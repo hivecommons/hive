@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -129,6 +130,21 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 	}
 	res.Commit = strings.TrimSpace(string(commit))
 	if err := b.rejectEmptyOutgoingCommits(ctx, res.Commit); err != nil {
+		return b.fail(res, err)
+	}
+	baseRef, baseExists := b.pushBase(ctx)
+	if remoteRef := b.remoteRef(); remoteRef != baseRef {
+		if _, err := b.git(ctx, "rev-parse", "--verify", remoteRef); err == nil {
+			if err := b.ensureFastForward(ctx, remoteRef); err != nil {
+				return b.fail(res, err)
+			}
+		}
+	} else if baseExists {
+		if err := b.ensureFastForward(ctx, baseRef); err != nil {
+			return b.fail(res, err)
+		}
+	}
+	if err := b.rejectForgedLaneSignoffs(ctx, baseRef, baseExists); err != nil {
 		return b.fail(res, err)
 	}
 
@@ -256,6 +272,19 @@ func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	return splitLines(out), err
 }
 
+func (b *Broker) pushBase(ctx context.Context) (string, bool) {
+	if base := strings.TrimSpace(b.BaseRef); base != "" {
+		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+			return base, true
+		}
+	}
+	base := b.remoteRef()
+	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+		return base, true
+	}
+	return "", false
+}
+
 func (b *Broker) rejectEmptyOutgoingCommits(ctx context.Context, head string) error {
 	rangeSpec := "HEAD"
 	baseExists := false
@@ -312,6 +341,68 @@ func (b *Broker) commitHasEmptyTreeDelta(ctx context.Context, commit string) (bo
 	}
 	_, err = b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", "diff-tree", "--quiet", fields[1], commit)
 	return err == nil, nil
+}
+
+func (b *Broker) ensureFastForward(ctx context.Context, base string) error {
+	if _, err := b.git(ctx, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+		return fmt.Errorf("pushbroker: refusing non-fast-forward push to existing branch %q; comment on the PR instead of rewriting history: %w", b.Branch, err)
+	}
+	return nil
+}
+
+var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(.*?)\s*<([^<>]+)>\s*$`)
+
+func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, baseExists bool) error {
+	nameOut, err := b.git(ctx, "config", "user.name")
+	if err != nil {
+		return fmt.Errorf("reading git user.name for sign-off guard: %w", err)
+	}
+	emailOut, err := b.git(ctx, "config", "user.email")
+	if err != nil {
+		return fmt.Errorf("reading git user.email for sign-off guard: %w", err)
+	}
+	laneName := strings.TrimSpace(string(nameOut))
+	laneEmail := strings.TrimSpace(string(emailOut))
+	if laneName == "" || laneEmail == "" {
+		return nil
+	}
+
+	var logArgs []string
+	if baseExists {
+		rangeSpec := base + "..HEAD"
+		logArgs = []string{"log", "--format=%H%x00%an%x00%ae%x00%B%x1e", rangeSpec}
+	} else {
+		logArgs = []string{"log", "-1", "--format=%H%x00%an%x00%ae%x00%B%x1e", "HEAD"}
+	}
+	out, err := b.git(ctx, logArgs...)
+	if err != nil {
+		return fmt.Errorf("reading outgoing commits for sign-off guard: %w", err)
+	}
+	for _, record := range strings.Split(string(out), "\x1e") {
+		record = strings.Trim(record, "\n")
+		if record == "" {
+			continue
+		}
+		parts := strings.SplitN(record, "\x00", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		sha, authorName, authorEmail, msg := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2]), parts[3]
+		if sameIdentity(authorName, authorEmail, laneName, laneEmail) {
+			continue
+		}
+		for _, match := range signedOffByRE.FindAllStringSubmatch(msg, -1) {
+			if len(match) == 3 && sameIdentity(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), laneName, laneEmail) {
+				return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, laneName)
+			}
+		}
+	}
+	return nil
+}
+
+func sameIdentity(name, email, wantName, wantEmail string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(wantName)) &&
+		strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(wantEmail))
 }
 
 func shortSHA(sha string) string {

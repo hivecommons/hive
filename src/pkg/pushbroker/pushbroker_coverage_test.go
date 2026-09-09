@@ -56,6 +56,18 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		commit := args[len(args)-1]
 		return []byte(commit + " parent\n"), nil
 	}
+	switch {
+	case key == "config user.name":
+		return []byte("Hive Test\n"), nil
+	case key == "config user.email":
+		return []byte("hive@example.com\n"), nil
+	case strings.HasPrefix(key, "log --format=%H%x00%an%x00%ae%x00%B%x1e "):
+		return nil, nil
+	case strings.HasPrefix(key, "log -1 --format=%H%x00%an%x00%ae%x00%B%x1e "):
+		return nil, nil
+	case key == "merge-base --is-ancestor origin/main HEAD" || strings.HasPrefix(key, "merge-base --is-ancestor refs/remotes/"):
+		return nil, nil
+	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
 
@@ -132,8 +144,8 @@ func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	if !res.Pushed || res.Commit != "cafebabe" {
 		t.Fatalf("res = %+v, want a push at cafebabe", res)
 	}
-	if slices.Contains(git.calls, "rev-parse --verify refs/remotes/origin/work") {
-		t.Fatalf("broker consulted the remote ref despite an explicit BaseRef: %v", git.calls)
+	if slices.Contains(git.calls, "diff --name-only refs/remotes/origin/work...HEAD") {
+		t.Fatalf("broker diffed against the remote ref despite an explicit BaseRef: %v", git.calls)
 	}
 }
 
@@ -184,6 +196,53 @@ func TestRunFallsBackToRemoteRefWhenBaseRefIsGone(t *testing.T) {
 	}
 	if !res.Pushed {
 		t.Fatalf("res = %+v, want the push to proceed via the remote ref", res)
+	}
+}
+
+func TestRunRejectsNonFastForwardPush(t *testing.T) {
+	git := &scriptedGit{
+		replies: map[string]string{
+			"rev-parse HEAD": "abc123\n",
+			"rev-parse --verify refs/remotes/origin/work":       "def456\n",
+			"rev-list --reverse refs/remotes/origin/work..HEAD": "abc123\n",
+		},
+		fails: map[string]error{
+			"merge-base --is-ancestor refs/remotes/origin/work HEAD": errors.New("not an ancestor"),
+		},
+	}
+	res, err := (&Broker{
+		Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "hivecommons/hive",
+		Minter: fakeMinter{"ghs_tok"}, Runner: git,
+	}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing non-fast-forward push") {
+		t.Fatalf("Run error = %v, want non-fast-forward rejection", err)
+	}
+	if res.Pushed || git.pushed {
+		t.Fatalf("broker pushed after non-fast-forward rejection: res=%+v calls=%v", res, git.calls)
+	}
+}
+
+func TestRunRejectsNonFastForwardPushEvenWithExplicitBaseRef(t *testing.T) {
+	git := &scriptedGit{
+		replies: map[string]string{
+			"rev-parse HEAD":                              "abc123\n",
+			"rev-parse --verify origin/main":              "base00\n",
+			"rev-parse --verify refs/remotes/origin/work": "old999\n",
+			"rev-list --reverse origin/main..HEAD":        "abc123\n",
+		},
+		fails: map[string]error{
+			"merge-base --is-ancestor refs/remotes/origin/work HEAD": errors.New("not an ancestor"),
+		},
+	}
+	res, err := (&Broker{
+		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main",
+		Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
+	}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing non-fast-forward push") {
+		t.Fatalf("Run error = %v, want non-fast-forward rejection against destination branch", err)
+	}
+	if res.Pushed || git.pushed {
+		t.Fatalf("broker pushed after non-fast-forward rejection: res=%+v calls=%v", res, git.calls)
 	}
 }
 

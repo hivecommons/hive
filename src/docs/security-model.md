@@ -71,6 +71,8 @@ What can agents actually do to your repositories? As little as you've dialed in:
 - **ACMM maturity levels gate autonomy.** Six levels (L1–L6) map to per-agent policy modes enforced end-to-end by token tiers and proxy rules: advisory (observe only) → measured (file issues) → hold-gated PRs → full. At **L5**, agent policies label every PR `hold` so humans batch-review and approve; the underlying guarantee is that **merge permission simply is not granted below L6** — an L5 agent's token tier and proxy rules do not allow merging, whatever its prompt says. The system proposes; humans approve.
 - **DCO sign-off.** Agent policies require DCO-signed commits (`git commit -s`); pair this with a DCO check on your repos to make it a hard gate.
 
+- **History and attestation invariants.** Agent-authored branch pushes must be fast-forward updates. A lane must not force-push, rebase-and-push, or otherwise rewrite a branch it did not create; conflicts and DCO failures on contributor commits are reported back to the PR instead of being repaired by rewriting history. Likewise, an agent may only add its own `Signed-off-by` trailer to commits it authored, because a sign-off is an attestation by the named identity.
+
 ## Layer 6 — Hub↔spoke channel
 
 Registered hives send periodic heartbeats to the hub:
