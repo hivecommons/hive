@@ -82,6 +82,7 @@ issues. Accepted workstreams:
   ([#5691](https://github.com/hivecommons/hive/issues/5691),
   [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
   [#5796](https://github.com/hivecommons/hive/pull/5796)).
+- **Per-repo policy scoping.** Proposed — awaiting maintainer sign-off on [#6208](https://github.com/hivecommons/hive/issues/6208): use one repo-scoped policy model for pause, per-repo agents, and per-repo ACMM/onboarding; hive-wide ACMM remains the ceiling, and repo overrides only narrow scope.
 - **Backend capacity, model inventory, and placement.** The same
   multi-spoke evidence made provider quota and model availability the
   practical constraint on splitting a hive. The accepted v5 capacity RFC
