@@ -8,10 +8,17 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="/var/run/hive-metrics/ga4-anomalies.json"
 TMP_FILE="${OUTPUT_FILE}.tmp"
 LOG="/var/log/kick-agents.log"
 REAL_GH="/usr/bin/gh"
+
+# Thresholds for bin/ga4_anomaly_lib.py's spike/drop arms. Overridable via env;
+# defaults live as named constants in that module (DEFAULT_*).
+GA4_ANOMALY_THRESHOLD="${GA4_ANOMALY_THRESHOLD:-}"
+GA4_DROP_THRESHOLD="${GA4_DROP_THRESHOLD:-}"
+GA4_DROP_MIN_BASELINE_DAILY="${GA4_DROP_MIN_BASELINE_DAILY:-}"
 
 PROJECT_YAML="${HIVE_PROJECT_YAML:-/etc/hive/hive-project.yaml}"
 if [ ! -f "$PROJECT_YAML" ]; then
@@ -59,6 +66,7 @@ from datetime import datetime, timezone, timedelta
 property_id = sys.argv[1]
 sa_key_path = sys.argv[2]
 output_path = sys.argv[3]
+script_dir = sys.argv[4]
 
 now = datetime.now(timezone.utc)
 
@@ -88,6 +96,18 @@ try:
     )
     recent_response = client.run_report(recent_request)
 
+    # Same recent window, UNFILTERED. The spike arm above deliberately only
+    # sees error events; the drop arm (#6430 item 4) needs real pages/events
+    # too; a domain migration's traffic collapse is not an error event and
+    # would otherwise be invisible to this detector entirely.
+    recent_all_request = RunReportRequest(
+        property=f'properties/{property_id}',
+        date_ranges=[DateRange(start_date='today', end_date='today')],
+        dimensions=[Dimension(name='eventName')],
+        metrics=[Metric(name='eventCount')],
+    )
+    recent_all_response = client.run_report(recent_all_request)
+
     # Baseline (last 7 days)
     baseline_request = RunReportRequest(
         property=f'properties/{property_id}',
@@ -103,43 +123,52 @@ try:
         count = int(row.metric_values[0].value)
         recent_events[event_name] = count
 
+    recent_all_events = {}
+    for row in recent_all_response.rows:
+        event_name = row.dimension_values[0].value
+        count = int(row.metric_values[0].value)
+        recent_all_events[event_name] = count
+
     baseline_events = {}
     for row in baseline_response.rows:
         event_name = row.dimension_values[0].value
         count = int(row.metric_values[0].value)
         baseline_events[event_name] = count / 7.0
 
-    anomalies = []
-    ANOMALY_THRESHOLD = 2.0
-    for event, recent_count in recent_events.items():
-        baseline_daily = baseline_events.get(event, 0)
-        if baseline_daily > 0:
-            ratio = recent_count / baseline_daily
-            if ratio > ANOMALY_THRESHOLD:
-                anomalies.append({
-                    'event': event,
-                    'recent_count': recent_count,
-                    'baseline_daily_avg': round(baseline_daily, 1),
-                    'ratio': round(ratio, 1),
-                    'severity': 'high' if ratio > 5.0 else 'medium'
-                })
-        elif recent_count > 5:
-            anomalies.append({
-                'event': event,
-                'recent_count': recent_count,
-                'baseline_daily_avg': 0,
-                'ratio': float('inf'),
-                'severity': 'high'
-            })
+    sys.path.insert(0, script_dir)
+    from ga4_anomaly_lib import (
+        compute_anomalies,
+        DEFAULT_ANOMALY_THRESHOLD,
+        DEFAULT_DROP_THRESHOLD,
+        DEFAULT_DROP_MIN_BASELINE_DAILY,
+    )
 
-    anomalies.sort(key=lambda a: a.get('ratio', 0), reverse=True)
+    anomaly_threshold = float(os.environ.get('GA4_ANOMALY_THRESHOLD') or DEFAULT_ANOMALY_THRESHOLD)
+    drop_threshold = float(os.environ.get('GA4_DROP_THRESHOLD') or DEFAULT_DROP_THRESHOLD)
+    drop_min_baseline_daily = float(os.environ.get('GA4_DROP_MIN_BASELINE_DAILY') or DEFAULT_DROP_MIN_BASELINE_DAILY)
+
+    anomalies = compute_anomalies(
+        recent_events,
+        recent_all_events,
+        baseline_events,
+        anomaly_threshold=anomaly_threshold,
+        drop_threshold=drop_threshold,
+        drop_min_baseline_daily=drop_min_baseline_daily,
+    )
+
+    spike_count = sum(1 for a in anomalies if a['type'] == 'spike')
+    drop_count = sum(1 for a in anomalies if a['type'] == 'drop')
+    if anomalies:
+        summary = f'{len(anomalies)} GA4 anomalies detected ({spike_count} spike, {drop_count} drop)'
+    else:
+        summary = 'GA4 nominal — no anomalies'
 
     result = {
         'generated_at': now.isoformat(),
         'status': 'ok',
         'anomaly_count': len(anomalies),
         'anomalies': anomalies,
-        'summary': f'{len(anomalies)} GA4 anomalies detected' if anomalies else 'GA4 nominal — no anomalies'
+        'summary': summary
     }
 
 except ImportError:
@@ -163,7 +192,7 @@ with open(output_path, 'w') as f:
     json.dump(result, f, indent=2)
 
 print(result['summary'])
-" "$PROPERTY_ID" "$SA_KEY" "$TMP_FILE"
+" "$PROPERTY_ID" "$SA_KEY" "$TMP_FILE" "$SCRIPT_DIR"
 
 mv "$TMP_FILE" "$OUTPUT_FILE" 2>/dev/null || true
 log "DONE"

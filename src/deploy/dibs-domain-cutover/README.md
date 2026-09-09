@@ -21,7 +21,18 @@ operator sequence is ready.
   default SSL certificate, `hive-hub/hive-wildcard-tls`, after the held SAN
   update is applied.
 - `03-dibs-kubestellar-redirect.yaml` stages the final ingress-nginx 308 redirect
-  from `dibs.kubestellar.io` to `dibs.hivecommons.dev`.
+  from `dibs.kubestellar.io` to `dibs.hivecommons.dev`. It routes to a Service
+  named `legacy-redirect`, not the `nginx.ingress.kubernetes.io/permanent-redirect`
+  annotation: that annotation cannot carry `$request_uri` on this cluster (the
+  admission webhook rejects any value containing `$`, and snippet annotations
+  are disabled), so redirecting through it would drop the path and query on
+  every legacy dibs link — the same defect [#6430](https://github.com/hivecommons/hive/issues/6430)
+  reported for `hive.kubestellar.io`. See `src/deploy/legacy-redirect/README.md`.
+- `04-dibs-legacy-redirect-externalname.yaml` stages the `dibs`-namespace
+  `legacy-redirect` ExternalName Service that `03-` depends on. Ingress backends
+  must live in the Ingress's own namespace, and the real `legacy-redirect`
+  Deployment/Service run in `hive-hub`, so this is a thin ExternalName alias
+  rather than a second copy of the backend.
 
 - `preflight.sh` checks — read-only, at zero certificate cost — the assumptions
   the three manifests above encode: the controller default certificate, the

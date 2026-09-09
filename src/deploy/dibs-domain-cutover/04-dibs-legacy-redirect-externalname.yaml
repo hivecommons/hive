@@ -1,0 +1,24 @@
+# Ingress backends must live in the same namespace as the Ingress. The
+# `legacy-redirect` Deployment/Service (src/deploy/legacy-redirect/) runs in
+# `hive-hub`, and 03-dibs-kubestellar-redirect.yaml's Ingress lives in `dibs`.
+# Rather than deploy a second copy of the redirect backend into `dibs`, this
+# stages an ExternalName Service named `legacy-redirect` in `dibs` that simply
+# resolves to the existing hive-hub Service — the simpler of the two options
+# discussed in #6430. ingress-nginx forwards the original Host header
+# (dibs.kubestellar.io) through unchanged, so the shared backend's
+# dibs.kubestellar.io server block still handles it correctly.
+#
+# Do NOT apply this (or 03-) until the dibs cutover (#5925) resumes; the dibs
+# namespace is held on Let's Encrypt quota.
+apiVersion: v1
+kind: Service
+metadata:
+  name: legacy-redirect
+  namespace: dibs
+spec:
+  type: ExternalName
+  externalName: legacy-redirect.hive-hub.svc.cluster.local
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

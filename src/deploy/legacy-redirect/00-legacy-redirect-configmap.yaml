@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: legacy-redirect-nginx
+  namespace: hive-hub
+  labels:
+    app: legacy-redirect
+data:
+  default.conf: |
+    # Falls through here when the Host header does not match any server_name
+    # below (this is what kubelet's readiness/liveness probes hit, since they
+    # do not set a Host header). Kept separate from the redirecting hosts so
+    # that an unmatched host 404s instead of silently redirecting somewhere.
+    server {
+      listen 8080 default_server;
+      location /healthz {
+        return 200 "ok";
+        add_header Content-Type text/plain;
+      }
+      location / {
+        return 404;
+      }
+    }
+
+    # hive.kubestellar.io -> hive.hivecommons.dev, preserving path and query.
+    #
+    # This exists instead of the ingress-nginx `permanent-redirect` annotation
+    # because that annotation cannot carry `$request_uri`: the admission
+    # webhook's URL validator rejects any value containing `$` ("contains
+    # invalid value"), and snippet annotations are intentionally disabled on
+    # this cluster's ingress-nginx controller. A tiny redirecting backend is
+    # the only way left to keep the path and query string on a 301. See
+    # src/deploy/legacy-redirect/README.md for the full story.
+    server {
+      listen 8080;
+      server_name hive.kubestellar.io;
+      location /healthz {
+        return 200 "ok";
+        add_header Content-Type text/plain;
+      }
+      location / {
+        return 301 https://hive.hivecommons.dev$request_uri;
+      }
+    }
+
+    # dibs.kubestellar.io -> dibs.hivecommons.dev, same reasoning, staged for
+    # #5925. Inert until the dibs Ingress (or a Service in the `dibs`
+    # namespace) actually points traffic at this backend; see
+    # src/deploy/dibs-domain-cutover/README.md.
+    server {
+      listen 8080;
+      server_name dibs.kubestellar.io;
+      location /healthz {
+        return 200 "ok";
+        add_header Content-Type text/plain;
+      }
+      location / {
+        return 308 https://dibs.hivecommons.dev$request_uri;
+      }
+    }

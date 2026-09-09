@@ -404,6 +404,18 @@ jobs:
         working-directory: .
         run: bash bin/test_dibs_cutover_verify.sh
 
+      # #6430: the anomaly detector fired only on increases (an error event
+      # more than 2x its 7-day baseline). A domain migration collapses real
+      # pages/events instead — not an error event — so nothing in the old
+      # code path could have flagged it, and nothing would flag a recurrence.
+      # This EXECUTES bin/ga4_anomaly_lib.py's compute_anomalies() directly —
+      # no google-analytics-data library, no service account key, no network —
+      # and asserts both arms: the pre-existing spike trigger is unchanged,
+      # and a real page/event falling below the drop floor is now reported.
+      - name: GA4 anomaly detector drop-arm contract (#6430)
+        working-directory: .
+        run: bash bin/test_ga4_anomaly_detector.sh
+
       # #4289: git-credential-hive.sh is the fetch/clone AND push credential
       # source for every agent. Its mode block used to exit 1 in ADVISORY/
       # ISSUES_ONLY/NO_GITHUB modes, cutting off every git READ for advisory
