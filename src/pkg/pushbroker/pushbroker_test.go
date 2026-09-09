@@ -69,6 +69,23 @@ func TestBrokerRejectsEmptyOutgoingCommitBeforePush(t *testing.T) {
 	}
 }
 
+func TestBrokerRejectsCommitMadeEmptyByNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+	base := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	runGit(t, dir, "update-ref", "refs/remotes/origin/work", base)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &recordingRunner{}
+
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "made empty by broker normalisation") {
+		t.Fatalf("Run error = %v, want empty commit rejection after normalisation", err)
+	}
+	if res.Pushed || r.argsOnPush != nil {
+		t.Fatalf("broker pushed after normalisation emptied the commit: res=%+v args=%v", res, r.argsOnPush)
+	}
+}
+
 func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "safe.txt", "hello\n")

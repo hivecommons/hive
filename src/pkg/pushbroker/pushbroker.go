@@ -160,6 +160,17 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))
 		}
 		res.Commit = strings.TrimSpace(string(commit))
+		if err := b.rejectEmptyOutgoingCommits(ctx); err != nil {
+			return b.fail(res, err)
+		}
+		files, err = b.changedFiles(ctx)
+		if err != nil {
+			return b.fail(res, err)
+		}
+		res.ChangedFiles = files
+		if len(files) == 0 {
+			return b.fail(res, errors.New("pushbroker: no committed changes to push"))
+		}
 	}
 	diff, err := b.outgoingDiff(ctx)
 	if err != nil {
@@ -337,12 +348,20 @@ func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (b
 		return false, err
 	}
 	if _, err := b.git(ctx, "commit", "--amend", "--no-edit"); err != nil {
+		if isEmptyAmendError(err) {
+			return false, errors.New("pushbroker: refusing to push a commit made empty by broker normalisation; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch")
+		}
 		return false, err
 	}
 	if b.Logger != nil {
 		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
 	}
 	return true, nil
+}
+
+func isEmptyAmendError(err error) bool {
+	msg := strings.ReplaceAll(err.Error(), "\n", " ")
+	return strings.Contains(msg, "would make") && strings.Contains(msg, "it empty")
 }
 
 // looksBinary reports whether data appears to be non-text, using the same
