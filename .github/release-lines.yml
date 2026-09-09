@@ -57,6 +57,10 @@ pinned:
   # than back-filled, because the workflow never ran there and adding it
   # would gate a line no longer taking doc changes.
   docs-link-check.yml: [-v2]
+  # Post-merge DCO monitor for protected branch history. It intentionally
+  # watches v4 and v5 only: v4 is the source line whose Tide squash commits
+  # triggered #6312, and v5 is the sync target that inherits those commits.
+  dco-post-merge.yml: [v5, -v2]
   go-security-analysis.yml: []
   podman-arm64-lane.yml: []
   podman-contract.yml: []

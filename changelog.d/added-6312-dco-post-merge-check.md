@@ -1,0 +1,1 @@
+- Hive now has a post-merge DCO trailer check for recent `v4` and `v5` commits, so protected-branch squash commits with missing or mismatched sign-offs are surfaced before they are inherited by sync PRs ([#6312](https://github.com/hivecommons/hive/issues/6312)).
