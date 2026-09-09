@@ -183,7 +183,7 @@ The relay speaks to whatever backend you set up — pass it to `contribute-setup
 | --- | --- |
 | `claude` | Claude Code (`npm i -g @anthropic-ai/claude-code`) |
 | `copilot` | GitHub Copilot CLI |
-| `goose` | Goose, defaulting to a local model via Ollama — fully local inference (`export GOOSE_PROVIDER=ollama GOOSE_MODEL=phi4`) |
+| `goose` | Goose, defaulting to a local model via Ollama — fully local inference (`export GOOSE_PROVIDER=ollama GOOSE_MODEL=phi4`). For an OpenAI-compatible local inference server, set `GOOSE_PROVIDER=openai` plus `OPENAI_HOST`/`OPENAI_BASE_PATH`/`OPENAI_API_KEY`; all are forwarded into the contributor container when set on the host — otherwise Goose falls back to `api.openai.com` and fails with `401`. |
 | `codex` | Codex CLI |
 | `pi` | Pi |
 | `aider` | Aider |

@@ -66,6 +66,9 @@ pinned:
   podman-contract.yml: []
   podman-rootful-lane.yml: []
   podman-rootless-lane.yml: []
+  # Static contract check for the provider-credential allowlist in the
+  # Justfile's contribute-hive recipe (#6400), sibling to podman-contract.yml.
+  provider-env-allowlist-contract.yml: []
   quadlet-gate.yml: []
   # scorecard.yml also runs on `main`, which is not a release line and does not
   # fit a `v*` pattern — this is why the guard asserts a set rather than

@@ -1,0 +1,36 @@
+name: Provider Env Allowlist Contract
+
+# Static contract check for the provider environment allowlist in the
+# Justfile's contribute-hive recipe (hivecommons/hive#6400). Mirrors the
+# sibling static contract checks in .github/workflows/podman-contract.yml and
+# .github/workflows/suid-contract.yml.
+on:
+  push:
+    branches:
+      - v2
+      - v4
+    paths:
+      - 'Justfile'
+      - 'src/scripts/check-provider-env-allowlist.sh'
+      - '.github/workflows/provider-env-allowlist-contract.yml'
+  pull_request:
+    branches:
+      - v2
+      - v4
+    paths:
+      - 'Justfile'
+      - 'src/scripts/check-provider-env-allowlist.sh'
+      - '.github/workflows/provider-env-allowlist-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-check:
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run provider env allowlist static contract check
+        run: bash src/scripts/check-provider-env-allowlist.sh Justfile

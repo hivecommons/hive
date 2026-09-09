@@ -1,0 +1,1 @@
+- Goose backend now forwards `OPENAI_HOST` and `OPENAI_BASE_PATH` into the contributor container so OpenAI-compatible local inference servers work instead of falling back to `api.openai.com` and failing with `401` ([#6400](https://github.com/hivecommons/hive/issues/6400)).
