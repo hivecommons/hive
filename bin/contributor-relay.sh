@@ -2605,7 +2605,7 @@ function classifyTmuxPane(text) {
     // and getting that wrong would be the opposite (and worse) bug: reporting a
     // busy agent as idle. The stall backstop in progressTick() covers whatever
     // this still misses.
-    // paneTailNonBlank, not a raw slice(-15): tmux capture-pane -p pads its
+    // paneTail (non-blank tail), not a raw slice(-15): tmux capture-pane -p pads its
     // output to the pane's full height, and agy renders inline near the top, so
     // on a short transcript a plain last-15-rows window is nothing but blank
     // padding (#6438 — the same defect #6413 fixed in getCLIState()).
@@ -2618,7 +2618,7 @@ function classifyTmuxPane(text) {
     // backstop fails it as `environment`, which is exactly the #4127 incident
     // recorded below: that fix widened the regex, but left the window it is
     // applied to padding-blind.
-    const agyTail = paneTailNonBlank(text, 15);
+    const agyTail = paneTail(text, 15);
     // agy formerly ended idle turns with "? for shortcuts". Current Gemini
     // builds render a bare input line followed by the model footer instead.
     // Keep the bare ">" constrained to that footer so a Markdown quote in
