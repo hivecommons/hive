@@ -112,6 +112,12 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 
 	cfgSet, cfgKnown := c.configRequiredChecks()
 	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
+	if protected, known := c.cachedBaseBranchProtection(owner, name, baseBranch); known && !protected && !cfgKnown {
+		// An allowlisted unprotected base has no branch-protection required set
+		// to delegate to. Use the fail-closed fallback so failing evidence is
+		// still a blocker unless the operator declared required checks explicitly.
+		required, requiredKnown = nil, false
+	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)

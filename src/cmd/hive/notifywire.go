@@ -336,18 +336,14 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 
 		// commitGreen's required-checks gate (self-merge sweep, see
 		// automerge_sweep.go): install the operator-declared
-		// auto_merge.required_checks list, if any, so gating does not depend
-		// on GitHub's branch-protection API — the Hive App token lacks
-		// administration:read, so that API call reliably errors and would
-		// otherwise fail closed to the coarser isMetaCheck/isIgnorableCICheck
+		// auto_merge.required_checks list, if any, so naming required checks
+		// does not depend on GitHub's required-status-checks branch-protection
+		// API. Older Hive App installations often lack administration:read, so
+		// that API call fails closed to the coarser isMetaCheck/isIgnorableCICheck
 		// allowlist. Unset/empty leaves the API/allowlist fallback chain
 		// intact (SetRequiredChecks(nil) is a safe no-op).
-		if set, ok := w.cfg.AutoMerge.RequiredCheckSet(); ok {
+		if set, ok := syncAutoMergePolicyToGitHubClient(w.cfg, w.ghClient); ok {
 			autoMergeOpts.RequiredChecks = set
-			// The merge-request watcher's pre-merge CI gate (#6173) names the
-			// required checks that have not reported yet, so it needs the same
-			// declared set the sweep gates on.
-			w.ghClient.SetRequiredChecks(set)
 		}
 
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
@@ -374,6 +370,7 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		if w.approvalDesk != nil && w.approvalInbox != nil {
 			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(w.approvalDesk, w.approvalInbox, w.cfg, w.logger)
 		}
+
 		autoMergeOpts.MutationBoundary = w.mutationBoundary
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
@@ -383,5 +380,18 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		autoMergeOpts.IntentGate = selfMergeIntentGate(w.cfg, w.beadStores)
 		automerge.StartSelfAuthoredAutoMergeSweep(w.ctx, w.ghClient, w.cfg.AutoMerge.MaxMerges, w.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(w.cfg.ACMMLevel), w.cfg.ACMMLevel, autoMergeOpts)
 	}
+}
 
+func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *github.Client) (map[string]bool, bool) {
+	if cfg == nil || ghClient == nil {
+		return nil, false
+	}
+	set, ok := cfg.AutoMerge.RequiredCheckSet()
+	// The merge-request watcher's pre-merge CI gate (#6173) names required
+	// checks that have not reported yet, so it needs the same declared set the
+	// sweep gates on. Passing nil clears stale values after config reload.
+	ghClient.SetRequiredChecks(set)
+	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
+	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
+	return set, ok
 }

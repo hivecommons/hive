@@ -106,6 +106,7 @@ func (w *spokeWire) wireSpokeStateDashboard() {
 				w.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(w.cfg.Governor.Labels.AutoMerge))
 			}
 			w.ghClient.SetIssueFilter(w.cfg.Project.IssueFilter)
+			syncAutoMergePolicyToGitHubClient(w.cfg, w.ghClient)
 			w.logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", w.cfg.Project.Repos)
 

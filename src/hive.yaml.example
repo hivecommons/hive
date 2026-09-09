@@ -30,6 +30,16 @@ project:
   #     by: your-github-login
   #     reason: release freeze until Friday
 
+# Optional merge-request safety exceptions. Defaults are refuse-closed:
+# Hive refuses to merge into an unprotected base branch, and refuses a PR with
+# zero statuses + zero check runs + zero workflow runs. List only repos that
+# intentionally need those exceptions.
+# auto_merge:
+#   allow_unprotected_base:
+#     - your-org/docs-only-repo
+#   no_ci_ok:
+#     - your-org/docs-only-repo
+
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks
   fail_mode: open                         # open (default) redacts; closed blocks Critical injection kicks and canary leaks

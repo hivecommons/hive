@@ -83,9 +83,11 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	// Valid write applies every provided field; required_checks entries are
 	// trimmed and blanks dropped.
 	rec := doPut(s, "/api/config/auto-merge", map[string]any{
-		"self_authored":   false,
-		"max_merges":      3,
-		"required_checks": []string{"  ci/test  ", "", "lint"},
+		"self_authored":          false,
+		"max_merges":             3,
+		"required_checks":        []string{"  ci/test  ", "", "lint"},
+		"allow_unprotected_base": []string{" repo-one ", ""},
+		"no_ci_ok":               []string{" docs-only "},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -100,12 +102,18 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	if len(am.RequiredChecks) != 2 || am.RequiredChecks[0] != "ci/test" || am.RequiredChecks[1] != "lint" {
 		t.Fatalf("required_checks not normalized: %v", am.RequiredChecks)
 	}
+	if len(am.AllowUnprotectedBase) != 1 || am.AllowUnprotectedBase[0] != "repo-one" {
+		t.Fatalf("allow_unprotected_base not normalized: %v", am.AllowUnprotectedBase)
+	}
+	if len(am.NoCIOK) != 1 || am.NoCIOK[0] != "docs-only" {
+		t.Fatalf("no_ci_ok not normalized: %v", am.NoCIOK)
+	}
 
 	// Absent keys leave settings untouched (pointer semantics).
 	if rec := doPut(s, "/api/config/auto-merge", map[string]any{}); rec.Code != http.StatusOK {
 		t.Fatalf("empty put: expected 200, got %d", rec.Code)
 	}
-	if s.deps.Config.AutoMerge.MaxMerges != 3 || len(s.deps.Config.AutoMerge.RequiredChecks) != 2 {
+	if s.deps.Config.AutoMerge.MaxMerges != 3 || len(s.deps.Config.AutoMerge.RequiredChecks) != 2 || len(s.deps.Config.AutoMerge.NoCIOK) != 1 {
 		t.Fatalf("empty put mutated config: %+v", s.deps.Config.AutoMerge)
 	}
 }

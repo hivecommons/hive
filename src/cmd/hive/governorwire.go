@@ -257,6 +257,7 @@ func (w *spokeWire) wireSpokeConfigReloadAndHooks() {
 
 		// Re-sync subsystems that cache config values
 		w.ghClient.SetRepos(w.cfg.Project.Repos)
+		syncAutoMergePolicyToGitHubClient(w.cfg, w.ghClient)
 		w.gov.UpdateConfig(w.cfg.Governor)
 		// A reload can add or archive repos, which moves every scaled default
 		// threshold — re-sync it alongside the repo list above.
@@ -355,6 +356,7 @@ func (w *spokeWire) wireSpokeConfigReloadAndHooks() {
 					}
 					newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
 					newClient.SetRepoPausedFunc(w.cfg.IsRepoPaused) // #6203: a client rebuild must not un-pause repos
+					syncAutoMergePolicyToGitHubClient(w.cfg, newClient)
 					w.ghClient = newClient
 					w.installMutationBoundary(w.ghClient)
 					w.appAuth = newAppAuth

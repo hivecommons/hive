@@ -68,6 +68,8 @@ Top-level YAML keys accepted by `config.Config`:
 | Field | Default / behavior | Operator note |
 |---|---|---|
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
+| `auto_merge.allow_unprotected_base` | Empty by default. | Explicit repo list allowed to merge through `hive-merge` when the PR base branch has no GitHub branch protection; absent means refuse closed. |
+| `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
 | `dashboard.snapshot_frame_ancestors` | Empty list means CSP `frame-ancestors 'none'`. | Entries must be exact `https://` origins; paths, wildcards, credentials, query, and fragments are rejected. |
 | `dashboard.authorized_users` | Empty means no per-user direct-route allowlist. | Entries can be `user` or `user:role`; roles are `read`, `read-write`, `merger`, `owner`. |
@@ -232,6 +234,7 @@ Minimum practical PAT permissions for full PAT-authenticated operation:
   - Pull requests: read/write (list, open, approve, merge)
   - Issues: read/write (list, comments, labels, advisory issue)
   - Checks: read-only and Commit statuses: read-only (CI/merge gating)
+  - Administration: read-only (branch-protection verification before merge requests)
   - Metadata: read-only (required by GitHub)
 
 If you use a GitHub App, configure equivalent repository permissions on the App

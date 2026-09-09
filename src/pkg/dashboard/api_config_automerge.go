@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // handleAutoMergeGet returns the top-level auto_merge config (AutoMergeConfig)
@@ -38,9 +39,11 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		SelfAuthored   *bool    `json:"self_authored"`
-		MaxMerges      *int     `json:"max_merges"`
-		RequiredChecks []string `json:"required_checks"`
+		SelfAuthored         *bool    `json:"self_authored"`
+		MaxMerges            *int     `json:"max_merges"`
+		RequiredChecks       []string `json:"required_checks"`
+		AllowUnprotectedBase []string `json:"allow_unprotected_base"`
+		NoCIOK               []string `json:"no_ci_ok"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -72,13 +75,31 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.AutoMerge.RequiredChecks = checks
 	}
+	if body.AllowUnprotectedBase != nil {
+		cfg.AutoMerge.AllowUnprotectedBase = normalizeAutoMergeRepoList(body.AllowUnprotectedBase)
+	}
+	if body.NoCIOK != nil {
+		cfg.AutoMerge.NoCIOK = normalizeAutoMergeRepoList(body.NoCIOK)
+	}
+	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after auto-merge update", "error", err)
 	}
+
 	s.auditFromRequest(r, "config_auto_merge", auditDetail("section", "auto_merge"), "")
 	s.refreshAndPersist()
 	jsonResponse(w, autoMergeSectionResponse(cfg))
+}
+
+func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Client) {
+	if cfg == nil || ghClient == nil {
+		return
+	}
+	set, _ := cfg.AutoMerge.RequiredCheckSet()
+	ghClient.SetRequiredChecks(set)
+	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
+	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
 }
 
 // autoMergeSectionResponse renders AutoMergeConfig for the dashboard. The
@@ -95,10 +116,31 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if checks == nil {
 		checks = []string{}
 	}
-	return map[string]interface{}{
-		"self_authored":     selfAuthored,
-		"self_authored_set": am.SelfAuthored != nil,
-		"max_merges":        am.MaxMerges,
-		"required_checks":   checks,
+	allowUnprotected := am.AllowUnprotectedBase
+	if allowUnprotected == nil {
+		allowUnprotected = []string{}
 	}
+	noCIOK := am.NoCIOK
+	if noCIOK == nil {
+		noCIOK = []string{}
+	}
+	return map[string]interface{}{
+		"self_authored":          selfAuthored,
+		"self_authored_set":      am.SelfAuthored != nil,
+		"max_merges":             am.MaxMerges,
+		"required_checks":        checks,
+		"allow_unprotected_base": allowUnprotected,
+		"no_ci_ok":               noCIOK,
+	}
+}
+
+func normalizeAutoMergeRepoList(repos []string) []string {
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo != "" {
+			out = append(out, repo)
+		}
+	}
+	return out
 }

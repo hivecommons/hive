@@ -24,6 +24,9 @@ type ciFixture struct {
 	statuses    []ciStatus
 	checks      []ciCheck
 	runs        []ciRun
+	// branchProtectionStatus is the HTTP status for GET
+	// /branches/{base}/protection. Zero means 200 protected.
+	branchProtectionStatus int
 	// mergeStatus, when non-zero, is the HTTP status PUT /merge answers with
 	// (to exercise the GitHub-side refusal paths); zero merges successfully.
 	mergeStatus int
@@ -84,6 +87,17 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 			runs = append(runs, map[string]any{"id": run.id, "name": run.name, "status": run.status, "conclusion": run.conc, "head_sha": r.URL.Query().Get("head_sha")})
 		}
 		enc(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+	case strings.HasSuffix(p, "/branches/main/protection"):
+		if f.branchProtectionStatus != 0 {
+			w.WriteHeader(f.branchProtectionStatus)
+			message := "branch protection unavailable"
+			if f.branchProtectionStatus == http.StatusNotFound {
+				message = "Branch not protected"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+			return true
+		}
+		enc(map[string]any{"url": "https://api.github.test/repos/o/r/branches/main/protection"})
 	case strings.HasSuffix(p, "/jobs"):
 		parts := strings.Split(p, "/")
 		id, _ := strconv.ParseInt(parts[len(parts)-2], 10, 64)
@@ -306,6 +320,93 @@ func TestMergeCIGate_AllSuccessMerges(t *testing.T) {
 	mustNotExist(t, reqPath, "request consumed after merge")
 }
 
+func TestMergeRequestBaseProtection_UnprotectedRefuses(t *testing.T) {
+	f := greenFixture()
+	f.branchProtectionStatus = http.StatusNotFound
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED: unprotected base branch was merged")
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, "no branch protection") || !strings.Contains(resp.Error, "allow_unprotected_base") {
+		t.Fatalf("expected refusal naming unprotected base override, got %+v", resp)
+	}
+	mustExist(t, reqPath+".denied", "unprotected-base request")
+}
+
+func TestMergeRequestBaseProtection_AllowlistedRepoProceeds(t *testing.T) {
+	f := greenFixture()
+	f.branchProtectionStatus = http.StatusNotFound
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetMergeRequestAllowUnprotectedBaseRepos(map[string]bool{"o/r": true})
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 1 {
+		t.Fatalf("allowlisted unprotected base should proceed to merge, got %d merges (result=%+v)", merges.Load(), readMergeResult(t, reqPath))
+	}
+	resp := readMergeResult(t, reqPath)
+	if !resp.OK {
+		t.Fatalf("expected successful merge, got %+v", resp)
+	}
+}
+
+func TestMergeRequestBaseProtection_AllowlistedRepoStillRefusesFailingCI(t *testing.T) {
+	f := &ciFixture{
+		defaultHead:            "abc",
+		checks:                 []ciCheck{{"build", "completed", "failure"}},
+		branchProtectionStatus: http.StatusNotFound,
+	}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetMergeRequestAllowUnprotectedBaseRepos(map[string]bool{"o/r": true})
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED: allow_unprotected_base overrode failing CI")
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, "check-failure") {
+		t.Fatalf("expected failing check refusal, got %+v", resp)
+	}
+}
+
+func TestMergeRequestBaseProtection_APIErrorRefuses(t *testing.T) {
+	f := greenFixture()
+	f.branchProtectionStatus = http.StatusInternalServerError
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED: branch-protection API error merged")
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, "base branch protection") {
+		t.Fatalf("expected fail-closed branch-protection API refusal, got %+v", resp)
+	}
+	mustExist(t, reqPath+".denied", "branch-protection API error request")
+}
+
 // The production shape from #6173: every workflow concluded failure with
 // zero jobs (startup failures), so the commit has zero check runs and an
 // empty status rollup. A check-run-only gate sees nothing; this gate sees
@@ -435,6 +536,16 @@ func TestMergeCIGate_EvidenceAPIErrorRefuses(t *testing.T) {
 			_, _ = io.WriteString(w, `{"sha":"deadbeef","merged":true}`)
 			return
 		}
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":42,"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}`)
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/branches/main/protection") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"url":"https://api.github.test/repos/o/r/branches/main/protection"}`)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -449,6 +560,46 @@ func TestMergeCIGate_EvidenceAPIErrorRefuses(t *testing.T) {
 	resp := readMergeResult(t, reqPath)
 	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, "ci gate") {
 		t.Fatalf("expected a failed attempt from the gate, got %+v", resp)
+	}
+}
+
+func TestMergeCIGate_NoCIOKOptInMergesUnverifiedRepo(t *testing.T) {
+	f := &ciFixture{defaultHead: "abc"} // no statuses, no check runs, no workflow runs
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetMergeRequestNoCIAllowedRepos(map[string]bool{"o/r": true})
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 1 {
+		t.Fatalf("explicit no_ci_ok repo should merge absent-CI PR, got %d merges (result=%+v)", merges.Load(), readMergeResult(t, reqPath))
+	}
+	resp := readMergeResult(t, reqPath)
+	if !resp.OK {
+		t.Fatalf("expected successful merge, got %+v", resp)
+	}
+}
+
+func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "completed", "failure"}}}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetMergeRequestNoCIAllowedRepos(map[string]bool{"o/r": true})
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED: no_ci_ok overrode a failing check")
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || !strings.Contains(resp.Error, "check-failure") {
+		t.Fatalf("expected failing check refusal, got %+v", resp)
 	}
 }
 

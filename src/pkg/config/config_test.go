@@ -1214,6 +1214,7 @@ func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
 		{"single entry", []string{"build-gate"}, map[string]bool{"build-gate": true}, true},
 		{"multiple entries, whitespace trimmed", []string{" build-gate ", "lint"}, map[string]bool{"build-gate": true, "lint": true}, true},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := AutoMergeConfig{RequiredChecks: tc.checks}
@@ -1235,6 +1236,20 @@ func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
 					t.Errorf("RequiredCheckSet()[%q] = %v, want %v", k, got[k], v)
 				}
 			}
+
 		})
+	}
+}
+
+func TestAutoMergeConfigRepoExceptionSets(t *testing.T) {
+	cfg := AutoMergeConfig{
+		AllowUnprotectedBase: []string{" o/r ", "", "docs"},
+		NoCIOK:               []string{"config", "o/empty"},
+	}
+	if got := cfg.AllowUnprotectedBaseSet(); len(got) != 2 || !got["o/r"] || !got["docs"] {
+		t.Fatalf("AllowUnprotectedBaseSet() = %v", got)
+	}
+	if got := cfg.NoCIOKSet(); len(got) != 2 || !got["config"] || !got["o/empty"] {
+		t.Fatalf("NoCIOKSet() = %v", got)
 	}
 }

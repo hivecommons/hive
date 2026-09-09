@@ -66,13 +66,13 @@ type AutoMergeConfig struct {
 	// contexts/check-run names that the self-merge sweep's commitGreen must
 	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
 	// asking GitHub's branch-protection API (Repositories.GetRequiredStatusChecks)
-	// which one, and only one, of these checks are actually required: that
-	// API needs administration:read, a scope the Hive GitHub App does not
-	// hold, so the call errors and the sweep used to fail closed to the old
-	// isMetaCheck/isIgnorableCICheck allowlist — which still blocked on
-	// non-required checks like "Detect untested files" (cancelled) or
-	// "Analyze (python)" (CodeQL failure). Declaring the branch's actual
-	// required set here removes the dependency on that scope entirely.
+	// which one, and only one, of these checks are actually required: older Hive
+	// App installations often lacked administration:read, so that call failed
+	// closed to the coarser isMetaCheck/isIgnorableCICheck allowlist — which
+	// still blocked on non-required checks like "Detect untested files"
+	// (cancelled) or "Analyze (python)" (CodeQL failure). Declaring the
+	// branch's actual required set here removes the dependency on that API for
+	// naming required checks.
 	//
 	// Unset/empty means "not config-declared" (RequiredCheckSet returns
 	// requiredKnown=false) — callers then fall back to the branch-protection
@@ -81,6 +81,16 @@ type AutoMergeConfig struct {
 	// per-repo (e.g. console's main branch requires only "build-gate"), so
 	// the operator must declare it per-hive in `auto_merge.required_checks`.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+	// AllowUnprotectedBase is the explicit per-repo exception list for the
+	// merge-request relay's base-branch protection guard. By default the relay
+	// refuses to merge into a base branch with no GitHub branch protection; a
+	// repo listed here is allowed to rely on Hive's CI gate alone.
+	AllowUnprotectedBase []string `yaml:"allow_unprotected_base,omitempty" json:"allow_unprotected_base,omitempty"`
+	// NoCIOK is the explicit per-repo exception list for repositories that have
+	// no CI by design. A listed repo may downgrade the merge-request relay's
+	// "zero statuses + zero check runs + zero workflow runs" verdict from
+	// unverified to green. Red or pending evidence still refuses/waits.
+	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a
@@ -107,6 +117,31 @@ func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
 		return nil, false
 	}
 	return set, true
+}
+
+func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
+	return repoListSet(a.AllowUnprotectedBase)
+}
+
+func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
+	return repoListSet(a.NoCIOK)
+}
+
+func repoListSet(repos []string) map[string]bool {
+	if len(repos) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo != "" {
+			set[repo] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
 }
 
 // SelfAuthoredEnabled reports whether the App-self-merge sweep is on for this

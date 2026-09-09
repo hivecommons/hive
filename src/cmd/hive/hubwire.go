@@ -354,6 +354,8 @@ func (w *spokeWire) handleHubGitHubAppConfig(ghCfg *hub.HeartbeatGitHubAppConfig
 		}
 		newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
 		newClient.SetRepoPausedFunc(w.cfg.IsRepoPaused) // #6203: a client rebuild must not un-pause repos
+		syncAutoMergePolicyToGitHubClient(w.cfg, newClient)
+
 		w.ghClient = newClient
 		w.installMutationBoundary(w.ghClient)
 		w.appAuth = newAppAuth
@@ -552,6 +554,7 @@ func (w *spokeWire) handleHubProjectConfig(pc *hub.HeartbeatProjectConfig) {
 	// effect on the next enumeration, not the next restart.
 	w.ghClient.SetRepos(w.cfg.Project.Repos)
 	w.ghClient.SetIssueFilter(w.cfg.Project.IssueFilter)
+	syncAutoMergePolicyToGitHubClient(w.cfg, w.ghClient)
 
 	// Persist to the PVC overlay so the claim survives a pod restart
 	// (config save writes the overlay hive.yaml, same as level switches).

@@ -262,6 +262,11 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	if err := c.verifyMergeRequestBaseProtected(ctx, req.Repo, req.Number); err != nil {
+		c.denyMergeRequest(path, req, err.Error(), nowFn)
+		return
+	}
+
 	// Optional branch-update-first (resolves "behind main"). A failure here is
 	// not fatal — the merge attempt below will surface the real blocker.
 	if req.UpdateBranch {
@@ -288,6 +293,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
 		return
 	}
+	verdict, why = c.maybeDowngradeNoCIVerdict(req, verdict, why)
 	c.logCIVerdict(req, verdict, why)
 	switch verdict {
 	case mergeCIGreen:
