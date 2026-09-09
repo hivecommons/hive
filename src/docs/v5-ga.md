@@ -21,11 +21,12 @@ cannot be counted as complete.
 | Digest-verifiable rollback | Operators can resolve the GA candidate and rollback targets to immutable digests for all three images. | GHCR manifest inspection for the GA candidate's short-SHA tag and the documented rollback/channel-switch procedure. | Blocked until the rollback/channel-switch procedure is documented. |
 | Tagged release docs | The tagged-release path documents whether semver tags are cut from `v5`, still cut only from `v4`, or deliberately deferred for the v5 GA candidate. | `src/docs/releases.md` and the tagged-release workflow triggers. | Not complete; current page is v4-oriented. |
 | Migration guide | A v4-to-v5 migration guide exists and names supported prerequisites, data/config compatibility, downgrade/rollback limits, and the channel choice operators should use during migration. | The merged migration guide (for example `UPGRADE.md` or a docs page linked from `src/docs/README.md`). | Guide exists: [`UPGRADE.md`](../../UPGRADE.md) landed via #5559 and is linked from `src/docs/README.md`; row closes when maintainers confirm it covers the GA candidate's prerequisites and rollback limits. |
-| Dual-version validation | At least one documented validation run covers v4 and v5 hub/spoke operation during transition, including heartbeat, branch/channel switching, and rollback expectations. | A linked test report, PR, issue comment, or CI artifact that states the exact v4/v5 SHAs and scenario. | Not complete; no durable source is named yet. |
-| Reviewer lane production exercise | A reviewer-lane PR has run in production after the #5617 follow-ups, with the result visible in the PR or governor artifacts. | The linked reviewer-lane PR/evidence artifact and the #5617 tracker closure state. | Not complete until #5617 follow-ups are closed and evidenced. |
+| Dual-version validation | **Bound — maintainer-recorded decision, see [#6112](https://github.com/hivecommons/hive/issues/6112):** at least one documented validation run covers v4 and v5 hub/spoke operation during transition, including heartbeat, branch/channel switching, and rollback expectations. No automated dual-version test exists today — `podman-contract.yml` runs only `v2`; `v2-ci.yml`/`v2-tests.yml` cover a single line at a time — so the row is evidenced by a dated manual run record until CI grows one. | Owner: maintainers (**@clubanderson**), with the ci-maintainer lane collecting the evidence comment on [#6016](https://github.com/hivecommons/hive/issues/6016). Evidence bullet format: `Evidence (YYYY-MM-DD, recorder): hub image tag: <ghcr short-SHA>; spoke image tag: <ghcr short-SHA>; scenario: <branch/channel switch + rollback steps performed>; hive status/heartbeat output: <pasted or linked>; conclusion: pass/fail.` Gap: no CI artifact backs this row; see the [Dual-version validation exercise](#dual-version-validation-exercise-bound) subsection below. | Bound; not yet run. Closes when the first evidence bullet is posted on #6016. |
+| Reviewer lane production exercise | **Bound — maintainer-recorded decision, see [#6130](https://github.com/hivecommons/hive/issues/6130):** one reviewer-lane (review swarm, [`src/docs/review-swarm.md`](review-swarm.md)) PR on `hivecommons/hive` is processed end-to-end in production — review posted by the lane and merged by a human — scheduled during the GA candidate week. | The PR URL, the lane's review-verdict comment URL, and the governor dispatch/`review-verdicts.json` artifact, linked from [#6016](https://github.com/hivecommons/hive/issues/6016); plus the #5617 tracker closure state (closed 2026-09-03). A maintainer triggers the exercise by kicking the reviewer-capable agent from the dashboard (`POST /api/kick/<agent>`) against the candidate PR. | Bound; not yet scheduled. Closes when the PR/comment/artifact links are posted on #6016. |
 | Formal-model safety gate | Formal-verification expectations for v5 are documented and the escalation/merge/hold models have no expected-fail safety witnesses for the GA candidate. | The formal-verification workflow/test results plus any model witness tracker referenced from `src/docs/formal-verification.md`. | Measurable only for models wired into CI; open expected-fail witnesses block GA. |
 | Hold and merge-lane hygiene | Hold-guard, merge-eligible, and self-merge lanes reject moved heads and have regression tests covering the v5 branch-hygiene incident class. | `go test` results for the relevant packages (`cmd/hive`, holdguard, scheduler) and linked issue/PR evidence such as #5589. | Measurable now; must be green for the GA candidate. |
-| Open severity bar | There are zero open P1/security/adoption-blocker issues that maintainers classify as blocking v5-only code. | GitHub issue search over v5 labels/severity labels plus the GA tracker checklist. | Measurable only after maintainers settle the exact label query on the tracker. |
+| Open severity bar | **Bound — maintainer-recorded decision, see [#6125](https://github.com/hivecommons/hive/issues/6125):** there are zero open P1/security/adoption-blocker issues that maintainers classify as blocking v5-only code, measured by the `ga-blocker` label plus the existing `security` label. Row is green when the query below returns zero issues. | `unset GITHUB_TOKEN && gh issue list --repo hivecommons/hive --label ga-blocker --state open` (adoption/P1 blockers) and `unset GITHUB_TOKEN && gh issue list --repo hivecommons/hive --label security --state open` (security blockers). No pre-existing label fit (checked: `priority/critical-urgent`, `priority/high`, `tide/merge-blocker`, none scope to v5-GA blockage), so `ga-blocker` is a new label created for this row. | Bound; not yet measured. Closes when both queries return zero and the run is recorded on #6016. |
+| Fork & self-hosted portability | **Bound — maintainer-recorded decision, see [#6090](https://github.com/hivecommons/hive/issues/6090):** a fresh fork of `hivecommons/hive` passes its CI without edits, and the #6081–#6087 portability cluster is closed. | Issue-state query: `unset GITHUB_TOKEN && gh issue view N --repo hivecommons/hive --json state,title` for `N` in 6081..6087, plus one linked fork CI run URL. As of this row's binding, #6081–#6087 are all closed and #6102 (backend-smoke fork-image fix) is merged. | Bound; issue cluster closed. Closes when a fresh-fork CI run URL with zero required edits is linked on #6016. |
 | v4 lifecycle policy | **Proposed — awaiting maintainer sign-off on [#6346](https://github.com/hivecommons/hive/issues/6346):** v4 feature-freezes when all **Release train** rows in this GA bar are green, or on 2026-10-15, whichever comes first. After freeze, v4 takes security and critical fixes only; v4→v5 movement is cherry-pick-only, with no batch syncs, and each cherry-pick carries its own DCO-valid sign-off. Before the next batch sync, [#6312](https://github.com/hivecommons/hive/issues/6312) must be fixed; until then each batch sync requires human-verified DCO state and must not use lane remediation ([#6329](https://github.com/hivecommons/hive/issues/6329), [#6339](https://github.com/hivecommons/hive/issues/6339)). v4 EOL remains blocked on this GA bar per [#6140](https://github.com/hivecommons/hive/issues/6140) and [ROADMAP.md](../../ROADMAP.md#v4--stable-line). | This row, the [v4→v5 forward-port sync policy](v5-sync-policy.md), [ROADMAP.md](../../ROADMAP.md#v4--stable-line), and the GA tracker. | Proposed; cannot close until maintainers sign off on [#6346](https://github.com/hivecommons/hive/issues/6346) and the tracker records the decision. |
 | v4 EOL dependency | The v4 EOL announcement is explicitly blocked on this GA bar being complete; no EOL date is announced before the checklist is closed. | Public roadmap/release docs and the GA tracker state. | Not complete until the tracker and roadmap/release docs carry the dependency. |
 
@@ -86,6 +87,90 @@ cannot be counted as complete.
     URLs>; cancelled-by-concurrency runs ignored: <URLs or none>; conclusion:
     pass/fail.`
 
+## Dual-version validation exercise (bound)
+
+**Bound — maintainer-recorded decision on [#6112](https://github.com/hivecommons/hive/issues/6112).**
+
+- **Owner:** maintainers (**@clubanderson**); the ci-maintainer lane collects
+  and posts the evidence comment on [#6016](https://github.com/hivecommons/hive/issues/6016).
+- **Why no automated source:** `.github/workflows/podman-contract.yml` has only
+  ever run on `v2` and was deliberately never extended to `v4` or a dual-line
+  scenario; `v2-ci.yml`/`v2-tests.yml` each test one branch at a time. There is
+  no existing job that stands up a v4 hub against a v5 spoke (or vice versa),
+  so this row is evidenced by a dated manual run record rather than a CI
+  artifact until one is built.
+- **Scenario:** run one hub on a `v4` image and one spoke on a `v5` image (or
+  the reverse pairing maintainers intend to support during transition),
+  observe heartbeat delivery, perform one branch/channel switch, and perform
+  one rollback, all against named image tags.
+- **Evidence bullet format:**
+  - `Evidence (YYYY-MM-DD, recorder): hub image tag: <ghcr short-SHA>; spoke
+    image tag: <ghcr short-SHA>; scenario: <branch/channel switch + rollback
+    steps performed>; hive status/heartbeat output: <pasted or linked>;
+    conclusion: pass/fail.`
+- **Gap:** until this exercise runs, the row stays open; if it recurs the CI
+  gap should be filed as its own follow-up issue rather than re-run manually
+  every release.
+
+## Open severity bar label and query (bound)
+
+**Bound — maintainer-recorded decision on [#6125](https://github.com/hivecommons/hive/issues/6125).**
+
+- **Label:** `ga-blocker` (created for this row; no existing label —
+  `priority/critical-urgent`, `priority/high`, `tide/merge-blocker` — scopes to
+  v5-GA blockage specifically). Description: "Blocks the v5 GA cut
+  (`src/docs/v5-ga.md` open-severity row)".
+- **Canonical queries:**
+
+  ```sh
+  unset GITHUB_TOKEN && gh issue list --repo hivecommons/hive --label ga-blocker --state open
+  unset GITHUB_TOKEN && gh issue list --repo hivecommons/hive --label security --state open
+  ```
+
+- **Pass condition:** the row is green when both queries return zero open
+  issues.
+- **Sweep:** maintainers apply or decline `ga-blocker` on open candidates (for
+  example the #6081–#6087 portability cluster while open) and record the
+  sweep result as a comment on [#6016](https://github.com/hivecommons/hive/issues/6016).
+
+## Reviewer lane production exercise (bound)
+
+**Bound — maintainer-recorded decision on [#6130](https://github.com/hivecommons/hive/issues/6130).**
+
+- **Precondition met:** the #5617 reviewer-lane follow-ups closed on
+  2026-09-03.
+- **Exercise:** one reviewer-lane PR (the review swarm described in
+  [`review-swarm.md`](review-swarm.md)) on `hivecommons/hive`, processed
+  end-to-end in production — a review-capable agent posts an aggregate
+  verdict and a human performs the merge — scheduled during the GA candidate
+  week.
+- **Trigger:** a maintainer kicks the review-capable agent from the dashboard
+  (`POST /api/kick/<agent>`) against the candidate PR; the governor's
+  `review.fan_out` eval cycle then dispatches the perspective reviews.
+- **Evidence:** the PR URL, the lane's review-verdict comment URL (or the
+  `review-verdicts.json` aggregate for that head SHA), and any governor
+  dispatch artifact, linked from [#6016](https://github.com/hivecommons/hive/issues/6016).
+
+## Fork and self-hosted portability (bound)
+
+**Bound — maintainer-recorded decision on [#6090](https://github.com/hivecommons/hive/issues/6090),**
+umbrella for the #6081–#6087 cluster (#6102 merged the backend-smoke half of
+the fix).
+
+- **Pass condition:** #6081, #6082, #6083, #6084, #6085, #6086, and #6087 are
+  all closed, **and** a fresh fork of `hivecommons/hive` passes its CI without
+  any edits to workflow files, prompts, or install artifacts.
+- **Issue-state query:**
+
+  ```sh
+  unset GITHUB_TOKEN && gh issue view N --repo hivecommons/hive --json state,title   # N = 6081..6087
+  ```
+
+  As of this row's binding, all seven are closed.
+- **Evidence:** the issue-list query output above plus one fork CI run URL
+  showing a green run with zero required edits, linked from
+  [#6016](https://github.com/hivecommons/hive/issues/6016).
+
 ## Tracker checklist template
 
 The live tracker is
@@ -107,13 +192,14 @@ same change.
 
 ### Migration and operator readiness
 - [ ] v4-to-v5 migration guide is merged and linked from docs.
-- [ ] Dual v4/v5 hub-spoke operation validation is linked with exact SHAs.
+- [ ] Dual v4/v5 hub-spoke operation validation is linked with exact SHAs and image tags, per [#6112](https://github.com/hivecommons/hive/issues/6112)'s bound evidence bullet format.
 - [ ] v4 EOL announcement remains blocked on this checklist.
 - [ ] v4 lifecycle freeze/sync policy is signed off on [#6346](https://github.com/hivecommons/hive/issues/6346).
 
 ### Safety and agent governance
-- [ ] Reviewer lane production exercise is linked and #5617 follow-ups are closed or explicitly deferred.
+- [ ] Reviewer lane production exercise is linked (PR URL + verdict comment/artifact) and #5617 follow-ups are closed — closed 2026-09-03, per [#6130](https://github.com/hivecommons/hive/issues/6130).
 - [ ] Formal-model CI expectations are green; no expected-fail safety witnesses remain for GA scope.
 - [ ] Hold/merge branch-hygiene tests are green, including the #5589 incident shape.
-- [ ] Zero open P1/security/adoption-blocker issues are classified as v5-GA blockers.
+- [ ] Zero open issues carry `ga-blocker` or `security` (`gh issue list --repo hivecommons/hive --label ga-blocker --state open`; same for `security`), per [#6125](https://github.com/hivecommons/hive/issues/6125).
+- [ ] Fork & self-hosted portability: #6081–#6087 closed and one fresh-fork CI run URL is linked, per [#6090](https://github.com/hivecommons/hive/issues/6090).
 ```
