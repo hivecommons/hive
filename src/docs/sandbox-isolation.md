@@ -20,7 +20,7 @@ This is the part that is easy to get wrong, because the two paths have different
 | | Hub / pod agents (`pkg/agent`) | Contributor relay (`just contribute-hive`) |
 |---|---|---|
 | Runs where | The hive spoke's own container | The contributor's machine |
-| Podman agent sandbox (`agent_sandbox`) | Available, opt-in — see below | **Does not exist on this path.** `SandboxEnabled` is read only by `pkg/agent`; nothing in `bin/contributor-relay.sh`, `bin/contributor-agent.sh` or the `Justfile` consults it |
+| Podman agent sandbox (`agent_sandbox`) | Available, opt-in — see below | **Does not exist on this path.** `SandboxEnabled` is read only by `pkg/agent`; nothing in `bin/contributor-relay.js`, `bin/contributor-agent.sh` or the `Justfile` consults it |
 | The confinement lever | `agent_sandbox` + the per-agent opt-in | Container mode (the default), or a backend-native sandbox in local mode — see the matrix below, coverage varies by backend |
 | Host-state denials (#4938) | Yes | Yes (`config/backends.conf`) |
 | Credentials / pushes | Constrained | Constrained |

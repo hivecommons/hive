@@ -76,7 +76,9 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Stage | Purpose |
 |---|---|---|
 | `contributor-agent.sh` | Contributor runtime | Contributor-container entrypoint: detects authenticated CLI backend, starts the relay, launches the CLI in tmux, and creates `${HOME}/agent.md` only from a verified live knowledge export. |
-| `contributor-relay.sh` | Contributor runtime | Node.js WebSocket client for ClankeR contributor agents. It authenticates to one or more hubs, receives tasks, injects GitHub tokens, reports progress/results, and supports interactive tmux or headless one-shot delivery. |
+| `contributor-relay.js` | Contributor runtime | Node.js WebSocket client for ClankeR contributor agents. It authenticates to one or more hubs, receives tasks, injects GitHub tokens, reports progress/results, and supports interactive tmux or headless one-shot delivery. Pure pane-classification (readiness/login/onboarding, the busy/idle/blocked/error state machine) lives in `lib/pane-classifier.js`, which this file `require`s. |
+| `contributor-relay.sh` | Contributor runtime | Thin POSIX-sh compat wrapper that `exec`s `contributor-relay.js` with the same argv (kubestellar/hive#6429) — kept because the `.sh` path is baked into existing deployments. New callers should invoke `contributor-relay.js` directly. |
+| `lib/pane-classifier.js` | Contributor runtime | Pure (no `process`/tmux) pane-classification library required by `contributor-relay.js`: `classifyReadiness`, `classifyPane`, `blockingPromptKey`, `classifyBlockedOnHumanReason`, and the pane-tail/API-error-line detectors they share. Kept test-for-test in sync with `src/pkg/agent/manager.go`'s Go port via the shared fixtures in `testdata/pane-fixtures/` (kubestellar/hive#6427). |
 | `pi-backend.js` | Contributor runtime | Pi contributor adapter contract (#5039). `AGENT_MODEL` is the one contributor-owned selection input; the adapter derives the provider's official credential variable names from it so only the selected provider's keys are handed to the container. |
 
 ## Model, token, and experiment helpers
@@ -96,7 +98,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Covers |
 |---|---|
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
-| `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
+| `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.js` with stubs, plus direct-require coverage of `lib/pane-classifier.js`. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
 | `test_agent_env_scrub.sh` | `agent-env-scrub.sh` (#4045): backend CLIs must not re-export live GitHub credentials into the tool shells they spawn. Behavioural plus source assertions. |
 | `test_gh_auth_native_no_cat.sh` | The N14 (#3842) fix: a native/systemd-install agent kicked via `kick-agents.sh` — no Go AgentManager, no per-agent `HIVE_AGENT_TOKEN_CACHE` — still authenticates without leaking the token through `cat`. |

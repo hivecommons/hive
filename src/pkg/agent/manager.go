@@ -3440,7 +3440,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 // `npm install -g`. Answering those needs the exact key, so each entry names
 // the one prompt it answers and nothing else is ever blind-fired at.
 //
-// This mirrors blockingPromptKey() in bin/contributor-relay.sh, which solved
+// This mirrors blockingPromptKey() in bin/contributor-relay.js, which solved
 // the same problem contributor-side. The hub had no equivalent.
 type blockingPrompt struct {
 	// backend this prompt belongs to. Prompts are matched only against the

@@ -125,7 +125,7 @@ sandbox, no deny-list, and no unattended-credential story still lands here.
 ### T1 - core, additionally
 
 10. **Headless entry point.** Add `<name>` to `HEADLESS_BACKENDS` in
-    `bin/contributor-relay.sh` with the one-shot sub-command or flag, and a
+    `bin/contributor-relay.js` with the one-shot sub-command or flag, and a
     test in `bin/contributor-relay.test.js` pinning the argv it builds. The
     CLI must run the prompt to completion and exit with a meaningful status;
     an invocation that prints help and exits 0 would be reported to the hub

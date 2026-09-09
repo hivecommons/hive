@@ -83,7 +83,7 @@ func loadPaneFixture(t *testing.T, name string) (pane, wantTail string, sidecar 
 
 // TestPaneTail_MatchesSharedGoldenFixtures is the core contract this issue
 // asks for: Go's paneTail (manager.go) must return byte-for-byte the same
-// last-n-non-blank-lines window as JS's paneTail (contributor-relay.sh) does
+// last-n-non-blank-lines window as JS's paneTail (contributor-relay.js) does
 // over the identical capture, for every shared fixture — including the
 // #6413 shapes (an inline-rendering CLI whose real content sits far above a
 // pane's blank-padded bottom, and a stale marker buried above newer non-blank

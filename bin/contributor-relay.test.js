@@ -13,13 +13,19 @@ const Module = require('module');
 const path = require('path');
 const fs = require('fs');
 const piBackend = require('./pi-backend.js');
+// The pure pane classifier (kubestellar/hive#6429) — required directly, with
+// no relay/tmux/ws stubbing at all, for the tests below that exercise it as a
+// standalone library. Tests that need the relay's WIRING (task lifecycle, hub
+// messaging, tmux launch/restart) still go through loadRelay(), which itself
+// requires this same module.
+const paneClassifier = require('./lib/pane-classifier.js');
 
 // Set for the whole run, not just during module load: the relay checks it at
 // CALL time in sleepMs() to skip its busy-wait, and the restart paths sleep for
 // seconds at a time.
 process.env.HIVE_RELAY_TEST_MODE = '1';
 
-const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
+const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 
 // ---------------------------------------------------------------------------
 // Harness: load the relay with child_process/ws stubbed out, so no tmux, no
@@ -6730,6 +6736,78 @@ for (const name of loadPaneFixtures()) {
 test('pane fixtures directory exists and is not empty (kubestellar/hive#6427)', () => {
   assert.ok(fs.existsSync(PANE_FIXTURES_DIR), `expected shared fixtures at ${PANE_FIXTURES_DIR}`);
   assert.ok(loadPaneFixtures().length > 0, 'expected at least one *.pane.txt fixture');
+});
+
+// ---------------------------------------------------------------------------
+// bin/lib/pane-classifier.js — direct-require coverage (kubestellar/hive#6429).
+//
+// These call the module functions straight, with no loadRelay() harness (no
+// tmux stub, no ws stub, no env plumbing): the classifier takes a pane-capture
+// string and an explicit `backend`, and returns a plain value. This is the
+// "direct test surface" the extraction exists to provide — the wiring tests
+// elsewhere in this file (loadRelay() + relay.classifyTmuxPane/getCLIState/
+// blockingPromptKey, which close over BACKEND and drive the module through
+// the relay's thin wrappers) are unchanged and still cover the same behaviour
+// end-to-end.
+// ---------------------------------------------------------------------------
+
+test('pane-classifier: classifyReadiness reads backend-specific ready/login/onboarding chrome', () => {
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('bypass permissions · claude', 'claude'), 'ready');
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('Not logged in. Please run /login', 'claude'), 'needs-login');
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('Do you trust the contents of this directory?', 'codex'),
+    'onboarding');
+  assert.strictEqual(paneClassifier.classifyReadiness('$ ', 'goose'), 'starting');
+});
+
+test('pane-classifier: blockingPromptKey takes backend as an explicit argument', () => {
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_TRUST_PANE, 'codex'), '1');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_UPDATE_PANE, 'codex'), '3');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey('Do you trust this folder? (y/n)', 'codex'), null);
+});
+
+test('pane-classifier: classifyPane is pure for every backend except bob, which takes an injected probe', () => {
+  assert.strictEqual(
+    paneClassifier.classifyPane(AGY_WEDGED_PANE, 'agy'), paneClassifier.PANE_STATE_IDLE_COMPLETE);
+  // bob's readiness depends on whether the bob process is still alive, which
+  // only a caller with process-table access can answer — classifyPane takes
+  // that as an injected `deps.bobIsRunning()` rather than shelling out itself.
+  const bobPane = 'Enter your prompt, / for commands\nAuto-approve: on\nTokens left: 42\n';
+  assert.strictEqual(
+    paneClassifier.classifyPane(bobPane, 'bob', { bobIsRunning: () => false }),
+    paneClassifier.PANE_STATE_IDLE_COMPLETE,
+    'a bob pane at its idle chrome, with no live process, must read as complete');
+  assert.strictEqual(
+    paneClassifier.classifyPane(bobPane, 'bob', {}),
+    paneClassifier.PANE_STATE_IDLE_COMPLETE,
+    'an omitted bobIsRunning must not throw — it defaults to "not running"');
+});
+
+test('pane-classifier: paneTail keeps the last n non-blank lines, dropping blanks wherever they occur', () => {
+  assert.strictEqual(paneClassifier.paneTail('a\n\n\nb\nc\n', 2), 'b\nc');
+  assert.strictEqual(paneClassifier.paneTail('', 5), '');
+});
+
+test('pane-classifier: classifyBlockedOnHumanReason has no relay dependency', () => {
+  assert.strictEqual(
+    paneClassifier.classifyBlockedOnHumanReason('Paste your API key to continue:\n> \n'),
+    paneClassifier.BLOCKED_REASON_HUMAN_REQUIRED);
+  assert.strictEqual(
+    paneClassifier.classifyBlockedOnHumanReason('Overwrite the existing branch? [y/N]\n> \n'),
+    paneClassifier.BLOCKED_REASON_QUESTION);
+  assert.strictEqual(paneClassifier.classifyBlockedOnHumanReason('Done — opened a PR.\n> \n'), null);
+});
+
+test('pane-classifier: paneShowsTransientAPIError/UnretryableAPIError/LoginRequiredError need no relay', () => {
+  assert.ok(paneClassifier.paneShowsTransientAPIError('API Error: connection error\n'));
+  assert.ok(!paneClassifier.paneShowsTransientAPIError('the deploy hit a connection error yesterday\n'));
+  assert.ok(paneClassifier.paneShowsUnretryableAPIError('API Error: 403 budget_exceeded\n'));
+  assert.ok(paneClassifier.paneShowsLoginRequiredError('Please run /login · API Error: 401\n'));
 });
 
 // ---------------------------------------------------------------------------

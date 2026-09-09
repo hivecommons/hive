@@ -15,7 +15,7 @@
 // "proto 1.1" chip with nothing to compare it against.
 //
 // That is not hypothetical. #2600 shipped both sides at "1.1"; #2671 bumped the
-// hub to "1.2" (adding capCredentialAfterAccept) and left bin/contributor-relay.sh
+// hub to "1.2" (adding capCredentialAfterAccept) and left bin/contributor-relay.js
 // at "1.1", against an explicit "Keep in step with contributorProtocolVersion"
 // comment that nothing enforced. The in-tree relay has been under-declaring its
 // own protocol level ever since, and no surface said so.

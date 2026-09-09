@@ -149,7 +149,7 @@ func TestPeerProtocolCompat_HandlesHostileDeclaredVersion(t *testing.T) {
 // TestRelayProtocolVersionMatchesHub is the drift guard, and the reason this
 // test file exists at all.
 //
-// The hub and bin/contributor-relay.sh ship from the same tree, so they speak
+// The hub and bin/contributor-relay.js ship from the same tree, so they speak
 // the same contributor-protocol version by construction — but that was only ever
 // a comment ("Keep in step with contributorProtocolVersion"), and it drifted:
 // #2600 shipped both at 1.1, #2671 bumped the hub to 1.2 and left the relay at
@@ -157,16 +157,16 @@ func TestPeerProtocolCompat_HandlesHostileDeclaredVersion(t *testing.T) {
 // two versions, no surface said so. A comment cannot enforce this; this can.
 func TestRelayProtocolVersionMatchesHub(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile("../../../bin/contributor-relay.sh")
+	raw, err := os.ReadFile("../../../bin/contributor-relay.js")
 	if err != nil {
-		t.Fatalf("read bin/contributor-relay.sh: %v (if the relay moved, re-point this test rather than deleting it)", err)
+		t.Fatalf("read bin/contributor-relay.js: %v (if the relay moved, re-point this test rather than deleting it)", err)
 	}
 	m := regexp.MustCompile(`(?m)^const RELAY_PROTOCOL_VERSION = '([^']*)';`).FindSubmatch(raw)
 	if m == nil {
-		t.Fatal("could not find RELAY_PROTOCOL_VERSION in bin/contributor-relay.sh — if it was renamed, re-point this test in the same PR")
+		t.Fatal("could not find RELAY_PROTOCOL_VERSION in bin/contributor-relay.js — if it was renamed, re-point this test in the same PR")
 	}
 	if got := string(m[1]); got != contributorProtocolVersion {
-		t.Errorf("bin/contributor-relay.sh declares protocol %q but the hub speaks %q.\n"+
+		t.Errorf("bin/contributor-relay.js declares protocol %q but the hub speaks %q.\n"+
 			"They ship from the same tree and must match. Bumping contributorProtocolVersion "+
 			"means bumping RELAY_PROTOCOL_VERSION in the same PR (hivecommons/hive#2547 / #2567).", got, contributorProtocolVersion)
 	}
@@ -178,9 +178,9 @@ func TestRelayProtocolVersionMatchesHub(t *testing.T) {
 // the hub's version but actually compares it — and that it does so advisorily.
 func TestRelayComparesHubProtocolVersion(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile("../../../bin/contributor-relay.sh")
+	raw, err := os.ReadFile("../../../bin/contributor-relay.js")
 	if err != nil {
-		t.Fatalf("read bin/contributor-relay.sh: %v", err)
+		t.Fatalf("read bin/contributor-relay.js: %v", err)
 	}
 	src := string(raw)
 	for _, want := range []string{
@@ -189,7 +189,7 @@ func TestRelayComparesHubProtocolVersion(t *testing.T) {
 		"warnOnProtocolDrift(hub, msg.protocol_version)", // actually wired into auth_ok
 	} {
 		if !strings.Contains(src, want) {
-			t.Errorf("bin/contributor-relay.sh missing %q — the client half of peer detection (#2547) is not wired", want)
+			t.Errorf("bin/contributor-relay.js missing %q — the client half of peer detection (#2547) is not wired", want)
 		}
 	}
 	// The relay must keep working through a mismatch: no exit, no refusal to ask

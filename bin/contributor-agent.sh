@@ -2,7 +2,7 @@
 # contributor-agent.sh — Entrypoint for the contributor container.
 #
 # 1. Detects which CLI backend is authenticated
-# 2. Starts contributor-relay.sh — ClankeR, the contributor relay (WebSocket client) — in the background
+# 2. Starts contributor-relay.js — ClankeR, the contributor relay (WebSocket client) — in the background
 # 3. Launches the CLI agent in a tmux session
 # 4. The relay feeds tasks into the tmux session and reports results
 #
@@ -590,7 +590,7 @@ mkdir -p "$HIVE_AGENT_CWD"
 
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
-node "${SCRIPT_DIR}/contributor-relay.sh" &
+node "${SCRIPT_DIR}/contributor-relay.js" &
 RELAY_PID=$!
 
 

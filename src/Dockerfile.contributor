@@ -290,7 +290,9 @@ RUN mkdir -p /var/run/hive-metrics /home/dev/.config/goose /home/dev/.config/gh 
 
 # Copy agent scripts
 COPY bin/contributor-agent.sh /usr/local/bin/
+COPY bin/contributor-relay.js /usr/local/bin/
 COPY bin/contributor-relay.sh /usr/local/bin/
+COPY bin/lib/ /usr/local/bin/lib/
 COPY bin/pi-backend.js /usr/local/bin/
 COPY bin/agent-launch.sh /usr/local/bin/
 COPY bin/gh-wrapper.sh /usr/local/bin/gh

@@ -15,7 +15,7 @@ import (
 // The reported shape: a socket-level reconnect mid-task left the hub reporting
 // current_task=null and the issue back in the ready queue as available, while the
 // relay was still working it. The relay DOES re-assert over the new socket
-// (bin/contributor-relay.sh sends task_accepted + task_progress on auth_ok), and
+// (bin/contributor-relay.js sends task_accepted + task_progress on auth_ok), and
 // the hub's lease-bound resume path DOES adopt it — but only if it is still
 // reachable when the assertion lands.
 //
@@ -163,7 +163,7 @@ func TestReconnect5322_LateDisconnectDeferDoesNotDropResumedAssignment(t *testin
 	_ = conn.UnderlyingConn().Close()
 
 	// The relay's reconnect: a brand-new socket, then the exact re-assertion
-	// bin/contributor-relay.sh sends on auth_ok — task_accepted followed by a
+	// bin/contributor-relay.js sends on auth_ok — task_accepted followed by a
 	// task_progress carrying the server-issued generation.
 	conn2, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
 	if err != nil {
@@ -275,7 +275,7 @@ func TestReconnect5322_DeferBeforeResumeLeavesNoStaleReleaseCooldown(t *testing.
 		t.Fatalf("#5322: setup expected the disconnect path to book the #2356 release cooldown")
 	}
 
-	// The relay returns and re-asserts, exactly as bin/contributor-relay.sh does.
+	// The relay returns and re-asserts, exactly as bin/contributor-relay.js does.
 	conn2, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
 	if err != nil {
 		t.Fatalf("redial: %v", err)

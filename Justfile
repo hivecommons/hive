@@ -431,7 +431,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     else
       # MULTI-HUB PRESERVATION (#4408). contributor.env carries positional,
       # comma-separated HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID
-      # lists (bin/contributor-relay.sh pairs them by index). This block used to
+      # lists (bin/contributor-relay.js pairs them by index). This block used to
       # `cat >` a SINGLE-hub file unconditionally, so a two-hive contributor who
       # ran contribute-setup against a hive they had not registered with yet
       # silently lost the credential for the first one — a live token that the
@@ -533,7 +533,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
 # REISSUES, once per hub, proving identity with your GitHub token
 # (POST /api/contribute/reissue-token). It then writes contributor.env with the
 # positional HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists aligned
-# in the SAME ORDER, which is what bin/contributor-relay.sh pairs by index. A
+# in the SAME ORDER, which is what bin/contributor-relay.js pairs by index. A
 # multi-hive contributor doing this by hand had to rotate per hub and rebuild
 # those lists without transposing them; the relay refuses to start if the
 # lengths disagree and misbehaves silently if the order is wrong.
@@ -978,10 +978,10 @@ contribute-hive backend="" mode="docker": check-version
       esac
       TMUX_SESSION="hive-${BACKEND}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
       SCRIPT_DIR="$(pwd)/bin"
-      RELAY="${SCRIPT_DIR}/contributor-relay.sh"
+      RELAY="${SCRIPT_DIR}/contributor-relay.js"
 
       if [[ ! -f "$RELAY" ]]; then
-        echo "ERROR: Run from the hive repo root (need bin/contributor-relay.sh)"
+        echo "ERROR: Run from the hive repo root (need bin/contributor-relay.js)"
         exit 1
       fi
 
@@ -1746,11 +1746,11 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     readonly GH_AUTH_FILE="{{config_dir}}/gh-auth.env"
     # Published multi-arch image (.github/workflows/docker.yml build-contributor).
     readonly IMAGE_REPO="ghcr.io/hivecommons/hive-contributor"
-    # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.sh.
+    # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.js.
     readonly MODE_HEADLESS="headless"
     # Where the headless relay writes its coarse lifecycle state as JSON
     # (waiting/working/done/failed). Kept in step with HEADLESS_STATUS_FILE's
-    # default in bin/contributor-relay.sh; the probe below reads this exact path.
+    # default in bin/contributor-relay.js; the probe below reads this exact path.
     readonly HEADLESS_STATUS_FILE="/tmp/contributor-headless-status.json"
     # Backends a CLUSTER can run headless. A headless pod on any OTHER backend
     # (bob/pi) refuses work LOUDLY at startup, so we warn here rather than emit
@@ -1758,7 +1758,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # in #2828 via its `goose run` one-shot sub-command.
     #
     # This is deliberately a SUBSET of HEADLESS_BACKENDS in
-    # bin/contributor-relay.sh, which lists CLI capability only: agy has a
+    # bin/contributor-relay.js, which lists CLI capability only: agy has a
     # verified print mode (`agy -p`) and runs headless on a HOST, but it
     # authenticates through an interactive Google OAuth flow with no API-key
     # mode, so a pod has no way to sign in. Do NOT add agy here to "resync" the

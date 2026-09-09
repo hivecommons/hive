@@ -607,14 +607,19 @@ jobs:
       - name: Proxy Tests
         run: cd proxy && npm ci && npm test
 
-      # bin/contributor-relay.sh is JavaScript run by node despite the .sh
-      # extension; node --check needs a .js path, so check a copy.
+      # bin/contributor-relay.js used to carry the source under a misleading
+      # .sh name (kubestellar/hive#6429), which needed a copy trick for
+      # node --check. It is a real .js file now; check it and its lib/ module
+      # directly. bin/contributor-relay.sh is kept only as a thin POSIX-sh
+      # compat wrapper for deployments that still invoke the old path;
+      # bash -n validates it here.
       - name: Contributor Relay Syntax + Tests
         working-directory: .
         run: |
           bash bin/contributor-agent.test.sh
-          cp bin/contributor-relay.sh "${RUNNER_TEMP}/contributor-relay.js"
-          node --check "${RUNNER_TEMP}/contributor-relay.js"
+          node --check bin/contributor-relay.js
+          node --check bin/lib/pane-classifier.js
+          bash -n bin/contributor-relay.js
           node bin/contributor-relay.test.js
 
       # backend-smoke.yml's failure-issue script runs only on a scheduled
@@ -749,7 +754,7 @@ jobs:
       # contributor identity to a new machine. The properties that matter are
       # not visible in the Justfile text — that the positional HIVE_HUB /
       # HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists come out aligned and in
-      # the same order is a property of the loop, and bin/contributor-relay.sh
+      # the same order is a property of the loop, and bin/contributor-relay.js
       # pairs those lists by index (it refuses to start on a length mismatch and
       # sends the wrong token to the wrong hive on a transposed one). Getting the
       # partial-failure path wrong is worse: a reissued token cannot be

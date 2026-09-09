@@ -2,7 +2,7 @@
 // WebSocket endpoint that authenticates contributor agents, dispatches tasks
 // (issue fixes, reviews, docs) to whichever machine is connected, and keeps
 // GitHub tokens fresh for the duration of a task. The contributor-side half
-// lives in bin/contributor-relay.sh.
+// lives in bin/contributor-relay.js.
 //
 // Names on the wire (message types, JSON fields, the /contribute route) are
 // deliberately unchanged: ClankeR is the presentation name, not the protocol.
@@ -373,7 +373,7 @@ type WSMessage struct {
 	CompletionSignal string `json:"completion_signal,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
-	// bin/contributor-relay.sh). Reassigning the same work item to the same
+	// bin/contributor-relay.js). Reassigning the same work item to the same
 	// contributor will be rejected outright, so the hub should prefer a
 	// different contributor. See kubestellar/hive#2203.
 	Permanent bool `json:"permanent,omitempty"`
@@ -1177,7 +1177,7 @@ const quarantineCooldownHours = 6
 
 // permanentFailureWeight is how much a permanent failure (msg.Permanent — the
 // relay exhausted its per-task CLI-restart budget and will not retry, see
-// bin/contributor-relay.sh) counts toward consecutiveFailureQuarantineThreshold.
+// bin/contributor-relay.js) counts toward consecutiveFailureQuarantineThreshold.
 // A permanent failure is a strong "nobody here can do this" signal, so it
 // advances the quarantine counter faster than an ordinary (possibly transient)
 // failure. With a weight of 3 and a threshold of 3, a single permanent failure
@@ -4531,7 +4531,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 // was minted, provided a task is still active. This keeps long, human-steered
 // sessions from silently losing push access when the original token expires at
 // wsTokenTTL. The relay's token_refresh handler consumes github_token +
-// token_expires_at (bin/contributor-relay.sh). See #2393 item 2.
+// token_expires_at (bin/contributor-relay.js). See #2393 item 2.
 func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 	tier, repo, due := tokenRefreshDue(c, time.Now())
 	if !due {
@@ -4781,7 +4781,7 @@ func (h *ContributeWSHub) sendTokenRefreshFailed(c *ContributorConnection, reaso
 // sendTokenRefresh writes a token_refresh message carrying the new token and its
 // expiry, then records the new mint time. The field names (github_token,
 // token_expires_at) match exactly what the relay's token_refresh handler
-// consumes in bin/contributor-relay.sh. See #2393 item 2.
+// consumes in bin/contributor-relay.js. See #2393 item 2.
 func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string) error {
 	msg := WSMessage{
 		Type:           "token_refresh",
@@ -5565,7 +5565,7 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 			// verdict, so an issue whose remainder is maintainer-gated stops
 			// re-entering the offer pool every cooldown window. Keep the marker
 			// spelling in sync with detectNoWorkVerdict in
-			// bin/contributor-relay.sh.
+			// bin/contributor-relay.js.
 			"If you determine there is genuinely NOTHING shippable — for example the "+
 			"remaining work is blocked on an unanswered maintainer decision, or merged "+
 			"PRs already cover everything actionable — do NOT open a PR; instead print "+
@@ -5580,7 +5580,7 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 			// input was a vendor's cosmetic rendering rather than a contract.
 			// This line IS the contract: the agent states it is finished. The
 			// relay's detectCompletionVerdict scrapes it; keep the marker
-			// spelling in sync with bin/contributor-relay.sh.
+			// spelling in sync with bin/contributor-relay.js.
 			//
 			// Asked for LAST and on its own line for a reason: the relay reads
 			// a bounded tail of the pane, so a sentinel buried above a long

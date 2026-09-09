@@ -5,7 +5,7 @@
 # integration surface hive does not control: vendors ship CLI updates on their
 # own schedule, and what breaks is the seam — completion detection (#5376),
 # CODEX_HOME handling (#5335), readiness regexes that matched nothing on real
-# output (see the codex arm of getCLIState in bin/contributor-relay.sh). Every
+# output (see the codex arm of getCLIState in bin/contributor-relay.js). Every
 # existing test pins that seam against captured fixtures, so a vendor change
 # ships green here and fails in production. This suite is the live complement:
 # it drives the REAL relay against a fake hub and, where credentials exist,
@@ -81,7 +81,7 @@ skip() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELAY="$ROOT/bin/contributor-relay.sh"
+RELAY="$ROOT/bin/contributor-relay.js"
 REAL_HOME="$HOME"
 
 SMOKE_BACKENDS="${HIVE_SMOKE_BACKENDS:-claude codex}"
@@ -103,7 +103,7 @@ echo "-- A1: HEADLESS_BACKENDS (relay) agrees with KNOWN_BACKENDS (backends.conf
 HEADLESS_KEYS="$(sed -n '/^const HEADLESS_BACKENDS = {$/,/^};$/p' "$RELAY" \
   | grep -E '^  [a-z]+: \{' | sed -E 's/^  ([a-z]+):.*/\1/')"
 if [ -z "$HEADLESS_KEYS" ]; then
-  fail "HEADLESS_BACKENDS table extracted from bin/contributor-relay.sh" \
+  fail "HEADLESS_BACKENDS table extracted from bin/contributor-relay.js" \
        "the sed/grep anchors matched nothing — did the table's formatting change?"
 else
   pass "HEADLESS_BACKENDS table extracted ($(echo "$HEADLESS_KEYS" | wc -l) backends)"

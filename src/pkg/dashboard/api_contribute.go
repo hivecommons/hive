@@ -2144,7 +2144,7 @@ var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:
 // more accurate statement than "must run on the host."
 //
 // agy IS headless-capable on a host (agy -p, see HEADLESS_BACKENDS in
-// bin/contributor-relay.sh); it stays out of K8S_HEADLESS_BACKENDS
+// bin/contributor-relay.js); it stays out of K8S_HEADLESS_BACKENDS
 // regardless, because a pod has no way to complete its interactive sign-in
 // even once.
 var HOST_ONLY_BACKENDS=['other'];
