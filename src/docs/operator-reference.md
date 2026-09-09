@@ -79,8 +79,8 @@ For runtime precedence and provenance, see [config-layering.md](config-layering.
 
 ## App self-merge sweep (`auto_merge`)
 
-Two different mechanisms merge PRs automatically, and they share the word
-"automerge" without sharing any configuration:
+Three different mechanisms merge PRs automatically, and they share the word
+"automerge" without sharing much configuration:
 
 - **The human queue** — a merger/owner applies the `governor.labels.automerge`
   label (default `lgtm`) and Hive squash-merges the PR once CI is green. A
@@ -88,8 +88,13 @@ Two different mechanisms merge PRs automatically, and they share the word
   [contributor-trust-and-roles.md](contributor-trust-and-roles.md).
 - **The App self-merge sweep** (`SweepSelfAuthoredAutoMerges`,
   `src/pkg/github/automerge_sweep.go`) — a background loop that merges the
-  App's **own** open PRs with no human queue-approval at all. This is what the
-  top-level `auto_merge:` block controls.
+  App's **own** open PRs with no human queue-approval at all. This is what most
+  of the top-level `auto_merge:` block controls.
+- **The merge-request watcher** (`hive-merge`) — agents request merges through
+  a result-file protocol and the watcher verifies CI evidence itself before
+  merging. It reads two per-repo keys from the same `auto_merge:` block
+  (`allow_unprotected_base`, `no_ci_ok`, below). See
+  [hive-merge.md](hive-merge.md).
 
 The self-merge sweep exists because Prow structurally forbids self-approval: a
 PR the Forge App itself opens can never collect the `lgtm`+`approved` labels
@@ -102,6 +107,8 @@ its own work. The sweep merges such PRs directly over the GitHub REST API
 | `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
 | `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
+| `auto_merge.allow_unprotected_base` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo allowlist (`owner/repo` or bare name) that lets [`hive-merge`](hive-merge.md) merge into a base branch with **no** GitHub branch protection. Default refuses, because on such a branch the hive's own CI-evidence gate is the only gate (#6281). |
+| `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). A no-CI repo whose base is also unprotected needs **both** this and `allow_unprotected_base` — the opt-outs are independent. See [hive-merge.md](hive-merge.md). |
 
 **The ACMM gate.** `self_authored: true` (or unset) is necessary but not
 sufficient: the sweep only starts when the hive's `acmm_level` is **6 or
