@@ -6,11 +6,12 @@ import (
 )
 
 // The Model Gateways tab is a plausible dead end for an operator trying to
-// configure Copilot for inference: Copilot is intentionally absent because it
-// is a subscription CLI backend, but the distinction used to exist only in
-// repository documentation that the tab did not link. Keep the explanation,
-// the complete dashboard setup path, and the documentation escape hatch at the
-// point where that confusion occurs.
+// configure Copilot (or Claude, Codex, Gemini, …) for inference: those agent
+// CLI backends are intentionally absent because they are subscription CLI
+// backends, not Model Gateways, but the distinction used to exist only in
+// repository documentation that the tab did not link (#6319, #6410). Keep
+// the explanation, the complete dashboard setup path, and the documentation
+// escape hatch at the point where that confusion occurs.
 func TestModelGatewaysExplainsHowToConfigureCopilot(t *testing.T) {
 	html := indexHTML(t)
 	cases := []struct {
@@ -18,7 +19,9 @@ func TestModelGatewaysExplainsHowToConfigureCopilot(t *testing.T) {
 		snippet string
 	}{
 		{"guidance is rendered on the tab", "data-copilot-backend-help"},
+		{"names the CLI backends", "Looking for Copilot, Claude, Codex, or Gemini?"},
 		{"distinguishes the backend types", "Copilot is a subscription CLI backend, not a Model Gateway"},
+		{"covers the other CLI backends too", "the same is true for Claude, Codex, Gemini, and other\n            agent CLI backends"},
 		{"names the pinning control", "<strong>CLI Pinned</strong>"},
 		{"names the backend picker", "<strong>Copilot</strong> under\n            <strong>CLI Pin Value</strong>"},
 		{"names the authentication action", "use <strong>Login</strong> on\n            that agent's card"},
