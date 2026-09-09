@@ -1092,9 +1092,13 @@ func isNonBrowserAPIRequest(r *http.Request) bool {
 }
 
 const (
-	defaultHubPublicURL          = "https://hive.kubestellar.io"
-	defaultHubCanonicalHost      = "hive.kubestellar.io"
-	defaultHubSpokeDomain        = "hive.kubestellar.io"
+	defaultHubPublicURL     = "https://hive.kubestellar.io"
+	defaultHubCanonicalHost = "hive.kubestellar.io"
+	defaultHubSpokeDomain   = "hive.kubestellar.io"
+	// NOT repointed, deliberately: this names the domain the PREVIOUS build's
+	// cookies were scoped to, and its only job is to expire them. Moving it to
+	// the current domain would make the expiry a no-op and strand those
+	// cookies in browsers.
 	defaultLegacyHubCookieDomain = ".hive.kubestellar.io"
 )
 
@@ -3992,8 +3996,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// own "channel -> image" block above the per-branch rows, and offers
 		// them as branch-switch targets. The association is resolved from
 		// registry digests (cached), never hardcoded to a branch name.
-		"release_channels":  ReleaseChannels(),
-		"channel_targets":   getChannelTargets(getDisplaySHAs(), s.logger),
+		"release_channels": ReleaseChannels(),
+		"channel_targets":  getChannelTargets(getDisplaySHAs(), s.logger),
+		// The parent domain hosted tenants live under. Sent because the
+		// dashboard has to BUILD "<id>.<domain>" links for hosted hives that
+		// carry no explicit dashboardUrl, and it used to do that from a
+		// hardcoded hostname — which silently kept pointing at the pre-move
+		// domain after HIVE_HUB_SPOKE_DOMAIN was repointed.
+		"hub_spoke_domain":  hubSpokeDomain(),
 		"hub_auto_upgrade":  isHubAutoUpgrade(),
 		"hub_upgrade_state": s.hubUpgradeState(),
 		// Kill-switch state rides the top-level payload (NOT the hive-row
@@ -13036,8 +13046,8 @@ const dashboardHTML = `<!DOCTYPE html>
       var base = '';
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
         base = esc(h.dashboardUrl);
-      } else if (isHosted) {
-        base = 'https://' + esc(h.id) + '.hive.kubestellar.io';
+      } else if (isHosted && _hubSpokeDomain) {
+        base = 'https://' + esc(h.id) + '.' + esc(_hubSpokeDomain);
       }
       if (!base) return '';
       return '<a href="' + base + '/api/docs" target="_blank" style="padding:3px 10px;background:rgba(88,166,255,0.15);color:#58a6ff;border:1px solid rgba(88,166,255,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;white-space:nowrap">API ↗</a>';
@@ -13045,7 +13055,7 @@ const dashboardHTML = `<!DOCTYPE html>
     function resolvedBase(h) {
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) return h.dashboardUrl;
       var isH = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
-      if (isH) return 'https://' + h.id + '.hive.kubestellar.io';
+      if (isH && _hubSpokeDomain) return 'https://' + h.id + '.' + _hubSpokeDomain;
       return '';
     }
 
@@ -13235,6 +13245,12 @@ const dashboardHTML = `<!DOCTYPE html>
        the UI must render that honestly rather than guessing a branch. */
     var _releaseChannels = [];
     var _channelTargets = [];
+    /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
+       Empty until the first payload lands, and the link builders below treat
+       empty as "cannot build a URL" rather than falling back to a literal:
+       a wrong host here is not a cosmetic defect, it sends a tenant to a name
+       the fleet wildcard does not cover and the browser refuses the TLS. */
+    var _hubSpokeDomain = '';
     /* Width of the channel-name pill in the "channel -> image" block. Fixed so
        the three arrows line up in a column; sized for the longest channel name
        ("candidate") at 0.6rem. */
@@ -16065,6 +16081,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
         if (data.channel_targets) _channelTargets = data.channel_targets;
+        if (data.hub_spoke_domain) _hubSpokeDomain = data.hub_spoke_domain;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
         _latestBuildStarted = data.latest_sha_build_started || {};
@@ -21182,7 +21199,7 @@ const dashboardHTML = `<!DOCTYPE html>
             // spokes (the heartbeat-only cluster etc.) link to their real route, not a dead
             // <id>.hive.kubestellar.io host. Fall back to the hub-reachable-cluster pattern.
             var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
-              ? regEntry.dashboardUrl : (isHosted ? 'https://' + esc(hid) + '.hive.kubestellar.io' : '');
+              ? regEntry.dashboardUrl : ((isHosted && _hubSpokeDomain) ? 'https://' + esc(hid) + '.' + esc(_hubSpokeDomain) : '');
             var linkLabel = linkBase.replace(/^https?:\/\//, '');
             var link = linkBase ? '<a href="' + esc(linkBase) + '" target="_blank" class="dash-link">' + esc(linkLabel) + '</a>' : '<span style="color:var(--muted)">local</span>';
             var typeBadge = isHosted ? '<span style="color:#60a5fa">hosted</span>' : '<span style="color:#9ca3af">local</span>';
