@@ -2068,7 +2068,7 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
                  names its commit. Show THAT — it is the same SHA the spokes on
                  this channel report, so the header and the fleet agree. Still
                  no branch pill: a label names a commit, not a branch. */
-              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest || '') + '">' + esc(ct.sha) + '</span>';
+              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest || '') + '">' + esc(ct.sha) + '</span>' + (ct.message ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(ct.message) + '</span>' : '');
             } else if (ct.digest) {
               /* Resolved, but to something no tracked branch points at and
                  whose image carries no revision label. Show the digest so the
@@ -2954,7 +2954,7 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
           return parts.join('\n');
         })();
         var dot = h.upgrading
-          ? '<span class="online-dot upgrading" title="Upgrading \u2014 a rollout is in progress"></span>'
+          ? healthBadge(h)
           : (h.online ? healthBadge(h) : '<span class="online-dot off" title="' + escAttr(offlineDotTitle) + '" style="cursor:help"></span>');
         var rp = repoPath(h);
         // Link on the hive's own GitHub instance (github_host) so a GHE repo

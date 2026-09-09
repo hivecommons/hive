@@ -448,13 +448,18 @@ promote() {
   } | append_summary
 
   if [[ $decision == promote ]]; then
+    # Re-verify every image before publishing any of them: a candidate that is
+    # superseded mid-loop must not leave stable partially promoted (run
+    # 34360559434 promoted hive and hive-contributor, then refused hive-hub).
     for image in "${images[@]}"; do
       candidate_digest=$(manifest_digest "${image_prefix}/${image}:${candidate_channel}")
       if [[ $candidate_digest != "${candidate_digests[$image]}" ]]; then
         echo "::error::${image_prefix}/${image}:${candidate_channel} changed during evaluation; refusing to promote a superseded candidate" >&2
         exit 1
       fi
-      publish_stable "${image_prefix}/${image}" "$candidate_digest" "$dry_run"
+    done
+    for image in "${images[@]}"; do
+      publish_stable "${image_prefix}/${image}" "${candidate_digests[$image]}" "$dry_run"
     done
   fi
 }

@@ -2,6 +2,31 @@
 
 Hive can route agents through OpenAI-compatible model gateways instead of a subscription CLI model. The supported gateway backend IDs are `vllm`, `llm-d`, `litellm`, `watsonx`, and named Model Gateways such as `openrouter`.
 
+## Looking for Copilot (or Claude, Codex, Gemini…)? It is not a Model Gateway
+
+Subscription CLI backends — `copilot`, `claude`, `codex`, `gemini`, `goose`,
+and friends — do **not** appear in **Governor Config → Model Gateways**, and
+that is expected: a gateway is an OpenAI-compatible HTTP endpoint that Hive
+routes requests to, while a CLI backend is a separate agent binary that brings
+its own subscription auth. If you came here trying to make your hive use
+**GitHub Copilot** for inferencing, configure it as an agent backend instead:
+
+1. Set `backend: copilot` on the agent (per-agent, in **Agents** config or
+   YAML — see [agent-configuration.md](../src/docs/agent-configuration.md)).
+2. Authenticate once per hive: click the **Login** button on any
+   copilot-backend agent's card in the dashboard. It runs a GitHub device-flow
+   login (`POST /api/copilot-auth/start`) — enter the one-time code at
+   `github.com/login/device`. The token is stored durably on the hive
+   (`/data/copilot-user-token`) and shared by all copilot agents.
+   Alternatively, provide a token via the `COPILOT_GITHUB_TOKEN` env var
+   (see [env-vars.md](../src/docs/env-vars.md)).
+3. Pick a model: Hive probes your plan's live, entitlement-filtered Copilot
+   `/models` list, so the agent's model dropdown shows exactly what your
+   Copilot subscription can use.
+
+Full per-backend setup details (install, auth, confinement) are in
+[backend-setup.md](backend-setup.md).
+
 ## How routing works
 
 The agent still launches Claude Code in bare mode. Hive writes Claude settings that point `ANTHROPIC_BASE_URL` at Hive's local translator, then the translator converts Anthropic Messages API calls to OpenAI-compatible requests and forwards them to the selected gateway. The backend name selects the upstream route; it is not a separate agent binary.

@@ -23,6 +23,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-09 (v4.21.1)
+
+### Fixed
+
+- Automated release merges now dispatch Docker publishing for the exact release commit SHA, so release commits get GHCR images and moving release-line tags advance reliably ([#6380](https://github.com/hivecommons/hive/issues/6380)).
+- Every path that arms a spoke upgrade now targets the commit the spoke can actually reach. #6294 made the auto-upgrade loop channel-aware, but the manual **Upgrade now** button, bulk upgrade, and stale-upgrade recovery still armed the raw branch tip — so a `:stable` spoke was told to reach the v4 tip, re-pulled `:stable`, came back on the same commit, and was re-told on every heartbeat: "Upgrading" forever with a ✓ on the SHA, restart storms, and `self-upgrade failed … the image never changed` (12 spokes on 2026-09-09). All three now resolve through `reachableUpgradeTarget`, and the heartbeat additionally validates any armed hub-managed target at delivery: a channel spoke already at its channel's commit drains the latch, one behind it is re-aimed at the channel's commit, and an unresolvable channel withholds the instruction. The "Release channels" header also shows the commit message for a channel identified by its revision label.
+- Switching a spoke from a release channel to a branch (e.g. `stable → v4`) now actually moves its Deployment. The heartbeat treated the spoke's reported `git_branch` as proof the switch had landed — but a `:stable` image is *built from* v4, so the spoke reported `v4` while still running `:stable`; the hub declared the switch complete on the first beat and the Deployment never changed, after which the branch tip was permanently unreachable (`27 behind`, `self-upgrade failed … the image never changed`). `git_branch` is now completion evidence only for spokes too old to report an image ref; otherwise only the reported image tag counts.
+- The "Release channels" header now shows the git SHA a channel is actually built from, even when no tracked branch tip carries the channel's image any more. `stable` lags `v4-latest` by design, so once v4 moved on the header could only fall back to the image *digest* prefix (`stable -> ef5a603`) — which looks like a commit, is not one, and disagreed with every spoke on the channel reporting `df9b867`. The header now reads the image's `org.opencontainers.image.revision` label — the same lookup the spoke upgrade targeting uses since #6294 — so the header and the fleet show the same SHA by construction. The digest remains in the tooltip; no branch is attributed, because a label names a commit, not a branch.
+- Stable promotion now re-verifies every candidate image digest before
+  retagging any of them, so a candidate superseded mid-promotion aborts the
+  whole run instead of leaving `stable` partially promoted across
+  hive/hive-contributor/hive-hub (`src/scripts/promote-stable.sh`).
+
 ## 2026-09-09 (v4.21.0)
 
 ### Added

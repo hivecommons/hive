@@ -2694,7 +2694,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// re-instructed forever. The branch inference stays as the fallback
 		// for older spokes whose heartbeat omits image_ref.
 		switchDone := payload.ImageRef != "" && imageTagOf(payload.ImageRef) == switchTag
-		if switchDone || (payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag) {
+		// git_branch is completion evidence ONLY for a spoke too old to report
+		// its image ref. A release-channel image is built from a branch, so a
+		// :stable spoke reports git_branch "v4" while its Deployment still
+		// tracks :stable; accepting that for a stable→v4 switch declared the
+		// switch complete on the first beat, cleared the latch, and left the
+		// Deployment on :stable forever (kalantar-msb, 2026-09-09) — the
+		// branch tip then looked "27 behind" and could never be reached.
+		legacyBranchDone := payload.ImageRef == "" && payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag
+		if switchDone || legacyBranchDone {
 			s.mu.Lock()
 			delete(s.heartbeatSwitchTag, payload.HiveID)
 			delete(s.heartbeatSwitchSent, payload.HiveID)
@@ -2755,6 +2763,57 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		delete(s.heartbeatUpgrade, payload.HiveID)
 		s.mu.Unlock()
 		hbTarget = ""
+	}
+
+	// Delivery-time guard for the hub-managed fallback: whatever armed
+	// hbTarget, a spoke on a release channel can only land on the commit its
+	// channel tag carries. If the armed target is anything else (a branch tip
+	// armed before #6294, or by a path that still reads the tip), re-aim it at
+	// the channel's commit — or drain it when the spoke is already there.
+	// Without this a :stable spoke armed at the v4 tip re-pulls :stable, comes
+	// back on the same commit, and is re-told to upgrade on every beat:
+	// "Upgrading" forever, ✓ on the SHA (12 spokes on 2026-09-09).
+	if hbTarget != "" && payload.GitHash != "" {
+		trackedChannel := ""
+		if saasHive != nil {
+			trackedChannel = saasHive.TrackedChannel
+		}
+		if channel := spokeReleaseChannel(payload.ImageRef, trackedChannel); channel != "" {
+			reach := s.reachableUpgradeTarget(branch, payload.ImageRef, trackedChannel)
+			switch {
+			case !reach.Resolved || reach.SHA == "":
+				// Unknown reachable set: do not deliver a target we cannot vouch for.
+				s.logger.Warn("heartbeat: hub-managed upgrade withheld — the spoke's release channel did not resolve to a commit",
+					"hive_id", payload.HiveID, "channel", channel, "armed_target", hbTarget)
+				hbTarget = ""
+			case sameCommit(payload.GitHash, reach.SHA) || commitAtOrAheadOfTarget(payload.GitHash, reach.SHA, s.logger):
+				s.logger.Info("heartbeat: draining hub-managed upgrade — spoke is at its release channel's commit",
+					"hive_id", payload.HiveID, "channel", channel, "current", payload.GitHash, "armed_target", hbTarget)
+				s.mu.Lock()
+				delete(s.heartbeatUpgrade, payload.HiveID)
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == payload.HiveID {
+						s.clearUpgradeLatch(i)
+						break
+					}
+				}
+				s.mu.Unlock()
+				hbTarget = ""
+			case !sameCommit(hbTarget, reach.SHA):
+				s.logger.Info("heartbeat: re-aiming hub-managed upgrade at the spoke's release channel",
+					"hive_id", payload.HiveID, "channel", channel, "armed_target", hbTarget, "reachable", reach.SHA)
+				s.mu.Lock()
+				s.heartbeatUpgrade[payload.HiveID] = reach.SHA
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == payload.HiveID {
+						s.registry.Hives[i].UpgradeTarget = reach.SHA
+						break
+					}
+				}
+				s.mu.Unlock()
+				hbTarget = reach.SHA
+			}
+		}
 	}
 
 	// Chase-latest target for a spoke-managed hive, resolved through the tag

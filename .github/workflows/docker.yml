@@ -344,7 +344,7 @@ jobs:
       #   On this same builder every layer of the forced-fresh build above is
       #   in local cache, so the rebuild is seconds and yields those exact
       #   layers. If BuildKit ever resolved a STALE binary layer instead, the
-      #   embedded hash would differ from github.sha and this step fails loudly
+      #   embedded hash would differ from the validated target SHA and this step fails loudly
       #   — a stale layer can make this check fail, never silently pass.
       - name: Assert embedded commit matches build (freshness guard)
         env:

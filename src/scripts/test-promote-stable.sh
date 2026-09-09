@@ -157,6 +157,20 @@ else
   pass "workflow_ran_on matches on head_sha alone so failures stay visible"
 fi
 
+# Promotion must be all-or-nothing across images. Run 34360559434 re-checked
+# and published one image at a time, so when hive-hub:candidate changed
+# mid-loop, hive and hive-contributor were already retagged: stable ended up a
+# mixed generation. Every digest must be re-verified before any publish.
+promote_block=$(sed -n '/\$decision == promote \]\]/,/^  fi$/p' "$promoter")
+first_loop=$(sed -n '/for image in/,/done/p' <<<"$promote_block" | sed -n '1,/done/p')
+if grep -q 'publish_stable' <<<"$first_loop"; then
+  bad "promotion publishes inside the verification loop: a mid-loop candidate change leaves stable partially promoted"
+elif ! grep -q 'publish_stable' <<<"$promote_block"; then
+  bad "promotion block no longer publishes at all"
+else
+  pass "promotion verifies every candidate digest before publishing any image"
+fi
+
 if sed -n '/^workflow_success()/,/^}/p' "$promoter" | grep -q 'failure) return 1'; then
   pass "ancestor walk stops at a failure instead of inheriting past it"
 else

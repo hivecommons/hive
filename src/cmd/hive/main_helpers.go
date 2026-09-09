@@ -2303,6 +2303,10 @@ func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.Rest
 }
 
 func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
+	persistStateWithPaths(agentMgr, gov, cfg, path, logger, dashSrv, wd, defaultPersistPaths())
+}
+
+func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -2408,7 +2412,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	// Component reach counters (#3993) ride the SAME save cadence as the main
 	// state file but live in their own file (reachStatePath — resolved OQ-2 of
 	// #3973), so a reach write failure never corrupts agent/governor state.
-	if err := tracing.SaveReachState(reachStatePath); err != nil {
+	if err := tracing.SaveReachState(paths.ReachState); err != nil {
 		logger.Error("failed to persist reach state", "error", err)
 	}
 
@@ -2436,7 +2440,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	if len(history) > 0 {
 		historyData, err := json.Marshal(history)
 		if err == nil {
-			atomicWrite("/data/sparkline-history.json", historyData)
+			atomicWrite(paths.SparklineHistory, historyData)
 		}
 	}
 
@@ -2444,7 +2448,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	if len(modeHistory) > 0 {
 		modeData, err := json.Marshal(modeHistory)
 		if err == nil {
-			atomicWrite("/data/mode-history.json", modeData)
+			atomicWrite(paths.ModeHistory, modeData)
 		}
 	}
 
@@ -2453,7 +2457,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(tokenHistory) > 0 {
 			tokenData, err := json.Marshal(tokenHistory)
 			if err == nil {
-				atomicWrite("/data/token-sparkline-history.json", tokenData)
+				atomicWrite(paths.TokenSparklineHistory, tokenData)
 			}
 		}
 
@@ -2461,7 +2465,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(factHist) > 0 {
 			factData, err := json.Marshal(factHist)
 			if err == nil {
-				atomicWrite("/data/fact-history.json", factData)
+				atomicWrite(paths.FactHistory, factData)
 			}
 		}
 
@@ -2469,7 +2473,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(costHist) > 0 {
 			costData, err := json.Marshal(costHist)
 			if err == nil {
-				atomicWrite("/data/cost-history.json", costData)
+				atomicWrite(paths.CostHistory, costData)
 			}
 		}
 
@@ -2477,7 +2481,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(trendHist) > 0 {
 			trendData, err := json.Marshal(trendHist)
 			if err == nil {
-				atomicWrite("/data/trend-history.json", trendData)
+				atomicWrite(paths.TrendHistory, trendData)
 			}
 		}
 
@@ -2487,7 +2491,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(budgetHist) > 0 {
 			budgetData, err := json.Marshal(budgetHist)
 			if err == nil {
-				atomicWrite("/data/budget-window-history.json", budgetData)
+				atomicWrite(paths.BudgetWindowHistory, budgetData)
 			}
 		}
 
@@ -2498,7 +2502,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		if len(soakHist) > 0 {
 			soakData, err := json.Marshal(soakHist)
 			if err == nil {
-				atomicWrite("/data/convergence-soak-history.json", soakData)
+				atomicWrite(paths.ConvergenceSoak, soakData)
 			}
 		}
 	}

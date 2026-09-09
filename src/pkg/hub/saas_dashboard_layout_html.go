@@ -2182,10 +2182,11 @@ const dashboardHTMLLayout = `<!DOCTYPE html>
       var checkIcons = {pass:'✓',fail:'✕',warn:'⚠',skip:'–'};
       var c = colors[st] || colors.unknown;
       var ic = icons[st] || '?';
-      var isUpgrading = _upgradingHives[h.id];
+      var isUpgrading = h.upgrading || _upgradingHives[h.id];
       var isDeleting = _deletingHives[h.id];
+      if (isUpgrading) { c = '#58a6ff'; }
       if (isDeleting) { c = colors.warning; ic = '⏳'; }
-      var statusLabel = isDeleting ? 'Deleting…' : (isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1));
+      var statusLabel = isDeleting ? 'Deleting…' : (isUpgrading ? 'Upgrading — rollout in progress' : st.charAt(0).toUpperCase() + st.slice(1));
       /* Checks, failures first, so the reason for a bad status reads before the
          wall of passing checks. Stable within each group (spoke report order). */
       var checks = healthChecks(h).slice().sort(function(a, b) {
@@ -2274,8 +2275,10 @@ const dashboardHTMLLayout = `<!DOCTYPE html>
         lines.push('ns: ' + hns);
       }
       var access = h.access || [];
-      var dotMarkup = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
-        '<span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span>';
+      var dotMarkup = isUpgrading && !isDeleting
+        ? '<span class="online-dot upgrading" style="margin-right:0"></span>'
+        : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
+          '<span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span>';
 
       // No access list (not an owner of this row): nothing to render beyond the
       // health lines, so the native title tooltip is enough and cheapest.

@@ -1,0 +1,1 @@
+- The hub dashboard now keeps the full hive status hover available while a spoke is Upgrading, reusing the normal status hover panel (including namespace and access details) on the animated blue pulse indicator.

@@ -147,6 +147,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/kick/{agent}/status` | Dashboard auth/session | Outcome of the most recent kick | `pkg/dashboard/api.go:71` |
 | `POST` | `/api/switch/{agent}/{backend}` | Dashboard auth/session | Switch | `pkg/dashboard/api.go:68` |
 | `POST` | `/api/model/{agent}/{model}` | Dashboard auth/session | Model Set | `pkg/dashboard/api.go:69` |
+| `POST` | `/api/effort/{agent}/{effort}` | Owner only | Set launch-only reasoning effort after validating against the agent's live backend (including runtime override); persists config/agent overlay, restarts the session, and `default` clears the stored effort | `pkg/dashboard/api.go:95` |
 | `POST` | `/api/pause/{agent}` | Dashboard auth/session | Pause | `pkg/dashboard/api.go:70` |
 | `POST` | `/api/resume/{agent}` | Dashboard auth/session | Resume | `pkg/dashboard/api.go:71` |
 | `GET` | `/api/agent-state/{agent}` | Dashboard auth/session | Agent State | `pkg/dashboard/api.go:72` |

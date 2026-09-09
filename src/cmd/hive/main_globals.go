@@ -82,6 +82,32 @@ const traceShutdownTimeout = 5 * time.Second
 // (persistState), loaded once at boot.
 const reachStatePath = "/data/reach-state.json"
 
+type persistPaths struct {
+	ReachState            string
+	SparklineHistory      string
+	ModeHistory           string
+	TokenSparklineHistory string
+	FactHistory           string
+	CostHistory           string
+	TrendHistory          string
+	BudgetWindowHistory   string
+	ConvergenceSoak       string
+}
+
+func defaultPersistPaths() persistPaths {
+	return persistPaths{
+		ReachState:            reachStatePath,
+		SparklineHistory:      "/data/sparkline-history.json",
+		ModeHistory:           "/data/mode-history.json",
+		TokenSparklineHistory: "/data/token-sparkline-history.json",
+		FactHistory:           "/data/fact-history.json",
+		CostHistory:           "/data/cost-history.json",
+		TrendHistory:          "/data/trend-history.json",
+		BudgetWindowHistory:   "/data/budget-window-history.json",
+		ConvergenceSoak:       "/data/convergence-soak-history.json",
+	}
+}
+
 // prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
 // after adopting ghCfg, or nil when the push speaks to no identity field and
 // there is nothing to validate.

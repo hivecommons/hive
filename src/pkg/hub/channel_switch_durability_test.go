@@ -301,3 +301,87 @@ func TestNonChannelTargetKeepsFloatingLatestClear(t *testing.T) {
 			entry.Upgrading, entry.UpgradeTarget)
 	}
 }
+
+// ============================================================
+// 3. BRANCH SWITCH COMPLETION: git_branch is not evidence when the spoke
+//    reports its image
+// ============================================================
+
+// The kalantar-msb wedge (2026-09-09): a :stable spoke was switched to "v4".
+// :stable is BUILT from v4, so the spoke's beat said git_branch "v4" while
+// image_ref still said :stable. The completion check accepted the branch
+// name, declared the switch done on the first beat, cleared the latch, and
+// the Deployment never left :stable — after which the v4 tip was "27 behind"
+// and unreachable forever. With an image ref on the wire, only the image tag
+// counts.
+func TestHeartbeatBranchSwitchNotCompleteWhileImageStillOnChannel(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+	s.mu.Lock()
+	s.heartbeatSwitchTag["kal"] = "v4-latest"
+	s.mu.Unlock()
+
+	rec := postHeartbeat(t, s, `{
+		"hive_id":"kal","primary_repo":"r",
+		"image_ref":"ghcr.io/hivecommons/hive:stable",
+		"git_branch":"v4","git_hash":"55bd2bc","upgrading":false
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"switch_to_tag":"v4-latest"`) {
+		t.Errorf("spoke still on :stable must be instructed to switch to v4-latest, got %s", rec.Body.String())
+	}
+	if got := armedSwitchTag(s, "kal"); got != "v4-latest" {
+		t.Errorf("heartbeatSwitchTag = %q, want v4-latest still armed — git_branch \"v4\" from a :stable image is not completion", got)
+	}
+}
+
+// Positive control: once the reported image tag IS the switch target the
+// switch completes and disarms.
+func TestHeartbeatBranchSwitchCompletesOnReportedImageTag(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+	s.mu.Lock()
+	s.heartbeatSwitchTag["kal"] = "v4-latest"
+	s.mu.Unlock()
+
+	rec := postHeartbeat(t, s, `{
+		"hive_id":"kal","primary_repo":"r",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
+		"git_branch":"v4","git_hash":"0056109","upgrading":false
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "switch_to_tag") {
+		t.Errorf("switch already landed, must not re-instruct: %s", rec.Body.String())
+	}
+	if got := armedSwitchTag(s, "kal"); got != "" {
+		t.Errorf("heartbeatSwitchTag = %q, want disarmed after the image tag matched", got)
+	}
+}
+
+// Legacy spokes that report no image ref keep the git_branch completion path:
+// it is the only evidence they can offer.
+func TestHeartbeatBranchSwitchLegacySpokeCompletesOnGitBranch(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+	s.mu.Lock()
+	s.heartbeatSwitchTag["old"] = "v4-latest"
+	s.mu.Unlock()
+
+	rec := postHeartbeat(t, s, `{
+		"hive_id":"old","primary_repo":"r",
+		"git_branch":"v4","git_hash":"0056109","upgrading":false
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := armedSwitchTag(s, "old"); got != "" {
+		t.Errorf("heartbeatSwitchTag = %q, want disarmed — a spoke with no image ref can only prove the switch by branch", got)
+	}
+}
