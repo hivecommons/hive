@@ -128,6 +128,9 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 		return b.fail(res, fmt.Errorf("reading HEAD: %w", err))
 	}
 	res.Commit = strings.TrimSpace(string(commit))
+	if err := b.rejectEmptyOutgoingCommits(ctx); err != nil {
+		return b.fail(res, err)
+	}
 
 	files, err := b.changedFiles(ctx)
 	if err != nil {
@@ -240,6 +243,53 @@ func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	}
 	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD")
 	return splitLines(out), err
+}
+
+func (b *Broker) rejectEmptyOutgoingCommits(ctx context.Context) error {
+	rangeSpec := "HEAD"
+	if base := strings.TrimSpace(b.BaseRef); base != "" {
+		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+			rangeSpec = base + "..HEAD"
+		}
+	} else {
+		base := b.remoteRef()
+		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+			rangeSpec = base + "..HEAD"
+		}
+	}
+	out, err := b.git(ctx, "rev-list", "--reverse", rangeSpec)
+	if err != nil {
+		return fmt.Errorf("reading outgoing commits for empty-commit guard: %w", err)
+	}
+	for _, commit := range splitLines(out) {
+		if empty, err := b.commitHasEmptyTreeDelta(ctx, commit); err != nil {
+			return err
+		} else if empty {
+			return fmt.Errorf("pushbroker: refusing to push empty commit %s; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch", shortSHA(commit))
+		}
+	}
+	return nil
+}
+
+func (b *Broker) commitHasEmptyTreeDelta(ctx context.Context, commit string) (bool, error) {
+	parentsOut, err := b.git(ctx, "rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return false, fmt.Errorf("reading parents for empty-commit guard: %w", err)
+	}
+	fields := strings.Fields(string(parentsOut))
+	if len(fields) <= 1 {
+		_, err = b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", "diff-tree", "--quiet", "--root", commit)
+		return err == nil, nil
+	}
+	_, err = b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", "diff-tree", "--quiet", fields[1], commit)
+	return err == nil, nil
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // stripTrailingBlankLines removes any blank line(s) trailing the final

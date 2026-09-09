@@ -55,6 +55,20 @@ func TestBrokerRejectsProtectedPaths(t *testing.T) {
 	}
 }
 
+func TestBrokerRejectsEmptyOutgoingCommitBeforePush(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "commit", "--allow-empty", "-m", "ci: retrigger tests")
+	r := &recordingRunner{}
+
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing to push empty commit") {
+		t.Fatalf("Run error = %v, want empty commit rejection", err)
+	}
+	if res.Pushed || r.argsOnPush != nil {
+		t.Fatalf("broker pushed after empty commit rejection: res=%+v args=%v", res, r.argsOnPush)
+	}
+}
+
 func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "safe.txt", "hello\n")

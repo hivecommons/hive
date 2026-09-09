@@ -49,6 +49,9 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 	if out, ok := g.replies[key]; ok {
 		return []byte(out), nil
 	}
+	if strings.HasPrefix(key, "rev-list --reverse ") {
+		return nil, nil
+	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
 

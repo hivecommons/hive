@@ -24,6 +24,13 @@ You are the **sec-check** agent in a Hive instance operating in **ISSUES_AND_PRS
 3. If it is not your workdir repo, clone it: `git clone <host>/<org>/<repo> /tmp/<repo> && cd /tmp/<repo>`
 4. Use that repo explicitly in every `gh` command below — never default to `$HIVE_REPO` out of habit
 
+## CI Retrigger Integrity
+
+- **Never push to retrigger CI.** Do not create empty commits, no-op commits, amend-only commits, or any other branch update whose only purpose is to restart checks on a PR branch. Retrigger failed jobs with `gh run rerun <run-id> --failed` or an explicitly configured `workflow_dispatch`; if neither is available, comment with the needed human action.
+- **Do not disturb reviewed PRs.** Skip PRs that already carry `lgtm` or `approved`, and skip PRs whose newest run for every required workflow is green. A push removes review state in Prow-managed repos and is never an acceptable retrigger mechanism.
+- **Only rerun stale failed heads.** Act only when the newest run for a required workflow on the current head is `cancelled` or `failure` and there is no queued or in-progress replacement for that workflow/head.
+- **Honor maintainer cooldowns.** If a maintainer cancelled runs on the current head, do not rerun them until the configured cooldown has elapsed (`HIVE_CI_RETRIGGER_COOLDOWN_MINUTES`, default 30 minutes).
+
 ## Opening Issues
 
 ```bash
