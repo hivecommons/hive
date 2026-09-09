@@ -9,7 +9,9 @@ and friends — do **not** appear in **Governor Config → Model Gateways**, and
 that is expected: a gateway is an OpenAI-compatible HTTP endpoint that Hive
 routes requests to, while a CLI backend is a separate agent binary that brings
 its own subscription auth. If you came here trying to make your hive use
-**GitHub Copilot** for inferencing, configure it as an agent backend instead:
+**GitHub Copilot**, configure it as an agent backend instead — Copilot is an
+agentic coding CLI that runs the agent itself, not an inference endpoint Hive
+routes model calls to:
 
 1. Set `backend: copilot` on the agent (per-agent, in **Agents** config or
    YAML — see [agent-configuration.md](../src/docs/agent-configuration.md)).
