@@ -619,7 +619,7 @@ jobs:
           bash bin/contributor-agent.test.sh
           node --check bin/contributor-relay.js
           node --check bin/lib/pane-classifier.js
-          bash -n bin/contributor-relay.js
+          bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
 
       # backend-smoke.yml's failure-issue script runs only on a scheduled
