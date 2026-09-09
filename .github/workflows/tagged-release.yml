@@ -93,10 +93,13 @@ name: Tagged Release
 #     already-earned verdict visible in the representation protection reads.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
-# dated section) is what empties Unreleased, which re-triggers docker.yml on
-# push, which re-triggers this workflow — and on that second pass Unreleased
-# is empty, derive-release-version.sh returns release=false, and the workflow
-# is a no-op. It never chases its own tail. `concurrency` below additionally
+# dated section) is what empties Unreleased. Because its PR is normally merged
+# with GITHUB_TOKEN, that merge cannot trigger docker.yml's push event (#6380),
+# so the release job explicitly dispatches docker.yml with the merge API's
+# exact returned SHA. That build produces a workflow_run event, but `decide`
+# deliberately filters workflow_dispatch builds, so the follower is a no-op.
+# Even without that filter, Unreleased is empty and derivation would return
+# release=false. It never chases its own tail. `concurrency` below additionally
 # serializes any two overlapping runs so two merges landing close together
 # cannot race two tags for two different commits — imagetools create (via
 # publish-image-tags.sh's monotonic run-number guard, same as docker.yml)
@@ -219,11 +222,15 @@ jobs:
         run: |
           set -euo pipefail
           sha="${{ steps.target.outputs.sha }}"
+          # A `push` run is the normal case; a `workflow_dispatch` run on v4
+          # is the post-release exact-SHA rebuild of a GITHUB_TOKEN merge commit
+          # (#6380). Both publish the <sha> / v4-latest / candidate tags, so
+          # both count as published for the backstop.
           conclusion="$(gh api \
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
-            --jq '[.workflow_runs[] | select(.event == "push")] | last | .conclusion // ""')"
+            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v4"))] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed push run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -710,12 +717,14 @@ jobs:
         id: push_v4
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           scratch="release-gate/v${VERSION}"
           commit_sha="$(git rev-parse HEAD)"
           merged=false
           pr_number=""
+          release_sha=""
 
           cleanup() {
             # Only close the PR if it never merged (closing a merged PR is
@@ -844,7 +853,18 @@ jobs:
             if out="$(gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge" \
                         -f merge_method=merge -f sha="${commit_sha}" 2>&1)"; then
               echo "$out"
+              if ! release_sha="$(jq -er '.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$out")"; then
+                echo "::error::merge succeeded but its API response did not contain the exact 40-character release SHA; refusing to tag or dispatch an ambiguous commit." >&2
+                exit 1
+              fi
               merged=true
+              # #6380: the GITHUB_TOKEN-authenticated merge cannot emit a push
+              # event to docker.yml. Dispatch immediately after the merge,
+              # before tag work widens the ordering window; pass the API's exact
+              # SHA because the v4 ref can advance before the build starts.
+              echo "Dispatching docker.yml for merged release commit ${release_sha} on v4 (#6380)..."
+              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v4 \
+                -f "release_sha=${release_sha}"
               break
             fi
             echo "$out"
@@ -872,12 +892,16 @@ jobs:
           done
 
           # The merge landed a NEW commit on v4 (a merge commit, or the same
-          # tree via fast-forward depending on PR mergeability), so re-derive
-          # the SHA actually on v4 before tagging — tagging the pre-merge
-          # commit_sha would tag a commit v4 may not contain verbatim.
+          # tree via fast-forward depending on PR mergeability). Fetch it so
+          # the object exists locally, but tag the merge API's exact returned
+          # SHA rather than re-resolving a branch that another PR can advance
+          # between our merge and this fetch.
           git fetch origin v4
-          v4_sha="$(git rev-parse origin/v4)"
-          git tag "v${VERSION}" "$v4_sha"
+          if ! git merge-base --is-ancestor "$release_sha" origin/v4; then
+            echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/v4; refusing to tag or dispatch it." >&2
+            exit 1
+          fi
+          git tag "v${VERSION}" "$release_sha"
           # Tag pushes have no protection race, only transient transport
           # failures — a plain bounded retry.
           for attempt in 1 2 3; do

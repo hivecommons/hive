@@ -31,6 +31,11 @@
 # statuses do. The status POST must succeed before the PR is opened, and the
 # tests below pin that fail-closed ordering.
 #
+# Since #6380 a successful release merge immediately dispatches docker.yml with
+# the merge endpoint's returned SHA. GITHUB_TOKEN merges cannot trigger another
+# workflow's push event, so this explicit exact-SHA handoff is what gives the
+# release commit immutable images and advances its release-line tags.
+#
 # Usage: src/scripts/test-release-push-retry.sh
 set -uo pipefail
 
@@ -85,7 +90,9 @@ case "$1 $2 ${3:-}" in
     echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
   "fetch origin "*)
     exit 0 ;;
-  "tag "*) exit 0 ;;
+  "tag "*)
+    echo "${3:-}" > "$state/tag_target"
+    exit 0 ;;
   "push origin --delete"*)
     exit 0 ;;
   "push origin refs/tags/"*)
@@ -125,13 +132,14 @@ case "$args" in
       *) echo "STUBFAIL: merge called without -f sha=<head commit>: $args" >&2; exit 1 ;;
     esac
     case "$RPR_SCENARIO" in
-      ok) echo '{"merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
+      ok|dispatch_fails) echo '{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
+      missing_merge_sha) echo '{"merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
       settle_then_ok)
         if [ "$n" -le 2 ]; then
           echo "gh: Required status check \"gate\" is expected. (HTTP 405)"
           exit 1
         fi
-        echo '{"merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
+        echo '{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
       settle_forever)
         echo "gh: Required status check \"gate\" is expected. (HTTP 405)"
         exit 1 ;;
@@ -147,6 +155,17 @@ case "$args" in
     esac ;;
 esac
 case "$1 $2" in
+  "workflow run")
+    echo dispatch >> "$state/timeline"
+    case "$args" in
+      *"docker.yml --ref v4"*"release_sha=feedfacefeedfacefeedfacefeedfacefeedface"*) ;;
+      *) echo "STUBFAIL: release dispatch did not carry exact merge SHA: $args" >&2; exit 1 ;;
+    esac
+    if [ "$RPR_SCENARIO" = dispatch_fails ]; then
+      echo "gh: failed to create workflow dispatch event (HTTP 422)" >&2
+      exit 1
+    fi
+    exit 0 ;;
   "pr create")
     echo pr >> "$state/timeline"
     if [ "$RPR_SCENARIO" = pr_create_fails ]; then
@@ -176,6 +195,7 @@ run_step() {
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
+    ACTIONS_TOKEN="actions-token-for-test" \
     GITHUB_REPOSITORY="hivecommons/hive" \
     PATH="$tmp/bin:$PATH" bash "$tmp/push_v4.sh" > "$st/out" 2>&1
   rc=$?
@@ -188,8 +208,11 @@ run_step ok
 [ "$rc" -eq 0 ] && note_ok "exit 0" || note_fail "exit $rc, want 0: $output"
 grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true: $ghout"
 [ "$(cat "$st/tag" 2>/dev/null)" = 1 ] && note_ok "tag pushed once" || note_fail "tag not pushed exactly once"
-[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge " ] \
-  && note_ok "gate status published before PR creation and merge" \
+[ "$(cat "$st/tag_target" 2>/dev/null)" = feedfacefeedfacefeedfacefeedfacefeedface ] \
+  && note_ok "version tag targets merge API's exact release SHA" \
+  || note_fail "version tag did not target merge API SHA: $(cat "$st/tag_target" 2>/dev/null)"
+[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch " ] \
+  && note_ok "gate, PR, merge and exact-SHA dispatch are ordered" \
   || note_fail "unexpected status/PR/merge order: $(tr '\n' ' ' < "$st/timeline")"
 
 echo "case: gate status publication failure stops before opening the PR"
@@ -211,6 +234,25 @@ grep -q 'a pull request for branch release-gate/v4.0.1 already exists' <<<"$outp
   && note_ok "merge not attempted" \
   || note_fail "workflow continued after PR creation failure: $(tr '\n' ' ' < "$st/timeline")"
 [ -f "$st/tag" ] && note_fail "tag was pushed despite PR creation failure" || note_ok "no tag pushed"
+
+echo "case: successful merge without an exact returned SHA fails closed"
+run_step missing_merge_sha
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "missing merge SHA must fail, got exit 0"
+grep -q 'did not contain the exact 40-character release SHA' <<<"$output" \
+  && note_ok "ambiguous merge response diagnosed" \
+  || note_fail "missing-SHA diagnostic absent: $output"
+[ -f "$st/tag" ] && note_fail "tag was pushed without an exact merge SHA" || note_ok "no tag pushed"
+
+echo "case: release-image dispatch failure stops before tagging"
+run_step dispatch_fails
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "dispatch failure must fail, got exit 0"
+grep -q 'failed to create workflow dispatch event' <<<"$output" \
+  && note_ok "dispatch API error preserved" \
+  || note_fail "dispatch failure diagnostic absent: $output"
+[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch " ] \
+  && note_ok "dispatch attempted immediately after merge" \
+  || note_fail "unexpected dispatch ordering: $(tr '\n' ' ' < "$st/timeline")"
+[ -f "$st/tag" ] && note_fail "tag was pushed despite dispatch failure" || note_ok "no tag pushed"
 
 echo "case: mergeable_state settling twice, then success"
 run_step settle_then_ok
@@ -353,6 +395,17 @@ guard = next((s for s in dec.get("steps", [])
 if guard is None:
     bad("the backstop's published-images guard is gone — a scheduled run could "
         "tag a v4 tip whose docker.yml build was cancelled or is still running (#5318)")
+else:
+    guard_run = guard.get("run") or ""
+    # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v4,
+    # not a push. The backstop may count that publishing run, but the decide
+    # job's workflow_run filter above must still reject workflow_dispatch so
+    # the handoff cannot re-enter the release loop.
+    if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v4"' not in guard_run:
+        bad("the backstop no longer accepts v4 workflow_dispatch docker.yml publishing runs (#6380)")
+    decide_if = dec.get("if") or ""
+    if "github.event.workflow_run.event != 'workflow_dispatch'" not in decide_if:
+        bad("decide no longer filters workflow_dispatch workflow_run events, risking a release loop (#6380)")
 push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_v4"), None)
 if push_step is None:
@@ -393,9 +446,46 @@ else:
             bad("push_v4 must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
         bad("push_v4's commit status is not the required gate:success verdict (#5356)")
-    if "gh workflow run docker.yml" in code:
-        bad("push_v4 still re-dispatches docker.yml after PR creation — dispatched "
-            "check-runs remain unassociated and cannot satisfy the PR rollup (#5356)")
+    # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
+    # push event. Dispatch immediately after the SHA-keyed merge, before tag
+    # retries widen the window in which a later v4 push could get an earlier
+    # docker.yml run number. The exact merge SHA must be an explicit input.
+    merge_at = code.index("gh api -X PUT")
+    dispatch_call = "gh workflow run docker.yml --ref v4"
+    if dispatch_call not in code:
+        bad("push_v4 no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
+    else:
+        dispatch_at = code.index(dispatch_call)
+        tag_at = code.index('git tag "v${VERSION}"')
+        if not merge_at < dispatch_at < tag_at:
+            bad("release-image dispatch must occur after merge succeeds and before tag publication")
+    if 'release_sha=${release_sha}' not in code:
+        bad("release-image dispatch no longer passes the merge API's exact release_sha")
+if os.path.exists(dpath):
+    dispatch_inputs = ((dw.get(True) or dw.get("on") or {})
+                       .get("workflow_dispatch") or {}).get("inputs") or {}
+    if "release_sha" not in dispatch_inputs:
+        bad("docker.yml no longer accepts the exact release_sha dispatch input (#6380)")
+    dgate = (dw.get("jobs", {}).get("gate", {}) or {})
+    if "sha" not in (dgate.get("outputs") or {}):
+        bad("docker.yml gate no longer exposes one validated target SHA to every image job")
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for child in value.values():
+                yield from strings(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from strings(child)
+    for jb in ("build", "merge", "build-contributor", "merge-contributor", "build-hub", "merge-hub"):
+        job = (dw.get("jobs", {}).get(jb, {}) or {})
+        checkout = next((s for s in job.get("steps", [])
+                         if (s.get("name") or "").startswith("Checkout")), None)
+        if checkout is None or "needs.gate.outputs.sha" not in ((checkout.get("with") or {}).get("ref") or ""):
+            bad(f"docker.yml's {jb} job does not checkout the validated target SHA (#6380)")
+        if any("github.sha" in value for value in strings(job)):
+            bad(f"docker.yml's {jb} job bypasses the validated target SHA with github.sha (#6380)")
 sys.exit(0 if ok else 1)
 PY
 

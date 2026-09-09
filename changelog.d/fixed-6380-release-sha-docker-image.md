@@ -1,0 +1,1 @@
+- Automated release merges now dispatch Docker publishing for the exact release commit SHA, so release commits get GHCR images and moving release-line tags advance reliably ([#6380](https://github.com/hivecommons/hive/issues/6380)).
