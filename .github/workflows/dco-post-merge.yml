@@ -23,7 +23,11 @@ env:
   # Empty by default on purpose: the normal rule is that Signed-off-by must use
   # the commit author's email. Add maintainer override emails here only when the
   # project has explicitly accepted that identity as a post-merge DCO exception.
-  DCO_ALLOWLIST_EMAILS: ''
+  #
+  # raul.mturrubiates@gmail.com: @mendezr signs off with this address while
+  # GitHub records the author as mendezr@users.noreply.github.com (privacy
+  # email). Same person; accepted by maintainer disposition in #6554.
+  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
