@@ -13,7 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 	"testing"
 	"time"
 )
@@ -68,16 +69,16 @@ func startMain(t *testing.T, args ...string) {
 // concurrent access to shared Go state for the race detector to flag.
 func redirectStdout(t *testing.T, f *os.File) {
 	t.Helper()
-	saved, err := syscall.Dup(1)
+	saved, err := unix.Dup(1)
 	if err != nil {
 		t.Fatalf("saving stdout fd: %v", err)
 	}
-	if err := syscall.Dup2(int(f.Fd()), 1); err != nil {
+	if err := unix.Dup2(int(f.Fd()), 1); err != nil {
 		t.Fatalf("redirecting stdout fd: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Dup2(saved, 1)
-		_ = syscall.Close(saved)
+		_ = unix.Dup2(saved, 1)
+		_ = unix.Close(saved)
 	})
 }
 
