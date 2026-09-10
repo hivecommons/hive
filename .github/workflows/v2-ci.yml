@@ -99,6 +99,20 @@ jobs:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: bash deploy/test_entrypoint_dangling_keyfile.sh
 
+      # #6489: `Open a terminal` 503ed forever on a standalone, non-hub-provisioned
+      # docker-compose spoke — terminalassert.SigningKey() (hub.TerminalSigningKey)
+      # had no lane left once HIVE_TERMINAL_KEY and HIVE_HUB_SECRET+HIVE_ID were
+      # both absent (audit N3 deliberately removed the fleet-uniform fallbacks
+      # that used to sit there). hive_ensure_terminal_signing_key now auto-
+      # provisions a persisted per-instance key and exports it as
+      # HIVE_TERMINAL_KEY before either the Go binary or the Node proxy starts, so
+      # both processes agree on it from their first request. EXECUTES the real
+      # function extracted from the shipped entrypoint, so a regression fails the
+      # PR rather than a standalone hive.
+      - name: Entrypoint standalone terminal-key fallback tests (#6489)
+        run: bash deploy/test_entrypoint_terminal_key_fallback.sh
+
+
       # #5369: the `chown -R dev:node /data` in the entrypoint's root phase is
       # guarded on `[ "$DATA_OWNER" != "1001" ]`, and the Dockerfile already
       # does that chown at BUILD time — so the guard is false on every normal

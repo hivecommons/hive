@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 func TestTerminalHandoffExpires(t *testing.T) {
@@ -149,28 +150,33 @@ func TestHandleCreateTerminalHandoff_RoleForbiddenContentType(t *testing.T) {
 	}
 }
 
-func TestHandleCreateTerminalHandoff_NoSigningKey503ContentType(t *testing.T) {
+// TestHandleCreateTerminalHandoff_NoHubLanesFallsBackAndSucceeds pins the
+// #6489 fix: a standalone spoke with NEITHER hub lane configured (no
+// HIVE_TERMINAL_KEY, no HIVE_HUB_SECRET) no longer 503s — terminalassert's
+// lane-3 persisted per-instance fallback key resolves instead, so the handoff
+// mint succeeds like any hub-provisioned hive. Before the fix this was a 503
+// "terminal handoff requires terminal signing key and hive id", which is what
+// #6489 reported (masked further by nginx's error-page rewrite, #6494/#6496).
+func TestHandleCreateTerminalHandoff_NoHubLanesFallsBackAndSucceeds(t *testing.T) {
 	s := newRenewServer(t, "hosted-alpha")
 	t.Setenv(hub.EnvTerminalKey, "")
 	t.Setenv("HIVE_HUB_SECRET", "")
+	t.Setenv(terminalassert.EnvFallbackKeyDir, t.TempDir())
 
 	req := httptest.NewRequest("POST", terminalHandoffPath, nil)
 	req.Header.Set("X-Hive-Role", config.RoleOwner)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Fatalf("Content-Type = %q, want application/json", ct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("body is not JSON: %v (body %q)", err, rec.Body.String())
 	}
-	if body["error"] != "terminal handoff requires terminal signing key and hive id" {
-		t.Fatalf("error = %q, want %q", body["error"], "terminal handoff requires terminal signing key and hive id")
+	if body["code"] == "" {
+		t.Fatalf("expected a handoff code, got body %q", rec.Body.String())
 	}
 }
 

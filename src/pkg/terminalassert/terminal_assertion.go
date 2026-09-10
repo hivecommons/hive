@@ -11,12 +11,14 @@ package terminalassert
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -89,6 +91,22 @@ const (
 	// envHiveID mirrors pkg/hub's EnvHiveID: the spoke's own identity, the second
 	// input to the per-hive self-derivation lane.
 	envHiveID = "HIVE_ID"
+
+	// EnvFallbackKeyDir overrides the directory the standalone-spoke fallback
+	// key (below) is persisted under. Test seam / operator override; production
+	// defaults to defaultFallbackKeyDir.
+	EnvFallbackKeyDir = "HIVE_TERMINAL_KEY_DIR"
+
+	// defaultFallbackKeyDir is the hive's private data directory — the same
+	// place the entrypoint already keeps other generated secrets (e.g.
+	// /data/.hive/proxy-ca-key.pem), chmod 700 by the entrypoint's root phase.
+	defaultFallbackKeyDir = "/data/.hive"
+
+	// fallbackKeyFile is the persisted fallback key's filename (#6489).
+	fallbackKeyFile = "terminal-key"
+
+	// fallbackKeyBytes is the length of the generated fallback signing key.
+	fallbackKeyBytes = 32
 )
 
 // claims is the signed payload of a terminal assertion. The JSON tags are the
@@ -167,6 +185,18 @@ func DerivePerHiveKey(master, info, hiveID string) string {
 //     SpokeHeartbeatKey's lane 2 (audit F2) and exists for the same reason: the
 //     per-hive key is a pure function of two things the spoke ALREADY HOLDS, so
 //     a spoke can become identity-bound with no hub action and no re-provision.
+//  3. A lazily generated, persisted per-instance random key (#6489), when the
+//     hive has NEITHER a hub-injected key NOR the identity a self-derive needs
+//     — i.e. a standalone, non-hub-provisioned docker-compose spoke. See
+//     fallbackSigningKey: it is the SAME persisted-random-file pattern
+//     pkg/dashboard's inviteSigningSecret already uses for the equivalent gap in
+//     the invite-link signing key, generated once with crypto/rand and reused
+//     across restarts. It is deliberately NEVER derived from HIVE_HUB_SECRET or
+//     any other value every spoke could plausibly hold — that would either
+//     collapse back to a fleet-uniform key (if the input is fleet-uniform) or
+//     require identity this lane exists precisely because the spoke lacks (if
+//     the input is per-hive). Lane 3 only ever fires below lanes 1 and 2: a
+//     hub-provisioned hive always resolves through one of those first.
 //
 // !! AUDIT N3 MUST NOT REGRESS: there is deliberately NO lane that resolves to a
 // FLEET-UNIFORM value. !!
@@ -195,7 +225,10 @@ func DerivePerHiveKey(master, info, hiveID string) string {
 //
 // Returns "" when nothing resolves, preserving fail-closed behavior (no key → no
 // assertion minted → the proxy falls back to the #2756 static allowlist, which
-// is a degradation in convenience, not in safety).
+// is a degradation in convenience, not in safety). In practice lane 3 means this
+// only happens if the fallback key could not even be generated in memory (a
+// crypto/rand failure), since lane 3 never fails closed on a persistence error —
+// see fallbackSigningKey.
 //
 // ROTATION (master-key-rotation.md, follow-on PR #5). There is deliberately NO
 // trial verification here, and none is possible: a spoke holds ONE master and
@@ -206,10 +239,16 @@ func DerivePerHiveKey(master, info, hiveID string) string {
 // converges here through the reconcile lane re-patching HIVE_TERMINAL_KEY, at
 // the cost of invalidating in-flight assertions — which self-heal within their
 // 15-minute TTL. See the design doc's PR #5 note for why that is the whole job.
+// Lane 3's persisted file is NOT rotated by that reconcile — a standalone spoke
+// has no hub to reconcile it — but it is entirely LOCAL to one instance, so a
+// rotation there is an operator action (delete the file and restart) with the
+// same self-healing property.
 //
 // The Node proxy's TERMINAL_SIGNING_KEY mirrors this order EXACTLY
-// (src/proxy/server.js) — the two MUST stay in lockstep, and PR #6 carries the
-// matching proxy change.
+// (src/proxy/server.js), with the persisted file's CONTENT (not its generation)
+// made reachable to it via the entrypoint, which resolves/creates lane 3 before
+// launching either process and exports it as HIVE_TERMINAL_KEY so both sides
+// converge on lane 1 in the container — the two MUST stay in lockstep.
 func SigningKey() string {
 	if v := strings.TrimSpace(os.Getenv(EnvTerminalKey)); v != "" {
 		return v
@@ -217,11 +256,80 @@ func SigningKey() string {
 	// Lane 2: self-derive the PER-HIVE key from the master the spoke already
 	// holds plus its own identity. Never a hiveID-less derivation — that is
 	// fleet-uniform and is the N3 forgery lane.
-	return DerivePerHiveKey(
+	if derived := DerivePerHiveKey(
 		strings.TrimSpace(os.Getenv(envHubSecret)),
 		InfoKey,
 		strings.TrimSpace(os.Getenv(envHiveID)),
-	)
+	); derived != "" {
+		return derived
+	}
+	// Lane 3 (#6489): neither hub lane resolved — a standalone, non-hub-provisioned
+	// spoke. Fall back to a persisted per-instance random key so terminals are not
+	// structurally unavailable there.
+	return fallbackSigningKey()
+}
+
+// fallbackKeyDir resolves the directory the lane-3 fallback key is persisted
+// under (test seam via EnvFallbackKeyDir; production default is the hive's
+// private, entrypoint-chmod-700 data directory).
+func fallbackKeyDir() string {
+	if v := strings.TrimSpace(os.Getenv(EnvFallbackKeyDir)); v != "" {
+		return v
+	}
+	return defaultFallbackKeyDir
+}
+
+// fallbackSigningKey resolves lane 3: a persisted, per-instance random terminal
+// signing key for a standalone spoke that can prove neither a hub-injected key
+// nor its own per-hive identity (#6489). This is the SAME pattern
+// pkg/dashboard's inviteSigningSecret uses for its own persisted-random-file
+// fallback lane — read the file if present, otherwise generate fresh with
+// crypto/rand and persist it at 0600 so it survives a restart.
+//
+// This is deliberately per-INSTANCE, not per-hive-derived: there is no
+// identity-bound input available to derive from (that is exactly why we are
+// here), and a value derived from something every standalone spoke shares (e.g.
+// a compile-time constant) would recreate the audit N3 fleet-uniform lane this
+// package exists to keep closed. crypto/rand is the only source that is
+// per-instance by construction and never a public value.
+//
+// Persistence is best-effort: a write failure (e.g. a read-only /data mount)
+// still returns the freshly generated key for THIS process rather than failing
+// closed, because the alternative — no terminal at all — is a worse outcome for
+// a standalone operator than a key that does not survive a restart. A restart
+// under a read-only mount regenerates a new key, which only invalidates
+// in-flight terminal assertions (15-minute TTL, self-healing), never breaks
+// anything else.
+func fallbackSigningKey() string {
+	dir := fallbackKeyDir()
+	path := filepath.Join(dir, fallbackKeyFile)
+	if data, err := os.ReadFile(path); err == nil {
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v
+		}
+	}
+	raw := make([]byte, fallbackKeyBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+	key := hex.EncodeToString(raw)
+	if err := os.MkdirAll(dir, 0o700); err == nil {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); err == nil {
+			_, _ = f.WriteString(key)
+			_ = f.Close()
+		} else if os.IsExist(err) {
+			// Lost a generation race to another process/goroutine: prefer the
+			// value that actually got persisted, so every caller in this
+			// instance converges on one key rather than each minting with its
+			// own in-memory value.
+			if data, rerr := os.ReadFile(path); rerr == nil {
+				if v := strings.TrimSpace(string(data)); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return key
 }
 
 // Mint creates a short-lived, HMAC-signed assertion binding

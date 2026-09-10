@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 // Tests for the POST /api/terminal/handoff mint endpoint
@@ -56,20 +57,26 @@ func TestTerminalHandoffMint_ReadRoleForbidden(t *testing.T) {
 	}
 }
 
-func TestTerminalHandoffMint_NoSigningKey503(t *testing.T) {
+// TestTerminalHandoffMint_NoHubLanesFallsBackAndSucceeds mirrors
+// TestHandleCreateTerminalHandoff_NoHubLanesFallsBackAndSucceeds against the
+// mint endpoint directly: the #6489 fix means a standalone spoke with neither
+// hub lane configured mints via terminalassert's lane-3 persisted fallback key
+// instead of 503ing.
+func TestTerminalHandoffMint_NoHubLanesFallsBackAndSucceeds(t *testing.T) {
 	s := newRenewServer(t, "hosted-alpha")
 	// Empty both lanes of hub.TerminalSigningKey: the injected per-hive key and
 	// the master secret the self-derive lane needs.
 	t.Setenv(hub.EnvTerminalKey, "")
 	t.Setenv("HIVE_HUB_SECRET", "")
+	t.Setenv(terminalassert.EnvFallbackKeyDir, t.TempDir())
 
 	rec := mintHandoff(s, "alice", config.RoleOwner)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("keyless handoff mint = %d, want 503", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("keyless handoff mint = %d, want 200 (fallback key should apply, body %q)", rec.Code, rec.Body.String())
 	}
-	if assertionCookie(rec.Result()) != nil {
-		t.Fatal("keyless mint still set a terminal assertion cookie")
+	if assertionCookie(rec.Result()) == nil {
+		t.Fatal("successful mint under the fallback key did not set a terminal assertion cookie")
 	}
 }
 

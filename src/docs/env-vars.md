@@ -317,12 +317,23 @@ only when neither is configured.
 | `HIVE_HEARTBEAT_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke heartbeat signing sub-key. |
 | `HIVE_SESSION_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke session-cookie signing sub-key. |
 | `HIVE_INVITE_KEY` | No | derived from `HIVE_HUB_SECRET` | Per-hive contributor-invite signing key. Symmetric: the spoke both mints and verifies invite tokens with it. |
-| `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID` | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
+| `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID`, else an auto-provisioned per-instance key on a standalone spoke (below) | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
 | `HIVE_SSO_PUBLIC_KEY` | No | none | Ed25519 **public** key a spoke verifies hub-minted SSO handoff tokens with. Holding only the public key, a spoke can verify but cannot mint. |
 | `HIVE_SSO_PUBLIC_KEY_PREV` | No | none | Previous SSO public key, accepted during rotation so a spoke bridges a hub key change. |
 | `HIVE_SSO_KEY` | No | none | Legacy symmetric SSO key, still read for one release so spokes on a pre-cutover Deployment keep working. |
 | `HIVE_SESSION_PUBLIC_KEY` | No | none | Ed25519 **public** key (exactly 64 hex characters) the spoke's Node proxy (`src/proxy/server.js`) verifies hub-minted session cookies with. Set at provisioning and kept converged by the hub's per-hive env reconcile sweep (`pkg/hub/perhive_env_reconcile.go`) — do not hand-edit it on hosted spokes. |
 | `HIVE_SESSION_PUBLIC_KEY_PREV` | No | none | Previous-generation session public key, also accepted by the proxy so terminal sessions keep verifying while a hub key rotation's reconcile sweep walks the fleet (`pkg/hub/hub_pubkey_generations.go`). A deliberately separate variable — a `<hex>,<hex>` list in the primary would be silently truncated by Node and rejected by the Go verifier. Unset on an un-rotated fleet. |
+
+A **standalone** spoke (docker-compose, no hub) has neither `HIVE_HUB_SECRET`
+nor `HIVE_ID`, so the terminal key's self-derive lane above cannot resolve
+either — before #6489 this meant `Open a terminal` on the dashboard 503'd
+forever. `deploy/entrypoint.sh` now auto-provisions a per-instance terminal key
+in that case: it generates one with a CSPRNG the first time the container
+boots, persists it under `/data/.hive/terminal-key` (0600, override the
+directory with `HIVE_TERMINAL_KEY_DIR`) so it survives a restart, and exports it
+as `HIVE_TERMINAL_KEY` before starting either the Go dashboard or the Node
+proxy — so both agree on it from the first request. Set `HIVE_TERMINAL_KEY`
+yourself (e.g. `openssl rand -hex 32`) to override the auto-provisioned value.
 
 ### Hub login providers
 

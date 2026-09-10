@@ -151,21 +151,26 @@ func TestDeriveTerminalKeyIsDomainSeparatedAndPerHive(t *testing.T) {
 }
 
 // SigningKey resolution order: HIVE_TERMINAL_KEY > self-derived per-hive
-// key from HIVE_HUB_SECRET + HIVE_ID. Every lane is per-hive; there is no lane
-// that yields a fleet-uniform value.
+// key from HIVE_HUB_SECRET + HIVE_ID > persisted per-instance fallback
+// (#6489). Every hub lane is per-hive; there is no lane that yields a
+// fleet-uniform value.
 func TestTerminalSigningKeyResolutionOrder(t *testing.T) {
 	t.Setenv(EnvTerminalKey, "")
 	t.Setenv(envHubSecret, "")
 	t.Setenv(envHiveID, "")
-	if SigningKey() != "" {
-		t.Fatal("no key sources → empty (fail closed)")
+	t.Setenv(EnvFallbackKeyDir, t.TempDir())
+	if SigningKey() == "" {
+		t.Fatal("no hub lane resolved → expected the persisted per-instance fallback key, got empty")
 	}
 
-	// Master present but NO identity: must stay empty rather than fall back to
-	// any shared value.
+	// Master present but NO identity: the self-derive lane still stays empty
+	// (never a shared value) — but lane 3 covers the gap, so this must resolve
+	// to a NON-EMPTY, NON-fleet-shared key too, not "".
 	t.Setenv(envHubSecret, "master")
-	if got := SigningKey(); got != "" {
-		t.Fatalf("master without HIVE_ID must not resolve a key, got %q", got)
+	if got := SigningKey(); got == "" {
+		t.Fatal("master without HIVE_ID must still resolve via the lane-3 fallback")
+	} else if got == "master" {
+		t.Fatal("must never resolve to the raw master")
 	}
 
 	t.Setenv(envHiveID, "hive-1")
@@ -194,11 +199,15 @@ func TestN3_TerminalKeyNeverFallsThroughToSessionKey(t *testing.T) {
 	const fleetUniform = "fleet-uniform-session-key"
 
 	// Behavioural: HIVE_SESSION_KEY set and nothing else — must NOT be adopted.
+	// Lane 3 (#6489) means this now resolves to the persisted per-instance
+	// fallback rather than "", so the assertion is "not the fleet-uniform
+	// value", not "empty".
 	t.Setenv(EnvTerminalKey, "")
 	t.Setenv(envHubSecret, "")
 	t.Setenv(envHiveID, "")
+	t.Setenv(EnvFallbackKeyDir, t.TempDir())
 	t.Setenv("HIVE_SESSION_KEY", fleetUniform)
-	if got := SigningKey(); got != "" {
+	if got := SigningKey(); got == fleetUniform {
 		t.Fatalf("N3 REGRESSION: HIVE_SESSION_KEY was adopted as the terminal key (got %q)", got)
 	}
 

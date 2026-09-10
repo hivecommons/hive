@@ -2228,6 +2228,70 @@ if [ -n "${HIVE_CONFIG:-}" ]; then
   set -- "$@" --config "$HIVE_CONFIG"
   echo "[entrypoint] Config path pinned for the Go binary: --config $HIVE_CONFIG"
 fi
+
+# Auto-provision a per-instance terminal signing key on standalone spokes
+# (#6489). `Open a terminal` used to 503 forever on a docker-compose spoke that
+# is not hub-provisioned: hub.TerminalSigningKey() (now
+# terminalassert.SigningKey()) needs either HIVE_TERMINAL_KEY (hub-injected) or
+# HIVE_HUB_SECRET+HIVE_ID (self-derive), and a standalone spoke has neither, by
+# design — audit N3 deliberately left no fleet-uniform or public-value fallback
+# in that resolver.
+#
+# The Go dashboard now has its OWN persisted-random-file fallback lane for this
+# exact case (pkg/terminalassert's fallbackSigningKey, same pattern as
+# pkg/dashboard's invite-key fallback), but it is lazy — it only runs the first
+# time a terminal is actually requested — and the Node proxy
+# (proxy/server.js) resolves TERMINAL_SIGNING_KEY from its environment ONCE, at
+# module load, before it can ever see a file the Go side has not written yet.
+# So this step does the SAME resolution/generation eagerly, right here, before
+# EITHER process starts, and exports the result as HIVE_TERMINAL_KEY so both
+# the Go minter and the Node verifier converge on lane 1 (the hub-injected env
+# var) with an IDENTICAL value from their very first request — never a race
+# between whichever process happens to run first.
+#
+# Deliberately skipped when this hive IS hub-provisioned (either lane already
+# resolves): HIVE_TERMINAL_KEY set, or HIVE_HUB_SECRET+HIVE_ID both set, mean
+# the Go and Node per-hive derivations already agree with no file needed, and a
+# hub-provisioned hive must keep using its per-hive key, never a local
+# standalone-only fallback.
+hive_ensure_terminal_signing_key() {
+  if [ -n "${HIVE_TERMINAL_KEY:-}" ]; then
+    return 0
+  fi
+  if [ -n "${HIVE_HUB_SECRET:-}" ] && [ -n "${HIVE_ID:-}" ]; then
+    return 0
+  fi
+
+  TERMKEY_DIR="${HIVE_TERMINAL_KEY_DIR:-/data/.hive}"
+  TERMKEY_FILE="$TERMKEY_DIR/terminal-key"
+
+  mkdir -p "$TERMKEY_DIR" 2>/dev/null || true
+  chmod 700 "$TERMKEY_DIR" 2>/dev/null || true
+
+  if [ ! -s "$TERMKEY_FILE" ]; then
+    # 32 bytes of /dev/urandom rendered as lowercase hex — same shape as the Go
+    # side's crypto/rand fallback (hex.EncodeToString), and no dependency on
+    # openssl, which the runtime image does not ship.
+    (
+      umask 077
+      head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TERMKEY_FILE.tmp" \
+        && mv -f "$TERMKEY_FILE.tmp" "$TERMKEY_FILE"
+    ) 2>/dev/null || true
+    chmod 600 "$TERMKEY_FILE" 2>/dev/null || true
+  fi
+
+  if [ -s "$TERMKEY_FILE" ]; then
+    HIVE_TERMINAL_KEY="$(cat "$TERMKEY_FILE" 2>/dev/null)"
+    if [ -n "$HIVE_TERMINAL_KEY" ]; then
+      export HIVE_TERMINAL_KEY
+      echo "[entrypoint] auto-provisioned a per-instance terminal signing key for this standalone spoke (#6489); set HIVE_TERMINAL_KEY to override"
+    fi
+  else
+    echo "[entrypoint] WARN: could not generate/persist a fallback terminal signing key at $TERMKEY_FILE; \"Open a terminal\" may 503 until HIVE_TERMINAL_KEY is set or the Go dashboard's own lazy fallback runs"
+  fi
+}
+hive_ensure_terminal_signing_key
+
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
 hive "$@" &
 HIVE_PID=$!
