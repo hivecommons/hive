@@ -21,4 +21,19 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: 8080
+      # 80, NOT the backend pod's 8080. ingress-nginx connects to an
+      # ExternalName Service on the port it resolves from the Service, and the
+      # name this resolves to — legacy-redirect.hive-hub.svc.cluster.local — is
+      # itself a ClusterIP Service listening on 80 and forwarding to the pod's
+      # 8080. Naming 8080 here reached the hive-hub Service's ClusterIP on a
+      # port nothing listens on, so every legacy request hung until
+      # ingress-nginx gave up:
+      #
+      #   upstream timed out (110: Operation timed out) while connecting to
+      #   upstream, server: dibs.kubestellar.io, upstream:
+      #   "http://10.96.127.61:8080/ideas/42?x=1"
+      #
+      # which the browser saw as a slow generic page rather than a redirect —
+      # a silently broken legacy link, not a loud failure. The pod's port is
+      # the other Service's business, not this one's.
+      targetPort: 80
