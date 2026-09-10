@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 // Domain-separated key derivation for the hub master secret (CWE-321/798, C2).
@@ -111,15 +113,15 @@ func deriveDomainKey(master, info string) string {
 //
 // Returns "" for an empty master OR an empty hiveID: a keyless or identity-less
 // caller must fail closed rather than silently sharing one key again.
+//
+// SINGLE SOURCE OF TRUTH: the implementation lives in the leaf package
+// pkg/terminalassert (terminalassert.DerivePerHiveKey), because the spoke's
+// terminal-key self-derive lane must produce byte-identical output to the hub's
+// provisioning lane (provisionTerminalKey) — two copies of this HMAC would be a
+// silent-drift hazard between those lanes. This delegation keeps hub callers
+// (heartbeat, session, SSO per-hive keys, reconcile) on the same bytes.
 func derivePerHiveKey(master, info, hiveID string) string {
-	if master == "" || hiveID == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	mac.Write([]byte{0})
-	mac.Write([]byte(hiveID))
-	return hex.EncodeToString(mac.Sum(nil))
+	return terminalassert.DerivePerHiveKey(master, info, hiveID)
 }
 
 // The four per-domain accessors below are the ONLY way hub code should obtain

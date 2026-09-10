@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 // userSession is a per-user server-side session created after a successful,
@@ -224,7 +224,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 // setTerminalAssertionCookie mints a short-lived, HMAC-signed {user,hive,role,exp}
-// assertion (hub.MintTerminalAssertion) and writes it as the hive_terminal_assertion
+// assertion (terminalassert.Mint) and writes it as the hive_terminal_assertion
 // cookie. This is the C3 follow-up upgrade over the static per-hive username
 // allowlist: instead of the proxy consulting a list injected at PROVISION time,
 // it now verifies a FRESH, EXPIRING, role-carrying grant the spoke minted for
@@ -237,7 +237,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
 // case the proxy simply falls back to the #2756 static-allowlist / ingress path,
 // so there is no regression.
 //
-// The signing key is the SPOKE-LOCAL, SYMMETRIC terminal key (hub.TerminalSigningKey):
+// The signing key is the SPOKE-LOCAL, SYMMETRIC terminal key (terminalassert.SigningKey):
 // the spoke mints here and the proxy verifies on the same spoke, so this is NOT
 // the (now-asymmetric, C2 #2761) SSO signing path — it is decoupled from it.
 //
@@ -248,7 +248,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
 // of C3), this assertion is bound to THIS hive by its signed HiveID claim AND
 // only sent to this hive's host.
 func (s *Server) setTerminalAssertionCookie(w http.ResponseWriter, r *http.Request, username, role string) {
-	key := hub.TerminalSigningKey()
+	key := terminalassert.SigningKey()
 	if key == "" {
 		return
 	}
@@ -259,7 +259,7 @@ func (s *Server) setTerminalAssertionCookie(w http.ResponseWriter, r *http.Reque
 	if hiveID == "" {
 		return
 	}
-	tok := hub.MintTerminalAssertion(key, username, role, hiveID, time.Now())
+	tok := terminalassert.Mint(key, username, role, hiveID, time.Now())
 	if tok == "" {
 		return
 	}
@@ -275,8 +275,9 @@ func (s *Server) setTerminalAssertionCookie(w http.ResponseWriter, r *http.Reque
 }
 
 // terminalAssertionCookieMaxAge caps how long the browser retains the assertion
-// cookie. It matches the signed assertion's own TTL (hub.terminalAssertionTTL,
-// 15 min): the cookie's lifetime and the token's expiry should agree so a stale
+// cookie. It matches the signed assertion's own TTL (terminalassert's
+// terminalAssertionTTL, 15 min): the cookie's lifetime and the token's expiry
+// should agree so a stale
 // cookie is dropped by the browser at roughly the same time the proxy would
 // reject it as expired anyway. The proxy's exp check is authoritative regardless.
 const terminalAssertionCookieMaxAge = 15 * time.Minute

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 const (
@@ -58,7 +58,7 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) canMintTerminalAssertion() bool {
-	if hub.TerminalSigningKey() == "" {
+	if terminalassert.SigningKey() == "" {
 		return false
 	}
 	return s.deps != nil && s.deps.Config != nil && s.deps.Config.HiveID != ""
@@ -112,7 +112,7 @@ func (s *Server) terminalAssertionFromRequest(r *http.Request) (username, role s
 	if s.deps != nil && s.deps.Config != nil {
 		hiveID = s.deps.Config.HiveID
 	}
-	user, terminalRole, err := hub.VerifyTerminalAssertion(hub.TerminalSigningKey(), c.Value, hiveID, time.Now())
+	user, terminalRole, err := terminalassert.Verify(terminalassert.SigningKey(), c.Value, hiveID, time.Now())
 	if err != nil || user == "" {
 		return "", "", false
 	}
