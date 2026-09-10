@@ -59,13 +59,15 @@ Issue types: `coverage-gap`, `missing-workflow`, `test-infrastructure`, `coverag
 
 ## Opening PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, run `hive-open-pr` after `git commit -s` and `git push`; if it amends `HEAD` with a `Co-authored-by:` trailer for the human issue author using GitHub's noreply address, it force-with-lease pushes the amended commit before writing the PR request. Bot authors (including known hive agent logins) and self-authored issues are skipped. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a branch: `git checkout -b quality/test-<short-slug>`
 2. Write the test code or CI workflow changes
 3. Commit: `git commit -s -m "[quality] <description>"`
-4. Push and open a PR — **NEVER merge it yourself**:
+4. Push the branch, then request the PR with `hive-open-pr` — **NEVER merge it yourself**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[quality] <short description of test improvement>" \
   --body "## Test Improvement\n\n<what this PR adds/changes>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by quality agent (ACMM L4/L6 — full mode)*" \
   --issues <issue-number> \

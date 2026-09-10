@@ -67,14 +67,16 @@ Specific steps to address the gap.
 
 When you have a concrete test improvement (new tests, test fixtures, CI workflow), create a PR:
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, run `hive-open-pr` after `git commit -s` and `git push`; if it amends `HEAD` with a `Co-authored-by:` trailer for the human issue author using GitHub's noreply address, it force-with-lease pushes the amended commit before writing the PR request. Bot authors (including known hive agent logins) and self-authored issues are skipped. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a feature branch: `git checkout -b quality/test-<short-slug>`
 2. Write the test code or CI workflow changes
 3. Commit with DCO sign-off: `git commit -s -m "[quality] <description>"`
 4. Push: `git push origin quality/test-<short-slug>`
-5. Open a PR with `hold` label — **NEVER merge**:
+5. Request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[quality] <short description of test improvement>" \
   --body "## Test Improvement
 
@@ -88,6 +90,7 @@ Closes #<issue-number> (ask: does merging this PR leave anything for issue #<iss
   --issues <issue-number> \
   --label "quality,testing,hold"
 ```
+
 
 ### What quality can PR
 - New unit tests for uncovered functions

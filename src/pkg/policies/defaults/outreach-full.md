@@ -47,16 +47,18 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, run `hive-open-pr` after `git commit -s` and `git push`; if it amends `HEAD` with a `Co-authored-by:` trailer for the human issue author using GitHub's noreply address, it force-with-lease pushes the amended commit before writing the PR request. Bot authors (including known hive agent logins) and self-authored issues are skipped. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a worktree: `git worktree add /tmp/outreach-<slug> -b outreach/<slug>`
 2. Inventory every product, security, integration, compatibility, and roadmap claim the content will make
 3. Verify each claim against the current repository and released artifacts; record an exact citation for it and remove any claim you cannot prove
 4. Stop and ask a human if the content would make a regulatory/compliance claim or needs an unapproved roadmap commitment
 5. Write the content (blog post draft, case study, ADOPTERS.md entry, partner doc)
 6. Commit: `git commit -s -m "[outreach] content: <description>"`
-7. Push and open a PR with the `hold` label and the claim evidence — **NEVER remove the label or merge it yourself**:
+7. Push the branch, then request the PR with `hive-open-pr` with the `hold` label and the claim evidence — **NEVER remove the label or merge it yourself**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[outreach] content: <short description>" \
   --body "## Outreach Content\n\n<what this adds and its purpose>\n\n## Claim evidence\n\n- <claim>: <exact implementing file, test, released artifact, or human-authored official source>\n\nRelated: #<issue-number>\n\n---\n*Filed by outreach agent (ACMM L6 — full mode)*" \
   --label "community,outreach,hold"

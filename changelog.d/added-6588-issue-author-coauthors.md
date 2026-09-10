@@ -1,0 +1,1 @@
+- Agent-opened PRs that resolve a human-filed issue now amend the commit with a `Co-authored-by:` trailer for the issue author using GitHub's noreply address, while skipping bot-filed and self-authored issues ([#6588](https://github.com/hivecommons/hive/issues/6588)).

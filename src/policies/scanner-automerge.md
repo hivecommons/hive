@@ -89,7 +89,9 @@ Steps:
 7. git add the changed files
 8. git commit -s -m "[scanner] fix: <short description covering all issues>"
 9. git push -u origin scanner/fix-<lowest-number>
-10. gh pr create --repo <org>/<repo> --title "[scanner] fix: <short description>" --body "Closes #<n1>, Closes #<n2>, Closes #<n3>" --issues <n1>,<n2>,<n3> (repeat Closes for each issue: ask does merging this PR leave anything for it to track? If nothing, use Closes; use Refs #<n> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)
+10. Open the PR request with `hive-open-pr`:
+   `hive-open-pr --repo <org>/<repo> --head scanner/fix-<lowest-number> --title "[scanner] fix: <short description>" --body "Closes #<n1>, Closes #<n2>, Closes #<n3>" --issues <n1>,<n2>,<n3>` (repeat Closes for each issue: ask does merging this PR leave anything for it to track? If nothing, use Closes; use Refs #<n> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why).
+   For each human-authored resolved issue, `hive-open-pr` amends HEAD with a GitHub noreply `Co-authored-by:` trailer for the issue author and force-with-lease pushes that amendment before requesting the PR; bot authors (including known hive agent logins) and self-authored issues are skipped. This is attribution only, not DCO — never add `Signed-off-by:` for an issue author.
 11. git worktree remove /tmp/scanner-fix-<lowest-number>
 12. Return immediately — do NOT wait for CI, do NOT merge, do NOT run build or lint
 ```

@@ -61,6 +61,24 @@ when part of the issue deliberately stays open — and rejects the request
 otherwise. Pass it whenever the run started from an issue, so a truncated or
 replaced body cannot open a PR that orphans its issue.
 
+When the PR body resolves an issue (`Closes #N`, `Fixes #N`, or
+`Resolves #N`), `hive-open-pr` also looks up each issue author with the GitHub
+API and amends `HEAD` with a `Co-authored-by:` trailer using GitHub's noreply
+address form, `<id>+<login>@users.noreply.github.com`. That gives outside
+contributors commit credit for high-quality issue reports without exposing
+private email addresses. Bot-filed issues (GitHub `Bot` users and the hive's
+known agent logins such as scanner, quality, architect, strategist, sec-check,
+ci-maintainer, and `github-actions`) are skipped, and the authenticated PR
+author is not added as their own co-author. A `Refs #N` mention is deliberately
+not credited because it does not claim the issue is resolved.
+
+Because this may amend the commit message, call `hive-open-pr` after committing
+and pushing the branch. If it adds a trailer, it force-with-lease pushes the
+amended `HEAD` before writing the PR request, so the watcher validates the same
+branch tip that will be published. `Co-authored-by:` is only attribution; it is
+**not** a DCO sign-off. Never add `Signed-off-by:` for the issue author or
+anyone else unless that person actually signed off on the commit.
+
 Before writing `Refs #N`, answer the question directly: *does merging this PR
 leave anything for issue #N to track?* If nothing, use `Closes #N` — that is
 the default. Reserve `Refs #N` for an epic/tracker or a deliberately partial

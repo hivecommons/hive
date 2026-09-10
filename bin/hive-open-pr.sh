@@ -26,6 +26,14 @@
 #   # hive verifies the body actually references each one (Closes #N / Refs #N)
 #   # and refuses the request otherwise — pass it whenever the run started from
 #   # an issue, so a mangled body cannot open a PR that orphans its issue.
+#   # When the body resolves an issue (Closes/Fixes/Resolves #N), this wrapper
+#   # also amends HEAD with a Co-authored-by trailer for the issue author,
+#   # unless that author is a bot/known hive agent or is the authenticated PR
+#   # author. Run it after committing and pushing; if the wrapper amends HEAD,
+#   # it force-with-lease pushes the amended commit before writing the PR
+#   # request, so the watcher validates the final branch. This is attribution
+#   # only, never a DCO sign-off; do not add Signed-off-by on another person's
+#   # behalf.
 #   # --head defaults to the current git branch. --base is OPTIONAL and should
 #   # normally be omitted: an omitted base is left empty in the request so the
 #   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
@@ -41,7 +49,148 @@
 
 set -euo pipefail
 
-REQ_DIR="/var/run/hive-metrics/pr-requests"
+REQ_DIR="${HIVE_OPEN_PR_REQ_DIR:-/var/run/hive-metrics/pr-requests}"
+
+extract_closing_issue_numbers() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  python3 -c '
+import re
+import sys
+
+body = sys.stdin.read()
+seen = set()
+for line in body.splitlines():
+    for match in re.finditer(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b([^\n]*)", line):
+        tail = re.split(r"(?i)\b(?:refs?|references|related\s+to|see)\b", match.group(1), maxsplit=1)[0]
+        for issue in re.findall(r"#([0-9]+)", tail):
+            if issue not in seen:
+                seen.add(issue)
+                print(issue)
+'
+}
+
+known_agent_bot_login() {
+  login_lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$login_lc" in
+    *'[bot]'|github-actions|github-actions[bot]|copilot-swe-agent|copilot-swe-agent[bot]|\
+scanner|scanner-agent|hive-scanner|hive-scanner[bot]|\
+quality|quality-agent|hive-quality|hive-quality[bot]|\
+architect|architect-agent|hive-architect|hive-architect[bot]|\
+strategist|strategist-agent|hive-strategist|hive-strategist[bot]|\
+sec-check|sec-check-agent|hive-sec-check|hive-sec-check[bot]|\
+ci-maintainer|ci-maintainer-agent|hive-ci-maintainer|hive-ci-maintainer[bot])
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+commit_has_coauthor_email() {
+  email_lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  git log -1 --format=%B |
+    git interpret-trailers --parse |
+    awk -v want="$email_lc" '
+      tolower($0) ~ /^co-authored-by:[[:space:]]*/ {
+        line=$0
+        sub(/^[^:]+:[[:space:]]*/, "", line)
+        if (match(line, /<[^<>[:space:]]+@[^<>[:space:]]+>/)) {
+          email=tolower(substr(line, RSTART + 1, RLENGTH - 2))
+          if (email == want) found=1
+        }
+      }
+      END { exit found ? 0 : 1 }'
+}
+
+push_amended_head_for_request() {
+  head_branch="$1"
+  push_branch="${head_branch#*:}"
+  if [ -z "$push_branch" ] || [ "$push_branch" = "HEAD" ]; then
+    echo "hive-open-pr: WARN: cannot infer branch to push after adding co-author trailers; leaving push unchanged" >&2
+    return 1
+  fi
+  git push --force-with-lease origin "HEAD:${push_branch}" >/dev/null
+  echo "hive-open-pr: pushed amended HEAD to origin/${push_branch}" >&2
+}
+
+append_issue_author_coauthors() {
+  repo="$1"
+  head_branch="$2"
+  body="$3"
+
+  command -v gh >/dev/null 2>&1 || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git rev-parse --verify HEAD >/dev/null 2>&1 || return 0
+
+  self_login=""
+  self_id=""
+  self="$(gh api user --jq '[.login, (.id|tostring)] | @tsv' 2>/dev/null || true)"
+  if [ -n "$self" ]; then
+    self_login="${self%%	*}"
+    self_id="${self#*	}"
+  fi
+
+  trailers=""
+  creditable_issue=0
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    rec="$(gh api "repos/${repo}/issues/${issue}" --jq '[.user.login, (.user.id|tostring), .user.type] | @tsv' 2>/dev/null || true)"
+    if [ -z "$rec" ]; then
+      echo "hive-open-pr: WARN: could not resolve issue #${issue} author; leaving co-author credit unchanged" >&2
+      continue
+    fi
+    login="$(printf '%s' "$rec" | awk -F '\t' '{print $1}')"
+    user_id="$(printf '%s' "$rec" | awk -F '\t' '{print $2}')"
+    user_type="$(printf '%s' "$rec" | awk -F '\t' '{print $3}')"
+
+    if [ "$user_type" = "Bot" ] || known_agent_bot_login "$login"; then
+      echo "hive-open-pr: skipping issue #${issue} co-author credit for bot author ${login}" >&2
+      continue
+    fi
+    if { [ -n "$self_login" ] && [ "$login" = "$self_login" ]; } || { [ -n "$self_id" ] && [ "$user_id" = "$self_id" ]; }; then
+      echo "hive-open-pr: skipping issue #${issue} co-author credit for PR author ${login}" >&2
+      continue
+    fi
+
+    email="${user_id}+${login}@users.noreply.github.com"
+    creditable_issue=1
+    if commit_has_coauthor_email "$email"; then
+      continue
+    fi
+    trailer="${login} <${email}>"
+    case "
+$trailers
+" in
+      *"
+$trailer
+"*) ;;
+      *) trailers="${trailers}${trailer}
+" ;;
+    esac
+  done <<EOF_COAUTHOR_ISSUES
+$(printf '%s' "$body" | extract_closing_issue_numbers)
+EOF_COAUTHOR_ISSUES
+
+  if [ -z "$trailers" ]; then
+    [ "$creditable_issue" = 1 ] && push_amended_head_for_request "$head_branch"
+    return 0
+  fi
+  {
+    git log -1 --format=%B
+    printf '\n'
+    while IFS= read -r trailer; do
+      [ -n "$trailer" ] || continue
+      printf 'Co-authored-by: %s\n' "$trailer"
+    done <<EOF_TRAILERS
+$trailers
+EOF_TRAILERS
+  } | git commit --amend -F - >/dev/null
+  echo "hive-open-pr: amended HEAD with issue-author co-author trailer(s)" >&2
+  push_amended_head_for_request "$head_branch"
+}
 
 REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
 BODY_SET=0
@@ -117,6 +266,8 @@ if [ -z "$REPO" ] || [ -z "$HEAD" ] || [ -z "$TITLE" ]; then
   echo "hive-open-pr: --repo, --head (or a current branch), and --title are required" >&2
   exit 2
 fi
+
+append_issue_author_coauthors "$REPO" "$HEAD" "$BODY"
 
 # Identify the requesting agent. Prefer the UID map (the watcher re-derives the
 # owner from the FILE's UID anyway, so this is informational + a nicer log line);

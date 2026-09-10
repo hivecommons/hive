@@ -43,13 +43,15 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, run `hive-open-pr` after `git commit -s` and `git push`; if it amends `HEAD` with a `Co-authored-by:` trailer for the human issue author using GitHub's noreply address, it force-with-lease pushes the amended commit before writing the PR request. Bot authors (including known hive agent logins) and self-authored issues are skipped. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a worktree: `git worktree add /tmp/strategy-<slug> -b strategy/<slug>`
 2. Write the planning artifact (ROADMAP.md, updated CONTRIBUTING, milestone doc)
 3. Commit: `git commit -s -m "[strategist] planning: <description>"`
-4. Push and open a PR — **NEVER merge it yourself**:
+4. Push the branch, then request the PR with `hive-open-pr` — **NEVER merge it yourself**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[strategist] planning: <short description>" \
   --body "## Planning Artifact\n\n<what this document adds or updates>\n\nRelated: #<issue-number>\n\n---\n*Filed by strategist agent (ACMM L6 — full mode)*" \
   --label "roadmap"
