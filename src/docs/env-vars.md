@@ -284,6 +284,7 @@ section requires for lookups.
 | `HIVE_HUB_ADMIN_USERNAME` | No | none | Single hub admin username. Consulted alongside `HIVE_HUB_ADMINS`. |
 | `HIVE_HUB_ADMINS` | No | none | Comma-separated hub admin usernames. |
 | `HIVE_HUB_GITHUB_TOKEN` | No | none | Hub-side GitHub token used by the dibs public-repo check. |
+| `HIVE_HUB_AUTH_HEALTH_DOWN_THRESHOLD` | No | `15m` | Go duration **all** enabled agents on a hive must report a failing backend-auth status before the hive's aggregate `auth_health` escalates from `degraded` to `down` (`pkg/hub/auth_health.go`, [#6558](https://github.com/hivecommons/hive/issues/6558)). Unset, empty, unparseable, or non-positive values fall back to the default, which is sized above the spoke's provider-error backoff ceiling so transient upstream retries never trip it. See [Agent backend-auth health canary](fleet-health.md#agent-backend-auth-health-canary-6558). |
 | `HIVE_REACH_REPO_DIR` | No | none (GitHub compare API) | Local clone the reach ancestry check resolves against via `git merge-base --is-ancestor`. The hub image ships no clone, so the compare-API adapter is the default. |
 | `HIVE_REACH_NEVER_RAN_DAYS` | No | `3` | Never-ran grace period in days (integer, > 0). Absent or invalid values fall back to the default. |
 | `HIVE_PROVISION_WORKERS` | No | saved scale setting, else built-in default | Provision queue worker count. The saved dashboard scale setting takes precedence over this variable. |
