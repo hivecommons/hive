@@ -231,6 +231,55 @@ earns the real docker gate on the scratch branch, mirrors that exact-SHA
 verdict into the representation the release PR can consume, and lets the
 protected merge endpoint make the final decision.
 
+## Building the merged release commit: the `release_sha` dispatch (#6380) and its ancestry gate (#6419)
+
+The merge in step 6 is performed with the workflow's own `GITHUB_TOKEN`, and
+GitHub deliberately does not start other workflow runs from a
+`GITHUB_TOKEN`-authenticated push (the same recursive-workflow prevention
+described for the scratch branch above). So the release commit landing on
+`v4` fires **no** `push`-triggered `docker.yml` build — without intervention
+the release commit would never get its own images, and the moving tags would
+stay pointed at the pre-release tree. `tagged-release.yml` therefore
+dispatches `docker.yml` explicitly, immediately after the merge succeeds
+([#6380](https://github.com/hivecommons/hive/issues/6380)):
+
+```
+gh workflow run docker.yml --ref v4 -f release_sha=<sha>
+```
+
+passing the merge API's **exact returned SHA** rather than letting the
+dispatched run resolve `v4`'s tip, because another PR can advance `v4`
+between the merge and the build starting. That is what `docker.yml`'s
+`release_sha` `workflow_dispatch` input exists for; left empty (an ordinary
+manual branch build), the run builds the dispatched ref's tip as usual.
+
+**The receiving end fails closed
+([#6419](https://github.com/hivecommons/hive/issues/6419), v4.23.0).**
+Until then, `docker.yml`'s `gate` job validated `release_sha` only as
+well-formed 40-hex — and well-formed hex is not "in this branch's history."
+Any principal with `actions: write` could dispatch
+`release_sha=<any commit object in the repo>` — including an unreviewed PR
+head — and every downstream job would build and publish it under the
+branch's moving tags (`<branch>-latest`, `candidate`, …), laundered through
+the normal pipeline with legitimate provenance labels. `tagged-release.yml`,
+the only intended caller, already ran a `git merge-base --is-ancestor` check
+before tagging, but the gate job re-verified nothing on the receiving end.
+When (and only when) a `release_sha` is supplied, the gate job now checks out
+the dispatched ref with full history and runs
+`src/scripts/check-release-sha-ancestry.sh`, which refuses — exit 1, build
+never starts — unless the SHA is a full 40-char lowercase hex string,
+resolves to a real commit object, **and** is an ancestor of the dispatched
+ref. The ordinary push/PR path (the overwhelming majority of runs) pays no
+extra fetch. The check lives in a standalone script rather than an inline
+`run:` block so it is testable against fixture repos
+(`src/scripts/test-check-release-sha-ancestry.sh`) instead of only being
+provable inside a live Actions run.
+
+The dispatched build completing does fire a `workflow_run` event back at
+`tagged-release.yml`, but its `decide` job deliberately ignores
+`workflow_dispatch`-triggered builds (see "Idempotency and concurrency"
+below), so the release pipeline never chases its own tail.
+
 ## Software bill of materials (SBOM)
 
 Every tagged release ships a downloadable SBOM per image — `hive`,
@@ -351,11 +400,15 @@ three SBOM files, using the same `gh release create` asset-upload call.
 
 ## Idempotency and concurrency
 
-- **Step 5 emptying `Unreleased`** is what makes this safe to chain off
-  `docker.yml`: pushing the release commit to `v4` triggers `docker.yml`
-  again, which triggers `tagged-release.yml` again — and on that second pass
-  `Unreleased` is empty, so `derive-release-version.sh` returns
-  `release=false` and the workflow is a no-op. It never chases its own tail.
+- **The release commit's own build cannot re-trigger a release.** The
+  `GITHUB_TOKEN`-authenticated merge fires no `push` event, so the release
+  commit's images come from the explicit `release_sha` dispatch (#6380 — see
+  above), and `tagged-release.yml`'s `decide` job deliberately filters out
+  `workflow_dispatch`-triggered `docker.yml` runs, so that build's
+  `workflow_run` event is a no-op. Even on a path that does re-evaluate the
+  released tip (the hourly #5318 backstop), **step 5 emptied `Unreleased`**,
+  so `derive-release-version.sh` returns `release=false`. It never chases
+  its own tail — belt and suspenders.
 - `concurrency: { group: tagged-release-v4, cancel-in-progress: false }`
   serializes overlapping runs so two merges landing close together queue
   rather than race two tags for two different commits.
