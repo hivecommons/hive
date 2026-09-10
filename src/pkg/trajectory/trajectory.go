@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/jsonextract"
 )
 
 const (
@@ -222,7 +224,7 @@ func (r *Reviewer) Review(ctx context.Context, agentName, intent, transcript str
 // ParseVerdict extracts the Verdict JSON from a model reply, tolerating models
 // that wrap JSON in prose or code fences by scanning for the outermost object.
 func ParseVerdict(content string) (Verdict, error) {
-	raw := extractJSONObject(content)
+	raw := jsonextract.Object(content)
 	if raw == "" {
 		return Verdict{}, fmt.Errorf("no JSON object in reviewer reply")
 	}
@@ -237,16 +239,4 @@ func ParseVerdict(content string) (Verdict, error) {
 		v.Confidence = 1
 	}
 	return v, nil
-}
-
-// extractJSONObject returns the substring from the first '{' to the last '}'
-// inclusive, or "" if none. Enough to strip code fences / leading prose that
-// smaller models sometimes emit despite instructions.
-func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start < 0 || end < 0 || end < start {
-		return ""
-	}
-	return s[start : end+1]
 }

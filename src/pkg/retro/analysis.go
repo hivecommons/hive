@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/jsonextract"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -98,7 +99,7 @@ func buildAnalysisPrompt(record RetroRecord, findings []Finding) []chatMessage {
 }
 
 func ParseAnalysis(content string) (Analysis, error) {
-	raw := extractJSONObject(content)
+	raw := jsonextract.Object(content)
 	if raw == "" {
 		return Analysis{}, fmt.Errorf("no JSON object in retro analysis reply")
 	}
@@ -205,15 +206,6 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
-}
-
-func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start < 0 || end < 0 || end < start {
-		return ""
-	}
-	return s[start : end+1]
 }
 
 func truncate(s string, max int) string {
