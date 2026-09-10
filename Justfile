@@ -1281,6 +1281,27 @@ contribute-hive backend="" mode="docker": check-version
         # not the Mac). The relay only dials out, so the default network
         # works; reach a localhost LiteLLM proxy via host.containers.internal.
       fi
+      # Resource limits (#6485). contribute-k8s has always run this exact
+      # workload inside a 4Gi memory / 2 CPU limit envelope; the local
+      # container path set none, so a growing agent could push a
+      # contributor's workstation into systemd-oomd territory and get the
+      # whole container SIGKILLed (exit 137) mid-task. Apply the same
+      # envelope here so both deployment paths describe one workload.
+      # --memory-swap equal to --memory disallows extra swap, matching the
+      # no-swap semantics of the k8s limit (and avoiding the zram spiral
+      # where swapped pages still occupy RAM).
+      # Overrides: HIVE_CONTAINER_MEMORY (e.g. 6g), HIVE_CONTAINER_CPUS
+      # (e.g. 4). Set HIVE_CONTAINER_MEMORY=none to run unlimited (e.g. on
+      # hosts without cgroup memory-limit support).
+      CONTAINER_MEMORY="${HIVE_CONTAINER_MEMORY:-4g}"
+      CONTAINER_CPUS="${HIVE_CONTAINER_CPUS:-2}"
+      RESOURCE_FLAGS=""
+      if [[ "$CONTAINER_MEMORY" != "none" && "$CONTAINER_MEMORY" != "0" ]]; then
+        RESOURCE_FLAGS="--memory ${CONTAINER_MEMORY} --memory-swap ${CONTAINER_MEMORY}"
+      fi
+      if [[ "$CONTAINER_CPUS" != "none" && "$CONTAINER_CPUS" != "0" ]]; then
+        RESOURCE_FLAGS="${RESOURCE_FLAGS} --cpus ${CONTAINER_CPUS}"
+      fi
       if [[ "${HIVE_SKIP_PULL:-}" != "true" ]]; then
         echo "Pulling {{hive_image}} (${RUNTIME})..."
         "$RUNTIME" pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
@@ -1526,6 +1547,7 @@ contribute-hive backend="" mode="docker": check-version
         --name "${CONTAINER_NAME}" \
         ${RUNTIME_FLAGS} \
         ${NET_FLAGS} \
+        ${RESOURCE_FLAGS} \
         -v "{{config_dir}}:/home/dev/.config/hive${ROSUF}" \
         ${CLI_MOUNTS} \
         -v "${HOME}/.config/gh:/home/dev/.config/gh${ROSUF}" \
@@ -1635,6 +1657,23 @@ contribute-hive backend="" mode="docker": check-version
       if [[ "$FINAL_EXIT" != "0" && "$FINAL_EXIT" != "unknown" ]]; then
         echo ""
         echo "Container ${CONTAINER_NAME} exited with code ${FINAL_EXIT}."
+        # Say what a memory kill IS instead of leaving a bare 137 (#6485).
+        # .State.OOMKilled covers the cgroup (kernel) OOM killer that the
+        # --memory limit arms; exit 137 with no in-container kill also
+        # matches an external SIGKILL such as systemd-oomd reaping the
+        # whole cgroup under host memory pressure.
+        OOM_KILLED=$("$RUNTIME" inspect -f '{{ "{{" }}.State.OOMKilled{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "false")
+        if [[ "$OOM_KILLED" == "true" || "$FINAL_EXIT" == "137" ]]; then
+          echo ""
+          if [[ "$OOM_KILLED" == "true" ]]; then
+            echo "The container was killed for exceeding its memory limit (${CONTAINER_MEMORY})."
+          else
+            echo "Exit 137 means the container was SIGKILLed — most often by the"
+            echo "kernel or systemd-oomd for exceeding available memory."
+          fi
+          echo "Raise (or lift) the limit and re-run, e.g.:"
+          echo "  HIVE_CONTAINER_MEMORY=6g just contribute-hive ${BACKEND}"
+        fi
       fi
     fi
 

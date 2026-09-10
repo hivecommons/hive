@@ -58,6 +58,7 @@ NOT_A_SUITE=(
 # specific enough that a reviewer can judge whether it still holds; an empty
 # list is the healthy state.
 UNWIRED_ON_PURPOSE=(
+  "test_container_resource_limits.sh|#6485 fix landed from a GitHub App branch, which cannot edit .github/workflows/; wire it into v2-ci.yml next to test_attach_hint_runtime.sh (maintainer follow-up), then delete this entry"
 )
 
 failures=0

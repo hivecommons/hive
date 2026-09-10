@@ -371,6 +371,8 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_SKIP_VERSION_CHECK` | No | `false` | Skips `just` version freshness check when set to `true`. |
 | `HIVE_SKIP_PULL` | No | `false` | Skips contributor image pull when set to `true`. |
 | `HIVE_KEEP_CONTAINER` | No | remove failed contributor container | Keeps failed contributor containers for debugging when set to `true`. |
+| `HIVE_CONTAINER_MEMORY` | No | `4g` | Memory limit for the `just contribute-hive` container (`--memory`, with `--memory-swap` set equal so the container cannot grow further into swap). Mirrors the 4Gi limit `contribute-k8s` applies to the same workload ([#6485](https://github.com/hivecommons/hive/issues/6485)). Set to `none` to run without a memory limit. |
+| `HIVE_CONTAINER_CPUS` | No | `2` | CPU limit for the `just contribute-hive` container (`--cpus`). Mirrors the `contribute-k8s` CPU limit. Set to `none` to run without a CPU limit. |
 | `HIVE_PROJECT_CONFIG` | No | `/etc/hive/hive-project.yaml` | Path read by `bin/hive-config.sh` for deterministic pipeline/project metadata. |
 | `HIVE_PROJECT_YAML` | No | `/etc/hive/hive-project.yaml`, then first example found | Path read directly by pipeline stages. |
 | `HIVE_RUNTIME_CONFIG` | No | `/etc/hive/hive-runtime.yaml` | Runtime overlay read by `bin/hive-config.sh`. |
