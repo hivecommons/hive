@@ -1,0 +1,1 @@
+- Stable-channel promotion no longer exits silently with code 1 when the scheduled run races a `docker.yml` publish that is still in progress; it now reports an explicit `hold` naming the in-flight candidate run ([#6537](https://github.com/hivecommons/hive/issues/6537)).
