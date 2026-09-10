@@ -93,7 +93,9 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{ACMMLevel: level})
 	pausedAt := time.Date(2026, 9, 9, 12, 1, 0, 0, time.UTC)
 	lastKick := time.Date(2026, 9, 9, 12, 2, 0, 0, time.UTC)
-	restartAt := time.Date(2026, 9, 9, 12, 3, 0, 0, time.UTC)
+	// restartAt must stay inside the 24h restartEventsToSnapshot retention
+	// window, so anchor it to time.Now() instead of a fixed date.
+	restartAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	if err := mgr.PauseBy("scanner", "dashboard-api", "owner maintenance", "owner@example"); err != nil {
 		t.Fatalf("PauseBy: %v", err)
 	}
