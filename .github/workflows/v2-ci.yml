@@ -112,7 +112,6 @@ jobs:
       - name: Entrypoint standalone terminal-key fallback tests (#6489)
         run: bash deploy/test_entrypoint_terminal_key_fallback.sh
 
-
       # #5369: the `chown -R dev:node /data` in the entrypoint's root phase is
       # guarded on `[ "$DATA_OWNER" != "1001" ]`, and the Dockerfile already
       # does that chown at BUILD time — so the guard is false on every normal
