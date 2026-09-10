@@ -61,6 +61,16 @@ JSON
 {"number":124,"merged_at":null,"html_url":"https://github.com/hivecommons/hive/pull/124","body":"Refs #10"}
 JSON
     ;;
+  repos/hivecommons/hive/pulls/125)
+    cat <<'JSON'
+{"number":125,"merged_at":"2026-09-10T20:00:00Z","html_url":"https://github.com/hivecommons/hive/pull/125","body":"Related to #20\nSee #21\nFixes #20"}
+JSON
+    ;;
+  repos/hivecommons/hive/pulls/126)
+    cat <<'JSON'
+{"number":126,"merged_at":"2026-09-10T20:05:00Z","html_url":"https://github.com/hivecommons/hive/pull/126","body":"See #22"}
+JSON
+    ;;
   repos/hivecommons/hive/issues/10)
     printf '{"number":10,"state":"open"}\n'
     ;;
@@ -73,6 +83,15 @@ JSON
   repos/hivecommons/hive/issues/15)
     printf '{"number":15,"state":"open"}\n'
     ;;
+  repos/hivecommons/hive/issues/20)
+    printf '{"number":20,"state":"open"}\n'
+    ;;
+  repos/hivecommons/hive/issues/21)
+    printf '{"number":21,"state":"open"}\n'
+    ;;
+  repos/hivecommons/hive/issues/22)
+    printf '{"number":22,"state":"open"}\n'
+    ;;
   repos/hivecommons/hive/issues/10/timeline*)
     printf '[[]]\n'
     ;;
@@ -84,13 +103,25 @@ JSON
   repos/hivecommons/hive/issues/15/timeline*)
     printf '[[]]\n'
     ;;
+  repos/hivecommons/hive/issues/21/timeline*)
+    printf '[[]]\n'
+    ;;
+  repos/hivecommons/hive/issues/22/timeline*)
+    printf '[[]]\n'
+    ;;
   repos/hivecommons/hive/issues/10/comments*)
     printf '[[]]\n'
     ;;
   repos/hivecommons/hive/issues/15/comments*)
     cat <<'JSON'
-[[{"body":"<!-- hive-post-merge-refs-sweep: pr=123 issue=15 -->\nalready asked"}]]
+[[{"body":"<!-- hive-post-merge-refs-sweep: issue=15 -->\nalready asked"}]]
 JSON
+    ;;
+  repos/hivecommons/hive/issues/21/comments*)
+    printf '[[]]\n'
+    ;;
+  repos/hivecommons/hive/issues/22/comments*)
+    printf '[[]]\n'
     ;;
   *)
     echo "unexpected gh api path: $path" >&2
@@ -141,7 +172,7 @@ fi
 
 if printf '%s\n' "$output" | grep -q 'Skipping #12: issue state is closed' \
   && printf '%s\n' "$output" | grep -q 'Skipping #13: another open PR references it' \
-  && printf '%s\n' "$output" | grep -q 'Skipping #15: sweep comment for PR #123 already exists'; then
+  && printf '%s\n' "$output" | grep -q 'Skipping #15: sweep comment already exists'; then
   pass "closed issues, open-PR claims, and duplicate comments are skipped"
 else
   bad "expected skip messages were missing"
@@ -161,6 +192,57 @@ else
 fi
 if grep -q '^POST ' "$CALL_LOG"; then
   bad "unmerged PR should not post comments"
+fi
+
+# --- "Related to #N" / "See #N" non-closing shapes are recognized ----------
+: > "$CALL_LOG"
+: > "$BODY_LOG"
+set +e
+related_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" bash "$CHECKER" --repo hivecommons/hive --pr 125 2>&1)
+related_rc=$?
+set -e
+if [ "$related_rc" -eq 0 ]; then
+  pass "sweep exits 0 for 'Related to'/'See' PR"
+else
+  bad "sweep exited ${related_rc} for 'Related to'/'See' PR"
+  echo "$related_output" | sed 's/^/      | /'
+fi
+if grep -q '^POST repos/hivecommons/hive/issues/21/comments' "$CALL_LOG"; then
+  pass "'See #N' is treated as a non-closing reference"
+else
+  bad "'See #N' was not treated as a non-closing reference"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
+if grep -q '^POST repos/hivecommons/hive/issues/20/comments' "$CALL_LOG"; then
+  bad "issue #20 has 'Related to' AND 'Fixes' on separate mentions; the closing keyword should suppress it"
+else
+  pass "'Related to #N' is recognized, but a same-body closing keyword still suppresses it"
+fi
+
+# --- DRY_RUN=1 never posts, but prints the plan -----------------------------
+: > "$CALL_LOG"
+: > "$BODY_LOG"
+set +e
+dry_run_output=$(CALL_LOG="$CALL_LOG" BODY_LOG="$BODY_LOG" GH_BIN="$GH_STUB" DRY_RUN=1 bash "$CHECKER" --repo hivecommons/hive --pr 126 2>&1)
+dry_run_rc=$?
+set -e
+if [ "$dry_run_rc" -eq 0 ]; then
+  pass "DRY_RUN=1 sweep exits 0"
+else
+  bad "DRY_RUN=1 sweep exited ${dry_run_rc}"
+  echo "$dry_run_output" | sed 's/^/      | /'
+fi
+if grep -q '^POST ' "$CALL_LOG"; then
+  bad "DRY_RUN=1 must never post a real comment"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+else
+  pass "DRY_RUN=1 posts no comments"
+fi
+if printf '%s\n' "$dry_run_output" | grep -q 'DRY-RUN' && printf '%s\n' "$dry_run_output" | grep -q '#22'; then
+  pass "DRY_RUN=1 prints the planned comment"
+else
+  bad "DRY_RUN=1 did not print the planned comment"
+  echo "$dry_run_output" | sed 's/^/      | /'
 fi
 
 if [ "$fail" -ne 0 ]; then

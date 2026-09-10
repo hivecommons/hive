@@ -81,7 +81,7 @@ gh pr create --repo "$HIVE_REPO" \
 <what this PR adds/changes>
 
 ## Related Issue
-Closes #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)
+Closes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)
 
 ---
 *Filed by quality agent (hold-gated mode). Human review required.*" \

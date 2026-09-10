@@ -6,6 +6,7 @@ set -euo pipefail
 GH_BIN="${GH_BIN:-gh}"
 REPO="${SWEEP_REPO:-${GITHUB_REPOSITORY:-}}"
 PR_NUMBER="${SWEEP_PR_NUMBER:-}"
+DRY_RUN="${DRY_RUN:-0}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -15,6 +16,7 @@ Environment:
   SWEEP_REPO        Repository in owner/repo form (default: GITHUB_REPOSITORY)
   SWEEP_PR_NUMBER  Pull request number when --pr is omitted
   GH_BIN           gh-compatible command to call (default: gh)
+  DRY_RUN          1 to print planned comments without posting them (default: 0)
 USAGE
 }
 
@@ -80,7 +82,7 @@ repo = sys.argv[1].lower()
 body = sys.stdin.read()
 ref_token = r"(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\s*)?#[0-9]+"
 ref_re = re.compile(r"(?:(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\s*)?#(?P<num>[0-9]+)")
-weak_kw = re.compile(r"\b(?:refs?|references?)\b\s*:?\s*((?:%s)(?:\s*(?:,|and)\s*(?:%s))*)" % (ref_token, ref_token), re.I)
+weak_kw = re.compile(r"\b(?:refs?|references?|related\s+to|see)\b\s*:?\s*((?:%s)(?:\s*(?:,|and)\s*(?:%s))*)" % (ref_token, ref_token), re.I)
 closing_kw = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s*((?:%s)(?:\s*(?:,|and)\s*(?:%s))*)" % (ref_token, ref_token), re.I)
 
 def refs_after(pattern):
@@ -149,7 +151,12 @@ for event in json.load(sys.stdin):
     continue
   fi
 
-  marker="<!-- hive-post-merge-refs-sweep: pr=${PR_NUMBER} issue=${issue} -->"
+  # The marker is per-issue only (not per-PR): once this sweep has asked about
+  # an issue, a later PR that also references it with a non-closing keyword
+  # must not ask again. #6547 requires "post ONE comment on #N" — tying the
+  # marker to the triggering PR number would let every distinct merged PR
+  # re-open the nudge for the same issue.
+  marker="<!-- hive-post-merge-refs-sweep: issue=${issue} -->"
   comments_json=$(api --paginate --slurp "repos/${REPO}/issues/${issue}/comments?per_page=100" | python3 -c "$flatten_json_pages")
   comment_seen_py='import json
 import sys
@@ -160,15 +167,20 @@ for comment in json.load(sys.stdin):
 sys.exit(1)'
   if python3 -c "$comment_seen_py" "$marker" <<<"$comments_json"
   then
-    echo "Skipping #${issue}: sweep comment for PR #${PR_NUMBER} already exists."
+    echo "Skipping #${issue}: sweep comment already exists."
     skipped=$((skipped + 1))
     continue
   fi
 
   comment_body=$(printf '%s\nPR #%s has merged (%s) and referenced this issue with a non-closing `%s` rather than a closing keyword.\n\nCan this issue now be closed, or is there remaining work it should keep tracking?' \
     "$marker" "$PR_NUMBER" "$pr_url" "Refs #${issue}")
-  api -X POST "repos/${REPO}/issues/${issue}/comments" -f "body=${comment_body}" >/dev/null
-  echo "Commented on #${issue} for merged PR #${PR_NUMBER}."
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "DRY-RUN: would comment on #${issue} for merged PR #${PR_NUMBER}:"
+    printf '%s\n' "$comment_body"
+  else
+    api -X POST "repos/${REPO}/issues/${issue}/comments" -f "body=${comment_body}" >/dev/null
+    echo "Commented on #${issue} for merged PR #${PR_NUMBER}."
+  fi
   posted=$((posted + 1))
 done <<EOF_ISSUES
 $weak_issues

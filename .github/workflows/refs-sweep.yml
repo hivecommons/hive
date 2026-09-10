@@ -1,0 +1,71 @@
+name: Refs sweep
+
+# Mechanical follow-up for #6547: #6152 tightened the hive-open-pr guidance,
+# but 22% of merged issue-linked PRs still shipped a non-closing `Refs #N`,
+# leaving the resolved issue open. This sweeps merged PRs on a schedule and
+# calls src/scripts/comment-merged-refs.sh once per PR number; the script
+# itself never closes an issue, only comments.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Print planned comments; do not post them'
+        type: boolean
+        default: false
+      lookback-days:
+        description: 'How many days of merged PRs to sweep'
+        type: string
+        default: '7'
+      pr-number:
+        description: 'Sweep only this PR number (skips the merged-PR search)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+env:
+  SWEEP_REPO: ${{ github.repository }}
+  BASE_BRANCHES: 'v4 v5'
+  LOOKBACK_DAYS: ${{ inputs.lookback-days || '7' }}
+  DRY_RUN: ${{ (inputs.dry-run && '1') || '0' }}
+  GH_TOKEN: ${{ github.token }}
+  SINGLE_PR_NUMBER: ${{ inputs.pr-number || '' }}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Sweep merged PRs for non-closing issue references
+        run: |
+          set -euo pipefail
+
+          if [ -n "$SINGLE_PR_NUMBER" ]; then
+            echo "Sweeping single PR #${SINGLE_PR_NUMBER}"
+            SWEEP_PR_NUMBER="$SINGLE_PR_NUMBER" src/scripts/comment-merged-refs.sh
+            exit 0
+          fi
+
+          since=$(python3 -c "from datetime import datetime, timedelta, timezone; import sys; days = int(sys.argv[1]); print((datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d'))" "$LOOKBACK_DAYS")
+
+          for branch in $BASE_BRANCHES; do
+            echo "::group::Merged PRs on ${branch} since ${since}"
+            numbers=$(gh pr list --repo "$SWEEP_REPO" --state merged --base "$branch" \
+              --search "merged:>=${since}" --json number --limit 200 --jq '.[].number' || true)
+            echo "$numbers"
+            echo "::endgroup::"
+            for n in $numbers; do
+              echo "::group::PR #${n} (${branch})"
+              SWEEP_PR_NUMBER="$n" src/scripts/comment-merged-refs.sh || echo "::warning::sweep failed for PR #${n}"
+              echo "::endgroup::"
+            done
+          done
