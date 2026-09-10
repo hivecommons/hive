@@ -431,6 +431,37 @@ The dashboard config lives under `dashboard:`. `dashboard.auth_token` protects n
 
 If API calls fail, check whether the request is going through the gateway on port `3001` or directly to Hive on `3002`, then inspect the response and Hive logs. Dashboard handlers return concrete messages such as `X-Hive-Role header required`, `insufficient access`, `owner access required`, and `only the owner can back up this hive` for role/header failures.
 
+## The API says `service starting up, please retry`
+
+`{"error":"service starting up, please retry","ok":false}` is not an application
+response — it is synthesized by the nginx gateway (`src/deploy/nginx.conf`,
+`@api_error`) when it has **no upstream body to relay**. Since
+[#6494](https://github.com/hivecommons/hive/issues/6494) that means exactly two
+conditions, both gateway-origin:
+
+- **502** — the upstream (the auth proxy on `:3001`, which fronts the Go API
+  on `:3002`) is unreachable.
+- **504** — the upstream accepted the connection but timed out.
+
+Every other JSON error body — **including a 503** — comes from the running
+application itself and should be read verbatim. The Go dashboard and Node proxy
+return deliberate, actionable 503 bodies (for example `/api/terminal/handoff`:
+`terminal handoff requires terminal signing key and hive id`), and the dashboard
+toast renders them as-is. Before #6494 the gateway intercepted those too, so a
+hive that had been up for a day could still claim to be "starting up"
+([#6489](https://github.com/hivecommons/hive/issues/6489)); if you see that
+symptom, update.
+
+What to do when the synthesized message persists beyond startup: the upstream
+really is unreachable, so run the paired probes in
+[Health endpoints](#health-endpoints) below — `:3002` failing means the Go API
+is down; `:3002` healthy but `:3001` failing means the auth proxy refused to
+start.
+
+One related status is also nginx-origin but never wears this body: **429** on
+the `/api/auth/*` and device-flow paths is the gateway's `limit_req` rate
+limiter, not a service failure — back off and retry after the window.
+
 ## Health endpoints
 
 Use the same endpoints as the probes:
