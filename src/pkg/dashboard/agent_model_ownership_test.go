@@ -185,6 +185,8 @@ func TestPinClaimsOwnership(t *testing.T) {
 
 	const pinned = "pinned-model"
 	req := httptest.NewRequest("POST", "/api/agents/scanner/pin/model", nil)
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
 	req.SetPathValue("agent", "scanner")
 	req.SetPathValue("dimension", "model")
 	w := httptest.NewRecorder()
