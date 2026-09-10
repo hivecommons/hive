@@ -1,0 +1,1 @@
+- Fixed the token-triggered restart give-up latch (GUARD 4, #4596) being cleared by the blank/booting pane produced by its own restart, which defeated the 3-attempt cap and caused restart storms of up to ×1334/24h on agents stuck at a device-flow login prompt ([#6578](https://github.com/hivecommons/hive/issues/6578)).

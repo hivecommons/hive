@@ -3150,6 +3150,25 @@ func samePaneCapture(a, b []string) bool {
 	return true
 }
 
+// tokenRestartLatchClears reports whether a pane not showing a login prompt
+// is genuine evidence the prompt cleared, as opposed to the pane simply not
+// having painted yet. A CLI freshly relaunched by a token-triggered restart
+// shows neither a login prompt nor its ready chrome for a few seconds, and
+// that boot pane must not be read as "cleared" — doing so let the give-up
+// latch (GUARD 4, #4596) be reset by the side effect of its own remedy,
+// producing restart storms of ~1300/24h (#6578). This uses the SAME
+// boot-grace signal CheckAndRestartCrashedAgents already applies
+// (cliBootGraceSeconds measured from StartedAt) rather than inventing a new
+// one, so a still-booting pane and a genuinely cleared one are never
+// confused. Split out of pollTmuxOutputForAgent so the rule is unit-testable
+// without a tmux pane, mirroring decideTokenRestart.
+func tokenRestartLatchClears(agent *AgentProcess, now time.Time) bool {
+	if agent.StartedAt == nil {
+		return true
+	}
+	return now.Sub(*agent.StartedAt) >= cliBootGraceSeconds*time.Second
+}
+
 // pollTmuxOutputForAgent is pollTmuxOutput using the agent's tmux socket.
 func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Context) {
 	const pollInterval = 3 * time.Second
@@ -3198,11 +3217,26 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				loginStreak++
 			} else {
 				loginStreak = 0
-				// The prompt cleared, so a future "token appeared, nudge it"
-				// restart is a fresh theory rather than a repeat of one that
-				// already failed. Reset both halves of the cap together.
-				agent.tokenRestartAttempts = 0
-				agent.tokenRestartGaveUp = false
+				// The absence of login chrome is NOT by itself evidence the
+				// prompt cleared: the pane also shows no login prompt while
+				// the CLI is still booting, which is exactly the pane state
+				// produced by the token-triggered restart this cap just
+				// performed. Resetting unconditionally here let the give-up
+				// latch (GUARD 4, #4596) be cleared by the side effect of its
+				// own remedy, defeating the cap and producing restart storms
+				// of ~1300/24h (#6578). tokenRestartLatchClears gates the
+				// reset on the SAME boot-grace signal
+				// CheckAndRestartCrashedAgents already uses, so a pane that
+				// merely hasn't had time to paint is never mistaken for one
+				// that genuinely cleared.
+				if tokenRestartLatchClears(agent, time.Now()) {
+					// The prompt cleared, so a future "token appeared, nudge
+					// it" restart is a fresh theory rather than a repeat of
+					// one that already failed. Reset both halves of the cap
+					// together.
+					agent.tokenRestartAttempts = 0
+					agent.tokenRestartGaveUp = false
+				}
 			}
 
 			agent.paneMu.Lock()

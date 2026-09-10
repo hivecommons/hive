@@ -256,6 +256,123 @@ func TestTokenRestartCounterResetRearms(t *testing.T) {
 	}
 }
 
+// TestTokenRestartLatchClearsWithinBootGraceStaysFalse pins #6578: right after
+// a token-triggered restart the pane shows neither a login prompt nor ready
+// chrome for a few seconds while the CLI boots, and pollTmuxOutputForAgent's
+// else branch (no login shown) must NOT treat that as "the prompt cleared" and
+// reset the give-up latch — doing so unconditionally defeated GUARD 4 (#4596)
+// and produced restart storms of ~1300/24h. Without the boot-grace gate this
+// test fails, because tokenRestartLatchClears would simply return true.
+func TestTokenRestartLatchClearsWithinBootGraceStaysFalse(t *testing.T) {
+	restartedAt := time.Now()
+	agent := &AgentProcess{Name: "quality", StartedAt: &restartedAt}
+
+	// One tick after the restart (well within cliBootGraceSeconds): the pane
+	// is still painting startup chrome, not a cleared prompt.
+	stillBooting := restartedAt.Add(3 * time.Second)
+	if tokenRestartLatchClears(agent, stillBooting) {
+		t.Fatalf("latch reported cleared %v after restart, within the %ds boot grace: "+
+			"a booting pane must not re-arm the give-up latch (#6578)",
+			stillBooting.Sub(restartedAt), cliBootGraceSeconds)
+	}
+
+	// One tick before the grace expires: still must not clear.
+	almostGrace := restartedAt.Add(cliBootGraceSeconds*time.Second - time.Second)
+	if tokenRestartLatchClears(agent, almostGrace) {
+		t.Fatalf("latch reported cleared 1s before boot grace elapsed")
+	}
+}
+
+// TestTokenRestartLatchClearsAfterBootGraceRearms pins the legitimate half of
+// the fix: once the boot-grace window has genuinely elapsed and the pane still
+// shows no login prompt, that IS positive evidence the CLI came up clean (or
+// an operator fixed the token), and the cap must re-arm so a real future login
+// need is not permanently barred by a stale streak.
+func TestTokenRestartLatchClearsAfterBootGraceRearms(t *testing.T) {
+	restartedAt := time.Now()
+	agent := &AgentProcess{Name: "quality", StartedAt: &restartedAt}
+
+	pastGrace := restartedAt.Add(cliBootGraceSeconds*time.Second + time.Second)
+	if !tokenRestartLatchClears(agent, pastGrace) {
+		t.Fatalf("latch did not clear once boot grace elapsed: a genuine clear must re-arm the cap")
+	}
+
+	// An agent with no recorded StartedAt (never restarted this run) has no
+	// boot pane to confuse with a clear; treat it as cleared.
+	fresh := &AgentProcess{Name: "quality"}
+	if !tokenRestartLatchClears(fresh, time.Now()) {
+		t.Fatalf("latch did not clear for an agent with no StartedAt recorded")
+	}
+}
+
+// TestTokenRestartGiveUpSurvivesItsOwnBootPane drives the exact loop from
+// #6578 end to end through decideTokenRestart + tokenRestartLatchClears: three
+// token restarts exhaust the cap and latch tokenRestartGaveUp, the pane goes
+// blank as the third restart boots (no login prompt, but within boot grace),
+// and the latch must survive that tick rather than being cleared by the side
+// effect of its own remedy. A subsequent login-prompt sighting must therefore
+// NOT be allowed to fire a 4th restart.
+func TestTokenRestartGiveUpSurvivesItsOwnBootPane(t *testing.T) {
+	a := &AgentProcess{Name: "quality"}
+	now := time.Now()
+	cooldown := time.Duration(tokenRestartCooldownSec) * time.Second
+
+	// 1. Pane shows login → loginStreak builds → decide fires up to the cap.
+	fires := 0
+	for i := 0; i < tokenRestartMaxAttempts; i++ {
+		if got := a.decideTokenRestart(now); got != tokenRestartFire {
+			t.Fatalf("restart %d: got %v, want fire", i, got)
+		}
+		fires++
+		now = now.Add(cooldown)
+	}
+	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+		t.Fatalf("after %d fires: got %v, want giveUp", fires, got)
+	}
+	a.tokenRestartGaveUp = true
+
+	// 2. The 3rd restart relaunches the CLI: StartedAt advances to "now", and
+	// for the next few ticks the pane shows no login prompt because it is
+	// still booting, not because it cleared.
+	restartedAt := now
+	a.StartedAt = &restartedAt
+
+	for tick := 1; tick <= 3; tick++ {
+		pollTime := restartedAt.Add(time.Duration(tick) * time.Second)
+		// This is pollTmuxOutputForAgent's else branch, reproduced exactly:
+		// showsLogin is false (blank boot pane) so it reaches the reset guard.
+		if tokenRestartLatchClears(a, pollTime) {
+			a.tokenRestartAttempts = 0
+			a.tokenRestartGaveUp = false
+		}
+		if a.tokenRestartGaveUp != true {
+			t.Fatalf("tick %d: give-up latch cleared by the boot pane of its own restart (#6578)", tick)
+		}
+	}
+
+	// 3. The CLI finishes booting and paints the login prompt again. Because
+	// the latch held, a 4th restart must not fire.
+	postBoot := restartedAt.Add(time.Duration(tokenRestartMaxAttempts+1) * cooldown)
+	if got := a.decideTokenRestart(postBoot); got != tokenRestartGiveUp {
+		t.Fatalf("login reappeared after the boot pane: got %v, want giveUp (no 4th restart)", got)
+	}
+	if a.tokenRestartAttempts != tokenRestartMaxAttempts {
+		t.Fatalf("attempts = %d after the boot-pane ticks, want unchanged at %d",
+			a.tokenRestartAttempts, tokenRestartMaxAttempts)
+	}
+
+	// 4. A genuine clear (pane healthy well past boot grace) DOES re-arm.
+	genuineClear := restartedAt.Add(cliBootGraceSeconds*time.Second + time.Second)
+	if !tokenRestartLatchClears(a, genuineClear) {
+		t.Fatalf("a healthy pane past boot grace must re-arm the cap")
+	}
+	a.tokenRestartAttempts = 0
+	a.tokenRestartGaveUp = false
+	if got := a.decideTokenRestart(genuineClear); got != tokenRestartFire {
+		t.Fatalf("after a genuine clear: got %v, want fire (cap re-armed)", got)
+	}
+}
+
 // --- the diagnosis -----------------------------------------------------------
 
 func TestDiagnoseStuckLoginNamesTheSessionStateFile(t *testing.T) {
