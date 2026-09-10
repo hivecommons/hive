@@ -87,8 +87,13 @@ type IssueResponse struct {
 	Number         int    `json:"number,omitempty"`
 	URL            string `json:"url,omitempty"`
 	AlreadyExisted bool   `json:"already_existed,omitempty"`
-	Error          string `json:"error,omitempty"`
-	At             string `json:"at"`
+	// RejectedDuplicate reports that no issue was created because a maintainer
+	// recently closed an agent-filed issue covering the same file set as
+	// not-planned or duplicate (#6463). Number/URL point at that closed issue
+	// so the agent can read the rebuttal instead of re-litigating it.
+	RejectedDuplicate bool   `json:"rejected_duplicate,omitempty"`
+	Error             string `json:"error,omitempty"`
+	At                string `json:"at"`
 }
 
 // IssueRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -317,6 +322,28 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	default: // "issue"
 		var res CreateIssueResult
 		res, err = c.CreateIssue(ctx, req.Repo, req.Title, body, req.Labels)
+		if err == nil && res.RejectedTwin {
+			// Terminal, not retried: a maintainer already rejected this
+			// finding, and no amount of retrying changes their verdict
+			// (#6463). The result names the closed issue so the agent reads
+			// the rebuttal instead of rephrasing the finding next kick.
+			resp.OK = false
+			resp.RejectedDuplicate = true
+			resp.Number = res.Number
+			resp.URL = res.URL
+			resp.Error = fmt.Sprintf("not filed: a maintainer closed issue #%d (%s) as %q over the same file references within the last 30 days; do not re-file this finding — read the closure rationale and record the rejection instead", res.Number, res.URL, res.RejectedReason)
+			c.recordCreationAudit(AuditActionAgentIssueRejectedDuplicate, meta,
+				"repo", req.Repo,
+				"number", strconv.Itoa(res.Number),
+				"url", res.URL)
+			c.writeIssueResult(path, resp)
+			_ = os.Remove(path)
+			c.issueClearRetry(path)
+			c.logger.Info("issue-request watcher: create refused, maintainer-rejected twin exists",
+				slog.String("repo", req.Repo), slog.Int("closed_issue", res.Number),
+				slog.String("state_reason", res.RejectedReason), slog.String("agent", req.Agent))
+			return
+		}
 		if err == nil {
 			resp.OK = true
 			resp.Number = res.Number
@@ -407,6 +434,12 @@ type CreateIssueResult struct {
 	// (or an agent-side "timed out but actually created" ambiguity) never
 	// yields a second issue.
 	AlreadyExisted bool
+	// RejectedTwin is true when no issue was created because a maintainer
+	// recently closed an App-bot-filed issue with the same file-reference set
+	// as not-planned/duplicate (#6463). Number/URL identify that closed issue
+	// and RejectedReason carries its state_reason.
+	RejectedTwin   bool
+	RejectedReason string
 }
 
 // CreateIssue creates an issue as the hive's App bot, ensuring requested labels
@@ -446,6 +479,25 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 		c.logger.Info("CreateIssue: open issue with identical title exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()))
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
+	}
+
+	// Rejected-finding gate (#6463): a maintainer who recently closed an
+	// agent-filed issue over the same file set as not-planned/duplicate has
+	// already answered this finding, however it is reworded this time. A
+	// failed lookup files anyway — suppression only on positive evidence.
+	if twin, err := c.findRejectedTwin(ctx, owner, repoName, title, body); err != nil {
+		c.logger.Warn("CreateIssue: rejected-twin lookup failed, proceeding to create",
+			slog.String("repo", repoName), slog.String("error", err.Error()))
+	} else if twin != nil {
+		c.logger.Info("CreateIssue: refusing create, maintainer rejected an identical-file-set finding",
+			slog.String("repo", repoName), slog.Int("closed_issue", twin.GetNumber()),
+			slog.String("state_reason", twin.GetStateReason()))
+		return CreateIssueResult{
+			Number:         twin.GetNumber(),
+			URL:            twin.GetHTMLURL(),
+			RejectedTwin:   true,
+			RejectedReason: twin.GetStateReason(),
+		}, nil
 	}
 
 	// Ensure labels exist; a label that cannot be ensured is dropped (labels

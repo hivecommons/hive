@@ -38,6 +38,13 @@ gh issue create --repo "$HIVE_REPO" \
   --label "bug"
 ```
 
+The hive fulfills this asynchronously and writes a `.result.json` next to the
+request. If that result reports `"rejected_duplicate": true`, a maintainer
+recently closed an agent-filed issue covering the same files as not-planned or
+duplicate — the finding was reviewed and REJECTED. Do not re-file it, do not
+reword it and try again: read the closed issue the result points at, record the
+rejection in a bead citing it, and move on.
+
 ## Writing Beads
 
 Also record each finding as a bead:

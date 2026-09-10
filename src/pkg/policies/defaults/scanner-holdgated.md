@@ -44,6 +44,12 @@ gh issue create --repo "$HIVE_REPO" \
   --label "bug"
 ```
 
+If the request's `.result.json` reports `"rejected_duplicate": true`, a
+maintainer recently closed an agent-filed issue covering the same files as
+not-planned or duplicate — the finding was reviewed and REJECTED. Do not
+re-file or reword it: read the closed issue the result points at, record the
+rejection in a bead citing it, and move on.
+
 ## Opening Hold-Gated PRs
 
 1. Create a worktree: `git worktree add /tmp/scanner-fix-<slug> -b scanner/fix-<slug>`
