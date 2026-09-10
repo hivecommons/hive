@@ -459,8 +459,9 @@ is down; `:3002` healthy but `:3001` failing means the auth proxy refused to
 start.
 
 One related status is also nginx-origin but never wears this body: **429** on
-the `/api/auth/*` and device-flow paths is the gateway's `limit_req` rate
-limiter, not a service failure — back off and retry after the window.
+`/api/auth/token` and the `/api/gh-user-auth/` device-flow paths is the
+gateway's `limit_req` rate limiter, not a service failure — back off and
+retry after the window.
 
 ## Health endpoints
 
