@@ -1510,6 +1510,13 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 // --- Agent control endpoints ---
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: the kick prompt is typed verbatim into the agent's CLI
+	// session, and agents execute shell commands with App-scoped credentials.
+	// Without this gate any read-write contributor could inject arbitrary
+	// prompts into any agent (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	var body struct {
 		Prompt  string `json:"prompt"`
@@ -1765,6 +1772,11 @@ func (s *Server) validateModelForAgent(name, model string) error {
 }
 
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
+	// Owner-only, matching handleEffortSet: switching backends persists to
+	// hive.yaml, claims operator field-ownership, and restarts the agent (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	backend := sanitizeString(r.PathValue("backend"))
 
@@ -1790,6 +1802,11 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
+	// Owner-only, matching handleEffortSet: the model is the same class of
+	// operator-owned agent configuration as the reasoning effort (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	model := sanitizeString(r.PathValue("model"))
 
@@ -2094,6 +2111,11 @@ func (s *Server) handleBreakerRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: pinning claims operator ownership of an agent config
+	// dimension and persists to hive.yaml (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	dimension := r.PathValue("dimension")
 
@@ -2159,6 +2181,10 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
+	// Owner-only, symmetric with handlePin (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	dimension := r.PathValue("dimension")
 
@@ -2185,6 +2211,11 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	// Owner-only, matching handlePause/handleResume: restarting an agent is
+	// the same class of lifecycle control as pausing it (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// Serialize restart operations to prevent concurrent pause/resume cycles
@@ -2204,6 +2235,11 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: clearing the restart counter defeats the crash-loop
+	// breaker's escalation history (#6557).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	if err := s.deps.AgentMgr.ResetRestartCount(name); err != nil {
