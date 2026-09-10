@@ -1005,6 +1005,8 @@ func TestHandleKickPromptTooLong(t *testing.T) {
 	body := `{"prompt":"` + longPrompt + `"}`
 	req := httptest.NewRequest("POST", "/api/kick/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 

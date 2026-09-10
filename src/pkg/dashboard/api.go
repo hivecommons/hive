@@ -1543,6 +1543,9 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 // --- Agent control endpoints ---
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	var body struct {
 		Prompt  string `json:"prompt"`
@@ -1798,6 +1801,9 @@ func (s *Server) validateModelForAgent(name, model string) error {
 }
 
 func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	backend := sanitizeString(r.PathValue("backend"))
 
@@ -1823,6 +1829,9 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	model := sanitizeString(r.PathValue("model"))
 
@@ -2127,6 +2136,9 @@ func (s *Server) handleBreakerRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	dimension := r.PathValue("dimension")
 
@@ -2192,6 +2204,9 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 	dimension := r.PathValue("dimension")
 
@@ -2218,6 +2233,9 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// Serialize restart operations to prevent concurrent pause/resume cycles
@@ -2237,6 +2255,9 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	if err := s.deps.AgentMgr.ResetRestartCount(name); err != nil {
