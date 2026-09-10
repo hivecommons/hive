@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hive-bee.png" alt="Hive" width="120" height="120">
+</p>
+
 # Hive
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14261/badge)](https://www.bestpractices.dev/projects/14261)
