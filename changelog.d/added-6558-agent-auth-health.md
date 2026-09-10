@@ -1,0 +1,1 @@
+- The dashboard and heartbeat health summary now include an `agent_auth` check that fails when any enabled agent is actively blocked by an inference-provider auth error, making fleet-wide Copilot licensing/token failures visible without opening each agent terminal ([#6558](https://github.com/hivecommons/hive/issues/6558)).

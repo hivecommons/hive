@@ -564,6 +564,66 @@ func TestBuildFrontendStatus(t *testing.T) {
 	}
 }
 
+func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		},
+		GitHub: config.GitHubConfig{Token: "tok"},
+	}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:                      "scanner",
+			Config:                    cfg.Agents["scanner"],
+			State:                     agent.StateRunning,
+			OutputBuffer:              agent.NewRingBuffer(10),
+			ProviderErrorClass:        "auth",
+			ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
+			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
+		},
+		"quality": {
+			Name:         "quality",
+			Config:       cfg.Agents["quality"],
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+		},
+	}
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if got := payload.Health["agent_auth"]; got != 0 {
+		t.Fatalf("health.agent_auth = %v, want 0 while a provider auth block is active", got)
+	}
+}
+
+func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		},
+		GitHub: config.GitHubConfig{Token: "tok"},
+	}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:                      "scanner",
+			Config:                    cfg.Agents["scanner"],
+			State:                     agent.StateRunning,
+			OutputBuffer:              agent.NewRingBuffer(10),
+			ProviderErrorClass:        "auth",
+			ProviderErrorLine:         "old auth error",
+			ProviderErrorBackoffUntil: time.Now().Add(-time.Minute),
+		},
+	}
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if got := payload.Health["agent_auth"]; got != 1 {
+		t.Fatalf("health.agent_auth = %v, want 1 after provider auth backoff expires", got)
+	}
+}
+
 func TestBuildFrontendStatusACMMLevelConfigured(t *testing.T) {
 	cfg := &config.Config{}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)

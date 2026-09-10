@@ -106,6 +106,75 @@ func TestHealthSummary_QuietByDesignAgentsAreIdleNotDown(t *testing.T) {
 	}
 }
 
+func TestHealthSummary_AgentAuthCheckAggregatesProviderAuthBlocks(t *testing.T) {
+	deps := testDeps(t)
+	deps.Config.Agents = map[string]config.AgentConfig{
+		"scanner": {Backend: "copilot", Enabled: true},
+		"quality": {Backend: "copilot", Enabled: true},
+	}
+	deps.Config.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{"scanner": "15m", "quality": "15m"}},
+	}}
+	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
+	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	healthAgentStatuses = func() map[string]*agent.AgentProcess {
+		return map[string]*agent.AgentProcess{
+			"scanner": {
+				State:                     agent.StateRunning,
+				Config:                    deps.Config.Agents["scanner"],
+				ProviderErrorClass:        "auth",
+				ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
+				ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
+			},
+			"quality": {State: agent.StateRunning, Config: deps.Config.Agents["quality"]},
+		}
+	}
+	t.Cleanup(func() { healthAgentStatuses = nil })
+
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.MarkReady()
+	s.startedAt = time.Now().Add(-2 * healthBootGrace)
+
+	status, detail := healthCheckOf(t, s, "agent_auth")
+	if status != "fail" {
+		t.Fatalf("agent_auth status = %q, want fail", status)
+	}
+	if !strings.Contains(detail, "1 blocked by inference auth: scanner") {
+		t.Fatalf("agent_auth detail = %q, want scanner named", detail)
+	}
+}
+
+func TestHealthSummary_AgentAuthCheckIgnoresExpiredProviderBlocks(t *testing.T) {
+	deps := testDeps(t)
+	cfg := config.AgentConfig{Backend: "copilot", Enabled: true}
+	deps.Config.Agents = map[string]config.AgentConfig{"scanner": cfg}
+	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
+	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	healthAgentStatuses = func() map[string]*agent.AgentProcess {
+		return map[string]*agent.AgentProcess{
+			"scanner": {
+				State:                     agent.StateRunning,
+				Config:                    cfg,
+				ProviderErrorClass:        "auth",
+				ProviderErrorLine:         "expired auth block",
+				ProviderErrorBackoffUntil: time.Now().Add(-time.Minute),
+			},
+		}
+	}
+	t.Cleanup(func() { healthAgentStatuses = nil })
+
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.MarkReady()
+	s.startedAt = time.Now().Add(-2 * healthBootGrace)
+
+	status, detail := healthCheckOf(t, s, "agent_auth")
+	if status != "pass" || detail != "" {
+		t.Fatalf("agent_auth check = %q/%q, want pass with no detail", status, detail)
+	}
+}
+
 func scannedTokenCollector(t *testing.T, dir string, live bool) *tokens.Collector {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

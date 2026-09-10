@@ -265,17 +265,21 @@ func BuildFrontendStatus(
 
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
+	agents := buildAgents(agentStatuses, cfg, govState)
+	health := buildHealth(ghClient, ctx)
+	mergeAgentAuthHealth(health, agents)
+
 	payload := &StatusPayload{
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
 		HiveID:              cfg.HiveID,
-		Agents:              buildAgents(agentStatuses, cfg, govState),
+		Agents:              agents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
 		Governor:            buildGovernor(govState, cfg),
 		Tokens:              buildTokens(tokenCollector),
 		Repos:               buildRepos(cfg, actionable),
 		Beads:               BuildBeadsFromConfig(beadStores, cfg),
 		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
-		Health:              buildHealth(ghClient, ctx),
+		Health:              health,
 		Budget:              buildBudget(gov, tokenCollector),
 		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses),
 		GHRateLimits:        buildGHRateLimits(ghClient, ctx, cfg),
@@ -290,6 +294,20 @@ func BuildFrontendStatus(
 		Security:            buildSecurity(cfg),
 	}
 	return payload
+}
+
+func mergeAgentAuthHealth(health map[string]any, agents []FrontendAgent) {
+	if health == nil {
+		return
+	}
+	for _, a := range agents {
+		if a.StructuredStatus == "BLOCKED" &&
+			strings.Contains(strings.ToLower(a.StatusEvidence), "blocked: inference (auth)") {
+			health["agent_auth"] = 0
+			return
+		}
+	}
+	health["agent_auth"] = 1
 }
 
 // agentDisabledInConfig reports whether an agent is switched OFF in config —

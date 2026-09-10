@@ -2531,6 +2531,7 @@
       if (!health || Object.keys(health).length === 0) { setIfChanged(el, '<span style="color:var(--muted);font-size:0.8rem">Loading…</span>'); return; }
       const items = [
         { key: 'ci', label: 'CI Pass Rate', type: 'pct' },
+        { key: 'agent_auth', label: 'Agent Auth' },
         { key: 'brew', label: 'Brew Formula' },
         { key: 'helm', label: 'Helm Chart' },
         { key: 'nightly', label: 'Nightly Tests' },
@@ -3781,7 +3782,8 @@ function burnAreaChart() {
       ci: 'CI Pass Rate', brew: 'Homebrew', helm: 'Helm', nightly: 'Nightly',
       nightlyCompliance: 'Compliance', nightlyDashboard: 'Dashboard', nightlyGhaw: 'GHAW',
       nightlyPlaywright: 'Playwright', nightlyRel: 'Release', weekly: 'Weekly',
-      weeklyRel: 'Weekly Rel', hourly: 'Hourly', deploy_vllm_d: 'vLLM-d', deploy_pok_prod: 'POK'
+      weeklyRel: 'Weekly Rel', hourly: 'Hourly', deploy_vllm_d: 'vLLM-d', deploy_pok_prod: 'POK',
+      agent_auth: 'Agent Auth'
     };
     function _buildHealthLabels(agents) {
       const labels = { ...HEALTH_LABEL_DEFAULTS };
