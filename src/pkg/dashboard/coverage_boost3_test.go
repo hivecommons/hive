@@ -420,6 +420,7 @@ func TestHandleKick_ValidAgent(t *testing.T) {
 	body := `{"message":"test kick"}`
 	req := httptest.NewRequest("POST", "/api/kick/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handleKick(w, req)
@@ -432,6 +433,7 @@ func TestHandleKick_ValidAgent(t *testing.T) {
 func TestHandleKick_EmptyBody(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/kick/scanner", strings.NewReader(""))
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handleKick(w, req)
@@ -448,6 +450,7 @@ func TestHandleRestart_ScannerAgent(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/restart/scanner", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handleRestart(w, req)

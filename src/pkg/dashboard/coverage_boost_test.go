@@ -1690,6 +1690,7 @@ func TestHandleKick_AgentNotFound(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/kick/nonexistent", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "nonexistent")
 	w := httptest.NewRecorder()
 	srv.handleKick(w, req)
