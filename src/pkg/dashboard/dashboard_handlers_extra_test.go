@@ -192,6 +192,7 @@ func TestHandleKickUnknownAgent(t *testing.T) {
 	body := `{"agent":"nonexistent"}`
 	req := httptest.NewRequest("POST", "/api/agents/nonexistent/kick", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKick(w, req)
 
@@ -633,6 +634,7 @@ func TestHandleKnowledgeExportMarkdown(t *testing.T) {
 func TestHandleRestartUnknownAgent(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/restart/nonexistent", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -645,6 +647,7 @@ func TestHandleRestartUnknownAgent(t *testing.T) {
 func TestHandleRestartKnownAgent(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/restart/scanner", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
