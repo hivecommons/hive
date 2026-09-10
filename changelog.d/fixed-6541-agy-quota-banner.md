@@ -1,0 +1,1 @@
+- The contributor relay now detects agy's chrome-less "⚠ Individual quota reached" provider quota banner as a fatal API error and dismisses its post-error feedback survey, instead of stalling for 20 minutes and misreporting the task as an `[environment]` failure ([#6541](https://github.com/hivecommons/hive/issues/6541)).
