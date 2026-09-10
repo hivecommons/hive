@@ -191,6 +191,13 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		switch {
 		case strings.Contains(lower, "insufficient_quota"):
 			return providerErrorMatch{Class: "quota", Line: trimmed}, true
+		// Copilot CLI renders a revoked/expired seat as a bare
+		// "✗ You are not licensed to use Copilot. (Request ID: …)" — no HTTP
+		// status, no "unauthorized"/"forbidden" — so the status-code branches
+		// below never fire and the agent kept reporting as running while every
+		// turn failed (#6500). It is the 403 the upstream API actually returns.
+		case strings.Contains(lower, "not licensed to use copilot"):
+			return providerErrorMatch{Class: "auth", Line: trimmed}, true
 		case strings.Contains(lower, "rate_limit") ||
 			((strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many requests")) && providerLineHasAPIContext(lower)):
 			return providerErrorMatch{Class: "rate_limit", Line: trimmed}, true

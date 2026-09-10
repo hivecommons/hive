@@ -1,0 +1,1 @@
+- Hosted agents whose Copilot CLI reports "You are not licensed to use Copilot" are now classified as blocked on inference auth (with the pane line surfaced in the dashboard) instead of showing as running while every turn fails ([#6500](https://github.com/hivecommons/hive/issues/6500)).
