@@ -318,6 +318,18 @@
                           },
                           "lastError": {
                             "type": "string"
+                          },
+                          "backendAuthStatus": {
+                            "type": "string",
+                            "description": "Agent backend-auth canary (#6558): ok/unlicensed/token-expired/unreachable/quota, derived from classifyProviderError. Omitted when ok."
+                          },
+                          "backendAuthSince": {
+                            "type": "string",
+                            "description": "RFC 3339 timestamp of when backendAuthStatus's current value began."
+                          },
+                          "backendAuthLastError": {
+                            "type": "string",
+                            "description": "The offending pane line that produced backendAuthStatus."
                           }
                         }
                       }

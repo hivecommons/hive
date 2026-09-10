@@ -212,6 +212,14 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		// believes is running; SessionMissing enforces that itself.
 		SessionMissing: mgr.SessionMissing(name),
 	}
+	// BackendAuth (#6558): only carried when the spoke has actually observed a
+	// failure (Status != "" and != ok) — an ok/never-classified agent leaves
+	// these empty, read by the hub as no-signal exactly like a legacy spoke.
+	if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+		act.BackendAuthStatus = status
+		act.BackendAuthSince = proc.BackendAuth.Since
+		act.BackendAuthLastError = proc.BackendAuth.LastError
+	}
 	if proc.StartedAt != nil {
 		act.StartedAt = *proc.StartedAt
 	}

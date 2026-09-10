@@ -378,6 +378,18 @@ type AgentSummary struct {
 	// last fields explain the newest restart. The hub may add ResetAt/ResetBy
 	// when rendering fleet rows after an operator reset.
 	Restarts AgentRestartTelemetry `json:"restarts,omitempty"`
+	// BackendAuth* is the per-agent backend-auth canary (#6558): the spoke's
+	// own classification of whether this agent's inference backend currently
+	// authenticates (agent.BackendAuthState, derived from
+	// classifyProviderError), sent so the hub can tell "every agent on this
+	// hive is unlicensed/token-expired/unreachable/quota-blocked" from any
+	// other reason a kick might be quiet — the #6500 gap: a hive can run for
+	// hours with every agent dead on a licence rejection with nothing but a
+	// human Terminal session noticing. Empty status means ok, identical to a
+	// legacy spoke that predates the field.
+	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -423,6 +435,10 @@ type AgentActivity struct {
 	StartFailureExitCode *int
 	StartFailureSignal   string
 	Restarts             AgentRestartTelemetry
+	// BackendAuth* — see the matching AgentSummary fields (#6558).
+	BackendAuthStatus    string
+	BackendAuthSince     time.Time
+	BackendAuthLastError string
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -454,6 +470,8 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartBlocked:         act.StartBlocked,
 		StartFailureExitCode: act.StartFailureExitCode,
 		StartFailureSignal:   act.StartFailureSignal,
+		BackendAuthStatus:    act.BackendAuthStatus,
+		BackendAuthLastError: act.BackendAuthLastError,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -466,6 +484,9 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	}
 	if !act.StartFailureLastAt.IsZero() {
 		as.StartFailureLastAt = act.StartFailureLastAt.UTC().Format(time.RFC3339)
+	}
+	if !act.BackendAuthSince.IsZero() {
+		as.BackendAuthSince = act.BackendAuthSince.UTC().Format(time.RFC3339)
 	}
 	if act.KickInterval > 0 {
 		as.KickIntervalSec = int64(act.KickInterval / time.Second)

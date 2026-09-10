@@ -159,6 +159,17 @@ type RegistryEntry struct {
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
 	// GatewayHealth is the spoke-reported set of currently failing inference gateways.
 	GatewayHealth []inferencehealth.GatewayStatus `json:"gatewayHealth,omitempty"`
+	// AuthHealth is the hub-COMPUTED fleet-wide agent backend-auth canary
+	// (#6558): ok / degraded / down, derived from this hive's Agents'
+	// BackendAuthStatus/BackendAuthSince by evaluateAuthHealth on every
+	// heartbeat. Unlike InferenceAuthError (spoke-computed, one inference
+	// gateway), this looks at every enabled AGENT's own classified backend
+	// auth state and is what the fleet badge and the down-transition
+	// notification key off. AuthHealthSince is when the current AuthHealth
+	// status began (zero when ok).
+	AuthHealth       string    `json:"authHealth,omitempty"`
+	AuthHealthReason string    `json:"authHealthReason,omitempty"`
+	AuthHealthSince  time.Time `json:"authHealthSince,omitempty"`
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
@@ -1886,6 +1897,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].StartFailureCount = clampInt(payload.Agents[i].StartFailureCount, 0, 1_000_000)
 				payload.Agents[i].StartFailureLastAt = sanitizeField(payload.Agents[i].StartFailureLastAt)
 				payload.Agents[i].StartFailureSignal = sanitizeHeartbeatField(payload.Agents[i].StartFailureSignal)
+				// BackendAuth (#6558): Status is a closed identifier set
+				// (agent.BackendAuthUnlicensed etc.), Since a timestamp, and
+				// LastError prose from the offending pane line — same
+				// treatment as the other three field kinds beside it.
+				payload.Agents[i].BackendAuthStatus = sanitizeHeartbeatField(payload.Agents[i].BackendAuthStatus)
+				payload.Agents[i].BackendAuthSince = sanitizeField(payload.Agents[i].BackendAuthSince)
+				payload.Agents[i].BackendAuthLastError = sanitizeProseField(payload.Agents[i].BackendAuthLastError)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -1984,6 +2002,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RepoActivityWindowHours:      clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
 		RepoActivityCountWindowHours: clampInt(payload.RepoActivityCountWindowHours, 0, repoActivityMaxWindowHours),
 	}
+
+	// Fleet-wide agent backend-auth canary (#6558): computed hub-side from
+	// the just-sanitized entry.Agents, exactly once per heartbeat, so the
+	// registry always carries the current verdict rather than a stale one
+	// from whenever an operator last looked.
+	authHealth := evaluateAuthHealth(entry.Agents, time.Now())
+	entry.AuthHealth = authHealth.Status
+	entry.AuthHealthReason = authHealth.Reason
+	entry.AuthHealthSince = authHealth.Since
 
 	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
 	// window_1h buckets into the hub's per-component retention ring. Runs on
@@ -2454,6 +2481,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.recordHeartbeatTransitions(&prevEntry, &entry)
 	} else {
 		s.recordTimeline(entry.ID, TimelineCameOnline, "hive registered with the hub for the first time", "")
+	}
+
+	// Auth-health down-transition notification (#6558): ONE Slack DM to the
+	// hive owner the moment auth_health enters "down", reusing the exact
+	// notification plumbing notifyOwnerAccessRequest already uses (there is
+	// no hub-side email sender). prevEntry is the zero value when hadPrev is
+	// false (brand-new hive), whose AuthHealth is "" != down, so a hive that
+	// heartbeats "down" on its very FIRST beat (a fresh restart inheriting an
+	// already-broken credential) still notifies once, while a hive beating
+	// "down" every 2 minutes for hours does not spam.
+	if entry.AuthHealth == AuthHealthDown && prevEntry.AuthHealth != AuthHealthDown {
+		s.notifyOwnerAuthHealthDown(entry)
 	}
 
 	// Sample the fleet-total token trend. Deliberately AFTER s.mu.Unlock():

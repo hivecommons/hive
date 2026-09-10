@@ -269,6 +269,65 @@ them is simply not judged on them.
 
 For L3-L6 hives, newer spokes add optional heartbeat fields that explain stale write/merge streams: the most recent write-capable kick, the last kick disposition or skip reason, and how many queued items were deliberately deemed not writable. The hub treats missing fields as an old spoke and keeps the legacy red `no write in Nd (M queued)` behavior. When the fields are present, the verdict can distinguish a broken pipeline (recent write-capable kicks but no writes) from quiet-by-design states such as no due agents, budget-suppressed kicks, advisory-only operation, or work that agents intentionally declined as not writable.
 
+## Agent backend-auth health canary (#6558)
+
+The verdict above answers "is this hive producing output?" — but a hive whose
+agents cannot even authenticate to their model backend produces nothing to
+judge, and (before this canary) could sit at a stale green/unknown verdict
+indefinitely. That is exactly what happened in #6500 (every agent hit
+`You are not licensed to use Copilot`) and #6489 (a self-hosted inference
+backend went unreachable): the fleet was fully down and nothing on the hub or
+dashboard said so until a human happened to open a terminal.
+
+Each agent tracks its own `backend_auth` state, derived from the same
+provider-error classifier the dashboard already uses
+(`classifyProviderError` in `src/pkg/agent/pane_classify.go`):
+
+| Status | Meaning |
+|---|---|
+| `ok` | The agent's last completed turn succeeded, or it has never seen an auth-shaped provider error. |
+| `unlicensed` | The provider rejected the account/token as not licensed to use this backend (the #6500 shape). |
+| `token-expired` | The provider returned an auth failure (401/403) that isn't the licensing message. |
+| `unreachable` | The inference backend itself could not be reached (the #6489 shape). |
+| `quota` | The provider is refusing calls on quota grounds. |
+
+This is per-agent state, visible on the spoke dashboard's `/api/status`
+(`backendAuthStatus` / `backendAuthSince` / `backendAuthLastError` on each
+agent, omitted entirely when the agent is `ok`) and carried in the same
+heartbeat the spoke already sends the hub.
+
+The hub aggregates per hive into `auth_health`, stored on the hive's registry
+entry and returned from the fleet/My-Hives APIs alongside the health verdict:
+
+| `auth_health` | Meaning |
+|---|---|
+| `ok` | Every enabled agent's `backend_auth` is `ok`. |
+| `degraded` | At least one, but not all, enabled agents are failing backend auth. |
+| `down` | **Every** enabled agent has been failing backend auth for longer than the down threshold — default 15 minutes, configurable per hub via the `HIVE_HUB_AUTH_HEALTH_DOWN_THRESHOLD` env var (a Go duration string, e.g. `10m`). |
+
+On `/fleet` and My Hives, a hive whose `auth_health` is `down` renders its row
+red (`problem`) regardless of what the base verdict would otherwise say, and
+the expanded diagnosis block names the failing agents and their status —
+this is deliberately checked before every other verdict signal, so a fleet
+that is silently dead can never hide behind a stale green dot.
+
+**Notification.** When a hive's `auth_health` transitions from `ok`/`degraded`
+to `down`, the hub sends the hive owner one Slack DM (the same
+`HIVE_HUB_SLACK_BOT_TOKEN` + `slack_id` channel issue #4149's access-request
+notifier uses — see `src/pkg/hub/auth_health_notify.go`). Exactly one DM per
+down episode: the hub does not re-notify while the hive stays down, and only
+notifies again after a genuine recovery to `ok` followed by a second,
+independent outage. If no Slack token or no `slack_id` is on file for the
+owner, the hub logs a structured `Warn` line instead of failing silently.
+
+This canary is intentionally a separate signal from the health verdict above,
+not yet folded into its cause/remediation taxonomy (see [where the verdict
+comes from](#where-the-verdict-comes-from-for-the-curious)) — the verdict's
+precondition-red ordering and per-cause remediation hints are their own
+well-tested surface, and merging `auth_health` into that taxonomy is left as
+a deliberate follow-up rather than risking that machinery in the same change
+that adds the canary.
+
 ## Troubleshooting: symptom → hint → fix
 
 | Symptom on `/fleet` | What it means | Fix, and where |
