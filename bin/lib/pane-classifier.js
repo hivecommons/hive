@@ -85,6 +85,7 @@ const UNRETRYABLE_API_ERROR_PATTERNS = [
   'team not allowed to access',
   'exceeded your monthly quota',
   'used all your copilot free chat requests',
+  'individual quota reached',
   'budget_exceeded',
   'budget has been exceeded',
   'provider spending limit reached',
@@ -95,6 +96,22 @@ const UNRETRYABLE_API_ERROR_PATTERNS = [
 // 403 is authorization, not authentication: the caller IS identified and is not
 // permitted, so neither a retry nor a login changes anything (#4400).
 const UNRETRYABLE_API_ERROR_STATUS_RE = /\bAPI Error: 403\b/i;
+// agy renders provider quota exhaustion WITHOUT the "API Error:" chrome — a
+// bare banner the chrome gate below rejects before any pattern is consulted
+// (kubestellar/hive#6541, the third chrome-less case the #5121 residual note
+// predicted):
+//
+//   ⚠ Individual quota reached. Please upgrade your subscription to increase
+//     your limits. Resets in 38m29s.
+//
+// Left undetected, the relay kept dispatching tasks into the quota-blocked CLI
+// and booked each one as an [environment] failure 20 minutes later. The anchor
+// here is agy's own error glyph at line start — the analogue of Claude's
+// "● API Error:" bullet — paired with the quota wording, so two independent
+// signals are still required: an agent whose completed-turn PROSE merely
+// mentions "individual quota reached" (this repo contains the string) does not
+// start its line with the ⚠ chrome and is not tripped.
+const CHROMELESS_QUOTA_BANNER_RE = /^\s*⚠\s[^\n]*\bquota reached\b/i;
 // The visible tail the error must appear in. Matching the whole pane would let
 // an error the agent already recovered from read as current.
 const TRANSIENT_API_ERROR_TAIL_LINES = 12;
@@ -117,6 +134,13 @@ function blockingPromptKey(text, backend) {
   // Enter. The other two steps (theme picker, folder trust) do advance on a
   // bare Enter and deliberately fall through to null.
   if (backend === 'agy' && /Terms of Service & Data Use/.test(recent) && /\[(?:Previous|Back)\]\s+\[Done\]/.test(recent)) return 'Down Right';
+  // agy: post-error feedback survey — "How's the CLI experience so far? Help us
+  // improve: [1] Good [2] Fine [3] Bad [0] Skip" (#6541, rendered right after
+  // the quota banner). Skip it: answering a satisfaction survey is not the
+  // relay's call to make, and 0 persists nothing. Both halves are required so
+  // a transcript that merely QUOTES the survey (this comment does) cannot
+  // match without the numbered option row.
+  if (backend === 'agy' && /How'?s the CLI experience so far/i.test(recent) && /\[0\]\s*Skip/.test(recent)) return '0';
   return null;
 }
 
@@ -215,6 +239,14 @@ function classifyReadiness(text, backend) {
       // pane's fixed height.
       const recent = paneTail(text, 15);
       if (/not signed in|Select login method/i.test(recent)) return 'needs-login';
+      // The post-error feedback survey ("How's the CLI experience so far?
+      // [1] Good … [0] Skip", #6541) parks the input behind a modal exactly
+      // like the first-run wizard does — and it outlives the turn that raised
+      // it, so a fresh readiness wait would otherwise sit at 'starting' until
+      // CLI_READY_TIMEOUT_MS. Classify it 'onboarding' so waitForCLI()'s
+      // auto-dismiss path consults blockingPromptKey, which answers it with
+      // "0" (Skip).
+      if (/How'?s the CLI experience so far/i.test(recent) && /\[0\]\s*Skip/.test(recent)) return 'onboarding';
       if (/Choose your color scheme|Terms of Service & Data Use|Do you trust the contents|I trust this (?:folder|directory)|Welcome to (?:the )?Antigravity/i.test(recent)) return 'onboarding';
       // agy shows "? for shortcuts" at the bottom when its interactive prompt
       // is ready. The generic />\s*$/ fires too early during splash, and the
@@ -410,10 +442,13 @@ function paneShowsTransientAPIError(text) {
 // ("API Error: 429 {\"type\":\"budget_exceeded\"...}"), so the gate costs
 // nothing for the errors this exists to catch. A chrome-less quota banner
 // (copilot/bob render some) falls through to the pre-#5094 behavior and is
-// part of the documented #5121 residual.
+// part of the documented #5121 residual — EXCEPT the agy banner, which carries
+// its own ⚠ line-start chrome and is matched by CHROMELESS_QUOTA_BANNER_RE
+// above (#6541).
 function paneShowsUnretryableAPIError(text) {
   const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
   return lines.some((line) => {
+    if (CHROMELESS_QUOTA_BANNER_RE.test(line)) return true;
     const lower = line.toLowerCase();
     if (!lower.includes('api error:')) return false;
     if (UNRETRYABLE_API_ERROR_PATTERNS.some((pat) => lower.includes(pat))) return true;

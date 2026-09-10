@@ -342,6 +342,11 @@ func lineShowsUpstreamAuthorizationError(line string) bool {
 var quotaExhaustionPatterns = []string{
 	"exceeded your monthly quota",
 	"used all your copilot free chat requests",
+	// agy's chrome-less provider quota banner: "⚠ Individual quota reached.
+	// Please upgrade your subscription to increase your limits." (#6541).
+	// Kept in step with bin/lib/pane-classifier.js's
+	// UNRETRYABLE_API_ERROR_PATTERNS / CHROMELESS_QUOTA_BANNER_RE.
+	"individual quota reached",
 	"budget_exceeded",
 	"budget has been exceeded",
 	"provider spending limit reached",

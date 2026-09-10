@@ -6856,6 +6856,47 @@ test('pane-classifier: paneShowsTransientAPIError/UnretryableAPIError/LoginRequi
   assert.ok(paneClassifier.paneShowsLoginRequiredError('Please run /login · API Error: 401\n'));
 });
 
+// agy renders provider quota exhaustion as a chrome-less banner — no
+// "API Error:" prefix — so the chrome gate rejected it before any pattern was
+// consulted, the relay kept dispatching tasks into the quota-blocked CLI, and
+// each one was booked as an [environment] failure 20 minutes later (#6541).
+test('#6541 agy chrome-less quota banner is a fatal API error, not an invisible stall', () => {
+  const banner = '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 38m29s.';
+  assert.ok(paneClassifier.paneShowsUnretryableAPIError(banner + '\n'),
+    'the ⚠-anchored banner must veto without "API Error:" chrome');
+  // Two independent signals are still required: prose that merely mentions the
+  // wording (this repo now contains it) has no ⚠ line-start chrome, and the
+  // pattern list stays behind the chrome gate.
+  assert.ok(!paneClassifier.paneShowsUnretryableAPIError(
+    'I added Individual quota reached to the pattern list in pane-classifier.js\n'));
+  assert.ok(!paneClassifier.paneShowsUnretryableAPIError('the quota reached a new high today\n'));
+  // End to end: the observed incident pane fails at once as FATAL rather than
+  // falling through to WORKING and dying at the stall backstop.
+  const pane = [
+    '● Bash(ls -la /home/dev/workspace)',
+    banner,
+    'Error ID: cd45be83-870d-4c25-b297-c608fa533664-12',
+    " How's the CLI experience so far? Help us improve:",
+    ' [1] Good  [2] Fine  [3] Bad  [0] Skip',
+  ].join('\n');
+  assert.strictEqual(paneClassifier.classifyPane(pane, 'agy'),
+    paneClassifier.PANE_STATE_FATAL_API_ERROR);
+});
+
+test('#6541 agy post-error survey modal is dismissed with 0 (Skip)', () => {
+  const survey = " How's the CLI experience so far? Help us improve:\n [1] Good  [2] Fine  [3] Bad  [0] Skip\n";
+  assert.strictEqual(paneClassifier.blockingPromptKey(survey, 'agy'), '0');
+  // agy-only: no other backend renders this modal.
+  assert.strictEqual(paneClassifier.blockingPromptKey(survey, 'codex'), null);
+  // A transcript that merely quotes the question without the option row must
+  // not match.
+  assert.strictEqual(paneClassifier.blockingPromptKey(
+    "the summary quotes How's the CLI experience so far without the menu", 'agy'), null);
+  // The modal outlives the turn that raised it, so a readiness wait must see
+  // it as a dismissable gate rather than sitting at 'starting' until timeout.
+  assert.strictEqual(paneClassifier.classifyReadiness(survey, 'agy'), 'onboarding');
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;
