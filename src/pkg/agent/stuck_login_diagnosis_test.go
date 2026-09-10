@@ -383,3 +383,136 @@ func TestDiagnoseStuckLoginUnreadableDoesNotBlameTheAgent(t *testing.T) {
 		t.Errorf("diagnosis should say the identity is undetermined from the hive's view:\n%s", got)
 	}
 }
+
+// --- #6578: the give-up latch must survive its own restart's boot pane -------
+
+func TestPaneAllowsTokenRestartCapResetRequiresPositiveEvidence(t *testing.T) {
+	now := time.Now()
+	past := now.Add(-2 * tokenRestartBootGrace)
+
+	cases := []struct {
+		name             string
+		tail             []string
+		lastTokenRestart time.Time
+		want             bool
+	}{
+		{
+			name:             "blank boot pane is not evidence the login cleared",
+			tail:             []string{"", "   "},
+			lastTokenRestart: now.Add(-1 * time.Second),
+			want:             false,
+		},
+		{
+			name:             "startup chrome without a CLI marker is not evidence",
+			tail:             []string{"Starting agent...", "connecting"},
+			lastTokenRestart: past,
+			want:             false,
+		},
+		{
+			name:             "boot banner carrying a marker word is still inside boot grace",
+			tail:             []string{"Claude Code v2.1.0"},
+			lastTokenRestart: now.Add(-5 * time.Second),
+			want:             false,
+		},
+		{
+			name:             "settled CLI prompt outside boot grace re-arms the cap",
+			tail:             []string{"❯ "},
+			lastTokenRestart: past,
+			want:             true,
+		},
+		{
+			name:             "never token-restarted needs only the marker",
+			tail:             []string{"❯ "},
+			lastTokenRestart: time.Time{},
+			want:             true,
+		},
+		{
+			name:             "stale scrollback marker is out of tail, so no reset",
+			tail:             []string{"", ""},
+			lastTokenRestart: past,
+			want:             false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := paneAllowsTokenRestartCapReset(tc.tail, tc.lastTokenRestart, now)
+			if got != tc.want {
+				t.Fatalf("paneAllowsTokenRestartCapReset(%q) = %v, want %v", tc.tail, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTokenRestartGiveUpSurvivesBootPaneAlternation reproduces the storm in
+// #6578: a pane that alternates blank-during-boot -> login-prompt must reach
+// tokenRestartGiveUp and STAY there. Before the fix the blank boot pane cleared
+// the latch every cycle, so the cap never held and the agent relaunched forever
+// (observed at x1334/24h).
+func TestTokenRestartGiveUpSurvivesBootPaneAlternation(t *testing.T) {
+	a := &AgentProcess{Name: "quality"}
+	now := time.Now()
+	cooldown := time.Duration(tokenRestartCooldownSec) * time.Second
+
+	bootPane := []string{"", "   "} // no login prompt yet, CLI still painting
+	loginPane := []string{"/login"} // the prompt the agent is stuck on
+
+	fired := 0
+	for i := 0; i < 50; i++ {
+		// The login prompt is showing: the poll loop does NOT reset, it decides.
+		switch a.decideTokenRestart(now) {
+		case tokenRestartFire:
+			fired++
+		case tokenRestartGiveUp:
+			// Latch the way the poll loop does.
+			a.tokenRestartGaveUp = true
+		}
+		_ = loginPane
+
+		// Immediately after the restart the pane is blank while the CLI boots.
+		// This is the step that used to clear the cap.
+		now = now.Add(1 * time.Second)
+		if paneAllowsTokenRestartCapReset(bootPane, a.lastTokenRestart, now) {
+			a.tokenRestartAttempts = 0
+			a.tokenRestartGaveUp = false
+		}
+
+		now = now.Add(cooldown)
+	}
+
+	if !a.tokenRestartGaveUp {
+		t.Fatalf("give-up latch did not hold: attempts=%d fired=%d", a.tokenRestartAttempts, fired)
+	}
+	if fired > tokenRestartMaxAttempts {
+		t.Fatalf("restart storm: fired %d times, cap is %d", fired, tokenRestartMaxAttempts)
+	}
+	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+		t.Fatalf("after alternation: got %v, want giveUp", got)
+	}
+}
+
+// TestTokenRestartCapStillReArmsOnRealRecovery guards the opposite direction:
+// the #6578 fix must not strand an agent whose login genuinely cleared.
+func TestTokenRestartCapStillReArmsOnRealRecovery(t *testing.T) {
+	a := &AgentProcess{Name: "quality"}
+	now := time.Now()
+	cooldown := time.Duration(tokenRestartCooldownSec) * time.Second
+
+	const maxProbes = 25
+	for i := 0; i < maxProbes && a.decideTokenRestart(now) != tokenRestartGiveUp; i++ {
+		now = now.Add(cooldown)
+	}
+	a.tokenRestartGaveUp = true
+
+	// The CLI comes up for real: marker present, boot grace elapsed.
+	now = now.Add(2 * tokenRestartBootGrace)
+	if !paneAllowsTokenRestartCapReset([]string{"❯ "}, a.lastTokenRestart, now) {
+		t.Fatal("a settled CLI pane must re-arm the cap")
+	}
+	a.tokenRestartAttempts = 0
+	a.tokenRestartGaveUp = false
+
+	if got := a.decideTokenRestart(now); got != tokenRestartFire {
+		t.Fatalf("after genuine recovery: got %v, want fire", got)
+	}
+}

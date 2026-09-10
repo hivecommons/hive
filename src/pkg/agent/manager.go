@@ -2519,6 +2519,41 @@ const (
 	piContextMarker = "%/"
 )
 
+// paneAllowsTokenRestartCapReset reports whether a pane tail carrying no login
+// prompt is POSITIVE evidence that the CLI is up, and therefore that the
+// token-restart cap may be re-armed.
+//
+// The absence of a login prompt is not sufficient on its own (#6578). A pane
+// also shows no login prompt while the CLI is still booting, which is exactly
+// the state the token-triggered restart itself creates. Treating that as
+// success let the give-up latch be cleared by the boot pane of its own
+// restart, so the cap never held and agents blocked on a human device-flow
+// login relaunched forever (observed at x1334/24h, ~one restart every 65s).
+//
+// Two independent conditions, because either alone is defeatable:
+//
+//   - A CLI marker must be present in the pane TAIL. Matching the tail rather
+//     than the whole capture keeps a stale marker left in scrollback by an
+//     exited CLI from re-arming the loop.
+//   - The pane must be outside the boot grace following the last token
+//     restart. Some CLIs paint a banner containing a marker word ("Claude",
+//     "Copilot") while still booting, so the marker check alone can fire on a
+//     pane that has not finished starting. This mirrors watchdog.BootGrace,
+//     which already refuses to draw conclusions from a pane that has not had
+//     time to paint (watchdog/classify.go:190).
+//
+// lastTokenRestart is zero for an agent that has never been token-restarted,
+// in which case there is no boot to wait out and only the marker matters.
+func paneAllowsTokenRestartCapReset(tail []string, lastTokenRestart, now time.Time) bool {
+	if !paneHasCLIMarker(strings.Join(tail, "\n")) {
+		return false
+	}
+	if !lastTokenRestart.IsZero() && now.Sub(lastTokenRestart) < tokenRestartBootGrace {
+		return false
+	}
+	return true
+}
+
 // paneHasCLIMarker reports whether the given pane content contains any known
 // CLI UI marker.
 func paneHasCLIMarker(output string) bool {
@@ -3201,8 +3236,24 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				// The prompt cleared, so a future "token appeared, nudge it"
 				// restart is a fresh theory rather than a repeat of one that
 				// already failed. Reset both halves of the cap together.
-				agent.tokenRestartAttempts = 0
-				agent.tokenRestartGaveUp = false
+				//
+				// GUARD 5 (#6578): require POSITIVE evidence the CLI is up
+				// before resetting. "No login prompt" is also true while the
+				// CLI is still booting — the pane is blank or painting startup
+				// chrome — which is precisely the state produced by the very
+				// restart that just incremented the cap. Resetting on that
+				// absence let the give-up latch clear itself on the boot pane
+				// of its own restart, so the cap could never hold and agents
+				// blocked on a human device-flow login relaunched forever
+				// (observed at x1334/24h, ~one restart every 65s). Gate on a
+				// CLI marker in the pane TAIL, mirroring watchdog.BootGrace's
+				// refusal to draw conclusions from a pane that has not painted.
+				// Tail rather than the whole capture so a stale marker left in
+				// scrollback by an exited CLI cannot re-arm the loop.
+				if paneAllowsTokenRestartCapReset(tail, agent.lastTokenRestart, time.Now()) {
+					agent.tokenRestartAttempts = 0
+					agent.tokenRestartGaveUp = false
+				}
 			}
 
 			agent.paneMu.Lock()
@@ -6805,7 +6856,13 @@ const (
 	tokenRestartMaxAttempts = 3
 	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
 	// delivery so the restart can never destroy just-delivered work.
-	tokenRestartKickGrace      = 10 * time.Minute
+	tokenRestartKickGrace = 10 * time.Minute
+	// tokenRestartBootGrace is how long after a token-triggered restart a pane
+	// with no login prompt is still treated as "not yet painted" rather than
+	// as evidence the login cleared (#6578). Matches watchdog.DefaultBootGrace
+	// (60s), which is itself pinned to cliReadyTimeout, so both subsystems draw
+	// the boot boundary at the same place.
+	tokenRestartBootGrace      = 60 * time.Second
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
 	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
 )
