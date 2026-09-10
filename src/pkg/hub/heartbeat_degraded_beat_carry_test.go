@@ -89,6 +89,32 @@ func TestHeartbeatUpgradingBeatCarriesProjectIdentityForward(t *testing.T) {
 	}
 }
 
+func TestHeartbeatUpgradingBeatDoesNotStoreZeroStartedAt(t *testing.T) {
+	srv := degradedCarryTestServer(t)
+	const hiveID = "carry-started-at-hive"
+	const knownStartedAt = "2026-09-10T20:00:00Z"
+
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"],"started_at":"`+knownStartedAt+`"}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","upgrading":true,"git_hash":"abc1234","started_at":"0001-01-01T00:00:00Z"}`)
+
+	entry := registryEntryByID(t, srv, hiveID)
+	if entry.StartedAt != knownStartedAt {
+		t.Errorf("StartedAt = %q after zero-time upgrading beat, want previous %q carried forward", entry.StartedAt, knownStartedAt)
+	}
+}
+
+func TestHeartbeatZeroStartedAtIsUnknownForNewEntry(t *testing.T) {
+	srv := degradedCarryTestServer(t)
+	const hiveID = "zero-started-at-hive"
+
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"],"started_at":"0001-01-01T00:00:00Z"}`)
+
+	entry := registryEntryByID(t, srv, hiveID)
+	if entry.StartedAt != "" {
+		t.Errorf("StartedAt = %q, want empty unknown timestamp for Go zero time", entry.StartedAt)
+	}
+}
+
 // TestHeartbeatStatsStaleBeatCarriesProjectIdentityForward covers the minimal
 // liveness beat: identity only, org included but repos historically absent
 // (old spokes omit them from the published identity), marked stats_stale.

@@ -1,0 +1,1 @@
+- The hub dashboard now treats missing or Go zero process start times as unknown instead of rendering multi-century uptimes, and upgrade heartbeats preserve the last known spoke start time so the Uptime column stays accurate during restarts.

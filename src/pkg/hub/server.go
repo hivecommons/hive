@@ -1785,7 +1785,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PrimaryRepo:       safePrimary,
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
-		StartedAt:         sanitizeField(payload.StartedAt),
+		StartedAt:         sanitizeHeartbeatTime(payload.StartedAt),
 		// Duplicate-instance detection. noteReporter returns "" until two
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
@@ -1796,7 +1796,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryLastPostedAt:  sanitizeHeartbeatTime(payload.AdvisoryLastPostedAt),
 		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
 		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
 		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
@@ -1869,8 +1869,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// Timestamps are spoke-reported strings like every other field
 				// here. An unparseable value is later read as "unknown" by the
 				// inactive-agent rule, never as evidence of idleness.
-				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
-				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
+				payload.Agents[i].StartedAt = sanitizeHeartbeatTime(payload.Agents[i].StartedAt)
+				payload.Agents[i].LastActivityAt = sanitizeHeartbeatTime(payload.Agents[i].LastActivityAt)
 				// Pause provenance (#4041). Trigger and actor are identifiers
 				// ("dashboard-api", a GitHub login); the reason is prose the
 				// hover renders to a human; the timestamp keeps its colons via
@@ -1878,7 +1878,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].PausedTrigger = sanitizeHeartbeatField(payload.Agents[i].PausedTrigger)
 				payload.Agents[i].PausedBy = sanitizeHeartbeatField(payload.Agents[i].PausedBy)
 				payload.Agents[i].PausedReason = sanitizeProseField(payload.Agents[i].PausedReason)
-				payload.Agents[i].PausedAt = sanitizeField(payload.Agents[i].PausedAt)
+				payload.Agents[i].PausedAt = sanitizeHeartbeatTime(payload.Agents[i].PausedAt)
 				// Fleet-divergence signals (#hub-fleet-view). Backend is a spoke-
 				// reported identifier (claude/copilot/gemini/…) and is sanitized
 				// like State/Mode. The remaining new signals — ExpectedActive,
@@ -1889,20 +1889,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].Backend = sanitizeHeartbeatField(payload.Agents[i].Backend)
 				payload.Agents[i].Restarts.Total = clampInt(payload.Agents[i].Restarts.Total, 0, 1_000_000)
 				payload.Agents[i].Restarts.Last24h = clampInt(payload.Agents[i].Restarts.Last24h, 0, 1_000_000)
-				payload.Agents[i].Restarts.LastRestartAt = sanitizeField(payload.Agents[i].Restarts.LastRestartAt)
+				payload.Agents[i].Restarts.LastRestartAt = sanitizeHeartbeatTime(payload.Agents[i].Restarts.LastRestartAt)
 				payload.Agents[i].Restarts.LastReason = sanitizeProseField(payload.Agents[i].Restarts.LastReason)
 				payload.Agents[i].Restarts.PodRestarts = clampInt(payload.Agents[i].Restarts.PodRestarts, 0, 1_000_000)
 				payload.Agents[i].StartBlockedReason = sanitizeProseField(payload.Agents[i].StartBlockedReason)
 				payload.Agents[i].StartFailureReason = sanitizeProseField(payload.Agents[i].StartFailureReason)
 				payload.Agents[i].StartFailureCount = clampInt(payload.Agents[i].StartFailureCount, 0, 1_000_000)
-				payload.Agents[i].StartFailureLastAt = sanitizeField(payload.Agents[i].StartFailureLastAt)
+				payload.Agents[i].StartFailureLastAt = sanitizeHeartbeatTime(payload.Agents[i].StartFailureLastAt)
 				payload.Agents[i].StartFailureSignal = sanitizeHeartbeatField(payload.Agents[i].StartFailureSignal)
 				// BackendAuth (#6558): Status is a closed identifier set
 				// (agent.BackendAuthUnlicensed etc.), Since a timestamp, and
 				// LastError prose from the offending pane line — same
 				// treatment as the other three field kinds beside it.
 				payload.Agents[i].BackendAuthStatus = sanitizeHeartbeatField(payload.Agents[i].BackendAuthStatus)
-				payload.Agents[i].BackendAuthSince = sanitizeField(payload.Agents[i].BackendAuthSince)
+				payload.Agents[i].BackendAuthSince = sanitizeHeartbeatTime(payload.Agents[i].BackendAuthSince)
 				payload.Agents[i].BackendAuthLastError = sanitizeProseField(payload.Agents[i].BackendAuthLastError)
 			}
 			const maxAgents = 50
@@ -2164,6 +2164,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					if len(entry.Repos) == 0 && len(h.Repos) > 0 {
 						entry.Repos = h.Repos
 					}
+				}
+				if entry.StartedAt == "" && h.StartedAt != "" {
+					entry.StartedAt = h.StartedAt
 				}
 				// Name was computed from the payload's (possibly empty)
 				// fields at build time — recompute it from the carried ones.
@@ -4476,10 +4479,18 @@ func parseHeartbeatTime(s string) time.Time {
 		return time.Time{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
+	if err != nil || t.IsZero() {
 		return time.Time{}
 	}
 	return t
+}
+
+func sanitizeHeartbeatTime(s string) string {
+	t := parseHeartbeatTime(strings.TrimSpace(s))
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func clampInt64(v, min, max int64) int64 {

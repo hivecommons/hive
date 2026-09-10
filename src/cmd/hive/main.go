@@ -4519,6 +4519,7 @@ func main() {
 					PrimaryRepo:             cfg.Project.PrimaryRepo,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
+					StartedAt:               processStartedAt.UTC().Format(time.RFC3339),
 					GitHash:                 gitShort,
 					ClusterID:               cfg.Hub.ClusterID,
 					HiveType:                cfg.Hub.HiveType,

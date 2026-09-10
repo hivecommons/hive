@@ -12280,6 +12280,13 @@ const dashboardHTML = `<!DOCTYPE html>
       return 'Cumulative tokens consumed, as of the last heartbeat';
     }
 
+    function hiveStartedTime(h) {
+      var raw = h && h.startedAt;
+      if (typeof raw !== 'string' || !raw) return null;
+      var t = Date.parse(raw);
+      return isNaN(t) || t <= 0 ? null : t;
+    }
+
     // uptimeCell renders process uptime for the Uptime column.
     //
     // This used to be an inline pill next to the hive name, which wrapped long
@@ -12295,8 +12302,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var SETTLING_SECS = 3600;        // 1 hour
       var SHOW_SECONDS_BELOW = 90;     // finer granularity while very fresh
       var HOUR_SECS = 3600, DAY_SECS = 86400;
-      if (!h.startedAt) return '<span style="color:var(--muted)">—</span>';
-      var secs = (Date.now() - new Date(h.startedAt).getTime()) / 1000;
+      var startedMs = hiveStartedTime(h);
+      if (startedMs === null) return '<span style="color:var(--muted)">—</span>';
+      var secs = (Date.now() - startedMs) / 1000;
       if (!isFinite(secs) || secs < 0) return '<span style="color:var(--muted)">—</span>';
       var label;
       if (secs < SHOW_SECONDS_BELOW) label = Math.round(secs) + 's';
@@ -15528,6 +15536,14 @@ const dashboardHTML = `<!DOCTYPE html>
           if (ra === null) return 1;
           if (rb2 === null) return -1;
           return _dashSortAsc ? ra - rb2 : rb2 - ra;
+        }
+        if (key === 'startedAt') {
+          var sa = hiveStartedTime(a);
+          var sb = hiveStartedTime(b);
+          if (sa === null && sb === null) return 0;
+          if (sa === null) return 1;
+          if (sb === null) return -1;
+          return _dashSortAsc ? sa - sb : sb - sa;
         }
         if (key === 'quadrant' || key.indexOf('quadrant') === 0) {
           /* Quadrant sorts rank by composite or by one axis. A hive with no
