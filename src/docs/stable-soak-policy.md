@@ -60,6 +60,21 @@ to the GitHub Actions step summary. If the gate fails, the workflow leaves
 required 86400s (24h)` or `newer candidate superseded this digest before the soak
 window completed`.
 
+One hold is expected and benign: the candidate digest is pushed part-way
+through its `docker.yml` run, so an hourly promotion that lands in that window
+sees a candidate whose publishing run has not completed yet. Since v4.24.4
+(`hold_with_reason` in `src/scripts/promote-stable.sh`,
+[#6537](https://github.com/hivecommons/hive/issues/6537)) the workflow reports
+
+> `candidate <digest> comes from docker.yml run <N>, which has not completed
+> yet; re-evaluate on the next schedule`
+
+and the next hourly schedule re-evaluates once the run finishes — no action is
+needed. On builds **before v4.24.4** the same race instead killed the script
+with exit 1 and *no output at all* (the empty `workflow_run_created_at` lookup
+under `set -e`): a Promote Stable Channel run that failed with no step summary
+and nothing in the log is this condition, not a broken gate.
+
 ## Emergency promotion exception
 
 Manual dispatch may set `emergency-exception-reason` to shorten the 24-hour soak.
