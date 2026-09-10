@@ -177,6 +177,52 @@ else
   bad "ancestor walk must stop at a failure"
 fi
 
+# The candidate digest is pushed part-way through its docker.yml run, so a
+# scheduled promotion can observe a candidate whose run is still in progress.
+# workflow_run_created_at then finds no completed run for that generation and
+# the gate used to die under set -e with exit 1 and no output at all (observed
+# 2026-09-10, run 34488998982). It must instead report an explicit hold.
+inflight="$tmp/inflight"
+mkdir -p "$inflight/bin"
+cat > "$inflight/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+# imagetools inspect REF --format '{{.Manifest.Digest}}'  -> a digest
+# imagetools inspect --format '{{json (index .Image ...)}}' REF -> platform config
+if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  if [[ $* == *'.Manifest.Digest'* ]]; then
+    if [[ $* == *':stable'* ]]; then echo 'sha256:stable'; else echo 'sha256:candidate'; fi
+    exit 0
+  fi
+  ref=${@: -1}
+  if [[ $ref == *':stable'* ]]; then gen=100; else gen=200; fi
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"abcdef"}}}\n' "$gen"
+  exit 0
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 1
+MOCK
+cat > "$inflight/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+# gh run list ... : the candidate's run (200) exists but is still in progress,
+# so the completed-only filter the promoter applies yields nothing for it.
+if [[ $1 == run && $2 == list ]]; then
+  echo '[{"number":200,"createdAt":"2026-09-10T14:31:50Z","status":"in_progress","conclusion":null},{"number":199,"createdAt":"2026-09-10T14:24:38Z","status":"completed","conclusion":"success"}]' \
+    | jq -r "${@: -1}"
+  exit 0
+fi
+echo '[]'
+MOCK
+chmod +x "$inflight/bin/docker" "$inflight/bin/gh"
+out=$(PATH="$inflight/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'has not completed yet' <<<"$out"; then
+  pass "an in-flight candidate run yields an explicit hold instead of a silent exit 1"
+else
+  bad "an in-flight candidate run must hold with a reason (rc=${rc}; output: ${out})"
+fi
+
 echo
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL — stable promotion gate regressed."
