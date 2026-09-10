@@ -584,6 +584,16 @@ type ContributeWSHub struct {
 	// stays bounded. Guarded by rateMu.
 	assignmentTimes map[string][]time.Time
 	rateMu          sync.Mutex
+	// contributorFailureStreaks tracks, per identity, CONSECUTIVE hub-measured
+	// sub-minute task failures (kubestellar/hive#6450, contribute_failure_streak.go).
+	// Once a streak reaches contributorFailureStreakThreshold, selectTask pauses
+	// that identity's claims for contributorFailureStreakPause and says so with an
+	// explicit contributor_failure_streak negative-ack, so a dying agent runtime
+	// is surfaced to the contributor instead of silently burning issue cooldowns
+	// and standing. Reset by a completion or a slow (genuinely attempted) failure.
+	// Guarded by failureStreakMu.
+	contributorFailureStreaks map[string]contributorFailureStreak
+	failureStreakMu           sync.Mutex
 	// sse is the read-only Server-Sent-Events broadcast registry (contribute_sse.go).
 	// Every appended ActivityEntry is fanned out to subscribed dashboard browsers so
 	// the Operations "command center" renders live. It is purely additive: the fan-out
@@ -1210,32 +1220,33 @@ const yankSelfExcludeSeconds = 60
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub := &ContributeWSHub{
-		connections:           make(map[string]*ContributorConnection),
-		completedTasks:        make(map[string]time.Time),
-		completedTaskCooldown: make(map[string]time.Duration),
-		completedTaskPRURL:    make(map[string]string),
-		failedTasks:           make(map[string]time.Time),
-		consecutiveFailures:   make(map[string]int),
-		noPRStreaks:           make(map[string]noPRStreakRecord),
-		noWorkVerdicts:        make(map[string]noWorkVerdictRecord),
-		activityFilePath:      activityFilePath,
-		completedTasksFile:    completedTasksFile,
-		failedTasksFile:       failedTasksFile,
-		noPRStreaksFile:       noPRStreaksFile,
-		taskLeasesFile:        taskLeasesFile,
-		startedAt:             time.Now(),
-		noWorkVerdictsFile:    noWorkVerdictsPath(),
-		asyncActivitySave:     asyncActivitySave,
-		persistActivity:       activityPersistenceEnabled,
-		persistTaskLedgers:    taskLedgerPersistenceEnabled,
-		assignmentTimes:       make(map[string][]time.Time),
-		leases:                make(map[string]*taskLease),
-		yankExclusions:        make(map[string]time.Time),
-		logger:                logger,
-		server:                server,
-		sse:                   newSSERegistry(),
-		stopCh:                make(chan struct{}),
-		doneCh:                make(chan struct{}),
+		connections:               make(map[string]*ContributorConnection),
+		completedTasks:            make(map[string]time.Time),
+		completedTaskCooldown:     make(map[string]time.Duration),
+		completedTaskPRURL:        make(map[string]string),
+		failedTasks:               make(map[string]time.Time),
+		consecutiveFailures:       make(map[string]int),
+		noPRStreaks:               make(map[string]noPRStreakRecord),
+		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
+		activityFilePath:          activityFilePath,
+		completedTasksFile:        completedTasksFile,
+		failedTasksFile:           failedTasksFile,
+		noPRStreaksFile:           noPRStreaksFile,
+		taskLeasesFile:            taskLeasesFile,
+		startedAt:                 time.Now(),
+		noWorkVerdictsFile:        noWorkVerdictsPath(),
+		asyncActivitySave:         asyncActivitySave,
+		persistActivity:           activityPersistenceEnabled,
+		persistTaskLedgers:        taskLedgerPersistenceEnabled,
+		assignmentTimes:           make(map[string][]time.Time),
+		contributorFailureStreaks: make(map[string]contributorFailureStreak),
+		leases:                    make(map[string]*taskLease),
+		yankExclusions:            make(map[string]time.Time),
+		logger:                    logger,
+		server:                    server,
+		sse:                       newSSERegistry(),
+		stopCh:                    make(chan struct{}),
+		doneCh:                    make(chan struct{}),
 	}
 	hub.loadCompletedTasks()
 	hub.loadFailedTasks()
@@ -4257,6 +4268,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 					}
 					h.appendTaskRun(runRec)
+					// #6450: a genuine completion proves the runtime works — clear
+					// the contributor's fast-failure streak.
+					h.resetContributorFailureStreak(identityOf(contributor))
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
 					// Trust credit is gated on the VERIFIED PR, not the reported one:
@@ -4428,6 +4442,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 					}
 					h.appendTaskRun(runRec)
+					// #6450: book this failure against the CONTRIBUTOR's fast-failure
+					// streak (hub-measured duration; an unknown/adopted-task duration
+					// is not counted). Separate from the per-issue cooldown above:
+					// same failure, two ledgers, two questions ("is this issue
+					// poisoned?" vs "is this contributor's runtime dying?").
+					if !taskAssignedAt.IsZero() {
+						h.recordContributorFastFailure(identityOf(contributor), time.Since(taskAssignedAt), msg.Reason)
+					}
 					contributor.mu.Lock()
 					contributor.profile.TasksFailed++
 					contributor.mu.Unlock()
@@ -5170,6 +5192,15 @@ const (
 	// taskUnavailableRoleNotPermitted: the relay requested a spoke agent role, but
 	// the hive config/tier/grant policy does not allow this contributor to claim it.
 	taskUnavailableRoleNotPermitted = "agent_role_not_permitted"
+	// taskUnavailableFailureStreak (kubestellar/hive#6450): this identity's last
+	// contributorFailureStreakThreshold assignments each failed within
+	// contributorFastFailureMax of assignment — the signature of an agent runtime
+	// dying at startup — so claims are paused for contributorFailureStreakPause.
+	// Unlike no_matching_work this is about THIS contributor, not the queue, and
+	// the message names the streak and the pause expiry. Not an enforced-policy
+	// refusal like tier_disabled: it lifts on its own and is reset by any
+	// completion or genuinely-attempted (slow) failure.
+	taskUnavailableFailureStreak = "contributor_failure_streak"
 )
 
 // identityOf returns the stable key that groups a contributor's live
@@ -5872,6 +5903,21 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				}
 			}
 		}
+	}
+
+	// #6450: pause claims for an identity whose recent assignments all died
+	// within seconds — a dying agent runtime. Checked after the operator gates
+	// (which are policy and must win the log/refusal narrative) and before the
+	// candidate scan (so a broken runtime cannot book another issue's failure
+	// cooldown). Hub-measured only; see contribute_failure_streak.go.
+	if paused, streak, until := h.contributorFailureStreakActive(identityOf(c), time.Now()); paused {
+		h.logger.Warn("[contribute-ws] refusing task: contributor failure streak",
+			"username", identityOf(c),
+			"consecutive_fast_failures", streak.Count,
+			"paused_until", until.UTC().Format(time.RFC3339))
+		msg := h.taskUnavailable(taskUnavailableFailureStreak)
+		msg.Message = contributorFailureStreakMessage(streak, until)
+		return msg
 	}
 
 	totalAvailable := 0
@@ -6653,4 +6699,3 @@ func (s *Server) Close() {
 	}
 	s.CloseContributeHub()
 }
-
