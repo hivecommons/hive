@@ -6593,28 +6593,44 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"api_version":     contributorProtocolVersion,
 		"served_sha":      versionShort,
 	})
+}
 
+// handleAPIv1Queue serves a paginated page of the offerable ready-work set
+// (the same population /api/v1/status counts as actionable_items), so a
+// downstream consumer can enumerate the full backlog instead of only the
+// unpaginated /api/contribute/queue slice (hivecommons/hive#6537). Auth and
+// the contributor allowlist are already enforced by handleAPIv1 before this
+// is reached.
 func (s *Server) handleAPIv1Queue(w http.ResponseWriter, r *http.Request) {
-	// Paginated ready-work listing for the actionable offerable set.
 	limit := readyQueueDefaultLimit
-	offset := 0
 	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			jsonError(w, "invalid limit: must be a positive integer", http.StatusBadRequest)
+			return
 		}
+		limit = n
 	}
+	offset := 0
 	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			jsonError(w, "invalid offset: must be a non-negative integer", http.StatusBadRequest)
+			return
 		}
+		offset = n
 	}
 	items, total := []ReadyQueueItem{}, 0
 	if s.contributeHub != nil {
 		items, total = s.contributeHub.admissionQueueRange(limit, offset, false)
 	}
-	jsonResponse(w, map[string]any{"queue": items, "total": total, "limit": limit, "offset": offset})
-}
-
+	jsonResponse(w, map[string]any{
+		"queue":    items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": offset+len(items) < total,
+	})
 }
 
 // contributeSurface reports which contributor surface this deployment presents
@@ -8312,7 +8328,7 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(subpath, "/prs/") || !strings.HasSuffix(subpath, "/queue-automerge") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
+			_, _ = w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/queue","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")

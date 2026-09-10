@@ -1,0 +1,1 @@
+- Added a paginated `GET /api/v1/queue` endpoint (`?limit=<int>&offset=<int>`) so downstream consumers can enumerate and page the full actionable backlog reported by `/api/v1/status`, instead of only the small unpaginated `/api/contribute/queue` slice ([#6537](https://github.com/hivecommons/hive/issues/6537)).
