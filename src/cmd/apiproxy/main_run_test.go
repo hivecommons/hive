@@ -15,8 +15,11 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // These tests exercise main() itself — flag wiring, the event-log encoder
@@ -84,16 +87,14 @@ func redirectStdout(t *testing.T, f *os.File) {
 
 func waitForListener(t *testing.T, addr string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return
+		if err != nil {
+			return false
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("proxy never started listening on %s", addr)
+		_ = conn.Close()
+		return true
+	}, "proxy never started listening on %s", addr)
 }
 
 // logEntry mirrors the anonymous struct main()'s handler encodes.
@@ -134,14 +135,10 @@ func readLogEntries(t *testing.T, path string) []logEntry {
 // SSE handler emits from a goroutine after the client has read the stream.
 func waitForEntries(t *testing.T, path string, n int) []logEntry {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	return testutil.EventuallyValue(t, 5*time.Second, func() ([]logEntry, bool) {
 		entries := readLogEntries(t, path)
-		if len(entries) >= n || time.Now().After(deadline) {
-			return entries
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return entries, len(entries) >= n
+	}, "log %s never reached %d entries", path, n)
 }
 
 func TestMainServesAndRedactsNonSSEBodiesInFileLog(t *testing.T) {
