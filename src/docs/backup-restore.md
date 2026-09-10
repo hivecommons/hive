@@ -2,7 +2,7 @@
 
 Hive has two backup paths with different scopes: nightly encrypted hub disaster-recovery archives, and on-demand per-spoke backups an owner can download from the dashboard.
 
-> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md).
+> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md); [Cross-runtime moves](move-cross-runtime.md) covers Podman ↔ Docker cross-host and Compose/Quadlet ↔ Kubernetes, using the same-host Docker → Podman migration below as its reference case.
 
 ## Hub disaster recovery: `hive-backup`
 
@@ -92,6 +92,79 @@ Resolution order at backup time is governor config first, then the environment:
 **Security note.** There is no default key and no plaintext fallback: with no key from any source, `GET /api/backup/status` reports `available: false` and `POST /api/backup` returns `412` — a backup is refused rather than written unencrypted, because the archive carries this hive's GitHub App private keys. Clearing the key (**Clear key** in the same panel) restores that refusal.
 
 **Escrow the key.** It is not stored inside the archive, so a backup without its key is unrestorable. Replacing the key does not re-encrypt existing archives; keep the old key to restore them.
+
+## Restoring a spoke backup archive
+
+> **Status: the decrypt/extract step below is OBSERVED — executed while writing this section, command output included. Placing the extracted files into a real container's `/data` and rebooting it is DOCUMENTED, NOT EXECUTED — no container runtime was available to prove that half.** There is currently no tool that performs the placement step for you (see the gap below and [#6529](https://github.com/hivecommons/hive/issues/6529)).
+
+This answers epic [#6521](https://github.com/hivecommons/hive/issues/6521) item #16 and [#6527](https://github.com/hivecommons/hive/issues/6527): **restoring a `pkg/spokebackup` archive into a fresh deployment is possible today, using only existing tooling, with no new code.** `pkg/spokebackup` deliberately reuses `pkg/hubbackup`'s builder (`src/pkg/hubbackup/builder_export.go:1-22`, "so `Verify` and `Extract` accept both archive kinds unchanged") — it produces the same AES-256-GCM-sealed, SHA-256-manifested tar.gz that `hive-backup` already knows how to decrypt. There is no separate "spoke restore" binary because none is needed for the decrypt step; there is, however, no tooling to perform the file-placement step, which is the gap filed as [#6529](https://github.com/hivecommons/hive/issues/6529).
+
+### What the archive contains, and where each path goes on restore
+
+The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-116`):
+
+| Archive path | Container path (relative to `HIVE_SPOKE_BACKUP_DATA_DIR`, default `/data`) | Source |
+| --- | --- | --- |
+| `spoke/hive.yaml.dashboard` | `/data/hive.yaml.dashboard` | `configOverlayFile`, `backup.go:59` |
+| `spoke/hive.yaml.runtime` | `/data/hive.yaml.runtime` | `configRuntimeFile`, `backup.go:73` |
+| `spoke/hive.yaml.bak` | `/data/hive.yaml.bak` | `configRuntimeFileLegacy`, `backup.go:88` (present only on hives that have not saved config since the rename) |
+| `spoke/hive-id` | `/data/hive-id` | `hiveIDFile`, `backup.go:91` |
+| `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:94` |
+| `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:97`, matched with `filepath.Glob` (`backup.go:250-251`) |
+| `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:56,117` — one subtree per agent, discovered from the archive rather than a fixed list |
+| `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
+
+The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,262-266,533-550`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:894-931`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api.go:6861`, `src/pkg/hub/cluster_app_key.go:393`).
+
+### Decrypting the archive — executed
+
+`hive-backup extract` (`src/cmd/hive-backup/main.go`) calls `hubbackup.Extract`, which is format-agnostic: it verifies the manifest's SHA-256 digests, then untars every member under `-dest`, preserving the archive's own path prefixes. It was run here against a real spoke-backup archive built by `spokebackup.Build` from a synthetic `/data`-shaped directory (a `hive-id`, a `gh-app-key.pem`, both config files, `hive-state.json`, and one bead file under `beads/agentA/`), sealed with a throwaway AES-256 key:
+
+```
+$ hive-backup extract -file archive.tar.gz.enc -dest restored
+extracted 6 files to restored
+$ find restored -type f
+restored/MANIFEST.json
+restored/spoke/hive-id
+restored/spoke/hive.yaml.dashboard
+restored/spoke/hive.yaml.runtime
+restored/spoke/hive-state.json
+restored/spoke/gh-app-key.pem
+restored/beads/agentA/bead-0001.json
+$ cat restored/spoke/hive-id
+test-hive-id-12345
+$ sha256sum restored/spoke/gh-app-key.pem      # matches the pre-backup file exactly
+411a57f4397884ca23a03fc467c8804a959cdbc5511b2645099013aaa079e790  restored/spoke/gh-app-key.pem
+$ cat restored/beads/agentA/bead-0001.json
+{"agent":"agentA","bead":1}
+```
+
+`hive-id`, the GitHub App key (byte-for-byte, confirmed by SHA-256), and the bead ledger all round-tripped unchanged. `hive-state.json` also round-tripped here only because nothing was running to rewrite it — on a live restore expect it to be overwritten at the next boot, the same caveat the Podman restore section above notes for the same file.
+
+### Placing the files and rebooting — documented, not executed
+
+The extraction proves the archive is decodable; the remaining steps are ordinary file operations that were **not** run against a real container in this pass:
+
+1. **Supplying the encryption key.** The key is never in the archive by design (`src/pkg/spokebackup/backup.go`, "Encryption" doc comment: "the archive must be encrypted... The key is deliberately NOT embedded in, or derivable from, the archive"). It resolves the same way for `extract` as for building the backup: `hubbackup.LoadKey`/`ResolveKey`, i.e. `HIVE_BACKUP_KEY` in the environment the `hive-backup` binary runs in, or (if you extract on the machine that will host the restored hive) whatever `governor.backup.key_file` pointed at when the *original* backup was taken. **The escrowed key from the source hive is required — the target's own key setting, if any, is irrelevant to decrypting a foreign archive.** If the key was rotated after the archive was taken, the *old* key is what decrypts it (see "Escrow the key" above).
+2. **Target must be genuinely fresh, or you accept overwriting identity.** Nothing in `hive-backup extract` or the copy step below checks whether the destination already holds a different hive's `hive-id`. Restoring onto a live, differently-identified spoke silently splices one hive's config/keys/beads onto another's identity — verify `/data/hive-id` is absent or already equal to the archive's `spoke/hive-id` before copying.
+3. **Copy, don't merge, into the target `/data`:**
+
+   ```sh
+   hive-backup extract -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest ./restored
+   # target /data must not already belong to a different hive-id — see step 2
+   cp ./restored/spoke/hive.yaml.dashboard ./restored/spoke/hive.yaml.runtime \
+      ./restored/spoke/hive-id ./restored/spoke/hive-state.json \
+      ./restored/spoke/gh-app-key*.pem  /data/           2>/dev/null
+   cp -r ./restored/beads/. /data/beads/
+   ```
+
+   On Kubernetes, "the target `/data`" is the spoke's PVC — copy in via `kubectl cp` to an init container or a temporary debug pod mounting the same PVC before the hive Deployment's pod starts (or into a scaled-down Deployment's pod). On Compose/Quadlet, it is the `hive-data` volume/named volume — use the same container-mediated copy pattern as the [host-level backup pattern](#host-level-backup-pattern) / [Podman restore](#restore) sections above, substituting the extracted tree for the volume tarball.
+4. **(Re)start the container.** The entrypoint re-applies `0600` ownership to the config files (`entrypoint.sh:262-266`, `hive_harden_runtime_config`) and re-chowns `beads/<agent>` to each agent's runtime UID (`entrypoint.sh:894-931`) regardless of what ownership the copy left them with, so the copy step does not need to reproduce container-internal UIDs.
+5. **Verify**, the same way the Podman section above does: `hive-id` and the GitHub App key SHA-256 must match the source hive; the bead ledger and dashboard config overlay must be present.
+
+### The gap: no tool performs steps 1–3 for you
+
+There is no `hive-backup restore` subcommand and no dashboard upload/restore endpoint — `src/pkg/dashboard/backup_api.go` implements only `GET /api/backup/status` and `POST /api/backup` (download), never an inbound restore path, and `src/cmd/hive-backup/main.go`'s only decrypt verb is `extract`, which stops at a plain directory. That gap — plus the missing "is the target already a different hive" guard — is filed as a scoped feature request: [#6529](https://github.com/hivecommons/hive/issues/6529), linked from both this section and [#6527](https://github.com/hivecommons/hive/issues/6527).
 
 ## Standalone deployments: which section applies
 
