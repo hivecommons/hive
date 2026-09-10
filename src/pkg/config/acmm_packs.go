@@ -120,6 +120,20 @@ func OnDemandAgentsFromPacks() map[string]bool {
 	return result
 }
 
+// PackAgentNames returns the set of agent names that appear in ANY pack level.
+// Its complement over a hive's configured agents is the operator's CUSTOM
+// agents: names the packs never materialize and therefore cannot be
+// "ghosts of another level" (hivecommons/hive#6488).
+func PackAgentNames() map[string]bool {
+	result := make(map[string]bool)
+	for _, pack := range ACMMPacks() {
+		for _, a := range pack.Agents {
+			result[a.Name] = true
+		}
+	}
+	return result
+}
+
 // ACMMPackByLevel returns the pack for a specific level, or an error if not found.
 func ACMMPackByLevel(level int) (ACMMPack, error) {
 	for _, p := range ACMMPacks() {

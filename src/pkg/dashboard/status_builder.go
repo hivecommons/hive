@@ -530,10 +530,24 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 	packAllowed := acmmPackAllowedSet(cfg)
 	onDemandSet := config.OnDemandAgentsFromPacks()
 
+	// The pack filter exists to hide GHOSTS: pack-materialized agents left over
+	// from another ACMM level (1360b72f). An operator's CUSTOM agent — present
+	// in the live config under a name no pack ever materializes — is not a
+	// ghost, and hiding it made a running, token-consuming agent invisible in
+	// the dashboard (hivecommons/hive#6488). Admit those unconditionally;
+	// keep hiding names that belong to some OTHER level's pack.
+	var packNames map[string]bool
+	if packAllowed != nil {
+		packNames = config.PackAgentNames()
+	}
+
 	names := make([]string, 0, len(statuses))
 	for name := range statuses {
 		if packAllowed != nil && !packAllowed[name] {
-			continue
+			_, inConfig := cfg.Agents[name]
+			if !inConfig || packNames[name] {
+				continue
+			}
 		}
 		names = append(names, name)
 	}
