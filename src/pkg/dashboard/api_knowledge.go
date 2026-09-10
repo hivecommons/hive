@@ -1,3 +1,8 @@
+// Knowledge/vaults/documents endpoints: knowledge CRUD/search/graph/export,
+// bead-synth toggle, vaults and git-sources connect/list/disconnect,
+// document import/reimport/list/get/delete, and Obsidian sync. Split out of
+// api.go's `// --- Knowledge endpoints ---` section per #6570 (slice 1/5),
+// mirroring the manager.go split precedent (#6468).
 package dashboard
 
 import (
