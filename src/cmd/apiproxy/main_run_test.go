@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -54,6 +55,30 @@ func startMain(t *testing.T, args ...string) {
 	os.Args = append([]string{"apiproxy"}, args...)
 	flag.CommandLine = flag.NewFlagSet("apiproxy", flag.ExitOnError)
 	go main()
+}
+
+// redirectStdout duplicates fd 1 onto the given file's fd for the life of the
+// test, then restores the original fd 1 on cleanup. main() runs on its own
+// goroutine (see startMain) and reads the *os.File value of os.Stdout exactly
+// once during startup with no synchronization back to the test goroutine, so
+// reassigning the os.Stdout *variable* concurrently is a real data race under
+// -race. Redirecting the underlying OS file descriptor instead leaves the
+// os.Stdout variable itself untouched — main()'s writes still go through the
+// same *os.File, whose fd 1 now happens to point at f — so there is no
+// concurrent access to shared Go state for the race detector to flag.
+func redirectStdout(t *testing.T, f *os.File) {
+	t.Helper()
+	saved, err := syscall.Dup(1)
+	if err != nil {
+		t.Fatalf("saving stdout fd: %v", err)
+	}
+	if err := syscall.Dup2(int(f.Fd()), 1); err != nil {
+		t.Fatalf("redirecting stdout fd: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Dup2(saved, 1)
+		_ = syscall.Close(saved)
+	})
 }
 
 func waitForListener(t *testing.T, addr string) {
@@ -215,19 +240,16 @@ func TestMainWritesSSEEventBodiesToStdoutLog(t *testing.T) {
 	t.Setenv("PROXY_AUTH_TOKEN", "gate-token")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	// Cover the stdout lane of main(): swap os.Stdout for a file and read the
-	// encoder's output back from it.
+	// Cover the stdout lane of main(): redirect the OS-level fd 1 to a file
+	// and read the encoder's output back from it. See redirectStdout for why
+	// this must be an fd redirect rather than an os.Stdout variable swap.
 	stdoutPath := filepath.Join(t.TempDir(), "stdout.log")
 	f, err := os.Create(stdoutPath)
 	if err != nil {
 		t.Fatalf("creating stdout capture file: %v", err)
 	}
-	oldStdout := os.Stdout
-	os.Stdout = f
-	t.Cleanup(func() {
-		os.Stdout = oldStdout
-		_ = f.Close()
-	})
+	defer func() { _ = f.Close() }()
+	redirectStdout(t, f)
 
 	port := freeLoopbackPort(t)
 	startMain(t,
@@ -236,9 +258,6 @@ func TestMainWritesSSEEventBodiesToStdoutLog(t *testing.T) {
 	)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	waitForListener(t, addr)
-	// main() has read os.Stdout by now; later tests' output must not land in
-	// the capture file, but the leaked server goroutine keeps its encoder.
-	os.Stdout = oldStdout
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/messages", strings.NewReader(`{"model":"claude-sse"}`))
 	if err != nil {
