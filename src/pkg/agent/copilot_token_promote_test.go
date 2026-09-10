@@ -371,3 +371,81 @@ func TestRestoreCopilotTokens_IdentityShape(t *testing.T) {
 		t.Errorf("no-identity token = %q, want gho_plain under github.com object shape; tokens=%v", got, toks)
 	}
 }
+
+// --- #6500: logout must not leave an authoritative EMPTY token ---------------
+
+// A dashboard logout calls SetCopilotToken(""). If that marked the empty token
+// authoritative, syncCopilotToken's SEED branch would return noop forever
+// (authoritative && held == ""), permanently disabling PROMOTE: an operator who
+// logs out and then runs /login inside an agent would never have that login
+// mirrored to the durable store, losing it on the next roll.
+func TestSetCopilotTokenEmptyIsNeverAuthoritative(t *testing.T) {
+	m := testManager(5)
+
+	m.SetCopilotToken("gho_real")
+	if !m.copilotAuthTokenAuthoritative {
+		t.Fatal("a non-empty explicit token must be authoritative")
+	}
+
+	// The logout path.
+	m.SetCopilotToken("")
+	if m.copilotAuthTokenAuthoritative {
+		t.Fatal("an empty token must never be authoritative (#6500)")
+	}
+
+	// Whitespace is not a token either.
+	m.SetCopilotToken("gho_real")
+	m.SetCopilotToken("   ")
+	if m.copilotAuthTokenAuthoritative {
+		t.Fatal("a whitespace-only token must never be authoritative")
+	}
+}
+
+// End-to-end shape of the regression: log out, then log in inside an agent.
+// The in-agent login must still be promoted to the durable store.
+func TestSyncCopilotToken_PromoteStillWorksAfterLogout(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:me":"gho_fromcli"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+
+	// An operator had logged in via the dashboard, then logged out.
+	m.SetCopilotToken("gho_dashboard")
+	m.SetCopilotToken("")
+
+	// Now someone runs /login inside an agent; the CLI config holds that token.
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncPromote {
+		t.Fatalf("action = %v, want promote after logout (#6500)", act)
+	}
+	if b, _ := os.ReadFile(dur); string(b) != "gho_fromcli" {
+		t.Errorf("durable file = %q, want gho_fromcli", string(b))
+	}
+	if m.CopilotToken() != "gho_fromcli" {
+		t.Errorf("in-memory token = %q, want gho_fromcli", m.CopilotToken())
+	}
+}
+
+// The fix must NOT weaken #6514: a real dashboard/env token still outranks a
+// stale identity sitting in the shared CLI config.
+func TestSyncCopilotToken_AuthoritativeStillWinsAfterFix(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:stale":"gho_stale"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+	m.SetCopilotToken("gho_licensed")
+
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
+		t.Fatalf("action = %v, want seed (authoritative token must replace stale CLI identity)", act)
+	}
+	if got := extractCopilotToken(cfg); got != "gho_licensed" {
+		t.Errorf("config token = %q, want gho_licensed", got)
+	}
+}

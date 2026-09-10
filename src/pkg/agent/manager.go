@@ -745,7 +745,21 @@ func (m *Manager) setCopilotToken(token string, authoritative bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.copilotAuthToken = token
-	m.copilotAuthTokenAuthoritative = authoritative
+	// INVARIANT: an EMPTY token is never authoritative (#6500).
+	//
+	// "Authoritative" means "prefer this over whatever identity the shared CLI
+	// config holds". That claim is meaningless without a token to prefer, and
+	// asserting it for "" is actively harmful: syncCopilotToken's SEED branch
+	// returns noop when authoritative && held == "", which permanently disables
+	// the PROMOTE direction. An operator who logs out via the dashboard and then
+	// runs /login inside an agent would have that login never mirrored to the
+	// durable store, so it would be lost on the next roll — exactly the gap
+	// PROMOTE was added to close.
+	//
+	// Enforced here rather than at the call site so no present or future caller
+	// can reintroduce the state. m.copilotAuthTokenAuthoritative is only ever
+	// true alongside a non-empty token.
+	m.copilotAuthTokenAuthoritative = authoritative && strings.TrimSpace(token) != ""
 }
 
 // ActivateCopilotToken makes token the active shared CLI identity as well as
