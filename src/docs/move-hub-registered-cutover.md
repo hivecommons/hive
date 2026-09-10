@@ -10,9 +10,9 @@ in [move-kubernetes.md](move-kubernetes.md) (Kubernetes → Kubernetes, this
 hive's own cluster),
 [cross-cluster-migration.md](cross-cluster-migration.md) (hub-hosted cluster
 move), and `move-host.md` (Compose/Quadlet host moves, filed under
-[#6522–#6524](https://github.com/hivecommons/hive/issues/6521)) — this
-document is what they all link back to for the concurrent-identity and
-cutover-order rules.
+[epic #6521](https://github.com/hivecommons/hive/issues/6521), sub-issues
+#6522–#6524) — this document is what they all link back to for the
+concurrent-identity and cutover-order rules.
 
 > **Status.** The concurrent-identity hazard and the cutover order below are
 > grounded directly in the hub's duplicate-reporter detection code and the
@@ -94,17 +94,17 @@ not merely an aesthetic one:
 
 ### 1. Duplicate heartbeats — the hub detects and reports this today
 
-`noteReporter` (`src/pkg/hub/spoke_restart.go:56-107`) is a real, shipped
+`noteReporter` (`src/pkg/hub/spoke_restart.go:56-111`) is a real, shipped
 detector: each heartbeat carries an opaque `reporter` string (`"<pod>/<pid>"`
 on modern spokes), and the hub tracks, per `hive_id`, every reporter seen
 within a 15-minute window (`reporterConflictWindow`,
-`src/pkg/hub/spoke_restart.go:20`). If a reporter that had stopped beating
+`src/pkg/hub/spoke_restart.go:22`). If a reporter that had stopped beating
 **reappears** while a different reporter has been beating in between — the
 signature of two live instances alternating, not a rollout — the hub sets
 `ConflictingReporters` on the registry entry
 (`src/pkg/hub/server.go:290-294,1781`) after two such alternations
 (`reporterFlipsToConfirm = 2`,
-`src/pkg/hub/spoke_restart.go:26`). This is surfaced as a real drift signal:
+`src/pkg/hub/spoke_restart.go:28`). This is surfaced as a real drift signal:
 `src/pkg/hub/drift.go:572-574` turns a non-empty `ConflictingReporters` into
 an alert reading "two spoke instances are reporting as this hive". A move
 where the source is left running while the target starts heartbeating with
@@ -223,7 +223,7 @@ is deleted. Do not run source and target simultaneously to "compare" —
 that recreates the exact hazard this document describes. If the target has
 already sent heartbeats with `ConflictingReporters` set, expect the hub to
 keep flagging the conflict for up to `reporterConflictWindow` (15 minutes,
-`src/pkg/hub/spoke_restart.go:20`) after the duplicate reporter stops
+`src/pkg/hub/spoke_restart.go:22`) after the duplicate reporter stops
 beating.
 
 ## Open questions this issue answers
