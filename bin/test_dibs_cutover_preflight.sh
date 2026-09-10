@@ -84,6 +84,14 @@ case "$*" in
     [ "${STUB_CS_FAIL:-0}" = "0" ] || exit 22
     printf '%s' "${STUB_CS_JSON:-[]}"
     exit 0 ;;
+  # crt.sh subdomain wildcard (q=%.<domain>, URL-encoded). Matched BEFORE the
+  # identity case, which would otherwise swallow it, and populated separately
+  # so a case can prove the identity query alone misses subdomain issuances.
+  *crt.sh*q=%25.*)
+    [ "${STUB_CRT_SUB_FAIL:-0}" = "0" ] || exit 22
+    [ "${STUB_CRT_FAIL:-0}" = "0" ] || exit 22
+    printf '%s' "${STUB_CRT_SUB_JSON:-[]}"
+    exit 0 ;;
   *crt.sh*)
     [ "${STUB_CRT_FAIL:-0}" = "0" ] || exit 22
     printf '%s' "${STUB_CRT_JSON:-[]}"
@@ -130,7 +138,7 @@ clear_env() {
   unset STUB_NS_OK STUB_CONTROLLER_ARGS STUB_CERT_SANS STUB_INGRESS_CLASS \
         STUB_INGRESS_SECRET STUB_INGRESS_ANNOS STUB_INGRESS_LIST STUB_DIG_A \
         STUB_CRT_JSON STUB_CRT_FAIL STUB_DIG_FAIL LE_CERT_LIMIT CRT_SH_NOW_UTC \
-        STUB_CS_JSON STUB_CS_FAIL
+        STUB_CS_JSON STUB_CS_FAIL STUB_CRT_SUB_JSON STUB_CRT_SUB_FAIL
 }
 
 echo "=== dibs cutover preflight contract (#5925) ==="
@@ -415,6 +423,50 @@ run_preflight
 case "$OUT" in
   *"1 Let's Encrypt certificate(s)"*) ok "precert and leaf count as one issuance in both sources" ;;
   *) bad "one certificate was counted more than once:\n$OUT" ;;
+esac
+
+# ── check 6: the crt.sh identity query misses subdomains ───────────────────
+# crt.sh `q=<domain>` is an IDENTITY match and returns nothing for the domain's
+# subdomains, while the cap is per REGISTERED domain and every subdomain spends
+# from it. That — not flakiness — is why crt.sh was measured at 46 against a
+# true 83. Cert Spotter is rate-limited unauthenticated, and a truncated page
+# parses exactly like a complete one, so when it answers short crt.sh has to be
+# able to exceed it. With only the identity query it never can.
+clear_env; healthy_env
+export LE_CERT_LIMIT=2
+# Cert Spotter answers, but short — one certificate, in window.
+export STUB_CS_JSON='[
+  {"dns_names":["a.hive.hivecommons.dev"],"issuer":{"name":"C=US, O=Let'\''s Encrypt, CN=R13"},"not_before":"2026-09-04T11:00:00"}
+]'
+# crt.sh identity sees nothing (no certificate is named the apex)...
+export STUB_CRT_JSON='[]'
+# ...while the subdomain query sees the two that actually exhaust the window.
+export STUB_CRT_SUB_JSON='[
+  {"issuer_name":"C=US, O=Let'\''s Encrypt, CN=R13","common_name":"a.hive.hivecommons.dev","name_value":"a.hive.hivecommons.dev","not_before":"2026-09-04T11:00:00","serial_number":"aa01"},
+  {"issuer_name":"C=US, O=Let'\''s Encrypt, CN=R13","common_name":"b.hive.hivecommons.dev","name_value":"b.hive.hivecommons.dev","not_before":"2026-09-04T12:00:00","serial_number":"bb01"}
+]'
+run_preflight
+if [ "$RC" -eq 78 ]; then
+  ok "subdomain issuances crt.sh only sees via q=%.<domain> still block"
+else
+  bad "subdomain-only exhaustion exited $RC, want 78 — the identity query undercounts:\n$OUT"
+fi
+case "$OUT" in
+  *"2 Let's Encrypt certificate(s)"*)
+    ok "the crt.sh count spans the registered domain, not just the apex" ;;
+  *) bad "subdomain certificates were not counted:\n$OUT" ;;
+esac
+
+# Losing the wildcard half must not turn a working check into a skip: what
+# remains is the identity count, exactly the reading this check already had,
+# still cross-checked against Cert Spotter.
+clear_env; healthy_env
+export STUB_CRT_SUB_FAIL=1
+export LE_CERT_LIMIT=50
+run_preflight
+case "$OUT" in
+  *"; headroom "*) ok "a failed subdomain query still yields a reading" ;;
+  *) bad "losing the crt.sh subdomain query turned the check into a skip:\n$OUT" ;;
 esac
 
 # ── check 5 again: a resolver that could not answer ─────────────────────────

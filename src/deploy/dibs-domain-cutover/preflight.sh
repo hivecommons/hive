@@ -299,7 +299,7 @@ check_le_headroom() {
     return
   fi
 
-  local crt_url cs_url crt_json cs_json counts total count
+  local crt_url crt_sub_url cs_url crt_json crt_sub_json cs_json counts total count
 
   # WHY TWO INDEPENDENT CT SOURCES AND NOT JUST crt.sh.
   #
@@ -324,18 +324,42 @@ check_le_headroom() {
   # So: query both, and believe the HIGHER count. Neither source can invent a
   # certificate that was not issued, so the larger number is always the one
   # closer to the truth, and disagreement is itself the signal to be careful.
+  # WHY crt.sh IS QUERIED TWICE.
+  #
+  # `q=<domain>` is an IDENTITY match: it returns certificates whose names are
+  # that exact domain, and NONE for its subdomains. That is the whole reason
+  # crt.sh was measured at 46 against a true 83 — not flakiness, but a query
+  # asking a narrower question than the limit is defined over, since the cap is
+  # per REGISTERED domain and every subdomain spends from it. `q=%.<domain>`
+  # (URL-encoded `%25.`) is crt.sh's subdomain wildcard; the union of the two
+  # is the registered domain.
+  #
+  # The two counts are still compared and the higher believed. This does not
+  # make crt.sh a substitute for corroboration — it makes crt.sh contribute a
+  # number about the right SET OF NAMES, so that when Cert Spotter answers
+  # partially (it is rate-limited unauthenticated, and a truncated page parses
+  # like a complete one) crt.sh can exceed it and catch an exhausted window
+  # that Cert Spotter alone would have missed. Feeding a known-incomplete
+  # number into a max() can only ever lose issuances.
   crt_url="https://crt.sh/?q=${LE_REGISTERED_DOMAIN}&output=json"
+  crt_sub_url="https://crt.sh/?q=%25.${LE_REGISTERED_DOMAIN}&output=json"
   cs_url="https://api.certspotter.com/v1/issuances?domain=${LE_REGISTERED_DOMAIN}&include_subdomains=true&expand=dns_names"
   if ! crt_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$crt_url" 2>/dev/null)"; then
     _pf_skip "could not query crt.sh for ${LE_REGISTERED_DOMAIN}; do not treat this as quota headroom"
     return
   fi
+  # The subdomain half failing on its own is not fatal: what remains is the
+  # identity count, which is exactly the reading this check already had, still
+  # cross-checked against Cert Spotter. Losing the wildcard query must not turn
+  # a working check into a skip.
+  crt_sub_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$crt_sub_url" 2>/dev/null)" || crt_sub_json="[]"
+  [ -n "$crt_sub_json" ] || crt_sub_json="[]"
   # ONE SOURCE IS NOT A CROSS-CHECK. If Cert Spotter cannot be reached, what
   # remains is the crt.sh count alone, and that is the reading measured above
   # at 55% of the truth. It parses, it looks plausible, and it is wrong in the
   # unsafe direction. Refuse it the same way an empty body is refused.
   if ! cs_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$cs_url" 2>/dev/null)"; then
-    _pf_skip "could not reach Cert Spotter to corroborate crt.sh for ${LE_REGISTERED_DOMAIN}; crt.sh alone was measured seeing only 46 of 83 in-window certificates, so the count that remains UNDERCOUNTS the registered-domain limit and is NOT headroom"
+    _pf_skip "could not reach Cert Spotter to corroborate crt.sh for ${LE_REGISTERED_DOMAIN}; one source is not a cross-check, and crt.sh alone was measured seeing only 46 of 83 in-window certificates, so the count that remains may UNDERCOUNT the registered-domain limit and is NOT headroom"
     return
   fi
 
@@ -360,7 +384,7 @@ check_le_headroom() {
   # re-issue an EXISTING wildcard for, the first is not a possibility, so zero
   # rows can only be the second. Zero rows IN THE WINDOW, out of rows that were
   # actually returned, is a real and useful answer and still passes.
-  if ! counts="$(printf '%s\036%s' "$crt_json" "$cs_json" | \
+  if ! counts="$(printf '%s\036%s\036%s' "$crt_json" "$crt_sub_json" "$cs_json" | \
       LE_CERT_WINDOW_HOURS="$LE_CERT_WINDOW_HOURS" \
       LE_REGISTERED_DOMAIN="$LE_REGISTERED_DOMAIN" \
       CRT_SH_NOW_UTC="${CRT_SH_NOW_UTC:-}" \
@@ -391,19 +415,21 @@ cutoff = now - dt.timedelta(hours=window_hours)
 
 try:
     docs = []
-    # The two bodies arrive separated by an ASCII record separator, a byte that
+    # The bodies arrive separated by an ASCII record separator, a byte that
     # cannot occur unescaped inside JSON, so this cannot split a document in
-    # half. They are DIFFERENT schemas from different services and are counted
-    # separately below, never concatenated.
+    # half. Documents 0 and 1 are crt.sh identity and crt.sh subdomain — the
+    # SAME schema, two halves of one registered domain, so they are the one
+    # thing here that IS concatenated. Document 2 is Cert Spotter, a different
+    # schema from a different service, counted separately below.
     for doc in sys.stdin.read().split("\x1e"):
         doc = doc.strip()
         part = json.loads(doc) if doc else []
         if isinstance(part, dict):
             part = [part]
         docs.append(part)
-    while len(docs) < 2:
+    while len(docs) < 3:
         docs.append([])
-    crt_rows, cs_rows = docs[0], docs[1]
+    crt_rows, cs_rows = docs[0] + docs[1], docs[2]
 except json.JSONDecodeError:
     print("parse-error", file=sys.stderr)
     sys.exit(2)
