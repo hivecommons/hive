@@ -32,6 +32,39 @@ type gatewayCanaryUpstreamRequest struct {
 	Stream   bool            `json:"stream"`
 }
 
+type gatewayCanarySSEEvent struct {
+	Event string
+	Data  string
+}
+
+func parseGatewayCanarySSE(t *testing.T, body string) []gatewayCanarySSEEvent {
+	t.Helper()
+
+	var (
+		events []gatewayCanarySSEEvent
+		event  string
+		data   string
+	)
+	for _, line := range strings.Split(body, "\n") {
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			data = strings.TrimPrefix(line, "data: ")
+		case line == "":
+			if event == "" || data == "" {
+				continue
+			}
+			events = append(events, gatewayCanarySSEEvent{Event: event, Data: data})
+			event, data = "", ""
+		}
+	}
+	if event != "" || data != "" {
+		t.Fatalf("unterminated SSE event: event=%q data=%q", event, data)
+	}
+	return events
+}
+
 // startGatewayCanaryUpstream mimics a named, api_key_file-authenticated custom
 // gateway (e.g. a corp LiteLLM/vLLM deployment configured as `kind: custom` in
 // governor.gateways). It records the last request it saw and the Authorization
@@ -199,11 +232,11 @@ func TestGatewayPathCanary_NamedGatewayAPIKeyFileRequestShape(t *testing.T) {
 	}
 }
 
-// TestGatewayPathCanary_NamedGatewayWrongKeyFails404sTheGatewayRoute proves the
+// TestGatewayPathCanary_NamedGatewayWrongKeyFails401sTheGatewayRoute proves the
 // canary is not vacuously green: an unresolved/incorrect key must actually be
 // rejected end-to-end (401 surfaced back to the Anthropic-shaped caller),
 // not silently swallowed by the translator.
-func TestGatewayPathCanary_NamedGatewayWrongKeyFails404sTheGatewayRoute(t *testing.T) {
+func TestGatewayPathCanary_NamedGatewayWrongKeyFails401sTheGatewayRoute(t *testing.T) {
 	secretsDir := t.TempDir()
 	restore := config.SetSecretFileRootsForTest(secretsDir)
 	defer restore()
@@ -319,15 +352,77 @@ func TestGatewayPathCanary_StreamingNamedGatewayMapsUsageAndDeltas(t *testing.T)
 	}
 
 	body := w.Body.String()
-	for _, evt := range []string{"event: message_start", "event: content_block_delta", "event: message_stop"} {
-		if !strings.Contains(body, evt) {
-			t.Errorf("missing SSE event %q in output:\n%s", evt, body)
+	events := parseGatewayCanarySSE(t, body)
+	if len(events) == 0 {
+		t.Fatalf("no SSE events parsed from output:\n%s", body)
+	}
+
+	var (
+		sawMessageStart bool
+		sawMessageStop  bool
+		gotDeltas       []string
+		gotStopReason   string
+		gotUsage        *anthropicUsage
+	)
+	for _, evt := range events {
+		switch evt.Event {
+		case "message_start":
+			sawMessageStart = true
+			var payload anthropicSSEMessageStart
+			if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+				t.Fatalf("unmarshal message_start: %v", err)
+			}
+			if payload.Message.Usage == nil {
+				t.Fatalf("message_start usage missing in output:\n%s", body)
+			}
+		case "content_block_delta":
+			var payload struct {
+				Delta struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"delta"`
+			}
+			if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+				t.Fatalf("unmarshal content_block_delta: %v", err)
+			}
+			if payload.Delta.Type == "text_delta" {
+				gotDeltas = append(gotDeltas, payload.Delta.Text)
+			}
+		case "message_delta":
+			var payload struct {
+				Delta struct {
+					StopReason string `json:"stop_reason"`
+				} `json:"delta"`
+				Usage *anthropicUsage `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+				t.Fatalf("unmarshal message_delta: %v", err)
+			}
+			gotStopReason = payload.Delta.StopReason
+			gotUsage = payload.Usage
+		case "message_stop":
+			sawMessageStop = true
 		}
 	}
-	if !strings.Contains(body, "Streaming ") || !strings.Contains(body, "gateway") {
-		t.Errorf("missing streamed delta text in output:\n%s", body)
+	if !sawMessageStart || !sawMessageStop {
+		t.Errorf("missing message boundary events in output:\n%s", body)
 	}
-	if !strings.Contains(body, `"end_turn"`) {
-		t.Errorf("missing end_turn stop reason in output:\n%s", body)
+	wantDeltas := []string{"Streaming ", "from ", "gateway"}
+	if len(gotDeltas) != len(wantDeltas) {
+		t.Fatalf("delta count = %d, want %d (%q)", len(gotDeltas), len(wantDeltas), body)
+	}
+	for i, want := range wantDeltas {
+		if gotDeltas[i] != want {
+			t.Errorf("delta[%d] = %q, want %q", i, gotDeltas[i], want)
+		}
+	}
+	if gotStopReason != "end_turn" {
+		t.Errorf("stop_reason = %q, want end_turn", gotStopReason)
+	}
+	if gotUsage == nil {
+		t.Fatalf("message_delta usage missing in output:\n%s", body)
+	}
+	if gotUsage.OutputTokens != 3 {
+		t.Errorf("output_tokens = %d, want 3", gotUsage.OutputTokens)
 	}
 }

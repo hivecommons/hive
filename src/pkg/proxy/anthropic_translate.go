@@ -359,6 +359,13 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 			continue
 		}
 
+		if chunk.Usage != nil {
+			totalOutputTokens = chunk.Usage.CompletionTokens
+			if chunk.Usage.PromptTokens > 0 {
+				totalInputTokens = chunk.Usage.PromptTokens
+			}
+		}
+
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
 
@@ -449,13 +456,6 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 						"output_tokens": totalOutputTokens,
 					},
 				})
-			}
-		}
-
-		if chunk.Usage != nil {
-			totalOutputTokens = chunk.Usage.CompletionTokens
-			if chunk.Usage.PromptTokens > 0 {
-				totalInputTokens = chunk.Usage.PromptTokens
 			}
 		}
 	}
