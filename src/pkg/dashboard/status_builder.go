@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"regexp"
@@ -229,6 +230,9 @@ type AgentStatusPayload struct {
 	Agents           []FrontendAgent           `json:"agents"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	GovMode          string                    `json:"govMode"`
+	// HiddenAgents is diagnostic-only (#6581): runtime entries the manager
+	// reports that were left out of Agents, and why. See HiddenAgentInfo.
+	HiddenAgents []HiddenAgentInfo `json:"hiddenAgents,omitempty"`
 }
 
 // BuildAgentOnlyStatus builds a lightweight agent-only status from in-memory
@@ -238,11 +242,13 @@ func BuildAgentOnlyStatus(
 	agentStatuses map[string]*agent.AgentProcess,
 	cfg *config.Config,
 ) *AgentStatusPayload {
+	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
-		Agents:           buildAgents(agentStatuses, cfg, govState),
+		Agents:           agents,
 		ConfiguredAgents: buildConfiguredAgents(cfg),
 		GovMode:          strings.ToLower(string(govState.Mode)),
+		HiddenAgents:     hidden,
 	}
 }
 
@@ -265,10 +271,12 @@ func BuildFrontendStatus(
 
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
+	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	payload := &StatusPayload{
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
 		HiveID:              cfg.HiveID,
-		Agents:              buildAgents(agentStatuses, cfg, govState),
+		Agents:              agents,
+		HiddenAgents:        hiddenAgents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
 		Governor:            buildGovernor(govState, cfg),
 		Tokens:              buildTokens(tokenCollector),
@@ -532,7 +540,37 @@ func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
 	return count, reason
 }
 
+// HiddenAgentInfo names an entry that IS present in the agent manager's
+// runtime status map but was left out of the Agents cards, and the stable
+// reason category why. It exists so an operator staring at an empty (or
+// short) Agents section on the dashboard can tell, from /api/status alone
+// and without shell access, whether the hive even attempted to surface that
+// agent — closing the observability gap #6581 reopened after #6503: the
+// dashboard is currently silent about every card it declines to render.
+type HiddenAgentInfo struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// Hidden-agent reason categories. Kept as constants (not ad hoc strings at
+// each call site) so a reason can be compared/asserted on on exactly, the same
+// way StartFailureClass is a stable class rather than its rendered sentence.
+const (
+	hiddenReasonBelowACMMGate = "below-acmm-gate"
+	hiddenReasonPackInactive  = "pack-inactive"
+)
+
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
+	agents, _ := buildAgentsWithHidden(statuses, cfg, govState)
+	return agents
+}
+
+// buildAgentsWithHidden is buildAgents plus the list of runtime entries it
+// declined to surface as cards, and why. Split out from buildAgents so every
+// existing caller (and every existing test) keeps its original single-value
+// signature; only BuildFrontendStatus/BuildAgentOnlyStatus need the second
+// value to publish it on the status payload.
+func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
 	currentMode := strings.ToLower(string(govState.Mode))
 
 	// The watchdog's authority is hive-wide, but it rides each agent's payload
@@ -552,15 +590,20 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 		acmmLevel = *cfg.ACMMLevel
 	}
 
+	var hidden []HiddenAgentInfo
 	names := make([]string, 0, len(statuses))
 	for name, proc := range statuses {
 		// The operability-agent gate is a hard availability boundary, unlike
 		// membership in a pack's default roster. Keep it authoritative even if
 		// a stale manager snapshot still contains one of those processes.
 		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
+			slog.Debug("agent card omitted: below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 			continue
 		}
 		if packAllowed != nil && !packAllowed[name] && !activeOutsidePack(cfg, name, proc) {
+			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+			slog.Debug("agent card omitted: outside ACMM pack and not active", "agent", name, "acmm_level", acmmLevel)
 			continue
 		}
 		names = append(names, name)
@@ -807,7 +850,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 
 		agents = append(agents, a)
 	}
-	return agents
+	return agents, hidden
 }
 
 // loadStatsConfig reads the per-agent stats configuration from /data/agents/{name}/stats.json.

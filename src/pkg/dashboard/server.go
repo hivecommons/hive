@@ -338,9 +338,16 @@ type StatusPayload struct {
 	// StatusInstance identifies the server process that produced the seq.
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
-	StatusInstance   string                    `json:"statusInstance"`
-	HiveID           string                    `json:"hiveId"`
-	Agents           []FrontendAgent           `json:"agents"`
+	StatusInstance string          `json:"statusInstance"`
+	HiveID         string          `json:"hiveId"`
+	Agents         []FrontendAgent `json:"agents"`
+	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
+	// that were left out of Agents (the dashboard cards), each with the stable
+	// reason category it was omitted for. It exists so an operator whose
+	// Agents section renders empty or short can tell, from /api/status alone,
+	// whether the hive even attempted to surface a given agent — see
+	// HiddenAgentInfo (status_builder.go).
+	HiddenAgents     []HiddenAgentInfo         `json:"hiddenAgents,omitempty"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	Governor         FrontendGovernor          `json:"governor"`
 	Tokens           FrontendTokens            `json:"tokens"`

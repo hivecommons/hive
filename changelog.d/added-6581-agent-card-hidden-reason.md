@@ -1,0 +1,1 @@
+- `/api/status` and the lightweight agent-status stream now include `hiddenAgents`, listing any agent-manager runtime entry left out of the Agents cards along with the stable reason it was omitted for, so an empty or short Agents section is diagnosable without shell access ([#6581](https://github.com/hivecommons/hive/issues/6581)).
