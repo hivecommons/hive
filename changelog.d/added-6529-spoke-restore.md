@@ -1,0 +1,1 @@
+- `hive-backup restore` can now apply an owner-triggered spoke backup archive to a target data directory, mapping `spoke/*` and `beads/*` into `/data` while defaulting to a dry run and refusing to overwrite a different existing `hive-id` unless explicitly forced ([#6529](https://github.com/hivecommons/hive/issues/6529)).

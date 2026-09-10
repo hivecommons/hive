@@ -12,6 +12,7 @@
 //	hive-backup verify              # verify the newest stored archive
 //	hive-backup verify -file f.enc  # verify a local archive
 //	hive-backup extract -file f.enc -dest ./restore
+//	hive-backup restore -file f.enc -dest /data -confirm
 //	hive-backup list                # list stored archives
 //
 // HIVE_BACKUP_KEY must be set to a 64-character hex AES-256 key. It has no
@@ -26,6 +27,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/hubbackup"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/spokebackup"
 )
 
 // exitCodeError is returned for any operational failure so a CronJob shows
@@ -48,6 +50,8 @@ func main() {
 		cmdVerify(os.Args[2:], logger)
 	case "extract":
 		cmdExtract(os.Args[2:], logger)
+	case "restore":
+		cmdRestore(os.Args[2:], logger)
 	case "list":
 		cmdList(logger)
 	default:
@@ -63,6 +67,7 @@ Commands:
   run [-local FILE] [-skip-spokes]   create an encrypted backup
   verify [-file FILE]                verify newest stored, or a local archive
   extract -file FILE -dest DIR       decrypt an archive to a directory
+  restore -file FILE -dest DIR       dry-run a spoke restore; add -confirm to write
   list                               list stored archives
 
 Environment:
@@ -164,6 +169,52 @@ func cmdExtract(args []string, logger *slog.Logger) {
 		os.Exit(exitCodeError)
 	}
 	fmt.Printf("extracted %d files to %s\n", len(man.Files), *dest)
+}
+
+func cmdRestore(args []string, logger *slog.Logger) {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	file := fs.String("file", "", "spoke backup archive to restore (required)")
+	dest := fs.String("dest", "", "target spoke data directory, usually /data (required)")
+	confirm := fs.Bool("confirm", false, "actually write files; without this, restore is a dry run")
+	force := fs.Bool("force", false, "allow replacing an existing different hive-id")
+	_ = fs.Parse(args)
+
+	if *file == "" || *dest == "" {
+		fmt.Fprintln(os.Stderr, "restore requires -file and -dest")
+		os.Exit(exitCodeError)
+	}
+	key, err := hubbackup.LoadKey()
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+	data, err := os.ReadFile(*file)
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+	res, err := spokebackup.Restore(key, data, spokebackup.RestoreOptions{
+		DestDir: *dest,
+		DryRun:  !*confirm,
+		Force:   *force,
+	})
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+	if res.DryRun {
+		fmt.Printf("restore dry-run OK: %d files would be written to %s\n", len(res.FilesPlanned), *dest)
+		fmt.Println("rerun with -confirm to apply")
+	} else {
+		fmt.Printf("restored %d files to %s\n", res.FilesWritten, *dest)
+		fmt.Println("restart the hive container so entrypoint ownership and bead permissions are repaired")
+	}
+	if res.ArchiveHiveID != "" {
+		fmt.Printf("  archive hive-id: %s\n", res.ArchiveHiveID)
+	}
+	if res.ExistingHiveID != "" {
+		fmt.Printf("  existing hive-id: %s\n", res.ExistingHiveID)
+	}
 }
 
 func cmdList(logger *slog.Logger) {
