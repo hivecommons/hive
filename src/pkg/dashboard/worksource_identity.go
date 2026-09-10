@@ -1,6 +1,9 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"log/slog"
+
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -28,6 +31,49 @@ func refFromIssueMap(repoFull string, issue map[string]any) worksource.Ref {
 		ExternalID: stringFromAny(issue["external_id"]),
 		Number:     intFromAny(issue["number"]),
 		URL:        stringFromAny(issue["url"]),
+	}
+}
+
+// forEachActionableIssue converts each entry of one repo's ActionableIssues
+// (`[]any` holding ghpkg.Issue structs or maps that survived a JSON
+// round-trip through the status payload) into a map and invokes fn with its
+// canonical, source-aware worksource.Ref (kubestellar/hive#4245).
+//
+// This is the single place the []any -> map[string]any conversion and the
+// #4245 identity/skip contract live; selectTask (contribute_ws.go) and
+// admissionQueueSnapshot (contribute_sse.go) both drove this by hand, which
+// is exactly the kind of duplication that let the two projections drift.
+//
+// An entry is skipped without invoking fn when it fails to marshal/unmarshal,
+// or when refFromIssueMap finds it has NO usable identity at all — no issue
+// number AND no external key — which is the one case where any key would be
+// fabricated. logger may be nil to skip logging on a marshal/unmarshal
+// failure or a no-identity skip (some call sites never logged these).
+// logTag prefixes any such log line, e.g. "[contribute-ws]".
+func forEachActionableIssue(logger *slog.Logger, logTag string, repoFull string, raw []any, fn func(issue map[string]any, ref worksource.Ref)) {
+	for _, item := range raw {
+		b, err := json.Marshal(item)
+		if err != nil {
+			if logger != nil {
+				logger.Debug(logTag+" marshal fail", "repo", repoFull, "error", err)
+			}
+			continue
+		}
+		var issue map[string]any
+		if err := json.Unmarshal(b, &issue); err != nil {
+			if logger != nil {
+				logger.Debug(logTag+" unmarshal fail", "repo", repoFull, "error", err)
+			}
+			continue
+		}
+		ref := refFromIssueMap(repoFull, issue)
+		if ref.Key() == "" {
+			if logger != nil {
+				logger.Info(logTag+" skip: item has no usable identity (no number, no external id)", "repo", repoFull)
+			}
+			continue
+		}
+		fn(issue, ref)
 	}
 }
 

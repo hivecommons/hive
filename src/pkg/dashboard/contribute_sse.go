@@ -345,26 +345,8 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
 			continue
 		}
-		for _, raw := range repo.ActionableIssues {
-			b, err := json.Marshal(raw)
-			if err != nil {
-				continue
-			}
-			var issue map[string]any
-			if err := json.Unmarshal(b, &issue); err != nil {
-				continue
-			}
-			// Canonical, source-aware identity (kubestellar/hive#4245). The old
-			// code read only "number" and skipped zero, which dropped every
-			// Linear/Jira item from the queue outright. Now an item is skipped
-			// only when it has NO identity at all — no issue number AND no
-			// external key — because that is the one case where any key we
-			// invented would be a fabrication.
-			ref := refFromIssueMap(repo.Full, issue)
+		forEachActionableIssue(nil, "", repo.Full, repo.ActionableIssues, func(issue map[string]any, ref worksource.Ref) {
 			itemKey := ref.Key()
-			if itemKey == "" {
-				continue
-			}
 			number := ref.Number
 			// Operator HOLD (#queue-hold): a parked issue is never offered, so it is
 			// kept OUT of the offer-eligible `out` set. It is still collected into
@@ -386,7 +368,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 					Held:       true,
 					HeldReason: holdReasons[itemKey], // "" when no note (map miss) — omitempty
 				})
-				continue
+				return
 			}
 			// A tracker/umbrella issue is coordination-only: its children carry the
 			// work and are queued independently, so selectTask refuses to hand the
@@ -407,10 +389,10 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 			// assignment, this function runs on every queue request and SSE
 			// hydration, so a log line here would be pure noise.
 			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
-				continue
+				return
 			}
 			if h.isTaskInCooldownKey(itemKey) {
-				continue
+				return
 			}
 			// #3987: a live no_work_needed verdict withholds the issue from the
 			// offer pool, and ReadyQueue is the read-only projection of exactly
@@ -418,13 +400,13 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 			// ledger admission pins). The hive AGENT pipeline does not read
 			// this ledger anywhere.
 			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
-				continue
+				return
 			}
 			if h.isTaskInFailureCooldownKey(itemKey) {
-				continue
+				return
 			}
 			if active[itemKey] {
-				continue
+				return
 			}
 			labels := stringSliceFromAny(issue["labels"])
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
@@ -449,7 +431,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 					snap.withheld = append(snap.withheld,
 						withheldItemFromDecision(repo.Full, ref, title, url, decision.convergence))
 				}
-				continue
+				return
 			}
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
@@ -463,13 +445,13 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
 					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
 					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
-					continue
+					return
 				}
 				// Own-work is meaningless for an anonymous queue view, so pass an
 				// empty "self" — an issue assigned solely to OTHERS is skipped, one
 				// unassigned stays. This matches selectTask's skip-assigned toggle.
 				if hub.ContributeSkipAssignedToOthers && assignedToOthers(assignees, "") {
-					continue
+					return
 				}
 			}
 
@@ -483,7 +465,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 				URL:        url,
 				Labels:     labels,
 			})
-		}
+		})
 	}
 
 	// Operator priority override (#queue-reorder): if the operator dragged items to
