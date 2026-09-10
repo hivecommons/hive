@@ -2,7 +2,7 @@
 
 Hive has two backup paths with different scopes: nightly encrypted hub disaster-recovery archives, and on-demand per-spoke backups an owner can download from the dashboard.
 
-> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md).
+> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md).
 
 ## Hub disaster recovery: `hive-backup`
 
