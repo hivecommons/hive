@@ -33,7 +33,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
 fi
 
 # Docker -e takes precedence over config file
-export HIVE_HUB="${HIVE_HUB:-wss://hive.kubestellar.io:3001/contribute}"
+export HIVE_HUB="${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}"
 export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-register' first}"
 export AGENT_BACKEND="${_DOCKER_BACKEND:-${AGENT_BACKEND:-claude}}"
 export HIVE_AGENT_SESSION="$TMUX_SESSION"

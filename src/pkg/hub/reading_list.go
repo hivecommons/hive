@@ -154,7 +154,7 @@ func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
 		return nil, err
 	}
 	// A browser-like UA gets the fully server-rendered list markup.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HiveHub/1.0; +https://hive.kubestellar.io)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HiveHub/1.0; +https://hive.hivecommons.dev)")
 	req.Header.Set("Accept", "text/html")
 
 	client := &http.Client{Timeout: readingListFetchTimeout}

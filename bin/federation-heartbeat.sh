@@ -5,7 +5,7 @@
 # Called by: cron or systemd timer (every 5 minutes)
 #
 # Environment:
-#   HIVE_FEDERATION_REGISTRY — URL of the registry hub (default: https://hive.kubestellar.io)
+#   HIVE_FEDERATION_REGISTRY — URL of the registry hub (default: https://hive.hivecommons.dev)
 #   HIVE_FEDERATION_ID       — this hive's ID in the registry
 #
 # Reads from:
@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REGISTRY_URL="${HIVE_FEDERATION_REGISTRY:-https://hive.kubestellar.io}"
+REGISTRY_URL="${HIVE_FEDERATION_REGISTRY:-https://hive.hivecommons.dev}"
 HIVE_ID="${HIVE_FEDERATION_ID:-}"
 METRICS_DIR="${HIVE_METRICS_DIR:-/var/run/hive-metrics}"
 

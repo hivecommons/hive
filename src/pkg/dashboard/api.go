@@ -1026,7 +1026,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set(proxyAuthHeader, proof)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1073,7 +1073,7 @@ func (s *Server) handleSnapshotFrameAncestors(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
-	hubURL := "https://hive.kubestellar.io"
+	hubURL := "https://hive.hivecommons.dev"
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.URL != "" {
 		hubURL = s.deps.Config.Hub.URL
 	}
@@ -2779,7 +2779,7 @@ code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:2px 8
 <p class="action">%[3]s</p>
 <p>Error code: <code>%[1]s</code></p>
 <a class="btn btn-primary" href="/">Sign in with GitHub</a>
-<a class="btn btn-secondary" href="https://hive.kubestellar.io/dashboard">Back to the hub</a>
+<a class="btn btn-secondary" href="https://hive.hivecommons.dev/dashboard">Back to the hub</a>
 </div>
 </html>`
 

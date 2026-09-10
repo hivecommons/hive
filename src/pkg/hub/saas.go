@@ -1266,7 +1266,7 @@ func isSameOriginAsHub(raw string) bool {
 // This one MUST keep accepting sibling tenants, and that is not an oversight:
 // every hosted hive's ingress carries
 //
-//	auth-signin: https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri
+//	auth-signin: https://hive.hivecommons.dev/login?redirect=$scheme://$http_host$request_uri
 //
 // (see saas_provision.go), so the ordinary "open my hive" flow arrives at the
 // hub with redirect=https://<id>.hive.kubestellar.io/... and must be allowed to

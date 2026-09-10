@@ -4602,7 +4602,7 @@ func (c *Config) applyDefaults() {
 		c.Data.AgentsDir = "/data/agent-configs"
 	}
 	if c.Hub.URL == "" {
-		c.Hub.URL = "https://hive.kubestellar.io"
+		c.Hub.URL = "https://hive.hivecommons.dev"
 		c.Hub.IsPublic = true
 	}
 	for name, agent := range c.Agents {
