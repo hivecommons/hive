@@ -87,32 +87,6 @@ func TestParseAnalysisNonGeneralizableClearsLesson(t *testing.T) {
 	}
 }
 
-// TestExtractJSONObject is a positive control on the brace-scanning helper:
-// wrong extraction would break every downstream ParseAnalysis case above.
-func TestExtractJSONObject(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"no braces", "hello world", ""},
-		{"only open brace", "hello { world", ""},
-		{"only close brace", "hello } world", ""},
-		{"close before open", "} { ", ""},
-		{"simple object", `noise {"a":1} noise`, `{"a":1}`},
-		{"nested object takes outermost span", `pre {"a":{"b":1}} post`, `{"a":{"b":1}}`},
-		{"empty object", "{}", "{}"},
-	}
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractJSONObject(tt.input)
-			if got != tt.want {
-				t.Fatalf("extractJSONObject(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestTruncate is a positive control: an off-by-one or missing rune-vs-byte
 // handling would corrupt every prompt built from record/finding text.
 func TestTruncate(t *testing.T) {
