@@ -1,0 +1,1 @@
+- Enabled agents whose backend is a configured model-gateway name now remain visible in the dashboard Agents section even if their runtime process is missing, with a blocked card that explains the missing process instead of silently disappearing ([#6581](https://github.com/hivecommons/hive/issues/6581)).

@@ -464,6 +464,43 @@ func TestBuildAgents(t *testing.T) {
 	}
 }
 
+func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"supervisor": {
+				ID:          "supervisor",
+				Backend:     "unsloth-local",
+				Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
+				Enabled:     true,
+				DisplayName: "Supervisor",
+				SortOrder:   10,
+			},
+		},
+		Governor: config.GovernorConfig{
+			Gateways: []config.GatewayConfig{{
+				Name:         "unsloth-local",
+				Kind:         config.GatewayKindCustom,
+				Endpoint:     "http://host.docker.internal:8888",
+				DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+			}},
+		},
+	}
+
+	agents := buildAgents(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	if len(agents) != 1 {
+		t.Fatalf("agents len = %d, want 1 for enabled agent using configured gateway backend", len(agents))
+	}
+	if agents[0].Name != "supervisor" {
+		t.Fatalf("agent name = %q, want supervisor", agents[0].Name)
+	}
+	if agents[0].CLI != "unsloth-local" {
+		t.Errorf("agent CLI = %q, want configured gateway backend", agents[0].CLI)
+	}
+	if agents[0].StructuredStatus != "BLOCKED" {
+		t.Errorf("structured status = %q, want BLOCKED to make the missing runtime process visible", agents[0].StructuredStatus)
+	}
+}
+
 // TestBuildAgents_OffByCadence verifies that an agent whose cadence for the
 // current governor mode is a non-kicking value ("pause"/"off") is flagged
 // OffByCadence, while a normally-scheduled agent is not. This is the signal the
