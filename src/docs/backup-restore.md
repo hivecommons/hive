@@ -105,13 +105,13 @@ The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-11
 
 | Archive path | Container path (relative to `HIVE_SPOKE_BACKUP_DATA_DIR`, default `/data`) | Source |
 | --- | --- | --- |
-| `spoke/hive.yaml.dashboard` | `/data/hive.yaml.dashboard` | `configOverlayFile`, `backup.go:59` |
-| `spoke/hive.yaml.runtime` | `/data/hive.yaml.runtime` | `configRuntimeFile`, `backup.go:73` |
-| `spoke/hive.yaml.bak` | `/data/hive.yaml.bak` | `configRuntimeFileLegacy`, `backup.go:88` (present only on hives that have not saved config since the rename) |
-| `spoke/hive-id` | `/data/hive-id` | `hiveIDFile`, `backup.go:91` |
-| `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:94` |
-| `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:97`, matched with `filepath.Glob` (`backup.go:250-251`) |
-| `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:56,117` — one subtree per agent, discovered from the archive rather than a fixed list |
+| `spoke/hive.yaml.dashboard` | `/data/hive.yaml.dashboard` | `configOverlayFile`, `backup.go:65` |
+| `spoke/hive.yaml.runtime` | `/data/hive.yaml.runtime` | `configRuntimeFile`, `backup.go:88` |
+| `spoke/hive.yaml.bak` | `/data/hive.yaml.bak` | `configRuntimeFileLegacy`, `backup.go:94` (present only on hives that have not saved config since the rename) |
+| `spoke/hive-id` | `/data/hive-id` | `hiveIDFile`, `backup.go:97` |
+| `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:100` |
+| `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:255`) |
+| `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
 The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,262-266,533-550`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:894-931`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api.go:6861`, `src/pkg/hub/cluster_app_key.go:393`).
