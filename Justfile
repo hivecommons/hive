@@ -1708,7 +1708,23 @@ contribute-status:
       if [[ -n "${_IDS[$i]:-}" ]]; then
         echo ""
         echo "=== Your Profile (${_IDS[$i]}) ==="
-        curl -sf "${HUB_HTTP}/api/contributors/${_IDS[$i]}" 2>/dev/null | jq . || echo "Could not fetch profile"
+        # /api/contributors/{id} is auth-gated and answers an unauthenticated
+        # request with a 302 to the login page. `curl -f` only fails on >=400,
+        # so a redirect used to pass the guard, feed nginx's HTML to jq, leak
+        # jq's parse error to the terminal, and blame the fetch ("Could not
+        # fetch profile") for what is really a missing login (#6542). Read the
+        # status code explicitly and name each failure for what it is; jq only
+        # ever sees a 200 body.
+        PROFILE_RESP=$(curl -s -w '\n%{http_code}' "${HUB_HTTP}/api/contributors/${_IDS[$i]}" 2>/dev/null) || PROFILE_RESP=""
+        PROFILE_CODE="${PROFILE_RESP##*$'\n'}"
+        PROFILE_BODY="${PROFILE_RESP%$'\n'*}"
+        if [[ "$PROFILE_CODE" == "200" ]]; then
+          jq . <<< "$PROFILE_BODY" 2>/dev/null || echo "Could not parse profile response"
+        elif [[ "$PROFILE_CODE" == 3?? || "$PROFILE_CODE" == "401" || "$PROFILE_CODE" == "403" ]]; then
+          echo "Not logged in — sign in at ${HUB_HTTP}/sso to see your profile"
+        else
+          echo "Could not fetch profile (HTTP ${PROFILE_CODE:-no response})"
+        fi
       fi
       echo ""
     done
