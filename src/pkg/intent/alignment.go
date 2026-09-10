@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/jsonextract"
 )
 
 const (
@@ -425,7 +426,7 @@ func buildAlignmentPrompt(ac AlignmentContext) []alignmentChatMessage {
 }
 
 func ParseModelAlignmentVerdict(content string) (ModelAlignmentVerdict, error) {
-	raw := extractJSONObject(content)
+	raw := jsonextract.Object(content)
 	if raw == "" {
 		return ModelAlignmentVerdict{}, fmt.Errorf("no JSON object in alignment reviewer reply")
 	}
@@ -465,15 +466,6 @@ type alignmentChatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
-}
-
-func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start < 0 || end < 0 || end < start {
-		return ""
-	}
-	return s[start : end+1]
 }
 
 func truncateString(s string, max int) string {

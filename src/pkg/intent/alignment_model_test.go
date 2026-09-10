@@ -180,25 +180,6 @@ func TestParseModelAlignmentVerdict(t *testing.T) {
 	})
 }
 
-func TestExtractJSONObject(t *testing.T) {
-	tests := []struct {
-		in, want string
-	}{
-		{`{"a":1}`, `{"a":1}`},
-		{`prefix {"a":1} suffix`, `{"a":1}`},
-		{`no braces`, ""},
-		{``, ""},
-		{`}{`, ""},
-		{`only open {`, ""},
-		{`{"outer":{"inner":1}}`, `{"outer":{"inner":1}}`},
-	}
-	for _, tt := range tests {
-		if got := extractJSONObject(tt.in); got != tt.want {
-			t.Errorf("extractJSONObject(%q) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
-
 func TestTruncateString(t *testing.T) {
 	if got := truncateString("hello", 10); got != "hello" {
 		t.Errorf("short string modified: %q", got)

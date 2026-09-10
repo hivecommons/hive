@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/jsonextract"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -214,7 +215,7 @@ func buildClassifierPrompt(text, validationError string) []chatMessage {
 
 // ParseInjectionScore extracts and validates the strict classifier JSON verdict.
 func ParseInjectionScore(content string) (InjectionScore, error) {
-	raw := extractJSONObject(content)
+	raw := jsonextract.Object(content)
 	if raw == "" {
 		return InjectionScore{}, fmt.Errorf("no JSON object in classifier reply")
 	}
@@ -238,15 +239,6 @@ func ParseInjectionScore(content string) (InjectionScore, error) {
 		return InjectionScore{}, fmt.Errorf("rationale too long")
 	}
 	return s, nil
-}
-
-func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start < 0 || end < 0 || end < start {
-		return ""
-	}
-	return s[start : end+1]
 }
 
 func validClassifierCategory(category string) bool {
