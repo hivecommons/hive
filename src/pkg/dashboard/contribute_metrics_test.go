@@ -202,6 +202,67 @@ func TestMetricsStoreSeedNoBackfill(t *testing.T) {
 	}
 }
 
+func TestMetricsPerUserDoneAlignsWithSharedTimeline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.json")
+	s := newMetricsStore(path, slog.Default())
+
+	s.rollup(rollupSample{queueDepth: 1, userTotals: map[string]int{"alice": 0}, now: time.Now()})
+	s.rollup(rollupSample{queueDepth: 2, userTotals: map[string]int{"alice": 2}, now: time.Now()})
+	s.rollup(rollupSample{queueDepth: 3, userTotals: map[string]int{"alice": 2, "bob": 1}, now: time.Now()})
+	s.rollup(rollupSample{queueDepth: 4, userTotals: map[string]int{"alice": 3, "bob": 1}, now: time.Now()})
+
+	snap := s.snapshot()
+	if got, want := len(snap.PerUserDone["alice"]), len(snap.TasksDone); got != want {
+		t.Fatalf("alice per_user_done len = %d, want shared timeline len %d", got, want)
+	}
+	if got, want := len(snap.PerUserDone["bob"]), len(snap.TasksDone); got != want {
+		t.Fatalf("bob per_user_done len = %d, want shared timeline len %d", got, want)
+	}
+	if got, want := snap.PerUserDone["alice"], []int{0, 2, 0, 1}; !equalInts(got, want) {
+		t.Fatalf("alice per_user_done = %v, want %v", got, want)
+	}
+	if got, want := snap.PerUserDone["bob"], []int{0, 0, 1, 0}; !equalInts(got, want) {
+		t.Fatalf("bob per_user_done = %v, want %v", got, want)
+	}
+}
+
+func TestMetricsLoadPadsLegacyRaggedPerUserDone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.json")
+	legacy := metricsPersistShape{
+		QueueDepth:  []int{1, 2, 3},
+		TasksDone:   []int{0, 2, 1},
+		FleetSize:   []int{1, 1, 2},
+		PerUserDone: map[string][]int{"alice": {2, 1}},
+		Bucket:      "hour",
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newMetricsStore(path, slog.Default())
+	s.load()
+	snap := s.snapshot()
+	if got, want := snap.PerUserDone["alice"], []int{0, 2, 1}; !equalInts(got, want) {
+		t.Fatalf("padded per_user_done = %v, want %v", got, want)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestMetricsPersistShapeStable pins the on-disk JSON keys the client sparklines
 // depend on, so a rename can't silently break the fetch contract.
 func TestMetricsPersistShapeStable(t *testing.T) {

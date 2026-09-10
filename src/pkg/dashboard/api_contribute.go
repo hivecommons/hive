@@ -966,6 +966,10 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-card-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
 .ops-card-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
+.cc-your-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;padding:16px 20px}
+.cc-your-stat{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px}
+.cc-your-stat .num{font-size:1.45rem;line-height:1;font-weight:700;color:var(--cc-text);font-variant-numeric:tabular-nums}
+.cc-your-stat .cap{font-size:.72rem;color:var(--cc-muted);margin-top:6px}
 .ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2);flex-wrap:wrap}
 .ops-filter{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
 .ops-filter.active{background:#1f6feb;border-color:var(--cc-accent-fg);color:#fff}
@@ -2504,6 +2508,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
      (see the .ops-shell media query) so the page never scrolls horizontally. -->
 <div class="ops-shell" id="ops-shell">
 <div class="ops-main">
+<div class="ops-card card-accent" id="cc-your-contribution-card" style="display:none;margin-bottom:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Your contribution</h3><span class="ops-card-count" id="cc-your-contribution-user"></span></div>
+<div class="cc-your-stats" id="cc-your-contribution-body"><div class="ops-empty">Loading your contribution&hellip;</div></div>
+</div>
 <div class="ops-grid">
 <div>
 <div class="ops-card card-accent">
@@ -3908,6 +3916,52 @@ function setSpark(id,values,w,h,color){
 // render (which runs independently of opsPoll) can read per-user history without
 // its own fetch. Null until the first successful poll.
 var ccMetrics=null;
+var ccContributionProfile=null;
+
+function ccSumLast(values,count){
+  if(!Array.isArray(values)||!values.length)return 0;
+  var start=Math.max(0,values.length-count),total=0;
+  for(var i=start;i<values.length;i++){var n=Number(values[i]);if(isFinite(n))total+=n;}
+  return total;
+}
+function ccRenderYourContribution(){
+  var card=document.getElementById('cc-your-contribution-card');
+  var body=document.getElementById('cc-your-contribution-body');
+  if(!card||!body)return;
+  if(!ccContributionProfile){
+    card.style.display='none';
+    return;
+  }
+  var p=ccContributionProfile;
+  var username=p.github_username||ccMeUsername||'you';
+  var series=(ccMetrics&&ccMetrics.per_user_done&&(ccMetrics.per_user_done[username]||ccMetrics.per_user_done[ccMeUsername]))||[];
+  var done24=ccSumLast(series,24);
+  var userEl=document.getElementById('cc-your-contribution-user');
+  if(userEl)userEl.textContent=username;
+  card.style.display='';
+  body.innerHTML='<div class="cc-your-stat"><div class="num">'+done24+'</div><div class="cap">Issues worked (24h)</div></div>'
+    +'<div class="cc-your-stat"><div class="num">'+Number(p.total_tasks_completed||0)+'</div><div class="cap">Issues worked (total)</div></div>'
+    +'<div class="cc-your-stat"><div class="num">'+Number(p.total_tasks_completed_with_pr||0)+'</div><div class="cap">PRs opened</div></div>'
+    +'<div class="cc-your-stat"><div class="num">'+Number(p.total_tasks_failed||0)+'</div><div class="cap">Failed</div></div>';
+}
+function ccLoadYourContribution(){
+  var card=document.getElementById('cc-your-contribution-card');
+  if(!card)return Promise.resolve();
+  return fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
+    if(!auth||!auth.logged_in||!auth.username){
+      ccContributionProfile=null;
+      ccRenderYourContribution();
+      return;
+    }
+    ccMeUsername=auth.username;
+    return fetch('/api/contributors/'+encodeURIComponent(auth.username)).then(function(r){
+      if(!r.ok){ccContributionProfile=null;ccRenderYourContribution();return null;}
+      return r.json();
+    }).then(function(p){
+      if(p){ccContributionProfile=p;ccRenderYourContribution();}
+    });
+  }).catch(function(e){console.error('your contribution load failed',e);});
+}
 // ccMetricsPoll fetches the persistent hourly series and paints the four Ops-tab
 // sparklines. Called from opsPoll() on its existing cadence — hourly data does
 // not need a fast dedicated timer, so every opsPoll tick is more than enough.
@@ -3924,6 +3978,7 @@ function ccMetricsPoll(){
     if(ccMeUsername&&ccMetrics.per_user_done&&ccMetrics.per_user_done[ccMeUsername]){
       setSpark('spark-quota',ccMetrics.per_user_done[ccMeUsername],SPARK_W,SPARK_H,'#388bfd');
     }
+    ccRenderYourContribution();
     // Leaderboard hive-wide trend + per-row sparklines, if the tab is rendered.
     ccRenderLeaderboardSparklines();
   }).catch(function(e){console.error('metrics poll failed',e);});
@@ -4981,6 +5036,7 @@ async function opsPoll(){
   // Persistent hourly sparklines (#persistent-history). Independent of the fleet
   // fetch above (its own try/catch inside ccMetricsPoll) so a metrics hiccup never
   // stalls the panels. Hourly data on the opsPoll cadence is plenty — no fast timer.
+  ccLoadYourContribution();
   ccMetricsPoll();
   var tab=document.getElementById('tab-ops');
   if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);

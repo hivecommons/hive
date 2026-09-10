@@ -115,6 +115,22 @@ func capRing(s []int) []int {
 	return s
 }
 
+func alignRingToLength(ring []int, length int) []int {
+	ring = capRing(ring)
+	if length > metricsRetentionBuckets {
+		length = metricsRetentionBuckets
+	}
+	if len(ring) > length {
+		return ring[len(ring)-length:]
+	}
+	if len(ring) == length {
+		return ring
+	}
+	aligned := make([]int, length)
+	copy(aligned[length-len(ring):], ring)
+	return aligned
+}
+
 // load restores the series from the PVC file. A missing file is a clean no-op
 // (first boot). A corrupt/unreadable file is logged and ignored — the store
 // starts empty rather than crashing, matching the tombstone/fleet-stats loaders'
@@ -146,7 +162,7 @@ func (m *metricsStore) load() {
 	m.fleetSize = capRing(stored.FleetSize)
 	m.perUserDone = make(map[string][]int, len(stored.PerUserDone))
 	for user, ring := range stored.PerUserDone {
-		m.perUserDone[user] = capRing(ring)
+		m.perUserDone[user] = alignRingToLength(ring, len(m.tasksDone))
 	}
 	if t, err := time.Parse(time.RFC3339, stored.CollectedAt); err == nil {
 		m.collectedAt = t
@@ -170,7 +186,7 @@ func (m *metricsStore) snapshot() metricsPersistShape {
 		Bucket:      "hour",
 	}
 	for user, ring := range m.perUserDone {
-		out.PerUserDone[user] = append([]int(nil), ring...)
+		out.PerUserDone[user] = append([]int(nil), alignRingToLength(ring, len(out.TasksDone))...)
 	}
 	if !m.collectedAt.IsZero() {
 		out.CollectedAt = m.collectedAt.UTC().Format(time.RFC3339)
@@ -247,18 +263,28 @@ func (m *metricsStore) rollup(s rollupSample) {
 	}
 
 	hourTasks := 0
-	for user, total := range s.userTotals {
-		delta := total - m.lastTotals[user]
-		if delta < 0 {
-			// A profile reset / re-registration lowered the cumulative count.
-			// Treat as zero for this hour rather than a negative bucket.
-			delta = 0
-		}
-		if delta > 0 {
-			m.perUserDone[user] = capRing(append(m.perUserDone[user], delta))
+	timelineLen := len(m.tasksDone)
+	users := make(map[string]struct{}, len(m.perUserDone)+len(s.userTotals))
+	for user := range m.perUserDone {
+		users[user] = struct{}{}
+	}
+	for user := range s.userTotals {
+		users[user] = struct{}{}
+	}
+	for user := range users {
+		delta := 0
+		if total, ok := s.userTotals[user]; ok {
+			delta = total - m.lastTotals[user]
+			if delta < 0 {
+				// A profile reset / re-registration lowered the cumulative count.
+				// Treat as zero for this hour rather than a negative bucket.
+				delta = 0
+			}
 			hourTasks += delta
+			m.lastTotals[user] = total
 		}
-		m.lastTotals[user] = total
+		ring := alignRingToLength(m.perUserDone[user], timelineLen)
+		m.perUserDone[user] = capRing(append(ring, delta))
 	}
 
 	m.queueDepth = capRing(append(m.queueDepth, s.queueDepth))

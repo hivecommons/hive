@@ -1,0 +1,1 @@
+- The Operations page now shows signed-in contributors their own hive contribution totals, including issues worked in the last 24 hours, all-time issues worked, PR-producing completions, and failures ([#6543](https://github.com/hivecommons/hive/issues/6543)).
