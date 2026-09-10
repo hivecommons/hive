@@ -6073,42 +6073,18 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
 			continue
 		}
-		for _, raw := range repo.ActionableIssues {
-			// ActionableIssues contains ghpkg.Issue structs stored as any.
-			// Marshal/unmarshal to get a map we can read fields from.
-			b, err := json.Marshal(raw)
-			if err != nil {
-				h.logger.Debug("[contribute-ws] marshal fail", "repo", repo.Full, "error", err)
-				continue
-			}
-			var issue map[string]any
-			if err := json.Unmarshal(b, &issue); err != nil {
-				h.logger.Debug("[contribute-ws] unmarshal fail", "repo", repo.Full, "error", err)
-				continue
-			}
-
-			// Canonical, source-aware identity (kubestellar/hive#4245). The old
-			// `number == 0` skip rejected every Linear and Jira item outright,
-			// so non-GitHub work could never be offered to a contributor at all.
-			// An item is now skipped only when it has NO identity — no issue
-			// number AND no external key — which is the one case where any key
-			// would be fabricated.
-			ref := refFromIssueMap(repo.Full, issue)
+		forEachActionableIssue(h.logger, "[contribute-ws]", repo.Full, repo.ActionableIssues, func(issue map[string]any, ref worksource.Ref) {
 			itemKey := ref.Key()
-			if itemKey == "" {
-				h.logger.Info("[contribute-ws] skip: item has no usable identity (no number, no external id)", "repo", repo.Full)
-				continue
-			}
 			number := ref.Number
 			// Operator HOLD (#queue-hold): skip a manually-parked issue outright. This
 			// is a persistent operator decision, DISTINCT from the time-based cooldown
 			// below — a held issue never becomes a candidate until the operator Resumes
 			// it. Keyed on the same canonical "%s#%d" as every other exclusion.
 			if _, isHeld := heldIssues[itemKey]; isHeld {
-				continue
+				return
 			}
 			if h.isTaskInCooldownKey(itemKey) {
-				continue
+				return
 			}
 			// #3987: skip an issue with a live no_work_needed completion verdict
 			// (the #2547 shape — shippable parts merged, remainder maintainer-
@@ -6116,16 +6092,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			// is voided the moment the issue shows activity newer than it, so a
 			// genuinely reopened issue comes straight back into the pool.
 			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
-				continue
+				return
 			}
 			// #2435: skip an issue still inside its short post-failure cooldown or
 			// its longer quarantine. This is the primary livelock fix — a failing
 			// issue at the head of the scan is no longer instantly re-admissible.
 			if h.isTaskInFailureCooldownKey(itemKey) {
-				continue
+				return
 			}
 			if activeIssues[itemKey] {
-				continue
+				return
 			}
 			labels := stringSliceFromAny(issue["labels"])
 			requirements := TaskRequirementsFromLabels(labels)
@@ -6138,7 +6114,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 					"required_arch", requirements.Arch,
 					"required_backend", requirements.CLIBackend,
 					"required_credential", requirements.CredentialType)
-				continue
+				return
 			}
 			// #3768: skip an issue that an open PR — from ANYONE, hive agent or
 			// human contributor — already claims to fix. The activeIssues guard
@@ -6180,7 +6156,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 						"generation", decision.convergence.ObservedGeneration,
 						"blockers", strings.Join(decision.convergence.Blockers, ","))
 				}
-				continue
+				return
 			}
 			// Yank self-exclusion: an issue this SAME clanker was just yanked off is
 			// briefly skipped for it (yankSelfExcludeSeconds), so the immediate post-yank
@@ -6192,7 +6168,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				selfExcluded := h.isYankSelfExcludedKeyLocked(c.profile.ContributorID, itemKey)
 				h.mu.Unlock()
 				if selfExcluded {
-					continue
+					return
 				}
 			}
 
@@ -6222,10 +6198,10 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
 				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
 					"repo", repo.Full, "number", number, "title", title)
-				continue
+				return
 			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {
-				continue
+				return
 			}
 
 			// Apply the title / author / label contribute filters. Each is a
@@ -6236,7 +6212,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
 					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
 					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
-					continue
+					return
 				}
 				// #2357: optionally skip issues already assigned to someone else.
 				// An issue assigned to the contributor themselves (or unassigned)
@@ -6244,7 +6220,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// skipped when the toggle is on.
 				if hub.ContributeSkipAssignedToOthers &&
 					assignedToOthers(assignees, c.profile.GitHubUsername) {
-					continue
+					return
 				}
 			}
 
@@ -6275,7 +6251,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// can deprioritise a recently-failed issue within its bucket.
 				recentFailures: h.recentFailureCountKey(itemKey),
 			})
-		}
+		})
 	}
 
 	if len(candidates) == 0 {
