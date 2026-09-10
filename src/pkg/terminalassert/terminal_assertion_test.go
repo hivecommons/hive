@@ -294,3 +294,45 @@ func forgeTerminalToken(key string, c claims) string {
 	body := b64.EncodeToString(payload)
 	return body + "." + terminalSign(key, body)
 }
+
+// Verify must reject a body that is correctly SIGNED but is not valid
+// base64url — the signature check runs BEFORE the payload is even decoded, so
+// a well-signed garbage body still has to fail closed at the decode step
+// rather than panic or silently succeed.
+func TestTerminalAssertionRejectsUndecodablePayload(t *testing.T) {
+	key := "terminal-key"
+	body := "not-valid-base64!!!"
+	tok := body + "." + terminalSign(key, body)
+	if _, _, err := Verify(key, tok, "hive-1", time.Unix(1_700_000_000, 0)); err == nil {
+		t.Fatal("expected rejection for a well-signed but undecodable payload")
+	}
+}
+
+// Verify must reject a body that decodes as valid base64url but is not valid
+// JSON claims — the decode step can succeed while the payload is still
+// meaningless, so json.Unmarshal's own failure has to fail closed too.
+func TestTerminalAssertionRejectsUnparseableClaims(t *testing.T) {
+	key := "terminal-key"
+	body := b64.EncodeToString([]byte("this is not json"))
+	tok := body + "." + terminalSign(key, body)
+	if _, _, err := Verify(key, tok, "hive-1", time.Unix(1_700_000_000, 0)); err == nil {
+		t.Fatal("expected rejection for well-signed, well-decoded, but unparseable claims")
+	}
+}
+
+// Mint refuses to produce a token with an empty username, so exercising
+// Verify's own empty-username guard requires hand-forging one directly: a
+// well-signed, well-formed, correct-version, correct-hive token whose claims
+// simply omit the username. Verify must still fail closed on it rather than
+// return an empty-but-"valid" identity.
+func TestTerminalAssertionRejectsEmptyUsername(t *testing.T) {
+	key := "terminal-key"
+	now := time.Unix(1_700_000_000, 0)
+	forged := forgeTerminalToken(key, claims{
+		Version: terminalAssertionVersion, Username: "", Role: "owner", HiveID: "hive-1",
+		IssuedAt: now.Unix(), Expiry: now.Add(terminalAssertionTTL).Unix(),
+	})
+	if _, _, err := Verify(key, forged, "hive-1", now); err == nil {
+		t.Fatal("expected rejection for claims carrying an empty username")
+	}
+}
