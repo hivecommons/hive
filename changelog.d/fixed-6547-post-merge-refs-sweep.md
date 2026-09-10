@@ -1,0 +1,1 @@
+- A new post-merge Refs sweep script can comment on still-open issues after a merged PR used a non-closing `Refs #N` and no other open PR claims the issue, asking whether the issue can now be closed without auto-closing legitimate epics, trackers, or already-closed issues ([#6547](https://github.com/hivecommons/hive/issues/6547)).
