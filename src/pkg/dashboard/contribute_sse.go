@@ -855,3 +855,120 @@ func personalizeQueueByInterests(items []ReadyQueueItem, interests []string) []R
 	})
 	return items
 }
+
+// admissionQueueRange returns a page of the offerable ReadyQueueItems along with
+// the total number of offerable items. It honours operator ordering but paginates
+// the offerable set (does not include held items in paging). Offset may be
+// positive; limit <= 0 uses readyQueueDefaultLimit. This is additive and does
+// not replace admissionQueueSnapshot.
+func (h *ContributeWSHub) admissionQueueRange(limit int, offset int, withDiagnostics bool) (items []ReadyQueueItem, total int) {
+    if limit <= 0 {
+        limit = readyQueueDefaultLimit
+    }
+    if offset < 0 {
+        offset = 0
+    }
+    // Reuse the admission pass logic to build the full offerable set, then
+    // apply ordering and slice. We avoid appending held items so pagination maps
+    // cleanly to the offerable population.
+    if h == nil || h.server == nil {
+        return []ReadyQueueItem{}, 0
+    }
+
+    h.server.statusMu.RLock()
+    status := h.server.status
+    h.server.statusMu.RUnlock()
+    if status == nil {
+        return []ReadyQueueItem{}, 0
+    }
+
+    // Build full offerable list
+    out := []ReadyQueueItem{}
+    active := h.activeIssueKeys()
+    var disabledRepos []string
+    if h.server.deps != nil && h.server.deps.Config != nil {
+        disabledRepos = h.server.deps.Config.Hub.DisabledRepos
+    }
+    sweep := h.newAdmissionSweep()
+
+    for _, repo := range status.Repos {
+        if len(repo.ActionableIssues) == 0 {
+            continue
+        }
+        if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
+            continue
+        }
+        for _, raw := range repo.ActionableIssues {
+            b, err := json.Marshal(raw)
+            if err != nil {
+                continue
+            }
+            var issue map[string]any
+            if err := json.Unmarshal(b, &issue); err != nil {
+                continue
+            }
+            ref := refFromIssueMap(repo.Full, issue)
+            itemKey := ref.Key()
+            if itemKey == "" {
+                continue
+            }
+            number := ref.Number
+            if isTracker, _ := issue["is_tracker"].(bool); isTracker {
+                continue
+            }
+            if h.isTaskInCooldownKey(itemKey) {
+                continue
+            }
+            if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
+                continue
+            }
+            if h.isTaskInFailureCooldownKey(itemKey) {
+                continue
+            }
+            if active[itemKey] {
+                continue
+            }
+            labels := stringSliceFromAny(issue["labels"])
+            decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
+                repoFull:  repo.Full,
+                repoName:  repo.Name,
+                number:    number,
+                ref:       ref,
+                labels:    labels,
+                dependsOn: dependenciesFromIssueMap(issue),
+            })
+            if !decision.admitted {
+                continue
+            }
+            title, _ := issue["title"].(string)
+            url, _ := issue["url"].(string)
+            out = append(out, ReadyQueueItem{
+                Repo:       repo.Full,
+                Number:     number,
+                Key:        itemKey,
+                SourceType: ref.SourceType,
+                ExternalID: ref.ExternalID,
+                Title:      title,
+                URL:        url,
+                Labels:     labels,
+            })
+        }
+    }
+
+    // Apply operator ordering
+    if h.server.deps != nil && h.server.deps.Config != nil {
+        applyQueueOrder(out, h.server.deps.Config.Hub.ContributeQueueOrder)
+    }
+
+    total = len(out)
+    // Slice for pagination
+    if offset >= total {
+        return []ReadyQueueItem{}, total
+    }
+    end := offset + limit
+    if end > total {
+        end = total
+    }
+    items = out[offset:end]
+    return items, total
+}
