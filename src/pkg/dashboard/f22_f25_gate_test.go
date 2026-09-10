@@ -210,15 +210,15 @@ func TestF22F25HandlersAreOwnerGated(t *testing.T) {
 // the outlier. After this fix it must be 12 of 12. The count floor below is
 // what catches a NEW un-gated writer being added alongside them later.
 var governorConfigWriters = map[string]string{
-	"handleGovernorSensing":       "api.go",
-	"handleGovernorThresholds":    "api.go",
-	"handleGovernorLabels":        "api.go",
-	"handleGovernorBudget":        "api.go",
-	"handleGovernorNotifications": "api.go",
-	"handleGovernorHealth":        "api.go",
-	"handleGovernorLogging":       "api.go",
-	"handleGovernorAttribution":   "api.go",
-	"handleGovernorHub":           "api.go",
+	"handleGovernorSensing":       "api_governor.go",
+	"handleGovernorThresholds":    "api_governor.go",
+	"handleGovernorLabels":        "api_governor.go",
+	"handleGovernorBudget":        "api_governor.go",
+	"handleGovernorNotifications": "api_governor.go",
+	"handleGovernorHealth":        "api_governor.go",
+	"handleGovernorLogging":       "api_governor.go",
+	"handleGovernorAttribution":   "api_governor.go",
+	"handleGovernorHub":           "api_governor.go",
 	"handleGovernorTrajectory":    "api_trajectory.go",
 	"handleGovernorSecurity":      "api_governor_security.go",
 	"handleGovernorFeatures":      "api_governor_features.go",
@@ -261,12 +261,12 @@ func TestF22F25OwnerGateCountFloor(t *testing.T) {
 	// Minimum requireOwnerRole call sites per file after F22/F25.
 	// api_governor_features.go: features (this fix).
 	// api_contribute.go: the four F14 contributor-management gates + hives delete.
-	// api.go: the nine governor writers that live there.
+	// api_governor.go: the nine governor writers moved out of api.go.
 	// api_trajectory.go: trajectory.
 	want := map[string]int{
 		"api_governor_features.go": 1,
 		"api_contribute.go":        5,
-		"api.go":                   9,
+		"api_governor.go":          9,
 		"api_trajectory.go":        1,
 	}
 	gate := regexp.MustCompile(`requireOwnerRole\(w, r\)`)
