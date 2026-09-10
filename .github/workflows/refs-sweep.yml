@@ -1,0 +1,42 @@
+name: Refs sweep
+
+# Mechanical follow-up for #6547: #6152 tightened the hive-open-pr guidance,
+# but 22% of merged issue-linked PRs still shipped a non-closing `Refs #N`,
+# leaving the resolved issue open. This sweep drains the accumulated backlog
+# and keeps draining it: it never closes an issue itself, only asks.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Print planned comments; do not post them'
+        type: boolean
+        default: false
+      lookback-days:
+        description: 'How many days of merged PRs to sweep'
+        type: string
+        default: '7'
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+env:
+  REPO: ${{ github.repository }}
+  BASE_BRANCHES: 'v4 v5'
+  LOOKBACK_DAYS: ${{ inputs.lookback-days || '7' }}
+  DRY_RUN: ${{ (inputs.dry-run && '1') || '0' }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Sweep merged PRs for non-closing issue references
+        run: src/scripts/refs-sweep.sh

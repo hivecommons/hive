@@ -59,7 +59,7 @@ gh issue create --repo "<org>/<target-repo>" \
 ```bash
 gh pr create --repo "<org>/<target-repo>" \
   --title "[sec-check] fix: <short description>" \
-  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "security,hold"
 ```

@@ -61,6 +61,14 @@ when part of the issue deliberately stays open — and rejects the request
 otherwise. Pass it whenever the run started from an issue, so a truncated or
 replaced body cannot open a PR that orphans its issue.
 
+Before writing `Refs #N`, answer the question directly: *does merging this PR
+leave anything for issue #N to track?* If nothing, use `Closes #N` — that is
+the default. Reserve `Refs #N` for an epic/tracker or a deliberately partial
+fix, and say on the same line what remains open. #6411 (`Refs #6319, #6410`,
+a follow-up tracker) and #6434 (a doc recording tracker state) are correct
+uses of `Refs`; most PRs are not those, and #6152/#6547 exist because agents
+defaulted to `Refs` out of caution rather than answering the question.
+
 Flags `gh` accepts but this path does not need — `--draft`, `--fill`, `--web`,
 `--no-maintainer-edit` — are **accepted and ignored**, so an agent's existing
 command line does not need rewriting. Note that `--draft` being ignored means

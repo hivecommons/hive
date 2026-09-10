@@ -1,0 +1,1 @@
+- Added a scheduled `refs-sweep` workflow that comments once on an open issue when a merged PR referenced it with a non-closing `Refs #N` and nothing else still tracks it, and tightened the `hive-open-pr` guidance to ask explicitly whether anything is left before choosing `Refs` over `Closes` ([#6547](https://github.com/hivecommons/hive/issues/6547)).
