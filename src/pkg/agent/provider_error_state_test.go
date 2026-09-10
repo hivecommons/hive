@@ -138,10 +138,11 @@ func TestMarkProviderErrorLockedReArmsAfterExpiry(t *testing.T) {
 
 func TestClearProviderErrorLocked(t *testing.T) {
 	mgr, agent := newProviderStateManager(t)
+	now := time.Now()
 
 	// No-op when there is nothing to clear.
 	agent.LastError = "unrelated error"
-	mgr.clearProviderErrorLocked(agent)
+	mgr.clearProviderErrorLocked(agent, now)
 	if agent.LastError != "unrelated error" {
 		t.Fatalf("no-op clear touched LastError: %q", agent.LastError)
 	}
@@ -154,7 +155,7 @@ func TestClearProviderErrorLocked(t *testing.T) {
 	agent.ProviderErrorBackoffUntil = time.Now().Add(time.Minute)
 	agent.providerErrorBackoffAttempt = 3
 	agent.LastError = line
-	mgr.clearProviderErrorLocked(agent)
+	mgr.clearProviderErrorLocked(agent, now)
 	if agent.ProviderErrorClass != "" || agent.ProviderErrorLine != "" ||
 		!agent.ProviderErrorBackoffUntil.IsZero() || agent.providerErrorBackoffAttempt != 0 {
 		t.Fatalf("clear left state: class=%q line=%q until=%v attempt=%d",
@@ -169,7 +170,7 @@ func TestClearProviderErrorLocked(t *testing.T) {
 	agent.ProviderErrorClass = "auth"
 	agent.ProviderErrorLine = "API Error: 401"
 	agent.LastError = "tmux session lost"
-	mgr.clearProviderErrorLocked(agent)
+	mgr.clearProviderErrorLocked(agent, now)
 	if agent.LastError != "tmux session lost" {
 		t.Fatalf("clear overwrote unrelated LastError: %q", agent.LastError)
 	}

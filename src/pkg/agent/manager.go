@@ -327,6 +327,10 @@ type AgentProcess struct {
 	ProviderErrorLine           string
 	ProviderErrorBackoffUntil   time.Time
 	providerErrorBackoffAttempt int
+	// BackendAuth is the per-agent backend-auth canary (#6558), derived from
+	// the same classifyProviderError verdict as ProviderErrorClass above and
+	// guarded by the same lock (Manager.mu). See backend_auth.go.
+	BackendAuth BackendAuthState
 	// kickLogPending is true while the current tmux session holds kick output
 	// that has not yet been archived to a per-kick log file (see
 	// kick_logs.go). Set after every kick delivery; cleared when the
@@ -6010,6 +6014,13 @@ func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 }
 
 func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErrorMatch, now time.Time) time.Duration {
+	// BackendAuth (#6558) is updated on every observation of this match,
+	// independent of the backoff early-return below: an operator watching the
+	// canary needs "still unlicensed" to keep its original Since even while
+	// the backoff timer itself is not restarted.
+	if status, ok := classifyBackendAuthStatus(match.Class, match.Line); ok {
+		agent.markBackendAuthLocked(status, match.Line, now)
+	}
 	if !agent.ProviderErrorBackoffUntil.IsZero() && now.Before(agent.ProviderErrorBackoffUntil) &&
 		agent.ProviderErrorClass == match.Class && agent.ProviderErrorLine == match.Line {
 		return agent.ProviderErrorBackoffUntil.Sub(now)
@@ -6025,7 +6036,11 @@ func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErr
 	return delay
 }
 
-func (m *Manager) clearProviderErrorLocked(agent *AgentProcess) {
+func (m *Manager) clearProviderErrorLocked(agent *AgentProcess, now time.Time) {
+	// BackendAuth (#6558) clears whenever the watchdog finds no provider
+	// error on a pane it just checked — the spoke's evidence of a successful
+	// turn — regardless of whether ProviderErrorClass was already empty.
+	agent.clearBackendAuthLocked(now)
 	if agent.ProviderErrorClass == "" && agent.ProviderErrorLine == "" && agent.ProviderErrorBackoffUntil.IsZero() {
 		return
 	}
@@ -6102,7 +6117,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 			"error", match.Line)
 		return
 	}
-	m.clearProviderErrorLocked(agent)
+	m.clearProviderErrorLocked(agent, now)
 
 	if paneContentHash(pane) == agent.lastInferKickPane {
 		// Frozen pane: the CLI never consumed the kick.
@@ -6454,6 +6469,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		ProviderErrorClass:        a.ProviderErrorClass,
 		ProviderErrorLine:         a.ProviderErrorLine,
 		ProviderErrorBackoffUntil: a.ProviderErrorBackoffUntil,
+		BackendAuth:               a.BackendAuth,
 		StartFailureClass:         a.StartFailureClass,
 		StartFailureReason:        a.StartFailureReason,
 		StartFailureCount:         a.StartFailureCount,

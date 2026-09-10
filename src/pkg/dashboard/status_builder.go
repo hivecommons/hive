@@ -747,6 +747,11 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
 		}
+		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+			a.BackendAuthStatus = status
+			a.BackendAuthSince = formatOptionalTime(proc.BackendAuth.Since)
+			a.BackendAuthLastError = proc.BackendAuth.LastError
+		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"

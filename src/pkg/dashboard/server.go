@@ -545,6 +545,14 @@ type FrontendAgent struct {
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
 	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
+	// from the same classifyProviderError verdict as StructuredStatus's
+	// "blocked: inference" evidence, so the dashboard can render an explicit
+	// auth-health badge without re-parsing StatusEvidence prose. Empty status
+	// means ok — also what a legacy agent that predates the field reports.
+	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
 	// Conditions is the watchdog reconciler's observed-truth condition set
 	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
 	// State config echo. Empty until the watchdog's first sweep.
