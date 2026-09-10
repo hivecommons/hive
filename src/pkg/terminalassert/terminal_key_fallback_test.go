@@ -54,6 +54,52 @@ func TestFallbackKeyPersistedAndReusedAcrossRestart(t *testing.T) {
 	}
 }
 
+// TestFallbackKeyIgnoresEmptyPersistedFile pins the corrupt/partial-file arm:
+// an existing but blank key file must not resolve to an empty signing key. This
+// also exercises the generation-race path where O_EXCL observes a file that the
+// initial read could not use.
+func TestFallbackKeyIgnoresEmptyPersistedFile(t *testing.T) {
+	dir := t.TempDir()
+	resetFallbackEnv(t, dir)
+
+	path := filepath.Join(dir, fallbackKeyFile)
+	if err := os.WriteFile(path, []byte(" \n\t"), 0o600); err != nil {
+		t.Fatalf("seed empty fallback file: %v", err)
+	}
+
+	if got := SigningKey(); got == "" {
+		t.Fatal("blank persisted fallback key resolved as empty instead of generating an in-memory key")
+	}
+	if data, err := os.ReadFile(path); err != nil {
+		t.Fatalf("read seeded fallback file: %v", err)
+	} else if strings.TrimSpace(string(data)) != "" {
+		t.Fatalf("fallback key file was unexpectedly rewritten: %q", string(data))
+	}
+}
+
+// TestFallbackKeyReturnsInMemoryKeyWhenDirectoryUnusable pins the
+// best-effort persistence contract: a read-only/broken persistence target must
+// not make standalone terminals structurally unavailable.
+func TestFallbackKeyReturnsInMemoryKeyWhenDirectoryUnusable(t *testing.T) {
+	dir := t.TempDir()
+	badDir := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(badDir, []byte("blocks MkdirAll"), 0o600); err != nil {
+		t.Fatalf("seed non-directory fallback path: %v", err)
+	}
+	resetFallbackEnv(t, badDir)
+
+	if got := SigningKey(); got == "" {
+		t.Fatal("unusable fallback directory must still yield an in-memory key")
+	}
+	info, err := os.Stat(badDir)
+	if err != nil {
+		t.Fatalf("stat fallback path: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatal("fallback path unexpectedly became a directory")
+	}
+}
+
 // TestFallbackKeyFilePermsAreOwnerOnly pins CWE-522: the persisted key file must
 // be 0600, never group/world readable — it is a symmetric secret good for
 // forging any user's terminal session on this hive.
