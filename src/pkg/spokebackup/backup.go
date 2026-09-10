@@ -114,6 +114,22 @@ const (
 	beadsPrefix = "beads"
 )
 
+// Exported aliases of the archive layout, for callers (hive-backup restore)
+// that place an extracted archive back onto a spoke's data dir and must
+// therefore agree on these paths exactly rather than re-declaring them.
+const (
+	// SpokePrefix is the archive path prefix that maps to the data-dir root.
+	SpokePrefix = spokePrefix
+
+	// BeadsPrefix is the archive path prefix that maps to the data-dir's
+	// beads/ subdirectory.
+	BeadsPrefix = beadsPrefix
+
+	// HiveIDFile is the name of the file, under SpokePrefix in the archive
+	// and at the data-dir root on disk, that identifies the hive.
+	HiveIDFile = hiveIDFile
+)
+
 // Size guards. A backup is streamed through the dashboard to a browser, so it
 // must stay responsive; an unbounded read of a ~796MB PVC would not be.
 const (

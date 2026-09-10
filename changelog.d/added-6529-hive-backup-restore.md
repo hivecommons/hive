@@ -1,0 +1,1 @@
+- Added `hive-backup restore -file <archive> -dest <data-dir>` to decrypt a `pkg/spokebackup` archive and place `spoke/*`/`beads/<agent>/*` onto a spoke data directory, with a `-force`-gated hive-id conflict check and a `-dry-run` preview ([#6529](https://github.com/hivecommons/hive/issues/6529))

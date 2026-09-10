@@ -12,6 +12,7 @@
 //	hive-backup verify              # verify the newest stored archive
 //	hive-backup verify -file f.enc  # verify a local archive
 //	hive-backup extract -file f.enc -dest ./restore
+//	hive-backup restore -file f.enc -dest /data
 //	hive-backup list                # list stored archives
 //
 // HIVE_BACKUP_KEY must be set to a 64-character hex AES-256 key. It has no
@@ -48,6 +49,8 @@ func main() {
 		cmdVerify(os.Args[2:], logger)
 	case "extract":
 		cmdExtract(os.Args[2:], logger)
+	case "restore":
+		cmdRestore(os.Args[2:], logger)
 	case "list":
 		cmdList(logger)
 	default:
@@ -63,6 +66,10 @@ Commands:
   run [-local FILE] [-skip-spokes]   create an encrypted backup
   verify [-file FILE]                verify newest stored, or a local archive
   extract -file FILE -dest DIR       decrypt an archive to a directory
+  restore -file FILE -dest DIR       decrypt a spoke archive and place its
+                                      files at DIR (spoke/* -> DIR/,
+                                      beads/<agent>/* -> DIR/beads/<agent>/)
+                                      [-force] [-dry-run]
   list                               list stored archives
 
 Environment:
@@ -148,12 +155,7 @@ func cmdExtract(args []string, logger *slog.Logger) {
 		fmt.Fprintln(os.Stderr, "extract requires -file and -dest")
 		os.Exit(exitCodeError)
 	}
-	key, err := hubbackup.LoadKey()
-	if err != nil {
-		logger.Error("extract failed", "err", err)
-		os.Exit(exitCodeError)
-	}
-	data, err := os.ReadFile(*file)
+	key, data, err := loadKeyAndArchive(*file)
 	if err != nil {
 		logger.Error("extract failed", "err", err)
 		os.Exit(exitCodeError)
@@ -164,6 +166,22 @@ func cmdExtract(args []string, logger *slog.Logger) {
 		os.Exit(exitCodeError)
 	}
 	fmt.Printf("extracted %d files to %s\n", len(man.Files), *dest)
+}
+
+// loadKeyAndArchive resolves the backup key and reads the archive file, the
+// two steps every decrypt path (extract, restore) needs before it can call
+// hubbackup.Extract. Sharing it keeps restore's key handling identical to
+// extract's rather than a second, possibly-drifting copy.
+func loadKeyAndArchive(file string) (key, data []byte, err error) {
+	key, err = hubbackup.LoadKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err = os.ReadFile(file)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, data, nil
 }
 
 func cmdList(logger *slog.Logger) {

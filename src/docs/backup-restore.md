@@ -95,9 +95,9 @@ Resolution order at backup time is governor config first, then the environment:
 
 ## Restoring a spoke backup archive
 
-> **Status: the decrypt/extract step below is OBSERVED — executed while writing this section, command output included. Placing the extracted files into a real container's `/data` and rebooting it is DOCUMENTED, NOT EXECUTED — no container runtime was available to prove that half.** There is currently no tool that performs the placement step for you (see the gap below and [#6529](https://github.com/hivecommons/hive/issues/6529)).
+> **Status: decrypt/extract and file placement are both TESTED — `hive-backup restore` has unit tests covering the mapped-path copy, the mode-preservation, the hive-id conflict guard and `-dry-run` (`src/cmd/hive-backup/restore_test.go`). (Re)starting a real container so the entrypoint re-applies ownership is DOCUMENTED, NOT EXECUTED — no container runtime was available to prove that half.** There is still no dashboard-side upload/restore endpoint (see the gap below and [#6529](https://github.com/hivecommons/hive/issues/6529)).
 
-This answers epic [#6521](https://github.com/hivecommons/hive/issues/6521) item #16 and [#6527](https://github.com/hivecommons/hive/issues/6527): **restoring a `pkg/spokebackup` archive into a fresh deployment is possible today, using only existing tooling, with no new code.** `pkg/spokebackup` deliberately reuses `pkg/hubbackup`'s builder (`src/pkg/hubbackup/builder_export.go:1-22`, "so `Verify` and `Extract` accept both archive kinds unchanged") — it produces the same AES-256-GCM-sealed, SHA-256-manifested tar.gz that `hive-backup` already knows how to decrypt. There is no separate "spoke restore" binary because none is needed for the decrypt step; there is, however, no tooling to perform the file-placement step, which is the gap filed as [#6529](https://github.com/hivecommons/hive/issues/6529).
+This answers epic [#6521](https://github.com/hivecommons/hive/issues/6521) item #16 and [#6527](https://github.com/hivecommons/hive/issues/6527): **restoring a `pkg/spokebackup` archive into a fresh deployment is possible today**, either manually (below) or via `hive-backup restore` (see the subsection of that name further down). `pkg/spokebackup` deliberately reuses `pkg/hubbackup`'s builder (`src/pkg/hubbackup/builder_export.go:1-22`, "so `Verify` and `Extract` accept both archive kinds unchanged") — it produces the same AES-256-GCM-sealed, SHA-256-manifested tar.gz that `hive-backup` already knows how to decrypt.
 
 ### What the archive contains, and where each path goes on restore
 
@@ -162,11 +162,33 @@ The extraction proves the archive is decodable; the remaining steps are ordinary
 4. **(Re)start the container.** The entrypoint re-applies `0600` ownership to the config files (`entrypoint.sh:262-266`, `hive_harden_runtime_config`) and re-chowns `beads/<agent>` to each agent's runtime UID (`entrypoint.sh:894-931`) regardless of what ownership the copy left them with, so the copy step does not need to reproduce container-internal UIDs.
 5. **Verify**, the same way the Podman section above does: `hive-id` and the GitHub App key SHA-256 must match the source hive; the bead ledger and dashboard config overlay must be present.
 
-### The gap: no tool performs steps 1–3 for you
+### Restoring a spoke backup: `hive-backup restore`
 
-There is no `hive-backup restore` subcommand and no dashboard upload/restore endpoint — `src/pkg/dashboard/backup_api.go` implements only `GET /api/backup/status` and `POST /api/backup` (download), never an inbound restore path, and `src/cmd/hive-backup/main.go`'s only decrypt verb is `extract`, which stops at a plain directory. That gap — plus the missing "is the target already a different hive" guard — is filed as a scoped feature request: [#6529](https://github.com/hivecommons/hive/issues/6529), linked from both this section and [#6527](https://github.com/hivecommons/hive/issues/6527).
+Steps 1–3 above are now automated by `hive-backup restore -file <archive> -dest <data-dir>` (`src/cmd/hive-backup/restore.go`). It decrypts and verifies the archive through the same `hubbackup.Extract` path `extract` uses (into a scratch directory next to `-dest`, removed when the command exits), then places the two archive trees onto `-dest` using the mapping in the table above: `spoke/*` → `<data-dir>/`, `beads/<agent>/*` → `<data-dir>/beads/<agent>/`. File modes from the archive are preserved; the command refuses to follow symlinks and never creates one on disk (`hubbackup.Extract` never emits one either).
+
+It also closes the "target must be genuinely fresh" gap: if `<data-dir>/hive-id` already exists and differs from the archive's `spoke/hive-id`, `restore` refuses with an error naming both IDs; pass `-force` to restore anyway. Pass `-dry-run` to print the planned file operations (archive path → destination path) and exit `0` without writing anything, so an operator can review a restore before committing to it.
+
+```
+$ hive-backup restore -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest /data -dry-run
+dry run: 7 file(s) would be restored to /data (hive-id: <id>)
+  spoke/hive-id -> /data/hive-id
+  spoke/hive.yaml.dashboard -> /data/hive.yaml.dashboard
+  spoke/hive.yaml.runtime -> /data/hive.yaml.runtime
+  spoke/hive-state.json -> /data/hive-state.json
+  spoke/gh-app-key.pem -> /data/gh-app-key.pem
+  beads/agentA/bead-0001.json -> /data/beads/agentA/bead-0001.json
+$ hive-backup restore -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest /data
+restored 6 file(s) to /data (hive-id: <id>)
+```
+
+`restore` still stops short of step 4 (restarting the container so the entrypoint re-applies ownership) and step 5 (verifying against the source hive) — those remain manual, and there is still no dashboard-side upload/restore endpoint (see the gap note below).
+
+### The gap: no dashboard upload/restore endpoint
+
+`hive-backup restore` (above) automates decrypting an archive and placing its files onto a target `/data`, but only from a shell with filesystem access to that target. There is still no dashboard upload/restore endpoint — `src/pkg/dashboard/backup_api.go` implements only `GET /api/backup/status` and `POST /api/backup` (download), never an inbound restore path — so an owner without cluster/kubectl access still cannot self-serve a restore. That remains filed as the second half of [#6529](https://github.com/hivecommons/hive/issues/6529), linked from both this section and [#6527](https://github.com/hivecommons/hive/issues/6527).
 
 ## Standalone deployments: which section applies
+
 
 A standalone Hive runs on one host with no Kubernetes cluster. There are two supported runtimes and the host-level procedures are **not** interchangeable — the volume has a different name, the ownership on disk is different, and one of them relabels its mounts:
 
