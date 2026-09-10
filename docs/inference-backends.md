@@ -2,6 +2,8 @@
 
 Hive can route agents through OpenAI-compatible model gateways instead of a subscription CLI model. The supported gateway backend IDs are `vllm`, `llm-d`, `litellm`, `watsonx`, and named Model Gateways such as `openrouter`.
 
+See [Gateway-path tier](../src/docs/backend-support-tiers.md#gateway-path-tier) for which dashboard/agent features (terminal access, model discovery, token metering, login) are guaranteed, best-effort, or not applicable on this path, and what a gateway smoke check must prove.
+
 ## Looking for Copilot (or Claude, Codex, Gemini…)? It is not a Model Gateway
 
 Subscription CLI backends — `copilot`, `claude`, `codex`, `gemini`, `goose`,

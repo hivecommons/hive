@@ -157,6 +157,60 @@ the criterion number above, and the fix moves the backend's posture in
 `localBackendPostures` and the allowlists in the same PR.
 
 
+## Gateway-path tier
+
+The three tiers above are the CLI-agent acceptance bar (`KNOWN_BACKENDS`) and do
+not apply to the OTHER on-ramp: OpenAI-compatible model gateways (`vllm`,
+`llm-d`, `litellm`, `watsonx`, and named Model Gateways such as `openrouter` or
+a self-hosted `kind: custom` endpoint — see
+[docs/inference-backends.md](../../docs/inference-backends.md)). A gateway is
+not an agent binary; it is a routing target that the built-in Anthropic-to-
+OpenAI translator (`pkg/proxy/anthropic_translate.go`, "inference translation
+server") calls on behalf of the Claude CLI running in bare mode. That
+architectural difference is also why it was untiered: the T1/T2/T3 criteria
+above are all about a CLI's own confinement and credential story, which does
+not exist on this path. This section states, per feature, what a gateway
+backend is expected to do — determined from what the code actually does today,
+not from the vendor's advertised capability. Tracking: this section closes the
+gap named in [#6515](https://github.com/hivecommons/hive/issues/6515); adopter
+symptom: [#6489](https://github.com/hivecommons/hive/issues/6489).
+
+| Dashboard/agent feature | Gateway-path status | Why |
+| --- | --- | --- |
+| Model inference (chat) | **Guaranteed** | The whole point of the path: `forwardToInference` translates the Anthropic Messages request to OpenAI Chat Completions, forwards it to `route.Endpoint` + `/v1/chat/completions`, and translates the response (or SSE stream) back. This is what the hermetic canary in `pkg/proxy/gateway_path_canary_test.go` asserts. |
+| Model picker / model discovery | **Guaranteed, with unverified fallback** | Hive probes `GET /v1/models` on the gateway (`pkg/dashboard/gateways.go`), with bearer auth when a key is configured. If discovery fails, the dashboard falls back to a static or configured model list and marks entries unverified (`docs/inference-backends.md#model-discovery`) — the picker never simply goes empty, but an unverified entry is not proof the model is reachable. |
+| Login flow | **Not applicable — no CLI-style login exists** | Gateway auth is `api_key_env` / `api_key_file` (or, for `watsonx`, an IBM Cloud API key exchanged for a short-lived IAM bearer, `pkg/watsonx`) resolved from `config.GatewayConfig.ResolveAPIKey`. There is no device-flow or interactive `/login` button for a gateway backend the way there is for `copilot`/`claude` — the operator configures the key once in **Governor Config → Model Gateways** or YAML, and a stale/missing key surfaces as a `401` from the gateway itself, not as a login prompt. |
+| Token metering | **Guaranteed for the translator path itself; per-kind claim otherwise** | `InferenceSink` (`pkg/tokens/inference_sink.go`) records usage from the OpenAI usage block on every translator response regardless of which gateway kind served it — `vllm`, `llm-d`, `litellm`, `watsonx`, and any named `custom` gateway all flow through the same `forwardToInference` call and the same sink, so the sniff genuinely covers the translator path, not just the two backends historically named in [docs/token-tracking.md](token-tracking.md). The gap is upstream of the sink: a gateway that never emits an OpenAI `usage` block on its response (some third-party proxies omit it, especially on non-streaming errors) yields zero recorded tokens for that call — see `docs/token-tracking.md`'s "zero consumed" diagnostics table for how that failure is surfaced instead of silently invoicing nothing. Budget-gated hives should treat a newly-added named gateway as unmetered until a real response with usage is observed. |
+| Terminal access | **Best-effort, and currently coupled to hub provisioning** | Terminal handoff (`pkg/dashboard/terminal_handoff.go`) requires a non-empty `terminalassert.SigningKey()` plus a configured hive ID (`canMintTerminalAssertion`); when either is absent the dashboard returns `503 terminal handoff requires terminal signing key and hive id` rather than opening a terminal. `SigningKey()` resolves from `HIVE_TERMINAL_KEY` (hub-injected) or a self-derived key from `HIVE_HUB_SECRET` + `HIVE_ID` (`pkg/terminalassert`) — both are hub-provisioning artifacts. A gateway-routed agent's inference works independently of this (it never touches the translator), so a standalone/compose spoke with no hub-issued signing material can have a fully working gateway agent and a terminal button that never resolves. This is the exact shape of [#6489](https://github.com/hivecommons/hive/issues/6489); a fix to provision a standalone-compose signing key is tracked separately and does not change today's requirement. |
+
+### What a gateway smoke check must prove
+
+A gateway canary — CI or manual — is only meaningful if it proves the parts of
+the path that can silently regress independently of each other:
+
+1. **Request shape survives translation.** The model id set on the route
+   reaches the gateway verbatim (no silent rewrite), and Anthropic
+   system/user/assistant turns map to the correct OpenAI roles in order.
+2. **Auth reaches the wire.** Whatever key `api_key_env`/`api_key_file`
+   resolves is the exact value sent as `Authorization: Bearer <key>` — not a
+   stale or empty one, and not leaked into `ExtraHeaders` improperly for
+   backends (like `watsonx`) that use both a bearer and a plain header.
+3. **Both response shapes decode.** A non-streaming Chat Completions response
+   and a streaming SSE response (with `stream_options.include_usage`) both
+   translate back to a valid Anthropic message/SSE event sequence, including a
+   non-nil `usage` block.
+4. **Failure is not swallowed.** An upstream error status (e.g. `401` for a
+   bad key) is surfaced to the caller as an error, not silently treated as a
+   successful empty completion.
+
+`pkg/proxy/gateway_path_canary_test.go` is the current implementation of this
+list: it drives the real translator against an `httptest` fake
+OpenAI-compatible endpoint for a named custom gateway authenticated via
+`api_key_file`, covering non-streaming, streaming, and the wrong-key failure
+case, entirely hermetically (no network, no sleeps) as an ordinary PR-time Go
+test rather than a new CI workflow arm.
+
+
 ## Metering coverage and budget-gated hives
 
 Backend support is also a metering contract. Budget gates in `pkg/governor`
