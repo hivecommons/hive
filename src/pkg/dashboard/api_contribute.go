@@ -6593,6 +6593,28 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"api_version":     contributorProtocolVersion,
 		"served_sha":      versionShort,
 	})
+
+func (s *Server) handleAPIv1Queue(w http.ResponseWriter, r *http.Request) {
+	// Paginated ready-work listing for the actionable offerable set.
+	limit := readyQueueDefaultLimit
+	offset := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	items, total := []ReadyQueueItem{}, 0
+	if s.contributeHub != nil {
+		items, total = s.contributeHub.admissionQueueRange(limit, offset, false)
+	}
+	jsonResponse(w, map[string]any{"queue": items, "total": total, "limit": limit, "offset": offset})
+}
+
 }
 
 // contributeSurface reports which contributor surface this deployment presents
@@ -8251,6 +8273,10 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 
 	subpath := strings.TrimPrefix(r.URL.Path, "/api/v1")
 	switch subpath {
+	case "/queue":
+		// Paginated ready-work listing: supports ?limit=<int>&offset=<int>
+		// Authentication and allowlist already enforced by handleAPIv1.
+		s.handleAPIv1Queue(w, r)
 	case "/status":
 		s.handleContributeStatus(w, r)
 	case "/activity":
