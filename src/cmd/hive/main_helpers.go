@@ -2583,7 +2583,9 @@ func enforceHoldGuard(
 	}
 	store := getHoldGuardStore()
 	org := ""
+	selfAuthHoldDisabled := false
 	if cfg != nil {
+		selfAuthHoldDisabled = !cfg.GitHub.SelfAuthorizationHoldEnabled()
 		org = cfg.Project.Org
 	}
 
@@ -2643,6 +2645,18 @@ func enforceHoldGuard(
 			logger.Info("hold guard: hold lifted with head unchanged; merge lanes reopened",
 				"repo", repo, "pr", pr.Number, "head_sha", pr.HeadSHA)
 			continue
+		}
+		if selfAuthHoldDisabled && ghClient != nil {
+			selfAuthHold, err := ghClient.LiftedHoldWasSelfAuthorization(ctx, pr.Repo, pr.Number)
+			if err != nil {
+				logger.Warn("hold guard: could not check #5117 self-authorization hold provenance before config-disabled skip",
+					"repo", repo, "pr", pr.Number, "error", err)
+			} else if selfAuthHold {
+				store.Clear(repo, pr.Number)
+				logger.Info("self-authorization hold disabled by config",
+					"repo", repo, "pr", pr.Number)
+				continue
+			}
 		}
 
 		// Drift: keep it out of this tick's merge-eligible artifact

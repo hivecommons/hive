@@ -4768,10 +4768,11 @@ func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Re
 // --- GitHub config endpoint ---
 
 type githubConfigUpdate struct {
-	AppID          *int64
-	InstallationID *int64
-	KeyFile        string
-	PrivateKey     string
+	AppID                 *int64
+	InstallationID        *int64
+	KeyFile               string
+	PrivateKey            string
+	SelfAuthorizationHold *bool
 }
 
 type githubConfigUpdateError struct {
@@ -4791,26 +4792,28 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		AppID          *int64 `json:"app_id"`
-		InstallationID *int64 `json:"installation_id"`
-		KeyFile        string `json:"key_file"`
-		PrivateKey     string `json:"private_key"`
+		AppID                 *int64 `json:"app_id"`
+		InstallationID        *int64 `json:"installation_id"`
+		KeyFile               string `json:"key_file"`
+		PrivateKey            string `json:"private_key"`
+		SelfAuthorizationHold *bool  `json:"self_authorization_hold"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" {
-		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key", http.StatusBadRequest)
+	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" && body.SelfAuthorizationHold == nil {
+		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold", http.StatusBadRequest)
 		return
 	}
 
 	result, err := s.applyGitHubConfigUpdate(r, githubConfigUpdate{
-		AppID:          body.AppID,
-		InstallationID: body.InstallationID,
-		KeyFile:        body.KeyFile,
-		PrivateKey:     body.PrivateKey,
+		AppID:                 body.AppID,
+		InstallationID:        body.InstallationID,
+		KeyFile:               body.KeyFile,
+		PrivateKey:            body.PrivateKey,
+		SelfAuthorizationHold: body.SelfAuthorizationHold,
 	})
 	if err != nil {
 		code := http.StatusInternalServerError
@@ -4867,6 +4870,10 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 	if body.InstallationID != nil {
 		cfg.GitHub.InstallationID = *body.InstallationID
 	}
+	if body.SelfAuthorizationHold != nil {
+		v := *body.SelfAuthorizationHold
+		cfg.GitHub.SelfAuthorizationHold = &v
+	}
 
 	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
 	if err != nil {
@@ -4901,10 +4908,11 @@ func (s *Server) finishGitHubConfigUpdateLocked(auditUser, detail string) (map[s
 	}
 
 	result := map[string]interface{}{
-		"status":          "updated",
-		"app_id":          cfg.GitHub.AppID,
-		"installation_id": cfg.GitHub.InstallationID,
-		"key_file":        cfg.GitHub.KeyFile,
+		"status":                  "updated",
+		"app_id":                  cfg.GitHub.AppID,
+		"installation_id":         cfg.GitHub.InstallationID,
+		"key_file":                cfg.GitHub.KeyFile,
+		"self_authorization_hold": cfg.GitHub.SelfAuthorizationHoldEnabled(),
 	}
 
 	// Resolve the signing key the same way the boot and heartbeat-apply paths

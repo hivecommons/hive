@@ -700,6 +700,47 @@ func TestAppAuthoredPRsEnabled_DefaultsOn(t *testing.T) {
 	}
 }
 
+func TestSelfAuthorizationHoldEnabled_DefaultsOn(t *testing.T) {
+	if !(GitHubConfig{}).SelfAuthorizationHoldEnabled() {
+		t.Error("SelfAuthorizationHoldEnabled() with unset flag = false, want true (default on)")
+	}
+	f := false
+	if (GitHubConfig{SelfAuthorizationHold: &f}).SelfAuthorizationHoldEnabled() {
+		t.Error("SelfAuthorizationHoldEnabled() with explicit false = true, want false")
+	}
+	tr := true
+	if !(GitHubConfig{SelfAuthorizationHold: &tr}).SelfAuthorizationHoldEnabled() {
+		t.Error("SelfAuthorizationHoldEnabled() with explicit true = false, want true")
+	}
+}
+
+func TestSelfAuthorizationHoldEnvOverride(t *testing.T) {
+	t.Setenv("HIVE_SELF_AUTHORIZATION_HOLD", "false")
+	yaml := `
+project:
+  org: my-org
+  repos: [repo-a]
+github:
+  token: ghp_tok
+  self_authorization_hold: true
+agents:
+  w:
+    backend: claude
+`
+	cfg, err := Load(writeTempConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.GitHub.SelfAuthorizationHold == nil || *cfg.GitHub.SelfAuthorizationHold {
+		t.Fatalf("HIVE_SELF_AUTHORIZATION_HOLD=false did not override config: %+v", cfg.GitHub.SelfAuthorizationHold)
+	}
+	tr := true
+	cfg.GitHub.SelfAuthorizationHold = &tr
+	if cfg.GitHub.SelfAuthorizationHoldEnabled() {
+		t.Fatal("HIVE_SELF_AUTHORIZATION_HOLD=false must remain the effective override after live config mutation")
+	}
+}
+
 // With App-bot mode on (the default) and ai_author empty, the effective author
 // is the App bot login; an explicit ai_author still wins; an explicit opt-out
 // yields no author.

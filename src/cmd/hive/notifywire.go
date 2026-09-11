@@ -293,6 +293,7 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		w.ghClient.SetHiveIdentity(hiveIdentity(w.cfg))
+		w.ghClient.SetSelfAuthorizationHoldEnabled(func() bool { return w.cfg.GitHub.SelfAuthorizationHoldEnabled() })
 		// github.app_signed_commits: re-author each agent branch through
 		// createCommitOnBranch before the PR opens, so its commit is
 		// GitHub-signed and authored by the App bot. Read through a func so a
@@ -376,6 +377,7 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		}
 
 		autoMergeOpts.MutationBoundary = w.mutationBoundary
+		autoMergeOpts.SelfAuthorizationHoldEnabled = func() bool { return w.cfg.GitHub.SelfAuthorizationHoldEnabled() }
 		// Intent tier gate (#6258): the human lane only queues PRs that
 		// survive writeMergeEligible's intent check, but this sweep lists
 		// the App's PRs on its own, so it carries the same policy (same

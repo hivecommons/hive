@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/resolve"
@@ -133,6 +134,12 @@ func (c *Config) applyBootstrapEnv() {
 	if len(c.Dashboard.AuthorizedUsers) == 0 {
 		if v := os.Getenv("HIVE_AUTHORIZED_USERS"); v != "" {
 			c.Dashboard.AuthorizedUsers = parseAuthorizedUsers(v)
+		}
+	}
+	if v := os.Getenv("HIVE_SELF_AUTHORIZATION_HOLD"); strings.TrimSpace(v) != "" {
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			c.GitHub.SelfAuthorizationHold = &b
+			c.GitHub.selfAuthorizationHoldEnvOverride = &b
 		}
 	}
 }

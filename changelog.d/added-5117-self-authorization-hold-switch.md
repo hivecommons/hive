@@ -1,0 +1,1 @@
+- Added `github.self_authorization_hold` (and `HIVE_SELF_AUTHORIZATION_HOLD`) as a default-on per-hive switch for the #5117 self-authorization hold, with bounded release of existing #5117-marked holds when disabled.

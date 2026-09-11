@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func doPutRaw(s *Server, path, raw string) *httptest.ResponseRecorder {
@@ -95,6 +98,53 @@ func TestCovBR_ConfigGitHub_KeyFileAndIDs(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["app_id"] != float64(123) {
 		t.Fatalf("app_id not applied: %v", body["app_id"])
+	}
+}
+
+func TestConfigGitHubSelfAuthorizationHoldSwitch(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	rec := doPut(s, "/api/config/github", map[string]any{
+		"self_authorization_hold": false,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("self_authorization_hold update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.GitHub.SelfAuthorizationHold == nil || *s.deps.Config.GitHub.SelfAuthorizationHold {
+		t.Fatalf("self_authorization_hold not applied: %+v", s.deps.Config.GitHub.SelfAuthorizationHold)
+	}
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["self_authorization_hold"] != false {
+		t.Fatalf("response self_authorization_hold = %v, want false", body["self_authorization_hold"])
+	}
+}
+
+func TestConfigGitHubSelfAuthorizationHoldEnvOverrideWins(t *testing.T) {
+	t.Setenv("HIVE_SELF_AUTHORIZATION_HOLD", "true")
+	s := covApiServer(t)
+	path := filepath.Join(t.TempDir(), "hive.yaml")
+	if err := os.WriteFile(path, []byte("project:\n  org: acme\n  repos: [widgets]\ngithub:\n  token: ghp_test\n  self_authorization_hold: false\nagents:\n  bot:\n    backend: claude\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	s.deps.Config = cfg
+	rec := doPut(s, "/api/config/github", map[string]any{
+		"self_authorization_hold": false,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("self_authorization_hold update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.GitHub.SelfAuthorizationHoldEnabled() {
+		t.Fatal("HIVE_SELF_AUTHORIZATION_HOLD=true should remain effective after dashboard update")
+	}
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["self_authorization_hold"] != true {
+		t.Fatalf("response self_authorization_hold = %v, want effective true from env override", body["self_authorization_hold"])
 	}
 }
 
