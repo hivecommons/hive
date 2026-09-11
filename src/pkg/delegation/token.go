@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
 )
 
 // Token wire format and crypto.
@@ -86,19 +88,12 @@ func SeedFromMaster(master string) string {
 // PublicKeyFromSeed expands a hex Ed25519 seed and returns ONLY the hex public
 // half. Returns "" for anything that is not a valid 32-byte seed.
 //
-// Mirrors pkg/hub/ssoPublicKeyFromSeed. The private key is a local that goes
-// out of scope; nothing in this function can return it.
+// THIN WRAPPER over pkg/keyderive.Ed25519PublicKeyFromSeed, which is also what
+// pkg/hub's ssoPublicKeyFromSeed now delegates to (#6643) — one stdlib-only
+// implementation instead of two copies. The private key is a local that goes
+// out of scope inside that implementation; nothing here can return it.
 func PublicKeyFromSeed(seedHex string) string {
-	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return ""
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return ""
-	}
-	return hex.EncodeToString(pub)
+	return keyderive.Ed25519PublicKeyFromSeed(seedHex)
 }
 
 // MintToken signs a chain and returns the wire token.

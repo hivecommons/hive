@@ -3,6 +3,9 @@ package hub
 import (
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
+	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
 // TestDomainKeysAreDistinct pins the C2 guarantee at the primitive level: the
@@ -180,5 +183,44 @@ func TestSpokeInviteKeyIsDomainSeparated(t *testing.T) {
 	}
 	if invite == terminal || invite == heartbeat || terminal == heartbeat {
 		t.Fatal("per-hive sub-keys must be pairwise distinct under one master+hive")
+	}
+}
+
+// TestHubWrappersMatchKeyderive is the anti-drift pin for #6643: hub's
+// deriveDomainKey/ssoPublicKeyFromSeed and pkg/terminalassert's
+// DerivePerHiveKey (which hub's derivePerHiveKey itself calls) must produce
+// byte-identical output to the single stdlib-only implementation in
+// pkg/keyderive that all three now wrap. This is the hub-side half of the
+// same guarantee TestDeriveDomainKeyMatchesHubDerivation gives for
+// hub-vs-delegation; together they cover every wrapper this refactor added.
+//
+// A future change that reimplemented any of these wrappers locally instead of
+// calling pkg/keyderive would still pass every other test in this file (since
+// a correct reimplementation looks identical from the outside) but would fail
+// here the moment it drifted even one byte.
+func TestHubWrappersMatchKeyderive(t *testing.T) {
+	const master = "hub-keyderive-pin-master"
+	const hiveID = "hive-pin"
+
+	for _, info := range []string{infoHeartbeatKey, infoSessionKey, infoSSOKey, infoImpersonateKey, infoSSOEd25519Seed} {
+		if got, want := deriveDomainKey(master, info), keyderive.DomainKey(master, info); got != want {
+			t.Fatalf("deriveDomainKey(%q) = %q, want %q", info, got, want)
+		}
+	}
+	if got, want := derivePerHiveKey(master, infoHeartbeatKey, hiveID), keyderive.PerHiveKey(master, infoHeartbeatKey, hiveID); got != want {
+		t.Fatalf("derivePerHiveKey = %q, want %q", got, want)
+	}
+	if got, want := terminalassert.DerivePerHiveKey(master, infoHeartbeatKey, hiveID), keyderive.PerHiveKey(master, infoHeartbeatKey, hiveID); got != want {
+		t.Fatalf("terminalassert.DerivePerHiveKey = %q, want %q", got, want)
+	}
+
+	seed := deriveDomainKey(master, infoSSOEd25519Seed)
+	if got, want := ssoPublicKeyFromSeed(seed), keyderive.Ed25519PublicKeyFromSeed(seed); got != want {
+		t.Fatalf("ssoPublicKeyFromSeed(%q) = %q, want %q", seed, got, want)
+	}
+
+	// Fail-closed contract must also match: no secret in, no key out.
+	if deriveDomainKey("", infoHeartbeatKey) != keyderive.DomainKey("", infoHeartbeatKey) {
+		t.Error("empty-master behavior diverges between deriveDomainKey and keyderive.DomainKey")
 	}
 }

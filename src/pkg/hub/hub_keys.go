@@ -1,15 +1,12 @@
 package hub
 
 import (
-	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/keyderive"
 	"github.com/hivecommons/hive/pkg/terminalassert"
 )
 
@@ -81,13 +78,14 @@ const (
 // info label, as lowercase hex. Returns "" for an empty master so callers keep
 // their existing "no secret configured → feature disabled / fail closed"
 // behavior unchanged (an empty master must never derive to a usable key).
+//
+// THIN WRAPPER over pkg/keyderive.DomainKey (#6643). pkg/delegation's own
+// deriveDomainKey wraps the same function, so the two packages can no longer
+// drift the way byte-copied implementations could — a change here changes
+// both. TestDeriveDomainKeyMatchesHubDerivation still pins the two wrappers
+// against each other.
 func deriveDomainKey(master, info string) string {
-	if master == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.DomainKey(master, info)
 }
 
 // derivePerHiveKey returns a sub-key bound to BOTH a trust domain and a single
@@ -423,17 +421,12 @@ func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
 // public key. Returns "" if seedHex is not a valid 32-byte seed. Used by both the
 // hub-side public-key accessor and provisioning so the spoke and hub agree on the
 // exact public key derived from one master.
+//
+// THIN WRAPPER over pkg/keyderive.Ed25519PublicKeyFromSeed (#6643), which
+// pkg/delegation.PublicKeyFromSeed also wraps — one implementation instead of
+// two hand-copied ones.
 func ssoPublicKeyFromSeed(seedHex string) string {
-	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return ""
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return ""
-	}
-	return hex.EncodeToString(pub)
+	return keyderive.Ed25519PublicKeyFromSeed(seedHex)
 }
 
 // Dedicated spoke-side env vars. A hub-hosted spoke is provisioned with ONLY the

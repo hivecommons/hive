@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
 )
 
 // Short-lived signed terminal assertion (finding C3 follow-up).
@@ -142,11 +144,13 @@ func terminalSign(key, body string) string {
 // DerivePerHiveKey derives the per-hive, per-domain symmetric sub-key:
 // hex(HMAC-SHA256(master, info || 0x00 || hiveID)).
 //
-// This is the SINGLE implementation of the per-hive derivation — moved here
-// from pkg/hub's hub_keys.go, which now delegates. It must stay single-sourced:
-// the hub PROVISIONS HIVE_TERMINAL_KEY with it and the spoke SELF-DERIVES the
-// same value with it (SigningKey lane 2), so any drift between two copies would
-// silently split the two lanes.
+// THIN WRAPPER over pkg/keyderive.PerHiveKey (#6643). It must stay
+// single-sourced: the hub PROVISIONS HIVE_TERMINAL_KEY with it and the spoke
+// SELF-DERIVES the same value with it (SigningKey lane 2), so any drift
+// between two copies would silently split the two lanes. pkg/keyderive is the
+// stdlib-only leaf every such derivation site now delegates to, so this stays
+// the single call site hub and terminal-assertion code share rather than a
+// second hand-copied implementation.
 //
 // Mixing the hive ID into the derivation makes the key per-spoke while keeping
 // every property a fleet-wide scheme had: deterministic in the existing master
@@ -162,14 +166,7 @@ func terminalSign(key, body string) string {
 // Returns "" for an empty master OR an empty hiveID: a keyless or identity-less
 // caller must fail closed rather than silently sharing one key again.
 func DerivePerHiveKey(master, info, hiveID string) string {
-	if master == "" || hiveID == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	mac.Write([]byte{0})
-	mac.Write([]byte(hiveID))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.PerHiveKey(master, info, hiveID)
 }
 
 // SigningKey resolves the symmetric key the spoke mints — and the proxy
