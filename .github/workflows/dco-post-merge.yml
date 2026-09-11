@@ -94,7 +94,19 @@ env:
   # treats a GitHub noreply address as the author's own. Waiving each occurrence
   # does not converge. #6721 tracks teaching the checker that rule so the
   # monitor stops paging for sign-offs that were already accepted at merge time.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 65b9c67341962834e27c28b0d833b8b03fe91ac9 cfaf4988779ed52a03670d0b6824a3517117be82'
+  #
+  # 4601f926ffab6386fb07c3bc624b18041ec338d7 - "Make OpenSSF badge status
+  # consistent across the self-assessment" (#6715). Authored by Andy Anderson
+  # as andy@clubanderson.com, signed off as clubanderson@users.noreply.github.com
+  # - the same account's GitHub noreply address, exactly like 5cd49b22 above.
+  # Reported by the monitor in #6729.
+  #
+  # This is the SIXTH instance, and it arrived within a day of the fifth, which
+  # is the whole argument of #6721: the waiver list grows once per merge cycle
+  # and never converges, because nothing here is actually wrong. Every one of
+  # these sign-offs was accepted by the pre-merge DCO app. When #6721 lands,
+  # the noreply entries become STALE-WAIVER and should be deleted wholesale.
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 65b9c67341962834e27c28b0d833b8b03fe91ac9 cfaf4988779ed52a03670d0b6824a3517117be82 4601f926ffab6386fb07c3bc624b18041ec338d7'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
