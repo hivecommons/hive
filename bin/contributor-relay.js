@@ -301,6 +301,8 @@ const hubs = rawHubList.map((url, i) => ({
   reconnectDelay: BASE_RECONNECT_DELAY_MS,
   heartbeatInterval: null,
   lastPong: Date.now(),
+  lastPingSentAt: 0,
+  connectionId: '',
   connectGeneration: 0,
   reconnectTimer: null,
   authenticated: false,
@@ -2182,6 +2184,7 @@ function bobIsRunning() {
 // this fixes. Long enough to cover reading a diff; far short of the 30-minute
 // strand it replaces.
 const HUMAN_PRESENCE_IDLE_MS = Number(process.env.HIVE_HUMAN_PRESENCE_IDLE_MS) || 5 * 60 * 1000;
+const HUMAN_PRESENCE_MAX_DEFERRALS = Number(process.env.HIVE_HUMAN_PRESENCE_MAX_DEFERRALS) || 3;
 
 // tmuxSessionHumanPresence reports whether a human is at the agent's tmux
 // session, and how confident that answer is.
@@ -2229,6 +2232,23 @@ function tmuxSessionHumanPresence() {
   } catch (_) {
     return { attached: true, active: true, idleMs: null };
   }
+}
+
+let lastPresencePaneFingerprint = null;
+let presenceDeferralCount = 0;
+
+function resetHumanPresenceEvidence() {
+  lastPresencePaneFingerprint = null;
+  presenceDeferralCount = 0;
+}
+
+function paneEditedSincePresenceCheck(tmuxLines) {
+  const fingerprint = Array.isArray(tmuxLines) ? tmuxLines.join('\n') : String(tmuxLines || '');
+  if (!fingerprint) return true;
+  const previous = lastPresencePaneFingerprint;
+  lastPresencePaneFingerprint = fingerprint;
+  if (previous === null) return true;
+  return fingerprint !== previous;
 }
 
 // tmuxSessionHasAttachedClient reports only whether a client is CONNECTED. It
@@ -2544,6 +2564,7 @@ let lastTransientNudgeAt = 0;
 function resetTransientNudgeState() {
   transientNudgeCount = 0;
   lastTransientNudgeAt = 0;
+  resetHumanPresenceEvidence();
 }
 
 // Autonomy-nudge state (kubestellar/hive#5281), scoped to the CURRENT task.
@@ -2896,18 +2917,20 @@ function handleTransientAPIError(tmuxLines) {
   };
 
   // A human AT the pane owns it, and a watchdog must never type over someone
-  // mid-keystroke. But presence is a recency question, not a connection one
-  // (#5277): a dashboard terminal tab left open is a connected client and not a
-  // person, and treating the two alike disabled recovery entirely for as long
-  // as the tab lived. An attached-but-quiet client falls through to the retry
-  // below; only a recently active one still takes this branch.
+  // mid-keystroke. Two signals must agree before a retry is withheld:
+  // tmux saw input recently and the pane changed since the last presence check.
   const presence = tmuxSessionHumanPresence();
-  if (presence.active) {
+  const paneEdited = paneEditedSincePresenceCheck(tmuxLines);
+  const deferralsLeft = presenceDeferralCount < HUMAN_PRESENCE_MAX_DEFERRALS;
+  if (presence.active && paneEdited && deferralsLeft) {
+    presenceDeferralCount++;
     const since = presence.idleMs === null
-      ? 'activity unknown'
-      : `last input ${Math.round(presence.idleMs / 1000)}s ago`;
+      ? 'client activity unknown'
+      : `client sent input ${Math.round(presence.idleMs / 1000)}s ago`;
     console.warn(`Task ${currentTask.task_id} stopped on a retryable API error; ` +
-      `someone is active on ${TMUX_SESSION} (${since}), so not typing a retry`);
+      `${TMUX_SESSION} looks in use (${since}, and the pane changed since the ` +
+      `last check), so not typing a retry ` +
+      `(${presenceDeferralCount}/${HUMAN_PRESENCE_MAX_DEFERRALS} deferrals)`);
     send({
       ...progressBase,
       status: 'blocked_on_human',
@@ -2917,7 +2940,17 @@ function handleTransientAPIError(tmuxLines) {
     });
     return;
   }
-  if (presence.attached) {
+  if (presence.active && !paneEdited) {
+    console.warn(`Task ${currentTask.task_id} stopped on a retryable API error; ` +
+      `${TMUX_SESSION} reported client input but the pane is unchanged — that is ` +
+      `the terminal answering the CLI's queries, not someone typing, so ` +
+      `proceeding with the retry`);
+  } else if (presence.active && !deferralsLeft) {
+    console.warn(`Task ${currentTask.task_id} stopped on a retryable API error; ` +
+      `${TMUX_SESSION} still looks in use, but ${HUMAN_PRESENCE_MAX_DEFERRALS} ` +
+      `deferrals is the cap — retrying rather than parking the task on a signal ` +
+      `we cannot verify`);
+  } else if (presence.attached) {
     console.warn(`Task ${currentTask.task_id} stopped on a retryable API error; ` +
       `a client is attached to ${TMUX_SESSION} but has been idle ` +
       `${Math.round(presence.idleMs / 1000)}s, so proceeding with the retry`);
@@ -3446,6 +3479,7 @@ function handleMessage(data, hub) {
       warnOnProtocolDrift(hub, msg.protocol_version);
       hub.authenticated = true;
       hub.authFailed = false;
+      hub.connectionId = msg.connection_id || '';
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
       // Scoped to the hub this task would have been re-asserted TO, so a
       // second, non-active hub authenticating mid-review stays as silent as it
@@ -3751,6 +3785,15 @@ function describeWsClose(code, reason) {
   return text ? `${label}: ${text}` : label;
 }
 
+function wsCloseCorrelation(hub, now = Date.now()) {
+  const lastPongAge = hub.lastPong ? Math.max(0, now - hub.lastPong) : -1;
+  const lastPingAge = hub.lastPingSentAt ? Math.max(0, now - hub.lastPingSentAt) : -1;
+  return `conn=${hub.connectionId || 'unknown'} ` +
+    `last_pong_age_ms=${lastPongAge} last_ping_age_ms=${lastPingAge} ` +
+    `reconnect_delay_ms=${hub.reconnectDelay} ` +
+    `heartbeat_interval_ms=${HEARTBEAT_INTERVAL_MS} heartbeat_timeout_ms=${HEARTBEAT_TIMEOUT_MS}`;
+}
+
 function connectHub(hub) {
   if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
   if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
@@ -3764,14 +3807,17 @@ function connectHub(hub) {
     console.log(`Connected to ${hub.url}`);
     hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
     hub.lastPong = Date.now();
+    hub.lastPingSentAt = 0;
+    hub.connectionId = '';
 
     hub.heartbeatInterval = setInterval(() => {
       if (gen !== hub.connectGeneration) { clearInterval(hub.heartbeatInterval); return; }
       if (Date.now() - hub.lastPong > HEARTBEAT_TIMEOUT_MS) {
-        console.error(`Heartbeat timeout on ${hub.url} — reconnecting`);
+        console.error(`Heartbeat timeout on ${hub.url} (${wsCloseCorrelation(hub)}) — reconnecting`);
         hub.ws.terminate();
         return;
       }
+      hub.lastPingSentAt = Date.now();
       sendTo(hub, { type: 'ping', seq: nextSeq() });
       // Also emit a PROTOCOL-level Ping control frame (kubestellar/hive#5090).
       // The JSON ping above is an ordinary text frame; an L7 proxy that scores
@@ -3807,7 +3853,7 @@ function connectHub(hub) {
   hub.ws.on('close', (code, reason) => {
     if (gen !== hub.connectGeneration) return;
     console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
-      `Reconnecting in ${hub.reconnectDelay}ms...`);
+      `${wsCloseCorrelation(hub)}. Reconnecting in ${hub.reconnectDelay}ms...`);
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -3917,6 +3963,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     tmuxSessionHasAttachedClient,
     tmuxSessionHumanPresence,
     HUMAN_PRESENCE_IDLE_MS,
+    HUMAN_PRESENCE_MAX_DEFERRALS,
+    paneEditedSincePresenceCheck,
+    resetHumanPresenceEvidence,
+    getPresenceDeferralCount: () => presenceDeferralCount,
     TRANSIENT_API_ERROR_MAX_NUDGES,
     TRANSIENT_API_ERROR_NUDGE_MESSAGE,
     getTransientNudgeCount: () => transientNudgeCount,
@@ -4007,6 +4057,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     classifyPeerProtocol,
     warnOnProtocolDrift,
     describeWsClose,
+    wsCloseCorrelation,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,
