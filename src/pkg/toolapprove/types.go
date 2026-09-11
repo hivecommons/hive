@@ -3,7 +3,7 @@ package toolapprove
 import (
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentmode"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -105,7 +105,7 @@ func (r ToolRequest) GetRepo() string {
 type AgentIdentity struct {
 	Name         string              `json:"name"`
 	Role         string              `json:"role,omitempty"`
-	Mode         agent.AgentMode     `json:"mode,omitempty"`
+	Mode         agentmode.AgentMode `json:"mode,omitempty"`
 	ToolsConfig  *config.ToolsConfig `json:"tools_config,omitempty"`
 	AllowedRepos map[string]bool     `json:"allowed_repos,omitempty"`
 }

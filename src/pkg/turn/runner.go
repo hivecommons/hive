@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
@@ -19,7 +19,7 @@ type Runner struct {
 	Hooks           HookHandler
 	Compactor       Compactor
 	AvailableTools  []toolapprove.ToolRequest
-	AuditSink       agent.AuditSink
+	AuditSink       agentaudit.AuditSink
 }
 
 // Option configures a Runner instance.
@@ -46,7 +46,7 @@ func WithAvailableTools(tools []toolapprove.ToolRequest) Option {
 }
 
 // WithAuditSink sets the audit sink for recording tool approval verdicts.
-func WithAuditSink(sink agent.AuditSink) Option {
+func WithAuditSink(sink agentaudit.AuditSink) Option {
 	return func(r *Runner) { r.AuditSink = sink }
 }
 
