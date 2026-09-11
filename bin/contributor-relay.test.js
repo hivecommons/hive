@@ -2245,6 +2245,7 @@ test('only the active hub is sent ready on auth_ok; the other waits its turn', (
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
     const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -2358,6 +2359,7 @@ test('task_unavailable on the active hub rotates the poll slot to the next hub',
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
     const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -3191,6 +3193,7 @@ test('only the active hub is sent ready on auth_ok; the other waits its turn', (
     const sentA = [], sentB = [];
     hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
     hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -3318,6 +3321,7 @@ test('task_unavailable on the active hub rotates the poll slot to the next hub',
     const sentA = [], sentB = [];
     hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
     hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);

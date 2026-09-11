@@ -1601,7 +1601,11 @@ function armCLIReadyWait() {
     }
     // Only re-advertise if we previously withdrew by failing a task; the normal
     // startup path is already advertised by the auth_ok handler.
-    if (hadFailed) send({ type: 'ready', seq: nextSeq() });
+    if (hadFailed) {
+      send({ type: 'ready', seq: nextSeq() });
+    } else if (!currentTask && currentTaskHub().authenticated) {
+      send({ type: 'ready', seq: nextSeq() });
+    }
     flushPendingTask();
   }).catch(e => {
     cliReadyFailed = true;
@@ -3293,10 +3297,12 @@ function handleMessage(data, hub) {
         // Only the hub currently in the poll rotation asks for work. A hub
         // that authenticates while it's not its turn just sits connected
         // (heartbeating) until task_unavailable rotates the active slot to it.
-        if (!cliReadyFailed) {
+        if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
           sendTo(hub, { type: 'ready', seq: nextSeq() });
-        } else {
+        } else if (cliReadyFailed) {
           console.log('Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers');
+        } else {
+          console.log('Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
         }
       }
       break;
