@@ -5094,7 +5094,26 @@
       return Number.isInteger(v) ? String(v) : v.toFixed(2);
     }
 
-    function sparkSvg(rawValues, color) {
+    // Compact date+time for sparkline tooltips (#6768: "oldest → newest" says
+    // nothing about the actual time span the graph covers).
+    function fmtSparkTime(t) {
+      const d = new Date(t);
+      if (!(typeof t === 'number' && isFinite(t) && t > 0) || isNaN(d)) return '';
+      return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' +
+        d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    }
+    // Horizontal-span label for a sparkline tooltip: the real first→last
+    // timestamps when the caller has them (aligned with the value series),
+    // otherwise the old direction-only hint.
+    function sparkSpanLabel(times, n) {
+      if (Array.isArray(times) && times.length === n) {
+        const a = fmtSparkTime(times[0]), b = fmtSparkTime(times[times.length - 1]);
+        if (a && b) return `${a} → ${b}`;
+      }
+      return 'oldest → newest';
+    }
+
+    function sparkSvg(rawValues, color, times) {
       if (!rawValues || rawValues.length < 2) return '';
       // Fill zero gaps: carry forward last non-zero value through consecutive zeros
       const values = [...rawValues];
@@ -5114,7 +5133,7 @@
       // <title> gives every tiny sparkline a hover scale (#4298: graphs with
       // no axes are impossible to read — these are too small for drawn axes).
       return `<span class="sparkline"><svg width="${SPARK_W}" height="${SPARK_H}" viewBox="0 0 ${SPARK_W} ${SPARK_H}">` +
-        `<title>range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(values[values.length - 1])} · ${values.length} points, oldest → newest</title>` +
+        `<title>range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(values[values.length - 1])} · ${values.length} points, ${sparkSpanLabel(times, values.length)}</title>` +
         `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
         `<circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="2" fill="${color}"/>` +
         `</svg></span>`;
@@ -5127,6 +5146,11 @@
         for (const k of keys) v = v?.[k];
         return v ?? 0;
       });
+    }
+    // Snapshot timestamps aligned index-for-index with getHistorySeries(),
+    // so sparkSvg can label the real time span (#6768).
+    function getHistoryTimes() {
+      return historyData.map(s => s.t ?? s.timestamp);
     }
 
     // Default stroke colors for the named series historyData carries. Keeps the
@@ -5152,15 +5176,16 @@
     // muted). One helper routes every historyData-backed sparkline through the
     // same getHistorySeries + sparkSvg path.
     function sparkline(name, color) {
-      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)');
+      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)', getHistoryTimes());
     }
 
     function restartSparkSvg(agentName) {
-      const series = historyData
-        .map(s => s.agents?.[agentName]?.restarts)
-        .filter(v => v != null);
+      const entries = historyData
+        .map(s => ({ v: s.agents?.[agentName]?.restarts, t: s.t ?? s.timestamp }))
+        .filter(e => e.v != null);
+      const series = entries.map(e => e.v);
       if (series.length < 2 || Math.max(...series) === 0) return '';
-      return sparkSvg(series, 'var(--red)');
+      return sparkSvg(series, 'var(--red)', entries.map(e => e.t));
     }
 
     // ── Fact count sparkline (30-day server-side history) ──
@@ -5948,7 +5973,8 @@
         const histSeries = historyData.map(s => s.agentStats?.[name]?.[statKey] ?? 0);
         const hasHistData = histSeries.some(v => v > 0);
         const trendSeries = hasHistData ? histSeries : (window._trendData || []).map(s => s[trendField] || 0);
-        const spark = sparkSvg(trendSeries, color);
+        const trendTimes = hasHistData ? getHistoryTimes() : (window._trendData || []).map(s => s.t ?? s.timestamp);
+        const spark = sparkSvg(trendSeries, color, trendTimes);
         return `<span class="ind-dot-item"><span class="ind-num">${icon}${v || 0}</span><span class="ind-dlabel">${label} ${spark}</span></span>`;
       }
 
@@ -7465,7 +7491,7 @@
       const itmCount = itm.count || 0;
       const FIX_TIME_SPARK_COLOR = 'var(--muted)'; /* sparkline tint only — the value itself is neutral */
       const itmHistory = (itm.history || []).map(h => h.median || h.avg);
-      const itmSpark = sparkSvg(itmHistory, FIX_TIME_SPARK_COLOR);
+      const itmSpark = sparkSvg(itmHistory, FIX_TIME_SPARK_COLOR, (itm.history || []).map(h => h.t));
       const itmExplain = 'MTTR — how fast issues get resolved.\n\nWHAT: The headline figure is the MEDIAN time from an issue being opened to the fixing PR being merged. Lower is better; the sparkline shows the recent trend.\n\nHOW: For every issue closed by a merged PR in the last 30 days, we measure (merge time − open time). The tile shows the median of those durations; the breakdown below lists avg / p90 / fastest / slowest and the sample size.\n\n';
       const itmTitle = itmCount > 0 ? itmExplain + `median: ${formatFixTime(itmMedian)} | avg: ${formatFixTime(itmAvg)} | p90: ${formatFixTime(itm.p90_minutes)} | fastest: ${formatFixTime(itm.fastest_minutes)} | slowest: ${formatFixTime(itm.slowest_minutes)} | ${itmCount} fixes in last 30d` : itmExplain + 'No fixes recorded in the last 30 days yet.';
 
@@ -7753,8 +7779,8 @@
         }
       }
       setIfChanged(el, repos.map(r => {
-        const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
-        const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)');
+        const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
+        const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
         const MAX_PILL_TITLE_LEN = 50;
         const issuePills = (r.actionableIssues || []).map(i => {
@@ -9186,7 +9212,7 @@ function burnAreaChart() {
 
       const modelChips = models.map(([name, m]) => {
         const mTotal = m.input + m.output + m.cacheRead;
-        const mSpark = sparkSvg(historyData.map(s => s.tokenModels?.[name] ?? 0), 'var(--purple)');
+        const mSpark = sparkSvg(historyData.map(s => s.tokenModels?.[name] ?? 0), 'var(--purple)', getHistoryTimes());
         return `<div class="token-model-chip">
           <span class="mname">${esc(name)}</span>
           <span class="mcount">${fmtTokens(mTotal)} tokens · ${m.messages} msgs</span>
@@ -9253,7 +9279,7 @@ function burnAreaChart() {
         const aData = ba[name];
         const aTotal = aData ? (aData.input || 0) + (aData.output || 0) + (aData.cacheRead || 0) : 0;
         const clr = _getAgentColor(name);
-        const aSpark = sparkSvg(historyData.map(s => s.tokens?.[name] ?? 0), clr);
+        const aSpark = sparkSvg(historyData.map(s => s.tokens?.[name] ?? 0), clr, getHistoryTimes());
         return `<div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(aTotal)}</span>${aSpark}</div><div class="tlabel">${name}</div></div>`;
       }).join('');
 

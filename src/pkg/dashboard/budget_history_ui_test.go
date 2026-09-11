@@ -82,6 +82,12 @@ func TestSparklinesCarryAxesOrScaleTooltips(t *testing.T) {
 		"axisSparkSvg(_costHistory",
 		// sparkSvg + miniSparkSvg embed an SVG <title> stating the range.
 		"<title>range ${fmtSparkVal(min)}",
+		// The sparkSvg tooltip states the real time span when the caller has
+		// aligned timestamps (#6768: "oldest → newest" told the viewer nothing
+		// about the horizontal range of the ON HOLD / issues / PRs graphs).
+		"sparkSpanLabel(times, values.length)",
+		"function fmtSparkTime",
+		"getHistoryTimes()",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
