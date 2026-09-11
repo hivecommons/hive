@@ -1,0 +1,1 @@
+- Agents whose copilot hang diagnostic timed out were parked in `failed` with their tmux session already destroyed, refusing every kick ("failed to start: copilot hung with no output") until an operator restarted them. An inconclusive diagnostic now relaunches the agent instead.
