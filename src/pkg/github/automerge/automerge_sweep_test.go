@@ -329,6 +329,44 @@ func TestSweepQueuedAutoMergesRechecksSelfMergeBan(t *testing.T) {
 	}
 }
 
+func TestSweepQueuedAutoMergesSkipsHeldIssueWithoutPRFetch(t *testing.T) {
+	var pullsGet int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"number":       7,
+				"pull_request": map[string]any{"url": "https://api.example/pr/7"},
+				"labels":       issueLabels(hgithub.AutoMergeQueuedLabel, []string{"hold"}),
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			pullsGet++
+			t.Fatalf("unexpected PR fetch for held queued issue")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer api.Close()
+
+	var logs bytes.Buffer
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{
+		Logger:           slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		MergerAuthorizer: func(login string) bool { return true },
+	})
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if pullsGet != 0 || result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 {
+		t.Fatalf("pullsGet=%d result=%+v, want held queued issue skipped before PR fetch", pullsGet, result)
+	}
+	if !strings.Contains(logs.String(), "reason=held") {
+		t.Fatalf("logs = %q, want debug held skip", logs.String())
+	}
+}
+
 func TestAutoMergeSweepHelpersAndNilClient(t *testing.T) {
 	var nilClient *Engine
 	if _, err := nilClient.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != hgithub.ErrNoGitHubClient {
@@ -1190,6 +1228,36 @@ func TestSweepSelfAuthoredAutoMergesSkipsHeldListedPRWithoutFetch(t *testing.T) 
 	}
 }
 
+func TestSweepSelfAuthoredAutoMergesAggregatesHeldSkips(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	var getCounts map[int]int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged, &getCounts)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || getCounts[11] != 0 {
+		t.Fatalf("result=%+v getCounts=%v, want one held skip without candidate fetch", result, getCounts)
+	}
+	gotLogs := logs.String()
+	if !strings.Contains(gotLogs, "self-authored automerge sweep tick") || !strings.Contains(gotLogs, "held=1") {
+		t.Fatalf("logs = %q, want aggregate tick log with held count", gotLogs)
+	}
+	if strings.Contains(gotLogs, "self-authored automerge sweep skipped PR") {
+		t.Fatalf("logs = %q, want no per-PR info skip log", gotLogs)
+	}
+}
+
 func TestSweepSelfAuthoredAutoMergesFetchesUnheldCandidate(t *testing.T) {
 	var merged []int
 	var getCounts map[int]int
@@ -1375,6 +1443,125 @@ func TestStartSelfAuthoredAutoMergeSweepNilClient(t *testing.T) {
 	var nilClient *Engine
 	l6 := config.SelfMergeMinACMMLevel
 	nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6)
+}
+
+func TestAutoMergeSweepPackageWrappersHandleNilTransport(t *testing.T) {
+	if _, err := SweepQueuedAutoMerges(context.Background(), nil, Options{}, AutoMergeSweepOptions{}); err != hgithub.ErrNoGitHubClient {
+		t.Fatalf("SweepQueuedAutoMerges wrapper error = %v, want hgithub.ErrNoGitHubClient", err)
+	}
+	StartSelfAuthoredAutoMergeSweep(context.Background(), nil, 0, true, nil, Options{})
+}
+
+func TestAutoMergeSweepSettersAndApprovalDeskBranches(t *testing.T) {
+	var nilClient *Engine
+	nilClient.SetMergerAuthorizer(func(string) bool { return true })
+	nilClient.SetAttributionHooks(hgithub.AttributionHooks{})
+	nilClient.SetRequiredChecks(map[string]bool{"build": true})
+	nilClient.SetAutoMergeLabel("ship-it")
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "http://127.0.0.1:0")
+	c := New(client, Options{})
+	c.SetMergerAuthorizer(func(login string) bool { return login == "bob" })
+	if ok, configured := c.isTrustedMerger("bob"); !ok || !configured {
+		t.Fatalf("isTrustedMerger after SetMergerAuthorizer = (%v, %v), want trusted and configured", ok, configured)
+	}
+	c.SetRequiredChecks(map[string]bool{"build": true})
+	if checks, ok := c.configRequiredChecks(); !ok || !checks["build"] {
+		t.Fatalf("configRequiredChecks = (%v, %v), want configured build check", checks, ok)
+	}
+	c.SetAutoMergeLabel("ship-it")
+	if got := client.AutoMergeLabel(); got != "ship-it" {
+		t.Fatalf("AutoMergeLabel = %q, want ship-it", got)
+	}
+	if allowed, reason := c.consultApprovalDesk(context.Background(), hgithub.ApprovalDeskRequest{}); !allowed || reason != "" {
+		t.Fatalf("nil approval desk = (%v, %q), want allowed with empty reason", allowed, reason)
+	}
+
+	desk := func(context.Context, hgithub.ApprovalDeskRequest) (bool, string) {
+		return false, ""
+	}
+	c = New(client, Options{ApprovalDesk: desk})
+	if allowed, reason := c.consultApprovalDesk(context.Background(), hgithub.ApprovalDeskRequest{}); allowed || reason != "approval-desk-withheld" {
+		t.Fatalf("withholding approval desk = (%v, %q), want default withheld reason", allowed, reason)
+	}
+
+	desk = func(context.Context, hgithub.ApprovalDeskRequest) (bool, string) {
+		return false, "policy-paused"
+	}
+	c = New(client, Options{ApprovalDesk: desk})
+	if allowed, reason := c.consultApprovalDesk(context.Background(), hgithub.ApprovalDeskRequest{}); allowed || reason != "policy-paused" {
+		t.Fatalf("withholding approval desk = (%v, %q), want explicit reason", allowed, reason)
+	}
+}
+
+func TestAutoMergeSweepPrefilterHelpers(t *testing.T) {
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "http://127.0.0.1:0")
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	client.SetExemptLabels([]string{"skip-merge"})
+	c := New(client, Options{})
+
+	appPR := func(labels ...string) *gh.PullRequest {
+		prLabels := make([]*gh.Label, 0, len(labels))
+		for _, label := range labels {
+			prLabels = append(prLabels, &gh.Label{Name: gh.Ptr(label)})
+		}
+		return &gh.PullRequest{
+			Number: gh.Ptr(7),
+			State:  gh.Ptr("open"),
+			User:   &gh.User{Login: gh.Ptr(testHiveAppBotLogin)},
+			Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha7")},
+			Labels: prLabels,
+		}
+	}
+
+	selfCases := []struct {
+		name string
+		pr   *gh.PullRequest
+		want string
+	}{
+		{name: "nil", want: "missing-head-sha"},
+		{name: "closed", pr: &gh.PullRequest{State: gh.Ptr("closed")}, want: "closed"},
+		{name: "draft", pr: &gh.PullRequest{State: gh.Ptr("open"), Draft: gh.Ptr(true)}, want: "draft"},
+		{name: "other-author", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr("alice")}}, want: "not-app-authored"},
+		{name: "held", pr: appPR("hold/review"), want: "held"},
+		{name: "exempt", pr: appPR("skip-merge"), want: "exempt-label"},
+		{name: "missing-head", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}, want: "missing-head-sha"},
+		{name: "candidate", pr: appPR("ready"), want: ""},
+	}
+	for _, tc := range selfCases {
+		t.Run("self/"+tc.name, func(t *testing.T) {
+			if got := c.prefilterSelfAuthoredPR(tc.pr); got != tc.want {
+				t.Fatalf("prefilterSelfAuthoredPR = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	queuedIssue := func(labels ...string) *gh.Issue {
+		issueLabels := make([]*gh.Label, 0, len(labels))
+		for _, label := range labels {
+			issueLabels = append(issueLabels, &gh.Label{Name: gh.Ptr(label)})
+		}
+		return &gh.Issue{Number: gh.Ptr(7), PullRequestLinks: &gh.PullRequestLinks{}, Labels: issueLabels}
+	}
+	queuedCases := []struct {
+		name  string
+		issue *gh.Issue
+		want  string
+	}{
+		{name: "nil", want: "not-pull-request"},
+		{name: "plain-issue", issue: &gh.Issue{Number: gh.Ptr(7)}, want: "not-pull-request"},
+		{name: "label-removed", issue: queuedIssue("other"), want: "label-removed"},
+		{name: "held", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "hold"), want: "held"},
+		{name: "exempt", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "skip-merge"), want: "exempt-label"},
+		{name: "candidate", issue: queuedIssue(hgithub.AutoMergeQueuedLabel), want: ""},
+	}
+	for _, tc := range queuedCases {
+		t.Run("queued/"+tc.name, func(t *testing.T) {
+			if got := c.prefilterQueuedIssue(tc.issue, hgithub.AutoMergeQueuedLabel); got != tc.want {
+				t.Fatalf("prefilterQueuedIssue = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // testTrustedMergers are the logins the sweep fixtures treat as holding the

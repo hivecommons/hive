@@ -81,6 +81,24 @@ func TestSelfAuthoredSweepInterval_SmallHiveIgnoresObservedCandidates(t *testing
 	}
 }
 
+func TestNextSelfAuthoredSweepInterval_AdjustsAndRecovers(t *testing.T) {
+	base := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance)
+	backedOff, changed := nextSelfAuthoredSweepInterval(6, base, &AutoMergeSweepResult{Candidates: selfAuthoredSweepCandidateAllowance + 100})
+	if !changed || backedOff <= base {
+		t.Fatalf("backoff interval=%v changed=%v, want interval greater than base %v", backedOff, changed, base)
+	}
+
+	recovered, changed := nextSelfAuthoredSweepInterval(6, backedOff, &AutoMergeSweepResult{Candidates: 0})
+	if !changed || recovered != base {
+		t.Fatalf("recovered interval=%v changed=%v, want base %v", recovered, changed, base)
+	}
+
+	unchanged, changed := nextSelfAuthoredSweepInterval(6, base, nil)
+	if changed || unchanged != base {
+		t.Fatalf("nil result interval=%v changed=%v, want unchanged base %v", unchanged, changed, base)
+	}
+}
+
 // TestSelfAuthoredSweepInterval_ScalesWithRepos: more repos must never sweep
 // more often, or the guard above can be defeated by a non-monotonic curve.
 func TestSelfAuthoredSweepInterval_ScalesWithRepos(t *testing.T) {

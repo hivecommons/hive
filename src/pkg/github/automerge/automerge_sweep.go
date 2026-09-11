@@ -206,6 +206,14 @@ func selfAuthoredSweepIntervalForCandidates(repos, candidates int) time.Duration
 	return interval.Round(time.Second)
 }
 
+func nextSelfAuthoredSweepInterval(repos int, current time.Duration, result *AutoMergeSweepResult) (time.Duration, bool) {
+	if result == nil {
+		return current, false
+	}
+	next := selfAuthoredSweepIntervalForCandidates(repos, result.Candidates)
+	return next, next != current
+}
+
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
@@ -652,18 +660,15 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 					}
 					continue
 				}
-				if result != nil {
-					next := selfAuthoredSweepIntervalForCandidates(repos, result.Candidates)
-					if next != interval {
-						t.Reset(next)
-						c.info("self-authored automerge sweep interval adjusted",
-							"previous_interval", interval,
-							"next_interval", next,
-							"repos", repos,
-							"candidates", result.Candidates,
-							"default_candidate_allowance", selfAuthoredSweepCandidateAllowance)
-						interval = next
-					}
+				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
+					t.Reset(next)
+					c.info("self-authored automerge sweep interval adjusted",
+						"previous_interval", interval,
+						"next_interval", next,
+						"repos", repos,
+						"candidates", result.Candidates,
+						"default_candidate_allowance", selfAuthoredSweepCandidateAllowance)
+					interval = next
 				}
 			}
 		}
