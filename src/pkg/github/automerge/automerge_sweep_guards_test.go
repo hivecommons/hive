@@ -175,7 +175,7 @@ func TestTrySweepSelfAuthoredPRGuardBranches(t *testing.T) {
 			api := newSelfSweepGuardAPI(t, tt.fx)
 			defer api.Close()
 			c := newAutoMergeSweepClient(api.URL)
-			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
 			}
@@ -193,7 +193,7 @@ func TestTrySweepSelfAuthoredPRMergesGreenPR(t *testing.T) {
 	api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true})
 	defer api.Close()
 	c := newAutoMergeSweepClient(api.URL)
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want clean merge", reason, err)
 	}

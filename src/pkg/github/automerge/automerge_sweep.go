@@ -27,6 +27,7 @@ type Transport interface {
 	AutoMergeLabel() string
 	AppBotLogin() string
 	IsExemptLabels(labels []string) bool
+	UpdateBranch(ctx context.Context, repo string, number int) error
 	RecordPRMergedAudit(repo string, number int, method, sha string)
 }
 
@@ -133,6 +134,7 @@ const selfMergeMinACMMLevel = 6
 const SelfMergeMinACMMLevel = selfMergeMinACMMLevel
 
 const DefaultAutoMergeSweepMaxMerges = 3
+const selfAuthoredSweepMaxBranchUpdates = 5
 
 // selfAuthoredAutoMergeSweepInterval is how often
 // StartSelfAuthoredAutoMergeSweep re-scans the App's own open PRs. Matches
@@ -362,10 +364,11 @@ type AutoMergeSweepEvent struct {
 }
 
 type AutoMergeSweepResult struct {
-	Merged     []AutoMergeSweepEvent
-	Seen       int
-	Skipped    int
-	Candidates int
+	Merged          []AutoMergeSweepEvent
+	Seen            int
+	Skipped         int
+	Candidates      int
+	UpdatedBranches int
 }
 
 type hiveQueueApproval struct {
@@ -504,6 +507,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 
 	// See the queued sweep above: paused repos are out of scope for automerge.
 	selfAuthReleaseBudget := c.selfAuthorizationReleaseBudget()
+	branchUpdateAttempts := 0
 	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -556,13 +560,19 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			result.Candidates++
 			repoCandidates++
-			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number)
+			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
+			if reason == "updated-branch" || reason == "update-branch" {
+				branchUpdateAttempts++
+			}
 			if err != nil {
 				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
 				continue
+			}
+			if reason == "updated-branch" {
+				result.UpdatedBranches++
 			}
 			if reason != "" {
 				result.Skipped++
@@ -581,9 +591,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"seen", repoSeen,
 				"candidates", repoCandidates,
 				"merged", len(result.Merged) - repoMergedBefore,
+				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			for _, reason := range []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha"} {
+			for _, reason := range []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "not-mergeable"} {
 				if count := repoSkipReasons[reason]; count > 0 {
 					args = append(args, reason, count)
 				}
@@ -737,7 +748,7 @@ func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 // evaluated-then-re-verified-at-merge-time safety property trySweepQueuedPR
 // gets from the queue approval's recorded HeadSHA, just without a stored
 // approval record to compare against (there is no queue step in this path).
-func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int) (AutoMergeSweepEvent, string, error) {
+func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
@@ -783,6 +794,16 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 
 	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	if strings.EqualFold(pr.GetMergeableState(), "behind") {
+		if !branchUpdateAllowed {
+			return AutoMergeSweepEvent{}, "not-mergeable", nil
+		}
+		if err := c.transport.UpdateBranch(ctx, displayRepo, number); err != nil {
+			return AutoMergeSweepEvent{}, "update-branch", err
+		}
+		c.info("self-authored automerge sweep updated behind PR branch", "repo", displayRepo, "pr", number)
+		return AutoMergeSweepEvent{}, "updated-branch", nil
+	}
 	if mergeable != hgithub.MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}

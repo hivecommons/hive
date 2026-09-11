@@ -30,7 +30,7 @@ func TestSelfAuthoredSweepNoIntentGateInstalledMergesWithoutEvidence(t *testing.
 	api := newSelfSweepGuardAPI(t, fx)
 	defer api.Close()
 	c := newAutoMergeSweepClient(api.URL) // no SetIntentGate call: c.intentGate is nil
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want clean merge with no gate installed", reason, err)
 	}
@@ -66,7 +66,7 @@ func TestSelfAuthoredSweepIntentGateAdvisoryEvidenceErrorStillMerges(t *testing.
 	api := newSelfSweepGuardAPI(t, fx)
 	defer api.Close()
 	c := newIntentGateSweepClient(api.URL, false) // enforce=false
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want advisory merge despite evidence-fetch failure", reason, err)
 	}

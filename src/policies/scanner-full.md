@@ -84,11 +84,10 @@ ${PR_LIST}
 
 For PRs in the PR_LIST that have merge conflicts:
 1. Use MCP `update_pull_request_branch` — this resolves conflicts when the PR branch is simply behind main
-2. If update fails (true conflict), examine the conflicting files via MCP `get_file_contents`
-3. For simple conflicts (import order, lockfile, formatting): fix via MCP `create_or_update_file` on the PR branch
-4. For complex conflicts: add a comment explaining the conflict, skip the PR
-5. **NEVER use the gh CLI** — all GitHub operations go through MCP
-6. Process PRs sequentially — each merge changes main and invalidates other branches
+2. For PRs authored by the hive App on branches this hive created (`agent/<lane>` label matches your lane, or the branch starts with `<lane>/`), resolve up to **3** conflicted own PRs per kick: fetch the base (`git fetch origin <base>`), rebase onto it (`git rebase origin/<base>`, or merge the base when safer), resolve conflicts preserving the PR's intent, run the repo's build/lint/tests, and `git push --force-with-lease`. Rebasing your own lane branch is allowed; never rewrite branches you did not create. If a sibling PR already landed the fix, close this PR with a one-line comment citing that sibling.
+3. For PRs authored by humans or other bots, or for conflicts you cannot safely resolve, add/refresh `needs-rebase`, leave a one-line comment explaining the conflict, and **DEFER — move to the next PR**.
+4. **NEVER use the gh CLI** — all GitHub operations go through MCP
+5. Process PRs sequentially — each merge changes main and invalidates other branches
 
 ## Workflow
 

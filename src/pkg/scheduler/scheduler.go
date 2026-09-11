@@ -291,7 +291,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	}
 	agentIssuesForList, heldInflight := s.splitInflight(agentIssuesForList)
 	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
-	prList, prFailClosed := s.formatPRListWithPolicy(actionable)
+	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName)
 	if issueFailClosed || prFailClosed {
 		s.logger.Warn("ioscan fail-closed blocked kick", "agent", agentName)
 		return "", true
@@ -484,6 +484,10 @@ func issuePriorityMarker(issue github.Issue) string {
 }
 
 func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) (string, bool) {
+	return s.formatPRListWithPolicyForAgent(actionable, "")
+}
+
+func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.ActionableResult, agentName string) (string, bool) {
 	if len(actionable.PRs.Items) == 0 {
 		return "(none)", false
 	}
@@ -503,9 +507,75 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 		}
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, author, title))
+		annotation, annotationVerdict := s.enforceIssueTextVerdict(prKickAnnotation(pr, agentName))
+		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
+		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s %s\n", pr.Repo, pr.Number, author, annotation, title))
 	}
 	return b.String(), failClosed
+}
+
+func prKickAnnotation(pr github.PullRequest, agentName string) string {
+	lane := prOwningLane(pr)
+	mergeableState := strings.TrimSpace(pr.MergeableState)
+	if mergeableState == "" && prHasLabel(pr.Labels, "needs-rebase") {
+		mergeableState = "needs-rebase"
+	}
+	if mergeableState == "" {
+		switch pr.Mergeable {
+		case github.MergeableYes:
+			mergeableState = "mergeable"
+		case github.MergeableNo:
+			mergeableState = "not-mergeable"
+		default:
+			mergeableState = "unknown"
+		}
+	}
+	parts := []string{"mergeable_state=" + mergeableState}
+	if lane != "" {
+		parts = append(parts, "lane="+lane)
+	} else {
+		parts = append(parts, "lane=unknown")
+	}
+	annotation := "[" + strings.Join(parts, ", ") + "]"
+	if prIsAppAuthored(pr) && prHasConflictSignal(pr, mergeableState) && lane != "" && strings.EqualFold(lane, agentName) {
+		annotation += " [CONFLICT, yours]"
+	}
+	return annotation
+}
+
+func prOwningLane(pr github.PullRequest) string {
+	for _, label := range pr.Labels {
+		if lane, ok := strings.CutPrefix(strings.TrimSpace(label), "agent/"); ok && lane != "" {
+			return lane
+		}
+	}
+	if head := strings.TrimSpace(pr.HeadRef); head != "" {
+		if lane, _, ok := strings.Cut(head, "/"); ok && lane != "" {
+			return lane
+		}
+	}
+	return ""
+}
+
+func prHasLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func prHasConflictSignal(pr github.PullRequest, mergeableState string) bool {
+	if prHasLabel(pr.Labels, "needs-rebase") {
+		return true
+	}
+	return strings.EqualFold(mergeableState, "dirty") || strings.EqualFold(mergeableState, "conflicting")
+}
+
+func prIsAppAuthored(pr github.PullRequest) bool {
+	author := strings.TrimSpace(pr.Author)
+	return pr.AppAuthored || strings.HasPrefix(strings.ToLower(author), "app/")
 }
 
 // buildAgentListAndRoles returns a comma-separated agent list and a formatted
@@ -1239,7 +1309,8 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, pr.Author, title))
+		annotation, _ := s.enforceIssueTextVerdict(prKickAnnotation(pr, "scanner"))
+		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s %s\n", pr.Repo, pr.Number, pr.Author, annotation, title))
 	}
 
 	if actionable.Issues.SLAViolations > 0 {
