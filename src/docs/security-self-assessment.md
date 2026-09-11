@@ -710,20 +710,26 @@ repository's code-scanning alerts. This assessment deliberately does not
 freeze a numeric score into the text — it moves independently of this
 document — and a reviewer should pull the current result.
 
-**OpenSSF Best Practices Badge: not yet held, and now being pursued.** The
-first revision of this document recorded this as "not yet assessed whether
-this is planned," which was an evasion; TAG-Security review called it out,
-and the answer is that the project had simply not done it. It is planned, and
-tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). The
-passing-level criteria are largely met already — OSI-approved license
-(Apache-2.0), public version-controlled source, documented contribution
-process, private vulnerability reporting via GitHub Security Advisories, an
-automated test suite gating every PR, static analysis in CI, digest-pinned
-dependencies, and no known unpatched vulnerabilities — so the outstanding
-work is registration and self-certification rather than engineering. When the
-badge is awarded this section will carry its ID and level; until then it
-carries the issue number, because a tracked commitment is worth more to a
-reviewer than a claim.
+**OpenSSF Best Practices Badge: held at the passing level.** The project is
+registered as [project 14261](https://www.bestpractices.dev/projects/14261)
+and reached **passing** (100% of the passing criteria) on **2026-08-27**; it
+has not lapsed since. The badge is displayed in `README.md` and its live
+status is available from `https://www.bestpractices.dev/projects/14261/badge`.
+Silver and gold are not claimed. The badge is self-certified, as the
+programme intends, so its value to a reviewer is not the graphic but the
+per-criterion written justifications behind it, each linking to the specific
+file, workflow or policy that satisfies it — those can be checked rather than
+taken on trust.
+
+Two earlier revisions of this section were wrong about this, in opposite
+directions, and both errors are worth recording. The first said the badge was
+"not yet assessed whether this is planned," which was an evasion rather than
+an answer; TAG-Security review called it out. The correction then overshot by
+describing the badge as not yet held and merely "being pursued" — but it had
+in fact been awarded on 2026-08-27, four days before that review. In both
+cases this document was written from itself rather than re-derived from
+observable state, which is the same defect that left the maintainer count
+stale. The badge status above is taken from the programme's public API.
 
 ### Case studies
 
