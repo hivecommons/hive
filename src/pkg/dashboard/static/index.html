@@ -16594,6 +16594,23 @@ function burnAreaChart() {
           html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(pillText)}</span>`;
         }
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
+        // Auto-update health (#6765). The server exposes the spoke's persisted
+        // self-upgrade marker; present means an instructed upgrade has NOT
+        // landed. Without this badge an operator could not tell "updated as
+        // configured" apart from "auto-update is quietly failing".
+        const um = v.upgradeMarker;
+        if (um && um.failed) {
+          const umTitle = `Auto-update FAILED: upgrade to ${um.target || '?'} gave up after ${um.attempts}/${um.maxAttempts} attempts — the image never changed.` +
+            (um.lastError ? ` Last error: ${um.lastError}.` : '') +
+            (um.requestedAt ? ` First requested ${um.requestedAt}.` : '') +
+            ' Check that the spoke can get/patch its own Deployment (hive-self-upgrade Role/RoleBinding) and that the deployment tracks a tag carrying the target SHA.';
+          html += ` <span class="git-behind" style="color:var(--red)" title="${escapeHtml(umTitle)}">⚠ auto-update failed</span>`;
+        } else if (um) {
+          const umTitle = `Auto-update in progress: upgrading to ${um.target || '?'} — attempt ${um.attempts} of ${um.maxAttempts} has not landed yet (the pod restarted on the same image); retrying with backoff.` +
+            (um.lastError ? ` Last error: ${um.lastError}.` : '') +
+            (um.requestedAt ? ` First requested ${um.requestedAt}.` : '');
+          html += ` <span class="git-behind" title="${escapeHtml(umTitle)}">⟳ auto-update retrying ${escapeHtml(String(um.attempts))}/${escapeHtml(String(um.maxAttempts))}</span>`;
+        }
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Stable v4 tip: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
           : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase()
@@ -16616,7 +16633,7 @@ function burnAreaChart() {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         } else if (v.behind) {
           html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
-          if (v.autoUpgrade) {
+          if (v.autoUpgrade && !um) {
             // Hub-managed: the hub rolls the upgrade automatically, so no manual
             // button — a passive state badge, worded to match the hub dashboard's
             // "Queued for auto-upgrade", with the target named in the tooltip.

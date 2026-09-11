@@ -659,6 +659,14 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if s.deps != nil && s.deps.Config != nil {
 		resp["autoUpgrade"] = s.deps.Config.Hub.AutoUpgrade
 	}
+	// Auto-update health (#6765): the on-PVC upgrade marker survives the
+	// restarts an upgrade causes, so its presence at runtime means the last
+	// instructed upgrade has NOT landed yet — either retrying or terminally
+	// failed. Surfacing it is what lets an operator tell "updated as
+	// configured" apart from "auto-update has a problem".
+	if m := readUpgradeMarker(); m != nil {
+		resp["upgradeMarker"] = m
+	}
 
 	s.versionMu.RLock()
 	cached := s.cachedLatestHash
@@ -731,6 +739,60 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
 const dashboardStableReleaseBranch = "v4"
+
+// upgradeMarkerPath is where cmd/hive persists its self-upgrade attempt
+// bookkeeping (upgradeMarker in cmd/hive/main.go). Var, not const, so tests
+// can point it at a fixture instead of the live PVC.
+var upgradeMarkerPath = "/data/upgrade-requested"
+
+// dashboardSelfUpgradeMaxAttempts mirrors cmd/hive's selfUpgradeMaxAttempts —
+// the retry budget after which the spoke stops attempting an upgrade and
+// reports terminal failure. Duplicated (package main cannot be imported); the
+// two must stay in step.
+const dashboardSelfUpgradeMaxAttempts = 5
+
+// readUpgradeMarker exposes the spoke's persisted self-upgrade attempt state
+// for /api/version (#6765). nil when no upgrade is in flight or failing —
+// the marker is removed on the boot that lands the new image, so a present
+// marker always describes an upgrade that has not landed. "failed" is the
+// terminal give-up state (attempt budget exhausted); attempts >= 1 with the
+// marker still present means the previous attempt did not change the image
+// and the spoke is retrying with backoff.
+func readUpgradeMarker() map[string]any {
+	data, err := os.ReadFile(upgradeMarkerPath)
+	if err != nil {
+		return nil
+	}
+	var m struct {
+		TargetSHA   string    `json:"target_sha"`
+		CurrentSHA  string    `json:"current_sha"`
+		RequestedAt time.Time `json:"requested_at"`
+		Attempts    int       `json:"attempts"`
+		LastError   string    `json:"last_error"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil || m.TargetSHA == "" {
+		return nil
+	}
+	if m.Attempts < 1 {
+		// Legacy marker without attempt bookkeeping — same reading as
+		// cmd/hive's parseUpgradeMarker: counts as one prior attempt.
+		m.Attempts = 1
+	}
+	out := map[string]any{
+		"target":      m.TargetSHA,
+		"current":     m.CurrentSHA,
+		"attempts":    m.Attempts,
+		"maxAttempts": dashboardSelfUpgradeMaxAttempts,
+		"failed":      m.Attempts >= dashboardSelfUpgradeMaxAttempts,
+	}
+	if !m.RequestedAt.IsZero() {
+		out["requestedAt"] = m.RequestedAt.Format(time.RFC3339)
+	}
+	if m.LastError != "" {
+		out["lastError"] = m.LastError
+	}
+	return out
+}
 
 func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	base = shortSHADashboard(base)
