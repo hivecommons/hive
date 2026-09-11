@@ -142,19 +142,22 @@ const selfAuthoredSweepBudgetShare = 0.25
 // interval is sized against.
 const githubAppHourlyRateLimit = 6900
 
-// selfAuthoredSweepCandidateAllowance is the per-tick request allowance for
-// per-CANDIDATE calls, on top of the one list call per repo. Listing is not the
-// whole cost of a tick: every open App-authored non-draft PR costs a
-// PullRequests.Get in trySweepSelfAuthoredPR, plus a second re-verify Get on
-// the ones that reach the merge step. Sizing the interval on repo count alone
-// therefore understates a tick — on the hive this was measured on, candidate
-// Gets outnumbered list calls whenever the App had a backlog of open PRs.
+// selfAuthoredSweepCandidateAllowance is the default per-tick request allowance
+// for per-CANDIDATE calls, on top of the one list call per repo. Listing is not
+// the whole cost of a tick: every open App-authored non-draft PR that survives
+// cheap list-response gates costs a PullRequests.Get in trySweepSelfAuthoredPR,
+// plus a second re-verify Get on the ones that reach the merge step. Sizing the
+// interval on repo count alone therefore understates a tick.
 //
-// This is an ALLOWANCE, not a measurement: candidates vary tick to tick, and a
-// static budget that covers the common case beats a dynamic ticker for
-// reviewability. A hive holding more open App PRs than this simply runs
-// slightly hotter within its share; the share itself still bounds the damage.
+// This is only the starting allowance. StartSelfAuthoredAutoMergeSweep adapts
+// the next tick to the observed post-filter candidate count when a backlog is
+// larger than this default, so a held/exempt backlog does not burn the budget
+// and a genuinely large mergeable backlog slows proportionally.
 const selfAuthoredSweepCandidateAllowance = 32
+
+// selfAuthoredSweepMaxInterval bounds adaptive backoff so the self-authored
+// sweep still makes progress even during unusually large candidate backlogs.
+const selfAuthoredSweepMaxInterval = 15 * time.Minute
 
 // selfAuthoredSweepInterval sizes the sweep tick so a hive with many repos
 // cannot exhaust its GitHub rate limit just by looking for merge candidates.
@@ -180,15 +183,25 @@ const selfAuthoredSweepCandidateAllowance = 32
 const selfAuthoredSweepSmallHiveRepos = 4
 
 func selfAuthoredSweepInterval(repos int) time.Duration {
+	return selfAuthoredSweepIntervalForCandidates(repos, selfAuthoredSweepCandidateAllowance)
+}
+
+func selfAuthoredSweepIntervalForCandidates(repos, candidates int) time.Duration {
 	if repos <= selfAuthoredSweepSmallHiveRepos {
 		return selfAuthoredAutoMergeSweepInterval
 	}
+	if candidates < selfAuthoredSweepCandidateAllowance {
+		candidates = selfAuthoredSweepCandidateAllowance
+	}
 	budget := float64(githubAppHourlyRateLimit) * selfAuthoredSweepBudgetShare
-	perTick := float64(repos + selfAuthoredSweepCandidateAllowance)
+	perTick := float64(repos + candidates)
 	seconds := perTick * 3600.0 / budget
 	interval := time.Duration(seconds * float64(time.Second))
 	if interval < selfAuthoredAutoMergeSweepInterval {
 		return selfAuthoredAutoMergeSweepInterval
+	}
+	if interval > selfAuthoredSweepMaxInterval {
+		return selfAuthoredSweepMaxInterval
 	}
 	return interval.Round(time.Second)
 }
@@ -332,9 +345,10 @@ type AutoMergeSweepEvent struct {
 }
 
 type AutoMergeSweepResult struct {
-	Merged  []AutoMergeSweepEvent
-	Seen    int
-	Skipped int
+	Merged     []AutoMergeSweepEvent
+	Seen       int
+	Skipped    int
+	Candidates int
 }
 
 type hiveQueueApproval struct {
@@ -381,6 +395,15 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 				continue
 			}
 			result.Seen++
+			if reason := c.prefilterQueuedIssue(issue, label); reason != "" {
+				if reason == "held" || reason == "exempt-label" {
+					c.debug("automerge sweep skipped PR", "repo", repo, "pr", issue.GetNumber(), "reason", reason)
+				} else {
+					c.info("automerge sweep skipped PR", "repo", repo, "pr", issue.GetNumber(), "reason", reason)
+				}
+				result.Skipped++
+				continue
+			}
 			event, reason, err := c.trySweepQueuedPR(ctx, repo, owner, repoName, issue.GetNumber(), label)
 			if err != nil {
 				c.warn("automerge sweep skipped PR", "repo", repo, "pr", issue.GetNumber(), "reason", reason, "error", err)
@@ -472,26 +495,62 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		if err != nil {
 			return result, err
 		}
+		repoSeen := 0
+		repoSkipped := 0
+		repoCandidates := 0
+		repoMergedBefore := len(result.Merged)
+		repoSkipReasons := make(map[string]int)
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
 				break
 			}
+			number := 0
+			if pr != nil {
+				number = pr.GetNumber()
+			}
 			result.Seen++
-			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, pr.GetNumber())
-			if err != nil {
-				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", pr.GetNumber(), "reason", reason, "error", err)
+			repoSeen++
+			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
 				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[reason]++
+				continue
+			}
+			result.Candidates++
+			repoCandidates++
+			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number)
+			if err != nil {
+				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[reason]++
 				continue
 			}
 			if reason != "" {
-				c.info("self-authored automerge sweep skipped PR", "repo", repo, "pr", pr.GetNumber(), "reason", reason)
 				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[reason]++
 				continue
 			}
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
 			}
+		}
+		if repoSeen > 0 || repoCandidates > 0 || len(result.Merged) > repoMergedBefore {
+			args := []any{
+				"repo", repo,
+				"seen", repoSeen,
+				"candidates", repoCandidates,
+				"merged", len(result.Merged) - repoMergedBefore,
+				"skipped", repoSkipped,
+			}
+			for _, reason := range []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha"} {
+				if count := repoSkipReasons[reason]; count > 0 {
+					args = append(args, reason, count)
+				}
+			}
+			c.info("self-authored automerge sweep tick", args...)
 		}
 	}
 	return result, nil
@@ -570,7 +629,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			"acmm_level", level, "min_acmm_level", selfMergeMinACMMLevel)
 		return
 	}
-	interval := selfAuthoredSweepInterval(len(c.transport.Repositories()))
+	repos := len(c.transport.Repositories())
+	interval := selfAuthoredSweepInterval(repos)
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -579,7 +639,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if _, err := c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges}); err != nil {
+				result, err := c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges})
+				if err != nil {
 					c.warn("self-authored automerge sweep failed", "error", err)
 					// A rate-limit refusal may be go-github's cached verdict
 					// from a token that has since rotated. Re-read the real
@@ -589,6 +650,20 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 					if isRateLimited(err) {
 						c.refreshRateLimitCache(ctx)
 					}
+					continue
+				}
+				if result != nil {
+					next := selfAuthoredSweepIntervalForCandidates(repos, result.Candidates)
+					if next != interval {
+						t.Reset(next)
+						c.info("self-authored automerge sweep interval adjusted",
+							"previous_interval", interval,
+							"next_interval", next,
+							"repos", repos,
+							"candidates", result.Candidates,
+							"default_candidate_allowance", selfAuthoredSweepCandidateAllowance)
+						interval = next
+					}
 				}
 			}
 		}
@@ -596,10 +671,12 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.transport.Repositories()))
 }
 
-// listOpenAppAuthoredPullRequests returns every open, non-draft PR in owner/repo
-// authored by the App bot login. Uses the PR list endpoint (not issue search)
-// because the caller needs PullRequest objects (head SHA, mergeable state)
-// for every candidate, not just issue metadata.
+// listOpenAppAuthoredPullRequests returns every open PR in owner/repo. Uses the
+// PR list endpoint (not issue search) because the caller needs PullRequest
+// objects: PullRequests.List populates Labels and Head.SHA, so cheap gates can
+// run before paying for PullRequests.Get. It does not populate MergeableState;
+// PRs that survive the cheap gates are fetched once for that safety-critical
+// evaluation data and fetched again immediately before merge to re-verify SHA.
 func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
@@ -611,15 +688,7 @@ func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 		if err != nil {
 			return nil, fmt.Errorf("listing open PRs for %s/%s: %w", owner, repo, err)
 		}
-		for _, pr := range prs {
-			if pr.GetDraft() {
-				continue
-			}
-			if !strings.EqualFold(hgithub.SafeGetLogin(pr.GetUser()), c.transport.AppBotLogin()) {
-				continue
-			}
-			out = append(out, pr)
-		}
+		out = append(out, prs...)
 		if resp.NextPage == 0 {
 			return out, nil
 		}
@@ -784,6 +853,49 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "merge_sha", event.MergeSHA)
 	return event, "", nil
+}
+
+func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
+	if pr == nil {
+		return "missing-head-sha"
+	}
+	if state := pr.GetState(); state != "" && !strings.EqualFold(state, "open") {
+		return "closed"
+	}
+	if pr.GetDraft() {
+		return "draft"
+	}
+	if !strings.EqualFold(hgithub.SafeGetLogin(pr.GetUser()), c.transport.AppBotLogin()) {
+		return "not-app-authored"
+	}
+	labels := labelNames(pr.Labels)
+	if hgithub.HasHoldLabel(labels) {
+		return "held"
+	}
+	if c.transport.IsExemptLabels(labels) {
+		return "exempt-label"
+	}
+	if pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
+		return "missing-head-sha"
+	}
+	return ""
+}
+
+func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
+	if issue == nil || !issue.IsPullRequest() {
+		return "not-pull-request"
+	}
+	labels := labelNames(issue.Labels)
+	if !hasLabel(labels, label) {
+		return "label-removed"
+	}
+	if hgithub.HasHoldLabel(labels) {
+		return "held"
+	}
+	if c.transport.IsExemptLabels(labels) {
+		return "exempt-label"
+	}
+	return ""
 }
 
 func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {
@@ -1143,5 +1255,11 @@ func (c *Engine) warn(msg string, args ...any) {
 func (c *Engine) info(msg string, args ...any) {
 	if c != nil && c.logger != nil {
 		c.logger.Info(msg, args...)
+	}
+}
+
+func (c *Engine) debug(msg string, args ...any) {
+	if c != nil && c.logger != nil {
+		c.logger.Debug(msg, args...)
 	}
 }

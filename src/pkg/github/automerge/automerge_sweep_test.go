@@ -35,6 +35,17 @@ type sweepPR struct {
 	checkConclusion string
 }
 
+func issueLabels(primary string, extra []string) []map[string]string {
+	labels := make([]map[string]string, 0, 1+len(extra))
+	if primary != "" {
+		labels = append(labels, map[string]string{"name": primary})
+	}
+	for _, label := range extra {
+		labels = append(labels, map[string]string{"name": label})
+	}
+	return labels
+}
+
 func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	var audits []AutoMergeSweepEvent
 	var merged []int
@@ -1050,6 +1061,7 @@ func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 type selfAuthoredPR struct {
 	number          int
 	author          string
+	extraLabels     []string
 	draft           bool
 	mergeableState  string
 	statusState     string
@@ -1061,10 +1073,13 @@ type selfAuthoredPR struct {
 	headSHAOverride string
 }
 
-func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int) *httptest.Server {
+func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]*selfAuthoredPR, len(prs))
 	fetchCount := make(map[int]int)
+	if len(getCounts) > 0 && getCounts[0] != nil {
+		*getCounts[0] = fetchCount
+	}
 	for i := range prs {
 		byNumber[prs[i].number] = &prs[i]
 	}
@@ -1075,8 +1090,11 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			for _, pr := range prs {
 				out = append(out, map[string]any{
 					"number": pr.number,
+					"state":  "open",
 					"draft":  pr.draft,
 					"user":   map[string]string{"login": pr.author},
+					"head":   map[string]string{"sha": "sha" + strconv.Itoa(pr.number)},
+					"labels": issueLabels("", pr.extraLabels),
 				})
 			}
 			json.NewEncoder(w).Encode(out)
@@ -1150,6 +1168,50 @@ func TestSweepSelfAuthoredAutoMergesMergesGreenAppPRWithoutHumanReview(t *testin
 	}
 }
 
+func TestSweepSelfAuthoredAutoMergesSkipsHeldListedPRWithoutFetch(t *testing.T) {
+	var merged []int
+	var getCounts map[int]int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged, &getCounts)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want held PR skipped before candidate fetch", result, merged)
+	}
+	if got := getCounts[11]; got != 0 {
+		t.Fatalf("/pulls/11 GET count = %d, want 0 for held PR from list response", got)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesFetchesUnheldCandidate(t *testing.T) {
+	var merged []int
+	var getCounts map[int]int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, mergeableState: "dirty",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged, &getCounts)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if result.Seen != 1 || result.Skipped != 1 || result.Candidates != 1 || len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want unheld PR fetched as one candidate then skipped", result, merged)
+	}
+	if got := getCounts[11]; got != 1 {
+		t.Fatalf("/pulls/11 GET count = %d, want 1 for unheld candidate", got)
+	}
+}
+
 func TestSweepSelfAuthoredAutoMergesIgnoresNonAppAuthoredPR(t *testing.T) {
 	var merged []int
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
@@ -1163,8 +1225,8 @@ func TestSweepSelfAuthoredAutoMergesIgnoresNonAppAuthoredPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
 	}
-	if len(result.Merged) != 0 || len(merged) != 0 || result.Seen != 0 {
-		t.Fatalf("result=%+v merge calls=%v, want non-App-authored PR never listed or merged", result, merged)
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Seen != 1 || result.Skipped != 1 || result.Candidates != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want non-App-authored PR skipped from list response", result, merged)
 	}
 }
 
@@ -1353,6 +1415,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				issues = append(issues, map[string]any{
 					"number":       pr.number,
 					"pull_request": map[string]any{"url": "https://api.example/pr/" + strconv.Itoa(pr.number)},
+					"labels":       issueLabels(expectedLabel, pr.extraLabels),
 				})
 			}
 			json.NewEncoder(w).Encode(issues)

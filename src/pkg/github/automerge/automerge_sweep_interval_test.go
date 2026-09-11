@@ -36,7 +36,7 @@ func TestSelfAuthoredSweepInterval_StaysWithinRateBudget(t *testing.T) {
 			}
 			continue
 		}
-		if reqPerHour > budget*1.05 {
+		if interval < selfAuthoredSweepMaxInterval && reqPerHour > budget*1.05 {
 			t.Errorf("repos=%d: %.0f req/hour exceeds the %.0f/hour share (interval %v)",
 				repos, reqPerHour, budget, interval)
 		}
@@ -56,6 +56,28 @@ func TestSelfAuthoredSweepInterval_SmallHivesUnchanged(t *testing.T) {
 			t.Errorf("repos=%d: interval = %v, want the unchanged %v",
 				repos, got, selfAuthoredAutoMergeSweepInterval)
 		}
+	}
+}
+
+func TestSelfAuthoredSweepInterval_AdaptsToObservedCandidates(t *testing.T) {
+	base := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance)
+	got := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance*3)
+	if got <= base {
+		t.Fatalf("interval with excess candidates = %v, want greater than base %v", got, base)
+	}
+}
+
+func TestSelfAuthoredSweepInterval_AdaptiveBackoffIsBounded(t *testing.T) {
+	got := selfAuthoredSweepIntervalForCandidates(6, 100000)
+	if got != selfAuthoredSweepMaxInterval {
+		t.Fatalf("interval with huge candidate backlog = %v, want max %v", got, selfAuthoredSweepMaxInterval)
+	}
+}
+
+func TestSelfAuthoredSweepInterval_SmallHiveIgnoresObservedCandidates(t *testing.T) {
+	got := selfAuthoredSweepIntervalForCandidates(selfAuthoredSweepSmallHiveRepos, 100000)
+	if got != selfAuthoredAutoMergeSweepInterval {
+		t.Fatalf("small-hive interval = %v, want unchanged %v", got, selfAuthoredAutoMergeSweepInterval)
 	}
 }
 
