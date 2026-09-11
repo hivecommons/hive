@@ -27,9 +27,12 @@ seam has run long enough to be trusted, per the reporter's own downstream experi
 The parts of Hive that change behavior specifically for Podman, all in the `contribute-hive`
 recipe of `Justfile`:
 
-1. `--userns=keep-id` — rootless UID mapping, so the container's `dev` user can read
-   bind-mounted host config (`~/.config/hive`, `~/.claude`, `~/.config/gh`, etc.) without
-   a UID mismatch.
+1. `--userns=keep-id:uid=1000,gid=1000` — rootless UID mapping pinned to the image's
+   `dev` user (UID/GID 1000), so the container's `dev` user can read bind-mounted host
+   config (`~/.config/hive`, `~/.claude`, `~/.config/gh`, etc.) regardless of the
+   contributor's host UID. Bare `keep-id` maps the host UID straight through and broke
+   any host whose contributor UID isn't 1000 — e.g. Fedora CoreOS, where `core` occupies
+   1000 so the first Ignition user is always 1001 (#6771).
 2. `:Z` / `:ro,Z` volume-mount suffixes — SELinux relabeling so the container can actually
    access those same bind mounts on an SELinux-enforcing host.
 3. The macOS carve-out — `podman machine`'s "host" is the Podman VM, not the Mac itself, so

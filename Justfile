@@ -1327,7 +1327,11 @@ contribute-hive backend="" mode="docker": check-version
       # which needs host networking to discover the host-local LLM server.
       NET_FLAGS=""
       if [[ "$RUNTIME" == "podman" ]]; then
-        RUNTIME_FLAGS="--userns=keep-id"
+        # keep-id must be pinned to the image's dev user (UID/GID 1000):
+        # bare keep-id maps the host UID straight through, so any host UID
+        # other than 1000 (e.g. Fedora CoreOS first users are 1001) leaves
+        # the 0600 bind-mounted contributor.env unreadable inside (#6771).
+        RUNTIME_FLAGS="--userns=keep-id:uid=1000,gid=1000"
         VOLSUF=":Z"
         ROSUF=":ro,Z"
         # podman machine on macOS has no host networking (host = the VM,
