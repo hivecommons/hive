@@ -8,110 +8,111 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/version` | Dashboard auth/session | Build/version metadata | `pkg/dashboard/api.go:38` |
-| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:667` |
-| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:668` |
-| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:669` |
-| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: Bearer $HIVE_METRICS_TOKEN` (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:674` |
-| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status | `pkg/dashboard/server.go:676` |
-| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:677` |
+| `GET` | `/api/version` | Dashboard auth/session | Build/version metadata | `pkg/dashboard/api.go:41` |
+| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:975` |
+| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:976` |
+| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:977` |
+| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: Bearer $HIVE_METRICS_TOKEN` (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:983` |
+| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status | `pkg/dashboard/server.go:988` |
+| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:989` |
 
 ## Snapshots and style
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:39` |
-| `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:56` |
-| `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:57` |
-| `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:58` |
+| `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:42` |
+| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1047` |
+| `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:60` |
+| `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:61` |
+| `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:62` |
 
 ## Auth and external accounts
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/gh-auth` | Dashboard auth/session | GitHub Auth | `pkg/dashboard/api.go:92` |
-| `GET` | `/api/gh-rate-limits` | Dashboard auth/session | GitHub Rate Limits | `pkg/dashboard/api.go:93` |
-| `GET` | `/api/gh-user-auth/status` | Public | GitHub User Auth Status | `pkg/dashboard/api.go:94` |
-| `POST` | `/api/gh-user-auth/start` | Public | GitHub User Auth Start | `pkg/dashboard/api.go:95` |
-| `POST` | `/api/gh-user-auth/poll` | Public | GitHub User Auth Poll | `pkg/dashboard/api.go:96` |
-| `POST` | `/api/gh-user-auth/logout` | Public | GitHub User Auth Logout | `pkg/dashboard/api.go:97` |
-| `GET` | `/api/gh-user-auth/session` | Public | GitHub User Auth Session | `pkg/dashboard/api.go:98` |
-| `GET` | `/api/claude-auth/status` | Dashboard auth/session | Claude Auth Status | `pkg/dashboard/claude_auth.go:42` |
-| `POST` | `/api/claude-auth/start` | Dashboard auth/session | Claude Auth Start | `pkg/dashboard/claude_auth.go:43` |
-| `POST` | `/api/claude-auth/exchange` | Dashboard auth/session | Claude Auth Exchange | `pkg/dashboard/claude_auth.go:44` |
-| `POST` | `/api/claude-auth/logout` | Dashboard auth/session | Claude Auth Logout | `pkg/dashboard/claude_auth.go:45` |
-| `GET` | `/api/copilot-auth/status` | Dashboard auth/session | Copilot Auth Status | `pkg/dashboard/copilot_auth.go:69` |
-| `POST` | `/api/copilot-auth/start` | Dashboard auth/session | Copilot Auth Start | `pkg/dashboard/copilot_auth.go:70` |
-| `POST` | `/api/copilot-auth/logout` | Dashboard auth/session | Copilot Auth Logout | `pkg/dashboard/copilot_auth.go:71` |
+| `GET` | `/api/gh-auth` | Dashboard auth/session | GitHub Auth | `pkg/dashboard/api.go:120` |
+| `GET` | `/api/gh-rate-limits` | Dashboard auth/session | GitHub Rate Limits | `pkg/dashboard/api.go:121` |
+| `GET` | `/api/gh-user-auth/status` | Public | GitHub User Auth Status | `pkg/dashboard/api.go:122` |
+| `POST` | `/api/gh-user-auth/start` | Public | GitHub User Auth Start | `pkg/dashboard/api.go:123` |
+| `POST` | `/api/gh-user-auth/poll` | Public | GitHub User Auth Poll | `pkg/dashboard/api.go:124` |
+| `POST` | `/api/gh-user-auth/logout` | Public | GitHub User Auth Logout | `pkg/dashboard/api.go:125` |
+| `GET` | `/api/gh-user-auth/session` | Public | GitHub User Auth Session | `pkg/dashboard/api.go:126` |
+| `GET` | `/api/claude-auth/status` | Dashboard auth/session | Claude Auth Status | `pkg/dashboard/claude_auth.go:54` |
+| `POST` | `/api/claude-auth/start` | Dashboard auth/session | Claude Auth Start | `pkg/dashboard/claude_auth.go:55` |
+| `POST` | `/api/claude-auth/exchange` | Dashboard auth/session | Claude Auth Exchange | `pkg/dashboard/claude_auth.go:56` |
+| `POST` | `/api/claude-auth/logout` | Dashboard auth/session | Claude Auth Logout | `pkg/dashboard/claude_auth.go:57` |
+| `GET` | `/api/copilot-auth/status` | Dashboard auth/session | Copilot Auth Status | `pkg/dashboard/copilot_auth.go:84` |
+| `POST` | `/api/copilot-auth/start` | Dashboard auth/session | Copilot Auth Start | `pkg/dashboard/copilot_auth.go:85` |
+| `POST` | `/api/copilot-auth/logout` | Dashboard auth/session | Copilot Auth Logout | `pkg/dashboard/copilot_auth.go:86` |
 | `GET` | `/api/openrouter/connect/start` | Dashboard auth/session | Open Router Start | `pkg/dashboard/openrouter.go:66` |
 | `GET` | `/api/openrouter/qr` | Dashboard auth/session | Open Router QR | `pkg/dashboard/openrouter.go:67` |
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:68` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:69` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:70` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:678` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:679` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:680` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:990` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:991` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:992` |
 
 ## Configuration
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/config` | Dashboard auth/session | Config | `pkg/dashboard/api.go:40` |
-| `GET` | `/api/config/download` | Dashboard auth/session | Config Download | `pkg/dashboard/api.go:41` |
-| `GET` | `/api/config/provenance` | Dashboard auth/session | Config Provenance | `pkg/dashboard/api.go:42` |
-| `GET` | `/api/config/variables` | Dashboard auth/session | Variables List | `pkg/dashboard/api.go:43` |
-| `GET` | `/api/config/authorized-users` | Dashboard auth/session | Authorized Users List | `pkg/dashboard/api.go:44` |
-| `PUT` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Upsert | `pkg/dashboard/api.go:45` |
-| `DELETE` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Delete | `pkg/dashboard/api.go:46` |
-| `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:105` |
-| `PUT` | `/api/config/agent/{name}/general` | Dashboard auth/session | Agent Config General | `pkg/dashboard/api.go:106` |
-| `PUT` | `/api/config/agent/{name}/cadences` | Dashboard auth/session | Agent Config Cadences | `pkg/dashboard/api.go:107` |
-| `PUT` | `/api/config/agent/{name}/models` | Dashboard auth/session | Agent Config Models | `pkg/dashboard/api.go:108` |
-| `PUT` | `/api/config/agent/{name}/pipeline` | Dashboard auth/session | Agent Config Pipeline | `pkg/dashboard/api.go:109` |
-| `PUT` | `/api/config/agent/{name}/hooks` | Dashboard auth/session | Agent Config Hooks | `pkg/dashboard/api.go:110` |
-| `PUT` | `/api/config/agent/{name}/restrictions` | Dashboard auth/session | Agent Config Restrictions | `pkg/dashboard/api.go:111` |
-| `PUT` | `/api/config/agent/{name}/stats` | Dashboard auth/session | Agent Config Stats | `pkg/dashboard/api.go:112` |
-| `GET` | `/api/config/agent/{name}/prompt` | Dashboard auth/session | Agent Prompt | `pkg/dashboard/api.go:113` |
-| `PUT` | `/api/config/agent/{name}/prompt` | Dashboard auth/session | Agent Prompt Save | `pkg/dashboard/api.go:114` |
-| `GET` | `/api/config/agent/{name}/export` | Dashboard auth/session | Agent Export | `pkg/dashboard/api.go:115` |
-| `PUT` | `/api/config/agent/{name}/channels` | Dashboard auth/session | Agent Config Channels | `pkg/dashboard/api.go:116` |
-| `PUT` | `/api/config/agent/{name}/tools` | Dashboard auth/session | Agent Config Tools | `pkg/dashboard/api.go:117` |
-| `PUT` | `/api/config/agent/{name}/connections` | Dashboard auth/session | Agent Config Connections | `pkg/dashboard/api.go:118` |
-| `GET` | `/api/config/stat-sources` | Dashboard auth/session | Stat Sources | `pkg/dashboard/api.go:119` |
-| `GET` | `/api/config/governor` | Dashboard auth/session | Governor Config Get | `pkg/dashboard/api.go:121` |
-| `PUT` | `/api/config/governor/sensing` | Dashboard auth/session | Governor Sensing | `pkg/dashboard/api.go:122` |
-| `PUT` | `/api/config/governor/thresholds` | Dashboard auth/session | Governor Thresholds | `pkg/dashboard/api.go:123` |
-| `PUT` | `/api/config/governor/labels` | Dashboard auth/session | Governor Labels | `pkg/dashboard/api.go:124` |
-| `PUT` | `/api/config/governor/budget` | Dashboard auth/session | Governor Budget | `pkg/dashboard/api.go:125` |
-| `PUT` | `/api/config/governor/notifications` | Dashboard auth/session | Governor Notifications | `pkg/dashboard/api.go:126` |
-| `PUT` | `/api/config/governor/health` | Dashboard auth/session | Governor Health | `pkg/dashboard/api.go:127` |
-| `PUT` | `/api/config/governor/logging` | Dashboard auth/session | Governor Logging | `pkg/dashboard/api.go:128` |
-| `PUT` | `/api/config/governor/attribution` | Dashboard auth/session | Governor Attribution | `pkg/dashboard/api.go:129` |
-| `PUT` | `/api/config/governor/hub` | Dashboard auth/session | Governor Hub | `pkg/dashboard/api.go:130` |
-| `PUT` | `/api/config/governor/litellm` | Dashboard auth/session | Governor Lite LLM | `pkg/dashboard/api.go:131` |
-| `PUT` | `/api/config/governor/trajectory` | Dashboard auth/session | Governor Trajectory | `pkg/dashboard/api.go:132` |
+| `GET` | `/api/config` | Dashboard auth/session | Config | `pkg/dashboard/api.go:43` |
+| `GET` | `/api/config/download` | Dashboard auth/session | Config Download | `pkg/dashboard/api.go:44` |
+| `GET` | `/api/config/provenance` | Dashboard auth/session | Config Provenance | `pkg/dashboard/api.go:45` |
+| `GET` | `/api/config/variables` | Dashboard auth/session | Variables List | `pkg/dashboard/api.go:46` |
+| `GET` | `/api/config/authorized-users` | Dashboard auth/session | Authorized Users List | `pkg/dashboard/api.go:47` |
+| `PUT` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Upsert | `pkg/dashboard/api.go:48` |
+| `DELETE` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Delete | `pkg/dashboard/api.go:49` |
+| `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:133` |
+| `PUT` | `/api/config/agent/{name}/general` | Dashboard auth/session | Agent Config General | `pkg/dashboard/api.go:134` |
+| `PUT` | `/api/config/agent/{name}/cadences` | Dashboard auth/session | Agent Config Cadences | `pkg/dashboard/api.go:135` |
+| `PUT` | `/api/config/agent/{name}/models` | Dashboard auth/session | Agent Config Models | `pkg/dashboard/api.go:136` |
+| `PUT` | `/api/config/agent/{name}/pipeline` | Dashboard auth/session | Agent Config Pipeline | `pkg/dashboard/api.go:137` |
+| `PUT` | `/api/config/agent/{name}/hooks` | Dashboard auth/session | Agent Config Hooks | `pkg/dashboard/api.go:138` |
+| `PUT` | `/api/config/agent/{name}/restrictions` | Dashboard auth/session | Agent Config Restrictions | `pkg/dashboard/api.go:139` |
+| `PUT` | `/api/config/agent/{name}/stats` | Dashboard auth/session | Agent Config Stats | `pkg/dashboard/api.go:140` |
+| `GET` | `/api/config/agent/{name}/prompt` | Dashboard auth/session | Agent Prompt | `pkg/dashboard/api.go:141` |
+| `PUT` | `/api/config/agent/{name}/prompt` | Dashboard auth/session | Agent Prompt Save | `pkg/dashboard/api.go:142` |
+| `GET` | `/api/config/agent/{name}/export` | Dashboard auth/session | Agent Export | `pkg/dashboard/api.go:143` |
+| `PUT` | `/api/config/agent/{name}/channels` | Dashboard auth/session | Agent Config Channels | `pkg/dashboard/api.go:144` |
+| `PUT` | `/api/config/agent/{name}/tools` | Dashboard auth/session | Agent Config Tools | `pkg/dashboard/api.go:145` |
+| `PUT` | `/api/config/agent/{name}/connections` | Dashboard auth/session | Agent Config Connections | `pkg/dashboard/api.go:146` |
+| `GET` | `/api/config/stat-sources` | Dashboard auth/session | Stat Sources | `pkg/dashboard/api.go:147` |
+| `GET` | `/api/config/governor` | Dashboard auth/session | Governor Config Get | `pkg/dashboard/api.go:149` |
+| `PUT` | `/api/config/governor/sensing` | Dashboard auth/session | Governor Sensing | `pkg/dashboard/api.go:150` |
+| `PUT` | `/api/config/governor/thresholds` | Dashboard auth/session | Governor Thresholds | `pkg/dashboard/api.go:151` |
+| `PUT` | `/api/config/governor/labels` | Dashboard auth/session | Governor Labels | `pkg/dashboard/api.go:154` |
+| `PUT` | `/api/config/governor/budget` | Dashboard auth/session | Governor Budget | `pkg/dashboard/api.go:155` |
+| `PUT` | `/api/config/governor/notifications` | Dashboard auth/session | Governor Notifications | `pkg/dashboard/api.go:157` |
+| `PUT` | `/api/config/governor/health` | Dashboard auth/session | Governor Health | `pkg/dashboard/api.go:158` |
+| `PUT` | `/api/config/governor/logging` | Dashboard auth/session | Governor Logging | `pkg/dashboard/api.go:168` |
+| `PUT` | `/api/config/governor/attribution` | Dashboard auth/session | Governor Attribution | `pkg/dashboard/api.go:169` |
+| `PUT` | `/api/config/governor/hub` | Dashboard auth/session | Governor Hub | `pkg/dashboard/api.go:170` |
+| `PUT` | `/api/config/governor/litellm` | Dashboard auth/session | Governor Lite LLM | `pkg/dashboard/api.go:171` |
+| `PUT` | `/api/config/governor/trajectory` | Dashboard auth/session | Governor Trajectory | `pkg/dashboard/api.go:172` |
 | `GET` | `/api/config/governor/backup` | Owner only | Backup Key Status (presence + safe source label; never the key value) | `pkg/dashboard/backup_key.go` |
 | `PUT` | `/api/config/governor/backup` | Owner only | Backup Key Set (64-hex AES-256 key; stored 0600, path-only in `hive.yaml`) | `pkg/dashboard/backup_key.go` |
 | `DELETE` | `/api/config/governor/backup` | Owner only | Backup Key Clear (backups are refused again) | `pkg/dashboard/backup_key.go` |
-| `GET` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Status | `pkg/dashboard/api.go:136` |
-| `PUT` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key | `pkg/dashboard/api.go:137` |
-| `DELETE` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key Clear | `pkg/dashboard/api.go:138` |
-| `POST` | `/api/config/governor/bob/test` | Dashboard auth/session | Governor Bob Key Test | `pkg/dashboard/api.go:140` |
-| `POST` | `/api/config/governor/litellm/test` | Dashboard auth/session | Governor Lite LLMTest | `pkg/dashboard/api.go:141` |
-| `GET` | `/api/config/governor/gateways` | Dashboard auth/session | Governor Gateways List | `pkg/dashboard/api.go:142` |
-| `PUT` | `/api/config/governor/gateways` | Dashboard auth/session | Governor Gateways Upsert | `pkg/dashboard/api.go:143` |
-| `DELETE` | `/api/config/governor/gateways/{name}` | Dashboard auth/session | Governor Gateways Delete | `pkg/dashboard/api.go:144` |
-| `POST` | `/api/config/governor/gateways/{name}/test` | Dashboard auth/session | Governor Gateways Test | `pkg/dashboard/api.go:145` |
-| `POST` | `/api/config/governor/gateways/discover` | Dashboard auth/session | Governor Gateways Discover | `pkg/dashboard/api.go:146` |
-| `POST` | `/api/config/governor/agents` | Dashboard auth/session | Governor Add Agent | `pkg/dashboard/api.go:148` |
-| `DELETE` | `/api/config/governor/agents/{name}` | Dashboard auth/session | Governor Remove Agent | `pkg/dashboard/api.go:149` |
-| `PUT` | `/api/config/governor/repos` | Dashboard auth/session | Governor Repos | `pkg/dashboard/api.go:150` |
-| `POST` | `/api/config/governor/repos/check-access` | Dashboard auth/session | Governor Repo Check Access | `pkg/dashboard/api.go:154` |
-| `PUT` | `/api/config/github` | Dashboard auth/session | Config GitHub | `pkg/dashboard/api.go:155` |
-| `GET` | `/api/config/github/forge-apps` | Dashboard auth/session | Config GitHub Forge Apps | `pkg/dashboard/api.go:158` |
-| `GET` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Get | `pkg/dashboard/api.go:172` |
-| `PUT` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Set | `pkg/dashboard/api.go:173` |
-| `GET` | `/api/config/backends` | Dashboard auth/session | Backends | `pkg/dashboard/api.go:174` |
+| `GET` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Status | `pkg/dashboard/api.go:205` |
+| `PUT` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key | `pkg/dashboard/api.go:206` |
+| `DELETE` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key Clear | `pkg/dashboard/api.go:207` |
+| `POST` | `/api/config/governor/bob/test` | Dashboard auth/session | Governor Bob Key Test | `pkg/dashboard/api.go:209` |
+| `POST` | `/api/config/governor/litellm/test` | Dashboard auth/session | Governor Lite LLMTest | `pkg/dashboard/api.go:210` |
+| `GET` | `/api/config/governor/gateways` | Dashboard auth/session | Governor Gateways List | `pkg/dashboard/api.go:213` |
+| `PUT` | `/api/config/governor/gateways` | Dashboard auth/session | Governor Gateways Upsert | `pkg/dashboard/api.go:214` |
+| `DELETE` | `/api/config/governor/gateways/{name}` | Dashboard auth/session | Governor Gateways Delete | `pkg/dashboard/api.go:215` |
+| `POST` | `/api/config/governor/gateways/{name}/test` | Dashboard auth/session | Governor Gateways Test | `pkg/dashboard/api.go:216` |
+| `POST` | `/api/config/governor/gateways/discover` | Dashboard auth/session | Governor Gateways Discover | `pkg/dashboard/api.go:217` |
+| `POST` | `/api/config/governor/agents` | Dashboard auth/session | Governor Add Agent | `pkg/dashboard/api.go:220` |
+| `DELETE` | `/api/config/governor/agents/{name}` | Dashboard auth/session | Governor Remove Agent | `pkg/dashboard/api.go:221` |
+| `PUT` | `/api/config/governor/repos` | Dashboard auth/session | Governor Repos | `pkg/dashboard/api.go:222` |
+| `POST` | `/api/config/governor/repos/check-access` | Dashboard auth/session | Governor Repo Check Access | `pkg/dashboard/api.go:226` |
+| `PUT` | `/api/config/github` | Dashboard auth/session | Config GitHub | `pkg/dashboard/api.go:227` |
+| `GET` | `/api/config/github/forge-apps` | Dashboard auth/session | Config GitHub Forge Apps | `pkg/dashboard/api.go:230` |
+| `GET` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Get | `pkg/dashboard/api.go:250` |
+| `PUT` | `/api/config/sidebar` | Dashboard auth/session | Sidebar Set | `pkg/dashboard/api.go:251` |
+| `GET` | `/api/config/backends` | Dashboard auth/session | Backends | `pkg/dashboard/api.go:252` |
 | `GET` | `/api/config/governor/threshold-scaling` | Dashboard auth/session | Governor Threshold Scaling Get | `pkg/dashboard/api.go:152` |
 | `PUT` | `/api/config/governor/threshold-scaling` | Dashboard auth/session | Governor Threshold Scaling Set | `pkg/dashboard/api.go:153` |
 | `POST` | `/api/config/governor/budget/reset` | Dashboard auth/session | Governor Budget Reset | `pkg/dashboard/api.go:156` |
@@ -143,30 +144,30 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `POST` | `/api/kick/{agent}` | Dashboard auth/session | Kick — asynchronous; answers `202` once queued (see below) | `pkg/dashboard/api.go:67` |
-| `GET` | `/api/kick/{agent}/status` | Dashboard auth/session | Outcome of the most recent kick | `pkg/dashboard/api.go:71` |
-| `POST` | `/api/switch/{agent}/{backend}` | Dashboard auth/session | Switch | `pkg/dashboard/api.go:68` |
-| `POST` | `/api/model/{agent}/{model}` | Dashboard auth/session | Model Set | `pkg/dashboard/api.go:69` |
-| `POST` | `/api/effort/{agent}/{effort}` | Owner only | Set launch-only reasoning effort after validating against the agent's live backend (including runtime override); persists config/agent overlay, restarts the session, and `default` clears the stored effort | `pkg/dashboard/api.go:95` |
-| `POST` | `/api/pause/{agent}` | Dashboard auth/session | Pause | `pkg/dashboard/api.go:70` |
-| `POST` | `/api/resume/{agent}` | Dashboard auth/session | Resume | `pkg/dashboard/api.go:71` |
-| `GET` | `/api/agent-state/{agent}` | Dashboard auth/session | Agent State | `pkg/dashboard/api.go:72` |
-| `GET` | `/api/breaker` | Dashboard auth/session | Breaker State | `pkg/dashboard/api.go:73` |
-| `POST` | `/api/breaker/engage` | Dashboard auth/session | Breaker Engage | `pkg/dashboard/api.go:74` |
-| `POST` | `/api/breaker/release` | Dashboard auth/session | Breaker Release | `pkg/dashboard/api.go:75` |
-| `POST` | `/api/pin/{agent}/{dimension}` | Dashboard auth/session | Pin | `pkg/dashboard/api.go:76` |
-| `POST` | `/api/unpin/{agent}/{dimension}` | Dashboard auth/session | Unpin | `pkg/dashboard/api.go:77` |
-| `POST` | `/api/restart/{agent}` | Dashboard auth/session | Restart | `pkg/dashboard/api.go:78` |
-| `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:88` |
-| `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:160` |
-| `POST` | `/api/agents` | Dashboard auth/session | Agent Create | `pkg/dashboard/api.go:161` |
-| `POST` | `/api/agents/import` | Dashboard auth/session | Agent Import | `pkg/dashboard/api.go:162` |
-| `DELETE` | `/api/agents/{name}` | Dashboard auth/session | Agent Delete | `pkg/dashboard/api.go:163` |
-| `GET` | `/api/agents/{name}/log` | Dashboard auth/session | Agent Full Log | `pkg/dashboard/api.go:72` |
-| `GET` | `/api/agents/{name}/terminal-urls` | Dashboard auth/session | Agent Terminal URLs | `pkg/dashboard/api.go:76` |
-| `GET` | `/api/agents/{name}/kicks` | Dashboard auth/session | Agent Kick Log List | `pkg/dashboard/api.go:79` |
-| `GET` | `/api/agents/{name}/kicks/{id}` | Dashboard auth/session | Agent Kick Log Get | `pkg/dashboard/api.go:80` |
-| `GET` | `/agents/{name}/kicks` | Dashboard auth/session | Agent Kick History Page (HTML) | `pkg/dashboard/api.go:81` |
+| `POST` | `/api/kick/{agent}` | Dashboard auth/session | Kick — asynchronous; answers `202` once queued (see below) | `pkg/dashboard/api.go:84` |
+| `GET` | `/api/kick/{agent}/status` | Dashboard auth/session | Outcome of the most recent kick | `pkg/dashboard/api.go:88` |
+| `POST` | `/api/switch/{agent}/{backend}` | Dashboard auth/session | Switch | `pkg/dashboard/api.go:89` |
+| `POST` | `/api/model/{agent}/{model}` | Dashboard auth/session | Model Set | `pkg/dashboard/api.go:90` |
+| `POST` | `/api/effort/{agent}/{effort}` | Owner only | Set launch-only reasoning effort after validating against the agent's live backend (including runtime override); persists config/agent overlay, restarts the session, and `default` clears the stored effort | `pkg/dashboard/api.go:91` |
+| `POST` | `/api/pause/{agent}` | Dashboard auth/session | Pause | `pkg/dashboard/api.go:92` |
+| `POST` | `/api/resume/{agent}` | Dashboard auth/session | Resume | `pkg/dashboard/api.go:93` |
+| `GET` | `/api/agent-state/{agent}` | Dashboard auth/session | Agent State | `pkg/dashboard/api.go:94` |
+| `GET` | `/api/breaker` | Dashboard auth/session | Breaker State | `pkg/dashboard/api.go:95` |
+| `POST` | `/api/breaker/engage` | Dashboard auth/session | Breaker Engage | `pkg/dashboard/api.go:96` |
+| `POST` | `/api/breaker/release` | Dashboard auth/session | Breaker Release | `pkg/dashboard/api.go:97` |
+| `POST` | `/api/pin/{agent}/{dimension}` | Dashboard auth/session | Pin | `pkg/dashboard/api.go:98` |
+| `POST` | `/api/unpin/{agent}/{dimension}` | Dashboard auth/session | Unpin | `pkg/dashboard/api.go:99` |
+| `POST` | `/api/restart/{agent}` | Dashboard auth/session | Restart | `pkg/dashboard/api.go:103` |
+| `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:116` |
+| `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:232` |
+| `POST` | `/api/agents` | Dashboard auth/session | Agent Create | `pkg/dashboard/api.go:233` |
+| `POST` | `/api/agents/import` | Dashboard auth/session | Agent Import | `pkg/dashboard/api.go:234` |
+| `DELETE` | `/api/agents/{name}` | Dashboard auth/session | Agent Delete | `pkg/dashboard/api.go:235` |
+| `GET` | `/api/agents/{name}/log` | Dashboard auth/session | Agent Full Log | `pkg/dashboard/api.go:71` |
+| `GET` | `/api/agents/{name}/terminal-urls` | Dashboard auth/session | Agent Terminal URLs | `pkg/dashboard/api.go:75` |
+| `GET` | `/api/agents/{name}/kicks` | Dashboard auth/session | Agent Kick Log List | `pkg/dashboard/api.go:78` |
+| `GET` | `/api/agents/{name}/kicks/{id}` | Dashboard auth/session | Agent Kick Log Get | `pkg/dashboard/api.go:79` |
+| `GET` | `/agents/{name}/kicks` | Dashboard auth/session | Agent Kick History Page (HTML) | `pkg/dashboard/api.go:80` |
 | `POST` | `/api/agents/{name}/login-code` | Dashboard auth/session | Agent Login Code | `pkg/dashboard/api.go:102` |
 
 ### Kick is asynchronous
@@ -187,111 +188,111 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/packs` | Dashboard auth/session | Packs List | `pkg/dashboard/api.go:165` |
-| `POST` | `/api/packs/{level}/apply` | Dashboard auth/session | Pack Apply | `pkg/dashboard/api.go:166` |
-| `PUT` | `/api/packs/level` | Dashboard auth/session | Pack Set Level | `pkg/dashboard/api.go:167` |
+| `GET` | `/api/packs` | Dashboard auth/session | Packs List | `pkg/dashboard/api.go:237` |
+| `POST` | `/api/packs/{level}/apply` | Dashboard auth/session | Pack Apply | `pkg/dashboard/api.go:238` |
+| `PUT` | `/api/packs/level` | Dashboard auth/session | Pack Set Level | `pkg/dashboard/api.go:239` |
 | `POST` | `/api/repos/rescan` | Dashboard auth/session | Re-enumerate watched repositories' open issues/PRs for the dashboard Repositories cards. The scan is read-only with respect to agents/governor actions, collapses concurrent requests, and debounces repeated presses for 30 seconds (`repoRescanDebounce`) so the button cannot hammer GitHub | `pkg/dashboard/api.go`, `pkg/dashboard/api_repos_rescan.go` |
-| `GET` | `/api/acmm/evaluation` | Dashboard auth/session | ACMMEvaluation — combined codebase + operational result, cached server-side for 1 hour (`acmmEvalTTL`). `?refresh=1` (the dashboard's "🔄 Re-evaluate" button, #5877) bypasses the hourly TTL but is debounced server-side: requests within 1 minute of the last evaluation (`acmmRefreshDebounce`) still serve the cache, since a full refresh costs up to ~29 GitHub GetContents calls per repo. The response's `last_evaluated_at` timestamp reports when the cached evaluation was computed | `pkg/dashboard/api.go:244`, `pkg/dashboard/api_acmm_eval.go` |
-| `POST` | `/api/acmm/issue` | Dashboard auth/session | ACMMCreate Issue — files on GitHub or, with `governor.acmm.issue_tracker: work_source` / body `tracker: "work_source"` on a Linear-sourced hive, on Linear; response `tracker` says which. See [ACMM policy matrix](acmm-policy-matrix.md#where-acmm-gap-issues-are-filed) | `pkg/dashboard/api.go:170` |
-| `GET` | `/api/acmm-recommendation` | Dashboard auth/session | Advisory level-up recommendation (`acmmadvisor.Recommendation`, JSON): never changes the applied level — see [ACMM advisor](acmm-advisor.md) | `pkg/dashboard/api.go:230` |
+| `GET` | `/api/acmm/evaluation` | Dashboard auth/session | ACMMEvaluation — combined codebase + operational result, cached server-side for 1 hour (`acmmEvalTTL`). `?refresh=1` (the dashboard's "🔄 Re-evaluate" button, #5877) bypasses the hourly TTL but is debounced server-side: requests within 1 minute of the last evaluation (`acmmRefreshDebounce`) still serve the cache, since a full refresh costs up to ~29 GitHub GetContents calls per repo. The response's `last_evaluated_at` timestamp reports when the cached evaluation was computed | `pkg/dashboard/api.go:246`, `pkg/dashboard/api_acmm_eval.go` |
+| `POST` | `/api/acmm/issue` | Dashboard auth/session | ACMMCreate Issue — files on GitHub or, with `governor.acmm.issue_tracker: work_source` / body `tracker: "work_source"` on a Linear-sourced hive, on Linear; response `tracker` says which. See [ACMM policy matrix](acmm-policy-matrix.md#where-acmm-gap-issues-are-filed) | `pkg/dashboard/api.go:247` |
+| `GET` | `/api/acmm-recommendation` | Dashboard auth/session | Advisory level-up recommendation (`acmmadvisor.Recommendation`, JSON): never changes the applied level — see [ACMM advisor](acmm-advisor.md) | `pkg/dashboard/api.go:248` |
 
 ## Cost, tokens, telemetry
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/trends` | Dashboard auth/session | Trends | `pkg/dashboard/api.go:60` |
-| `GET` | `/api/token-access` | Dashboard auth/session | Token Access | `pkg/dashboard/api.go:81` |
-| `GET` | `/api/tokens` | Dashboard auth/session | Tokens | `pkg/dashboard/api.go:82` |
-| `GET` | `/api/cost` | Dashboard auth/session | Cost | `pkg/dashboard/api.go:83` |
+| `GET` | `/api/trends` | Dashboard auth/session | Trends | `pkg/dashboard/api.go:64` |
+| `GET` | `/api/token-access` | Dashboard auth/session | Token Access | `pkg/dashboard/api.go:106` |
+| `GET` | `/api/tokens` | Dashboard auth/session | Tokens | `pkg/dashboard/api.go:107` |
+| `GET` | `/api/cost` | Dashboard auth/session | Cost | `pkg/dashboard/api.go:108` |
 | `GET` | `/api/repo-activity` | Dashboard auth/session | Per-repo audited activity | `pkg/dashboard/api.go` |
 | `GET` | `/api/repo-cost` | Dashboard auth/session | Per-repo estimated token cost (interval join, cached) | `pkg/dashboard/api.go` |
-| `GET` | `/api/cost/history` | Dashboard auth/session | Cost History | `pkg/dashboard/api.go:84` |
-| `GET` | `/api/trend/history` | Dashboard auth/session | Trend History | `pkg/dashboard/api.go:85` |
-| `GET` | `/api/timeseries` | Dashboard auth/session | Time Series | `pkg/dashboard/api.go:86` |
-| `GET` | `/api/providers/headroom` | Dashboard auth/session | Providers Headroom | `pkg/dashboard/api.go:52` |
+| `GET` | `/api/cost/history` | Dashboard auth/session | Cost History | `pkg/dashboard/api.go:111` |
+| `GET` | `/api/trend/history` | Dashboard auth/session | Trend History | `pkg/dashboard/api.go:114` |
+| `GET` | `/api/timeseries` | Dashboard auth/session | Time Series | `pkg/dashboard/api.go:115` |
+| `GET` | `/api/providers/headroom` | Dashboard auth/session | Providers Headroom | `pkg/dashboard/api.go:51` |
 | `GET` | `/api/budget/history` | Dashboard auth/session | Budget History | `pkg/dashboard/api.go:113` |
 
 ## Knowledge
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/knowledge` | Dashboard auth/session | Knowledge List | `pkg/dashboard/api.go:177` |
-| `GET` | `/api/knowledge/export` | Dashboard auth/session | Knowledge Export | `pkg/dashboard/api.go:178` |
-| `GET` | `/api/knowledge/search` | Dashboard auth/session | Knowledge Search | `pkg/dashboard/api.go:179` |
-| `GET` | `/api/knowledge/health` | Dashboard auth/session | Knowledge Health | `pkg/dashboard/api.go:180` |
-| `GET` | `/api/knowledge/stats` | Dashboard auth/session | Knowledge Stats | `pkg/dashboard/api.go:181` |
-| `GET` | `/api/knowledge/graph` | Dashboard auth/session | Knowledge Graph | `pkg/dashboard/api.go:182` |
-| `GET` | `/api/knowledge/fact-history` | Dashboard auth/session | Fact History | `pkg/dashboard/api.go:183` |
-| `POST` | `/api/knowledge/create` | Dashboard auth/session | Knowledge Create | `pkg/dashboard/api.go:184` |
-| `POST` | `/api/knowledge/import` | Dashboard auth/session | Knowledge Import | `pkg/dashboard/api.go:185` |
-| `POST` | `/api/knowledge/promote` | Dashboard auth/session | Knowledge Promote | `pkg/dashboard/api.go:186` |
-| `GET` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs List | `pkg/dashboard/api.go:187` |
-| `POST` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs Add | `pkg/dashboard/api.go:188` |
-| `DELETE` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs Remove | `pkg/dashboard/api.go:189` |
-| `PUT` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Update | `pkg/dashboard/api.go:190` |
-| `DELETE` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Delete | `pkg/dashboard/api.go:191` |
-| `GET` | `/api/knowledge/{layer}` | Dashboard auth/session | Knowledge Layer | `pkg/dashboard/api.go:192` |
-| `GET` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Fact | `pkg/dashboard/api.go:193` |
-| `PUT` | `/api/knowledge/enabled` | Dashboard auth/session | Knowledge Toggle | `pkg/dashboard/api.go:194` |
-| `GET` | `/api/knowledge/bead-synthesizer` | Dashboard auth/session | Bead Synth Status | `pkg/dashboard/api.go:195` |
-| `PUT` | `/api/knowledge/bead-synthesizer/enabled` | Dashboard auth/session | Bead Synth Toggle | `pkg/dashboard/api.go:196` |
-| `GET` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults List | `pkg/dashboard/api.go:197` |
-| `POST` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults Connect | `pkg/dashboard/api.go:198` |
-| `DELETE` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults Disconnect | `pkg/dashboard/api.go:199` |
-| `POST` | `/api/knowledge/vaults/reindex` | Dashboard auth/session | Vaults Reindex | `pkg/dashboard/api.go:200` |
-| `GET` | `/api/knowledge/vaults/{name}/facts` | Dashboard auth/session | Vault Facts | `pkg/dashboard/api.go:201` |
-| `GET` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources List | `pkg/dashboard/api.go:202` |
-| `POST` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources Connect | `pkg/dashboard/api.go:203` |
-| `DELETE` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources Disconnect | `pkg/dashboard/api.go:204` |
-| `POST` | `/api/knowledge/obsidian/sync` | Dashboard auth/session | Obsidian Sync | `pkg/dashboard/api.go:205` |
-| `GET` | `/api/knowledge/documents` | Dashboard auth/session | Documents List | `pkg/dashboard/api.go:206` |
-| `POST` | `/api/knowledge/documents` | Dashboard auth/session | Documents Import | `pkg/dashboard/api.go:207` |
-| `GET` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Get | `pkg/dashboard/api.go:208` |
-| `DELETE` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Delete | `pkg/dashboard/api.go:209` |
-| `POST` | `/api/knowledge/documents/{slug}/reimport` | Dashboard auth/session | Document Reimport | `pkg/dashboard/api.go:210` |
-| `GET` | `/api/knowledge/context7/search` | Dashboard auth/session | Context7 Search | `pkg/dashboard/api.go:211` |
-| `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:212` |
-| `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:262` |
-| `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:263` |
+| `GET` | `/api/knowledge` | Dashboard auth/session | Knowledge List | `pkg/dashboard/api.go:255` |
+| `GET` | `/api/knowledge/export` | Dashboard auth/session | Knowledge Export | `pkg/dashboard/api.go:256` |
+| `GET` | `/api/knowledge/search` | Dashboard auth/session | Knowledge Search | `pkg/dashboard/api.go:257` |
+| `GET` | `/api/knowledge/health` | Dashboard auth/session | Knowledge Health | `pkg/dashboard/api.go:258` |
+| `GET` | `/api/knowledge/stats` | Dashboard auth/session | Knowledge Stats | `pkg/dashboard/api.go:259` |
+| `GET` | `/api/knowledge/graph` | Dashboard auth/session | Knowledge Graph | `pkg/dashboard/api.go:260` |
+| `GET` | `/api/knowledge/fact-history` | Dashboard auth/session | Fact History | `pkg/dashboard/api.go:261` |
+| `POST` | `/api/knowledge/create` | Dashboard auth/session | Knowledge Create | `pkg/dashboard/api.go:262` |
+| `POST` | `/api/knowledge/import` | Dashboard auth/session | Knowledge Import | `pkg/dashboard/api.go:263` |
+| `POST` | `/api/knowledge/promote` | Dashboard auth/session | Knowledge Promote | `pkg/dashboard/api.go:269` |
+| `GET` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs List | `pkg/dashboard/api.go:270` |
+| `POST` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs Add | `pkg/dashboard/api.go:271` |
+| `DELETE` | `/api/knowledge/subscriptions` | Dashboard auth/session | Knowledge Subs Remove | `pkg/dashboard/api.go:272` |
+| `PUT` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Update | `pkg/dashboard/api.go:273` |
+| `DELETE` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Delete | `pkg/dashboard/api.go:274` |
+| `GET` | `/api/knowledge/{layer}` | Dashboard auth/session | Knowledge Layer | `pkg/dashboard/api.go:275` |
+| `GET` | `/api/knowledge/{layer}/{slug}` | Dashboard auth/session | Knowledge Fact | `pkg/dashboard/api.go:276` |
+| `PUT` | `/api/knowledge/enabled` | Dashboard auth/session | Knowledge Toggle | `pkg/dashboard/api.go:277` |
+| `GET` | `/api/knowledge/bead-synthesizer` | Dashboard auth/session | Bead Synth Status | `pkg/dashboard/api.go:278` |
+| `PUT` | `/api/knowledge/bead-synthesizer/enabled` | Dashboard auth/session | Bead Synth Toggle | `pkg/dashboard/api.go:279` |
+| `GET` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults List | `pkg/dashboard/api.go:280` |
+| `POST` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults Connect | `pkg/dashboard/api.go:281` |
+| `DELETE` | `/api/knowledge/vaults` | Dashboard auth/session | Vaults Disconnect | `pkg/dashboard/api.go:282` |
+| `POST` | `/api/knowledge/vaults/reindex` | Dashboard auth/session | Vaults Reindex | `pkg/dashboard/api.go:283` |
+| `GET` | `/api/knowledge/vaults/{name}/facts` | Dashboard auth/session | Vault Facts | `pkg/dashboard/api.go:284` |
+| `GET` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources List | `pkg/dashboard/api.go:285` |
+| `POST` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources Connect | `pkg/dashboard/api.go:286` |
+| `DELETE` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources Disconnect | `pkg/dashboard/api.go:287` |
+| `POST` | `/api/knowledge/obsidian/sync` | Dashboard auth/session | Obsidian Sync | `pkg/dashboard/api.go:288` |
+| `GET` | `/api/knowledge/documents` | Dashboard auth/session | Documents List | `pkg/dashboard/api.go:289` |
+| `POST` | `/api/knowledge/documents` | Dashboard auth/session | Documents Import | `pkg/dashboard/api.go:290` |
+| `GET` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Get | `pkg/dashboard/api.go:291` |
+| `DELETE` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Delete | `pkg/dashboard/api.go:292` |
+| `POST` | `/api/knowledge/documents/{slug}/reimport` | Dashboard auth/session | Document Reimport | `pkg/dashboard/api.go:293` |
+| `GET` | `/api/knowledge/context7/search` | Dashboard auth/session | Context7 Search | `pkg/dashboard/api.go:294` |
+| `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:295` |
+| `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:267` |
+| `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:268` |
 
 ## Contribute
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/contribute` | Public | Contribute Landing | `pkg/dashboard/api_contribute.go:226` |
-| `GET` | `/contribute/{tab}` | Public | Contribute Landing | `pkg/dashboard/api_contribute.go:232` |
-| `GET` | `/api/contribute/ws` | Public | s.contribute Hub.Handle WS | `pkg/dashboard/api_contribute.go:233` |
-| `POST` | `/api/contribute/register` | Public | Contribute Register | `pkg/dashboard/api_contribute.go:234` |
-| `POST` | `/api/contribute/invite` | Public | Contribute Invite | `pkg/dashboard/api_contribute.go:240` |
-| `POST` | `/api/contribute/reissue-token` | Public | Contribute Reissue Token | `pkg/dashboard/api_contribute.go:241` |
-| `GET` | `/api/contribute/status` | Public | Contribute Status | `pkg/dashboard/api_contribute.go:242` |
-| `GET` | `/api/contribute/activity` | Public | Contribute Activity | `pkg/dashboard/api_contribute.go:243` |
-| `GET` | `/api/contribute/fleet` | Public | Contribute Fleet | `pkg/dashboard/api_contribute.go:244` |
-| `GET` | `/api/contribute/events` | Public | Contribute Events (SSE). Every frame carries a monotonic `seq`; a connection whose channel filled gets a `gap` frame naming how many events it missed, so a long-lived client can tell "nothing happened" from "I missed events" ([#6218](https://github.com/hivecommons/hive/issues/6218)) | `pkg/dashboard/api_contribute.go:248` |
-| `GET` | `/api/contribute/queue` | Public | Contribute Queue | `pkg/dashboard/api_contribute.go:251` |
-| `GET` | `/api/contribute/opportunistic` | Public | Contribute Opportunistic | `pkg/dashboard/api_contribute.go:255` |
-| `GET` | `/api/contribute/limits` | Public | Contribute Limits | `pkg/dashboard/api_contribute.go:260` |
-| `GET` | `/api/contribute/metrics` | Public | Contribute Metrics | `pkg/dashboard/api_contribute.go:266` |
+| `GET` | `/contribute` | Public | Contribute Landing | `pkg/dashboard/api_contribute.go:291` |
+| `GET` | `/contribute/{tab}` | Public | Contribute Landing | `pkg/dashboard/api_contribute.go:297` |
+| `GET` | `/api/contribute/ws` | Public | s.contribute Hub.Handle WS | `pkg/dashboard/api_contribute.go:305` |
+| `POST` | `/api/contribute/register` | Public | Contribute Register | `pkg/dashboard/api_contribute.go:306` |
+| `POST` | `/api/contribute/invite` | Public | Contribute Invite | `pkg/dashboard/api_contribute.go:312` |
+| `POST` | `/api/contribute/reissue-token` | Public | Contribute Reissue Token | `pkg/dashboard/api_contribute.go:313` |
+| `GET` | `/api/contribute/status` | Public | Contribute Status | `pkg/dashboard/api_contribute.go:314` |
+| `GET` | `/api/contribute/activity` | Public | Contribute Activity | `pkg/dashboard/api_contribute.go:315` |
+| `GET` | `/api/contribute/fleet` | Public | Contribute Fleet | `pkg/dashboard/api_contribute.go:316` |
+| `GET` | `/api/contribute/events` | Public | Contribute Events (SSE). Every frame carries a monotonic `seq`; a connection whose channel filled gets a `gap` frame naming how many events it missed, so a long-lived client can tell "nothing happened" from "I missed events" ([#6218](https://github.com/hivecommons/hive/issues/6218)) | `pkg/dashboard/api_contribute.go:320` |
+| `GET` | `/api/contribute/queue` | Public | Contribute Queue | `pkg/dashboard/api_contribute.go:323` |
+| `GET` | `/api/contribute/opportunistic` | Public | Contribute Opportunistic | `pkg/dashboard/api_contribute.go:327` |
+| `GET` | `/api/contribute/limits` | Public | Contribute Limits | `pkg/dashboard/api_contribute.go:332` |
+| `GET` | `/api/contribute/metrics` | Public | Contribute Metrics | `pkg/dashboard/api_contribute.go:338` |
 | `GET` | `/api/contribute/me` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | The caller's OWN contribution stats — issues worked (24h and all-time), completions that produced a verified PR, and failures. No username parameter, so it only ever answers for its caller ([#6543](https://github.com/hivecommons/hive/issues/6543)) | `pkg/dashboard/api_contribute.go:344` |
-| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:273` |
-| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:277` |
-| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:282` |
-| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:286` |
-| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:292` |
-| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:293` |
-| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:294` |
-| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:295` |
-| `PUT` | `/api/contributors/{id}/trust` | Dashboard auth/session | Contributor Trust | `pkg/dashboard/api_contribute.go:296` |
-| `PUT` | `/api/contributors/{id}/agent-role` | Dashboard auth/session | Contributor Agent Role | `pkg/dashboard/api_contribute.go:297` |
-| `PUT` | `/api/contributors/{id}/agent-role-grants` | Dashboard auth/session | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:298` |
-| `POST` | `/api/contributors/{id}/revoke` | Dashboard auth/session | Contributor Revoke | `pkg/dashboard/api_contribute.go:299` |
-| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:300` |
-| `DELETE` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Delete | `pkg/dashboard/api_contribute.go:301` |
-| `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:301` |
-| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:340` |
-| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:371` |
-| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:372` |
-| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:399` |
+| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:356` |
+| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:360` |
+| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:365` |
+| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:369` |
+| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:375` |
+| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:376` |
+| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:382` |
+| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:383` |
+| `PUT` | `/api/contributors/{id}/trust` | Dashboard auth/session | Contributor Trust | `pkg/dashboard/api_contribute.go:384` |
+| `PUT` | `/api/contributors/{id}/agent-role` | Dashboard auth/session | Contributor Agent Role | `pkg/dashboard/api_contribute.go:385` |
+| `PUT` | `/api/contributors/{id}/agent-role-grants` | Dashboard auth/session | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:386` |
+| `POST` | `/api/contributors/{id}/revoke` | Dashboard auth/session | Contributor Revoke | `pkg/dashboard/api_contribute.go:387` |
+| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:388` |
+| `DELETE` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Delete | `pkg/dashboard/api_contribute.go:389` |
+| `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:304` |
+| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:349` |
+| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:380` |
+| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:381` |
+| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:408` |
 
 ### `/api/v1` contributor subpaths
 
@@ -329,106 +330,106 @@ always resolved server-side from the validated token.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/nous/status` | Dashboard auth/session | Nous Status | `pkg/dashboard/api.go:234` |
-| `GET` | `/api/nous/ledger` | Dashboard auth/session | Nous Ledger | `pkg/dashboard/api.go:235` |
-| `GET` | `/api/nous/principles` | Dashboard auth/session | Nous Principles | `pkg/dashboard/api.go:236` |
-| `POST` | `/api/nous/approve` | Dashboard auth/session | Nous Approve | `pkg/dashboard/api.go:237` |
-| `POST` | `/api/nous/abort` | Dashboard auth/session | Nous Abort | `pkg/dashboard/api.go:238` |
-| `PUT` | `/api/nous/mode` | Dashboard auth/session | Nous Mode | `pkg/dashboard/api.go:239` |
-| `PUT` | `/api/nous/scope` | Dashboard auth/session | Nous Scope | `pkg/dashboard/api.go:240` |
-| `GET` | `/api/nous/phase` | Dashboard auth/session | Nous Phase | `pkg/dashboard/api.go:241` |
-| `PUT` | `/api/nous/gate-decision` | Dashboard auth/session | Nous Gate Decision | `pkg/dashboard/api.go:242` |
-| `GET` | `/api/nous/gate-pending` | Dashboard auth/session | Nous Gate Pending | `pkg/dashboard/api.go:243` |
-| `POST` | `/api/nous/gate-respond` | Dashboard auth/session | Nous Gate Respond | `pkg/dashboard/api.go:244` |
-| `GET` | `/api/nous/gate-response` | Dashboard auth/session | Nous Gate Response | `pkg/dashboard/api.go:245` |
-| `GET` | `/api/nous/config` | Dashboard auth/session | Nous Config Get | `pkg/dashboard/api.go:246` |
-| `PUT` | `/api/nous/config/goals` | Dashboard auth/session | Nous Config Goals | `pkg/dashboard/api.go:247` |
-| `PUT` | `/api/nous/config/repos` | Dashboard auth/session | Nous Config Repos | `pkg/dashboard/api.go:248` |
-| `PUT` | `/api/nous/config/output` | Dashboard auth/session | Nous Config Output | `pkg/dashboard/api.go:249` |
-| `PUT` | `/api/nous/config/fast-fail` | Dashboard auth/session | Nous Config Fast Fail | `pkg/dashboard/api.go:250` |
-| `PUT` | `/api/nous/config/schedule` | Dashboard auth/session | Nous Config Schedule | `pkg/dashboard/api.go:251` |
-| `PUT` | `/api/nous/config/controllables` | Dashboard auth/session | Nous Config Controllables | `pkg/dashboard/api.go:252` |
-| `PUT` | `/api/nous/config/principles` | Dashboard auth/session | Nous Config Principles | `pkg/dashboard/api.go:253` |
-| `DELETE` | `/api/nous/principles/{id}` | Dashboard auth/session | Nous Delete Principle | `pkg/dashboard/api.go:254` |
+| `GET` | `/api/nous/status` | Dashboard auth/session | Nous Status | `pkg/dashboard/api.go:326` |
+| `GET` | `/api/nous/ledger` | Dashboard auth/session | Nous Ledger | `pkg/dashboard/api.go:327` |
+| `GET` | `/api/nous/principles` | Dashboard auth/session | Nous Principles | `pkg/dashboard/api.go:328` |
+| `POST` | `/api/nous/approve` | Dashboard auth/session | Nous Approve | `pkg/dashboard/api.go:329` |
+| `POST` | `/api/nous/abort` | Dashboard auth/session | Nous Abort | `pkg/dashboard/api.go:330` |
+| `PUT` | `/api/nous/mode` | Dashboard auth/session | Nous Mode | `pkg/dashboard/api.go:331` |
+| `PUT` | `/api/nous/scope` | Dashboard auth/session | Nous Scope | `pkg/dashboard/api.go:332` |
+| `GET` | `/api/nous/phase` | Dashboard auth/session | Nous Phase | `pkg/dashboard/api.go:333` |
+| `PUT` | `/api/nous/gate-decision` | Dashboard auth/session | Nous Gate Decision | `pkg/dashboard/api.go:334` |
+| `GET` | `/api/nous/gate-pending` | Dashboard auth/session | Nous Gate Pending | `pkg/dashboard/api.go:335` |
+| `POST` | `/api/nous/gate-respond` | Dashboard auth/session | Nous Gate Respond | `pkg/dashboard/api.go:336` |
+| `GET` | `/api/nous/gate-response` | Dashboard auth/session | Nous Gate Response | `pkg/dashboard/api.go:337` |
+| `GET` | `/api/nous/config` | Dashboard auth/session | Nous Config Get | `pkg/dashboard/api.go:338` |
+| `PUT` | `/api/nous/config/goals` | Dashboard auth/session | Nous Config Goals | `pkg/dashboard/api.go:339` |
+| `PUT` | `/api/nous/config/repos` | Dashboard auth/session | Nous Config Repos | `pkg/dashboard/api.go:340` |
+| `PUT` | `/api/nous/config/output` | Dashboard auth/session | Nous Config Output | `pkg/dashboard/api.go:341` |
+| `PUT` | `/api/nous/config/fast-fail` | Dashboard auth/session | Nous Config Fast Fail | `pkg/dashboard/api.go:342` |
+| `PUT` | `/api/nous/config/schedule` | Dashboard auth/session | Nous Config Schedule | `pkg/dashboard/api.go:343` |
+| `PUT` | `/api/nous/config/controllables` | Dashboard auth/session | Nous Config Controllables | `pkg/dashboard/api.go:344` |
+| `PUT` | `/api/nous/config/principles` | Dashboard auth/session | Nous Config Principles | `pkg/dashboard/api.go:345` |
+| `DELETE` | `/api/nous/principles/{id}` | Dashboard auth/session | Nous Delete Principle | `pkg/dashboard/api.go:346` |
 
 ## Inception
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `POST` | `/api/inception/start` | Dashboard auth/session | Inception Start | `pkg/dashboard/api.go:217` |
-| `POST` | `/api/inception/scan` | Dashboard auth/session | Inception Scan | `pkg/dashboard/api.go:218` |
-| `GET` | `/api/inception/state` | Dashboard auth/session | Inception State | `pkg/dashboard/api.go:219` |
-| `POST` | `/api/inception/questions` | Dashboard auth/session | Inception Set Questions | `pkg/dashboard/api.go:220` |
-| `POST` | `/api/inception/answer` | Dashboard auth/session | Inception Answer | `pkg/dashboard/api.go:221` |
-| `POST` | `/api/inception/facts` | Dashboard auth/session | Inception Record Facts | `pkg/dashboard/api.go:222` |
-| `GET` | `/api/inception/scaffold` | Dashboard auth/session | Inception Scaffold | `pkg/dashboard/api.go:223` |
-| `POST` | `/api/inception/approve` | Dashboard auth/session | Inception Approve | `pkg/dashboard/api.go:224` |
-| `POST` | `/api/inception/reset` | Dashboard auth/session | Inception Reset | `pkg/dashboard/api.go:225` |
-| `GET` | `/api/inception/ideation-facts` | Dashboard auth/session | Inception Ideation Facts | `pkg/dashboard/api.go:226` |
-| `GET` | `/api/inception/download` | Dashboard auth/session | Inception Download | `pkg/dashboard/api.go:227` |
-| `GET` | `/api/inception/has-files` | Dashboard auth/session | Inception Has Files | `pkg/dashboard/api.go:228` |
-| `PUT` | `/api/inception/wiki-name` | Dashboard auth/session | Inception Rename Wiki | `pkg/dashboard/api.go:229` |
-| `POST` | `/api/inception/import` | Dashboard auth/session | Inception Import | `pkg/dashboard/api.go:230` |
+| `POST` | `/api/inception/start` | Dashboard auth/session | Inception Start | `pkg/dashboard/api.go:300` |
+| `POST` | `/api/inception/scan` | Dashboard auth/session | Inception Scan | `pkg/dashboard/api.go:301` |
+| `GET` | `/api/inception/state` | Dashboard auth/session | Inception State | `pkg/dashboard/api.go:302` |
+| `POST` | `/api/inception/questions` | Dashboard auth/session | Inception Set Questions | `pkg/dashboard/api.go:303` |
+| `POST` | `/api/inception/answer` | Dashboard auth/session | Inception Answer | `pkg/dashboard/api.go:304` |
+| `POST` | `/api/inception/facts` | Dashboard auth/session | Inception Record Facts | `pkg/dashboard/api.go:305` |
+| `GET` | `/api/inception/scaffold` | Dashboard auth/session | Inception Scaffold | `pkg/dashboard/api.go:306` |
+| `POST` | `/api/inception/approve` | Dashboard auth/session | Inception Approve | `pkg/dashboard/api.go:307` |
+| `POST` | `/api/inception/reset` | Dashboard auth/session | Inception Reset | `pkg/dashboard/api.go:308` |
+| `GET` | `/api/inception/ideation-facts` | Dashboard auth/session | Inception Ideation Facts | `pkg/dashboard/api.go:309` |
+| `GET` | `/api/inception/download` | Dashboard auth/session | Inception Download | `pkg/dashboard/api.go:310` |
+| `GET` | `/api/inception/has-files` | Dashboard auth/session | Inception Has Files | `pkg/dashboard/api.go:311` |
+| `PUT` | `/api/inception/wiki-name` | Dashboard auth/session | Inception Rename Wiki | `pkg/dashboard/api.go:312` |
+| `POST` | `/api/inception/import` | Dashboard auth/session | Inception Import | `pkg/dashboard/api.go:313` |
 
 ## Beads
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/beads` | Dashboard auth/session | Beads List | `pkg/dashboard/api.go:256` |
-| `GET` | `/api/beads/{agent}` | Dashboard auth/session | Beads List | `pkg/dashboard/api.go:257` |
-| `POST` | `/api/beads/{agent}` | Dashboard auth/session | Beads Create | `pkg/dashboard/api.go:258` |
-| `POST` | `/api/beads/reset` | Dashboard auth/session | Beads Reset | `pkg/dashboard/api.go:259` |
-| `POST` | `/api/beads/reset/{agent}` | Dashboard auth/session | Beads Reset Agent | `pkg/dashboard/api.go:260` |
+| `GET` | `/api/beads` | Dashboard auth/session | Beads List | `pkg/dashboard/api.go:348` |
+| `GET` | `/api/beads/{agent}` | Dashboard auth/session | Beads List | `pkg/dashboard/api.go:349` |
+| `POST` | `/api/beads/{agent}` | Dashboard auth/session | Beads Create | `pkg/dashboard/api.go:350` |
+| `POST` | `/api/beads/reset` | Dashboard auth/session | Beads Reset | `pkg/dashboard/api.go:351` |
+| `POST` | `/api/beads/reset/{agent}` | Dashboard auth/session | Beads Reset Agent | `pkg/dashboard/api.go:352` |
 
 ## Dashboard miscellaneous
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:47` |
-| `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:48` |
-| `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:49` |
-| `POST` | `/api/self-upgrade` | Dashboard auth/session | Self Upgrade | `pkg/dashboard/api.go:50` |
-| `GET` | `/api/backup/status` | Owner only | Backup Status — `available:false` with a reason when no encryption key is configured | `pkg/dashboard/api.go:53` |
-| `POST` | `/api/backup` | Owner only | Backup Download — `412` when no encryption key is configured (never an unencrypted archive) | `pkg/dashboard/api.go:54` |
-| `POST` | `/api/banner-dismissed` | Dashboard auth/session | Banner Dismissed | `pkg/dashboard/api.go:55` |
-| `GET` | `/api/history` | Dashboard auth/session | History | `pkg/dashboard/api.go:59` |
-| `GET` | `/api/timeline` | Dashboard auth/session | Timeline | `pkg/dashboard/api.go:61` |
-| `GET` | `/api/lifecycle-timeline` | Dashboard auth/session | Issue→PR lifecycle journeys plus derived stage timeline | `pkg/dashboard/api.go:67` |
+| `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:50` |
+| `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:52` |
+| `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:53` |
+| `POST` | `/api/self-upgrade` | Dashboard auth/session | Self Upgrade | `pkg/dashboard/api.go:54` |
+| `GET` | `/api/backup/status` | Owner only | Backup Status — `available:false` with a reason when no encryption key is configured | `pkg/dashboard/api.go:57` |
+| `POST` | `/api/backup` | Owner only | Backup Download — `412` when no encryption key is configured (never an unencrypted archive) | `pkg/dashboard/api.go:58` |
+| `POST` | `/api/banner-dismissed` | Dashboard auth/session | Banner Dismissed | `pkg/dashboard/api.go:59` |
+| `GET` | `/api/history` | Dashboard auth/session | History | `pkg/dashboard/api.go:63` |
+| `GET` | `/api/timeline` | Dashboard auth/session | Timeline | `pkg/dashboard/api.go:65` |
+| `GET` | `/api/lifecycle-timeline` | Dashboard auth/session | Issue→PR lifecycle journeys plus derived stage timeline | `pkg/dashboard/api.go:66` |
 | `GET` | `/api/convergence/soak` | Dashboard auth/session | Convergence Soak Status | `pkg/dashboard/api.go:187` |
-| `POST` | `/api/plan/from-issue` | Dashboard auth/session | Plan From Issue | `pkg/dashboard/api.go:313` |
-| `GET` | `/api/plan/{epicID}` | Dashboard auth/session | Plan Tree | `pkg/dashboard/api.go:314` |
-| `POST` | `/api/plan/{epicID}/approve` | Dashboard auth/session | Plan Approve | `pkg/dashboard/api.go:315` |
-| `POST` | `/api/plan/{epicID}/reject` | Dashboard auth/session | Plan Reject | `pkg/dashboard/api.go:316` |
-| `POST` | `/api/plan/{epicID}/child/{childID}` | Dashboard auth/session | Plan Child Action | `pkg/dashboard/api.go:317` |
+| `POST` | `/api/plan/from-issue` | Dashboard auth/session | Plan From Issue | `pkg/dashboard/api.go:318` |
+| `GET` | `/api/plan/{epicID}` | Dashboard auth/session | Plan Tree | `pkg/dashboard/api.go:319` |
+| `POST` | `/api/plan/{epicID}/approve` | Dashboard auth/session | Plan Approve | `pkg/dashboard/api.go:320` |
+| `POST` | `/api/plan/{epicID}/reject` | Dashboard auth/session | Plan Reject | `pkg/dashboard/api.go:321` |
+| `POST` | `/api/plan/{epicID}/child/{childID}` | Dashboard auth/session | Plan Child Action | `pkg/dashboard/api.go:322` |
 | `POST` | `/api/linear/agent/install` | Dashboard auth/session | Linear Agent Install (OAuth start) | `pkg/dashboard/api_linear_agent.go:271` |
 | `GET` | `/api/linear/agent/status` | Dashboard auth/session | Linear Agent Status | `pkg/dashboard/api_linear_agent.go:272` |
 | `POST` | `/api/linear/agent/disconnect` | Dashboard auth/session | Linear Agent Disconnect | `pkg/dashboard/api_linear_agent.go:273` |
-| `GET` | `/api/widget` | Dashboard auth/session | Widget | `pkg/dashboard/api.go:62` |
-| `GET` | `/api/pane/{agent}` | Dashboard auth/session | Pane | `pkg/dashboard/api.go:63` |
-| `GET` | `/api/role` | Dashboard auth/session | Role | `pkg/dashboard/api.go:65` |
-| `POST` | `/api/reset-restarts/{agent}` | Dashboard auth/session | Reset Restarts | `pkg/dashboard/api.go:79` |
-| `GET` | `/api/budget-ignore` | Dashboard auth/session | Budget Ignore Get | `pkg/dashboard/api.go:89` |
-| `POST` | `/api/budget-ignore` | Dashboard auth/session | Budget Ignore Set | `pkg/dashboard/api.go:90` |
-| `GET` | `/api/summaries` | Dashboard auth/session | Summaries | `pkg/dashboard/api.go:102` |
-| `POST` | `/api/prs/{owner}/{repo}/{number}/queue-automerge` | Dashboard auth/session | Queue PRAuto Merge | `pkg/dashboard/api.go:103` |
-| `GET` | `/api/inference/models/{backend}` | Dashboard auth/session | Inference Models | `pkg/dashboard/api.go:175` |
-| `GET` | `/api/hive-id` | Dashboard auth/session | Hive IDGet | `pkg/dashboard/api.go:214` |
-| `PUT` | `/api/hive-id` | Dashboard auth/session | Hive IDSet | `pkg/dashboard/api.go:215` |
-| `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:232` |
-| `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:262` |
-| `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:303` |
-| `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:304` |
-| `GET` | `/api/docs` | Dashboard auth/session | APIDocs | `pkg/dashboard/api_contribute.go:305` |
-| `GET` | `/leaderboard` | Public | Leaderboard Page | `pkg/dashboard/api_contribute.go:307` |
-| `GET` | `/api/leaderboard` | Public | Leaderboard API | `pkg/dashboard/api_contribute.go:308` |
-| `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:309` |
-| `GET` | `/api/leaderboard/contributor/{username}` | Public | Contributor Profile | `pkg/dashboard/api_contribute.go:315` |
-| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:317` |
-| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:318` |
-| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:319` |
-| `DELETE` | `/api/hives/{id}` | Dashboard auth/session | Hives Delete | `pkg/dashboard/api_contribute.go:320` |
-| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:321` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:685` |
+| `GET` | `/api/widget` | Dashboard auth/session | Widget | `pkg/dashboard/api.go:67` |
+| `GET` | `/api/pane/{agent}` | Dashboard auth/session | Pane | `pkg/dashboard/api.go:68` |
+| `GET` | `/api/role` | Dashboard auth/session | Role | `pkg/dashboard/api.go:82` |
+| `POST` | `/api/reset-restarts/{agent}` | Dashboard auth/session | Reset Restarts | `pkg/dashboard/api.go:104` |
+| `GET` | `/api/budget-ignore` | Dashboard auth/session | Budget Ignore Get | `pkg/dashboard/api.go:117` |
+| `POST` | `/api/budget-ignore` | Dashboard auth/session | Budget Ignore Set | `pkg/dashboard/api.go:118` |
+| `GET` | `/api/summaries` | Dashboard auth/session | Summaries | `pkg/dashboard/api.go:130` |
+| `POST` | `/api/prs/{owner}/{repo}/{number}/queue-automerge` | Dashboard auth/session | Queue PRAuto Merge | `pkg/dashboard/api.go:131` |
+| `GET` | `/api/inference/models/{backend}` | Dashboard auth/session | Inference Models | `pkg/dashboard/api.go:253` |
+| `GET` | `/api/hive-id` | Dashboard auth/session | Hive IDGet | `pkg/dashboard/api.go:297` |
+| `PUT` | `/api/hive-id` | Dashboard auth/session | Hive IDSet | `pkg/dashboard/api.go:298` |
+| `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:324` |
+| `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:354` |
+| `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:391` |
+| `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:392` |
+| `GET` | `/api/docs` | Dashboard auth/session | APIDocs | `pkg/dashboard/api_contribute.go:393` |
+| `GET` | `/leaderboard` | Public | Leaderboard Page | `pkg/dashboard/api_contribute.go:395` |
+| `GET` | `/api/leaderboard` | Public | Leaderboard API | `pkg/dashboard/api_contribute.go:396` |
+| `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:397` |
+| `GET` | `/api/leaderboard/contributor/{username}` | Public | Contributor Profile | `pkg/dashboard/api_contribute.go:403` |
+| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:410` |
+| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:411` |
+| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:412` |
+| `DELETE` | `/api/hives/{id}` | Dashboard auth/session | Hives Delete | `pkg/dashboard/api_contribute.go:413` |
+| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:414` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:997` |
 
 ## Hub SaaS
 
@@ -528,28 +529,28 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:690` |
 | `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:556` |
 | `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:681` |
-| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1567` |
-| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1568` |
-| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1529` |
-| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1530` |
-| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1531` |
-| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1532` |
-| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1533` |
-| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1534` |
-| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1535` |
-| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1545` |
-| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1546` |
-| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1547` |
-| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1548` |
-| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1549` |
-| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1550` |
-| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1551` |
-| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1552` |
-| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1553` |
-| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1554` |
-| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1555` |
-| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1558` |
-| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1575` |
-| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1580` |
-| `GET` | `/api/hub/delegation-keys` | Public | Delegation-chain verification material (Ed25519 public keys + generation numbers, JWKS-equivalent); deliberately unauthenticated so a tenant or their auditor can verify a chain without a hive credential - see [delegation chain](delegation-chain.md) | `pkg/hub/server.go:1544` |
-| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1581` |
+| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1587` |
+| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1588` |
+| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1549` |
+| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1550` |
+| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1551` |
+| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1552` |
+| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1553` |
+| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1554` |
+| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1555` |
+| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1565` |
+| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1566` |
+| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1567` |
+| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1568` |
+| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1569` |
+| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1570` |
+| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1571` |
+| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1572` |
+| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1573` |
+| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1574` |
+| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1575` |
+| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1578` |
+| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1595` |
+| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1600` |
+| `GET` | `/api/hub/delegation-keys` | Public | Delegation-chain verification material (Ed25519 public keys + generation numbers, JWKS-equivalent); deliberately unauthenticated so a tenant or their auditor can verify a chain without a hive credential - see [delegation chain](delegation-chain.md) | `pkg/hub/server.go:1564` |
+| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1601` |
