@@ -49,6 +49,42 @@ func TestIssueRefsKeepGitHubSpelling(t *testing.T) {
 	}
 }
 
+func TestIssueRefsUseRankedOrderWithinCap(t *testing.T) {
+	const botIssueCount = maxIssuesPerKick + 50
+	issues := make([]github.Issue, 0, botIssueCount+1)
+	for i := 0; i < botIssueCount; i++ {
+		issues = append(issues, github.Issue{
+			Repo:       "acme/repo",
+			Number:     i + 1,
+			Author:     "kubestellar-hive[bot]",
+			AgeMinutes: 1000 - i,
+		})
+	}
+	issues = append(issues, github.Issue{
+		Repo:          "acme/repo",
+		Number:        999,
+		Author:        "alice",
+		AuthorIsHuman: true,
+		Labels:        []string{"triage/accepted"},
+		AgeMinutes:    1,
+	})
+	github.RankActionableIssues(issues)
+
+	refs := issueRefsForAgent("scanner", issues)
+
+	if len(refs) != maxIssuesPerKick {
+		t.Fatalf("refs len = %d, want %d", len(refs), maxIssuesPerKick)
+	}
+	if refs[0] != "acme/repo#999" {
+		t.Fatalf("first ref = %q, want ranked human issue first", refs[0])
+	}
+	for _, ref := range refs {
+		if ref == "acme/repo#100" {
+			t.Fatalf("human issue failed to displace the 100th bot issue: %v", refs)
+		}
+	}
+}
+
 // TestIssueRefsDropUnidentifiableItems pins the one case that must still be
 // dropped: no number AND no external key. Referencing it would mean inventing
 // an identity.

@@ -59,9 +59,60 @@ func TestFormatIssueList_MaxIssues(t *testing.T) {
 		issues[i] = github.Issue{Repo: "r", Number: i + 1, Title: "issue", Labels: []string{}}
 	}
 	result, _ := s.formatIssueListWithPolicy(issues)
+	issueLines := 0
+	for _, line := range strings.Split(strings.TrimSpace(result), "\n") {
+		if strings.HasPrefix(line, "  ") {
+			issueLines++
+		}
+	}
+	if issueLines > maxIssuesPerKick {
+		t.Errorf("expected at most %d issue lines, got %d", maxIssuesPerKick, issueLines)
+	}
+}
+
+func TestFormatIssueList_ShowsPriorityTieringAndHonorsCap(t *testing.T) {
+	s := newScheduler()
+	const botIssueCount = 150
+	issues := make([]github.Issue, 0, botIssueCount+1)
+	for i := 0; i < botIssueCount; i++ {
+		issues = append(issues, github.Issue{
+			Repo:       "repo",
+			Number:     i + 1,
+			Title:      "older hive-filed issue",
+			Author:     "kubestellar-hive[bot]",
+			AgeMinutes: 1000 - i,
+		})
+	}
+	issues = append(issues, github.Issue{
+		Repo:          "repo",
+		Number:        999,
+		Title:         "newer human accepted issue",
+		Author:        "alice",
+		AuthorIsHuman: true,
+		Labels:        []string{"triage/accepted"},
+		AgeMinutes:    1,
+	})
+	github.RankActionableIssues(issues)
+
+	result, _ := s.formatIssueListWithPolicy(issues)
+	if !strings.Contains(result, issuePriorityNote) {
+		t.Fatalf("issue priority note missing from kick list: %q", result)
+	}
 	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) > maxIssuesPerKick {
-		t.Errorf("expected at most %d lines, got %d", maxIssuesPerKick, len(lines))
+	var issueLines []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "  ") {
+			issueLines = append(issueLines, line)
+		}
+	}
+	if len(issueLines) != maxIssuesPerKick {
+		t.Fatalf("shown issue lines = %d, want %d", len(issueLines), maxIssuesPerKick)
+	}
+	if first := issueLines[0]; !strings.Contains(first, "repo#999") || !strings.Contains(first, "[human]") {
+		t.Fatalf("first shown issue = %q, want human issue #999 with marker", first)
+	}
+	if strings.Contains(result, "repo#100 ") {
+		t.Fatalf("newer human issue did not displace the 100th bot issue within the cap:\n%s", result)
 	}
 }
 

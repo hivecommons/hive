@@ -199,6 +199,84 @@ func TestEnumerateActionable_SortedOldestFirst(t *testing.T) {
 	}
 }
 
+func TestEnumerateActionable_RanksHumanIssuesAheadOfHiveFiledBacklog(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	const botIssueCount = 150
+	issues := make([]wireIssue, 0, botIssueCount+1)
+	for i := 0; i < botIssueCount; i++ {
+		issues = append(issues, wireIssue{
+			Number:    i + 1,
+			Title:     "older hive-filed issue",
+			User:      wireUser{"kubestellar-hive[bot]"},
+			CreatedAt: hoursAgo(float64(200 - i)),
+		})
+	}
+	issues = append(issues, wireIssue{
+		Number:    999,
+		Title:     "newer human issue",
+		User:      wireUser{"alice"},
+		Labels:    []wireLabel{{Name: "triage/accepted"}},
+		CreatedAt: hoursAgo(1),
+	})
+
+	mux := buildMux(t, org, repo, issues, nil)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != botIssueCount+1 {
+		t.Fatalf("Issues.Count = %d, want %d", result.Issues.Count, botIssueCount+1)
+	}
+	if got := result.Issues.Items[0]; got.Number != 999 || !got.AuthorIsHuman {
+		t.Fatalf("first issue = %#v, want human issue #999", got)
+	}
+	if got := result.Issues.Items[1]; got.Number != 1 {
+		t.Fatalf("oldest bot issue should follow the human tier, got #%d", got.Number)
+	}
+}
+
+func TestRankActionableIssues_PriorityAndTierOrder(t *testing.T) {
+	issues := []Issue{
+		{Repo: "repo", Number: 1, Author: "alice", AuthorIsHuman: true, AgeMinutes: 60},
+		{Repo: "repo", Number: 2, Author: "bob", AuthorIsHuman: true, Labels: []string{"triage/accepted"}, AgeMinutes: 10},
+		{Repo: "repo", Number: 3, Author: "carol", AuthorIsHuman: true, AgeMinutes: 30},
+		{Repo: "repo", Number: 4, Author: "kubestellar-hive[bot]", Labels: []string{HumanAckLabel}, AgeMinutes: 500},
+		{Repo: "repo", Number: 5, Author: "kubestellar-hive[bot]", AgeMinutes: 1000},
+		{Repo: "repo", Number: 6, Author: "dave", AuthorIsHuman: true, Labels: []string{"bug"}, AgeMinutes: 20},
+	}
+
+	RankActionableIssues(issues)
+
+	got := make([]int, len(issues))
+	for i, issue := range issues {
+		got[i] = issue.Number
+	}
+	want := []int{6, 2, 1, 3, 4, 5}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ranked issue numbers = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRankActionableIssues_EnvPriorityLabels(t *testing.T) {
+	t.Setenv(actionablePriorityLabelsEnv, "customer/escalated")
+	issues := []Issue{
+		{Repo: "repo", Number: 1, Author: "alice", AuthorIsHuman: true, Labels: []string{"bug"}, AgeMinutes: 60},
+		{Repo: "repo", Number: 2, Author: "bob", AuthorIsHuman: true, Labels: []string{"customer/escalated"}, AgeMinutes: 10},
+	}
+
+	RankActionableIssues(issues)
+
+	if got := issues[0].Number; got != 2 {
+		t.Fatalf("custom priority label issue ranked first = #%d, want #2", got)
+	}
+}
+
 func TestEnumerateActionable_SLAViolations(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
