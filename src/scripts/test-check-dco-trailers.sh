@@ -5,7 +5,7 @@
 set -u -o pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHECKER="${HERE}/check-dco-trailers.sh"
+CHECKER="${CHECKER:-${HERE}/check-dco-trailers.sh}"
 TMP_ROOT="${HERE}/../.test-tmp"
 mkdir -p "$TMP_ROOT"
 TMP="$(mktemp -d "$TMP_ROOT/dco-trailers.XXXXXX")"
@@ -41,23 +41,44 @@ git add file.txt
 git commit -q -m $'mismatched signoff commit\n\nSigned-off-by: Other Person <other@example.com>'
 mismatch_sha=$(git rev-parse HEAD)
 
+git config user.name 'Noreply Author'
+git config user.email 'personal@example.com'
+echo noreply-good >> file.txt
+git add file.txt
+git commit -q -m $'matching GitHub noreply signoff commit\n\nSigned-off-by: Noreply Author <12345+noreply-author@users.noreply.github.com>'
+noreply_good_sha=$(git rev-parse HEAD)
+
+git config user.name 'Different Noreply Author'
+git config user.email 'different@example.com'
+echo noreply-bad >> file.txt
+git add file.txt
+git commit -q -m $'different GitHub noreply signoff commit\n\nSigned-off-by: Someone Else <other-account@users.noreply.github.com>'
+noreply_bad_sha=$(git rev-parse HEAD)
+
+git config user.name 'Second Address Author'
+git config user.email 'andy@clubanderson.com'
+echo second-address >> file.txt
+git add file.txt
+git commit -q -m $'arbitrary second address signoff commit\n\nSigned-off-by: Second Address Author <clubanderson@gmail.com>'
+second_address_sha=$(git rev-parse HEAD)
+
 set +e
-output=$(bash "$CHECKER" 10 HEAD 2>&1)
+output=$(DCO_AUTHOR_LOGIN_MAP="${noreply_good_sha}=noreply-author ${noreply_bad_sha}=different-author ${second_address_sha}=clubanderson" bash "$CHECKER" 10 HEAD 2>&1)
 rc=$?
 set -e
 
 if [ "$rc" -ne 1 ]; then
-  bad "checker exits 1 when two commits fail (got ${rc})"
+  bad "checker exits 1 when four commits fail (got ${rc})"
   echo "$output" | sed 's/^/      | /'
 else
   pass "checker exits 1 when bad commits are present"
 fi
 
 fail_lines=$(printf '%s\n' "$output" | grep -c '^FAIL ' || true)
-if [ "$fail_lines" -eq 2 ]; then
-  pass "exactly two failing commits are reported"
+if [ "$fail_lines" -eq 4 ]; then
+  pass "exactly four failing commits are reported"
 else
-  bad "expected exactly two FAIL lines, got ${fail_lines}"
+  bad "expected exactly four FAIL lines, got ${fail_lines}"
   echo "$output" | sed 's/^/      | /'
 fi
 
@@ -71,6 +92,24 @@ if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha} mismatched-signoff";
   pass "mismatched sign-off commit is reported"
 else
   bad "mismatched sign-off commit ${mismatch_sha} was not reported"
+fi
+
+if printf '%s\n' "$output" | grep -q "^FAIL ${noreply_good_sha}"; then
+  bad "GitHub noreply sign-off for the authoring account should not be reported"
+else
+  pass "GitHub noreply sign-off for the authoring account is accepted"
+fi
+
+if printf '%s\n' "$output" | grep -q "^FAIL ${noreply_bad_sha} mismatched-signoff"; then
+  pass "GitHub noreply sign-off for a different account is rejected"
+else
+  bad "GitHub noreply sign-off for a different account ${noreply_bad_sha} was not reported"
+fi
+
+if printf '%s\n' "$output" | grep -q "^FAIL ${second_address_sha} mismatched-signoff"; then
+  pass "an arbitrary second personal address is rejected"
+else
+  bad "arbitrary second personal address ${second_address_sha} was not reported"
 fi
 
 if printf '%s\n' "$output" | grep -q "^FAIL ${good_sha}"; then
@@ -90,12 +129,12 @@ fi
 
 run_checker() { # run_checker <env-assignments...> -- returns output, sets rc
   set +e
-  output=$(env "$@" bash "$CHECKER" 10 HEAD 2>&1)
+  output=$(env "DCO_AUTHOR_LOGIN_MAP=${noreply_good_sha}=noreply-author ${noreply_bad_sha}=different-author ${second_address_sha}=clubanderson" "$@" bash "$CHECKER" 10 HEAD 2>&1)
   rc=$?
   set -e
 }
 
-# A waiver clears the ONE failure it names and leaves the other one failing.
+# A waiver clears the ONE failure it names and leaves the others failing.
 # This is the property the email allowlist cannot provide: DCO_ALLOWLIST_EMAILS
 # is consulted only after a trailer is found, so it can never clear a
 # missing-signoff.
@@ -122,17 +161,17 @@ else
 fi
 
 # Waiving every failure turns the run green, and the summary still counts them.
-run_checker "DCO_WAIVED_COMMITS=${missing_sha},${mismatch_sha}"
+run_checker "DCO_WAIVED_COMMITS=${missing_sha},${mismatch_sha},${noreply_bad_sha},${second_address_sha}"
 if [ "$rc" -ne 0 ]; then
   bad "waiving every failure should exit 0 (got ${rc})"
   echo "$output" | sed 's/^/      | /'
 else
   pass "waiving every failure returns green"
 fi
-if printf '%s\n' "$output" | grep -q '2 waived'; then
+if printf '%s\n' "$output" | grep -q '4 waived'; then
   pass "the summary line counts waived commits"
 else
-  bad "summary line did not report 2 waived"
+  bad "summary line did not report 4 waived"
   echo "$output" | sed 's/^/      | /'
 fi
 # Green-with-waivers must not read the same as clean history: a maintainer
@@ -147,7 +186,7 @@ fi
 # Separator handling matches DCO_ALLOWLIST_EMAILS (comma/space/newline), and
 # SHA matching is case-insensitive.
 upper_missing=$(printf '%s' "$missing_sha" | tr '[:lower:]' '[:upper:]')
-run_checker "DCO_WAIVED_COMMITS=${upper_missing} ${mismatch_sha}"
+run_checker "DCO_WAIVED_COMMITS=${upper_missing} ${mismatch_sha} ${noreply_bad_sha} ${second_address_sha}"
 if [ "$rc" -eq 0 ]; then
   pass "space-separated and upper-case SHAs are accepted"
 else

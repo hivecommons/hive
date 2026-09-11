@@ -137,6 +137,8 @@ jobs:
       - name: Check recent DCO trailers
         id: dco
         if: github.event_name != 'push' || matrix.branch == github.ref_name
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
           src/scripts/check-dco-trailers.sh "${DCO_COMMIT_LIMIT}" HEAD > dco-report.txt 2>&1
