@@ -165,6 +165,73 @@ func TestFormatPRList_TruncatesTitle(t *testing.T) {
 	}
 }
 
+func TestFormatPRList_AnnotatesOwnConflictedPR(t *testing.T) {
+	s := newScheduler()
+	actionable := &github.ActionableResult{
+		PRs: github.PRResult{
+			Count: 1,
+			Items: []github.PullRequest{{
+				Repo:    "repo1",
+				Number:  99,
+				Title:   "fix conflict",
+				Author:  "app/kubestellar-hive",
+				Labels:  []string{"needs-rebase", "agent/scanner"},
+				HeadRef: "scanner/fix-99",
+			}},
+		},
+	}
+	result, _ := s.formatPRListWithPolicyForAgent(actionable, "scanner")
+	if !strings.Contains(result, "[mergeable_state=needs-rebase, lane=scanner] [CONFLICT, yours]") {
+		t.Fatalf("missing own conflict marker in output: %s", result)
+	}
+}
+
+func TestFormatPRList_AnnotatesDirtyOwnPRWithoutNeedsRebaseLabel(t *testing.T) {
+	s := newScheduler()
+	actionable := &github.ActionableResult{
+		PRs: github.PRResult{
+			Count: 1,
+			Items: []github.PullRequest{{
+				Repo:           "repo1",
+				Number:         101,
+				Title:          "fix dirty conflict",
+				Author:         "kubestellar-hive[bot]",
+				AppAuthored:    true,
+				Labels:         []string{"agent/scanner"},
+				MergeableState: "dirty",
+			}},
+		},
+	}
+	result, _ := s.formatPRListWithPolicyForAgent(actionable, "scanner")
+	if !strings.Contains(result, "[mergeable_state=dirty, lane=scanner] [CONFLICT, yours]") {
+		t.Fatalf("missing dirty own conflict marker in output: %s", result)
+	}
+}
+
+func TestFormatPRList_AnnotatesConflictWithoutYoursMarker(t *testing.T) {
+	s := newScheduler()
+	actionable := &github.ActionableResult{
+		PRs: github.PRResult{
+			Count: 1,
+			Items: []github.PullRequest{{
+				Repo:    "repo1",
+				Number:  100,
+				Title:   "human conflict",
+				Author:  "alice",
+				Labels:  []string{"needs-rebase"},
+				HeadRef: "scanner/fix-100",
+			}},
+		},
+	}
+	result, _ := s.formatPRListWithPolicyForAgent(actionable, "scanner")
+	if !strings.Contains(result, "[mergeable_state=needs-rebase, lane=scanner]") {
+		t.Fatalf("missing PR annotations in output: %s", result)
+	}
+	if strings.Contains(result, "[CONFLICT, yours]") {
+		t.Fatalf("unexpected own conflict marker in output: %s", result)
+	}
+}
+
 func TestFormatMergeEligibleDataShowsQueuedMarker(t *testing.T) {
 	result := formatMergeEligibleData([]byte(`{"merge_eligible":[{"number":7,"repo":"acme/widget","title":"fix it","queued":true}]}`))
 	if !strings.Contains(result, "#7 acme/widget [queued for auto-merge]") {

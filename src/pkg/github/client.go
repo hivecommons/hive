@@ -370,23 +370,26 @@ type IssueDependency struct {
 }
 
 type PullRequest struct {
-	Repo      string    `json:"repo"`
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Author    string    `json:"author"`
-	Labels    []string  `json:"labels"`
-	Draft     bool      `json:"draft"`
-	CreatedAt time.Time `json:"created_at"`
-	URL       string    `json:"url"`
+	Repo        string    `json:"repo"`
+	Number      int       `json:"number"`
+	Title       string    `json:"title"`
+	Author      string    `json:"author"`
+	AppAuthored bool      `json:"app_authored,omitempty"`
+	Labels      []string  `json:"labels"`
+	HeadRef     string    `json:"head_ref,omitempty"`
+	Draft       bool      `json:"draft"`
+	CreatedAt   time.Time `json:"created_at"`
+	URL         string    `json:"url"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
 	// silently gate every PR shut whenever the value was never populated.
 	// The zero value is MergeableUnknown ("") so an unfilled field reads as
 	// "we do not know" rather than a false negative.
-	Mergeable Mergeable `json:"mergeable"`
-	CIStatus  string    `json:"ci_status"`
-	HeadSHA   string    `json:"head_sha,omitempty"`
+	Mergeable      Mergeable `json:"mergeable"`
+	MergeableState string    `json:"mergeable_state,omitempty"`
+	CIStatus       string    `json:"ci_status"`
+	HeadSHA        string    `json:"head_sha,omitempty"`
 	// FailingChecks names the completed check runs whose conclusion was
 	// failure/action_required. CIFailureExcerpt carries the raw error lines
 	// pulled from those runs' annotations — the evidence a fix agent (or an
@@ -1154,8 +1157,10 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		}
 
 		headSHA := ""
+		headRef := ""
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()
+			headRef = pr.GetHead().GetRef()
 		}
 		baseSHA := ""
 		if pr.GetBase() != nil {
@@ -1163,22 +1168,26 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		}
 
 		breakdown.Actionable++
+		author := safeGetLogin(pr.GetUser())
 		actionable = append(actionable, PullRequest{
-			Repo:      repo,
-			Number:    pr.GetNumber(),
-			Title:     pr.GetTitle(),
-			Author:    safeGetLogin(pr.GetUser()),
-			Labels:    labels,
-			Draft:     pr.GetDraft(),
-			CreatedAt: pr.GetCreatedAt().Time,
-			URL:       pr.GetHTMLURL(),
+			Repo:        repo,
+			Number:      pr.GetNumber(),
+			Title:       pr.GetTitle(),
+			Author:      author,
+			AppAuthored: strings.EqualFold(author, c.appBotLogin) && c.appBotLogin != "",
+			Labels:      labels,
+			HeadRef:     headRef,
+			Draft:       pr.GetDraft(),
+			CreatedAt:   pr.GetCreatedAt().Time,
+			URL:         pr.GetHTMLURL(),
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it
 			// here would yield false for every PR. EnrichCIStatus fills it in
 			// from a per-PR fetch; until then it stays MergeableUnknown.
-			HeadSHA: headSHA,
-			BaseSHA: baseSHA,
+			MergeableState: pr.GetMergeableState(),
+			HeadSHA:        headSHA,
+			BaseSHA:        baseSHA,
 		})
 	}
 
@@ -1215,6 +1224,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
 		} else {
 			prs[i].Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
+			prs[i].MergeableState = full.GetMergeableState()
 		}
 
 		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, prs[i].HeadSHA, &gh.ListCheckRunsOptions{

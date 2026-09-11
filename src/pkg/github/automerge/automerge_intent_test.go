@@ -50,7 +50,7 @@ func TestSelfAuthoredSweepIntentGateRefusesUnauthorizedTier(t *testing.T) {
 			api := newSelfSweepGuardAPI(t, tt.fx)
 			defer api.Close()
 			c := newIntentGateSweepClient(api.URL, true)
-			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err != nil {
 				t.Fatalf("err = %v, want nil", err)
 			}
@@ -84,7 +84,7 @@ func TestSelfAuthoredSweepIntentGateFailsClosedWithoutEvidence(t *testing.T) {
 			api := newSelfSweepGuardAPI(t, tt.fx)
 			defer api.Close()
 			c := newIntentGateSweepClient(api.URL, true)
-			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err == nil {
 				t.Fatalf("err = nil, want evidence error")
 			}
@@ -121,7 +121,7 @@ func TestSelfAuthoredSweepIntentGateAuthorizedTiersMerge(t *testing.T) {
 			api := newSelfSweepGuardAPI(t, tt.fx)
 			defer api.Close()
 			c := newIntentGateSweepClient(api.URL, true)
-			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err != nil || reason != "" {
 				t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want clean merge", reason, err)
 			}
@@ -141,7 +141,7 @@ func TestSelfAuthoredSweepIntentGateAdvisoryWhenNotEnforced(t *testing.T) {
 	api := newSelfSweepGuardAPI(t, fx)
 	defer api.Close()
 	c := newIntentGateSweepClient(api.URL, false)
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want advisory merge", reason, err)
 	}
@@ -188,7 +188,7 @@ func TestSelfAuthoredSweepIntentGateAdvisoryWhenEvidenceUnavailable(t *testing.T
 			api := newSelfSweepGuardAPI(t, tt.fx)
 			defer api.Close()
 			c := newIntentGateSweepClient(api.URL, false)
-			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err != nil || reason != "" {
 				t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want advisory merge to proceed when evidence is unavailable", reason, err)
 			}
@@ -208,7 +208,7 @@ func TestSelfAuthoredSweepIntentGateNilEnforceIsAdvisory(t *testing.T) {
 	defer api.Close()
 	c := newAutoMergeSweepClient(api.URL)
 	c.SetIntentGate(&IntentGate{})
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want advisory merge with a nil Enforce callback", reason, err)
 	}
@@ -234,7 +234,7 @@ func TestSelfAuthoredSweepWithoutIntentGateMergesWithoutConsultingFiles(t *testi
 	if got := c.currentIntentGate(); got != nil {
 		t.Fatalf("currentIntentGate() after SetIntentGate(nil) = %+v, want nil", got)
 	}
-	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 	if err != nil || reason != "" {
 		t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want a clean merge with no gate installed", reason, err)
 	}
