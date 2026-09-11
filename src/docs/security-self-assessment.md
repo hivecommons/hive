@@ -17,7 +17,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | Review point | Change |
 > |---|---|
 > | "If I deploy this, what should I worry about?" | New section [If you deploy this, what should you worry about?](#if-you-deploy-this-what-should-you-worry-about) — the attack path stated plainly, a concern/mitigation/non-mitigation table, the three settings that determine exposure, and the worst realistic outcome. |
-> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered: **no red-teaming exists.** Efficacy is now described as unmeasured and partial, with the containment credited to the network deny rules instead. Evaluation tracked in [#6685](https://github.com/hivecommons/hive/issues/6685). |
+> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered with a bounded evaluation in [ioscan-red-team-evaluation.md](ioscan-red-team-evaluation.md): deterministic rules produced findings for 11/12 representative attempts and blocked 10/12, with containment still credited to network deny rules rather than to scanner perfection. |
 > | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check is substring-only — now filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and recorded as a known weakness. |
 > | "Get an OpenSSF passing badge." | Agreed; being pursued in [#6684](https://github.com/hivecommons/hive/issues/6684). Most passing criteria already met. |
 > | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped enforcement tracked in [#6687](https://github.com/hivecommons/hive/issues/6687). |
@@ -277,22 +277,21 @@ repository writes:
    plain-English-injection detection on top. **Enabled by default**
    (`ioscan.enabled: true` is the default per `ioscan.md:9`).
 
-   **How well does it work? Honestly: unmeasured, and it should be read as a
-   partial mitigation rather than a defense.** No red-team exercise,
-   adversarial evaluation, or measured detection rate exists for `ioscan` —
-   the package has 56 unit tests across its rule, Unicode, classifier and
-   canary paths, but unit tests establish that known shapes are caught, not
-   that unknown ones are. A prospective user should assume a determined,
-   encoding-aware attacker defeats it. What `ioscan` reliably does is (a)
-   raise the cost of the *casual* injection attempt, (b) normalize away an
-   entire class of invisible-character and homoglyph tricks deterministically,
-   and (c) produce an auditable record that something was withheld. What
-   contains the *consequence* of a successful injection is not `ioscan` at
-   all: it is the hard-denied PR-create/merge relays and the mode-tiered
-   token scope, neither of which the model can argue with. Operators should
-   size their trust accordingly, and the project commits to publishing a
-   red-team evaluation rather than leaving efficacy asserted
-   ([#6685](https://github.com/hivecommons/hive/issues/6685)).
+   **How well does it work? Honestly: partially measured, and it should still
+   be read as a partial mitigation rather than a defense.** The bounded
+   adversarial evaluation in
+   [ioscan-red-team-evaluation.md](ioscan-red-team-evaluation.md) measured
+   findings for 11/12 representative injection attempts and blocking for
+   10/12; the remaining misses are expected limits of deterministic phrase
+   matching and single-pass decoding. A prospective user should still assume a
+   determined, encoding-aware attacker defeats it. What `ioscan` reliably does
+   is (a) raise the cost of the *casual* injection attempt, (b) normalize away
+   an entire class of invisible-character and homoglyph tricks
+   deterministically, and (c) produce an auditable record that something was
+   withheld. What contains the *consequence* of a successful injection is not
+   `ioscan` at all: it is the hard-denied PR-create/merge relays and the
+   mode-tiered token scope, neither of which the model can argue with.
+   Operators should size their trust accordingly.
 
    **Exfiltration detection (`ioscan.canaries`, default off).** A per-agent
    `HIVE-CANARY-<48 hex>` token is planted in the agent's prompt, and the
@@ -820,16 +819,12 @@ repository and answered below. Where the answer is "no," it says no.
   wrong on a schedule.
 
 - **Has any informal security review or adversarial testing occurred?**
-  Resolved: **no, and this is the most significant "no" in the list.** There
-  is no red-team exercise, no adversarial evaluation, and no measured
-  detection rate for `ioscan` anywhere in the repository — the search for one
-  returned only the phrase used in unrelated design documents. The hardening
-  work referenced by issue number throughout `security-threat-model.md` is
-  maintainer-identified and maintainer-fixed, which is not the same thing as
-  adversarial review. A red-team evaluation of the injection path is tracked
-  in [#6685](https://github.com/hivecommons/hive/issues/6685). Until it
-  exists, every efficacy claim about `ioscan` in this document should be read
-  as unvalidated by design rather than validated by silence.
+  Resolved for `ioscan`: the bounded evaluation in
+  [ioscan-red-team-evaluation.md](ioscan-red-team-evaluation.md) records the
+  first measured corpus, with 11/12 deterministic findings and 10/12 blocked
+  cases. It is not a full penetration test, and every efficacy claim about
+  `ioscan` should still be read as scoped to that published corpus rather than
+  as proof against unknown prompt-injection shapes.
 
 - **Will CODEOWNERS enforcement be enabled?** Resolved: the live `v4` branch
   protection currently requires **no** pull-request reviews at all, and
