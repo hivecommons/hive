@@ -1937,7 +1937,9 @@ function tmuxSendKeys(text) {
     // HIVE_VERDICT line as this task's completion (#5650). Captured here rather
     // than at assignment because this is the moment the transcript stops being
     // "whatever was there" and starts being this task's own.
-    const priorVerdict = detectCompletionVerdict(captureTmuxLines(TMUX_TAIL_LINES));
+    const deliveryBaselineLines = captureTmuxLines(PR_SCAN_LINES);
+    resetTaskAgentActivity(deliveryBaselineLines);
+    const priorVerdict = detectCompletionVerdict(deliveryBaselineLines.slice(-TMUX_TAIL_LINES));
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
@@ -2671,6 +2673,44 @@ const CHROME_IDLE_GRACE_TICKS = Math.max(1, Number(process.env.HIVE_CHROME_IDLE_
 // completion verdict in sight. Reset on task start and on any tick that does
 // not see an unverdicted idle pane.
 let chromeIdleTicks = 0;
+let taskAgentActivityObserved = false;
+let deliveredAgentActivityBaseline = new Map();
+
+function agentActivityLineKey(line) {
+  const s = String(line || '').trim();
+  if (!s) return null;
+  if (detectCompletionVerdict([s])) return s;
+  if (/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/.test(s)) return s;
+  if (/^[●⏺]\s+\S/.test(s)) return s;
+  if (/^[•·▸]\s+(?!(?:Working|Running|Executing|Thinking)\b)\S/i.test(s)) return s;
+  return null;
+}
+
+function agentActivityCounts(lines) {
+  const counts = new Map();
+  for (const line of Array.isArray(lines) ? lines : String(lines || '').split('\n')) {
+    const key = agentActivityLineKey(line);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function recordTaskAgentActivity(lines) {
+  const counts = agentActivityCounts(lines);
+  for (const [key, count] of counts) {
+    if (count > (deliveredAgentActivityBaseline.get(key) || 0)) {
+      taskAgentActivityObserved = true;
+      return true;
+    }
+  }
+  return taskAgentActivityObserved;
+}
+
+function resetTaskAgentActivity(baselineLines) {
+  taskAgentActivityObserved = false;
+  deliveredAgentActivityBaseline = agentActivityCounts(baselineLines || []);
+}
 
 // recordChromeIdleTick advances (or resets) the grace counter and reports
 // whether chrome alone has now earned the right to end the task.
@@ -3422,6 +3462,9 @@ function progressTick() {
     console.warn(`Ignoring the HIVE_VERDICT line already on the pane when ${currentTask.task_id} was dispatched — it is the previous task's verdict, not this one's`);
   }
   const completionVerdict = staleVerdict ? null : paneVerdict;
+  const hasTaskAgentActivity = paneState === PANE_STATE_WORKING
+    ? (taskAgentActivityObserved = true)
+    : recordTaskAgentActivity(paneScanLines);
 
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
@@ -3444,6 +3487,12 @@ function progressTick() {
     paneState === PANE_STATE_UNKNOWN_API_ERROR ||
     paneState === PANE_STATE_FATAL_API_ERROR;
   const verdictCompletes = !!completionVerdict && !apiErrorState;
+
+  if (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed && !verdictCompletes && !hasTaskAgentActivity) {
+    resetChromeIdleGrace();
+    failCurrentTask(`pane went idle before ${BACKEND} produced any task output; prompt may not have been submitted`, { kind: 'environment' });
+    return;
+  }
 
   if (verdictCompletes || (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed)) {
     // How this task ended, recorded so the hub and the operator can tell the
@@ -4274,6 +4323,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     recordChromeIdleTick,
     resetChromeIdleGrace,
     getChromeIdleTicks: () => chromeIdleTicks,
+    getTaskAgentActivityObserved: () => taskAgentActivityObserved,
+    setTaskAgentActivityObserved: (v) => { taskAgentActivityObserved = !!v; },
+    resetTaskAgentActivity,
     // Max-duration lease surface (kubestellar/hive#5321).
     MAX_TASK_DURATION_MS,
     ABSOLUTE_TASK_DEADLINE_MS,

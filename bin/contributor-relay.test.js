@@ -767,6 +767,7 @@ test('agy Gemini idle pane reports its visible PR as task_complete', () => {
   const relay = loadRelay({ backend: 'agy', paneText: AGY_GEMINI_IDLE_PANE });
   try {
     dispatchTask(relay, 'ct-agy-gemini-idle');
+    relay.setTaskAgentActivityObserved(true);
     // #5376: this pane carries no HIVE_VERDICT line, so it completes on the
     // chrome-idle FALLBACK — after the grace window, not on the first tick.
     graceTicks(relay, () => relay.__crashTick());
@@ -4725,6 +4726,7 @@ test('#5094 a completed turn whose summary mentions a quota phrase is still comp
     assert.strictEqual(relay.classifyTmuxPane(pane), relay.PANE_STATE_IDLE_COMPLETE);
     relay.setCliReady(true);
     assignTask(relay, 't-prose');
+    relay.setTaskAgentActivityObserved(true);
     // #5376: chrome-only completion, so it needs the grace window.
     graceTicks(relay, () => relay.__crashTick());
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
@@ -6115,6 +6117,7 @@ test('#5376 a non-compliant agent still completes — via the bounded chrome-idl
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-noncompliant');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
@@ -6124,6 +6127,70 @@ test('#5376 a non-compliant agent still completes — via the bounded chrome-idl
     assert.strictEqual(completed[0].completion_signal, 'chrome_idle',
       'the weaker signal must be labelled, so per-backend non-compliance is measurable');
     assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/777');
+  } finally { teardown(relay); }
+});
+
+test('#6717 codex idle with an unsubmitted pasted prompt is failed, not completed', () => {
+  const CODEX_READY = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '› Ask Codex to do the task',
+  ].join('\n');
+  const UNSUBMITTED_PROMPT = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '│                                                │',
+    '│ model:     gpt-5.6-luna max   /model to change │',
+    '│ directory: ~/.local/state/hive/agent-cwd       │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '  Tip: NEW: Prevent sleep while running is now available in /experimental.',
+    '',
+    '',
+    '› [Pasted Content 1024 chars][Pasted Content 1012 chars] very last thing you output and on a line by itself, HIVE_VERDICT: complete — <short reason',
+    '',
+    '  gpt-5.6-luna max · ~/.local/state/hive/agent-cwd',
+  ].join('\n');
+  let pane = CODEX_READY;
+  const relay = loadRelay({ backend: 'codex', paneText: () => pane });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-unsubmitted-codex');
+    pane = UNSUBMITTED_PROMPT;
+    assert.strictEqual(relay.classifyTmuxPane(UNSUBMITTED_PROMPT), relay.PANE_STATE_IDLE_COMPLETE,
+      'setup: codex renders the unsent pasted prompt as idle chrome');
+    graceTicks(relay, () => relay.__crashTick());
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'chrome idleness alone must not report completion when the agent produced nothing');
+    assert.strictEqual(failed.length, 1, 'the hub must get a non-success outcome so it can re-offer the issue');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.match(failed[0].reason, /prompt may not have been submitted/);
+  } finally { teardown(relay); }
+});
+
+test('#6717 codex chrome-idle still completes after new assistant output', () => {
+  const CODEX_READY = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '› Ask Codex to do the task',
+  ].join('\n');
+  let pane = CODEX_READY;
+  const relay = loadRelay({ backend: 'codex', paneText: () => pane });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-codex-finished-fast');
+    pane = CODEX_DONE_SUMMARY_WITH_VERB;
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'new codex assistant output must keep a real fast completion from looking unsubmitted');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle');
   } finally { teardown(relay); }
 });
 
@@ -6143,6 +6210,7 @@ test('#5376 an idle pane awaiting its verdict is not handed to the stall backsto
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-idle-stall');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => {
       relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
       relay.__stallTick();
@@ -6189,6 +6257,7 @@ test('#5376 the grace window does not carry across tasks', () => {
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-one');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1, 'setup: first task completes');
 
@@ -6839,6 +6908,7 @@ test('#5650 a stale verdict does not block the chrome-idle fallback either', () 
   try {
     relay.setCliReady(true);
     assignTask(relay, 'ct-fallback', 5646);
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
