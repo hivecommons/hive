@@ -5245,10 +5245,31 @@ function captureBannerDuringLoad(opts) {
   return { relay, output: lines.join('\n') };
 }
 
+function captureStartupWithImmediateTimers(opts, maxTimers = 10) {
+  const lines = [];
+  const realLog = console.log;
+  const realSetTimeout = global.setTimeout;
+  let timers = 0;
+  console.log = (...args) => { lines.push(args.join(' ')); };
+  global.setTimeout = (fn) => {
+    timers++;
+    if (timers <= maxTimers) fn();
+    return { unref() {} };
+  };
+  let relay;
+  try {
+    relay = loadRelay(opts);
+  } finally {
+    console.log = realLog;
+    global.setTimeout = realSetTimeout;
+  }
+  return { relay, output: lines.join('\n') };
+}
+
 test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code\'s', () => {
-  const { relay, output } = captureBannerDuringLoad({
+  const { relay, output } = captureStartupWithImmediateTimers({
     backend: 'bob',
-    cliStates: ['Enter Bob-Shell API Key\n'],
+    cliStates: ['Enter Bob-Shell API Key\n', 'Enter Bob-Shell API Key\n', 'Enter Bob-Shell API Key\n'],
   });
   try {
     assert.ok(/needs authentication/.test(output),
@@ -5259,6 +5280,29 @@ test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code
       'a blocked bob is announced as Claude Code');
     assert.ok(!/Then type: \/login/.test(output),
       'bob cannot be authenticated by typing /login into the pane');
+  } finally { teardown(relay); }
+});
+
+test('#6668 waitForCLI ignores a single transient needs-login poll during startup', () => {
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'agy',
+    cliStates: ['Select login method\n', AGY_READY_PANE],
+  });
+  try {
+    assert.ok(!/needs authentication/.test(output),
+      `a one-poll startup race must not page the operator:\n${output}`);
+    assert.ok(/CLI ready/.test(output), `the healthy session should recover normally:\n${output}`);
+  } finally { teardown(relay); }
+});
+
+test('#6668 waitForCLI prints the banner only after repeated needs-login polls', () => {
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'agy',
+    cliStates: ['Select login method\n', 'Select login method\n', 'Select login method\n'],
+  });
+  try {
+    assert.ok(/Antigravity \(agy\) needs authentication/.test(output),
+      `a persistent login prompt must still page the operator:\n${output}`);
   } finally { teardown(relay); }
 });
 
@@ -5329,19 +5373,12 @@ test('#5145 the needs-authentication banner prints the resolved command', () => 
   // waitForCLI() is armed during module load in interactive mode and its first
   // poll runs synchronously, so a pane that reads as needs-login makes the
   // banner print while loadRelay() is still running — capture around it.
-  const lines = [];
-  const oldLog = console.log;
-  console.log = (msg) => { lines.push(String(msg)); };
-  let relay;
-  try {
-    relay = loadRelay({
-      backend: 'claude',
-      cliStates: ['Please run /login\n'],
-      env: { HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c', HIVE_CONTAINER_RUNTIME: 'podman' },
-    });
-  } finally {
-    console.log = oldLog;
-  }
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'claude',
+    cliStates: ['Please run /login\n', 'Please run /login\n', 'Please run /login\n'],
+    env: { HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c', HIVE_CONTAINER_RUNTIME: 'podman' },
+  });
+  const lines = output.split('\n');
   try {
     assert.ok(lines.some(l => l.includes('needs authentication')),
       `the login banner did not fire; captured:\n${lines.join('\n')}`);
