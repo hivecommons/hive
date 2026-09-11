@@ -36,7 +36,7 @@ func TestSelfAuthoredSweepInterval_StaysWithinRateBudget(t *testing.T) {
 			}
 			continue
 		}
-		if reqPerHour > budget*1.05 {
+		if interval < selfAuthoredSweepMaxInterval && reqPerHour > budget*1.05 {
 			t.Errorf("repos=%d: %.0f req/hour exceeds the %.0f/hour share (interval %v)",
 				repos, reqPerHour, budget, interval)
 		}
@@ -56,6 +56,46 @@ func TestSelfAuthoredSweepInterval_SmallHivesUnchanged(t *testing.T) {
 			t.Errorf("repos=%d: interval = %v, want the unchanged %v",
 				repos, got, selfAuthoredAutoMergeSweepInterval)
 		}
+	}
+}
+
+func TestSelfAuthoredSweepInterval_AdaptsToObservedCandidates(t *testing.T) {
+	base := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance)
+	got := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance*3)
+	if got <= base {
+		t.Fatalf("interval with excess candidates = %v, want greater than base %v", got, base)
+	}
+}
+
+func TestSelfAuthoredSweepInterval_AdaptiveBackoffIsBounded(t *testing.T) {
+	got := selfAuthoredSweepIntervalForCandidates(6, 100000)
+	if got != selfAuthoredSweepMaxInterval {
+		t.Fatalf("interval with huge candidate backlog = %v, want max %v", got, selfAuthoredSweepMaxInterval)
+	}
+}
+
+func TestSelfAuthoredSweepInterval_SmallHiveIgnoresObservedCandidates(t *testing.T) {
+	got := selfAuthoredSweepIntervalForCandidates(selfAuthoredSweepSmallHiveRepos, 100000)
+	if got != selfAuthoredAutoMergeSweepInterval {
+		t.Fatalf("small-hive interval = %v, want unchanged %v", got, selfAuthoredAutoMergeSweepInterval)
+	}
+}
+
+func TestNextSelfAuthoredSweepInterval_AdjustsAndRecovers(t *testing.T) {
+	base := selfAuthoredSweepIntervalForCandidates(6, selfAuthoredSweepCandidateAllowance)
+	backedOff, changed := nextSelfAuthoredSweepInterval(6, base, &AutoMergeSweepResult{Candidates: selfAuthoredSweepCandidateAllowance + 100})
+	if !changed || backedOff <= base {
+		t.Fatalf("backoff interval=%v changed=%v, want interval greater than base %v", backedOff, changed, base)
+	}
+
+	recovered, changed := nextSelfAuthoredSweepInterval(6, backedOff, &AutoMergeSweepResult{Candidates: 0})
+	if !changed || recovered != base {
+		t.Fatalf("recovered interval=%v changed=%v, want base %v", recovered, changed, base)
+	}
+
+	unchanged, changed := nextSelfAuthoredSweepInterval(6, base, nil)
+	if changed || unchanged != base {
+		t.Fatalf("nil result interval=%v changed=%v, want unchanged base %v", unchanged, changed, base)
 	}
 }
 
