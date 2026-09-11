@@ -50,14 +50,14 @@ const (
 	// the upper bound the C3 follow-up called for (e.g. 5–15 min).
 	terminalAssertionTTL = 15 * time.Minute
 
-	// infoTerminalKey is the domain-separation label for the terminal assertion's
+	// InfoTerminalKey is the domain-separation label for the terminal assertion's
 	// symmetric signing sub-key. It mirrors the C2 (#2758/#2761) deriveDomainKey
 	// convention — HMAC-SHA256(master, info) rendered as hex — so when C2's
 	// hub_keys.go lands the two derivations are FUNCTIONALLY IDENTICAL and this can
-	// be folded onto deriveDomainKey(master, infoTerminalKey) in a later cleanup.
+	// be folded onto deriveDomainKey(master, InfoTerminalKey) in a later cleanup.
 	// It is a DISTINCT label from the heartbeat/session/sso sub-keys, so the
 	// terminal key can only ever sign/verify terminal assertions.
-	infoTerminalKey = "hive-terminal-v1"
+	InfoTerminalKey = "hive-terminal-v1"
 
 	// EnvTerminalKey is the dedicated spoke-side env var carrying the PER-HIVE
 	// terminal signing key (provisionTerminalKey). It is the preferred lane and,
@@ -85,14 +85,14 @@ func terminalSign(key, body string) string {
 
 // deriveTerminalKeyFrom is DELETED (audit N3).
 //
-// It returned HMAC-SHA256(master, infoTerminalKey) with NO hive ID. Because the
+// It returned HMAC-SHA256(master, InfoTerminalKey) with NO hive ID. Because the
 // master is fleet-uniform — measured live: present on 65/65 spokes with exactly
 // ONE distinct value — that expression derived a single terminal key for the
 // entire fleet, so an assertion minted on any spoke verified on every other.
 // Domain separation does not help when the keying input is shared by every
 // tenant; only binding the hive ID does.
 //
-// The replacement is derivePerHiveKey(master, infoTerminalKey, hiveID), used
+// The replacement is derivePerHiveKey(master, InfoTerminalKey, hiveID), used
 // inline by TerminalSigningKey's self-derive lane. Nothing may reintroduce a
 // hiveID-less terminal derivation: a helper that exists is a helper that gets
 // called, which is how this lane survived the original N3 fix.
@@ -103,7 +103,7 @@ func terminalSign(key, body string) string {
 // Resolution order, most-to-least specific. EVERY lane is PER-HIVE:
 //
 //  1. HIVE_TERMINAL_KEY — the hub-injected per-hive sub-key
-//     (provisionTerminalKey: HMAC(master, infoTerminalKey || 0x00 || hiveID)).
+//     (provisionTerminalKey: HMAC(master, InfoTerminalKey || 0x00 || hiveID)).
 //     This is the normal hosted path; measured on the live fleet it is present
 //     and 65-distinct on every spoke.
 //  2. Self-derived per-hive key, from HIVE_HUB_SECRET + HIVE_ID. This mirrors
@@ -162,7 +162,7 @@ func TerminalSigningKey() string {
 	// fleet-uniform and is the N3 forgery lane.
 	return derivePerHiveKey(
 		strings.TrimSpace(os.Getenv(envHubSecret)),
-		infoTerminalKey,
+		InfoTerminalKey,
 		strings.TrimSpace(os.Getenv(EnvHiveID)),
 	)
 }

@@ -136,7 +136,7 @@ func TestTerminalAssertionRejectsForeignVersion(t *testing.T) {
 // other hive's terminal key.
 func TestDeriveTerminalKeyIsDomainSeparatedAndPerHive(t *testing.T) {
 	master := "master-secret"
-	got := derivePerHiveKey(master, infoTerminalKey, "hive-1")
+	got := derivePerHiveKey(master, InfoTerminalKey, "hive-1")
 	if got == "" {
 		t.Fatal("expected a derived key")
 	}
@@ -146,21 +146,21 @@ func TestDeriveTerminalKeyIsDomainSeparatedAndPerHive(t *testing.T) {
 	// Deterministic and equal to the documented formula:
 	// HMAC-SHA256(master, info || 0x00 || hiveID) hex.
 	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(infoTerminalKey))
+	mac.Write([]byte(InfoTerminalKey))
 	mac.Write([]byte{0})
 	mac.Write([]byte("hive-1"))
 	if want := hex.EncodeToString(mac.Sum(nil)); got != want {
 		t.Fatalf("derived key = %q, want %q", got, want)
 	}
 	// N3: a DIFFERENT hive under the SAME master must get a different key.
-	if other := derivePerHiveKey(master, infoTerminalKey, "hive-2"); other == got {
+	if other := derivePerHiveKey(master, InfoTerminalKey, "hive-2"); other == got {
 		t.Fatal("terminal key must differ per hive — this is audit N3")
 	}
 	// Fail closed on either missing input.
-	if derivePerHiveKey("", infoTerminalKey, "hive-1") != "" {
+	if derivePerHiveKey("", InfoTerminalKey, "hive-1") != "" {
 		t.Fatal("empty master must derive to empty (fail closed)")
 	}
-	if derivePerHiveKey(master, infoTerminalKey, "") != "" {
+	if derivePerHiveKey(master, InfoTerminalKey, "") != "" {
 		t.Fatal("empty hive ID must derive to empty (fail closed) — never a shared key")
 	}
 }
@@ -184,7 +184,7 @@ func TestTerminalSigningKeyResolutionOrder(t *testing.T) {
 	}
 
 	t.Setenv(EnvHiveID, "hive-1")
-	if got, want := TerminalSigningKey(), derivePerHiveKey("master", infoTerminalKey, "hive-1"); got != want {
+	if got, want := TerminalSigningKey(), derivePerHiveKey("master", InfoTerminalKey, "hive-1"); got != want {
 		t.Fatalf("self-derive lane: got %q want per-hive %q", got, want)
 	}
 
@@ -224,7 +224,7 @@ func TestN3_TerminalKeyNeverFallsThroughToSessionKey(t *testing.T) {
 	if got == fleetUniform {
 		t.Fatal("N3 REGRESSION: HIVE_SESSION_KEY won over the per-hive derivation")
 	}
-	if want := derivePerHiveKey("master", infoTerminalKey, "hive-1"); got != want {
+	if want := derivePerHiveKey("master", InfoTerminalKey, "hive-1"); got != want {
 		t.Fatalf("expected per-hive key %q, got %q", want, got)
 	}
 
@@ -270,8 +270,8 @@ func TestN3_TerminalAssertionDoesNotCrossHives(t *testing.T) {
 	const master = "shared-fleet-master"
 	now := time.Now()
 
-	keyA := derivePerHiveKey(master, infoTerminalKey, "hive-a")
-	keyB := derivePerHiveKey(master, infoTerminalKey, "hive-b")
+	keyA := derivePerHiveKey(master, InfoTerminalKey, "hive-a")
+	keyB := derivePerHiveKey(master, InfoTerminalKey, "hive-b")
 	if keyA == "" || keyB == "" {
 		t.Fatal("expected derived keys")
 	}
