@@ -202,6 +202,14 @@ Two things worth knowing if you write the trailer by hand instead:
 
 Credit the filer of the issue the PR fixes, not everyone who commented. If several people's issues are genuinely resolved by one PR, add one trailer each.
 
+## Closing issues filed by humans
+
+A merged fix is not the same thing as a resolved symptom. Issue [#6500](https://github.com/hivecommons/hive/issues/6500) was closed after a fix merged while the reported symptom persisted; the reporter could not reopen it (GitHub only lets users with write access, or whoever closed the issue, reopen it — and hive issues are closed by the App bot), so the same problem came back as two fresh bug reports ([#6762](https://github.com/hivecommons/hive/issues/6762), [#6767](https://github.com/hivecommons/hive/issues/6767)). To keep the loop closed:
+
+- **Do not close a human-filed `bug` issue on "fix merged" alone.** Comment instead: link the fix PR and ask the reporter to confirm — for example, `Fix merged in #<pr> — @<reporter> please confirm the symptom is gone.` Close only after the reporter confirms, or after 7 days with no objection (say in the closing comment which of the two it was).
+- **Bot- and agent-filed issues are exempt** — verify against the stated evidence (a green run, a passing check) and close when it is green.
+- **If a reporter says a closed issue is not fixed, reopen it** (or file the reopen on their behalf if they cannot) rather than letting them re-file from scratch. A comment from the original reporter on a closed issue saying the symptom persists is always grounds to reopen.
+
 ## Pull requests
 
 - Target `v4` for all code and documentation contributions (the active development branch).
