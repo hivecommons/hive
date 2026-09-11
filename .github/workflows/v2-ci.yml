@@ -128,6 +128,17 @@ jobs:
       - name: Entrypoint /data ownership invariant (#5369)
         run: bash deploy/test_entrypoint_data_ownership.sh
 
+      # #5525: when /data is a PVC mounted over the image's prepared directory,
+      # recursive UID isolation must run in the background and gate agent launch
+      # on per-UID/revision markers instead of blocking startup on chown.
+      - name: Entrypoint UID-isolation migration (#5525)
+        run: bash deploy/test_entrypoint_uid_isolation.sh
+
+      # #6287: the token-access audit log must not be agent-writable. The
+      # wrappers write only to the drop-box spool and no chmod may loosen it.
+      - name: Entrypoint token-access audit log not agent-writable (#6287)
+        run: bash deploy/test_entrypoint_token_access_audit.sh
+
       # #5370: the arm64 lane probed the PUBLISHED image, so on a PR it
       # validated code already on v4 rather than the change proposed — a PR
       # fixing a startup bug stayed red, one introducing a startup bug went
@@ -757,6 +768,13 @@ jobs:
       - name: hive-snapshot.service does not execute planted code (#5483)
         working-directory: .
         run: bash src/deploy/test_hive_snapshot_unit_contract.sh
+
+      # #5936: hive-deploy.service must use the verified-snapshot copy path so
+      # root-installed files never come straight from the mutable /tmp/hive
+      # worktree.
+      - name: hive-deploy.service does not root-install planted code (#5936)
+        working-directory: .
+        run: bash src/deploy/test_hive_deploy_unit_contract.sh
 
       # #4440: the changelog reminder promises it "always succeeds" and "never
       # blocks a merge", and it did neither on a fork PR — GITHUB_TOKEN is

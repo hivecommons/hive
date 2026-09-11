@@ -25,3 +25,44 @@ func TestTerminalAssertionNotConfusableWithSSO(t *testing.T) {
 		t.Fatal("a terminal assertion must NOT verify as an SSO handoff token")
 	}
 }
+
+func TestSpokeTerminalSigningKeyDelegatesToTerminalassert(t *testing.T) {
+	t.Setenv(EnvTerminalKey, "explicit-terminal-key")
+	t.Setenv("HIVE_HUB_SECRET", "master-secret")
+	t.Setenv(EnvHiveID, "hive-1")
+
+	if got := TerminalSigningKey(); got != "explicit-terminal-key" {
+		t.Fatalf("TerminalSigningKey() = %q, want explicit terminal key", got)
+	}
+}
+
+func TestSpokeTerminalAssertionWrappersMintAndVerify(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	token := MintTerminalAssertion("terminal-key", "alice", "owner", "hive-1", now)
+	if token == "" {
+		t.Fatal("MintTerminalAssertion returned empty token")
+	}
+
+	user, role, err := VerifyTerminalAssertion("terminal-key", token, "hive-1", now)
+	if err != nil {
+		t.Fatalf("VerifyTerminalAssertion returned error: %v", err)
+	}
+	if user != "alice" || role != "owner" {
+		t.Fatalf("VerifyTerminalAssertion = user %q role %q, want alice/owner", user, role)
+	}
+}
+
+func TestSpokeTerminalAssertionWrappersFailClosed(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	if got := MintTerminalAssertion("", "alice", "owner", "hive-1", now); got != "" {
+		t.Fatalf("MintTerminalAssertion with empty key = %q, want empty", got)
+	}
+
+	token := MintTerminalAssertion("terminal-key", "alice", "owner", "hive-1", now)
+	if _, _, err := VerifyTerminalAssertion("", token, "hive-1", now); err == nil {
+		t.Fatal("VerifyTerminalAssertion with empty key succeeded")
+	}
+	if _, _, err := VerifyTerminalAssertion("terminal-key", token, "other-hive", now); err == nil {
+		t.Fatal("VerifyTerminalAssertion accepted token for another hive")
+	}
+}
