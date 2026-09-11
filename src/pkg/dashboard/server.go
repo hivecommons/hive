@@ -1405,6 +1405,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
+		if !trusted && r.URL.Path == "/api/knowledge/export" {
+			if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+				trusted = true
+				r.Header.Set("X-Hive-User", profile.GitHubUsername)
+				r.Header.Set("X-Hive-Role", config.RoleRead)
+			}
+		}
+
 		if !trusted {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Content-Type", "application/json")

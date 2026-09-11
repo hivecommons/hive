@@ -110,6 +110,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         mode = self.path.split("/")[1] if self.path.count("/") >= 1 else ""
         if mode == "ok":
+            if self.headers.get("Authorization") != "Bearer test-token":
+                self.send_response(401)
+                self.end_headers()
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/markdown; charset=utf-8")
             self.end_headers()

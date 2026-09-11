@@ -3589,15 +3589,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			tokenHash := sha256Hex(msg.RegistrationToken)
-			profiles := listContributorProfiles()
-			var profile *ContributorProfile
-			for i := range profiles {
-				if secureCompare(profiles[i].RegistrationToken, tokenHash) {
-					profile = &profiles[i]
-					break
-				}
-			}
+			profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
 
 			if profile == nil {
 				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})

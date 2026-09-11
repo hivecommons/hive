@@ -115,7 +115,7 @@ func TestCovKM_List(t *testing.T) {
 
 func TestCovKM_Export(t *testing.T) {
 	s := covKServer(t)
-	if rec := doGet(s, "/api/knowledge/export"); rec.Code != http.StatusOK {
+	if rec := doOwnerGet(s, "/api/knowledge/export"); rec.Code != http.StatusOK {
 		t.Fatalf("export: %d", rec.Code)
 	}
 }

@@ -1004,6 +1004,7 @@ func TestHandleKnowledgeExport_Disabled(t *testing.T) {
 	srv.deps.Config.Knowledge.Enabled = false
 
 	req := httptest.NewRequest("GET", "/api/knowledge/export", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKnowledgeExport(w, req)
 

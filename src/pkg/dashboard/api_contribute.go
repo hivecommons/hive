@@ -605,6 +605,37 @@ func findContributor(id string) *ContributorProfile {
 	return nil
 }
 
+func registrationTokenFromAuthorization(r *http.Request) string {
+	authz := r.Header.Get("Authorization")
+	if strings.HasPrefix(authz, "Bearer ") {
+		const bearerPrefixLen = 7 // len("Bearer ")
+		return authz[bearerPrefixLen:]
+	}
+	if strings.HasPrefix(authz, "token ") {
+		const tokenPrefixLen = 6 // len("token ")
+		return authz[tokenPrefixLen:]
+	}
+	return ""
+}
+
+func contributorProfileFromRegistrationToken(token string) *ContributorProfile {
+	if token == "" {
+		return nil
+	}
+	tokenHash := sha256Hex(token)
+	profiles := listContributorProfiles()
+	for i := range profiles {
+		if secureCompare(profiles[i].RegistrationToken, tokenHash) {
+			return &profiles[i]
+		}
+	}
+	return nil
+}
+
+func (s *Server) contributorProfileFromAuthorization(r *http.Request) *ContributorProfile {
+	return contributorProfileFromRegistrationToken(registrationTokenFromAuthorization(r))
+}
+
 // ── Landing page ───────────────────────────────────────────────────────────
 
 // handleContributeLanding renders the public sign-up page for ClankeR, the
@@ -6573,15 +6604,7 @@ func (s *Server) resolveContributeCaller(r *http.Request) string {
 	if u := s.resolveViewerUsername(r); u != "" {
 		return u
 	}
-	authz := r.Header.Get("Authorization")
-	var token string
-	if strings.HasPrefix(authz, "Bearer ") {
-		const bearerPrefixLen = 7 // len("Bearer ")
-		token = authz[bearerPrefixLen:]
-	} else if strings.HasPrefix(authz, "token ") {
-		const tokenPrefixLen = 6 // len("token ")
-		token = authz[tokenPrefixLen:]
-	}
+	token := registrationTokenFromAuthorization(r)
 	if token == "" {
 		return ""
 	}
@@ -8482,9 +8505,15 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 	// Require allowlist authorization for every path except /api/v1/me, which is
 	// self-scoped. Fail closed: an empty allowlist authorizes nobody.
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/me") {
-		if _, ok := s.deps.Config.Dashboard.AuthorizedRole(username); !ok {
+		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
 			jsonError(w, "forbidden: not authorized for this endpoint", http.StatusForbidden)
 			return
+		}
+		r.Header.Set("X-Hive-User", username)
+		r.Header.Set("X-Hive-Role", role)
+		if isOwnerRole(role) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
 		}
 	}
 

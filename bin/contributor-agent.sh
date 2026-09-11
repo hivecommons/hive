@@ -70,8 +70,9 @@ fetch_knowledge_export() {
   fi
 
   curl_rc=0
-  curl --silent --show-error --location "${proto_redir_args[@]}" --max-redirs "${KNOWLEDGE_MAX_REDIRS:-3}" \
+  curl --silent --show-error "${proto_redir_args[@]}" \
     --max-time "${KNOWLEDGE_FETCH_MAX_TIME:-15}" \
+    --header "Authorization: Bearer ${HIVE_REGISTRATION_TOKEN}" \
     --output "$tmp_body" \
     --write-out "%{http_code}" \
     "$url" > "$tmp_status" 2>/dev/null || curl_rc=$?

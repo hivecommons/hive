@@ -617,6 +617,7 @@ func TestHandleKnowledgeListNoFilter(t *testing.T) {
 func TestHandleKnowledgeExportMarkdown(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("GET", "/api/knowledge/export", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKnowledgeExport(w, req)
 
