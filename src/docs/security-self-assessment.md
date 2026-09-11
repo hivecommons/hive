@@ -464,22 +464,14 @@ project-level compliance signals:
   Maintainer Committee table in upstream `GOVERNANCE-HIVE.md`, and the file
   says so explicitly, calling drift "a governance drift bug, not a
   housekeeping detail."
-- **CODEOWNERS**: `.github/CODEOWNERS` covers security-sensitive paths
-  (Dockerfiles, workflows, deploy manifests, launch scripts, key/cookie
-  code) but is **advisory only** — "Require review from Code Owners" is not
-  enabled in `v4` branch protection (verified against the live branch
-  protection API: no required pull-request reviews are configured; one
-  required status check is). The reason is stated in the file's own header:
-  the repository's automation merges green PRs, and enforcement would block
-  it. Two honest consequences follow. First, every path in that file
-  currently resolves to a single owner (`@clubanderson`) even though three
-  maintainers now exist — a lag between the governance change and the
-  ownership file, being corrected. Second, and more important: a change to
-  the proxy deny-rule table or the SUID contract script can merge on green
-  CI without a human security reviewer. That is a real gap between what
-  CODEOWNERS implies and what branch protection enforces, and it is the
-  project's largest remaining process risk — see
-  [Known weaknesses](#three-most-significant-known-weaknesses).
+- **CODEOWNERS**: `.github/CODEOWNERS` is scoped to the security-sensitive
+  paths whose changes can directly alter security boundaries (proxy policy,
+  Dockerfiles, workflow definitions, deploy manifests, SUID contract checks,
+  and key/cookie/session handling), and every entry names all three current
+  maintainers (`@clubanderson`, `@hanthor`, `@Danathar`). The remaining
+  repo-side step is enabling "Require review from Code Owners" in `v4` branch
+  protection; until that is enabled, CODEOWNERS is still advisory rather than
+  enforced — see [Known weaknesses](#three-most-significant-known-weaknesses).
 
 ### Communication channels
 
@@ -624,29 +616,22 @@ because a self-assessment that only lists strengths is not credible:
    availability.
 
    **What remains unmitigated is the enforcement gap, and it is real.**
-   `.github/CODEOWNERS` covers the security-sensitive paths — Dockerfiles,
-   CI workflows, deploy manifests, launch scripts, key/cookie handling — but
-   "Require review from Code Owners" is **not enabled** in `v4` branch
-   protection, which the live API confirms: no required pull-request reviews
-   are configured at all. Every path in that file also still resolves to a
-   single owner, lagging the governance change. The net effect is that a
-   change to the MITM proxy's deny-rule table — the control this document
-   credits as the thing an attacker cannot argue with — can merge on green
-   CI with no human security reviewer.
+   `.github/CODEOWNERS` now covers only the security-sensitive paths —
+   Dockerfiles, CI workflows, deploy manifests, SUID contract checks, proxy
+   policy, and key/cookie/session handling — and lists all three current
+   maintainers on every entry. But "Require review from Code Owners" still
+   has to be enabled in `v4` branch protection after the scoped file lands.
+   Until then, a change to the MITM proxy's deny-rule table — the control
+   this document credits as the thing an attacker cannot argue with — can
+   merge on green CI with no human security reviewer.
 
    **Why it has not simply been turned on.** This is the honest trade at the
    center of the project: Hive is substantially self-hosting, and its own
-   agent fleet merges green PRs. Enabling required code-owner review would
-   halt that automation repository-wide, which is why `CODEOWNERS` itself
-   documents the choice in its header rather than leaving it implicit. That
-   is an explanation, not a justification, and the maintainers do not offer
-   it as one. The defensible resolution is not "all or nothing" but a
-   **scoped** enforcement rule covering only the security-critical paths
-   (proxy rules, SUID contract, workflows, deploy manifests, key handling),
-   leaving ordinary code paths on the automated merge path. That is tracked
-   in [#6687](https://github.com/hivecommons/hive/issues/6687), together
-   with updating `CODEOWNERS` to list all three maintainers so enforcement
-   is survivable when it lands.
+   agent fleet merges green PRs. Enabling required code-owner review with
+   broad coverage would halt that automation repository-wide. The defensible
+   resolution is not "all or nothing" but the scoped ownership file above,
+   leaving ordinary code paths on the automated merge path while making the
+   human-review boundary enforceable for security-critical changes.
 
    Until that ships, an evaluator should treat "the deny-rule table is
    enforced in code" as true and "the deny-rule table is protected from
