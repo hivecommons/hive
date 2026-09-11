@@ -134,15 +134,25 @@ func inferenceReadyStub(t *testing.T) {
 // always 500 columns wide, so the wide pane is also the more faithful fixture.
 func newRawTmuxSession(t *testing.T, session string) {
 	t.Helper()
-	if err := testTmuxCommand("new-session", "-d",
+	// Kill any pre-existing session of this name first. Fixed session names
+	// (e.g. "hive-worker", shared by every test that uses the "worker" agent
+	// name) can be left alive by an EARLIER test's async machinery — a
+	// restart-branch relaunch or a delayed quiesceThenMarkReady goroutine
+	// that re-creates the session after that test's own cleanup ran — so
+	// without this, "new-session -s <session>" fails with "duplicate
+	// session" (exit status 1) here, ~20ms into an unrelated test (#6618).
+	// Errors are ignored: "no such session" is the expected common case.
+	_ = testTmuxCommand("kill-session", "-t", session).Run()
+	if out, err := testTmuxCommand("new-session", "-d",
 		"-x", strconv.Itoa(defaultTmuxPaneWidth), "-y", strconv.Itoa(defaultTmuxPaneHeight),
-		"-s", session).Run(); err != nil {
+		"-s", session).CombinedOutput(); err != nil {
 		// Every caller gates on tmuxAvailable() first, so tmux IS on PATH by
 		// the time we get here and TMUX_TMPDIR points at a directory TestMain
 		// created. A failure now is a broken test — a stale socket, a server
 		// the suite failed to clean up, a session name collision — not a
-		// missing capability (#5388).
-		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
+		// missing capability (#5388). Include tmux's stderr so a future
+		// failure names the actual cause instead of a bare exit status.
+		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v: %s", err, out)
 	}
 	t.Cleanup(func() {
 		_ = testTmuxCommand("kill-session", "-t", session).Run()
