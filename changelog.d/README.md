@@ -20,11 +20,15 @@ deleting the fragments in the same release commit.
   narrative style as the existing `CHANGELOG.md` entries (what changed, why an
   operator cares, issue links). No headings: the compiler owns the `###`
   subsection, your file is the bullet. Multiple bullets are fine when one PR
-  genuinely warrants them; use one file per category if they differ.
+  genuinely warrants them; use one file per category if they differ. Prose or
+  headings before the first bullet fail the guard with
+  `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`.
 - **What qualifies:** the same rule as always (top of `CHANGELOG.md`):
   user-visible features, fixes, security changes, migrations, deprecations,
   breaking changes. Routine refactors, test-only changes, and dependency churn
-  need no fragment — put a `no-changelog` label on the PR if the guard asks.
+  need no fragment; docs-only changes are exempt too. Put a `no-changelog`
+  label on the PR if the guard asks for a fragment for a change that is not
+  user-visible.
 - The `<!-- release: none|major|minor|patch -->` escape hatch
   (`src/docs/releases.md`) may ride in a fragment as its first line; it is
   compiled into `Unreleased` verbatim and honoured by
@@ -36,12 +40,19 @@ Example — a complete fragment, `changelog.d/fixed-1234-relay-timeout.md`:
 - The contributor relay no longer times out during long tasks ([#1234](https://github.com/hivecommons/hive/issues/1234)). Previously ...
 ```
 
-## Transition (closed 2026-09-09)
+## Direct `CHANGELOG.md` edits
 
-The transition window is over: since 2026-09-09 the fragment guard **rejects**
-PRs that edit `CHANGELOG.md`'s `## Unreleased` section directly — write a
-fragment instead. Entries already sitting under `## Unreleased` keep working:
-the compiler merges fragments *into* whatever is there.
+The transition window is over: since 2026-09-09 the fragment guard no longer
+accepts a direct `CHANGELOG.md` edit as a substitute for a fragment. A
+user-visible code change must add a `changelog.d/` fragment, or carry the
+`no-changelog` label if the author and maintainers agree no release note is
+needed. If such a PR edits `CHANGELOG.md` directly without a fragment or label,
+the guard reports `This PR edits CHANGELOG.md's Unreleased section directly;
+the transition window ended 2026-09-09` and then fails with
+`src/ code changed without a changelog.d fragment or a no-changelog label`.
+
+Entries already sitting under `## Unreleased` keep working: the compiler merges
+fragments *into* whatever is there.
 
 This `README.md` is never treated as a fragment and keeps the directory alive
 between releases.

@@ -171,7 +171,7 @@ Credit the filer of the issue the PR fixes, not everyone who commented. If sever
 
 ## Changelog fragments
 
-One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The complete workflow:
+One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The compiler owns the `###` headings, so do not put headings in a fragment. The complete workflow:
 
 ```bash
 echo '- The relay no longer drops long tasks ([#1234](https://github.com/hivecommons/hive/issues/1234)).' > changelog.d/fixed-1234-relay-drop.md
@@ -179,7 +179,7 @@ git add changelog.d/fixed-1234-relay-drop.md
 git commit -s
 ```
 
-`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. The transition window that let in-flight PRs edit `CHANGELOG.md` directly closed on 2026-09-09 — the `changelog-fragment-guard` check now fails any PR that touches the `## Unreleased` section; write a fragment instead.
+`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. The transition window that let in-flight PRs rely on direct `CHANGELOG.md` edits closed on 2026-09-09. For a user-visible code change, write a fragment instead: the `changelog-fragment-guard` check no longer accepts a direct `CHANGELOG.md` edit as a substitute, and reports `This PR edits CHANGELOG.md's Unreleased section directly; the transition window ended 2026-09-09` before asking for a fragment or `no-changelog` label. If a fragment starts with prose or a heading instead of a `- ` entry bullet, the guard fails with `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`. For refactors, test-only changes, docs-only changes, dependency churn, or other changes that are not user-visible, use the `no-changelog` label when the guard asks instead of adding a fragment.
 
 ## Maintainer resources
 
