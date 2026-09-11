@@ -20,44 +20,110 @@ else
   SESSION_FROM_ARG=0
 fi
 
-# Find the per-agent socket: /tmp/tmux-*/${SESSION}
-TMUX_SOCKET=""
-for sock in /tmp/tmux-*/"${SESSION}"; do
-  if [ -S "$sock" ]; then
-    TMUX_SOCKET="$sock"
-    break
-  fi
-done
-
-# Fallback: session may be on the default tmux server (no UID isolation).
-if [ -z "$TMUX_SOCKET" ]; then
-  DEV_UID=$(id -u dev 2>/dev/null || echo "1001")
-  TMUX_SOCKET="/tmp/tmux-${DEV_UID}/default"
+TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
+TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
+if ! [[ "$TTYD_WAIT_SEC" =~ ^[0-9]+$ ]]; then
+  echo "error: HIVE_TTYD_WAIT_SEC must be a non-negative integer (got '${TTYD_WAIT_SEC}')" >&2
+  exit 1
+fi
+if ! [[ "$TTYD_POLL_SEC" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: HIVE_TTYD_POLL_SEC must be a positive integer (got '${TTYD_POLL_SEC}')" >&2
+  exit 1
 fi
 
-if [ ! -S "$TMUX_SOCKET" ]; then
-  echo "error: no tmux socket found for session '${SESSION}'" >&2
-  if [ "$SESSION_FROM_ARG" -eq 0 ]; then
-    # The operator never typed 'supervisor' — the fallback did. Say where the
-    # name should have come from instead of naming a session nobody asked for.
-    echo "hint: no session name was passed to this script, so it fell back to" >&2
-    echo "      '${SESSION}'. The dashboard sends the name as ?arg=hive-<agent>," >&2
-    echo "      which ttyd only forwards when it is started with -a/--url-arg." >&2
-    echo "      Check ttyd's argv for -a (regression #4593)." >&2
-  fi
+list_available_sessions() {
   # Real sessions are named hive-<agent>, so listing them turns a dead end into
   # the one thing the caller needs: a name that would have worked.
-  FOUND=""
+  local found=""
+  local sock
   for sock in /tmp/tmux-*/*; do
     [ -S "$sock" ] || continue
-    FOUND="${FOUND} $(basename "$sock")"
+    found="${found} $(basename "$sock")"
   done
-  if [ -n "$FOUND" ]; then
-    echo "available sessions:${FOUND}" >&2
+  local dev_uid default_socket session
+  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
+  default_socket="/tmp/tmux-${dev_uid}/default"
+  if [ -S "$default_socket" ]; then
+    while IFS= read -r session; do
+      [ -n "$session" ] || continue
+      found="${found} ${session}"
+    done < <(tmux -S "$default_socket" list-sessions -F '#S' 2>/dev/null || true)
+  fi
+  if [ -n "$found" ]; then
+    echo "available sessions:${found}" >&2
   else
     echo "available sessions: none — no agent tmux sockets exist under /tmp/tmux-*/" >&2
   fi
+}
+
+socket_has_session() {
+  local socket="$1"
+  local owner_uid owner_gid owner_spec current_uid
+  local run=()
+  owner_uid=$(stat -c '%u' "$socket" 2>/dev/null || echo "")
+  owner_gid=$(stat -c '%g' "$socket" 2>/dev/null || echo "")
+  current_uid=$(id -u)
+  if [ -n "$owner_uid" ] && [ "$owner_uid" != "$current_uid" ] && command -v su-exec >/dev/null 2>&1; then
+    owner_spec="${owner_uid}:${owner_gid}"
+    run=(su-exec "$owner_spec")
+  fi
+  "${run[@]}" tmux -S "$socket" has-session -t "$SESSION" 2>/dev/null
+}
+
+find_tmux_socket() {
+  local sock
+  TMUX_SOCKET=""
+  for sock in /tmp/tmux-*/"${SESSION}"; do
+    if [ -S "$sock" ] && socket_has_session "$sock"; then
+      TMUX_SOCKET="$sock"
+      return 0
+    fi
+  done
+
+  # Fallback: session may be on the default tmux server (no UID isolation). A
+  # bare default socket is not enough: during boot it may exist before the
+  # requested hive-<agent> session does, and attaching immediately would fail
+  # tight-loop instead of waiting for that session to be created.
+  local dev_uid default_socket
+  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
+  default_socket="/tmp/tmux-${dev_uid}/default"
+  if [ -S "$default_socket" ] && socket_has_session "$default_socket"; then
+    TMUX_SOCKET="$default_socket"
+    return 0
+  fi
+
+  return 1
+}
+
+if [ "$SESSION_FROM_ARG" -eq 0 ]; then
+  echo "error: no tmux socket found for session '${SESSION}'" >&2
+  # The operator never typed 'supervisor' — the fallback did. Say where the
+  # name should have come from instead of naming a session nobody asked for.
+  echo "hint: no session name was passed to this script, so it fell back to" >&2
+  echo "      '${SESSION}'. The dashboard sends the name as ?arg=hive-<agent>," >&2
+  echo "      which ttyd only forwards when it is started with -a/--url-arg." >&2
+  echo "      Check ttyd's argv for -a (regression #4593)." >&2
+  list_available_sessions
   exit 1
+fi
+
+if ! find_tmux_socket; then
+  echo "waiting for agent '${SESSION#hive-}' to start (tmux session not created yet); polling up to ${TTYD_WAIT_SEC}s..." >&2
+  WAITED=0
+  while [ "$WAITED" -lt "$TTYD_WAIT_SEC" ]; do
+    sleep "$TTYD_POLL_SEC"
+    WAITED=$((WAITED + TTYD_POLL_SEC))
+    if find_tmux_socket; then
+      echo "agent '${SESSION#hive-}' tmux session is ready after ${WAITED}s; attaching..." >&2
+      break
+    fi
+  done
+  if [ -z "$TMUX_SOCKET" ]; then
+    echo "error: no tmux socket found for session '${SESSION}' after waiting ${TTYD_WAIT_SEC}s" >&2
+    echo "hint: '${SESSION}' was requested, but no matching tmux session was created before the wait expired." >&2
+    list_available_sessions
+    exit 1
+  fi
 fi
 
 # Derive the socket owner so we can su-exec as them (tmux requires it). Use the
