@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -232,13 +232,13 @@ func Resolve(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentI
 }
 
 // EvaluateAndAudit runs Resolve and emits the verdict to the provided AuditSink if configured.
-func EvaluateAndAudit(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentIdentity, scanner SecurityScanner, sink agent.AuditSink, actor string) Verdict {
+func EvaluateAndAudit(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentIdentity, scanner SecurityScanner, sink agentaudit.AuditSink, actor string) Verdict {
 	v := Resolve(ctx, req, acmmLevel, agentId, scanner)
 	if sink != nil {
 		if actor == "" {
 			actor = "system"
 		}
-		sink.Record(actor, agent.AuditToolApproval, agentId.Name, v.AuditFields())
+		sink.Record(actor, agentaudit.AuditToolApproval, agentId.Name, v.AuditFields())
 	}
 	return v
 }
