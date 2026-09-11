@@ -33,15 +33,15 @@ deleting the fragments in the same release commit.
 Example — a complete fragment, `changelog.d/fixed-1234-relay-timeout.md`:
 
 ```markdown
-- The contributor relay no longer times out during long tasks ([#1234](https://github.com/kubestellar/hive/issues/1234)). Previously ...
+- The contributor relay no longer times out during long tasks ([#1234](https://github.com/hivecommons/hive/issues/1234)). Previously ...
 ```
 
-## Transition (until 2026-09-09)
+## Transition (closed 2026-09-09)
 
-Entries already sitting under `## Unreleased` — and PRs in flight that edit it
-directly — keep working: the compiler merges fragments *into* whatever is
-there, and the fragment guard accepts direct `CHANGELOG.md` edits until
-2026-09-09. New PRs should write fragments; that is the whole point.
+The transition window is over: since 2026-09-09 the fragment guard **rejects**
+PRs that edit `CHANGELOG.md`'s `## Unreleased` section directly — write a
+fragment instead. Entries already sitting under `## Unreleased` keep working:
+the compiler merges fragments *into* whatever is there.
 
 This `README.md` is never treated as a fragment and keeps the directory alive
 between releases.
