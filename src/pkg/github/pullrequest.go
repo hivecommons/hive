@@ -98,7 +98,10 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	// the existing PR cleanly (the watcher may re-process a request after a
 	// crash between "PR opened" and "request file deleted").
 	if existing, err := c.findOpenPRForHead(ctx, owner, repo, head); err != nil {
-		c.logger.Warn("CreatePR: dedupe lookup failed, proceeding to create",
+		if isRetryableGitHubError(err) {
+			return CreatePRResult{}, fmt.Errorf("CreatePR: dedupe lookup failed with retryable error for %s/%s head %s: %w", owner, repo, head, err)
+		}
+		c.logger.Warn("CreatePR: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repo), slog.String("head", head), slog.String("error", err.Error()))
 	} else if existing != nil {
 		c.logger.Info("CreatePR: open PR already exists for head, reusing",
@@ -112,11 +115,14 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	// trees, so `git diff` between their tips was empty. Compare the tree SHA
 	// against the open PRs on this same base and reuse the match instead.
 	//
-	// A failed lookup proceeds to create. Refusing to publish work because an
-	// auxiliary read failed would be a worse bug than the duplicate: the guard
-	// is here to stop redundant PRs, not to become a new way to lose one.
+	// Retryable lookup failures keep the request queued rather than opening
+	// blind; terminal lookup failures still degrade so a bad candidate cannot
+	// permanently block an unrelated PR.
 	if existing, err := c.findOpenPRWithIdenticalTree(ctx, owner, repo, head, base); err != nil {
-		c.logger.Warn("CreatePR: duplicate-tree lookup failed, proceeding to create",
+		if isRetryableGitHubError(err) {
+			return CreatePRResult{}, fmt.Errorf("CreatePR: duplicate-tree lookup failed with retryable error for %s/%s head %s: %w", owner, repo, head, err)
+		}
+		c.logger.Warn("CreatePR: duplicate-tree lookup failed with terminal error, creating without duplicate-tree dedupe",
 			slog.String("repo", repo), slog.String("head", head), slog.String("error", err.Error()))
 	} else if existing != nil {
 		c.logger.Info("CreatePR: an open PR already carries this exact tree, reusing it instead of opening a duplicate",

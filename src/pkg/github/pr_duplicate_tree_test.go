@@ -33,8 +33,10 @@ type dupTreeServer struct {
 	labels      int
 	listedBases []string
 	// failRef, failList and failCommit make the corresponding endpoint 500, so
-	// the fail-open behaviour can be exercised one dependency at a time.
+	// the retryable fail-closed behaviour can be exercised one dependency at a
+	// time.
 	failRef, failList, failCommit bool
+	failCommits                   map[string]bool
 }
 
 type dupTreePR struct {
@@ -70,11 +72,11 @@ func (d *dupTreeServer) start(t *testing.T) *httptest.Server {
 			d.mu.Lock()
 			d.commitCalls++
 			d.mu.Unlock()
-			if d.failCommit {
+			sha := path[strings.Index(path, "/git/commits/")+len("/git/commits/"):]
+			if d.failCommit || d.failCommits[sha] {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			sha := path[strings.Index(path, "/git/commits/")+len("/git/commits/"):]
 			tree, ok := d.trees[sha]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -313,19 +315,18 @@ func TestCreatePR_DuplicateTreeMatchesIdenticalHeadSHA(t *testing.T) {
 	}
 }
 
-// TestCreatePR_DuplicateTreeFailsOpen is the property that keeps this guard from
-// becoming a new way to LOSE work. Every dependency it reads is auxiliary: if
-// any of them fails, the PR must still be opened. A guard that blocked
-// publication on a failed read would be a worse bug than the duplicate it
-// prevents.
-func TestCreatePR_DuplicateTreeFailsOpen(t *testing.T) {
+// Retryable failures in duplicate-prevention lookups must keep the request
+// queued rather than opening blind and risking a duplicate PR.
+func TestCreatePR_DuplicateTreeRetryableFailuresFailClosed(t *testing.T) {
 	// Each case makes one dependency fail while leaving a real duplicate in
 	// place, so a guard that somehow still fired would be visible as created=0.
 	cases := map[string]func(d *dupTreeServer){
 		"ref lookup fails":    func(d *dupTreeServer) { d.failRef = true },
 		"open-PR list fails":  func(d *dupTreeServer) { d.failList = true },
 		"commit lookup fails": func(d *dupTreeServer) { d.failCommit = true },
-		"head branch missing": func(d *dupTreeServer) { d.branches = map[string]string{} },
+		"candidate commit lookup fails": func(d *dupTreeServer) {
+			d.failCommits = map[string]bool{"beef2222": true}
+		},
 	}
 	for name, breakIt := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -340,17 +341,37 @@ func TestCreatePR_DuplicateTreeFailsOpen(t *testing.T) {
 			srv := d.start(t)
 			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
 
-			res, err := c.CreatePR(context.Background(), "o/r", "dup", "main", "dup", "body")
-			if err != nil {
-				t.Fatalf("CreatePR returned an error instead of opening the PR: %v", err)
+			_, err := c.CreatePR(context.Background(), "o/r", "dup", "main", "dup", "body")
+			if err == nil || !isRetryableGitHubError(err) {
+				t.Fatalf("CreatePR must fail closed with retryable error, got %v", err)
 			}
-			if created, _ := d.counts(); created != 1 {
-				t.Fatalf("opened %d PRs, want 1 — a failed auxiliary read must never withhold the PR", created)
-			}
-			if res.DuplicateTree {
-				t.Error("DuplicateTree = true after a failed lookup; the guard must not claim a finding it could not make")
+			if created, _ := d.counts(); created != 0 {
+				t.Fatalf("opened %d PRs, want 0 after retryable dedupe failure", created)
 			}
 		})
+	}
+}
+
+func TestCreatePR_DuplicateTreeTerminalMissingHeadStillCreates(t *testing.T) {
+	d := &dupTreeServer{
+		branches: map[string]string{},
+		trees:    map[string]string{"cafe1111": "eb0b85ab", "beef2222": "eb0b85ab"},
+		openPRs: map[string][]dupTreePR{
+			"main": {{Number: 212, HeadRef: "other", HeadSHA: "beef2222"}},
+		},
+	}
+	srv := d.start(t)
+	c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+
+	res, err := c.CreatePR(context.Background(), "o/r", "dup", "main", "dup", "body")
+	if err != nil {
+		t.Fatalf("CreatePR returned an error instead of opening the PR after terminal lookup failure: %v", err)
+	}
+	if created, _ := d.counts(); created != 1 {
+		t.Fatalf("opened %d PRs, want 1", created)
+	}
+	if res.DuplicateTree {
+		t.Error("DuplicateTree = true after a failed lookup; the guard must not claim a finding it could not make")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,8 +49,9 @@ var issueRequestPollInterval = 10 * time.Second
 // the life of the pod. The PR-open and review watchers apply the same policy
 // via the shared retryTracker (request_retry.go).
 const (
-	issueRetryBase = 30 * time.Second
-	issueRetryMax  = 15 * time.Minute
+	issueRetryBase         = 30 * time.Second
+	issueRetryMax          = 15 * time.Minute
+	issueRetryRateLimitMax = time.Hour
 )
 
 // issueRequestMaxAge is the give-up horizon: a request that still has not
@@ -208,7 +210,7 @@ func (c *Client) issueBackoffAllows(path string, nowFn func() time.Time) bool {
 
 // issueNoteFailure records a failed attempt and returns true when the request
 // has exceeded its give-up horizon and should be quarantined.
-func (c *Client) issueNoteFailure(path string, nowFn func() time.Time) bool {
+func (c *Client) issueNoteFailure(path string, nowFn func() time.Time, err error) bool {
 	c.issueRetryMu.Lock()
 	defer c.issueRetryMu.Unlock()
 	if c.issueRetries == nil {
@@ -224,6 +226,9 @@ func (c *Client) issueNoteFailure(path string, nowFn func() time.Time) bool {
 	backoff := issueRetryBase << uint(min(st.attempts-1, 30))
 	if backoff > issueRetryMax || backoff <= 0 {
 		backoff = issueRetryMax
+	}
+	if isRateLimitErr(err) {
+		backoff = retryableGitHubDelay(err, now, backoff, issueRetryMax, issueRetryRateLimitMax)
 	}
 	st.nextTry = now.Add(backoff)
 	return now.Sub(st.firstTry) > issueRequestMaxAge
@@ -376,7 +381,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		resp.OK = false
 		resp.Error = err.Error()
 		c.writeIssueResult(path, resp)
-		gaveUp := c.issueNoteFailure(path, nowFn)
+		gaveUp := c.issueNoteFailure(path, nowFn, err)
 		if gaveUp {
 			_ = os.Rename(path, path+".failed")
 			c.issueClearRetry(path)
@@ -493,8 +498,11 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 	// Issues.ListByRepo is strongly consistent (unlike the Search API, whose
 	// index can lag minutes on GHE — useless against a 10s retry loop).
 	if existing, err := c.findOpenIssueByTitle(ctx, owner, repoName, title); err != nil {
-		c.logger.Warn("CreateIssue: dedupe lookup failed, proceeding to create",
-			slog.String("repo", repoName), slog.String("error", err.Error()))
+		if isRetryableGitHubError(err) {
+			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
+		}
+		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
+			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
 	} else if existing != nil {
 		c.logger.Info("CreateIssue: open issue with identical title exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()))
@@ -520,17 +528,21 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 		}, nil
 	}
 
-	// Ensure labels exist; a label that cannot be ensured is dropped (labels
-	// are provenance metadata, not a gate — mirror the gh-wrapper posture).
+	// Ensure labels exist. Retryable failures keep the whole request queued
+	// because provenance labels (agent/*, hive/*) drive hive filtering and
+	// duplicate guards. Terminal label failures still degrade to unlabeled.
 	var usable []string
 	for _, l := range labels {
 		l = strings.TrimSpace(l)
 		if l == "" {
 			continue
 		}
-		if err := c.ensureLabel(ctx, owner, repoName, l); err != nil {
+		if err := c.ensureCreateIssueLabel(ctx, owner, repoName, l); err != nil {
+			if isRetryableGitHubError(err) {
+				return CreateIssueResult{}, fmt.Errorf("CreateIssue: could not ensure label %q in %s/%s due to retryable error: %w", l, owner, repoName, err)
+			}
 			c.logger.Warn("CreateIssue: could not ensure label, creating without it",
-				slog.String("repo", repoName), slog.String("label", l), slog.String("error", err.Error()))
+				slog.String("repo", repoName), slog.String("label", l), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
 			continue
 		}
 		usable = append(usable, l)
@@ -592,4 +604,25 @@ func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title st
 		}
 	}
 	return nil, nil
+}
+
+func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name string) error {
+	if _, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name); err == nil {
+		return nil
+	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {
+		return err
+	}
+	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
+		Name:        gh.Ptr(name),
+		Color:       gh.Ptr("8250df"),
+		Description: gh.Ptr("Created by Hive for agent-filed issue provenance"),
+	})
+	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+		if _, _, getErr := c.client.Issues.GetLabel(ctx, owner, repo, name); getErr == nil {
+			return nil
+		} else if isRetryableGitHubError(getErr) {
+			return getErr
+		}
+	}
+	return err
 }

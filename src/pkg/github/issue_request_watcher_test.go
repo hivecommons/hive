@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -68,6 +69,21 @@ func issueTestClient(t *testing.T, srvURL string) *Client {
 	c := testClient(t, srvURL)
 	c.issueAuthz = func(agent string, uid int, kind string) error { return nil }
 	return c
+}
+
+func writeRateLimitResponse(w http.ResponseWriter, reset time.Time) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-RateLimit-Remaining", "0")
+	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, `{"message":"API rate limit exceeded"}`)
+}
+
+func writeTooManyRequestsResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", "60")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = io.WriteString(w, `{"message":"too many requests"}`)
 }
 
 func withIssueDir(t *testing.T) string {
@@ -446,16 +462,12 @@ func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 	}
 }
 
-// A failing dedupe lookup or label-ensure must degrade, never block the create:
-// losing provenance labels is acceptable, losing the finding is not.
-func TestCreateIssue_DegradesWhenListAndLabelsFail(t *testing.T) {
+func TestCreateIssue_DedupeRetryableFailureFailsClosed(t *testing.T) {
 	created := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"): // dedupe list
-			w.WriteHeader(http.StatusInternalServerError)
-		case strings.Contains(r.URL.Path, "/labels"): // ensure-label lookups+creates
-			w.WriteHeader(http.StatusInternalServerError)
+			writeRateLimitResponse(w, time.Now().Add(time.Hour))
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
 			created++
 			w.Header().Set("Content-Type", "application/json")
@@ -467,12 +479,191 @@ func TestCreateIssue_DegradesWhenListAndLabelsFail(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"security"})
-	if err != nil {
-		t.Fatalf("create must survive list/label failures: %v", err)
+	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", nil); err == nil || !isRetryableGitHubError(err) {
+		t.Fatalf("dedupe rate limit must return retryable error, got %v", err)
 	}
-	if created != 1 || res.Number != 123 || res.AlreadyExisted {
-		t.Fatalf("unexpected result: created=%d res=%+v", created, res)
+	if created != 0 {
+		t.Fatalf("retryable dedupe failure must not create blind issue, got %d creates", created)
+	}
+}
+
+func TestCreateIssue_DedupeTooManyRequestsFailsClosed(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			writeTooManyRequestsResponse(w)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", nil); err == nil || !isRetryableGitHubError(err) {
+		t.Fatalf("dedupe 429 must return retryable error, got %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("429 dedupe failure must not create blind issue, got %d creates", created)
+	}
+}
+
+func TestCreateIssue_LabelEnsureRetryableFailureFailsClosed(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			writeRateLimitResponse(w, time.Now().Add(time.Hour))
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"agent/quality"}); err == nil || !isRetryableGitHubError(err) {
+		t.Fatalf("label rate limit must return retryable error, got %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("retryable label failure must not create degraded issue, got %d creates", created)
+	}
+}
+
+func TestCreateIssue_LabelEnsureConcurrentCreateKeepsLabel(t *testing.T) {
+	created := 0
+	labelGets := 0
+	var createLabels []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			labelGets++
+			if labelGets == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"agent/quality"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"message":"Validation Failed"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			var body struct {
+				Labels []string `json:"labels"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode issue create body: %v", err)
+			}
+			createLabels = append(createLabels, body.Labels...)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"agent/quality"})
+	if err != nil {
+		t.Fatalf("concurrent label creation should keep label: %v", err)
+	}
+	if created != 1 || res.Number != 123 || strings.Join(createLabels, ",") != "agent/quality" {
+		t.Fatalf("unexpected create result: created=%d labels=%v res=%+v", created, createLabels, res)
+	}
+}
+
+func TestCreateIssue_LabelEnsureTerminalFailureCreatesWithoutLabel(t *testing.T) {
+	created := 0
+	var createLabels []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"message":"Validation Failed"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			var body struct {
+				Labels []string `json:"labels"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode issue create body: %v", err)
+			}
+			createLabels = append(createLabels, body.Labels...)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"bad label"})
+	if err != nil {
+		t.Fatalf("terminal label ensure failure should create without label: %v", err)
+	}
+	if created != 1 || res.Number != 123 || len(createLabels) != 0 {
+		t.Fatalf("unexpected create result: created=%d labels=%v res=%+v", created, createLabels, res)
+	}
+}
+
+func TestIssueRequestWatcher_RateLimitBackoffUsesReset(t *testing.T) {
+	created := 0
+	reset := time.Now().Add(2 * time.Minute).Truncate(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			writeRateLimitResponse(w, reset)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{Repo: "o/r", Title: "rate limited", Body: "body", Agent: "quality"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := reset.Add(-2 * time.Minute)
+	clock := func() time.Time { return now }
+
+	c.processIssueRequests(context.Background(), clock)
+	if created != 0 {
+		t.Fatalf("rate-limited dedupe must not create, got %d creates", created)
+	}
+	st := c.issueRetries[reqPath]
+	if st == nil {
+		t.Fatal("expected retry state")
+	}
+	if st.nextTry.Before(reset) {
+		t.Fatalf("rate-limit backoff should wait until reset: nextTry=%s reset=%s", st.nextTry, reset)
 	}
 }
 
