@@ -229,6 +229,21 @@ else
       # here for a reason that has nothing to do with what is under test.
       run_attach() { timeout 20 bash "$ATTACH" "$@" </dev/null 2>&1; }
 
+      # ttyd-tmux.sh's no-argument path falls back to /tmp/tmux-<uid of dev,
+      # else 1001>/default. On GitHub-hosted runners the job user IS uid 1001,
+      # and an earlier test in the same job can leave an idle default tmux
+      # server there (a socket with zero sessions). The attach then reaches
+      # that server and dies with tmux's own "no sessions" instead of the
+      # #4593 hint this section asserts on. Only an idle, self-owned server is
+      # removed: one that still has sessions is somebody's real state.
+      FALLBACK_SOCK="/tmp/tmux-$(id -u dev 2>/dev/null || echo 1001)/default"
+      if [ -S "$FALLBACK_SOCK" ] && [ -O "$FALLBACK_SOCK" ] \
+         && ! tmux -S "$FALLBACK_SOCK" list-sessions >/dev/null 2>&1; then
+        tmux -S "$FALLBACK_SOCK" kill-server 2>/dev/null || true
+        rm -f "$FALLBACK_SOCK" 2>/dev/null || true
+        echo "  note: removed idle leftover tmux server at ${FALLBACK_SOCK}"
+      fi
+
       # No argument — the state ttyd leaves the script in when -a is missing.
       NOARG_OUT="$(run_attach)"
       NOARG_RC=$?
