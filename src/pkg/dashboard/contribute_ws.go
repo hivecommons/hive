@@ -369,8 +369,11 @@ type WSMessage struct {
 	// HIVE_VERDICT: line, "chrome_idle" when it never did and the relay fell
 	// back to a bounded grace period of idle-looking terminal chrome.
 	//
-	// Diagnostic only — it changes no cooldown, no trust and no selection. It
-	// exists so per-backend sentinel non-compliance is MEASURABLE rather than
+	// Since #6723 an explicit "chrome_idle" marks the completion evidence-less
+	// (no PR, no verdict): it books only the flat base cooldown instead of
+	// escalating, and does not clear the issue's failure history. It still
+	// grants no trust and no selection. It also remains the field by which
+	// per-backend sentinel non-compliance is MEASURABLE rather than
 	// guessed at: chrome inference is the mechanism behind thirteen separate
 	// false-completion issues, and this field is how an operator sees which
 	// backends are still relying on it. Absent from relays predating #5376 and
@@ -1783,8 +1786,10 @@ func normalizeCompletionVerdict(reported, verifiedPR string) string {
 	return completionVerdictIdle
 }
 
-// Completion-signal vocabulary (kubestellar/hive#5376). Diagnostic only: these
-// values gate no cooldown, no trust and no selection.
+// Completion-signal vocabulary (kubestellar/hive#5376). Originally diagnostic
+// only; since #6723 an explicit chrome_idle also marks a completion as
+// evidence-less, which bounds its cooldown and preserves failure history (see
+// isEvidenceLessCompletion). It still grants no trust and no selection.
 const (
 	// completionSignalVerdict — the agent printed its own HIVE_VERDICT: line.
 	// This is the trustworthy signal.
@@ -1800,6 +1805,37 @@ const (
 	// value the hub does not recognise.
 	completionSignalUnknown = "unknown"
 )
+
+// isEvidenceLessCompletion reports whether a task_complete carries NO evidence
+// that the work was attempted (#6723).
+//
+// The hub accepts three kinds of evidence, and this returns false if ANY is
+// present:
+//
+//   - a verified PR URL — the strongest, and the only one that is not
+//     self-reported;
+//   - an affirmative no_work_needed verdict — the agent reached a conclusion
+//     and said so;
+//   - anything other than an explicit chrome_idle signal. This is the
+//     conservative half of the predicate and it is deliberate: the field is
+//     absent from every relay predating #5376 and from the headless path,
+//     both of which normalize to "unknown". Keying off chrome_idle
+//     SPECIFICALLY means this policy changes behaviour only for a relay that
+//     has affirmatively told us it fell back to chrome inference. No existing
+//     relay silently changes behaviour by upgrading the hub.
+//
+// What remains — no PR, no conclusion, and a relay admitting it inferred
+// completion from idle terminal chrome — is the #6717 shape exactly: a prompt
+// that was never submitted, reported as done.
+func isEvidenceLessCompletion(prURL, verdict, signal string) bool {
+	if strings.TrimSpace(prURL) != "" {
+		return false
+	}
+	if verdict == completionVerdictNoWorkNeeded {
+		return false
+	}
+	return normalizeCompletionSignal(signal) == completionSignalChromeIdle
+}
 
 // normalizeCompletionSignal maps a client-reported completion_signal onto the
 // closed vocabulary above. Client-supplied free text never reaches the hub's
@@ -2105,6 +2141,26 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 // on that item rather than on a shared "repo#0" record that would suppress
 // every other zero-numbered item in the repository.
 func (h *ContributeWSHub) markTaskCompletedVerdictKey(key string, prURL, verdict, reporter, reason string) {
+	h.markTaskCompletedVerdictKeySignal(key, prURL, verdict, reporter, reason, completionSignalUnknown)
+}
+
+// markTaskCompletedVerdictKeySignal is markTaskCompletedVerdictKey plus the
+// completion SIGNAL (#6723), which decides whether this completion carries
+// evidence at all.
+//
+// #6717 showed a task reported complete by the chrome_idle fallback when the
+// prompt was never submitted: no commit, no branch, no PR, no HIVE_VERDICT.
+// That completion still escalated the no-PR streak and still cleared the
+// issue's failure history, so repeated false completions walked the cooldown
+// up to the full with-PR window and parked live work. A false completion is
+// strictly worse than a failure — failures are re-offered, false completions
+// silently strand the issue.
+//
+// So an EVIDENCE-LESS completion (defined by isEvidenceLessCompletion) books
+// only the flat base cooldown, never escalates, and leaves failure history
+// intact. It is loop-protected but re-offered, which is the behaviour the
+// absent evidence actually justifies.
+func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, verdict, reporter, reason, signal string) {
 	if key == "" {
 		return
 	}
@@ -2115,6 +2171,7 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKey(key string, prURL, verdict
 	// escalation below. Read before taking completedMu: it walks server config,
 	// which the lock has no business covering.
 	withPRCooldown := h.configuredWithPRCooldown()
+	evidenceLess := isEvidenceLessCompletion(prURL, verdict, signal)
 	h.completedMu.Lock()
 	var cooldown time.Duration
 	verdictLedgerDirty := false
@@ -2129,6 +2186,13 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKey(key string, prURL, verdict
 			delete(h.noWorkVerdicts, key)
 			verdictLedgerDirty = true
 		}
+	} else if evidenceLess {
+		// #6723: no PR, no verdict line, and no affirmative no_work_needed —
+		// the relay fell back to idle-looking terminal chrome and has told us
+		// so. That is not evidence that the work was even attempted, so it must
+		// not escalate. A flat base cooldown keeps the issue out of a tight
+		// re-offer loop (#2492/#2557) while leaving it offerable.
+		cooldown = completedNoPRCooldownHours * time.Hour
 	} else {
 		// #3980: repeated no-PR completions escalate geometrically (4h → 8h →
 		// …, capped at the with-PR cooldown) so a "nothing to ship" loop —
@@ -2164,17 +2228,24 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKey(key string, prURL, verdict
 	// consecutive-failure counter resets so a flaky-then-fixed issue does not
 	// carry a stale quarantine, and the short failure cooldown is superseded by
 	// the (longer) completion cooldown recorded just above.
+	//
+	// #6723: an evidence-less completion is exempt. Clearing the quarantine
+	// counter on it lets an issue that fails, then false-completes, then fails
+	// again evade consecutive-failure quarantine forever — the counter is reset
+	// by the very signal that indicates nothing was attempted.
 	failureCleared := false
-	if h.failedTasks != nil {
-		if _, ok := h.failedTasks[key]; ok {
-			delete(h.failedTasks, key)
-			failureCleared = true
+	if !evidenceLess {
+		if h.failedTasks != nil {
+			if _, ok := h.failedTasks[key]; ok {
+				delete(h.failedTasks, key)
+				failureCleared = true
+			}
 		}
-	}
-	if h.consecutiveFailures != nil {
-		if _, ok := h.consecutiveFailures[key]; ok {
-			delete(h.consecutiveFailures, key)
-			failureCleared = true
+		if h.consecutiveFailures != nil {
+			if _, ok := h.consecutiveFailures[key]; ok {
+				delete(h.consecutiveFailures, key)
+				failureCleared = true
+			}
 		}
 	}
 	h.completedMu.Unlock()
@@ -4208,8 +4279,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						// instantly re-offered in a tight loop). #3987: a no_work_needed
 						// verdict additionally books the durable offer-suppression
 						// verdict (see markTaskCompletedVerdict).
-						h.markTaskCompletedVerdictKey(completedTask.identityKey(), verifiedPR,
-							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+						h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
+							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
+							msg.CompletionSignal)
 					}
 					completedDesc := msg.TaskID
 					if completedTask != nil {
