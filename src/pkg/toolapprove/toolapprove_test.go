@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
+	"github.com/hivecommons/hive/pkg/agentmode"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -52,7 +53,7 @@ func TestReadOnlyToolsAutoApproveAtAllACMMLevels(t *testing.T) {
 	for _, tool := range readTools {
 		for level := 1; level <= 6; level++ {
 			req := ToolRequest{Tool: tool}
-			id := AgentIdentity{Name: "scanner", Mode: agent.ModeAdvisory}
+			id := AgentIdentity{Name: "scanner", Mode: agentmode.ModeAdvisory}
 			v := Decide(context.Background(), req, level, id)
 			if v.Decision != DecisionAutoApprove {
 				t.Errorf("tool %q at ACMM L%d got %q, want %q", tool, level, v.Decision, DecisionAutoApprove)
@@ -77,7 +78,7 @@ func TestHardDenyGuardrails(t *testing.T) {
 	for _, tool := range hardDenyTools {
 		for level := 1; level <= 6; level++ {
 			req := ToolRequest{Tool: tool}
-			id := AgentIdentity{Name: "architect", Mode: agent.ModeIssuesPRsMerge}
+			id := AgentIdentity{Name: "architect", Mode: agentmode.ModeIssuesPRsMerge}
 			v := Decide(context.Background(), req, level, id)
 			if v.Decision != DecisionDeny {
 				t.Errorf("hard-deny tool %q at ACMM L%d got %q, want %q", tool, level, v.Decision, DecisionDeny)
@@ -102,7 +103,7 @@ func TestExplicitDenyRulesConfigured(t *testing.T) {
 	}
 	id := AgentIdentity{
 		Name:        "restricted-agent",
-		Mode:        agent.ModeIssuesPRsMerge,
+		Mode:        agentmode.ModeIssuesPRsMerge,
 		ToolsConfig: toolsCfg,
 	}
 
@@ -133,7 +134,7 @@ func TestExplicitDenyRulesConfigured(t *testing.T) {
 func TestAllowedReposFilter(t *testing.T) {
 	id := AgentIdentity{
 		Name:         "scoped-agent",
-		Mode:         agent.ModeIssuesAndPRs,
+		Mode:         agentmode.ModeIssuesAndPRs,
 		AllowedRepos: map[string]bool{"hivecommons/hive": true},
 	}
 
@@ -158,13 +159,13 @@ func TestAllowedReposFilter(t *testing.T) {
 
 // TestAgentModeRestrictions verifies ModeAdvisory and ModeIssuesOnly restrictions.
 func TestAgentModeRestrictions(t *testing.T) {
-	advisoryId := AgentIdentity{Name: "guide", Mode: agent.ModeAdvisory}
+	advisoryId := AgentIdentity{Name: "guide", Mode: agentmode.ModeAdvisory}
 	vAdv := Decide(context.Background(), ToolRequest{Tool: "mcp__github__create_issue"}, 6, advisoryId)
 	if vAdv.Decision != DecisionDeny {
 		t.Errorf("advisory mode creating issue got %q, want deny", vAdv.Decision)
 	}
 
-	issuesOnlyId := AgentIdentity{Name: "scanner", Mode: agent.ModeIssuesOnly}
+	issuesOnlyId := AgentIdentity{Name: "scanner", Mode: agentmode.ModeIssuesOnly}
 	vIssues := Decide(context.Background(), ToolRequest{Tool: "mcp__github__create_issue"}, 6, issuesOnlyId)
 	if vIssues.Decision == DecisionDeny {
 		t.Errorf("issues-only mode creating issue should not be denied by mode: %s", vIssues.Rationale)
@@ -178,7 +179,7 @@ func TestACMML1ThroughL6SideEffectfulGating(t *testing.T) {
 		Target:  "src/file.go",
 		Content: "package src\n",
 	}
-	id := AgentIdentity{Name: "worker", Mode: agent.ModeIssuesPRsMerge}
+	id := AgentIdentity{Name: "worker", Mode: agentmode.ModeIssuesPRsMerge}
 
 	// L1 -> operator-approve
 	v1 := Decide(context.Background(), req, 1, id)
@@ -224,7 +225,7 @@ func TestResolveSecurityScanPipeline(t *testing.T) {
 		Tool:      "Bash",
 		Arguments: map[string]any{"command": "go test ./..."},
 	}
-	id := AgentIdentity{Name: "ci-maintainer", Mode: agent.ModeIssuesPRsMerge}
+	id := AgentIdentity{Name: "ci-maintainer", Mode: agentmode.ModeIssuesPRsMerge}
 
 	// L6 with clean scan -> auto-approve
 	v6 := Resolve(context.Background(), cleanReq, 6, id, nil)
@@ -315,7 +316,7 @@ func TestEvaluateAndAuditEmitsToAuditSink(t *testing.T) {
 		Tool:      "Bash",
 		Arguments: map[string]any{"command": "go vet ./..."},
 	}
-	id := AgentIdentity{Name: "quality", Mode: agent.ModeIssuesPRsMerge}
+	id := AgentIdentity{Name: "quality", Mode: agentmode.ModeIssuesPRsMerge}
 
 	v := EvaluateAndAudit(context.Background(), req, 6, id, nil, sink, "operator-alice")
 	if v.Decision != DecisionAutoApprove {
@@ -329,8 +330,8 @@ func TestEvaluateAndAuditEmitsToAuditSink(t *testing.T) {
 	if rec.actor != "operator-alice" {
 		t.Errorf("actor = %q, want 'operator-alice'", rec.actor)
 	}
-	if rec.action != agent.AuditToolApproval {
-		t.Errorf("action = %q, want %q", rec.action, agent.AuditToolApproval)
+	if rec.action != agentaudit.AuditToolApproval {
+		t.Errorf("action = %q, want %q", rec.action, agentaudit.AuditToolApproval)
 	}
 	if rec.agentName != "quality" {
 		t.Errorf("agentName = %q, want 'quality'", rec.agentName)
@@ -389,7 +390,7 @@ func (e *errorScanner) Scan(ctx context.Context, req ToolRequest) (ScanResult, e
 
 func TestResolve_ScannerError(t *testing.T) {
 	req := ToolRequest{Tool: "Write", Target: "test.txt", Content: "hello"}
-	id := AgentIdentity{Name: "worker", Mode: agent.ModeIssuesPRsMerge}
+	id := AgentIdentity{Name: "worker", Mode: agentmode.ModeIssuesPRsMerge}
 	v := Resolve(context.Background(), req, 6, id, &errorScanner{})
 	if v.Decision != DecisionDeny {
 		t.Errorf("expected deny on scanner error, got %q", v.Decision)
@@ -402,7 +403,7 @@ func TestResolve_ScannerError(t *testing.T) {
 func TestEvaluateAndAudit_DefaultSystemActor(t *testing.T) {
 	sink := &fakeAuditSink{}
 	req := ToolRequest{Tool: "read_file", Target: "test.txt"}
-	id := AgentIdentity{Name: "worker", Mode: agent.ModeIssuesPRsMerge}
+	id := AgentIdentity{Name: "worker", Mode: agentmode.ModeIssuesPRsMerge}
 
 	v := EvaluateAndAudit(context.Background(), req, 6, id, nil, sink, "")
 	if v.Decision != DecisionAutoApprove {
@@ -445,4 +446,3 @@ func TestDecisionStringAndHelpers(t *testing.T) {
 		t.Errorf("expected RequiresOperatorApproval to be true")
 	}
 }
-

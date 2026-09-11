@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentmode"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
@@ -80,7 +80,7 @@ func TestReentrantMultiTurnAgentFlow(t *testing.T) {
 		SessionID: "sess-100",
 		Agent: toolapprove.AgentIdentity{
 			Name: "scanner",
-			Mode: agent.ModeIssuesPRsMerge,
+			Mode: agentmode.ModeIssuesPRsMerge,
 		},
 		ACMMLevel: 6,
 	}
@@ -147,7 +147,7 @@ func TestDurableStateHandoffAcrossProcessRestarts(t *testing.T) {
 		SessionID: "sess-durable-1",
 		Agent: toolapprove.AgentIdentity{
 			Name: "quality",
-			Mode: agent.ModeIssuesPRsMerge,
+			Mode: agentmode.ModeIssuesPRsMerge,
 		},
 		ACMMLevel: 6,
 		Variables: map[string]string{"lane": "quality-check"},
@@ -216,7 +216,7 @@ func TestOperatorApprovalPauseAndResume(t *testing.T) {
 		SessionID: "sess-op-gate",
 		Agent: toolapprove.AgentIdentity{
 			Name: "ci-maintainer",
-			Mode: agent.ModeIssuesPRsMerge,
+			Mode: agentmode.ModeIssuesPRsMerge,
 		},
 		ACMMLevel: 4, // ACMM L4 requires operator approval for side-effectful tools
 	}
@@ -293,7 +293,7 @@ func TestOperatorApprovalRejection(t *testing.T) {
 		SessionID: "sess-op-reject",
 		Agent: toolapprove.AgentIdentity{
 			Name: "ci-maintainer",
-			Mode: agent.ModeIssuesPRsMerge,
+			Mode: agentmode.ModeIssuesPRsMerge,
 		},
 		ACMMLevel: 4,
 	}
@@ -359,7 +359,7 @@ func TestSubagentSynchronization(t *testing.T) {
 		SessionID: "sess-subagent-sync",
 		Agent: toolapprove.AgentIdentity{
 			Name: "architect",
-			Mode: agent.ModeIssuesPRsMerge,
+			Mode: agentmode.ModeIssuesPRsMerge,
 		},
 		ACMMLevel: 6,
 		Subagents: map[string]string{"sub-42": "running"},
@@ -412,7 +412,7 @@ func TestCompactorAndMaxTurns(t *testing.T) {
 		SessionID: "sess-limits",
 		Agent: toolapprove.AgentIdentity{
 			Name: "analyst",
-			Mode: agent.ModeAdvisory,
+			Mode: agentmode.ModeAdvisory,
 		},
 		ACMMLevel: 6,
 		MaxTurns:  1,
