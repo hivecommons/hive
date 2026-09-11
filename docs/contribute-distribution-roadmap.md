@@ -45,6 +45,40 @@ adoption improvement available, and the KVM/gVisor detection strengthens the
 
 ## Phases
 
+### Phase 0 — First-run reliability gate (added per #6656)
+
+Distribution amplifies whatever first-run experience exists. Two bugs filed
+2026-09-11 show the containerized flow currently fails on the first command
+of every task, so the funnel Phase 2 widens would land on a broken first
+impression:
+
+- #6654 — the assignment prompt (`src/pkg/dashboard/contribute_ws.go:5555`)
+  emits a `gh repo fork ... --remote=true <dir>` invocation that current `gh`
+  rejects (`--remote` invalid with a repository argument, no destination
+  positional), and unconditionally assumes a fork is possible even when the
+  contributor owns the repo. The documented first step fails 100% of the
+  time, and the #2545 workspace-path contract depends on the checkout path it
+  drops.
+- #6653 — `ghcr.io/hivecommons/hive-contributor:latest` ships no `bwrap` and
+  the container blocks unprivileged user namespaces, so codex (the container
+  default) burns its first tool call on a sandbox failure and runs with a
+  weaker sandbox posture than the launch flags request — undercutting the
+  KVM/gVisor confinement story this roadmap claims.
+
+Acceptance (all must land before Phase 2 publishes the formula):
+- #6654 fixed: the prompt emits a `gh`-valid clone/fork sequence that lands
+  the checkout at the #2545 contract path, with an owner==contributor branch
+  path.
+- #6653 resolved or explicitly postured: `bwrap` present in the image and the
+  userns decision documented, or codex launched with flags matching what the
+  container actually provides.
+- A first-run smoke test in CI (container up → task assigned → first prompted
+  command exits 0), also added to Phase 1 acceptance so the distroless image
+  cannot regress it.
+
+Implementation belongs to the bug issues; this phase is a sequencing gate
+only.
+
 ### Phase 1 — Distroless contribute container
 
 New contributor image: distroless base, roughly half current size, chunked
@@ -53,6 +87,7 @@ for delta-pull performance, reproducible builds, all in GHA.
 Acceptance:
 - Image builds reproducibly in CI; multi-arch (amd64+arm64) parity with the
   existing `hive-contributor` image.
+- The Phase 0 first-run smoke test passes against the new image.
 - Existing relay flow (`just contribute-hive`) works unchanged against the
   new image before it becomes the default.
 - Size reduction and repro claims recorded in the PR body with measurements.
@@ -60,7 +95,7 @@ Acceptance:
 ### Phase 2 — Homebrew tap GitHub Action
 
 The apptainer conversion action in the tap repo, consuming the Phase 1 image
-by digest.
+by digest. Blocked on Phase 0 completion (#6656).
 
 Acceptance:
 - `brew install kubestellar/hive/contribute` produces a working binary on
