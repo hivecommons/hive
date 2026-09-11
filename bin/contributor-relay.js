@@ -203,6 +203,14 @@ const HEADLESS_MAX_OUTPUT_BYTES = 1048576; // 1 MiB
 
 const TMUX_TAIL_LINES = 15;
 const NEEDS_LOGIN_CONFIRM_TICKS = 3;
+// #6667: the window detectPRURL scans is NOT the 15-line protocol payload.
+// TMUX_TAIL_LINES is sized for the audit trail the hub stores, and of those 15
+// terminal rows roughly ten are TUI chrome — the input box, the status bar, the
+// hint line — so only a handful of real output rows survive. A PR URL the agent
+// genuinely printed scrolls out of that window within seconds of being printed,
+// and the relay then reports no PR for a task that shipped one. Scan deep
+// scrollback for the URL while still sending only the tail upstream.
+const PR_SCAN_LINES = 400;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 90000;
 const RELAY_TEST_TIMING = process.env.HIVE_RELAY_TEST_TIMING === '1';
@@ -1168,8 +1176,11 @@ function runHeadlessTask(task) {
   }, (err, stdout, stderr) => {
     headlessChild = null;
     // Tokens can appear in agent output; redact before the tail leaves the host.
-    const outTail = redactTokens(String(stdout || '') + String(stderr || ''))
-      .split('\n').slice(-TMUX_TAIL_LINES);
+    const outLines = redactTokens(String(stdout || '') + String(stderr || '')).split('\n');
+    const outTail = outLines.slice(-TMUX_TAIL_LINES);
+    // #6667: headless has no TUI chrome, but a build log easily pushes a PR URL
+    // past fifteen lines, so scan the same deep window the interactive path does.
+    const outScan = outLines.slice(-PR_SCAN_LINES);
     // A revoke clears currentTask before killing the child. Ignore any callback
     // that arrives afterwards — including a raced exit 0 — so stale work cannot
     // emit completion after its assignment generation was fenced out.
@@ -1205,7 +1216,7 @@ function runHeadlessTask(task) {
     finish(() => {
       setPiInvocationState('succeeded');
       console.log(`Headless task ${task.task_id} completed (exit 0)`);
-      const prFinding = resolveTaskPR(outTail, {
+      const prFinding = resolveTaskPR(outScan, {
         repo: task.repo,
         taskId: task.task_id,
         taskStartedAt: taskAssignedAt,
@@ -3153,7 +3164,13 @@ function progressTick() {
   }
 
   const paneState = checkTmuxPaneState();
-  const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  // One capture, two windows (#6667). Capturing the deep scrollback and slicing
+  // its tail keeps the protocol payload byte-identical to before while giving
+  // PR detection room to see a URL that has scrolled past the visible rows. It
+  // deliberately does NOT add a second capture-pane call: the pane read is
+  // destructive to the paneStalled() fingerprint (#5333).
+  const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
+  const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
 
   // #5321: forward progress renews the max-duration lease. Recorded here,
   // before any branch below can return, so EVERY pane state gets the credit —
@@ -3225,7 +3242,7 @@ function progressTick() {
     // recent output, so the hub can distinguish "shipped a PR" from "just went
     // idle" and pick the right issue cooldown (kubestellar/hive#2393 item 7).
     // Empty when no PR link is found — the hub then applies the short cooldown.
-    const prFinding = resolveTaskPR(tmuxLines, {
+    const prFinding = resolveTaskPR(paneScanLines, {
       repo: currentTask.repo,
       taskId: currentTask.task_id,
       taskStartedAt: taskAssignedAt,
@@ -4060,6 +4077,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     PR_ATTRIBUTION_UNKNOWN,
     PR_ATTRIBUTION_CLOCK_SKEW_MS,
     CONTRIBUTOR_LOGIN,
+    TMUX_TAIL_LINES,
+    PR_SCAN_LINES,
     resolveBackend,
     shellQuote,
     looksLikeModelName,

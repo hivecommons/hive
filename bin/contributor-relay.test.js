@@ -5678,6 +5678,44 @@ test('#5353 a reported completion stops the agent and drops its token', () => {
   } finally { teardown(relay); }
 });
 
+test('#6667 a PR scrolled out of the 15-line payload window is still reported', () => {
+  // The inverse of #6662. detectPRURL used to be handed the same fifteen lines
+  // the relay sends upstream as tmux_output, and in a real TUI roughly ten of
+  // those rows are chrome — input box, status bar, hint line. A PR URL the
+  // agent genuinely printed leaves that window almost immediately, so the relay
+  // reported no PR for a task that shipped one, and the hub applied the short
+  // "just went idle" cooldown to work that was actually complete.
+  //
+  // Build exactly that pane: the URL is printed, then ordinary build noise
+  // pushes it well past fifteen rows, then the verdict lands at the bottom.
+  const noise = Array.from({ length: 60 }, (_, i) => `  compiling module ${i}`);
+  const paneText = [
+    'Pull request opened: https://github.com/foo/bar/pull/4242',
+    ...noise,
+    'HIVE_VERDICT: complete — PR is open',
+    '',
+    '/ commands for help',
+  ].join('\n');
+
+  const relay = loadRelay({ backend: 'copilot', paneText });
+  try {
+    dispatchTask(relay, 't-scrolled-pr');
+    relay.__stallTick();
+
+    const completed = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(completed, 'expected a completion');
+    assert.strictEqual(completed.pr_url, 'https://github.com/foo/bar/pull/4242',
+      'the PR the agent opened scrolled past the payload window and was dropped');
+
+    // The deeper scan must not widen what goes upstream: tmux_output stays the
+    // bounded audit tail, or every completion starts shipping the whole pane.
+    assert.ok(completed.tmux_output.length <= relay.TMUX_TAIL_LINES,
+      `tmux_output grew to ${completed.tmux_output.length} lines, must stay within TMUX_TAIL_LINES`);
+    assert.ok(!completed.tmux_output.join('\n').includes('Pull request opened'),
+      'setup check: the URL must be outside the payload tail, or this test proves nothing');
+  } finally { teardown(relay); }
+});
+
 test('#5353 the completion report still carries the AGENT output, not the relaunch chrome', () => {
   // Stopping the agent must not cost the evidence: tmux_output is captured
   // before the quit, so the hub still sees the pane the verdict was read from
