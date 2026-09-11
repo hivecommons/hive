@@ -6,7 +6,7 @@ Issue #6635 (castrojo) proposes collapsing the contribute on-ramp into a single
 command:
 
 ```bash
-brew install kubestellar/hive/contribute
+brew install hivecommons/hive/contribute
 ```
 
 An apptainer (LF-donated Singularity) build converts the OCI contributor image
@@ -37,11 +37,13 @@ adoption improvement available, and the KVM/gVisor detection strengthens the
   digest with immutable short-SHA tags plus a `candidate` channel via
   `.github/workflows/docker.yml`), its size/reproducibility improvements, and
   documentation of the install path.
-- **Tap repo (`kubestellar/homebrew-hive` or equivalent)** owns: the GitHub
-  Action that runs the apptainer conversion and publishes the brew formula.
-  Upstream's only contract is a stable image reference and tag/digest
-  discipline — scanner has confirmed this precondition is already satisfied,
-  so no upstream publishing changes are required for Phase 2.
+- **Tap repo ([`hivecommons/homebrew-hive`](https://github.com/hivecommons/homebrew-hive))**
+  owns: the GitHub Action that runs the apptainer conversion and publishes the
+  brew formula. Upstream's only contract is a stable image reference and
+  tag/digest discipline — scanner has confirmed this precondition is already
+  satisfied, so no upstream publishing changes are required for Phase 2.
+  Phase 2 is tracked there as
+  [homebrew-hive#1](https://github.com/hivecommons/homebrew-hive/issues/1).
 
 ## Phases
 
@@ -98,7 +100,7 @@ The apptainer conversion action in the tap repo, consuming the Phase 1 image
 by digest. Blocked on Phase 0 completion (#6656).
 
 Acceptance:
-- `brew install kubestellar/hive/contribute` produces a working binary on
+- `brew install hivecommons/hive/contribute` produces a working binary on
   macOS and Linux (Windows path documented separately).
 - Binary name decided and recorded here (open question below).
 - KVM/gVisor detection behavior documented, including the fallback when
@@ -124,7 +126,13 @@ Out of scope for this roadmap: the "review version" castrojo mentions
 
 1. **Binary name** — `contribute` (as in the formula path), `hive-contribute`,
    or `clanker`? Needs a maintainer decision in #6635 before Phase 2 ships.
-2. **Tap repo location and ownership** — under `kubestellar` or `hivecommons`?
+2. ~~**Tap repo location and ownership** — under `kubestellar` or
+   `hivecommons`?~~ **Answered:** `hivecommons`. The tap is
+   [`hivecommons/homebrew-hive`](https://github.com/hivecommons/homebrew-hive),
+   created 2026-09-11. Hive is a HiveCommons project and its distribution
+   artifacts belong in the same org as the image they wrap; routing them
+   through `kubestellar` would have split ownership of one install path across
+   two orgs mid-migration (see the HiveCommons org migration tracker).
 3. **Channel policy** — does the formula track the `candidate` channel or
    only tagged releases?
 
