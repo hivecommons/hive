@@ -47,10 +47,29 @@ func TestAgentModeSuffix(t *testing.T) {
 		{ModeIssuesOnly, "-issues"},
 		{ModeIssuesAndPRs, "-holdgated"},
 		{ModeIssuesPRsMerge, "-automerge"},
+		{AgentMode(99), "-advisory"},
 	}
 	for _, tt := range tests {
 		if got := tt.mode.Suffix(); got != tt.want {
 			t.Errorf("AgentMode(%d).Suffix() = %q, want %q", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestAgentModeTokenTier(t *testing.T) {
+	tests := []struct {
+		mode AgentMode
+		want string
+	}{
+		{ModeAdvisory, "advisor"},
+		{ModeIssuesOnly, "newcomer"},
+		{ModeIssuesAndPRs, "contributor"},
+		{ModeIssuesPRsMerge, "trusted"},
+		{AgentMode(99), "advisor"},
+	}
+	for _, tt := range tests {
+		if got := tt.mode.TokenTier(); got != tt.want {
+			t.Errorf("AgentMode(%d).TokenTier() = %q, want %q", tt.mode, got, tt.want)
 		}
 	}
 }
