@@ -23,8 +23,47 @@
 # status format and the wheel rebind here match manager.go byte for byte.
 set -euo pipefail
 
-SESSION=${1:-supervisor}
+if [ "$#" -ge 1 ] && [ -n "${1:-}" ]; then
+  SESSION="$1"
+  SESSION_FROM_ARG=1
+else
+  SESSION="supervisor"
+  SESSION_FROM_ARG=0
+fi
+TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
+TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
 TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
+if ! [[ "$TTYD_WAIT_SEC" =~ ^[0-9]+$ ]]; then
+  echo "error: HIVE_TTYD_WAIT_SEC must be a non-negative integer (got '${TTYD_WAIT_SEC}')" >&2
+  exit 1
+fi
+if ! [[ "$TTYD_POLL_SEC" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: HIVE_TTYD_POLL_SEC must be a positive integer (got '${TTYD_POLL_SEC}')" >&2
+  exit 1
+fi
+
+if [ "$SESSION_FROM_ARG" -eq 0 ]; then
+  echo "error: no tmux session name was passed; refusing to guess '${SESSION}'" >&2
+  echo "hint: the dashboard sends the name as ?arg=hive-<agent>, which ttyd only forwards when it is started with -a/--url-arg." >&2
+  exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "waiting for agent '${SESSION#hive-}' to start (tmux session not created yet); polling up to ${TTYD_WAIT_SEC}s..." >&2
+  WAITED=0
+  while [ "$WAITED" -lt "$TTYD_WAIT_SEC" ]; do
+    sleep "$TTYD_POLL_SEC"
+    WAITED=$((WAITED + TTYD_POLL_SEC))
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      echo "agent '${SESSION#hive-}' tmux session is ready after ${WAITED}s; attaching..." >&2
+      break
+    fi
+  done
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "error: no tmux session found for '${SESSION}' after waiting ${TTYD_WAIT_SEC}s" >&2
+    exit 1
+  fi
+fi
 
 # Scrollback state legibility (#4399, #4681). Kept character-for-character
 # identical to src/deploy/ttyd-tmux.sh and to tmuxStatusRight in

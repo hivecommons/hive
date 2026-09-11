@@ -56,6 +56,7 @@ done
 WORK="$(mktemp -d)"
 cleanup() {
   [ -n "${SOCK:-}" ] && tmux -S "$SOCK" kill-server 2>/dev/null
+  [ -n "${WAIT_SOCK:-}" ] && tmux -S "$WAIT_SOCK" kill-server 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -104,6 +105,37 @@ render_argv() {
 # has_arg <argv-file> <exact argument> — matches a WHOLE argv entry, so `-a` can
 # never be satisfied by a substring of `-t disableLeaveAlert=true` or similar.
 has_arg() { grep -qxF -e "$2" "$1"; }
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  else
+    perl -e '
+      my $seconds = shift @ARGV;
+      my $pid = fork();
+      exit 127 unless defined $pid;
+      if ($pid == 0) {
+        setpgrp(0, 0);
+        exec @ARGV;
+        exit 127;
+      }
+      $SIG{ALRM} = sub {
+        kill "TERM", -$pid;
+        select undef, undef, undef, 0.2;
+        kill "KILL", -$pid;
+        waitpid($pid, 0);
+        exit 124;
+      };
+      alarm $seconds;
+      waitpid($pid, 0);
+      exit 127 if $? == -1;
+      exit 128 + ($? & 127) if $? & 127;
+      exit $? >> 8;
+    ' "$seconds" "$@"
+  fi
+}
 
 # check_case <label> <expect-cred: yes|no> [VAR=VAL...]
 check_case() {
@@ -222,12 +254,12 @@ else
     mkdir -p "$REAL_DIR" 2>/dev/null
     LINK="${REAL_DIR}/${SESSION_NAME}"
     if ln -sf "$SOCK" "$LINK" 2>/dev/null && [ -S "$LINK" ]; then
-      trap 'rm -f "$LINK"; cleanup' EXIT
+      trap 'rm -f "$LINK" "${WAIT_LINK:-}"; cleanup' EXIT
 
       # Invoked through `bash` on purpose: the file ships mode 644 in git and is
       # made executable at image build time, so executing it directly would fail
       # here for a reason that has nothing to do with what is under test.
-      run_attach() { timeout 20 bash "$ATTACH" "$@" </dev/null 2>&1; }
+      run_attach() { run_with_timeout 20 bash "$ATTACH" "$@" </dev/null 2>&1; }
 
       # ttyd-tmux.sh's no-argument path falls back to /tmp/tmux-<uid of dev,
       # else 1001>/default. On GitHub-hosted runners the job user IS uid 1001,
@@ -271,6 +303,51 @@ else
         pass "and lists the session that WOULD have worked ('${SESSION_NAME}')"
       else
         fail "the error lists available sessions" "got: ${NOARG_OUT}"
+      fi
+
+      # A dashboard click can now legitimately arrive before the agent manager
+      # has launched that later-staggered agent. The attach helper must keep
+      # the ttyd child alive, report what it is waiting for, and attach once the
+      # tmux socket appears rather than exiting every ~200ms into ttyd's client
+      # reconnect loop.
+      WAIT_SESSION="hive-wait-$$"
+      WAIT_SOCK="${WORK}/tmux-wait-sock"
+      WAIT_LINK="${REAL_DIR}/${WAIT_SESSION}"
+      tmux -S "$WAIT_SOCK" -f /dev/null new-session -d -s "hive-other-$$" 'sleep 300' 2>/dev/null
+      ln -sf "$WAIT_SOCK" "$WAIT_LINK" 2>/dev/null
+      (
+        sleep 2
+        tmux -S "$WAIT_SOCK" new-session -d -s "$WAIT_SESSION" 'sleep 300' 2>/dev/null
+      ) &
+      WAIT_OUT="$(HIVE_TTYD_WAIT_SEC=6 HIVE_TTYD_POLL_SEC=1 run_with_timeout 10 bash "$ATTACH" "$WAIT_SESSION" </dev/null 2>&1)"
+      WAIT_RC=$?
+      if [ "$WAIT_RC" -eq 124 ]; then
+        fail "missing-at-first session -> waits for its socket and returns" "it hung until the timeout"
+      elif printf '%s' "$WAIT_OUT" | grep -q "tmux session is ready"; then
+        pass "missing-at-first session -> waits for its socket and then attaches"
+      else
+        fail "missing-at-first session -> reports readiness before attach" "got: ${WAIT_OUT}"
+      fi
+      if printf '%s' "$WAIT_OUT" | grep -q "waiting for agent 'wait-"; then
+        pass "and the wait message names the not-yet-created agent session"
+      else
+        fail "the wait message names the not-yet-created agent session" "got: ${WAIT_OUT}"
+      fi
+
+      GIVEUP_SESSION="hive-missing-$$"
+      GIVEUP_OUT="$(HIVE_TTYD_WAIT_SEC=1 HIVE_TTYD_POLL_SEC=1 run_with_timeout 5 bash "$ATTACH" "$GIVEUP_SESSION" </dev/null 2>&1)"
+      GIVEUP_RC=$?
+      if [ "$GIVEUP_RC" -eq 124 ]; then
+        fail "missing session -> gives up after configured wait" "it hung until the timeout"
+      elif [ "$GIVEUP_RC" -ne 0 ] && printf '%s' "$GIVEUP_OUT" | grep -q "after waiting 1s"; then
+        pass "missing session -> gives up after configured wait"
+      else
+        fail "missing session -> gives up after configured wait" "rc=${GIVEUP_RC}; got: ${GIVEUP_OUT}"
+      fi
+      if printf '%s' "$GIVEUP_OUT" | grep -q "available sessions:"; then
+        pass "and the give-up error still lists available sessions for a wrong name"
+      else
+        fail "the give-up error lists available sessions" "got: ${GIVEUP_OUT}"
       fi
 
       # With the argument the lookup resolves. Asserted POSITIVELY: the script's
