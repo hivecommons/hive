@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
 )
 
 // EnvChainsEnabled gates whether the hub publishes delegation verification keys.
@@ -32,16 +34,7 @@ func SeedFromMaster(master string) string {
 // PublicKeyFromSeed expands a hex Ed25519 seed and returns only the hex public
 // half. Returns "" for anything that is not a valid 32-byte seed.
 func PublicKeyFromSeed(seedHex string) string {
-	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return ""
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return ""
-	}
-	return hex.EncodeToString(pub)
+	return keyderive.Ed25519PublicKeyFromSeed(seedHex)
 }
 
 // ValidPublicKeys filters candidates down to well-formed hex Ed25519 public

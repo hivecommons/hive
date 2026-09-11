@@ -2,13 +2,13 @@ package spoke
 
 import (
 	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
 )
 
 const (
@@ -22,37 +22,21 @@ const (
 	EnvHiveID               = "HIVE_ID"
 )
 
+// deriveDomainKey, derivePerHiveKey, and ssoPublicKeyFromSeed delegate to
+// pkg/keyderive, the single implementation shared with the hub (pkg/hub) and
+// the delegation minting path (pkg/delegation). The derivations are wire
+// compatibility: the spoke verifies keys the hub minted from the same master,
+// so the two sides must stay byte-identical.
 func deriveDomainKey(master, info string) string {
-	if master == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.DomainKey(master, info)
 }
 
 func derivePerHiveKey(master, info, hiveID string) string {
-	if master == "" || hiveID == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	mac.Write([]byte{0})
-	mac.Write([]byte(hiveID))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.PerHiveKey(master, info, hiveID)
 }
 
 func ssoPublicKeyFromSeed(seedHex string) string {
-	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return ""
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return ""
-	}
-	return hex.EncodeToString(pub)
+	return keyderive.Ed25519PublicKeyFromSeed(seedHex)
 }
 
 func SSOSigningSeedFromMaster(master string) string {

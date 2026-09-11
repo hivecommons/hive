@@ -1,14 +1,12 @@
 package hub
 
 import (
-	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/keyderive"
 )
 
 const (
@@ -24,24 +22,17 @@ const (
 	infoSessionEd25519Seed = "hive-session-ed25519-v1"
 )
 
+// deriveDomainKey and derivePerHiveKey delegate to pkg/keyderive, the single
+// implementation shared with the spoke (pkg/hub/spoke) and the delegation
+// minting path (pkg/delegation). The derivations are wire compatibility: a
+// spoke verifies bearers the hub minted from the same master, so the two sides
+// must stay byte-identical.
 func deriveDomainKey(master, info string) string {
-	if master == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.DomainKey(master, info)
 }
 
 func derivePerHiveKey(master, info, hiveID string) string {
-	if master == "" || hiveID == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(info))
-	mac.Write([]byte{0})
-	mac.Write([]byte(hiveID))
-	return hex.EncodeToString(mac.Sum(nil))
+	return keyderive.PerHiveKey(master, info, hiveID)
 }
 
 func (s *HubServer) heartbeatKey() string {
@@ -239,16 +230,7 @@ func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
 // hub-side public-key accessor and provisioning so the spoke and hub agree on the
 // exact public key derived from one master.
 func ssoPublicKeyFromSeed(seedHex string) string {
-	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return ""
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return ""
-	}
-	return hex.EncodeToString(pub)
+	return keyderive.Ed25519PublicKeyFromSeed(seedHex)
 }
 
 // Dedicated spoke-side env vars. A hub-hosted spoke is provisioned with ONLY the
