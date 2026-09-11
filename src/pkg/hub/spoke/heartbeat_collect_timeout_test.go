@@ -118,6 +118,183 @@ func TestCollectWithTimeout_ContextCancelReturns(t *testing.T) {
 	}
 }
 
+func TestCollectFreshStatsWithTimeout_FastCollectReturnsPayload(t *testing.T) {
+	want := &HeartbeatPayload{HiveID: "fresh"}
+	got := collectFreshStatsWithTimeout(context.Background(), func() *HeartbeatPayload {
+		return want
+	}, time.Second, nil2Logger())
+	if got != want {
+		t.Fatalf("collectFreshStatsWithTimeout returned %+v, want %+v", got, want)
+	}
+}
+
+func TestCollectFreshStatsWithTimeout_BlockedCollectReturnsNil(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	got := collectFreshStatsWithTimeout(context.Background(), func() *HeartbeatPayload {
+		<-release
+		return &HeartbeatPayload{HiveID: "late"}
+	}, 20*time.Millisecond, nil2Logger())
+	if got != nil {
+		t.Fatalf("expected nil from timed-out fresh collect, got %+v", got)
+	}
+}
+
+func TestCollectFreshStatsWithTimeout_PanicRecovered(t *testing.T) {
+	got := collectFreshStatsWithTimeout(context.Background(), func() *HeartbeatPayload {
+		panic("boom")
+	}, time.Second, nil2Logger())
+	if got != nil {
+		t.Fatalf("expected nil after panicking fresh collect, got %+v", got)
+	}
+}
+
+func TestCollectFreshStatsWithTimeout_ContextCancelReturnsNil(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got := collectFreshStatsWithTimeout(ctx, func() *HeartbeatPayload {
+		<-release
+		return &HeartbeatPayload{HiveID: "late"}
+	}, time.Hour, nil2Logger())
+	if got != nil {
+		t.Fatalf("expected nil after context cancellation, got %+v", got)
+	}
+}
+
+func TestOverlayFreshStatsAfterCollectTimeoutCopiesFreshFieldsAndClearsCached(t *testing.T) {
+	payload := &HeartbeatPayload{
+		HiveID:                 "hive",
+		ACMMLevel:              6,
+		DashboardURL:           "https://cached.example",
+		Agents:                 []AgentSummary{{Name: "quality", State: "stopped"}},
+		Health:                 map[string]any{"status": "ok"},
+		Governor:               GovernorSummary{Mode: "old", Issues: 9, PRs: 8, WorkSource: "jira"},
+		ProviderLimitReason:    "cached provider limit",
+		ProviderLimitRebuffs:   3,
+		ProviderLimitHiveWide:  true,
+		ProviderLimitAgents:    []string{"quality"},
+		LastWriteCapableKickAt: "2026-09-11T15:00:00Z",
+		LastKickDisposition:    "cached",
+		LastKickSkipReason:     "cached skip",
+		NotWritableQueued:      7,
+		NoCadenceAgents:        []string{"quality"},
+		ConsentWedged:          []string{"quality"},
+		AgentErrorStreaks:      map[string]int{"quality": 5},
+	}
+
+	overlayFreshStatsAfterCollectTimeout(context.Background(), payload, nil2Logger(), func() *HeartbeatPayload {
+		return &HeartbeatPayload{
+			ACMMLevel:              5,
+			DashboardURL:           "https://fresh.example",
+			Agents:                 []AgentSummary{{Name: "quality", State: "running"}},
+			Health:                 map[string]any{"status": "unknown"},
+			Governor:               GovernorSummary{Mode: "active", Issues: 1, PRs: 2, WorkSource: "linear"},
+			ProviderLimitAgents:    []string{},
+			LastWriteCapableKickAt: "",
+			LastKickDisposition:    "",
+			LastKickSkipReason:     "",
+			NotWritableQueued:      0,
+			NoCadenceAgents:        []string{},
+			ConsentWedged:          []string{},
+			AgentErrorStreaks:      map[string]int{},
+			ProviderLimitReason:    "",
+			ProviderLimitRebuffs:   0,
+			ProviderLimitHiveWide:  false,
+		}
+	})
+
+	if !payload.FreshAgentStats {
+		t.Fatal("FreshAgentStats = false, want true after agents/health overlay")
+	}
+	if payload.ACMMLevel != 5 || payload.DashboardURL != "https://fresh.example" {
+		t.Fatalf("identity-ish fresh fields = L%d %q, want L5 fresh URL", payload.ACMMLevel, payload.DashboardURL)
+	}
+	if len(payload.Agents) != 1 || payload.Agents[0].State != "running" {
+		t.Fatalf("Agents = %+v, want fresh running agent", payload.Agents)
+	}
+	if payload.Health["status"] != "unknown" {
+		t.Fatalf("Health = %+v, want fresh unknown health", payload.Health)
+	}
+	if payload.Governor.Mode != "active" || payload.Governor.Issues != 1 || payload.Governor.PRs != 2 || payload.Governor.WorkSource != "linear" {
+		t.Fatalf("Governor = %+v, want fresh governor", payload.Governor)
+	}
+	if payload.ProviderLimitReason != "" || payload.ProviderLimitRebuffs != 0 || payload.ProviderLimitHiveWide || len(payload.ProviderLimitAgents) != 0 {
+		t.Fatalf("provider limit fields not cleared: %q %d %v %v", payload.ProviderLimitReason, payload.ProviderLimitRebuffs, payload.ProviderLimitHiveWide, payload.ProviderLimitAgents)
+	}
+	if payload.LastWriteCapableKickAt != "" || payload.LastKickDisposition != "" || payload.LastKickSkipReason != "" || payload.NotWritableQueued != 0 {
+		t.Fatalf("output freshness fields not cleared: %q %q %q %d", payload.LastWriteCapableKickAt, payload.LastKickDisposition, payload.LastKickSkipReason, payload.NotWritableQueued)
+	}
+	if payload.NoCadenceAgents == nil || len(payload.NoCadenceAgents) != 0 {
+		t.Fatalf("NoCadenceAgents = %#v, want measured empty slice", payload.NoCadenceAgents)
+	}
+	if payload.ConsentWedged == nil || len(payload.ConsentWedged) != 0 {
+		t.Fatalf("ConsentWedged = %#v, want measured empty slice", payload.ConsentWedged)
+	}
+	if payload.AgentErrorStreaks == nil || len(payload.AgentErrorStreaks) != 0 {
+		t.Fatalf("AgentErrorStreaks = %#v, want measured empty map", payload.AgentErrorStreaks)
+	}
+}
+
+func TestOverlayFreshStatsAfterCollectTimeoutUnavailableLeavesCachedPayload(t *testing.T) {
+	base := HeartbeatPayload{
+		HiveID:              "hive",
+		ACMMLevel:           6,
+		DashboardURL:        "https://cached.example",
+		Agents:              []AgentSummary{{Name: "quality", State: "stopped"}},
+		Health:              map[string]any{"status": "ok"},
+		ProviderLimitReason: "cached provider limit",
+	}
+	for _, tc := range []struct {
+		name      string
+		payload   *HeartbeatPayload
+		collector []FreshStatusCollector
+	}{
+		{name: "nil payload", payload: nil, collector: []FreshStatusCollector{func() *HeartbeatPayload { return &HeartbeatPayload{} }}},
+		{name: "no collector", payload: clonePayload(&base), collector: nil},
+		{name: "nil collector", payload: clonePayload(&base), collector: []FreshStatusCollector{nil}},
+		{name: "collector returns nil", payload: clonePayload(&base), collector: []FreshStatusCollector{func() *HeartbeatPayload { return nil }}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			overlayFreshStatsAfterCollectTimeout(context.Background(), tc.payload, nil2Logger(), tc.collector...)
+			if tc.payload == nil {
+				return
+			}
+			if tc.payload.FreshAgentStats {
+				t.Fatal("FreshAgentStats = true, want false when overlay unavailable")
+			}
+			if tc.payload.ACMMLevel != base.ACMMLevel || tc.payload.DashboardURL != base.DashboardURL || tc.payload.ProviderLimitReason != base.ProviderLimitReason {
+				t.Fatalf("payload changed without overlay: %+v", tc.payload)
+			}
+			if len(tc.payload.Agents) != 1 || tc.payload.Agents[0].State != "stopped" || tc.payload.Health["status"] != "ok" {
+				t.Fatalf("agent/health changed without overlay: %+v %+v", tc.payload.Agents, tc.payload.Health)
+			}
+		})
+	}
+}
+
+func TestOverlayFreshStatsAfterCollectTimeoutHealthOnlyMarksFresh(t *testing.T) {
+	payload := &HeartbeatPayload{
+		Agents: []AgentSummary{{Name: "quality", State: "stopped"}},
+		Health: map[string]any{"status": "ok"},
+	}
+	overlayFreshStatsAfterCollectTimeout(context.Background(), payload, nil2Logger(), func() *HeartbeatPayload {
+		return &HeartbeatPayload{Health: map[string]any{"status": "unknown"}}
+	})
+	if !payload.FreshAgentStats {
+		t.Fatal("FreshAgentStats = false, want true for health-only overlay")
+	}
+	if len(payload.Agents) != 1 || payload.Agents[0].State != "stopped" {
+		t.Fatalf("Agents = %+v, want cached agents left alone on health-only overlay", payload.Agents)
+	}
+	if payload.Health["status"] != "unknown" {
+		t.Fatalf("Health = %+v, want fresh health", payload.Health)
+	}
+}
+
 // TestSendHeartbeat_BlockedCollectStillAdvancesAttemptAndReturns is the end-to-
 // end positive control at the sendHeartbeat level: even when collect() is
 // wedged, recordHeartbeatAttempt has run (attempt clock advanced) AND
