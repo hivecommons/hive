@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -307,15 +308,17 @@ func (c *Client) SetAppBotLogin(login string) {
 }
 
 type Issue struct {
-	Repo      string    `json:"repo"`
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Author    string    `json:"author"`
-	Labels    []string  `json:"labels"`
-	Assignees []string  `json:"assignees"`
-	Priority  string    `json:"priority,omitempty"`
-	State     string    `json:"state,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Repo              string    `json:"repo"`
+	Number            int       `json:"number"`
+	Title             string    `json:"title"`
+	Author            string    `json:"author"`
+	AuthorIsHuman     bool      `json:"author_is_human,omitempty"`
+	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
+	Labels            []string  `json:"labels"`
+	Assignees         []string  `json:"assignees"`
+	Priority          string    `json:"priority,omitempty"`
+	State             string    `json:"state,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 	// UpdatedAt is GitHub's last-activity timestamp for the issue (new commits
 	// referencing it, comments, label/assignee changes, …). It is the
 	// invalidation signal for the contribute queue's no_work_needed verdict
@@ -523,6 +526,120 @@ func IssueResultFromItems(items []Issue) IssueResult {
 		}
 	}
 	return result
+}
+
+const actionablePriorityLabelsEnv = "HIVE_ACTIONABLE_PRIORITY_LABELS"
+
+var defaultActionablePriorityLabels = []string{
+	"triage/accepted",
+	"ai-fix-requested",
+	HumanAckLabel,
+	"kind/bug",
+	"bug",
+	"priority/critical-urgent",
+	"priority/important-soon",
+	"help wanted",
+	"good first issue",
+}
+
+// ActionablePriorityLabels returns the labels that boost human-filed work to
+// the very front of kick issue lists. Operators can replace the defaults with a
+// comma-separated HIVE_ACTIONABLE_PRIORITY_LABELS value.
+func ActionablePriorityLabels() []string {
+	raw := strings.TrimSpace(os.Getenv(actionablePriorityLabelsEnv))
+	if raw == "" {
+		return append([]string(nil), defaultActionablePriorityLabels...)
+	}
+	parts := strings.Split(raw, ",")
+	labels := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if label := strings.TrimSpace(part); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		return append([]string(nil), defaultActionablePriorityLabels...)
+	}
+	return labels
+}
+
+// RankActionableIssues orders the actionable issue snapshot for kick
+// presentation only: human-filed work first, hive-filed work with cheap human
+// acknowledgement next, and the remaining hive-filed backlog last. Counts are
+// unchanged; oldest-first order is preserved within each tier.
+func RankActionableIssues(issues []Issue) {
+	priorityLabels := makeLabelSet(ActionablePriorityLabels())
+	sort.SliceStable(issues, func(i, j int) bool {
+		leftTier := actionableIssueRankTier(issues[i], priorityLabels)
+		rightTier := actionableIssueRankTier(issues[j], priorityLabels)
+		if leftTier != rightTier {
+			return leftTier < rightTier
+		}
+		return issues[i].AgeMinutes > issues[j].AgeMinutes
+	})
+}
+
+func makeLabelSet(labels []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		if normalized := strings.ToLower(strings.TrimSpace(label)); normalized != "" {
+			set[normalized] = struct{}{}
+		}
+	}
+	return set
+}
+
+func actionableIssueRankTier(issue Issue, priorityLabels map[string]struct{}) int {
+	if issue.AuthorIsHuman {
+		if issueHasAnyLabel(issue.Labels, priorityLabels) {
+			return 0
+		}
+		return 1
+	}
+	if issueHasCheapHumanAcknowledgement(issue) {
+		return 2
+	}
+	return 3
+}
+
+func issueHasAnyLabel(labels []string, want map[string]struct{}) bool {
+	for _, label := range labels {
+		if _, ok := want[strings.ToLower(strings.TrimSpace(label))]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func issueHasCheapHumanAcknowledgement(issue Issue) bool {
+	if issue.HumanAcknowledged {
+		return true
+	}
+	if issueHasAnyLabel(issue.Labels, map[string]struct{}{HumanAckLabel: {}}) {
+		return true
+	}
+	for _, assignee := range issue.Assignees {
+		login := strings.TrimSpace(assignee)
+		if login == "" || strings.HasSuffix(login, "[bot]") || strings.EqualFold(login, issue.Author) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (c *Client) issueHasCheapHumanAcknowledgement(issue *gh.Issue) bool {
+	for _, label := range issue.Labels {
+		if strings.EqualFold(label.GetName(), HumanAckLabel) {
+			return true
+		}
+	}
+	for _, assignee := range issue.Assignees {
+		if c.isHumanAuthor(assignee) {
+			return true
+		}
+	}
+	return false
 }
 
 type PRResult struct {
@@ -801,9 +918,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		return nil, fmt.Errorf("all %d repos failed to enumerate (last error: %w)", len(repos), lastFetchErr)
 	}
 
-	sort.Slice(allIssues, func(i, j int) bool {
-		return allIssues[i].AgeMinutes > allIssues[j].AgeMinutes
-	})
+	RankActionableIssues(allIssues)
 
 	// Review-priority order for the PR side of the snapshot: fixes >
 	// refactors/docs > tests, oldest first within a class (#6183). Purely
@@ -932,17 +1047,19 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 
 		breakdown.Actionable++
 		actionable = append(actionable, Issue{
-			Repo:       repo,
-			Number:     issue.GetNumber(),
-			Title:      issue.GetTitle(),
-			Author:     safeGetLogin(issue.GetUser()),
-			Labels:     labels,
-			Assignees:  extractAssignees(issue.Assignees),
-			CreatedAt:  issue.GetCreatedAt().Time,
-			UpdatedAt:  issue.GetUpdatedAt().Time,
-			AgeMinutes: ageMinutes,
-			URL:        issue.GetHTMLURL(),
-			IsTracker:  isTracker(issue.GetTitle(), labels, issue.GetBody()),
+			Repo:              repo,
+			Number:            issue.GetNumber(),
+			Title:             issue.GetTitle(),
+			Author:            safeGetLogin(issue.GetUser()),
+			AuthorIsHuman:     c.isHumanAuthor(issue.GetUser()),
+			HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
+			Labels:            labels,
+			Assignees:         extractAssignees(issue.Assignees),
+			CreatedAt:         issue.GetCreatedAt().Time,
+			UpdatedAt:         issue.GetUpdatedAt().Time,
+			AgeMinutes:        ageMinutes,
+			URL:               issue.GetHTMLURL(),
+			IsTracker:         isTracker(issue.GetTitle(), labels, issue.GetBody()),
 		})
 	}
 

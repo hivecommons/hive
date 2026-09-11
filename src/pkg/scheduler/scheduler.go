@@ -442,6 +442,7 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 	}
 	var b strings.Builder
 	b.WriteString(notice)
+	b.WriteString(issuePriorityNote)
 	shown := 0
 	failClosed := false
 	for _, issue := range issues {
@@ -462,12 +463,24 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		}
 		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels)
 		failClosed = failClosed || labelsFailClosed
-		b.WriteString(fmt.Sprintf("  %dm %s [%s] %s\n",
-			issue.AgeMinutes, issueDisplayRef(issue),
+		b.WriteString(fmt.Sprintf("  %dm %s %s [%s] %s\n",
+			issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
 			strings.Join(labels, ","), title))
 		shown++
 	}
 	return b.String(), failClosed
+}
+
+const issuePriorityNote = "Issue priority: human-filed and priority-labelled issues are listed first; work them before hive-filed.\n"
+
+func issuePriorityMarker(issue github.Issue) string {
+	if issue.AuthorIsHuman {
+		return "[human]"
+	}
+	if issue.HumanAcknowledged {
+		return "[hive-filed+ack]"
+	}
+	return "[hive-filed]"
 }
 
 func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) (string, bool) {
@@ -1122,7 +1135,10 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	scannerIssues := issues
 
-	b.WriteString(fmt.Sprintf("ACTIONABLE ISSUES (%d, oldest first):\n", len(scannerIssues)))
+	b.WriteString(fmt.Sprintf("ACTIONABLE ISSUES (%d, human/priority first):\n", len(scannerIssues)))
+	if len(scannerIssues) > 0 {
+		b.WriteString(issuePriorityNote)
+	}
 	shown := 0
 	for _, issue := range scannerIssues {
 		if shown >= maxIssuesPerKick {
@@ -1141,8 +1157,8 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %dm %s [%s/%s] [%s] %s%s\n",
-			issue.AgeMinutes, issueDisplayRef(issue),
+		b.WriteString(fmt.Sprintf("  %dm %s %s [%s/%s] [%s] %s%s\n",
+			issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
 			tier, issue.ModelRec,
 			strings.Join(issue.Labels, ","),
 			title, tracker))
@@ -1421,8 +1437,9 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) > 0 {
 		b.WriteString(fmt.Sprintf("Work items (%d):\n", len(agentIssues)))
+		b.WriteString(issuePriorityNote)
 		for _, issue := range agentIssues {
-			b.WriteString(fmt.Sprintf("  %s %s\n", issueDisplayRef(issue), issue.Title))
+			b.WriteString(fmt.Sprintf("  %s %s %s\n", issueDisplayRef(issue), issuePriorityMarker(issue), issue.Title))
 		}
 	}
 
@@ -1447,6 +1464,7 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 	qualityIssues := filterByLane(issues, "quality")
 	if len(qualityIssues) > 0 {
 		b.WriteString(fmt.Sprintf("\nTEST-RELATED ISSUES (%d):\n", len(qualityIssues)))
+		b.WriteString(issuePriorityNote)
 		shown := 0
 		for _, issue := range qualityIssues {
 			if shown >= maxIssuesPerKick {
@@ -1457,8 +1475,8 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
-				issueDisplayRef(issue),
+			b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
+				issueDisplayRef(issue), issuePriorityMarker(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++
@@ -1505,6 +1523,7 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 	architectIssues := filterByLane(issues, "architect")
 	if len(architectIssues) > 0 {
 		b.WriteString(fmt.Sprintf("ARCHITECTURE-RELATED ISSUES (%d):\n", len(architectIssues)))
+		b.WriteString(issuePriorityNote)
 		shown := 0
 		for _, issue := range architectIssues {
 			if shown >= maxIssuesPerKick {
@@ -1515,8 +1534,8 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
-				issueDisplayRef(issue),
+			b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
+				issueDisplayRef(issue), issuePriorityMarker(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++
