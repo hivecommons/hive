@@ -101,16 +101,6 @@ func (c *Client) SetMergeRequestPolicy(allowUnprotectedBase, noCIOK map[string]b
 	c.noCIAllowedRepos = normalizeRepoSet(c.org, noCIOK)
 }
 
-// repoInMergePolicySet reports whether owner/name is a member of one of the
-// installed policy sets, matching the full "owner/name" form or the bare repo
-// name (both lowercased — the sets are normalized on install).
-func repoInMergePolicySet(set map[string]bool, owner, name string) bool {
-	if len(set) == 0 {
-		return false
-	}
-	return set[strings.ToLower(owner+"/"+name)] || set[strings.ToLower(name)]
-}
-
 func (c *Client) repoAllowsUnprotectedBase(owner, name string) bool {
 	if c == nil {
 		return false

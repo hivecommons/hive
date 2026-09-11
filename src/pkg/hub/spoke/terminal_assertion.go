@@ -21,11 +21,6 @@ const (
 	// EnvTerminalKey is the dedicated spoke-side env var carrying the PER-HIVE
 	// terminal signing key. See terminalassert.EnvTerminalKey.
 	EnvTerminalKey = terminalassert.EnvTerminalKey
-
-	// infoTerminalKey is the domain-separation label for the terminal signing
-	// sub-key. Provisioning (provisionTerminalKey) must use the SAME label the
-	// spoke's self-derive lane uses, so this aliases terminalassert.InfoKey.
-	infoTerminalKey = terminalassert.InfoKey
 )
 
 // TerminalSigningKey resolves the spoke's terminal signing key.
