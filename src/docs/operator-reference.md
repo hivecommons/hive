@@ -144,13 +144,22 @@ starve every other GitHub caller, including the agents.
 
 ## Image provenance and tags
 
-Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored to the matching `ghcr.io/hivecommons/*` packages. While `kubestellar` is the native publishing org before the Hive Commons transfer, the workflow retags the already-built digest into `hivecommons`, so both orgs serve digest-identical manifest lists for the same tag. A build of the mainline branch `v4` publishes, in one multi-architecture manifest operation:
+Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored **by digest** into the matching `ghcr.io/kubestellar/*` packages. Post-transfer, `hivecommons` is the native publishing org; the workflow retags the already-built digest into `kubestellar` so that spokes still pinned to the old org keep resolving, and both orgs serve digest-identical manifest lists for the same tag. (A missing cross-org credential is a hard failure in that direction precisely because a one-sided publish would leave `kubestellar` serving stale tags to live spokes.)
 
-- `ghcr.io/hivecommons/hive:v4-latest` and `ghcr.io/hivecommons/hive:v4-latest` — rolling tags for the current HEAD of `origin/v4`;
-- `ghcr.io/hivecommons/hive:<git-short-sha>` and `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tags;
-- `ghcr.io/hivecommons/hive:stable`, `:candidate`, `:edge` and the matching `ghcr.io/hivecommons/hive:*` tags — the moving **release channels** (retags of the same digest; see [release-channels.md](release-channels.md)).
+A build of a release line publishes, in one multi-architecture manifest operation:
 
-PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
+- `ghcr.io/hivecommons/hive:<line>-latest` — the rolling tag for the current HEAD of that branch: `v4-latest` on `v4`, `v5-latest` on `v5`;
+- `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tags;
+- that line's moving **release channel** — `v4` merge builds own `:candidate`, `v5` merge builds own `:edge` (retags of the same digest; see [release-channels.md](release-channels.md)).
+
+> **`:latest` is not currently line-scoped.** Both lines' builds move the global `:latest` tag, so it alternates between `v4` and pre-GA `v5` depending on which run finishes last — tracked in [#6711](https://github.com/hivecommons/hive/issues/6711). Until that is fixed, do not deploy `:latest`; name the line (`v4-latest`), the channel (`stable`), or a digest.
+
+Channel ownership is deliberately **per-line**: without the split, every `v4` merge would silently re-point `edge` back onto `v4` minutes after any deliberate promotion of `edge` to `v5` (`src/scripts/publish-image-tags.sh`). Two consequences follow that are easy to get backwards:
+
+- `:stable` is **not** published by a branch build at all. The separate stable-promotion workflow advances it by digest from `candidate`, after the [soak gate](stable-soak-policy.md) passes.
+- `:edge` rides `v5`, so it is an **active-development build of the next line**, not a fresher `:stable`. It is the newest build, not the most proven one.
+
+PR and short-lived branch builds compile the image as a CI gate, but only the long-lived release lines (`v4` and `v5`) push tags. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
 > **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` was bumped off it in #4206; standalone image references now come from one source of truth, [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh).)
 
