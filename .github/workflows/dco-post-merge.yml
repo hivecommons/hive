@@ -67,7 +67,34 @@ env:
   # clubanderson@gmail.com (both the maintainer's own). Sign-off intent is
   # unambiguous; branch is protected, so the trailer cannot be repaired
   # in place. Accepted by maintainer disposition in #6703.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01'
+  #
+  # 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 — "📖 Record OpenSSF Best
+  # Practices Badge in security self-assessment" (#6697). The same
+  # two-addresses-one-person case as 7e01fee4 above, in its other direction:
+  # authored as andy@clubanderson.com, signed off as
+  # clubanderson@users.noreply.github.com — GitHub's noreply address for that
+  # very account, so the identity is verifiable rather than merely plausible.
+  # Sign-off intent is unambiguous; the branch is protected, so the trailer
+  # cannot be repaired in place. Reported by the monitor in #6716.
+  #
+  # 65b9c67341962834e27c28b0d833b8b03fe91ac9 — "docs(security): the compliance
+  # list still says the badge is not held" (#6698).
+  # cfaf4988779ed52a03670d0b6824a3517117be82 — "fix(contributor): review the
+  # PRs the contributor has, not one repo's" (#6694).
+  # Both authored by Danathar as doug.baggett@gmail.com and signed off as
+  # danathar@users.noreply.github.com — GitHub's noreply address for the very
+  # account that authored them, so the identity is verifiable rather than
+  # merely plausible, and the pre-merge DCO app accepted both on that basis.
+  # Rewriting a contributor's commit or signing off on their behalf is
+  # forbidden by #6329, and v4 is protected, so a waiver is the only available
+  # disposition. Reported by the monitor in #6716.
+  #
+  # These two are not a new failure mode — they are the FOURTH and FIFTH
+  # instance of one: our checker is stricter than the pre-merge DCO app, which
+  # treats a GitHub noreply address as the author's own. Waiving each occurrence
+  # does not converge. #6721 tracks teaching the checker that rule so the
+  # monitor stops paging for sign-offs that were already accepted at merge time.
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 65b9c67341962834e27c28b0d833b8b03fe91ac9 cfaf4988779ed52a03670d0b6824a3517117be82'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
