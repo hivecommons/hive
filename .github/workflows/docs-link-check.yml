@@ -43,6 +43,10 @@ on:
       - 'docs/**'
       - 'src/scripts/check-docs-links.py'
       - 'src/scripts/test-check-docs-links.sh'
+      - 'src/scripts/check-api-reference-citations.sh'
+      - 'src/scripts/test-check-api-reference-citations.sh'
+      - 'src/pkg/dashboard/**'
+      - 'src/pkg/hub/**'
       - '.github/workflows/docs-link-check.yml'
   pull_request:
     branches:
@@ -53,6 +57,10 @@ on:
       - 'docs/**'
       - 'src/scripts/check-docs-links.py'
       - 'src/scripts/test-check-docs-links.sh'
+      - 'src/scripts/check-api-reference-citations.sh'
+      - 'src/scripts/test-check-api-reference-citations.sh'
+      - 'src/pkg/dashboard/**'
+      - 'src/pkg/hub/**'
       - '.github/workflows/docs-link-check.yml'
 
 permissions:
@@ -70,6 +78,14 @@ jobs:
 
       - name: Check src/docs/ relative links and anchors
         run: python3 src/scripts/check-docs-links.py src/docs
+
+      # Verifies every `pkg/<file>:<line>` citation in api-reference.md still
+      # points at the route registration it names (hivecommons/hive#6628).
+      - name: Self-test the api-reference citation checker
+        run: bash src/scripts/test-check-api-reference-citations.sh
+
+      - name: Check api-reference.md source citations
+        run: bash src/scripts/check-api-reference-citations.sh
 
       # Repo-root docs/ was covered by nothing until #5491: it was absent from
       # both paths: filters and had no step, so a PR breaking a relative link
