@@ -203,6 +203,70 @@ _run_test_contributor() {
   PASSED=$((PASSED + 1))
 }
 
+# Like _run_test_contributor, but also asserts WHICH gate answered.
+#
+# Exit code alone cannot tell "blocked by the gh auth gate" from "blocked by the
+# surface allowlist" — both are 1 — and that distinction is the entirety of
+# kubestellar/hive#6659. A test that only checked the code would have passed
+# throughout the bug's life and would pass again if it came back.
+#
+# want_match / want_absent are grep -E patterns; pass "-" to skip either.
+#
+# HERMETIC AGENT NAME, deliberately. These cases run `pr create` / `issue
+# create`, which are the first in this file to reach the mode gate — and that
+# gate reads `/tmp/.hive-mode-<agent-name>`, a world-writable path named after
+# the agent. On a machine that happens to have `/tmp/.hive-mode-scanner` (a
+# developer box or CI runner that has also run a hive), the shared "scanner"
+# name the helpers above use silently supplies a MODE and the create is refused
+# by ADVISORY rather than reaching the gate under test. A name nothing else
+# writes, plus an explicit empty mode and ACMM level 0, reproduces what a real
+# contributor container actually has.
+GATE_AGENT="ghwrapper-test-6659-$$"
+_run_test_contributor_gate() {
+  local expected_rc="$1" want_match="$2" want_absent="$3" desc="$4"
+  shift 4
+
+  local output rc=0
+  touch "${WORK_DIR}/contributor-marker"
+  output="$(env \
+    HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
+    HIVE_AGENT="$GATE_AGENT" \
+    HIVE_AGENT_DISPLAY_NAME="$GATE_AGENT" \
+    HIVE_AGENT_ID="$GATE_AGENT" \
+    HIVE_AGENT_MODE="" \
+    HIVE_ACMM_LEVEL="0" \
+    MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
+    GH_TOKEN="test-token-mock" \
+    bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+  rm -f "${WORK_DIR}/contributor-marker"
+
+  if [[ "$rc" != "$expected_rc" ]]; then
+    echo "FAIL: $desc"
+    echo "  expected exit code $expected_rc, got $rc"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_match" != "-" ]] && ! grep -qE "$want_match" <<<"$output"; then
+    echo "FAIL: $desc"
+    echo "  expected output to match /${want_match}/"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  if [[ "$want_absent" != "-" ]] && grep -qE "$want_absent" <<<"$output"; then
+    echo "FAIL: $desc"
+    echo "  expected output NOT to match /${want_absent}/"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
 _run_test_env_only() {
   local expected_rc="$1"
   local desc="$2"
@@ -359,6 +423,62 @@ _run_test_contributor 1 "issue list contributor mode --author unverified contrib
 
 MOCK_GH_LOGIN="test-contributor" _run_test_contributor 0 "issue list contributor mode --author verified contributor token login (allowed)" \
   issue list --repo test/repo --author test-contributor
+
+echo ""
+echo "=== gh auth gate matches the SUBCOMMAND, not the argv text (#6659) ==="
+
+# The gate used to be `case "$*" in *"auth "*)` — a substring match over the
+# FLATTENED argument string — so any gh call whose arguments merely MENTIONED
+# authentication was refused. The reported failure: a contributor finished a
+# [sec-check] task about keeping a registry token out of skopeo's argv (the fix
+# replaces --creds with an auth FILE), and could not open the PR, because the
+# body said "auth file". Work done, pushed, slot held, nothing landed.
+AUTH_GATE='gh auth is disabled for contributor agents'
+
+_run_test_contributor_gate 0 "-" "$AUTH_GATE" \
+  "pr create whose body says 'auth file' is NOT blocked (the reported failure)" \
+  pr create --repo test/repo --title 'sec: keep nightly registry token out of skopeo argv' \
+  --body 'skopeo --creds puts the token in argv. Use an auth file instead.'
+
+_run_test_contributor_gate 0 "-" "$AUTH_GATE" \
+  "issue create with 'auth' in both title and body is NOT blocked" \
+  issue create --repo test/repo --title 'auth bug' --body 'gh auth login fails here'
+
+# The trailing space in the old pattern was load-bearing in the worst way:
+# `authfile` passed and `auth file` did not. Two spellings of the same idea must
+# now reach the same verdict.
+_run_test_contributor_gate 0 "-" "$AUTH_GATE" \
+  "a search term containing 'auth file' is NOT blocked" \
+  pr list --repo test/repo --search 'auth file'
+_run_test_contributor_gate 0 "-" "$AUTH_GATE" \
+  "a search term containing 'authfile' is NOT blocked (same verdict as 'auth file')" \
+  pr list --repo test/repo --search 'authfile'
+
+# ...and the gate itself must still hold, in every form gh accepts.
+_run_test_contributor_gate 1 "$AUTH_GATE" "-" \
+  "gh auth login is still blocked" \
+  auth login
+_run_test_contributor_gate 1 "$AUTH_GATE" "-" \
+  "gh auth token is still blocked (it would print the credential)" \
+  auth token
+_run_test_contributor_gate 1 "$AUTH_GATE" "-" \
+  "bare 'gh auth' is still blocked" \
+  auth
+_run_test_contributor_gate 1 "$AUTH_GATE" "-" \
+  "gh auth status with a flag after the subcommand is still blocked" \
+  auth status --hostname github.com
+# The N7 lesson, applied to this gate: a SEPARATED flag value does not begin
+# with '-', so a parser that skipped only '-'-prefixed tokens would read
+# 'github.com' as the subcommand and let the auth call through.
+_run_test_contributor_gate 1 "$AUTH_GATE" "-" \
+  "a value-taking flag before the subcommand does not hide 'auth'" \
+  --hostname github.com auth token
+
+# Staff agents never had this gate — theirs is the deny-by-default surface
+# allowlist, which does not list 'auth' at all. Pin that removing the substring
+# match did not open gh auth for them.
+_run_test 1 "non-contributor gh auth token is blocked by the surface allowlist" \
+  auth token
 
 echo ""
 echo "=== Marker trust boundary regression tests ==="

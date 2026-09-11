@@ -164,10 +164,32 @@ outside the cluster (`pass=4 warn=2 fail=2`):
    also renders fine and also returns `200`, so nothing above distinguishes a
    working SSO bridge from the broken one this cutover exists to repair — see
    [Moving a public hostname](hivecommons-migration.md#moving-a-public-hostname).
-6. **Redirect the legacy host.** Once the new host is proven, remove
-   `dibs.kubestellar.io` from the application Ingress **first**, then apply
-   `src/deploy/dibs-domain-cutover/03-dibs-kubestellar-redirect.yaml`. Keep the
-   old per-host TLS secret/certificate until the redirect has been verified.
+6. **Redirect the legacy host.** The redirect is served by the shared
+   `legacy-redirect` nginx backend running in `hive-hub`
+   (`src/deploy/legacy-redirect/`, staged by [#6430](https://github.com/hivecommons/hive/issues/6430)
+   and already live for `hive.kubestellar.io`) — confirm that Deployment and
+   Service exist before starting:
+
+   ```sh
+   kubectl -n hive-hub get deploy,svc legacy-redirect
+   ```
+
+   Once the new host is proven, remove `dibs.kubestellar.io` from the
+   application Ingress **first**, then apply **both** staged manifests —
+   `04-dibs-legacy-redirect-externalname.yaml` (the `dibs`-namespace
+   ExternalName Service the redirect Ingress routes to; Ingress backends must
+   live in the Ingress's own namespace) and then
+   `03-dibs-kubestellar-redirect.yaml` (the redirect Ingress itself):
+
+   ```sh
+   kubectl apply -f src/deploy/dibs-domain-cutover/04-dibs-legacy-redirect-externalname.yaml
+   kubectl apply -f src/deploy/dibs-domain-cutover/03-dibs-kubestellar-redirect.yaml
+   ```
+
+   Applying `03-` without `04-` leaves the redirect Ingress pointing at a
+   Service that does not exist in `dibs`, so every legacy request fails instead
+   of redirecting. Keep the old per-host TLS secret/certificate until the
+   redirect has been verified.
 
    The order is not stylistic. Both Ingresses live in the `dibs` namespace and
    would claim the same host and path, and ingress-nginx resolves a duplicate
@@ -183,10 +205,17 @@ outside the cluster (`pass=4 warn=2 fail=2`):
    kubectl -n dibs get ingress \
      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.rules[*].host}{"\n"}{end}'
    ```
-7. **Verify the redirect, on a deep path.** The redirect annotation relies on
-   `$request_uri` to carry the path and query across, and a redirect that drops
-   them passes a `/`-only check while silently breaking every deep link into
-   `dibs`. Re-run the verifier — this time every check should pass:
+7. **Verify the redirect, on a deep path.** The `legacy-redirect` backend's
+   nginx config carries `$request_uri` across, and a redirect that drops the
+   path and query passes a `/`-only check while silently breaking every deep
+   link into `dibs`. (This is why the redirect is a backend and not the
+   `nginx.ingress.kubernetes.io/permanent-redirect` annotation: on this
+   cluster the ingress-nginx v1.12.2 admission webhook rejects any annotation
+   value containing `$`, and snippet annotations are disabled — an
+   annotation-based redirect would drop the path and query on every legacy
+   link, the exact defect [#6430](https://github.com/hivecommons/hive/issues/6430)
+   reports. See `src/deploy/legacy-redirect/README.md`.) Re-run the verifier —
+   this time every check should pass:
 
    ```sh
    bash src/deploy/dibs-domain-cutover/verify.sh
@@ -240,7 +269,10 @@ window short, and do not treat "both hosts answer" as the finish line.
 - If the dual-host application Ingress fails, restore the previous `dibs/dibs`
   Ingress with only `dibs.kubestellar.io` and keep the per-host `hive-tls-hc`
   secret in place.
-- If the redirect fails, delete or revert the redirect Ingress and restore
-  `dibs.kubestellar.io` on the application Ingress. Do not delete the old cert
+- If the redirect fails, delete or revert the redirect Ingress (`03-`) and the
+  `dibs`-namespace `legacy-redirect` ExternalName Service (`04-`), and restore
+  `dibs.kubestellar.io` on the application Ingress. Leave the shared
+  `hive-hub/legacy-redirect` backend alone — it also serves the live
+  `hive.kubestellar.io` redirect. Do not delete the old cert
   until the redirect has been observed working and no clients depend on direct
   serving from the legacy host.

@@ -5,6 +5,16 @@ on:
     branches:
       - v4
       - v5
+  # The checker itself is in scope, not just the history it checks. Until this
+  # filter was added, src/scripts/test-check-dco-trailers.sh existed but no
+  # workflow ever ran it — a change to the checker (or to the waiver logic that
+  # decides which protected-branch history is accepted) shipped with nothing
+  # exercising it. Same reasoning as the Dashboard Lint workflow's #5388 note.
+  pull_request:
+    paths:
+      - 'src/scripts/check-dco-trailers.sh'
+      - 'src/scripts/test-check-dco-trailers.sh'
+      - '.github/workflows/dco-post-merge.yml'
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
@@ -23,7 +33,34 @@ env:
   # Empty by default on purpose: the normal rule is that Signed-off-by must use
   # the commit author's email. Add maintainer override emails here only when the
   # project has explicitly accepted that identity as a post-merge DCO exception.
-  DCO_ALLOWLIST_EMAILS: ''
+  #
+  # raul.mturrubiates@gmail.com: @mendezr signs off with this address while
+  # GitHub records the author as mendezr@users.noreply.github.com (privacy
+  # email). Same person; accepted by maintainer disposition in #6554.
+  DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com'
+  # Per-commit maintainer DCO dispositions, by FULL SHA. This is the record
+  # src/docs/v5-sync-policy.md asks for — "listing every affected SHA and the
+  # reason the override is acceptable" — and the only instrument that can clear
+  # a commit with NO trailer at all, which no email allowlist can reach.
+  #
+  # A waived commit is still printed on every run (WAIVED, not hidden), and a
+  # waiver whose commit starts passing is reported as STALE-WAIVER so it gets
+  # removed. Unlike DCO_ALLOWLIST_EMAILS, a SHA cannot widen: it names history
+  # that already exists, so it can never pre-approve a future commit.
+  #
+  # b798382a4d98ada28b0cb813644a595db0c58b08 — "fix: update
+  # src/pkg/terminalassert/terminal_key_fallback_test.go for issue #6552",
+  # authored by Aditya Waghamare, landed on v4 with no Signed-off-by trailer.
+  # It cannot be repaired: rewriting a contributor's commit or adding a
+  # sign-off on their behalf is forbidden by #6329 and v5-sync-policy.md, and
+  # the branch is protected. Accepted by maintainer disposition in #6576.
+  #
+  # 8fe6bb34626af4277394fcd87de2cd7eb797cc52 — "feat: credit issue authors on
+  # hive PR commits" (#6592). The Signed-off-by IS present and matches the
+  # author, but a blank line separates it from a trailing Co-authored-by, so
+  # `git interpret-trailers --parse` sees only the last block. Cosmetic;
+  # accepted by maintainer disposition in #6605. Root cause fixed in #6606.
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
@@ -31,8 +68,25 @@ env:
   DCO_SKIP_BOT_AUTHORS: 'true'
 
 jobs:
+  # Exercises check-dco-trailers.sh against a throwaway repository with good,
+  # missing-trailer, mismatched-trailer and waived commits. This gates the
+  # instrument that decides which protected-branch history is accepted, so it
+  # runs on every PR that touches the checker, its tests, or this workflow.
+  checker-selftest:
+    name: Self-test the DCO checker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run check-dco-trailers self-tests
+        run: bash src/scripts/test-check-dco-trailers.sh
+
   dco-post-merge:
     name: Check ${{ matrix.branch }} recent commits
+    # A pull_request run is checking the CHECKER, not protected-branch history
+    # (the PR's own commits are covered by the pre-merge DCO check), so the
+    # monitor half sits out and only the self-test above runs.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -118,11 +172,47 @@ jobs:
             });
             const dup = existing.data.find(i => i.title === title);
             if (dup) {
+              // The monitor runs hourly AND on every push to a protected
+              // branch, so an unfixable failure used to add a comment every
+              // time it fired — #6554 collected six identical bot comments in
+              // 35 minutes, burying the maintainer triage that was the only
+              // useful content on the thread. Comment only when the SET OF
+              // FAILING COMMITS CHANGES, which is the only event a human needs
+              // to see: a NEW failure appearing, or one clearing. Repeats of a
+              // known state are silent (the run still fails, so the signal is
+              // not lost — it is just not re-narrated).
+              const failingSet = (body) => (body || '')
+                .split('\n')
+                .filter(l => l.startsWith('FAIL '))
+                .map(l => l.split(/\s+/)[1])
+                .sort()
+                .join(',');
+              const current = failingSet(report);
+
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                per_page: 100,
+              });
+              // Walk backwards to the most recent monitor comment; maintainer
+              // triage comments in between carry no FAIL lines and must not be
+              // mistaken for the last reported state.
+              const marker = 'DCO monitor still failing on';
+              const last = [...comments.data].reverse()
+                .find(c => (c.body || '').includes(marker));
+              const previous = last ? failingSet(last.body) : failingSet(dup.body);
+
+              if (previous === current) {
+                core.info(`DCO failure set unchanged (${current}); not adding a duplicate comment.`);
+                return;
+              }
+
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: dup.number,
-                body: `DCO monitor still failing on \`${branch}\` @ \`${shortSha}\`: ${runUrl}\n\n\`\`\`\n${report}\n\`\`\``,
+                body: `DCO monitor still failing on \`${branch}\` @ \`${shortSha}\`, with a CHANGED failure set: ${runUrl}\n\n\`\`\`\n${report}\n\`\`\``,
               });
               return;
             }

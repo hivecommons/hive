@@ -60,6 +60,17 @@ func TestClassifyProviderError_StatusAndOverloadBranches(t *testing.T) {
 			want:      true,
 		},
 		{
+			name:      "copilot seat revoked renders without a status code (#6500)",
+			pane:      `✗ You are not licensed to use Copilot. (Request ID: CF24:249477:13194BA:1505534:6AA2A42E)`,
+			wantClass: "auth",
+			want:      true,
+		},
+		{
+			name: "prose about licensing is not an error",
+			pane: "docs: explain who is licensed to use Copilot in the org",
+			want: false,
+		},
+		{
 			name: "bare status without api context is not an error",
 			pane: "503 lines changed in the diff",
 			want: false,

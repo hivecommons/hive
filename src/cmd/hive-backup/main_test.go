@@ -109,7 +109,7 @@ func TestUsageDocumentsEveryCommandAndEnvVar(t *testing.T) {
 	out := captureOutput(t, &os.Stderr, usage)
 
 	for _, want := range []string{
-		"run", "verify", "extract", "list",
+		"run", "verify", "extract", "restore", "list",
 		hubbackup.EnvBackupKey, hubbackup.EnvBucket,
 		hubbackup.EnvDataDir, hubbackup.EnvRetention,
 	} {
@@ -233,7 +233,9 @@ func TestMainNoArgsExitsNonzeroWithUsage(t *testing.T) {
 }
 
 func TestMainUnknownCommandExitsNonzero(t *testing.T) {
-	code, out := runMainHelper(t, nil, "restore")
+	// Was "restore" until #6529 made that a real subcommand. The point of the
+	// test is the unknown-verb branch, so it needs a verb that stays unknown.
+	code, out := runMainHelper(t, nil, "resurrect")
 	if code != exitCodeError {
 		t.Errorf("exit code = %d; want %d", code, exitCodeError)
 	}

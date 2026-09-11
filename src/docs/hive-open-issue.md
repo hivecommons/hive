@@ -115,6 +115,34 @@ agent-side "timed out but maybe it worked" ambiguity) never produces a second
 issue. The result file's `already_existed` field reports which case
 happened.
 
+### Rejected findings are not re-filed
+
+Exact-title dedupe cannot stop the second failure mode observed live
+([#6463](https://github.com/hivecommons/hive/issues/6463)): a maintainer
+closes an agent-filed finding as **not planned**, the closed issue leaves the
+agent's field of view (agents may not list issues), and on the next kick the
+same finding is rediscovered, *reworded*, and filed again — one false positive
+was filed five times in four days, each closure re-litigated by a human.
+
+Before creating, the watcher therefore also scans **recently closed** issues in
+the target repo that were filed by this hive's own App bot and closed as
+`not_planned` or `duplicate` within the last 30 days. The identity key is the
+**file-reference set**: the set of file paths named in title + body, with line
+numbers stripped (line numbers drift with unrelated commits; the files are the
+finding's actual subject and survive any rewording). When the pending request
+names exactly the same file set, the create is refused **terminally** — the
+request is consumed, never retried, and the result file carries
+`rejected_duplicate: true` with the closed issue's number and URL so the agent
+reads the maintainer's rebuttal instead of arguing with it. The refusal is
+recorded in the audit log as `agent_issue_rejected_duplicate`.
+
+The gate fails toward filing on every uncertainty: a failed lookup, an empty
+file set on either side, any difference between the sets (exact equality, not
+overlap — a genuine new defect involving one more file files normally), a
+`completed` closure (that means *fixed*, and a re-report may be a real
+regression), a rejection older than 30 days, or a hive with no App-bot
+identity all fall through to a normal create.
+
 ## Where things live
 
 | Path | What |

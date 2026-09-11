@@ -8,7 +8,8 @@
   <meta property="og:title" content="Get started — put your repo on autopilot">
   <meta property="og:description" content="Request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://hive.kubestellar.io/get-started">
+  <meta property="og:url" content="https://hive.hivecommons.dev/get-started">
+  <link rel="canonical" href="https://hive.hivecommons.dev/get-started">
   <meta name="description" content="Get started with Hive — request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive.">
   <title>Get started — put your repo on autopilot</title>
   <style>
@@ -482,7 +483,7 @@ docker compose -f src/docker-compose.yaml up -d
 
 # Open the dashboard
 open http://localhost:3001</code></pre>
-      <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.kubestellar.io.</p>
+      <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.hivecommons.dev.</p>
       <p style="margin-bottom:0">Listing a hive you host yourself in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a href="https://github.com/hivecommons/hive/issues/new" style="color:var(--blue)">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
     </div>
   </section>

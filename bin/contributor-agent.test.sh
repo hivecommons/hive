@@ -110,6 +110,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         mode = self.path.split("/")[1] if self.path.count("/") >= 1 else ""
         if mode == "ok":
+            if self.headers.get("Authorization") != "Bearer test-token":
+                self.send_response(401)
+                self.end_headers()
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/markdown; charset=utf-8")
             self.end_headers()
@@ -254,12 +258,69 @@ if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "$BOB_AGENT_MD" ]]; then
 fi
 echo "contributor-agent bob knowledge link tests passed"
 
+# OMP reads both of Hive's conventional knowledge-link names. The test hook
+# exits before launching tmux or the relay, so it proves the agent-owned seam
+# without reproducing any of its lifecycle.
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+OMP_AGENT_MD="${HOME_DIR}/agent.md"
+env -i \
+  PATH="${PATH}" \
+  HOME="$HOME_DIR" \
+  HIVE_REGISTRATION_TOKEN="test-token" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$OMP_AGENT_MD" \
+  AGENT_BACKEND=omp \
+  bash "${ROOT_DIR}/bin/contributor-agent.sh"
+
+for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
+  if [[ "$(readlink "$link")" != "$OMP_AGENT_MD" ]]; then
+    echo "expected OMP knowledge link $link to target the Hive export" >&2
+    exit 1
+  fi
+done
+
+mkdir -p "${WORK_DIR}/omp-bin"
+cat >"${WORK_DIR}/omp-bin/omp" <<'OMP'
+#!/bin/sh
+exit 0
+OMP
+chmod +x "${WORK_DIR}/omp-bin/omp"
+omp_detect_output="$(
+  env -i \
+    PATH="${WORK_DIR}/omp-bin:${CORE_PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI=1 \
+    AGENT_BACKEND=omp \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+if [[ "$omp_detect_output" != "UNVERIFIED" ]]; then
+  echo "expected OMP preflight to report an installed CLI without claiming authentication; got: $omp_detect_output" >&2
+  exit 1
+fi
+echo "contributor-agent OMP knowledge and preflight tests passed"
+
+# The codex --sandbox VALUE is PROBED at launch (kubestellar/hive#6653; see
+# codex_default_sandbox_mode in config/backends.conf), so a bare assertion of
+# "workspace-write" would silently mean "whatever the machine running this
+# suite happens to allow". These stubs pin both halves of the probe through the
+# HIVE_PRE_AGENT_HOOK seam — which is eval'd after backends.conf is sourced and
+# before backend_perm_flag runs — so the assertions below are about FLAG
+# ASSEMBLY and nothing else. The probe's own behaviour is tested separately at
+# the end of this block.
+#
+# This matters concretely: the suite is routinely run INSIDE the contributor
+# container, which is exactly the environment that resolves to
+# danger-full-access.
+CODEX_SANDBOX_OK_HOOK='codex_inside_contributor_container(){ return 1; }; codex_userns_available(){ return 0; }'
+
 codex_flags_output="$(
   env -i \
     PATH="${PATH}" \
     HOME="$HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="$CODEX_SANDBOX_OK_HOOK" \
     HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
     AGENT_BACKEND=codex \
@@ -280,6 +341,7 @@ codex_reviewer_override_output="$(
     HOME="$HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="$CODEX_SANDBOX_OK_HOOK" \
     HIVE_CODEX_APPROVALS_REVIEWER=user \
     HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
@@ -307,6 +369,7 @@ codex_reviewer_disabled_output="$(
     HOME="$HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="$CODEX_SANDBOX_OK_HOOK" \
     HIVE_CODEX_APPROVALS_REVIEWER= \
     HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
@@ -341,6 +404,7 @@ codex_spaced_workspace_output="$(
     HOME="$HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="$CODEX_SANDBOX_OK_HOOK" \
     HIVE_WORKSPACE_DIR="${WORK_DIR}/work space" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
     AGENT_BACKEND=codex \
@@ -390,6 +454,160 @@ case "$codex_bypass_output" in
     exit 1
     ;;
 esac
+
+# ── codex sandbox-mode probe (kubestellar/hive#6653) ────────────────────
+#
+# Codex's workspace-write sandbox is bubblewrap, and bubblewrap needs an
+# unprivileged user namespace. The contributor container denies that syscall
+# under the runtime's default seccomp profile, so asking for workspace-write
+# there failed every model-generated command — including both of Codex's
+# patch-application paths — with a bwrap error naming a HOST sysctl.
+#
+# The resolution is a probe over two independent predicates, and each of the
+# four combinations below is a distinct claim about what hive will launch.
+run_codex_sandbox_probe() {
+  # $1: stub for codex_inside_contributor_container's return
+  # $2: stub for codex_userns_available's return
+  # $3...: extra env assignments
+  local in_container="$1" userns_ok="$2"
+  shift 2
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="codex_inside_contributor_container(){ return ${in_container}; }; codex_userns_available(){ return ${userns_ok}; }" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    "$@" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>/dev/null
+}
+
+# 1. Inside the contributor container with user namespaces BLOCKED — the bug.
+#    The container is already the boundary, so stop asking for a nested one.
+#    The workspace grant must survive: --add-dir is how build/test tooling
+#    reaches the assigned repo and it is orthogonal to the sandbox mode.
+codex_probe_blocked="$(run_codex_sandbox_probe 0 1)"
+case "$codex_probe_blocked" in
+  *"backend_perm_flag=--ask-for-approval on-request --sandbox danger-full-access -c approvals_reviewer=auto_review --add-dir ${WORK_DIR}/workspace"* ) ;;
+  *)
+    echo "expected a userns-blocked contributor container to drop the unusable nested sandbox; got:" >&2
+    echo "$codex_probe_blocked" >&2
+    exit 1
+    ;;
+esac
+
+# 2. Inside the container but user namespaces WORK (operator relaxed seccomp).
+#    Nothing is broken, so nothing is downgraded — the nested sandbox is kept
+#    with no flag for the operator to remember.
+codex_probe_container_ok="$(run_codex_sandbox_probe 0 0)"
+case "$codex_probe_container_ok" in
+  *"--sandbox workspace-write"* ) ;;
+  *)
+    echo "expected a container with working user namespaces to keep workspace-write; got:" >&2
+    echo "$codex_probe_container_ok" >&2
+    exit 1
+    ;;
+esac
+
+# 3. NOT in the contributor container, user namespaces blocked. This is the
+#    one that must never downgrade: on the operator's own host there is no
+#    outer boundary, and workspace-write is the only thing between an assigned
+#    third-party test suite and their home directory (#4918). A blocked probe
+#    is a reason to fail loudly at launch, never a reason to widen access.
+codex_probe_host_blocked="$(run_codex_sandbox_probe 1 1)"
+case "$codex_probe_host_blocked" in
+  *"danger-full-access"* )
+    echo "local mode must NEVER be downgraded by the userns probe; got:" >&2
+    echo "$codex_probe_host_blocked" >&2
+    exit 1
+    ;;
+esac
+case "$codex_probe_host_blocked" in
+  *"--sandbox workspace-write"* ) ;;
+  *)
+    echo "expected local mode to keep workspace-write regardless of the probe; got:" >&2
+    echo "$codex_probe_host_blocked" >&2
+    exit 1
+    ;;
+esac
+
+# 4. An explicit HIVE_CODEX_SANDBOX_MODE pins the value and skips the probe
+#    entirely — otherwise the escape hatch would be silently overridden in the
+#    exact environment an operator is most likely to be debugging.
+codex_probe_pinned="$(run_codex_sandbox_probe 0 1 HIVE_CODEX_SANDBOX_MODE=read-only)"
+case "$codex_probe_pinned" in
+  *"--sandbox read-only"* ) ;;
+  *)
+    echo "expected an explicit HIVE_CODEX_SANDBOX_MODE to outrank the probe; got:" >&2
+    echo "$codex_probe_pinned" >&2
+    exit 1
+    ;;
+esac
+
+# The probe must never leak onto stdout: backend_perm_flag's output is
+# word-split into argv by agent-launch.sh, so an explanatory line landing there
+# would become a bogus flag. The note is stderr-only, which the 2>/dev/null in
+# run_codex_sandbox_probe above has been discarding — assert both halves here.
+codex_probe_note="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="codex_inside_contributor_container(){ return 0; }; codex_userns_available(){ return 1; }" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1 >/dev/null
+)"
+case "$codex_probe_note" in
+  *"danger-full-access"*"6653"* ) ;;
+  *)
+    echo "expected the downgrade to announce the posture actually in effect on stderr; got:" >&2
+    echo "$codex_probe_note" >&2
+    exit 1
+    ;;
+esac
+
+# The probe FAILS SAFE, in the direction that keeps the sandbox. If `unshare`
+# is not on PATH we cannot DISPROVE namespace availability, and a missing probe
+# tool must never be the reason a sandbox is dropped — so codex_userns_available
+# reports available and workspace-write stands. Exercised against the real
+# function (no stub) with an empty PATH, which is the only honest way to assert
+# "the tool is missing" rather than "we said it was".
+codex_probe_no_unshare="$(
+  bash -c "source '${ROOT_DIR}/config/backends.conf'
+           # emptied AFTER sourcing so the shell itself is still resolvable
+           PATH='${WORK_DIR}/nonexistent-bin'
+           codex_userns_available && echo available || echo blocked"
+)"
+if [[ "$codex_probe_no_unshare" != "available" ]]; then
+  echo "expected a missing unshare to report the namespace AVAILABLE (fail safe, keep the" >&2
+  echo "sandbox) rather than blocked; got: $codex_probe_no_unshare" >&2
+  exit 1
+fi
+
+# ...and the two predicates compose the way the resolution claims: with an
+# outer boundary and a blocked namespace the default is danger-full-access,
+# and flipping either input alone puts workspace-write back.
+codex_probe_matrix="$(
+  bash -c "source '${ROOT_DIR}/config/backends.conf'
+           for c in 0 1; do
+             for u in 0 1; do
+               codex_inside_contributor_container(){ return \$c; }
+               codex_userns_available(){ return \$u; }
+               printf '%s%s=%s ' \"\$c\" \"\$u\" \"\$(codex_default_sandbox_mode 2>/dev/null)\"
+             done
+           done"
+)"
+if [[ "$codex_probe_matrix" != "00=workspace-write 01=danger-full-access 10=workspace-write 11=workspace-write " ]]; then
+  echo "codex sandbox resolution matrix changed (container,userns => mode); got:" >&2
+  echo "$codex_probe_matrix" >&2
+  exit 1
+fi
+echo "contributor-agent codex sandbox probe tests passed"
 
 FAKE_BIN="${WORK_DIR}/bin"
 mkdir -p "$FAKE_BIN"
@@ -637,6 +855,108 @@ fi
 if bash -n -c "true ${claude_perm_value}" 2>/dev/null; then
   echo "the RAW claude perm flags unexpectedly parse as shell source — the _shell variant is redundant; got:" >&2
   echo "  ${claude_perm_value}" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# seed_claude_config must run for OAuth/subscription claude, not only when an
+# ANTHROPIC_API_KEY is delivered.
+#
+# Claude Code needs BOTH halves of its auth state: the token in
+# ${HOME}/.claude/.credentials.json and the session state in
+# ${HOME}/.claude.json. A contributor container mounts a staged ${HOME}/.claude
+# — so the token is fine — and the CLI writes its own ${HOME}/.claude.json,
+# which carries oauthAccount but no hasCompletedOnboarding. Without the seed
+# the CLI re-runs onboarding and parks the pane on "Select login method" with a
+# perfectly valid credential beside it. The old condition seeded litellm and
+# API-key claude only, so the default `just contribute-hive claude` path was
+# the single configuration that never got the flag.
+# ---------------------------------------------------------------------------
+
+seed_home="${WORK_DIR}/seed-home"
+seed_config="${seed_home}/.config/hive"
+mkdir -p "$seed_config"
+
+run_seed() {
+  # $1: AGENT_BACKEND. Any remaining args are extra `env` assignments.
+  local backend="$1"; shift
+  env -i \
+    PATH="${PATH}" \
+    HOME="$seed_home" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_SEED_CLAUDE_CONFIG=1 \
+    AGENT_BACKEND="$backend" \
+    "$@" \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+}
+
+seed_key() {
+  python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]))" \
+    "${seed_home}/.claude.json" "$1" 2>/dev/null
+}
+
+# 1. Subscription/OAuth claude — no ANTHROPIC_API_KEY anywhere. This is the
+#    regression: it used to leave .claude.json untouched.
+rm -f "${seed_home}/.claude.json"
+printf '%s' '{"oauthAccount":{"emailAddress":"c@example.invalid"},"userID":"u1"}' \
+  >"${seed_home}/.claude.json"
+run_seed claude >/dev/null 2>&1 || true
+
+if [[ "$(seed_key hasCompletedOnboarding)" != "True" ]]; then
+  echo "OAuth claude must get hasCompletedOnboarding seeded; got:" >&2
+  cat "${seed_home}/.claude.json" >&2
+  exit 1
+fi
+
+# The CLI's own keys survive the merge — the seed adds, it does not replace.
+if [[ "$(seed_key userID)" != "u1" ]]; then
+  echo "seeding must MERGE into an existing .claude.json, not overwrite it" >&2
+  cat "${seed_home}/.claude.json" >&2
+  exit 1
+fi
+
+# No key delivered means no customApiKeyResponses invented for one.
+if [[ "$(seed_key customApiKeyResponses)" != "None" ]]; then
+  echo "customApiKeyResponses must stay absent when no ANTHROPIC_API_KEY is set" >&2
+  cat "${seed_home}/.claude.json" >&2
+  exit 1
+fi
+
+# 2. An operator-supplied claude-config.json is still copied in first, and the
+#    seed merges on top of it rather than discarding it.
+rm -f "${seed_home}/.claude.json"
+printf '%s' '{"operatorKey":"kept"}' >"${seed_config}/claude-config.json"
+run_seed claude >/dev/null 2>&1 || true
+
+if [[ "$(seed_key operatorKey)" != "kept" ]] || [[ "$(seed_key hasCompletedOnboarding)" != "True" ]]; then
+  echo "claude-config.json must be copied in and then merged with the seed; got:" >&2
+  cat "${seed_home}/.claude.json" >&2
+  exit 1
+fi
+rm -f "${seed_config}/claude-config.json"
+
+# 3. The API-key path (#5103) is unchanged: the key is pre-approved, in full
+#    and as its last 20 chars, because matching differs across CLI versions.
+rm -f "${seed_home}/.claude.json"
+api_key="sk-ant-test-0123456789abcdefghij"
+run_seed claude ANTHROPIC_API_KEY="$api_key" >/dev/null 2>&1 || true
+
+approved="$(python3 -c "
+import json
+d = json.load(open('${seed_home}/.claude.json'))
+print(','.join(d.get('customApiKeyResponses', {}).get('approved', [])))
+" 2>/dev/null)"
+if [[ "$approved" != "${api_key},${api_key: -20}" ]]; then
+  echo "ANTHROPIC_API_KEY must be approved in full and as its last 20 chars; got: ${approved}" >&2
+  exit 1
+fi
+
+# 4. litellm keeps its seeding too. It refuses to start without an endpoint,
+#    so supply one; the seeding itself never consults it.
+rm -f "${seed_home}/.claude.json"
+run_seed litellm HIVE_LITELLM_ENDPOINT="https://litellm.invalid:4000" >/dev/null 2>&1 || true
+if [[ "$(seed_key hasCompletedOnboarding)" != "True" ]]; then
+  echo "litellm must still get hasCompletedOnboarding seeded" >&2
   exit 1
 fi
 

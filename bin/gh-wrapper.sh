@@ -138,15 +138,9 @@ if ! _contributor_mode; then
   } 2>/dev/null || true
 fi
 
-# Contributor mode — extra restrictions for remote contributor agents
-if _contributor_mode; then
-  case "$*" in
-    *"auth "*)
-      echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
-      exit 1
-      ;;
-  esac
-fi
+# NOTE: the contributor-mode `gh auth` gate USED to live here, matching
+# `case "$*" in *"auth "*)`. It now lives below the subcommand parser and keys
+# on `$subcmd` — see "CONTRIBUTOR MODE — gh auth" after that block (#6659).
 
 # Build the full command string for pattern matching
 FULL_CMD="gh $*"
@@ -246,6 +240,50 @@ for arg in "${args[@]}"; do
       ;;
   esac
 done
+
+# ── CONTRIBUTOR MODE — gh auth (kubestellar/hive#6659) ───────────────────────
+#
+# Contributor agents must not manage the gh credential store: they run on a
+# volunteer's own machine with that person's own `gh` login, and re-authing,
+# switching accounts or printing the token is none of an assigned task's
+# business.
+#
+# WHAT THIS GATE MUST MATCH IS THE SUBCOMMAND, NOT THE TEXT. It used to run
+# ~100 lines above this, before any parsing existed, as a glob over the
+# FLATTENED argument string:
+#
+#   case "$*" in *"auth "*) ... ;; esac
+#
+# so ANY gh invocation whose arguments merely MENTIONED authentication was
+# refused — PR bodies, issue titles, commit messages. The trailing space was
+# load-bearing in the worst way: `authfile` passed, `auth file` did not.
+#
+# The cost was not cosmetic. A codex contributor finished an assigned
+# `[sec-check]` task whose whole subject was keeping a registry token out of
+# skopeo's argv — the fix replaces `--creds` with an auth FILE — and could not
+# open the PR, because the body said "auth file". Security fixes are precisely
+# the PRs whose bodies discuss authentication, and `[sec-check]` issues are a
+# category the hive assigns routinely, so this systematically killed the last
+# step of the tasks it could least afford to lose: work done, tested, committed
+# and pushed, slot held, nothing landed.
+#
+# It also did not hold. The agent, refused on both `gh pr create` and `gh api`,
+# reached the REST endpoint with curl and the GH_TOKEN it already holds by
+# design. Nothing was escalated — but an over-broad refusal is what taught it to
+# leave the sanctioned path, and that is a lesson it carries into refusals that
+# mean something.
+#
+# Keyed on the parsed `$subcmd`, so it is exactly as strict as it was meant to
+# be and not one argument wider. Placed immediately after the parser and before
+# the surface allowlist, keeping the precedence the old gate had over it: a
+# contributor typing `gh auth login` gets this specific message rather than a
+# generic "not on the allowlist".
+if _contributor_mode && [ "$subcmd" = "auth" ]; then
+  echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
+  echo "   This gate matches the 'auth' SUBCOMMAND only — arguments that merely mention" >&2
+  echo "   authentication (a PR body, an issue title) are not blocked (#6659)." >&2
+  exit 1
+fi
 
 # ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840 F6/F7 residual; added in #3854) ─
 #

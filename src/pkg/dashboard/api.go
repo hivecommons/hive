@@ -1051,7 +1051,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set(proxyAuthHeader, proof)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1098,7 +1098,7 @@ func (s *Server) handleSnapshotFrameAncestors(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
-	hubURL := "https://hive.kubestellar.io"
+	hubURL := "https://hive.hivecommons.dev"
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.URL != "" {
 		hubURL = s.deps.Config.Hub.URL
 	}
@@ -2319,13 +2319,23 @@ func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
 		start = len(lines) - tokenAccessMaxEntries
 	}
 	entries := make([]json.RawMessage, 0, len(lines)-start)
+	skipped := 0
 	for _, line := range lines[start:] {
+		line = strings.TrimSpace(line)
 		if line == "" {
+			continue
+		}
+		// The log is appended concurrently by the gh-wrapper audit path, so a
+		// reader can observe a torn (partially written) final line. Skip and
+		// count any line that isn't valid JSON instead of letting it corrupt
+		// the whole response (#6407).
+		if !json.Valid([]byte(line)) {
+			skipped++
 			continue
 		}
 		entries = append(entries, json.RawMessage(line))
 	}
-	jsonResponse(w, map[string]interface{}{"entries": entries})
+	jsonResponse(w, map[string]interface{}{"entries": entries, "skipped": skipped})
 }
 
 // --- Token endpoints ---
@@ -2836,7 +2846,7 @@ code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:2px 8
 <p class="action">%[3]s</p>
 <p>Error code: <code>%[1]s</code></p>
 <a class="btn btn-primary" href="/">Sign in with GitHub</a>
-<a class="btn btn-secondary" href="https://hive.kubestellar.io/dashboard">Back to the hub</a>
+<a class="btn btn-secondary" href="https://hive.hivecommons.dev/dashboard">Back to the hub</a>
 </div>
 </html>`
 
@@ -5177,13 +5187,28 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	// copilot catalog and offers models bob cannot honor (see bobStaticModels).
 	bobCLI := s.queryCLIModels(bobBackendID)
 
+	// cliBackendEntry renders one CLI backend, attaching the discovery notice
+	// when there is one. A notice means the fallback list is being served
+	// because UPSTREAM REJECTED THIS ACCOUNT, not because a probe was absent
+	// or briefly unreachable — the dropdown says so instead of presenting a
+	// static catalog that looks like a working entitlement (#6500).
+	cliBackendEntry := func(id, name string, r cliModelResult) map[string]interface{} {
+		entry := map[string]interface{}{
+			"id": id, "name": name, "models": r.models, "fallback": r.fallback,
+		}
+		if r.notice != nil {
+			entry["notice"] = r.notice
+		}
+		return entry
+	}
+
 	jsonResponse(w, []map[string]interface{}{
-		{"id": "claude", "name": "Claude Code", "models": claudeCLI.models, "fallback": claudeCLI.fallback},
-		{"id": "copilot", "name": "GitHub Copilot", "models": copilotCLI.models, "fallback": copilotCLI.fallback},
-		{"id": bobBackendID, "name": "bob (IBM bobshell)", "models": bobCLI.models, "fallback": bobCLI.fallback},
-		{"id": "gemini", "name": "Gemini", "models": geminiCLI.models, "fallback": geminiCLI.fallback},
-		{"id": "goose", "name": "Goose", "models": gooseCLI.models, "fallback": gooseCLI.fallback},
-		{"id": agyBackendID, "name": "Google Antigravity (agy)", "models": agyCLI.models, "fallback": agyCLI.fallback},
+		cliBackendEntry("claude", "Claude Code", claudeCLI),
+		cliBackendEntry("copilot", "GitHub Copilot", copilotCLI),
+		cliBackendEntry(bobBackendID, "bob (IBM bobshell)", bobCLI),
+		cliBackendEntry("gemini", "Gemini", geminiCLI),
+		cliBackendEntry("goose", "Goose", gooseCLI),
+		cliBackendEntry(agyBackendID, "Google Antigravity (agy)", agyCLI),
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
 		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 		{"id": "litellm", "name": "LiteLLM (proxy)", "models": litellmModels, "inference": true},

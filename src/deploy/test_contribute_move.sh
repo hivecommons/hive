@@ -6,7 +6,7 @@
 # WHY THIS EXECUTES THE RECIPE. The properties that matter here are not visible
 # in the Justfile text. That the positional HIVE_HUB / HIVE_REGISTRATION_TOKEN /
 # CONTRIBUTOR_ID lists come out ALIGNED and IN THE SAME ORDER is a property of
-# the loop, not of any line in it; bin/contributor-relay.sh pairs those lists by
+# the loop, not of any line in it; bin/contributor-relay.js pairs those lists by
 # index, refuses to start when the lengths disagree, and misbehaves silently
 # when the order is transposed. Likewise "a later hub failing must not discard
 # the tokens already reissued" is a control-flow property — and getting it wrong
@@ -227,7 +227,7 @@ check "ids are in the SAME order as the hubs" "c-${PORT_A},c-${PORT_B}" \
 # The relay's own guard: one token per hub, or it refuses to start.
 N_HUBS=$(grep -m1 '^HIVE_HUB=' "$CONF" | cut -d= -f2- | tr ',' '\n' | grep -c .)
 N_TOKS=$(grep -m1 '^HIVE_REGISTRATION_TOKEN=' "$CONF" | cut -d= -f2- | tr ',' '\n' | grep -c .)
-check "list lengths agree (bin/contributor-relay.sh exits 1 otherwise)" "$N_HUBS" "$N_TOKS"
+check "list lengths agree (bin/contributor-relay.js exits 1 otherwise)" "$N_HUBS" "$N_TOKS"
 
 # ── 3. Switching back: hubs come from the existing file, extras survive ──────
 echo ""

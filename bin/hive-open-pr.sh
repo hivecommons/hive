@@ -26,6 +26,13 @@
 #   # hive verifies the body actually references each one (Closes #N / Refs #N)
 #   # and refuses the request otherwise — pass it whenever the run started from
 #   # an issue, so a mangled body cannot open a PR that orphans its issue.
+#   # When the body resolves an issue (Closes/Fixes/Resolves #N), this wrapper
+#   # asks src/scripts/issue-coauthor.sh for the expected Co-authored-by trailer
+#   # and warns if HEAD does not already carry it. Add the trailer before the
+#   # first push (usually with issue-coauthor.sh --amend); this wrapper never
+#   # rewrites or force-pushes a branch that may already be under review. The
+#   # trailer is attribution only, never a DCO sign-off; do not add
+#   # Signed-off-by on another person's behalf.
 #   # --head defaults to the current git branch. --base is OPTIONAL and should
 #   # normally be omitted: an omitted base is left empty in the request so the
 #   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
@@ -41,7 +48,76 @@
 
 set -euo pipefail
 
-REQ_DIR="/var/run/hive-metrics/pr-requests"
+REQ_DIR="${HIVE_OPEN_PR_REQ_DIR:-/var/run/hive-metrics/pr-requests}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ISSUE_COAUTHOR="${SCRIPT_DIR}/../src/scripts/issue-coauthor.sh"
+
+extract_closing_issue_numbers() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  python3 -c '
+import re
+import sys
+
+body = sys.stdin.read()
+seen = set()
+for line in body.splitlines():
+    for match in re.finditer(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b([^\n]*)", line):
+        tail = re.split(r"(?i)\b(?:refs?|references|related\s+to|see)\b", match.group(1), maxsplit=1)[0]
+        for issue in re.findall(r"#([0-9]+)", tail):
+            if issue not in seen:
+                seen.add(issue)
+                print(issue)
+'
+}
+
+commit_has_trailer() {
+  trailer="$1"
+  git log -1 --format=%B |
+    git interpret-trailers --parse |
+    grep -Fqx "$trailer"
+}
+
+check_issue_author_coauthors() {
+  repo="$1"
+  body="$2"
+
+  [ -f "$ISSUE_COAUTHOR" ] || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git rev-parse --verify HEAD >/dev/null 2>&1 || return 0
+
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    set +e
+    trailer="$(HIVE_COAUTHOR_REPO="$repo" bash "$ISSUE_COAUTHOR" "$issue")"
+    rc=$?
+    set -e
+    case "$rc" in
+      0) ;;
+      1)
+        echo "hive-open-pr: WARN: could not resolve co-author trailer for issue #${issue}; continuing so the fix can ship" >&2
+        continue
+        ;;
+      2)
+        echo "hive-open-pr: issue-coauthor.sh usage error while checking issue #${issue}; no request was written" >&2
+        exit 2
+        ;;
+      *)
+        echo "hive-open-pr: WARN: issue-coauthor.sh exited ${rc} for issue #${issue}; continuing so the fix can ship" >&2
+        continue
+        ;;
+    esac
+    [ -n "$trailer" ] || continue
+    if commit_has_trailer "$trailer"; then
+      continue
+    fi
+    echo "hive-open-pr: WARN: HEAD is missing issue #${issue} trailer: ${trailer}" >&2
+    echo "hive-open-pr: WARN: add it before pushing (for example: src/scripts/issue-coauthor.sh --amend ${issue})" >&2
+  done <<EOF_COAUTHOR_ISSUES
+$(printf '%s' "$body" | extract_closing_issue_numbers)
+EOF_COAUTHOR_ISSUES
+}
 
 REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
 BODY_SET=0
@@ -117,6 +193,8 @@ if [ -z "$REPO" ] || [ -z "$HEAD" ] || [ -z "$TITLE" ]; then
   echo "hive-open-pr: --repo, --head (or a current branch), and --title are required" >&2
   exit 2
 fi
+
+check_issue_author_coauthors "$REPO" "$BODY"
 
 # Identify the requesting agent. Prefer the UID map (the watcher re-derives the
 # owner from the FILE's UID anyway, so this is informational + a nicer log line);

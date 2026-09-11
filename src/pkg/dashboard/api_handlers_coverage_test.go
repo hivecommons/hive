@@ -132,7 +132,7 @@ func TestCovI_KnowledgeListExportSearch(t *testing.T) {
 	}
 
 	// Export returns markdown.
-	rec := doGet(s, "/api/knowledge/export")
+	rec := doOwnerGet(s, "/api/knowledge/export")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("knowledge export: %d", rec.Code)
 	}

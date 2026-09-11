@@ -213,6 +213,7 @@ func TestHandleKnowledgeExport_Enabled(t *testing.T) {
 	srv.deps.Knowledge = knowledge.NewKnowledgeAPI(layers, kcfg, srv.deps.Logger)
 
 	req := httptest.NewRequest("GET", "/api/knowledge/export", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKnowledgeExport(w, req)
 

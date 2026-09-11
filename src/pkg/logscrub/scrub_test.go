@@ -34,7 +34,7 @@ func TestScrubStringCredentialPatterns(t *testing.T) {
 }
 
 func TestRelayAndGoSecretPatternCategoriesAgree(t *testing.T) {
-	const relayPath = "../../../bin/contributor-relay.sh"
+	const relayPath = "../../../bin/contributor-relay.js"
 	body, err := os.ReadFile(relayPath)
 	if err != nil {
 		t.Fatalf("read relay secret patterns from %s: %v", relayPath, err)

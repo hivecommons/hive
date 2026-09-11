@@ -44,21 +44,31 @@ gh issue create --repo "$HIVE_REPO" \
   --label "bug"
 ```
 
+If the request's `.result.json` reports `"rejected_duplicate": true`, a
+maintainer recently closed an agent-filed issue covering the same files as
+not-planned or duplicate — the finding was reviewed and REJECTED. Do not
+re-file or reword it: read the closed issue the result points at, record the
+rejection in a bead citing it, and move on.
+
 ## Opening Hold-Gated PRs
+
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree: `git worktree add /tmp/scanner-fix-<slug> -b scanner/fix-<slug>`
 2. Implement the fix
 3. Commit: `git commit -s -m "[scanner] fix: <description>"`
-4. Push: `git push origin scanner/fix-<slug>`
-5. Open the PR with `hold` label — **NEVER merge**:
+4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+5. Push: `git push origin scanner/fix-<slug>`
+6. Request the PR with `hive-open-pr` — **NEVER merge it yourself**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[scanner] fix: <short description>" \
-  --body "## Fix\n\n<what this changes>\n\nCloses #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Fix\n\n<what this changes>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "hold"
 ```
+
 
 ## Writing Beads
 

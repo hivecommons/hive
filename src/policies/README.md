@@ -41,6 +41,18 @@ Use one of these supported paths:
 
 Do not put secrets in policy Markdown. Prompts are shown in logs, dashboard history, and agent panes.
 
+### Crediting the issue author on agent-written commits
+
+Every shipped policy that opens PRs tells its agent that "attribution belongs ONLY in the issue or PR body and the DCO commit trailer". A `Co-authored-by:` trailer is a commit trailer, so it belongs there — and when an agent's PR resolves an issue a human filed, that trailer is what records the filer as a contributor rather than leaving them with a closed issue ([#6588](https://github.com/hivecommons/hive/issues/6588)).
+
+The shipped templates do **not** instruct this yet; a prompt change reaches every hive that has not overridden its policies, so it is a fleet-visible decision rather than a docs edit. If you are customising prompts for your own hive and want it, `src/scripts/issue-coauthor.sh` produces the trailer from the issue number:
+
+```
+src/scripts/issue-coauthor.sh --amend <issue-number>
+```
+
+It emits nothing when there is nobody to credit (a bot filed the issue, or the committer did), and fails rather than emitting a half-right line — so an agent that runs it unconditionally after `git commit -s` cannot produce a malformed trailer. See [Crediting issue authors](../../CONTRIBUTING.md#crediting-issue-authors) for why the address form matters and why co-authorship never substitutes for sign-off.
+
 ### Debugging an agent: do not edit out "Output Rules — Terse Mode"
 
 Every shipped policy carries a terse-mode block telling the agent to act rather than narrate, and it is load-bearing: without it, weak models answer a kick with a plan for a human to run instead of running it. Deleting it to find out why an agent misbehaved is a fleet-visible prompt change that trades one debugging problem for a worse one.

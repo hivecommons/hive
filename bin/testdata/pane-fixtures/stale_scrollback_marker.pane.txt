@@ -1,0 +1,50 @@
+Welcome to Antigravity
+Terms of Service & Data Use
+
+[ ] I agree to the Terms of Service
+
+Do you trust the contents of this project?
+[Previous] [Done]
+
+agent output line 1: working on the assigned task
+agent output line 2: working on the assigned task
+agent output line 3: working on the assigned task
+agent output line 4: working on the assigned task
+agent output line 5: working on the assigned task
+agent output line 6: working on the assigned task
+agent output line 7: working on the assigned task
+agent output line 8: working on the assigned task
+agent output line 9: working on the assigned task
+agent output line 10: working on the assigned task
+agent output line 11: working on the assigned task
+agent output line 12: working on the assigned task
+agent output line 13: working on the assigned task
+agent output line 14: working on the assigned task
+agent output line 15: working on the assigned task
+agent output line 16: working on the assigned task
+agent output line 17: working on the assigned task
+agent output line 18: working on the assigned task
+agent output line 19: working on the assigned task
+agent output line 20: working on the assigned task
+agent output line 21: working on the assigned task
+agent output line 22: working on the assigned task
+agent output line 23: working on the assigned task
+agent output line 24: working on the assigned task
+agent output line 25: working on the assigned task
+agent output line 26: working on the assigned task
+agent output line 27: working on the assigned task
+agent output line 28: working on the assigned task
+agent output line 29: working on the assigned task
+agent output line 30: working on the assigned task
+agent output line 31: working on the assigned task
+agent output line 32: working on the assigned task
+agent output line 33: working on the assigned task
+agent output line 34: working on the assigned task
+agent output line 35: working on the assigned task
+agent output line 36: working on the assigned task
+agent output line 37: working on the assigned task
+
+────────────────────────────────────────────────────────────
+> 
+────────────────────────────────────────────────────────────
+? for shortcuts                        Gemini 3.8 Flash · high

@@ -62,20 +62,27 @@ gh issue create --repo "<org>/<target-repo>" \
 
 ## Opening Hold-Gated PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a worktree: `git worktree add /tmp/sec-fix-<slug> -b sec/fix-<slug>`
 2. Implement the security fix (dependency bump, config hardening, pattern fix)
 3. Commit: `git commit -s -m "[sec-check] fix: <description>"`
-4. Push and open a PR with `hold` label — **NEVER merge**:
+4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
 
 ```bash
-gh pr create --repo "<org>/<target-repo>" \
+hive-open-pr --repo "<org>/<target-repo>" \
   --title "[sec-check] fix: <short description>" \
-  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "security,hold"
 ```
 
 Sec-Check can PR: dependency version bumps for CVEs, removing hardcoded secrets, RBAC config fixes, unsafe pattern removal.
+Sec-Check can NOT PR a fix that lives in `.github/workflows/*.yml`: an ISSUES_AND_PRS
+token is minted at the `contributor` tier, which does not carry the Workflows
+permission, so GitHub rejects the push server-side (#6681). File the issue with the
+exact replacement text and say it needs a human or an ISSUES_PRS_MERGE agent to land.
 Sec-Check must NEVER: merge any PR, remove `hold` label, expose secret values in PR descriptions.
 
 ## Writing Beads

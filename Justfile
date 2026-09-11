@@ -21,6 +21,12 @@ config_dir := env("HOME") + "/.config/hive"
 # Set HIVE_CONTAINER_RUNTIME=podman to force rootless podman, or =docker.
 container_runtime := env("HIVE_CONTAINER_RUNTIME", "")
 
+# Shared contributor workload ceiling. The container runtime and Kubernetes
+# recipes render their native unit spelling from these values so the default
+# envelope cannot drift between the two deployment paths.
+contributor_memory_limit_gib := "4"
+contributor_cpu_limit := "2"
+
 # Show available commands
 default:
     @just --list
@@ -231,8 +237,19 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      omp)
+        if command -v omp &>/dev/null; then
+          echo "OMP CLI detected ($(omp --version 2>&1 | head -1))"
+          echo "  Set model: export AGENT_MODEL=provider/model"
+          echo "  Supply that provider's credential through OMP's documented environment or profile."
+          echo "  OMP is interactive-only; Hive does not claim a generic authentication probe or headless mode."
+        else
+          echo "ERROR: OMP CLI not found. Install: https://github.com/can1357/oh-my-pi"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp"
         exit 1
         ;;
     esac
@@ -431,7 +448,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     else
       # MULTI-HUB PRESERVATION (#4408). contributor.env carries positional,
       # comma-separated HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID
-      # lists (bin/contributor-relay.sh pairs them by index). This block used to
+      # lists (bin/contributor-relay.js pairs them by index). This block used to
       # `cat >` a SINGLE-hub file unconditionally, so a two-hive contributor who
       # ran contribute-setup against a hive they had not registered with yet
       # silently lost the credential for the first one — a live token that the
@@ -533,7 +550,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
 # REISSUES, once per hub, proving identity with your GitHub token
 # (POST /api/contribute/reissue-token). It then writes contributor.env with the
 # positional HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists aligned
-# in the SAME ORDER, which is what bin/contributor-relay.sh pairs by index. A
+# in the SAME ORDER, which is what bin/contributor-relay.js pairs by index. A
 # multi-hive contributor doing this by hand had to rotate per hub and rebuild
 # those lists without transposing them; the relay refuses to start if the
 # lengths disagree and misbehaves silently if the order is wrong.
@@ -978,10 +995,10 @@ contribute-hive backend="" mode="docker": check-version
       esac
       TMUX_SESSION="hive-${BACKEND}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
       SCRIPT_DIR="$(pwd)/bin"
-      RELAY="${SCRIPT_DIR}/contributor-relay.sh"
+      RELAY="${SCRIPT_DIR}/contributor-relay.js"
 
       if [[ ! -f "$RELAY" ]]; then
-        echo "ERROR: Run from the hive repo root (need bin/contributor-relay.sh)"
+        echo "ERROR: Run from the hive repo root (need bin/contributor-relay.js)"
         exit 1
       fi
 
@@ -1069,9 +1086,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo)
+        goose|agy|bob|pi|aider|kilo|omp)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these six (see the "no confinement mechanism at all"
+          # any of these seven (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
@@ -1259,6 +1276,23 @@ contribute-hive backend="" mode="docker": check-version
         fi
       fi
       RUNTIME_FLAGS=""
+      # Keep the default local-container envelope aligned with contribute-k8s.
+      # --memory-swap is the combined RAM+swap ceiling in Docker and Podman;
+      # setting it equal to --memory prevents a contributor from spilling an
+      # additional limit's worth into host swap (especially harmful with zram).
+      # Arrays preserve an operator-supplied value as one runtime argument.
+      CONTAINER_MEMORY="${HIVE_CONTAINER_MEMORY:-{{contributor_memory_limit_gib}}g}"
+      CONTAINER_CPUS="${HIVE_CONTAINER_CPUS:-{{contributor_cpu_limit}}}"
+      RESOURCE_FLAGS=()
+      if [[ "$CONTAINER_MEMORY" != "none" && "$CONTAINER_MEMORY" != "0" ]]; then
+        RESOURCE_FLAGS+=(
+          --memory "${CONTAINER_MEMORY}"
+          --memory-swap "${CONTAINER_MEMORY}"
+        )
+      fi
+      if [[ "$CONTAINER_CPUS" != "none" && "$CONTAINER_CPUS" != "0" ]]; then
+        RESOURCE_FLAGS+=(--cpus "${CONTAINER_CPUS}")
+      fi
       VOLSUF=""      # volume-option suffix for read-write mounts
       ROSUF=":ro"    # volume-option suffix for read-only mounts
       # SECURITY (H6 / CWE-668): the contributor container runs a hub-driven,
@@ -1505,7 +1539,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY; do
+        for name in ANTHROPIC_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY; do
           add_provider_env "$name"
         done
       fi
@@ -1522,9 +1556,25 @@ contribute-hive backend="" mode="docker": check-version
         [ -n "${CLI_STAGE:-}" ] && rm -rf "${CLI_STAGE}" 2>/dev/null || true
       }
       trap cleanup_container EXIT
+      report_container_termination() {
+        local exit_code="$1" oom_killed
+        oom_killed=$("$RUNTIME" inspect -f '{{ "{{" }}.State.OOMKilled{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
+        if [[ "$oom_killed" == "true" ]]; then
+          echo "  Cause:     the container was OOM-killed after exceeding available memory."
+          if [[ "$CONTAINER_MEMORY" == "none" || "$CONTAINER_MEMORY" == "0" ]]; then
+            echo "  Memory:    unlimited by Hive (set HIVE_CONTAINER_MEMORY, for example 4g)"
+          else
+            echo "  Memory:    ${CONTAINER_MEMORY} (raise with HIVE_CONTAINER_MEMORY, for example 6g)"
+          fi
+        elif [[ "$exit_code" == "137" ]]; then
+          echo "  Cause:     SIGKILL (exit 137); the runtime did not mark an in-container OOM."
+          echo "             Check the host's OOM logs for system-wide memory pressure."
+        fi
+      }
       "$RUNTIME" run -d \
         --name "${CONTAINER_NAME}" \
         ${RUNTIME_FLAGS} \
+        "${RESOURCE_FLAGS[@]}" \
         ${NET_FLAGS} \
         -v "{{config_dir}}:/home/dev/.config/hive${ROSUF}" \
         ${CLI_MOUNTS} \
@@ -1547,6 +1597,7 @@ contribute-hive backend="" mode="docker": check-version
       #   defaults the session to the backend name (kubestellar/hive#5605).
 
       echo "Container: ${CONTAINER_NAME}"
+      echo "Limits:    ${CONTAINER_MEMORY} memory, ${CONTAINER_CPUS} CPUs"
       echo "Waiting for CLI session to start..."
       # Grace period for the container entrypoint to bring up the tmux
       # session before we try to attach to it.
@@ -1565,6 +1616,7 @@ contribute-hive backend="" mode="docker": check-version
         echo "  Container: ${CONTAINER_NAME}"
         echo "  Runtime:   ${RUNTIME}"
         echo "  Exit code: ${CONTAINER_EXIT}"
+        report_container_termination "$CONTAINER_EXIT"
         echo ""
         echo "── Container logs ──"
         "$RUNTIME" logs "${CONTAINER_NAME}" 2>&1 || echo "(no logs captured)"
@@ -1635,6 +1687,7 @@ contribute-hive backend="" mode="docker": check-version
       if [[ "$FINAL_EXIT" != "0" && "$FINAL_EXIT" != "unknown" ]]; then
         echo ""
         echo "Container ${CONTAINER_NAME} exited with code ${FINAL_EXIT}."
+        report_container_termination "$FINAL_EXIT"
       fi
     fi
 
@@ -1666,7 +1719,23 @@ contribute-status:
       if [[ -n "${_IDS[$i]:-}" ]]; then
         echo ""
         echo "=== Your Profile (${_IDS[$i]}) ==="
-        curl -sf "${HUB_HTTP}/api/contributors/${_IDS[$i]}" 2>/dev/null | jq . || echo "Could not fetch profile"
+        # /api/contributors/{id} is auth-gated and answers an unauthenticated
+        # request with a 302 to the login page. `curl -f` only fails on >=400,
+        # so a redirect used to pass the guard, feed nginx's HTML to jq, leak
+        # jq's parse error to the terminal, and blame the fetch ("Could not
+        # fetch profile") for what is really a missing login (#6542). Read the
+        # status code explicitly and name each failure for what it is; jq only
+        # ever sees a 200 body.
+        PROFILE_RESP=$(curl -s -w '\n%{http_code}' "${HUB_HTTP}/api/contributors/${_IDS[$i]}" 2>/dev/null) || PROFILE_RESP=""
+        PROFILE_CODE="${PROFILE_RESP##*$'\n'}"
+        PROFILE_BODY="${PROFILE_RESP%$'\n'*}"
+        if [[ "$PROFILE_CODE" == "200" ]]; then
+          jq . <<< "$PROFILE_BODY" 2>/dev/null || echo "Could not parse profile response"
+        elif [[ "$PROFILE_CODE" == 3?? || "$PROFILE_CODE" == "401" || "$PROFILE_CODE" == "403" ]]; then
+          echo "Not logged in — sign in at ${HUB_HTTP}/sso to see your profile"
+        else
+          echo "Could not fetch profile (HTTP ${PROFILE_CODE:-no response})"
+        fi
       fi
       echo ""
     done
@@ -1746,11 +1815,11 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     readonly GH_AUTH_FILE="{{config_dir}}/gh-auth.env"
     # Published multi-arch image (.github/workflows/docker.yml build-contributor).
     readonly IMAGE_REPO="ghcr.io/hivecommons/hive-contributor"
-    # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.sh.
+    # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.js.
     readonly MODE_HEADLESS="headless"
     # Where the headless relay writes its coarse lifecycle state as JSON
     # (waiting/working/done/failed). Kept in step with HEADLESS_STATUS_FILE's
-    # default in bin/contributor-relay.sh; the probe below reads this exact path.
+    # default in bin/contributor-relay.js; the probe below reads this exact path.
     readonly HEADLESS_STATUS_FILE="/tmp/contributor-headless-status.json"
     # Backends a CLUSTER can run headless. A headless pod on any OTHER backend
     # (bob/pi) refuses work LOUDLY at startup, so we warn here rather than emit
@@ -1758,7 +1827,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # in #2828 via its `goose run` one-shot sub-command.
     #
     # This is deliberately a SUBSET of HEADLESS_BACKENDS in
-    # bin/contributor-relay.sh, which lists CLI capability only: agy has a
+    # bin/contributor-relay.js, which lists CLI capability only: agy has a
     # verified print mode (`agy -p`) and runs headless on a HOST, but it
     # authenticates through an interactive Google OAuth flow with no API-key
     # mode, so a pod has no way to sign in. Do NOT add agy here to "resync" the
@@ -1768,9 +1837,9 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # spawns a real coding-CLI + a repo build/test, so requests are deliberately
     # generous. Named here so an operator can see and tune them, not magic YAML.
     readonly MEM_REQUEST="1Gi"
-    readonly MEM_LIMIT="4Gi"
+    readonly MEM_LIMIT="{{contributor_memory_limit_gib}}Gi"
     readonly CPU_REQUEST="500m"
-    readonly CPU_LIMIT="2"
+    readonly CPU_LIMIT="{{contributor_cpu_limit}}"
 
     # ── Validate setup exists ──
     if [[ ! -f "$ENV_FILE" ]]; then

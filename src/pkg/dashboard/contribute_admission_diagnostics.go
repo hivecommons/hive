@@ -88,14 +88,18 @@ type AdmissionCoverage struct {
 const admissionCoveragePolicy = "readable blocked records are gated; unmapped lookup misses are admitted (hivecommons/hive#3904)"
 
 // queueAdmissionSnapshot is ONE read-only, ephemeral admission pass: the
-// offerable queue, the withheld diagnostics for convergence-blocked/unknown
-// candidates, and the sweep's ledger coverage — all from the SAME captured
-// sweep, so queue and diagnostics cannot disagree about the state they judged.
-// It lives for exactly one request/hydration and is never cached.
+// raw candidate/offerable/held totals, the bounded rendered queue, the withheld
+// diagnostics for convergence-blocked/unknown candidates, and the sweep's ledger
+// coverage — all from the SAME captured sweep, so status, queue and diagnostics
+// cannot disagree about the state they judged. It lives for exactly one
+// request/hydration and is never cached.
 type queueAdmissionSnapshot struct {
-	queue    []ReadyQueueItem
-	withheld []AdmissionWithheldItem
-	coverage AdmissionCoverage
+	queue          []ReadyQueueItem
+	candidateTotal int
+	offerableTotal int
+	heldTotal      int
+	withheld       []AdmissionWithheldItem
+	coverage       AdmissionCoverage
 }
 
 // convergenceDiagnosticsEnabled reports whether the #4246 diagnostics surface

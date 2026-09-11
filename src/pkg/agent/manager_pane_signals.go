@@ -161,6 +161,15 @@ var blockingPrompts = []blockingPrompt{
 		label: "agy project trust",
 	},
 	{
+		backend: "omp",
+		match: func(p string) bool {
+			lower := strings.ToLower(p)
+			return strings.Contains(lower, "welcome to omp") && strings.Contains(lower, "press enter to skip")
+		},
+		key:   "Enter",
+		label: "omp onboarding",
+	},
+	{
 		backend: "codex",
 		// codex: "Do you trust the contents of this directory?" → 1. Yes, continue.
 		match: func(p string) bool {
@@ -296,7 +305,9 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, bobInputPlaceholder) ||
 		strings.Contains(output, bobInputPlaceholderDefault) ||
 		strings.Contains(output, codexInputPromptMarker) ||
-		strings.Contains(output, piContextMarker)
+		strings.Contains(output, piContextMarker) ||
+		strings.Contains(output, "π >") ||
+		strings.Contains(output, "╰─")
 }
 
 func (a *AgentProcess) snapshot() AgentProcess {
@@ -346,6 +357,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		ProviderErrorClass:        a.ProviderErrorClass,
 		ProviderErrorLine:         a.ProviderErrorLine,
 		ProviderErrorBackoffUntil: a.ProviderErrorBackoffUntil,
+		BackendAuth:               a.BackendAuth,
 		StartFailureClass:         a.StartFailureClass,
 		StartFailureReason:        a.StartFailureReason,
 		StartFailureCount:         a.StartFailureCount,
@@ -745,6 +757,7 @@ func lineShowsUpstreamAuthorizationError(line string) bool {
 var quotaExhaustionPatterns = []string{
 	"exceeded your monthly quota",
 	"used all your copilot free chat requests",
+	"individual quota reached",
 	"budget_exceeded",
 	"budget has been exceeded",
 	"provider spending limit reached",

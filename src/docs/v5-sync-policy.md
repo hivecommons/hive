@@ -103,6 +103,18 @@ name.
 
 Do not hand-swap the `dco-signoff` label as the normal response. Instead:
 
+**Merge-method policy (decided by #6312):** `hive` PRs are merged by
+**rebase**, not squash. Squash is not used on `v4`/`v5` because Tide rebuilds
+the merge commit from PR metadata rather than the branch's own commits,
+which is what drops or mismatches the `Signed-off-by:` trailer above. Once
+[hivecommons/infra#3](https://github.com/hivecommons/infra/pull/3) lands,
+Tide will merge `hivecommons/hive` PRs with `merge_method: rebase`
+automatically; until then, maintainers merge by hand with
+`gh pr merge --admin --rebase`. Because rebase lands every commit on the PR
+branch verbatim (none are squashed into one), **every commit on a PR branch
+must carry its own valid `Signed-off-by:` trailer** — not just the PR's final
+or merge commit.
+
 1. Identify the offending v4 squash commits with the post-merge checker:
 
    ```sh
@@ -110,13 +122,22 @@ Do not hand-swap the `dco-signoff` label as the normal response. Instead:
    ```
 
    Increase the window when the sync range is larger than the default.
-2. Fix the source of the bad protected-branch commits. The preferred ask to the
-   Prow/Tide config owner is tracked in
-   [#6312](https://github.com/hivecommons/hive/issues/6312): either configure
-   Tide's squash commit template for `v4`/`v5` to emit a `Signed-off-by:` trailer
-   whose email matches the squash commit author, or use a merge mode such as
-   `--no-ff`/rebase for signed branches so reviewed signed commits are preserved.
-   That Prow/Tide configuration is outside this repository.
+2. Fix the source of the bad protected-branch commits. [#6312](https://github.com/hivecommons/hive/issues/6312)
+   determined that a squash commit template cannot reliably fix this: Tide only
+   has the PR title/body/author *login* available at merge time, not the
+   author's DCO-signing email, so it cannot reconstruct a matching trailer.
+   The fix is instead to merge `hivecommons/hive` by **rebase**, not squash:
+   rebase replays each already-signed branch commit onto the base as-is, so
+   every commit keeps its own valid `Signed-off-by:` trailer. That change is
+   requested in [hivecommons/infra#3](https://github.com/hivecommons/infra/pull/3),
+   which adds a `hivecommons/hive: rebase` override to Tide's
+   `merge_method` config (the org-wide default for other hivecommons repos
+   stays `squash`). Rebase requires PRs to be free of merge conflicts and
+   `needs-rebase`-clean, which Tide's existing query already enforces via
+   `missingLabels`. Until that Prow config change is applied and taken over by
+   Tide, maintainers merge `hive` PRs by hand with
+   `gh pr merge --admin --rebase` so the DCO trailer on every commit survives.
+   That Prow/Tide configuration itself is outside this repository.
 3. For the sync PR itself, use a real merge commit that preserves the original
    v4 SHAs. Never rewrite another contributor's commits and never add a
    sign-off on someone else's behalf; see
@@ -127,6 +148,52 @@ Do not hand-swap the `dco-signoff` label as the normal response. Instead:
 Contributors can avoid the author/trailer mismatch class by configuring
 `git user.email` to match the email they put in their `Signed-off-by:` trailer
 before commits are merged or squashed.
+
+### Recording a disposition for unfixable protected-branch history
+
+Step 3 above forbids the two things that would "fix" a bad commit already on a
+protected branch, so for that commit there is no fix — only a recorded
+disposition. The post-merge monitor
+(`.github/workflows/dco-post-merge.yml`) has two instruments for recording one,
+and they differ in blast radius:
+
+| | `DCO_ALLOWLIST_EMAILS` | `DCO_WAIVED_COMMITS` |
+| --- | --- | --- |
+| Accepts | an **identity** (a sign-off email) | **one historical commit** (full 40-char SHA) |
+| Clears `mismatched-signoff` | yes | yes |
+| Clears `missing-signoff` | **no** — it is only consulted once a trailer has been found | yes |
+| Applies to future commits | **yes**, indefinitely | never — a SHA names history that already exists |
+| Example | `raul.mturrubiates@gmail.com`, accepted in [#6554](https://github.com/hivecommons/hive/issues/6554) | `b798382a…`, accepted in [#6576](https://github.com/hivecommons/hive/issues/6576) |
+
+Prefer the SHA waiver. It is the narrower instrument, it matches what step 3
+already asks for ("listing every affected SHA and the reason"), and it is the
+only one that can clear a commit that carries no trailer at all. Reach for the
+email allowlist only when the intent really is to accept an identity's alternate
+address going forward.
+
+Neither instrument is silent. A waived commit is reported on every run as
+`WAIVED <sha> …` above the failures, the summary line counts waivers, and a
+green run carrying them says `passed (with recorded waivers)` rather than
+`passed` — so "nothing wrong" stays distinguishable from "we are accepting
+known-bad history". A waiver whose commit is in the inspected window and no
+longer failing is reported as `STALE-WAIVER` so it gets removed instead of
+lingering as an unexamined exception; that report is advisory and does not fail
+the run.
+
+Every waiver entry must carry, as a YAML comment beside it: the commit subject,
+the author, why it cannot be repaired, and the issue where the maintainer
+accepted it. Abbreviated SHAs are rejected outright (exit 2) — a prefix is
+ambiguous, and a waiver that silently matched nothing would leave the monitor
+red while a maintainer believed the disposition had been recorded.
+
+Check a waiver locally before proposing it:
+
+```sh
+DCO_WAIVED_COMMITS=<full-sha> src/scripts/check-dco-trailers.sh 50 origin/v4
+```
+
+`src/scripts/test-check-dco-trailers.sh` covers the checker itself and runs in
+CI on any PR touching it.
 
 ## Confirming zero delta
 

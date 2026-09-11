@@ -1,0 +1,9 @@
+{
+  "backend": "agy",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "paneShowsBlockingPrompt": false
+  },
+  "note": "The onboarding wizard text (Terms of Service, project trust) sits in OLD scrollback, rows 1-8, well above the last 15 non-blank rows. 37 newer non-blank rows of real task output sit between the stale marker and the current idle prompt, so the pane must classify as ready, not onboarding — a stale quote must never re-trip a gate the CLI has already passed."
+}

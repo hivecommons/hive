@@ -380,6 +380,7 @@ func TestReadJSONEmpty(t *testing.T) {
 func TestHandleKnowledgeExportNilKnowledge(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("GET", "/api/knowledge/export", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKnowledgeExport(w, req)
 	// Should handle nil knowledge gracefully — either 503 or creates fallback

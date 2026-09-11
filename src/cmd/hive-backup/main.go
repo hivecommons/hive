@@ -12,7 +12,16 @@
 //	hive-backup verify              # verify the newest stored archive
 //	hive-backup verify -file f.enc  # verify a local archive
 //	hive-backup extract -file f.enc -dest ./restore
+//	hive-backup restore -file f.enc -dest /data   # restore a spoke archive
 //	hive-backup list                # list stored archives
+//
+// extract and restore differ in what they do with the decrypted tree. extract
+// stops at a plain directory, preserving the archive's own path prefixes — the
+// right verb for inspecting an archive or for a hub disaster-recovery archive,
+// whose Secret/PVC reassembly is manual. restore goes on to place a per-spoke
+// archive into a live data directory, mapping spoke/ onto the data-dir root and
+// beads/<agent>/ one level down, and refusing to overwrite a destination that
+// already belongs to a different hive.
 //
 // HIVE_BACKUP_KEY must be set to a 64-character hex AES-256 key. It has no
 // default: an unset key aborts rather than writing plaintext.
@@ -26,6 +35,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/hubbackup"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/spokebackup"
 )
 
 // exitCodeError is returned for any operational failure so a CronJob shows
@@ -48,6 +58,8 @@ func main() {
 		cmdVerify(os.Args[2:], logger)
 	case "extract":
 		cmdExtract(os.Args[2:], logger)
+	case "restore":
+		cmdRestore(os.Args[2:], logger)
 	case "list":
 		cmdList(logger)
 	default:
@@ -63,6 +75,8 @@ Commands:
   run [-local FILE] [-skip-spokes]   create an encrypted backup
   verify [-file FILE]                verify newest stored, or a local archive
   extract -file FILE -dest DIR       decrypt an archive to a directory
+  restore -file FILE -dest DIR       restore a SPOKE archive into a data dir
+                                     [-force] [-dry-run]
   list                               list stored archives
 
 Environment:
@@ -164,6 +178,87 @@ func cmdExtract(args []string, logger *slog.Logger) {
 		os.Exit(exitCodeError)
 	}
 	fmt.Printf("extracted %d files to %s\n", len(man.Files), *dest)
+}
+
+// cmdRestore places a per-spoke archive into a data directory (#6529).
+//
+// This is the step `extract` deliberately stops short of. extract leaves a tree
+// still carrying the archive's own prefixes, which an operator then had to
+// hand-copy — a `cp` per path, remembering that beads/ nests one level deeper,
+// with nothing checking that the destination was not already a different hive.
+//
+// The key comes from hubbackup.LoadKey (HIVE_BACKUP_KEY), exactly as for
+// extract. For a cross-deployment restore that is the SOURCE hive's escrowed
+// key: the archive never carries its own key, and the destination's own key
+// setting has no bearing on opening a foreign archive.
+func cmdRestore(args []string, logger *slog.Logger) {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	file := fs.String("file", "", "spoke archive to restore (required)")
+	dest := fs.String("dest", "", "target spoke data directory, e.g. /data (required)")
+	force := fs.Bool("force", false, "restore even though the destination belongs to a different hive")
+	dryRun := fs.Bool("dry-run", false, "report what would be restored without writing anything")
+	_ = fs.Parse(args)
+
+	if *file == "" || *dest == "" {
+		// -dest has no default on purpose: this command writes over a hive's
+		// identity, config and GitHub App keys, and a destructive default is a
+		// bad default.
+		fmt.Fprintln(os.Stderr, "restore requires -file and -dest")
+		os.Exit(exitCodeError)
+	}
+	key, err := hubbackup.LoadKey()
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+	sealed, err := os.ReadFile(*file)
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+
+	res, err := spokebackup.Restore(key, sealed, spokebackup.RestoreOptions{
+		DataDir: *dest,
+		Force:   *force,
+		DryRun:  *dryRun,
+	}, logger)
+	if err != nil {
+		logger.Error("restore failed", "err", err)
+		os.Exit(exitCodeError)
+	}
+
+	verb := "restored"
+	if res.DryRun {
+		verb = "would restore"
+	}
+	fmt.Printf("%s %d files and %d bead directories to %s\n",
+		verb, len(res.Files), len(res.BeadDirs), *dest)
+	if res.ArchiveHiveID != "" {
+		fmt.Printf("  archive hive-id: %s\n", res.ArchiveHiveID)
+	}
+	if res.ExistingHiveID != "" {
+		fmt.Printf("  destination hive-id (before): %s\n", res.ExistingHiveID)
+	}
+	if res.Forced {
+		fmt.Println("  WARNING: identity check overridden by -force")
+	}
+	for _, f := range res.Files {
+		fmt.Printf("  %s\n", f)
+	}
+	if len(res.Ignored) > 0 {
+		// MANIFEST.json is expected here. Anything else means the archive held
+		// members this restore path does not place, which an operator should
+		// see rather than have silently dropped.
+		fmt.Printf("  not restored (archive metadata or outside the spoke layout): %d\n", len(res.Ignored))
+		for _, name := range res.Ignored {
+			fmt.Printf("    - %s\n", name)
+		}
+	}
+	if !res.DryRun {
+		// The entrypoint owns ownership and the config hardening, so the next
+		// boot is part of the procedure, not an optional extra.
+		fmt.Println("  (re)start the hive container to apply ownership and load the restored config")
+	}
 }
 
 func cmdList(logger *slog.Logger) {

@@ -142,6 +142,7 @@ func TestHandleKnowledgeExport_StableAcrossFetches(t *testing.T) {
 func doKnowledgeExport(t *testing.T, srv *Server) (body, etag string) {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/api/knowledge/export", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleKnowledgeExport(w, req)
 	if w.Code != http.StatusOK {

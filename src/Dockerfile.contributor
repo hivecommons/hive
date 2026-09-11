@@ -21,8 +21,21 @@ ARG NODE_MAJOR=24
 # contributor only re-pulls) that CLI's own layer, instead of also re-pulling
 # the base packages and Node toolchain underneath it. Total image size is
 # unchanged; only the update/re-pull cost per bump is reduced.
+#
+# bubblewrap (kubestellar/hive#6653) is the sandbox implementation every
+# sandbox-capable backend in this image reaches for on Linux — Codex's
+# workspace-write, Claude Code's local sandbox, Copilot's --sandbox. It was
+# absent, so Codex warned "could not find bubblewrap on PATH" at startup and
+# fell back to its own bundled musl copy. Under the container's DEFAULT seccomp
+# profile neither copy can work (user namespaces are denied, which is why
+# codex_default_sandbox_mode in config/backends.conf stops asking for a nested
+# sandbox there), so this does not by itself change the default posture. It
+# makes the OTHER path first-class: an operator who relaxes the runtime with
+# `--security-opt seccomp=unconfined` now gets a real, distro-maintained bwrap
+# and a nested sandbox that works, instead of a warning and a vendored binary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux python3 ca-certificates gnupg openssh-client \
+    bubblewrap \
   && rm -rf /var/lib/apt/lists/*
 
 # The NodeSource GPG key is downloaded to a file and its SHA-256 verified
@@ -113,7 +126,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64|aarch64) MUSE_FILE=muse-aarch64-linux; MUSE_SHA256="$MUSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for muse: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+    curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
       -o /tmp/muse "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=${MUSE_FILE}" && \
     echo "${MUSE_SHA256}  /tmp/muse" | sha256sum -c - && \
     install -m 0755 /tmp/muse /usr/local/bin/muse && \
@@ -156,7 +169,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
        *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
      esac \
-  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
        -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz"; then \
        echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
@@ -234,7 +247,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        *) echo "unsupported arch for agy: $ARCH" >&2; exit 1 ;; \
      esac \
   && mkdir -p /tmp/agy-dl \
-  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
        "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}/${AGY_PLATFORM}/${AGY_TARBALL}" \
        -o /tmp/agy-dl/agy.tar.gz; then \
@@ -290,7 +303,9 @@ RUN mkdir -p /var/run/hive-metrics /home/dev/.config/goose /home/dev/.config/gh 
 
 # Copy agent scripts
 COPY bin/contributor-agent.sh /usr/local/bin/
+COPY bin/contributor-relay.js /usr/local/bin/
 COPY bin/contributor-relay.sh /usr/local/bin/
+COPY bin/lib/ /usr/local/bin/lib/
 COPY bin/pi-backend.js /usr/local/bin/
 COPY bin/agent-launch.sh /usr/local/bin/
 COPY bin/gh-wrapper.sh /usr/local/bin/gh

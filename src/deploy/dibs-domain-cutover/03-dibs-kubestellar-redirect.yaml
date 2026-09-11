@@ -1,11 +1,17 @@
+# Redirects via the `legacy-redirect` backend (src/deploy/legacy-redirect/),
+# NOT the `nginx.ingress.kubernetes.io/permanent-redirect` annotation: that
+# annotation cannot carry `$request_uri` on this cluster (the ingress-nginx
+# v1.12.2 admission webhook rejects any value containing `$`, and snippet
+# annotations are intentionally disabled), so a redirect through it would drop
+# the path and query on every legacy link — the exact defect #6430 reports for
+# hive.kubestellar.io. See 04-dibs-legacy-redirect-externalname.yaml for how
+# the same-namespace `legacy-redirect` Service used below resolves into
+# `hive-hub`, and src/deploy/legacy-redirect/README.md for the full rationale.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: dibs-kubestellar-redirect
   namespace: dibs
-  annotations:
-    nginx.ingress.kubernetes.io/permanent-redirect: https://dibs.hivecommons.dev$request_uri
-    nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
 spec:
   ingressClassName: nginx
   tls:
@@ -20,6 +26,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: dibs
+                name: legacy-redirect
                 port:
                   number: 80

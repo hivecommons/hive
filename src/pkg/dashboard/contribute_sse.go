@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -54,6 +55,12 @@ const sseSubscriberBuffer = 32
 // panel is a fixed-height scroll container (.cc-queue), so a long list scrolls
 // inside its card rather than stretching the page.
 const readyQueueDefaultLimit = 150
+
+// readyQueueMaxPageSize is the largest page a caller of the paginated
+// /api/v1/queue endpoint may request in one call. It bounds a caller-supplied
+// limit so a pathological or malicious ?limit=<huge> query can never force the
+// server to marshal an unbounded JSON payload.
+const readyQueueMaxPageSize = 1000
 
 // sseEvent is one framed message pushed to subscribers. Type distinguishes the
 // initial hydration payload (queue + replay) from subsequent single activity
@@ -308,6 +315,9 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 	if status == nil {
 		return snap
 	}
+	for _, repo := range status.Repos {
+		snap.candidateTotal += len(repo.ActionableIssues)
+	}
 
 	// Which issues are already being worked right now — exclude them from "ready"
 	// exactly as selectTask does (an in-flight issue is not waiting to be picked).
@@ -482,6 +492,10 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 
 	// Cap AFTER ordering so the operator's pinned items are guaranteed to survive the
 	// truncation (they sort to the front), not be dropped by an arbitrary scan cut.
+	// Preserve the totals before truncation: status and queue metadata must describe
+	// the whole population, not merely the bounded rendering window.
+	snap.offerableTotal = len(out)
+	snap.heldTotal = len(heldItems)
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -829,4 +843,47 @@ func personalizeQueueByInterests(items []ReadyQueueItem, interests []string) []R
 		return items[i].MatchesInterest && !items[j].MatchesInterest
 	})
 	return items
+}
+
+// admissionQueueRange returns a page of the offerable ReadyQueueItems along with
+// the total number of offerable items. It honours operator ordering but paginates
+// the offerable set only (held items are never paged in — they are never
+// offerable). Offset < 0 is treated as 0; limit <= 0 uses readyQueueDefaultLimit,
+// and any limit is capped at readyQueueMaxPageSize.
+//
+// This deliberately does NOT re-run the admission sweep: it takes an UNCAPPED
+// admissionQueueSnapshot (the same single sweep behind ReadyQueue/the SSE hello
+// frame) and slices the ordered result. Duplicating the sweep's candidate
+// collection/filtering here previously drifted from admissionQueueSnapshot
+// (hivecommons/hive#6477 was exactly this class of bug), so there must be only
+// one place that decides what is offerable.
+func (h *ContributeWSHub) admissionQueueRange(limit int, offset int, withDiagnostics bool) (items []ReadyQueueItem, total int) {
+	if limit <= 0 {
+		limit = readyQueueDefaultLimit
+	}
+	if limit > readyQueueMaxPageSize {
+		limit = readyQueueMaxPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if h == nil {
+		return []ReadyQueueItem{}, 0
+	}
+
+	// math.MaxInt32 is effectively "no cap": admissionQueueSnapshot truncates
+	// AFTER recording offerableTotal, so requesting a limit far larger than any
+	// realistic backlog yields the full ordered offerable set with an accurate
+	// total, from the exact same sweep every other queue view uses.
+	snap := h.admissionQueueSnapshot(math.MaxInt32, withDiagnostics)
+	total = snap.offerableTotal
+	if offset >= total {
+		return []ReadyQueueItem{}, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	items = append([]ReadyQueueItem{}, snap.queue[offset:end]...)
+	return items, total
 }

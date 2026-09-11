@@ -22,7 +22,7 @@ import (
 // Justfile (and, for the container entrypoint below, contributor-agent.sh)
 // rather than restating them, so neither spawn site can regress quietly.
 //
-// The Justfile's local-mode recipe and contributor-relay.sh's relaunchCLI() were
+// The Justfile's local-mode recipe and contributor-relay.js's relaunchCLI() were
 // fixed first; contributor-agent.sh — the DEFAULT docker/container-mode
 // entrypoint (`just contribute-hive` defaults to mode="docker") — launches the
 // CLI the identical way and is just as exposed, so it gets the identical fix and
@@ -152,7 +152,7 @@ func TestContributorAgentPinsPaneWorkingDirectory(t *testing.T) {
 func TestContributeHiveExportsLaunchCommandForRelayRelaunch(t *testing.T) {
 	block := contributeHiveLaunchBlock(t)
 	if !strings.Contains(block, "export AGENT_LAUNCH_CMD=") {
-		t.Fatal("local contribute-hive must export the exact launch command for contributor-relay.sh relaunches")
+		t.Fatal("local contribute-hive must export the exact launch command for contributor-relay.js relaunches")
 	}
 	if !strings.Contains(block, "$AGENT_LAUNCH_CMD") {
 		t.Fatal("the first local launch must use the same AGENT_LAUNCH_CMD value the relay will reuse")

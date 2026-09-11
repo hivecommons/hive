@@ -8,7 +8,7 @@
   <meta property="og:description" content="Manage your AI agent hives. View local and hosted hive instances, monitor status, upgrade, and control access.">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Hive Hub">
-  <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
+  <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)  }gtag("js",new Date());gtag("config","G-4707R797K3");</script>
   <title>My Hives — Hive Hub</title>
   <style>
     :root {
@@ -1814,9 +1814,8 @@
       var SETTLING_SECS = 3600;        // 1 hour
       var SHOW_SECONDS_BELOW = 90;     // finer granularity while very fresh
       var HOUR_SECS = 3600, DAY_SECS = 86400;
-      if (!h.startedAt) return '<span style="color:var(--muted)">—</span>';
-      var secs = (Date.now() - new Date(h.startedAt).getTime()) / 1000;
-      if (!isFinite(secs) || secs < 0) return '<span style="color:var(--muted)">—</span>';
+      var secs = hiveStartedTime(h);
+      if (secs === null) return '<span style="color:var(--muted)">—</span>';
       var label;
       if (secs < SHOW_SECONDS_BELOW) label = Math.round(secs) + 's';
       else if (secs < HOUR_SECS) label = Math.round(secs / 60) + 'm';
@@ -1828,6 +1827,14 @@
         ? 'Restarted recently — a short value that keeps resetting means the pod is restarting'
         : 'Process uptime since the last restart';
       return '<span title="' + esc(title) + '" style="font-size:0.72rem;color:' + c + ';cursor:help">' + esc(label) + '</span>';
+    }
+    function hiveStartedTime(h) {
+      if (!h || !h.startedAt) return null;
+      var started = new Date(h.startedAt).getTime();
+      if (!isFinite(started) || started < Date.parse('2000-01-01T00:00:00Z')) return null;
+      var secs = (Date.now() - started) / 1000;
+      if (!isFinite(secs) || secs < 0) return null;
+      return secs;
     }
     /* ---- Assignment / claim-pending counter --------------------------------
        When a placeholder is ASSIGNED but its spoke has never reported the
@@ -2540,7 +2547,7 @@
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
         base = esc(h.dashboardUrl);
       } else if (isHosted) {
-        base = 'https://' + esc(h.id) + '.hive.kubestellar.io';
+        base = _hubSpokeDomain ? 'https://' + esc(h.id) + '.' + esc(_hubSpokeDomain) : '';
       }
       if (!base) return '';
       return '<a href="' + base + '/api/docs" target="_blank" style="padding:3px 10px;background:rgba(88,166,255,0.15);color:#58a6ff;border:1px solid rgba(88,166,255,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;white-space:nowrap">API ↗</a>';
@@ -2548,7 +2555,7 @@
     function resolvedBase(h) {
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) return h.dashboardUrl;
       var isH = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
-      if (isH) return 'https://' + h.id + '.hive.kubestellar.io';
+      if (isH && _hubSpokeDomain) return 'https://' + h.id + '.' + _hubSpokeDomain;
       return '';
     }
 
@@ -2697,6 +2704,7 @@
     var _currentUser = '';
     var _latestSHA = '';
     var _stableV4SHA = '';
+    var _hubSpokeDomain = '';
     /* Name of the branch _stableV4SHA is the tip of; the server's
        stable_v4_sha is that branch's HEAD, not the :stable channel. */
     var STABLE_BRANCH_LABEL = 'v4';
@@ -5541,6 +5549,7 @@
         var data = await resp.json();
         _userQuota = data.saas_quota || 0;
         _userUsed = data.saas_used || 0;
+        if (data.hub_spoke_domain) _hubSpokeDomain = data.hub_spoke_domain;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
         /* The fleet reference polygon behind every kite. Captured here rather
@@ -10693,7 +10702,7 @@
             // spokes (the heartbeat-only cluster etc.) link to their real route, not a dead
             // <id>.hive.kubestellar.io host. Fall back to the hub-reachable-cluster pattern.
             var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
-              ? regEntry.dashboardUrl : (isHosted ? 'https://' + esc(hid) + '.hive.kubestellar.io' : '');
+              ? regEntry.dashboardUrl : (isHosted && _hubSpokeDomain ? 'https://' + esc(hid) + '.' + esc(_hubSpokeDomain) : '');
             var linkLabel = linkBase.replace(/^https?:\/\//, '');
             var link = linkBase ? '<a href="' + esc(linkBase) + '" target="_blank" class="dash-link">' + esc(linkLabel) + '</a>' : '<span style="color:var(--muted)">local</span>';
             var typeBadge = isHosted ? '<span style="color:#60a5fa">hosted</span>' : '<span style="color:#9ca3af">local</span>';

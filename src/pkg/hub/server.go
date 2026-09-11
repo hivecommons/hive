@@ -159,6 +159,17 @@ type RegistryEntry struct {
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
 	// GatewayHealth is the spoke-reported set of currently failing inference gateways.
 	GatewayHealth []inferencehealth.GatewayStatus `json:"gatewayHealth,omitempty"`
+	// AuthHealth is the hub-COMPUTED fleet-wide agent backend-auth canary
+	// (#6558): ok / degraded / down, derived from this hive's Agents'
+	// BackendAuthStatus/BackendAuthSince by evaluateAuthHealth on every
+	// heartbeat. Unlike InferenceAuthError (spoke-computed, one inference
+	// gateway), this looks at every enabled AGENT's own classified backend
+	// auth state and is what the fleet badge and the down-transition
+	// notification key off. AuthHealthSince is when the current AuthHealth
+	// status began (zero when ok).
+	AuthHealth       string    `json:"authHealth,omitempty"`
+	AuthHealthReason string    `json:"authHealthReason,omitempty"`
+	AuthHealthSince  time.Time `json:"authHealthSince,omitempty"`
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
@@ -1769,7 +1780,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PrimaryRepo:       safePrimary,
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
-		StartedAt:         sanitizeField(payload.StartedAt),
+		StartedAt:         sanitizeHeartbeatTime(payload.StartedAt),
 		// Duplicate-instance detection. noteReporter returns "" until two
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
@@ -1780,7 +1791,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryLastPostedAt:  sanitizeHeartbeatTime(payload.AdvisoryLastPostedAt),
 		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
 		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
 		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
@@ -1853,8 +1864,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// Timestamps are spoke-reported strings like every other field
 				// here. An unparseable value is later read as "unknown" by the
 				// inactive-agent rule, never as evidence of idleness.
-				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
-				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
+				payload.Agents[i].StartedAt = sanitizeHeartbeatTime(payload.Agents[i].StartedAt)
+				payload.Agents[i].LastActivityAt = sanitizeHeartbeatTime(payload.Agents[i].LastActivityAt)
 				// Pause provenance (#4041). Trigger and actor are identifiers
 				// ("dashboard-api", a GitHub login); the reason is prose the
 				// hover renders to a human; the timestamp keeps its colons via
@@ -1862,7 +1873,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].PausedTrigger = sanitizeHeartbeatField(payload.Agents[i].PausedTrigger)
 				payload.Agents[i].PausedBy = sanitizeHeartbeatField(payload.Agents[i].PausedBy)
 				payload.Agents[i].PausedReason = sanitizeProseField(payload.Agents[i].PausedReason)
-				payload.Agents[i].PausedAt = sanitizeField(payload.Agents[i].PausedAt)
+				payload.Agents[i].PausedAt = sanitizeHeartbeatTime(payload.Agents[i].PausedAt)
 				// Fleet-divergence signals (#hub-fleet-view). Backend is a spoke-
 				// reported identifier (claude/copilot/gemini/…) and is sanitized
 				// like State/Mode. The remaining new signals — ExpectedActive,
@@ -1873,14 +1884,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].Backend = sanitizeHeartbeatField(payload.Agents[i].Backend)
 				payload.Agents[i].Restarts.Total = clampInt(payload.Agents[i].Restarts.Total, 0, 1_000_000)
 				payload.Agents[i].Restarts.Last24h = clampInt(payload.Agents[i].Restarts.Last24h, 0, 1_000_000)
-				payload.Agents[i].Restarts.LastRestartAt = sanitizeField(payload.Agents[i].Restarts.LastRestartAt)
+				payload.Agents[i].Restarts.LastRestartAt = sanitizeHeartbeatTime(payload.Agents[i].Restarts.LastRestartAt)
 				payload.Agents[i].Restarts.LastReason = sanitizeProseField(payload.Agents[i].Restarts.LastReason)
 				payload.Agents[i].Restarts.PodRestarts = clampInt(payload.Agents[i].Restarts.PodRestarts, 0, 1_000_000)
 				payload.Agents[i].StartBlockedReason = sanitizeProseField(payload.Agents[i].StartBlockedReason)
 				payload.Agents[i].StartFailureReason = sanitizeProseField(payload.Agents[i].StartFailureReason)
 				payload.Agents[i].StartFailureCount = clampInt(payload.Agents[i].StartFailureCount, 0, 1_000_000)
-				payload.Agents[i].StartFailureLastAt = sanitizeField(payload.Agents[i].StartFailureLastAt)
+				payload.Agents[i].StartFailureLastAt = sanitizeHeartbeatTime(payload.Agents[i].StartFailureLastAt)
 				payload.Agents[i].StartFailureSignal = sanitizeHeartbeatField(payload.Agents[i].StartFailureSignal)
+				// BackendAuth (#6558): Status is a closed identifier set
+				// (agent.BackendAuthUnlicensed etc.), Since a timestamp, and
+				// LastError prose from the offending pane line — same
+				// treatment as the other three field kinds beside it.
+				payload.Agents[i].BackendAuthStatus = sanitizeHeartbeatField(payload.Agents[i].BackendAuthStatus)
+				payload.Agents[i].BackendAuthSince = sanitizeHeartbeatTime(payload.Agents[i].BackendAuthSince)
+				payload.Agents[i].BackendAuthLastError = sanitizeProseField(payload.Agents[i].BackendAuthLastError)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -1979,6 +1997,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RepoActivityWindowHours:      clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
 		RepoActivityCountWindowHours: clampInt(payload.RepoActivityCountWindowHours, 0, repoActivityMaxWindowHours),
 	}
+
+	// Fleet-wide agent backend-auth canary (#6558): computed hub-side from
+	// the just-sanitized entry.Agents, exactly once per heartbeat, so the
+	// registry always carries the current verdict rather than a stale one
+	// from whenever an operator last looked.
+	authHealth := evaluateAuthHealth(entry.Agents, time.Now())
+	entry.AuthHealth = authHealth.Status
+	entry.AuthHealthReason = authHealth.Reason
+	entry.AuthHealthSince = authHealth.Since
 
 	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
 	// window_1h buckets into the hub's per-component retention ring. Runs on
@@ -2132,6 +2159,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					if len(entry.Repos) == 0 && len(h.Repos) > 0 {
 						entry.Repos = h.Repos
 					}
+				}
+				if entry.StartedAt == "" && h.StartedAt != "" {
+					entry.StartedAt = h.StartedAt
 				}
 				// Name was computed from the payload's (possibly empty)
 				// fields at build time — recompute it from the carried ones.
@@ -2449,6 +2479,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.recordHeartbeatTransitions(&prevEntry, &entry)
 	} else {
 		s.recordTimeline(entry.ID, TimelineCameOnline, "hive registered with the hub for the first time", "")
+	}
+
+	// Auth-health down-transition notification (#6558): ONE Slack DM to the
+	// hive owner the moment auth_health enters "down", reusing the exact
+	// notification plumbing notifyOwnerAccessRequest already uses (there is
+	// no hub-side email sender). prevEntry is the zero value when hadPrev is
+	// false (brand-new hive), whose AuthHealth is "" != down, so a hive that
+	// heartbeats "down" on its very FIRST beat (a fresh restart inheriting an
+	// already-broken credential) still notifies once, while a hive beating
+	// "down" every 2 minutes for hours does not spam.
+	if entry.AuthHealth == AuthHealthDown && prevEntry.AuthHealth != AuthHealthDown {
+		s.notifyOwnerAuthHealthDown(entry)
 	}
 
 	// Sample the fleet-total token trend. Deliberately AFTER s.mu.Unlock():
@@ -4480,10 +4522,18 @@ func parseHeartbeatTime(s string) time.Time {
 		return time.Time{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
+	if err != nil || t.IsZero() {
 		return time.Time{}
 	}
 	return t
+}
+
+func sanitizeHeartbeatTime(s string) string {
+	t := parseHeartbeatTime(strings.TrimSpace(s))
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func clampInt64(v, min, max int64) int64 {

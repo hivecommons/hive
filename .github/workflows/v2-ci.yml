@@ -2,7 +2,7 @@ name: v2 CI
 
 on:
   push:
-    branches: [v2, v4, v5]
+    branches: [v2, v4]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
@@ -13,9 +13,9 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
   pull_request:
-    branches: [v2, v4, v5]
+    branches: [v2, v4]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
@@ -26,7 +26,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
 
 permissions:
   contents: read
@@ -81,15 +81,6 @@ jobs:
       - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
         run: bash deploy/test_entrypoint_netadmin_ambient.sh
 
-      - name: Entrypoint egress ruleset contract tests
-        run: bash deploy/test_entrypoint_egress_ruleset.sh
-
-      - name: Entrypoint iptables gate contract tests
-        run: bash deploy/test_entrypoint_iptables_gate.sh
-
-      - name: Entrypoint xt module preflight contract tests
-        run: bash deploy/test_entrypoint_xt_module_preflight.sh
-
       # #4368: the entrypoint warns when the overlay's github.key_file names a
       # PEM that is not on disk — and used to look only at /data/, while the
       # provisioning template seeded /secrets/gh-app-key.pem for every App-using
@@ -108,6 +99,19 @@ jobs:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: bash deploy/test_entrypoint_dangling_keyfile.sh
 
+      # #6489: `Open a terminal` 503ed forever on a standalone, non-hub-provisioned
+      # docker-compose spoke — terminalassert.SigningKey() (hub.TerminalSigningKey)
+      # had no lane left once HIVE_TERMINAL_KEY and HIVE_HUB_SECRET+HIVE_ID were
+      # both absent (audit N3 deliberately removed the fleet-uniform fallbacks
+      # that used to sit there). hive_ensure_terminal_signing_key now auto-
+      # provisions a persisted per-instance key and exports it as
+      # HIVE_TERMINAL_KEY before either the Go binary or the Node proxy starts, so
+      # both processes agree on it from their first request. EXECUTES the real
+      # function extracted from the shipped entrypoint, so a regression fails the
+      # PR rather than a standalone hive.
+      - name: Entrypoint standalone terminal-key fallback tests (#6489)
+        run: bash deploy/test_entrypoint_terminal_key_fallback.sh
+
       # #5369: the `chown -R dev:node /data` in the entrypoint's root phase is
       # guarded on `[ "$DATA_OWNER" != "1001" ]`, and the Dockerfile already
       # does that chown at BUILD time — so the guard is false on every normal
@@ -123,22 +127,6 @@ jobs:
       # cannot go stale the first time someone adds a write.
       - name: Entrypoint /data ownership invariant (#5369)
         run: bash deploy/test_entrypoint_data_ownership.sh
-
-      # #5525: v4 -> v5 flips on long-lived NFS PVCs spent longer than the
-      # startup-probe budget in recursive per-agent chown/chmod, so kubelet
-      # killed the pod before :3002 listened and every restart began again.
-      # Pin both halves of the replacement: recursive walks live only in a
-      # background root worker, and UID/revision-bound markers gate agent launch.
-      - name: Entrypoint UID-isolation migration (#5525)
-        run: bash deploy/test_entrypoint_uid_isolation.sh
-
-      # #6287: the token-access audit log (GET /api/token-access) was
-      # dev:node 0664 while every agent UID is in group node, so the audited
-      # agents could truncate or forge their own trail. Pins the invariant on
-      # the shipped entrypoint and wrappers: the log is dev-owned 0600, the
-      # wrappers write only to the drop-box spool, and no chmod loosens it.
-      - name: Entrypoint token-access audit log not agent-writable (#6287)
-        run: bash deploy/test_entrypoint_token_access_audit.sh
 
       # #5370: the arm64 lane probed the PUBLISHED image, so on a PR it
       # validated code already on v4 rather than the change proposed — a PR
@@ -179,6 +167,21 @@ jobs:
       - name: Docker release-tag publication policy (#4804)
         run: bash scripts/test-publish-image-tags.sh
 
+      - name: Stable soak promotion policy (#5974)
+        run: bash scripts/test-promote-stable.sh
+
+      # #6588: PRs that resolve somebody else's issue credit the filer with a
+      # Co-authored-by trailer, and scripts/issue-coauthor.sh builds it. A
+      # wrong trailer is worse than none — GitHub silently ignores an address
+      # it cannot resolve, so the credit looks recorded while nothing was
+      # credited. Drives the script against a stubbed API (no network, no
+      # token) over every shape that matters, and pins the invariant that
+      # co-authoring is attribution and never sign-off: a co-authored commit
+      # must still pass DCO, and a commit carrying ONLY a co-author trailer
+      # must still fail it.
+      - name: Issue co-author trailer helper (#6588)
+        run: bash scripts/test-issue-coauthor.sh
+
       # #5142: v4.0.1 failed to publish twice in a row inside tagged-release.yml's
       # final push — once on GH006 propagation lag (branch protection had not
       # yet ingested the just-earned gate check), once on a non-fast-forward
@@ -211,6 +214,15 @@ jobs:
       # derive-release-version.sh from no-release to a minor release.
       - name: Changelog fragment compiler properties (#5675)
         run: bash scripts/test-compile-changelog.sh
+
+      # #5934: a hand-rescued v4.8.0 tag had no GitHub Release, and v4.9.0's
+      # dated changelog heading was empty while generated release notes still
+      # listed shipped PRs. The tagged release workflow now uses the tagged
+      # CHANGELOG.md section as its canonical Release body and falls back to
+      # generated notes only when that section is unexpectedly empty/missing,
+      # so tags do not become ledger entries with unusable bodies.
+      - name: Release notes extraction fallback (#5934)
+        run: bash scripts/test-extract-release-notes.sh
 
       # #4206: the standalone stack's image references live in exactly one
       # place, src/deploy/standalone-images.sh, so the Docker Compose assets
@@ -362,14 +374,6 @@ jobs:
         working-directory: .
         run: bash bin/test_kick_governor.sh
 
-      - name: DIBS cutover preflight contract tests
-        working-directory: .
-        run: bash bin/test_dibs_cutover_preflight.sh
-
-      - name: DIBS cutover verification contract tests
-        working-directory: .
-        run: bash bin/test_dibs_cutover_verify.sh
-
       # bin/merge-gate.sh reads actionable.json (enumerate-actionable.sh's
       # output) and writes merge-eligible.json — the ONE file agents are told
       # to trust before running `gh pr merge`. Every CI-check/mergeable/hold-
@@ -398,6 +402,44 @@ jobs:
       - name: gh-rate-check contract tests
         working-directory: .
         run: bash bin/test_gh_rate_check.sh
+
+      # #5925: the dibs domain cutover is scheduled around a Let's Encrypt quota
+      # window — a step that fails AFTER issuance costs a week, so the preflight
+      # that checks the plan's assumptions beforehand is itself load-bearing. A
+      # check that silently passes when it should fail is worse than no check,
+      # because it is the thing someone trusts before spending the window. This
+      # EXECUTES the preflight against a stub kubectl and stub dig and asserts
+      # its exit codes and report, including that an unreachable cluster never
+      # reads as a pass. No cluster, no network.
+      - name: dibs cutover preflight contract (#5925)
+        working-directory: .
+        run: bash bin/test_dibs_cutover_preflight.sh
+
+      # #5925: the verifier is what someone reads before deciding the cutover
+      # is finished and the old certificate can be retired. Every failure mode
+      # it exists to catch — a self-signed certificate, a certificate missing
+      # the new SAN, an inert redirect, a redirect that drops the path and
+      # query, a hub on a foreign registrable domain leaving dibs signed out —
+      # still answers HTTP 200, so a verifier that passes when one of those is
+      # true is worse than no verifier at all. This EXECUTES it against stub
+      # openssl/curl/dig/kubectl and asserts its exit codes and report,
+      # including that an open dual-host window never reads as finished. No
+      # cluster, no network.
+      - name: dibs cutover verification contract (#5925)
+        working-directory: .
+        run: bash bin/test_dibs_cutover_verify.sh
+
+      # #6430: the anomaly detector fired only on increases (an error event
+      # more than 2x its 7-day baseline). A domain migration collapses real
+      # pages/events instead — not an error event — so nothing in the old
+      # code path could have flagged it, and nothing would flag a recurrence.
+      # This EXECUTES bin/ga4_anomaly_lib.py's compute_anomalies() directly —
+      # no google-analytics-data library, no service account key, no network —
+      # and asserts both arms: the pre-existing spike trigger is unchanged,
+      # and a real page/event falling below the drop floor is now reported.
+      - name: GA4 anomaly detector drop-arm contract (#6430)
+        working-directory: .
+        run: bash bin/test_ga4_anomaly_detector.sh
 
       # #4289: git-credential-hive.sh is the fetch/clone AND push credential
       # source for every agent. Its mode block used to exit 1 in ADVISORY/
@@ -590,14 +632,19 @@ jobs:
       - name: Proxy Tests
         run: cd proxy && npm ci && npm test
 
-      # bin/contributor-relay.sh is JavaScript run by node despite the .sh
-      # extension; node --check needs a .js path, so check a copy.
+      # bin/contributor-relay.js used to carry the source under a misleading
+      # .sh name (kubestellar/hive#6429), which needed a copy trick for
+      # node --check. It is a real .js file now; check it and its lib/ module
+      # directly. bin/contributor-relay.sh is kept only as a thin POSIX-sh
+      # compat wrapper for deployments that still invoke the old path;
+      # bash -n validates it here.
       - name: Contributor Relay Syntax + Tests
         working-directory: .
         run: |
           bash bin/contributor-agent.test.sh
-          cp bin/contributor-relay.sh "${RUNNER_TEMP}/contributor-relay.js"
-          node --check "${RUNNER_TEMP}/contributor-relay.js"
+          node --check bin/contributor-relay.js
+          node --check bin/lib/pane-classifier.js
+          bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
 
       # backend-smoke.yml's failure-issue script runs only on a scheduled
@@ -629,10 +676,6 @@ jobs:
       - name: Backend smoke (keyless subset)
         working-directory: .
         run: bash bin/test_backend_smoke.sh
-
-      - name: Backend smoke attribution contract tests
-        working-directory: .
-        run: bash bin/test_backend_smoke_attribution.sh
 
       # `just contribute-k8s` now emits a runnable contributor workload (#2549):
       # a headless Deployment (#2660) with a status-file probe. This runs the
@@ -715,15 +758,6 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_hive_snapshot_unit_contract.sh
 
-      # #5936: hive-deploy.service is the same planted-checkout class with a
-      # larger payoff: it sudo-syncs /tmp/hive/bin/*.sh into /usr/local/bin.
-      # Pin the unit guard, the deploy script's checkout identity check, and
-      # the verified-snapshot copy path so root-installed files never come
-      # straight from the mutable /tmp/hive worktree.
-      - name: hive-deploy.service does not root-install planted code (#5936)
-        working-directory: .
-        run: bash src/deploy/test_hive_deploy_unit_contract.sh
-
       # #4440: the changelog reminder promises it "always succeeds" and "never
       # blocks a merge", and it did neither on a fork PR — GITHUB_TOKEN is
       # read-only there, the comment POST 403s, and `bash -e` made that a red
@@ -745,7 +779,7 @@ jobs:
       # contributor identity to a new machine. The properties that matter are
       # not visible in the Justfile text — that the positional HIVE_HUB /
       # HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists come out aligned and in
-      # the same order is a property of the loop, and bin/contributor-relay.sh
+      # the same order is a property of the loop, and bin/contributor-relay.js
       # pairs those lists by index (it refuses to start on a length mismatch and
       # sends the wrong token to the wrong hive on a transposed one). Getting the
       # partial-failure path wrong is worse: a reissued token cannot be
@@ -767,6 +801,18 @@ jobs:
       - name: In-container attach hints name the real runtime (#5145)
         working-directory: .
         run: bash src/deploy/test_attach_hint_runtime.sh
+
+      # #6485: the default contributor container had no resource ceiling, so a
+      # healthy coding task could consume enough RAM and zram for systemd-oomd
+      # to kill it (or another process in the contributor's desktop session).
+      # Run the real recipe against stub Docker/Podman CLIs: this verifies the
+      # effective argv, operator overrides, and OOM/SIGKILL diagnostics rather
+      # than merely finding resource-related strings in the Justfile.
+      - name: Contributor containers enforce resource limits (#6485)
+        working-directory: .
+        env:
+          HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+        run: bash src/deploy/test_contributor_container_resources.sh
 
       # #5388 item 3: the guard on the skip discipline itself.
       #
@@ -833,6 +879,25 @@ jobs:
       - name: hivectl extraction route contract (#5646)
         working-directory: .
         run: bash src/deploy/test_hivectl_extraction_contract.sh
+
+      # #6003: on hosts missing a non-optional netfilter extension,
+      # entrypoint.sh must capture the iptables stderr, flush any partial
+      # HIVE_PROXY chain, and then take the explicit advisory/fail-closed path
+      # instead of letting set -e crash on the raw iptables exit code.
+      - name: Entrypoint iptables append failure handling (#6003)
+        working-directory: .
+        run: bash src/deploy/test_entrypoint_iptables_gate.sh
+
+      - name: Entrypoint egress ruleset result checks (#6003)
+        working-directory: .
+        run: bash src/deploy/test_entrypoint_egress_ruleset.sh
+
+      # The step BEFORE the chain is built: a node missing xt_REDIRECT or
+      # xt_mark must be diagnosed by name and exit with the documented
+      # preflight code 77, leaving no partial HIVE_PROXY chain behind.
+      - name: Entrypoint netfilter extension preflight (#6003)
+        working-directory: .
+        run: bash src/deploy/test_entrypoint_xt_module_preflight.sh
 
       # The guard that keeps the omission above from recurring: every
       # src/deploy/test_*.sh must be named by at least one workflow. This is

@@ -1,0 +1,10 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "needs-login",
+    "paneShowsInputPrompt": false,
+    "paneShowsActiveWork": false
+  },
+  "note": "An OMP provider authentication gate must not be treated as a ready prompt."
+}

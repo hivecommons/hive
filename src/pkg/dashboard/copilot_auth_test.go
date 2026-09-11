@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // copilotDeviceMock serves fake /login/device/code and /login/oauth/access_token
@@ -130,11 +132,20 @@ func (p *backgroundPoll) await(t *testing.T, budget time.Duration) {
 // file inside t.TempDir(), restoring the real path afterward.
 func withCopilotTokenPath(t *testing.T) string {
 	t.Helper()
-	orig := copilotUserTokenPath
+	origPath := copilotUserTokenPath
+	origActivate := activateCopilotToken
 	path := filepath.Join(t.TempDir(), "copilot-user-token")
 	copilotUserTokenPath = path
+	// Manager activation normally writes /data/home/.copilot/config.json.
+	// Agent-package tests cover that write; dashboard tests isolate their
+	// package-global paths and verify the handoff through this seam.
+	activateCopilotToken = func(m *agent.Manager, token string) error {
+		m.SetCopilotToken(token)
+		return nil
+	}
 	t.Cleanup(func() {
-		copilotUserTokenPath = orig
+		copilotUserTokenPath = origPath
+		activateCopilotToken = origActivate
 	})
 	return path
 }
@@ -448,6 +459,12 @@ func TestPollCopilotToken_AccessDeniedStopsImmediately(t *testing.T) {
 
 func TestSaveCopilotToken_WritesAtomicallyWithPermissions(t *testing.T) {
 	tokenPath := withCopilotTokenPath(t)
+	var activated string
+	activateCopilotToken = func(m *agent.Manager, token string) error {
+		activated = token
+		m.SetCopilotToken(token)
+		return nil
+	}
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
 
@@ -469,6 +486,9 @@ func TestSaveCopilotToken_WritesAtomicallyWithPermissions(t *testing.T) {
 	}
 	if string(data) != "gho_savedtoken" {
 		t.Fatalf("token contents = %q, want gho_savedtoken", string(data))
+	}
+	if activated != "gho_savedtoken" {
+		t.Fatalf("activated token = %q, want gho_savedtoken", activated)
 	}
 
 	// The temp file used for the atomic rename should not be left behind.

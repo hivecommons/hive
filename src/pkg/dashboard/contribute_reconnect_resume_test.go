@@ -210,7 +210,7 @@ func TestReconnectResume_ProgressHandlerRenewsLease(t *testing.T) {
 	identity := onlyLeaseIdentity(t, s.contributeHub)
 	firstExpiry := leaseExpiry(t, s.contributeHub, identity)
 
-	// A progress report from the relay, exactly as contributor-relay.sh sends it.
+	// A progress report from the relay, exactly as contributor-relay.js sends it.
 	time.Sleep(10 * time.Millisecond)
 	conn.WriteJSON(WSMessage{
 		Type: "task_progress", Seq: 2, TaskID: assign.TaskID, TaskGen: assign.TaskGen,
@@ -232,7 +232,7 @@ func TestReconnectResume_ProgressHandlerRenewsLease(t *testing.T) {
 // TestReconnectResume_HandlerResumesPastOriginalTTL is the end-to-end proof of the
 // reported behaviour. A relay is assigned a task, works past the point where the
 // lease used to expire, drops its socket, reconnects, and re-asserts the task exactly
-// as contributor-relay.sh does. It must be resumed, not told "no active lease for
+// as contributor-relay.js does. It must be resumed, not told "no active lease for
 // this task" and handed the same issue as a brand-new assignment.
 func TestReconnectResume_HandlerResumesPastOriginalTTL(t *testing.T) {
 	s, ts := setupWSTest(t)

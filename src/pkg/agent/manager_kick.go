@@ -606,7 +606,10 @@ func stripExplainLines(pane string) string {
 // visible. The idle input prompt "❯" alone proves nothing on v2.1.204 —
 // the input box stays rendered while a response streams.
 func paneShowsActiveWork(pane string) bool {
-	return strings.Contains(pane, cliWorkingMarker) || strings.Contains(pane, cliActiveCounterMarker)
+	return strings.Contains(pane, cliWorkingMarker) ||
+		strings.Contains(pane, cliActiveCounterMarker) ||
+		strings.Contains(pane, "Working…") ||
+		strings.Contains(pane, "Running…")
 }
 
 func paneShowsEmptyInputPrompt(pane string) bool {
@@ -704,7 +707,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 			"error", match.Line)
 		return
 	}
-	m.clearProviderErrorLocked(agent)
+	m.clearProviderErrorLocked(agent, now)
 
 	if paneContentHash(pane) == agent.lastInferKickPane {
 		// Frozen pane: the CLI never consumed the kick.

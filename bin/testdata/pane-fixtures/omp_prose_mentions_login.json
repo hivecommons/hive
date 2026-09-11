@@ -1,0 +1,11 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsInputPrompt": true,
+    "paneShowsActiveWork": false
+  },
+  "note": "Real tmux capture-pane -p dump (omp 18.1.17, tmux -x 200 -y 50) reproducing a live production incident (2026-09-11, after 30 completed Hive tasks): a prior turn's own reply plainly discussed authentication ('Authentication required: please sign in to continue.'), and that prose was still inside the 15-line tail when OMP relaunched for the next task, tripping classifyReadiness('omp')'s needs-login gate on a pane that was fully idle and ready. kubestellar/hive#6639's 'Tip:' paragraph stripping did not touch this case (the false-positive line is ordinary conversation output, not a splash tip) and was independently broken besides (it swallowed everything after any 'Tip:' line because no blank line reliably follows one). Both are fixed by scoping the onboarding/login gates to the last 3 non-blank lines, where OMP's real prompt chrome actually renders."
+}

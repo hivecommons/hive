@@ -1,0 +1,10 @@
+{
+  "backend": "claude",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsTransientAPIError": false
+  },
+  "note": "A healthy, idle claude pane after a completed turn: persistent footer chrome plus its own HIVE_VERDICT, no error chrome anywhere in the capture."
+}

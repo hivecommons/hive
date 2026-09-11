@@ -1,4 +1,4 @@
-// Tests for bin/contributor-relay.sh (JavaScript despite the .sh extension).
+// Tests for bin/contributor-relay.js.
 //
 // Regression coverage for kubestellar/hive#2203 — "Contributor agent stuck in
 // infinite crash loop after periodic CLI restart". Reported with a full source
@@ -13,20 +13,26 @@ const Module = require('module');
 const path = require('path');
 const fs = require('fs');
 const piBackend = require('./pi-backend.js');
+// The pure pane classifier (kubestellar/hive#6429) — required directly, with
+// no relay/tmux/ws stubbing at all, for the tests below that exercise it as a
+// standalone library. Tests that need the relay's WIRING (task lifecycle, hub
+// messaging, tmux launch/restart) still go through loadRelay(), which itself
+// requires this same module.
+const paneClassifier = require('./lib/pane-classifier.js');
 
 // Set for the whole run, not just during module load: the relay checks it at
 // CALL time in sleepMs() to skip its busy-wait, and the restart paths sleep for
 // seconds at a time.
 process.env.HIVE_RELAY_TEST_MODE = '1';
 
-const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
+const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 
 // ---------------------------------------------------------------------------
 // Harness: load the relay with child_process/ws stubbed out, so no tmux, no
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -93,6 +99,17 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
       // CLI is "dead" the pane is a bare shell — and crucially the string must
       // not contain any known backend name.
       return procAlive ? `${backend} --allow-all\n` : '/usr/bin/sh\n';
+    }
+    // #6662: `gh pr view --json …` is how the relay asks GitHub whether a PR it
+    // saw in the pane is actually THIS task's work. `prMeta` is the answer:
+    //   - an object  → serialized as gh's JSON (the interesting cases)
+    //   - an Error   → thrown, modelling gh missing/offline/rate-limited
+    //   - unset      → '' falls through, which is what a JSON.parse failure and
+    //                  therefore the UNVERIFIED path looks like.
+    if (/gh pr view/.test(cmd)) {
+      if (prMeta instanceof Error) throw prMeta;
+      if (prMeta) return JSON.stringify(prMeta);
+      return '';
     }
     return '';
   };
@@ -184,13 +201,10 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
   if (env) Object.assign(process.env, env);
 
-  // node refuses to require a .sh file with the default extension handlers;
-  // register .sh as JavaScript. This must happen BEFORE require.resolve(), and
-  // the cache must be cleared on every load so each test gets a fresh module
+  // The cache must be cleared on every load so each test gets a fresh module
   // wired to its own execSync stub.
-  Module._extensions['.sh'] = Module._extensions['.js'];
   for (const key of Object.keys(require.cache)) {
-    if (key.includes('contributor-relay.sh')) delete require.cache[key];
+    if (key.includes('contributor-relay.js')) delete require.cache[key];
   }
   let relay;
   try {
@@ -625,6 +639,74 @@ const AGY_UNKNOWN_CHROME_WORKING = [
   '⣷  Editing files...',
   '  some unrecognised footer',
 ].join('\n');
+
+// --- #6438: classifyTmuxPane's agy window must survive tmux's blank padding --
+//
+// capture-pane -p pads to the pane's full height (50 rows), and agy renders
+// inline near the top, so a raw slice(-15) window is blank padding on any short
+// transcript. hasIdlePrompt's full-text "? for shortcuts" alternative hides
+// that on builds which still print it; the bare-prompt+footer alternative --
+// the current Gemini rendering -- reads this window and cannot match when it is
+// blank, so a FINISHED turn pins to WORKING until the stall backstop fails it
+// as `environment` (the #4127 incident, whose fix widened the regex but not the
+// window it reads).
+function padToPaneHeight6438(lines, height = 50) {
+  const out = lines.slice();
+  while (out.length < height) out.push('');
+  return out.join('\n');
+}
+
+// An idle agy turn on a build with no "? for shortcuts": bare input line, rule,
+// model footer.
+const AGY_IDLE_NO_SHORTCUTS = [
+  'Antigravity CLI 1.1.27',
+  '',
+  '\u25cf Edited scripts/lib/sbom/slim.js',
+  '\u2500'.repeat(60),
+  '> ',
+  '\u2500'.repeat(60),
+  '                                                 Gemini 3.8 Flash \u00b7 high',
+];
+
+// A busy turn, short enough that its "esc to cancel" footer is also inside the
+// padding. Pinned so the fix cannot over-correct into reporting a busy agent
+// idle -- the worse bug, as the branch's own comments say.
+const AGY_BUSY_SHORT_6438 = [
+  'Antigravity CLI 1.1.27',
+  '',
+  '\u25cf Read(scripts/lib/sbom/slim.js)',
+  '\u283f  Reading file...',
+  '\u2500'.repeat(60),
+  '> ',
+  '\u2500'.repeat(60),
+  'esc to cancel                                    Gemini 3.8 Flash \u00b7 high',
+];
+
+test('#6438 a finished agy turn is COMPLETE on a blank-padded pane', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    // Control: without tmux's padding this already worked, so padding is the
+    // only variable between the two assertions.
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_IDLE_NO_SHORTCUTS.join('\n')),
+      relay.PANE_STATE_IDLE_COMPLETE,
+      'control: the unpadded idle rendering was already COMPLETE');
+    assert.strictEqual(
+      relay.classifyTmuxPane(padToPaneHeight6438(AGY_IDLE_NO_SHORTCUTS)),
+      relay.PANE_STATE_IDLE_COMPLETE,
+      'a finished turn on a real (blank-padded) capture must not pin to WORKING — the stall backstop then fails a task that already shipped its work');
+  } finally { teardown(relay); }
+});
+
+test('#6438 a busy agy pane is still WORKING when padding hides its footer', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(padToPaneHeight6438(AGY_BUSY_SHORT_6438)),
+      relay.PANE_STATE_WORKING,
+      'reporting a busy agent as idle is the worse direction; the fix must not buy idle detection at that price');
+  } finally { teardown(relay); }
+});
 
 test('a finished agy turn is COMPLETE even when its summary contains an activity verb', () => {
   const relay = loadRelay({ backend: 'agy' });
@@ -2784,6 +2866,59 @@ test('agy startup gates are classified before readiness, using only the visible 
   }
 });
 
+// #6413: agy renders inline at the TOP of the pane — banner, input box and its
+// "? for shortcuts" footer land in rows 1-16 of a 50-row tmux capture, leaving
+// rows 17-50 blank. A plain last-15-lines tail (paneTail) is therefore rows
+// 36-50 on a real, idle agy pane — always blank — so getCLIState() returned
+// 'starting' forever and the CLI never became ready. Build the exact 50-row
+// shape (16 content rows, 34 trailing blank rows) rather than reusing
+// AGY_READY_PANE so this regresses if paneTail is ever reintroduced here.
+const AGY_READY_PANE_50_ROW_CAPTURE = [
+  '      \u2584\u2580\u2580\u2584        Antigravity CLI 1.1.27',
+  '     \u2580\u2580\u2580\u2580\u2580\u2580       account@example.com (Google AI Pro)',
+  '    \u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580      Gemini 3.8 Flash (High)',
+  '   \u2584\u2580\u2580    \u2580\u2580\u2584     ~/.local/state/hive/agent-cwd',
+  '  \u2584\u2580\u2580      \u2580\u2580\u2584',
+  '',
+  '\u2500'.repeat(60),
+  '> ',
+  '\u2500'.repeat(60),
+  '? for shortcuts                        Gemini 3.8 Flash \u00b7 high',
+  '', '', '', '', '', '',
+  ...Array.from({ length: 34 }, () => ''),
+].join('\n');
+
+test('a 50-row agy capture with "? for shortcuts" above a blank last-15-rows tail is ready (regression #6413)', () => {
+  const rows = AGY_READY_PANE_50_ROW_CAPTURE.split('\n');
+  assert.strictEqual(rows.length, 50, 'test fixture must model the real 50-row pane geometry');
+  assert.strictEqual(/\? for shortcuts/.test(rows[9]), true,
+    'the fixture must place the marker at row 10, well above the last 15 rows');
+  assert.strictEqual(rows.slice(-15).every((r) => r.trim() === ''), true,
+    'the last-15-rows window must be blank, exactly as on the real pane from #6413');
+  const relay = loadRelay({ backend: 'agy', cliStates: [AGY_READY_PANE_50_ROW_CAPTURE] });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'ready',
+      'a live, idle agy pane whose "? for shortcuts" footer sits above a blank last-15-rows tail must be ready, not starting forever');
+  } finally { teardown(relay); }
+});
+
+test('agy onboarding marker only in old scrollback above recent blank/idle rows is not onboarding', () => {
+  // The wizard text sits far above the last 15 non-blank rows, which show a
+  // plain idle prompt with no readiness marker at all — this must NOT match
+  // onboarding just because the word appears earlier in the capture.
+  const pane = [
+    'Terms of Service & Data Use',
+    '[Previous] [Done]',
+    ...Array.from({ length: 20 }, (_, i) => `ordinary output line ${i}`),
+    '> ',
+  ].join('\n');
+  const relay = loadRelay({ backend: 'agy', cliStates: [pane] });
+  try {
+    assert.notStrictEqual(relay.getCLIState(), 'onboarding',
+      'stale wizard prose above the visible tail must not reclassify a live, unrelated prompt as onboarding');
+  } finally { teardown(relay); }
+});
+
 test('agy ready gate does not fire on splash or wizard cursor', () => {
   for (const pane of [
     'Antigravity CLI\nloading workspace...\n',
@@ -3536,7 +3671,7 @@ test('the relay declares the same protocol version the hub speaks', () => {
   const relay = loadRelay();
   try {
     assert.strictEqual(relay.RELAY_PROTOCOL_VERSION, m[1],
-      'bin/contributor-relay.sh and the hub must declare the same contributor-protocol version; ' +
+      'bin/contributor-relay.js and the hub must declare the same contributor-protocol version; ' +
       'bump both in the same PR');
   } finally { teardown(relay); }
 });
@@ -4219,7 +4354,7 @@ test('#4267 sleepMs is a no-op under HIVE_RELAY_TEST_MODE', () => {
   } finally { teardown(relay); }
 });
 
-test('#4267 detectPRURL prefers the task repo and falls back to the first URL', () => {
+test('#4267 detectPRURL prefers the task repo; #6662 there is no cross-repo fallback', () => {
   const relay = loadRelay({});
   try {
     const lines = [
@@ -4228,8 +4363,16 @@ test('#4267 detectPRURL prefers the task repo and falls back to the first URL', 
     ];
     assert.strictEqual(relay.detectPRURL(lines, 'hivecommons/hive'),
       'https://github.com/hivecommons/hive/pull/4267');
-    assert.strictEqual(relay.detectPRURL(lines, 'nomatch/repo'),
-      'https://github.com/other/repo/pull/7', 'fall back to the first PR URL seen');
+    // #6662: this used to return the other repo's PR — "better an approximate
+    // audit trail than none". It is not: pr_url is what the hub books cooldowns
+    // and credits work on, and a PR in a different repository cannot be the PR
+    // for this task's issue. An approximate value there is a wrong one.
+    assert.strictEqual(relay.detectPRURL(lines, 'nomatch/repo'), '',
+      'a PR in another repo must never be attributed to this task');
+    // With no task repo supplied there is nothing to attribute against, so the
+    // first match stands — unchanged.
+    assert.strictEqual(relay.detectPRURL(lines, ''),
+      'https://github.com/other/repo/pull/7');
     assert.strictEqual(relay.detectPRURL(['no urls here'], 'hivecommons/hive'), '');
     assert.strictEqual(relay.detectPRURL([], 'hivecommons/hive'), '');
     assert.strictEqual(relay.detectPRURL(null, 'hivecommons/hive'), '');
@@ -5259,6 +5402,104 @@ test('#5121 the curated buckets keep first claim on their lines', () => {
 // BLOCKED and a human must attach to complete a login. A paste-able command
 // that fails there reads as "the whole thing is broken".
 //
+// --- #6437: the needs-login banner must name the backend that is blocked ----
+//
+// getCLIState() returns 'needs-login' for five backends, and waitForCLI() used
+// to print one hardcoded block announcing "Claude Code needs authentication"
+// and "Then type: /login" for every one of them. bob is the case that shows why
+// substituting the product name is not enough: it authenticates with
+// BOBSHELL_API_KEY, so no instruction to attach and type can fix it.
+const NEEDS_LOGIN_BACKENDS = ['claude', 'copilot', 'gemini', 'bob', 'agy'];
+
+test('#6437 every needs-login backend names itself, not Claude Code', () => {
+  for (const backend of NEEDS_LOGIN_BACKENDS) {
+    const relay = loadRelay({ backend });
+    try {
+      const text = relay.loginBannerLines(backend, 'tmux attach -t s').join('\n');
+      if (backend !== 'claude') {
+        assert.ok(!/Claude Code/.test(text),
+          `${backend}'s banner still announces Claude Code — the operator is told to fix the wrong product`);
+      }
+      assert.ok(/needs authentication|authenticates with/.test(text),
+        `${backend}'s banner does not say what is blocked`);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#6437 bob is told about its API key, not to type /login', () => {
+  const relay = loadRelay({ backend: 'bob' });
+  try {
+    const text = relay.loginBannerLines('bob', 'podman exec -it c tmux attach -t contributor').join('\n');
+    assert.ok(/BOBSHELL_API_KEY/.test(text), 'bob needs its API key named');
+    assert.ok(!/\/login/.test(text), 'typing /login cannot authenticate bob');
+    assert.ok(!/tmux attach/.test(text),
+      'attaching to the pane cannot fix a missing API key, so the banner must not send the operator there');
+    assert.ok(!/Waiting for login to complete/.test(text),
+      'no login is coming for bob; promising one misdescribes what the relay will do');
+  } finally { teardown(relay); }
+});
+
+test('#6437 an unknown backend gets an honest banner, not another backend\'s', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const text = relay.loginBannerLines('somenewcli', 'tmux attach -t s').join('\n');
+    assert.ok(/somenewcli/.test(text), 'the unknown backend should be named');
+    assert.ok(!/Claude Code|\/login/.test(text), 'and must not inherit claude\'s instructions');
+  } finally { teardown(relay); }
+});
+
+// The three tests above exercise the pure helpers. This one drives the REAL
+// path: armCLIReadyWait() -> waitForCLI() -> check() runs synchronously during
+// module load, so a relay loaded with a needs-login pane prints its banner
+// while loadRelay() is still on the stack. Capturing that is what pins the
+// wiring -- without it, reverting the call site to the hardcoded block leaves
+// every assertion above green.
+function captureBannerDuringLoad(opts) {
+  const lines = [];
+  const real = console.log;
+  console.log = (...args) => { lines.push(args.join(' ')); };
+  let relay;
+  try {
+    relay = loadRelay(opts);
+  } finally {
+    console.log = real;
+  }
+  return { relay, output: lines.join('\n') };
+}
+
+test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code\'s', () => {
+  const { relay, output } = captureBannerDuringLoad({
+    backend: 'bob',
+    cliStates: ['Enter Bob-Shell API Key\n'],
+  });
+  try {
+    assert.ok(/needs authentication/.test(output),
+      'the needs-login banner should have been printed during startup');
+    assert.ok(/BOBSHELL_API_KEY/.test(output),
+      'bob was told to authenticate some other way than with its API key');
+    assert.ok(!/Claude Code/.test(output),
+      'a blocked bob is announced as Claude Code');
+    assert.ok(!/Then type: \/login/.test(output),
+      'bob cannot be authenticated by typing /login into the pane');
+  } finally { teardown(relay); }
+});
+
+test('#6437 the box border survives a long container-mode attach command', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    // The exact shape that broke the old fixed-width box: runtime + container
+    // name + session name, comfortably wider than 58 columns.
+    const attach = 'podman exec -it hive-contributor-agy-aadef0c8 tmux attach -t contributor';
+    const rendered = relay.renderBoxedBanner(relay.loginBannerLines('agy', attach));
+    const widths = new Set(rendered.map((l) => l.length));
+    assert.strictEqual(widths.size, 1,
+      `every banner row must be the same width; got ${[...widths].join(', ')}`);
+    assert.ok(rendered.every((l) => /^[\u2554\u2551\u255a]/.test(l) && /[\u2557\u2551\u255d]$/.test(l)),
+      'every row must open and close with a border character');
+    assert.ok(rendered.some((l) => l.includes(attach)), 'the attach command must still be present in full');
+  } finally { teardown(relay); }
+});
+
 // ATTACH_COMMAND is resolved at module load from the environment the recipe
 // passes in, so these load the relay with that environment and read the value
 // the banner will print.
@@ -5846,6 +6087,23 @@ test('#5376 a task completes on the sentinel even while the chrome says the CLI 
   } finally { teardown(relay); }
 });
 
+test('#6492 a Markdown-bold verdict completes goose with the verdict signal', () => {
+  const pane = [
+    '**HIVE_VERDICT: complete — Configuration validated; next steps outlined.**',
+    'unknown backend chrome',
+  ].join('\n');
+  const relay = loadRelay({ backend: 'goose', paneText: pane });
+  try {
+    dispatchTask(relay, 't-goose-bold-verdict');
+    relay.__crashTick();
+
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1,
+      'Markdown presentation must not force a compliant goose task through chrome_idle');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+  } finally { teardown(relay); }
+});
+
 test('#5376 the sentinel completes a task through chrome no backend branch has ever seen', () => {
   // The generalisation of the class. Every one of the thirteen issues was
   // fixed by teaching classifyTmuxPane about some CLI's new rendering. This
@@ -6063,6 +6321,33 @@ test('#5376 detectCompletionVerdict accepts complete and no_work_needed, and not
   } finally { teardown(relay); }
 });
 
+test('#6492 detectCompletionVerdict accepts Markdown-emphasized sentinels without leaking formatting', () => {
+  const relay = loadRelay({});
+  try {
+    const bold = '**HIVE_VERDICT: complete — Configuration validated; next steps outlined.**';
+    assert.deepStrictEqual(relay.detectCompletionVerdict([bold]), {
+      verdict: 'complete',
+      reason: 'Configuration validated; next steps outlined.',
+      line: bold,
+    });
+
+    // Markdown emphasis can compose with the CLI's presentation bullet, and
+    // both verdicts use this one parser.
+    const underlined = '● __HIVE_VERDICT: no_work_needed — already fixed upstream__';
+    assert.deepStrictEqual(relay.detectCompletionVerdict([underlined]), {
+      verdict: 'no_work_needed',
+      reason: 'already fixed upstream',
+      line: underlined,
+    });
+
+    // A reason's own trailing punctuation is content when the sentinel had no
+    // leading Markdown delimiter.
+    assert.strictEqual(
+      relay.detectCompletionVerdict(['HIVE_VERDICT: complete — preserve this *']).reason,
+      'preserve this *');
+  } finally { teardown(relay); }
+});
+
 test('#5376 the completion sentinel inherits the anti-false-positive guards, not a second parser', () => {
   // These are the guards #3987/#4265 built for no_work_needed. Extending the
   // family must not have created a weaker parser alongside the hardened one —
@@ -6077,6 +6362,8 @@ test('#5376 the completion sentinel inherits the anti-false-positive guards, not
     assert.strictEqual(
       relay.detectCompletionVerdict(["print a line of the exact form 'HIVE_VERDICT: complete — <reason>'"]), null,
       'an unanchored match would complete every task the moment the prompt was typed');
+    assert.strictEqual(relay.detectCompletionVerdict(['**HIVE_VERDICT: complete — <short reason>**']), null,
+      'Markdown tolerance must not weaken the wrapped prompt-placeholder guard');
     // Prose that merely begins with the verdict word.
     assert.strictEqual(relay.detectCompletionVerdict(['HIVE_VERDICT: completely_wrong']), null);
     // Junk in, null out — every caller is on a best-effort terminal-capture path.
@@ -6132,16 +6419,31 @@ test('#5376 a no_work_needed verdict still completes the task and reports the ve
   } finally { teardown(relay); }
 });
 
-test('#5376 a shipped PR still overrides a no_work_needed claim', () => {
-  // #3987: a visible PR contradicts "nothing shippable", so the verdict is not
-  // reported (the hub would override it with "shipped" anyway). The task still
-  // completes — on the sentinel.
+test('#5376 a PR THIS TASK opened still overrides a no_work_needed claim', () => {
+  // #3987: a PR this task shipped contradicts "nothing shippable", so the
+  // verdict is not reported (the hub would override it with "shipped" anyway).
+  // The task still completes — on the sentinel.
+  //
+  // #6662 narrowed the test from "a visible PR" to "a PR this task opened", so
+  // this now states the confirming evidence rather than relying on the URL
+  // simply being on screen. The behaviour under that evidence is unchanged.
   const PANE = [
     'Opened https://github.com/foo/bar/pull/31',
     'HIVE_VERDICT: no_work_needed — I thought there was nothing to do',
     '✻ Cogitating… (esc to interrupt)',
   ].join('\n');
-  const relay = loadRelay({ backend: 'claude', paneText: PANE });
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' },
+    prMeta: {
+      url: 'https://github.com/foo/bar/pull/31',
+      author: { login: 'test-contributor' },
+      createdAt: new Date().toISOString(),
+      mergedAt: null,
+      state: 'OPEN',
+    },
+  });
   try {
     dispatchTask(relay, 't-nowork-with-pr');
     relay.__crashTick();
@@ -6149,7 +6451,7 @@ test('#5376 a shipped PR still overrides a no_work_needed claim', () => {
     assert.strictEqual(completed.length, 1);
     assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/31');
     assert.strictEqual(completed[0].verdict, undefined,
-      'a visible PR contradicts no_work_needed, so the claim must not be forwarded');
+      'a PR this task opened contradicts no_work_needed, so the claim must not be forwarded');
   } finally { teardown(relay); }
 });
 
@@ -6786,6 +7088,665 @@ test('#5650 a stale verdict does not block the chrome-idle fallback either', () 
     assert.strictEqual(completed[0].completion_signal, 'chrome_idle',
       'and it must be labelled as the fallback, not as the agent\'s own statement');
   } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// Shared golden pane fixtures (kubestellar/hive#6427).
+//
+// bin/testdata/pane-fixtures/ holds realistic, full-height (50-row) padded
+// tmux capture-pane -p dumps as plain text, one <name>.pane.txt per case, each
+// paired with:
+//   - <name>.tail.txt  — the exact string paneTail(text, tailLines) must
+//                        return, byte for byte;
+//   - <name>.json      — a sidecar naming the backend, the tailLines used to
+//                        produce tail.txt, and the expected classification.
+//
+// The SAME files are read by a Go test in src/pkg/agent/pane_fixtures_test.go,
+// so the JS and Go pane-tail/classifier implementations are checked against
+// one shared source of truth instead of two independently written fixture
+// sets that could quietly drift apart again, exactly as paneTail and
+// paneTailNonBlank did.
+const PANE_FIXTURES_DIR = path.join(__dirname, 'testdata', 'pane-fixtures');
+
+function loadPaneFixtures() {
+  if (!fs.existsSync(PANE_FIXTURES_DIR)) return [];
+  return fs.readdirSync(PANE_FIXTURES_DIR)
+    .filter((f) => f.endsWith('.pane.txt'))
+    .map((f) => f.slice(0, -'.pane.txt'.length))
+    .sort();
+}
+
+for (const name of loadPaneFixtures()) {
+  const paneFile = path.join(PANE_FIXTURES_DIR, `${name}.pane.txt`);
+  const tailFile = path.join(PANE_FIXTURES_DIR, `${name}.tail.txt`);
+  const jsonFile = path.join(PANE_FIXTURES_DIR, `${name}.json`);
+  const pane = fs.readFileSync(paneFile, 'utf8');
+  const expectedTail = fs.readFileSync(tailFile, 'utf8');
+  const sidecar = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+
+  test(`pane fixture ${name}: paneTail(text, ${sidecar.tailLines}) matches the shared golden tail.txt`, () => {
+    const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+    try {
+      assert.strictEqual(relay.paneTail(pane, sidecar.tailLines), expectedTail,
+        `paneTail() diverged from the golden tail.txt Go is also checked against (${sidecar.note})`);
+    } finally { teardown(relay); }
+  });
+
+  if (Object.prototype.hasOwnProperty.call(sidecar.expect, 'getCLIState')) {
+    test(`pane fixture ${name}: getCLIState() is ${sidecar.expect.getCLIState}`, () => {
+      const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+      try {
+        assert.strictEqual(relay.getCLIState(), sidecar.expect.getCLIState, sidecar.note);
+      } finally { teardown(relay); }
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(sidecar.expect, 'classifyTmuxPane')) {
+    test(`pane fixture ${name}: classifyTmuxPane() is ${sidecar.expect.classifyTmuxPane}`, () => {
+      const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+      try {
+        assert.strictEqual(relay.classifyTmuxPane(pane), relay[sidecar.expect.classifyTmuxPane], sidecar.note);
+      } finally { teardown(relay); }
+    });
+  }
+
+  for (const fn of ['paneShowsTransientAPIError', 'paneShowsUnretryableAPIError', 'paneShowsLoginRequiredError']) {
+    if (Object.prototype.hasOwnProperty.call(sidecar.expect, fn)) {
+      test(`pane fixture ${name}: ${fn}() is ${sidecar.expect[fn]}`, () => {
+        const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+        try {
+          assert.strictEqual(relay[fn](pane), sidecar.expect[fn], sidecar.note);
+        } finally { teardown(relay); }
+      });
+    }
+  }
+}
+
+test('pane fixtures directory exists and is not empty (kubestellar/hive#6427)', () => {
+  assert.ok(fs.existsSync(PANE_FIXTURES_DIR), `expected shared fixtures at ${PANE_FIXTURES_DIR}`);
+  assert.ok(loadPaneFixtures().length > 0, 'expected at least one *.pane.txt fixture');
+});
+
+// ---------------------------------------------------------------------------
+// bin/lib/pane-classifier.js — direct-require coverage (kubestellar/hive#6429).
+//
+// These call the module functions straight, with no loadRelay() harness (no
+// tmux stub, no ws stub, no env plumbing): the classifier takes a pane-capture
+// string and an explicit `backend`, and returns a plain value. This is the
+// "direct test surface" the extraction exists to provide — the wiring tests
+// elsewhere in this file (loadRelay() + relay.classifyTmuxPane/getCLIState/
+// blockingPromptKey, which close over BACKEND and drive the module through
+// the relay's thin wrappers) are unchanged and still cover the same behaviour
+// end-to-end.
+// ---------------------------------------------------------------------------
+
+test('pane-classifier: classifyReadiness reads backend-specific ready/login/onboarding chrome', () => {
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('bypass permissions · claude', 'claude'), 'ready');
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('Not logged in. Please run /login', 'claude'), 'needs-login');
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('Do you trust the contents of this directory?', 'codex'),
+    'onboarding');
+  assert.strictEqual(paneClassifier.classifyReadiness('$ ', 'goose'), 'starting');
+});
+
+test('pane-classifier: OMP captured chrome distinguishes ready, onboarding, login, busy, idle, and verdict states', () => {
+  const fixture = (name) => fs.readFileSync(path.join(PANE_FIXTURES_DIR, `${name}.pane.txt`), 'utf8');
+  assert.strictEqual(paneClassifier.classifyReadiness(fixture('omp_ready'), 'omp'), 'ready');
+  assert.strictEqual(paneClassifier.classifyReadiness(fixture('omp_onboarding'), 'omp'), 'onboarding');
+  assert.strictEqual(paneClassifier.blockingPromptKey(fixture('omp_onboarding'), 'omp'), null);
+  assert.strictEqual(paneClassifier.classifyReadiness(fixture('omp_login'), 'omp'), 'needs-login');
+  assert.strictEqual(
+    paneClassifier.classifyPane(fixture('omp_busy'), 'omp'), paneClassifier.PANE_STATE_WORKING);
+  assert.strictEqual(
+    paneClassifier.classifyPane(fixture('omp_idle'), 'omp'), paneClassifier.PANE_STATE_IDLE_COMPLETE);
+
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    assert.strictEqual(
+      relay.detectCompletionVerdict(fixture('omp_terminal_verdict').trim().split('\n')).verdict,
+      'complete');
+  } finally { teardown(relay); }
+});
+
+// Claude Code's first-run login chooser, as captured from a contributor
+// container whose ${HOME}/.claude/.credentials.json was valid and unexpired
+// the whole time. The pane carries none of the strings the older claude
+// branch matched — not "Not logged in", not "/login", not the theme or trust
+// wording — so it fell through to 'starting', waitForCLI() polled a menu that
+// could not clear itself, and the task came back at CLI_READY_TIMEOUT_MS as
+// "CLI did not become ready within timeout". Note the '❯' on the selected
+// option: readiness must classify this BEFORE any chrome pattern, the same
+// ordering bob and codex already depend on.
+const CLAUDE_LOGIN_METHOD_PANE = [
+  ' Claude Code can be used with your Claude subscription or billed based on',
+  ' API usage through your Console account.',
+  '',
+  ' Select login method:',
+  '',
+  ' ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise',
+  '   2. Anthropic Console account · API usage billing',
+  '   3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, or Vertex AI',
+].join('\n');
+
+test('pane-classifier: the claude first-run login chooser is needs-login, not starting', () => {
+  assert.strictEqual(
+    paneClassifier.classifyReadiness(CLAUDE_LOGIN_METHOD_PANE, 'claude'), 'needs-login');
+  // It must not be reported ready by the '❯' its own selected row draws,
+  // and must not be treated as a dismissable onboarding menu: answering it
+  // starts a browser OAuth flow no container can finish.
+  assert.notStrictEqual(
+    paneClassifier.classifyReadiness(CLAUDE_LOGIN_METHOD_PANE, 'claude'), 'ready');
+  assert.notStrictEqual(
+    paneClassifier.classifyReadiness(CLAUDE_LOGIN_METHOD_PANE, 'claude'), 'onboarding');
+  // The gates that were already classified stay where they were.
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('Choose the text style', 'claude'), 'onboarding');
+  assert.strictEqual(
+    paneClassifier.classifyReadiness('⏵⏵ bypass permissions on (shift+tab to cycle)', 'claude'),
+    'ready');
+});
+
+test('pane-classifier: blockingPromptKey takes backend as an explicit argument', () => {
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_TRUST_PANE, 'codex'), '1');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey(CODEX_UPDATE_PANE, 'codex'), '3');
+  assert.strictEqual(
+    paneClassifier.blockingPromptKey('Do you trust this folder? (y/n)', 'codex'), null);
+});
+
+test('pane-classifier: classifyPane is pure for every backend except bob, which takes an injected probe', () => {
+  assert.strictEqual(
+    paneClassifier.classifyPane(AGY_WEDGED_PANE, 'agy'), paneClassifier.PANE_STATE_IDLE_COMPLETE);
+  // bob's readiness depends on whether the bob process is still alive, which
+  // only a caller with process-table access can answer — classifyPane takes
+  // that as an injected `deps.bobIsRunning()` rather than shelling out itself.
+  const bobPane = 'Enter your prompt, / for commands\nAuto-approve: on\nTokens left: 42\n';
+  assert.strictEqual(
+    paneClassifier.classifyPane(bobPane, 'bob', { bobIsRunning: () => false }),
+    paneClassifier.PANE_STATE_IDLE_COMPLETE,
+    'a bob pane at its idle chrome, with no live process, must read as complete');
+  assert.strictEqual(
+    paneClassifier.classifyPane(bobPane, 'bob', {}),
+    paneClassifier.PANE_STATE_IDLE_COMPLETE,
+    'an omitted bobIsRunning must not throw — it defaults to "not running"');
+});
+
+test('pane-classifier: paneTail keeps the last n non-blank lines, dropping blanks wherever they occur', () => {
+  assert.strictEqual(paneClassifier.paneTail('a\n\n\nb\nc\n', 2), 'b\nc');
+  assert.strictEqual(paneClassifier.paneTail('', 5), '');
+});
+
+test('pane-classifier: classifyBlockedOnHumanReason has no relay dependency', () => {
+  assert.strictEqual(
+    paneClassifier.classifyBlockedOnHumanReason('Paste your API key to continue:\n> \n'),
+    paneClassifier.BLOCKED_REASON_HUMAN_REQUIRED);
+  assert.strictEqual(
+    paneClassifier.classifyBlockedOnHumanReason('Overwrite the existing branch? [y/N]\n> \n'),
+    paneClassifier.BLOCKED_REASON_QUESTION);
+  assert.strictEqual(paneClassifier.classifyBlockedOnHumanReason('Done — opened a PR.\n> \n'), null);
+});
+
+test('pane-classifier: paneShowsTransientAPIError/UnretryableAPIError/LoginRequiredError need no relay', () => {
+  assert.ok(paneClassifier.paneShowsTransientAPIError('API Error: connection error\n'));
+  assert.ok(!paneClassifier.paneShowsTransientAPIError('the deploy hit a connection error yesterday\n'));
+  assert.ok(paneClassifier.paneShowsUnretryableAPIError('API Error: 403 budget_exceeded\n'));
+  assert.ok(paneClassifier.paneShowsLoginRequiredError('Please run /login · API Error: 401\n'));
+});
+
+// agy renders provider quota exhaustion as a chrome-less banner — no
+// "API Error:" prefix — so the chrome gate rejected it before any pattern was
+// consulted, the relay kept dispatching tasks into the quota-blocked CLI, and
+// each one was booked as an [environment] failure 20 minutes later (#6541).
+test('#6541 agy chrome-less quota banner is a fatal API error, not an invisible stall', () => {
+  const banner = '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 38m29s.';
+  assert.ok(paneClassifier.paneShowsUnretryableAPIError(banner + '\n'),
+    'the ⚠-anchored banner must veto without "API Error:" chrome');
+  // Two independent signals are still required: prose that merely mentions the
+  // wording (this repo now contains it) has no ⚠ line-start chrome, and the
+  // pattern list stays behind the chrome gate.
+  assert.ok(!paneClassifier.paneShowsUnretryableAPIError(
+    'I added Individual quota reached to the pattern list in pane-classifier.js\n'));
+  assert.ok(!paneClassifier.paneShowsUnretryableAPIError('the quota reached a new high today\n'));
+  // End to end: the observed incident pane fails at once as FATAL rather than
+  // falling through to WORKING and dying at the stall backstop.
+  const pane = [
+    '● Bash(ls -la /home/dev/workspace)',
+    banner,
+    'Error ID: cd45be83-870d-4c25-b297-c608fa533664-12',
+    " How's the CLI experience so far? Help us improve:",
+    ' [1] Good  [2] Fine  [3] Bad  [0] Skip',
+  ].join('\n');
+  assert.strictEqual(paneClassifier.classifyPane(pane, 'agy'),
+    paneClassifier.PANE_STATE_FATAL_API_ERROR);
+});
+
+test('#6541 agy post-error survey modal is dismissed with 0 (Skip)', () => {
+  const survey = " How's the CLI experience so far? Help us improve:\n [1] Good  [2] Fine  [3] Bad  [0] Skip\n";
+  assert.strictEqual(paneClassifier.blockingPromptKey(survey, 'agy'), '0');
+  // agy-only: no other backend renders this modal.
+  assert.strictEqual(paneClassifier.blockingPromptKey(survey, 'codex'), null);
+  // A transcript that merely quotes the question without the option row must
+  // not match.
+  assert.strictEqual(paneClassifier.blockingPromptKey(
+    "the summary quotes How's the CLI experience so far without the menu", 'agy'), null);
+  // The modal outlives the turn that raised it, so a readiness wait must see
+  // it as a dismissable gate rather than sitting at 'starting' until timeout.
+  assert.strictEqual(paneClassifier.classifyReadiness(survey, 'agy'), 'onboarding');
+});
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#5715 — a WebSocket flap must not abort the PR review cycle.
+//
+// The review task is the one currentTask the relay builds for ITSELF: no
+// task_assign, no server-issued lease, `pr-review-` id, `number: 0`. The
+// reconnect path did not know that, so it re-asserted the task to a hub that
+// had never heard of it; the hub refused under the #C4 server-issued-lease rule
+// and answered `task_revoke: no active lease for this task`; the relay treated
+// the revoke as terminal and stopped the agent. Observed end to end twice, four
+// months apart, on two different backends.
+//
+// These drive the REAL cycle rather than hand-building the task, so the marker,
+// the id prefix and the withholding are exercised together — a fixture that
+// stated the task shape itself would pass even if the relay stopped producing
+// it that way.
+// ---------------------------------------------------------------------------
+
+// Complete a real task so the relay enters its own PR review cycle, and return
+// the synthetic task it built. PR_REVIEW_EVERY_N - 1 completions are staged so
+// this one crosses the threshold.
+function enterReviewCycle(relay) {
+  relay.setTasksCompletedCount(relay.PR_REVIEW_EVERY_N - 1);
+  dispatchTask(relay, 't-before-review');
+  relay.__stallTick();
+  const review = relay.getCurrentTask();
+  assert.ok(review, 'test setup: no review cycle was entered');
+  assert.ok(review.task_id.startsWith('pr-review-'),
+    `test setup: expected the synthetic review task, got ${review.task_id}`);
+  // Completing the previous task stops the agent and relaunches the CLI, so the
+  // review prompt is QUEUED rather than typed and progressTick() rightly
+  // refuses to judge a task the agent has not been given (#5650). The real
+  // relay clears that within a second or two — "CLI ready — accepting tasks /
+  // Task prompt sent to CLI" in both reports — so say so here, or every tick
+  // below returns early and asserts nothing.
+  relay.setCliReady(true);
+  relay.setTaskPromptDelivered(true);
+  relay.setDeliveredVerdictBaseline(null);
+  return review;
+}
+
+const REVIEW_PANE = `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
+
+test('#5715 the locally-built review task is marked synthetic and carries no work item', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
+  try {
+    const review = enterReviewCycle(relay);
+    assert.strictEqual(review.synthetic, true,
+      'the review task must say so on the object, not only in its id');
+    assert.strictEqual(review.number, 0, 'a review cycle has no work item behind it');
+    assert.strictEqual(relay.isLocalOnlyTask(review), true);
+    // The predicate must not be satisfiable by a hub-assigned task, or the
+    // revoke guard below would swallow a revoke that IS terminal.
+    assert.strictEqual(
+      relay.isLocalOnlyTask({ task_id: 'ct-foo/bar-1-2', kind: 'issue', repo: 'foo/bar', number: 7 }),
+      false);
+  } finally { teardown(relay); }
+});
+
+test('#5715 a reconnect mid-review sends no ownership frame and no repo#0 resume line', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  try {
+    const review = enterReviewCycle(relay);
+    const before = relay.__sent.length;
+
+    // The flap: the socket drops and the relay re-authenticates. This is the
+    // exact point the review used to die.
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+
+    const after = relay.__sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'task_accepted' && m.task_id === review.task_id),
+      `a task the hub never leased must not be accepted back to it: ${JSON.stringify(after)}`);
+    assert.ok(!after.some(m => m.type === 'task_progress' && m.task_id === review.task_id),
+      `the resume claim is what draws the revoke — it must not be sent: ${JSON.stringify(after)}`);
+    assert.strictEqual(relay.getCurrentTask(), review, 'the review must still be the active task');
+
+    const resumeLine = logs.find(l => l.includes('Reconnected'));
+    assert.ok(resumeLine, `expected the reconnect to be logged: ${JSON.stringify(logs)}`);
+    assert.ok(!/#0\b/.test(resumeLine),
+      `the resume line named an issue number that does not exist: ${resumeLine}`);
+    assert.ok(!/—\s*resuming\b/.test(resumeLine),
+      `nothing is being resumed — the hub holds no lease: ${resumeLine}`);
+    assert.ok(/not resuming/.test(resumeLine),
+      `the log must say why the review is not re-asserted: ${resumeLine}`);
+  } finally { console.log = origLog; teardown(relay); }
+});
+
+test('#5715 progress ticks during a review never claim the task at the hub', () => {
+  // The withholding is at the send choke point, not just in the reconnect
+  // branch: every task_progress a live review emits would hit the same
+  // unleased-resume rejection on the hub.
+  let pane = REVIEW_PANE;
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane });
+  try {
+    const review = enterReviewCycle(relay);
+    // Idle chrome with no verdict yet — the exact state the 2026-09-11 report
+    // was in when the socket dropped ("pane looks idle but no HIVE_VERDICT yet
+    // — 1/3 checks"). That branch reports progress and waits, so it is a live
+    // review emitting hub frames rather than a finished one.
+    pane = IDLE_PANE;
+    const before = relay.__sent.length;
+    // __stallTick backdates the assignment clock past TASK_GRACE_PERIOD_MS, so
+    // the tick actually judges the pane instead of returning inside the
+    // startup grace the freshly-started review task is still in.
+    relay.__stallTick();
+    const after = relay.__sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'task_progress' && m.task_id === review.task_id),
+      `progress for an unleased task can only be answered with a revoke: ${JSON.stringify(after)}`);
+    assert.strictEqual(relay.getCurrentTask(), review, 'the review must still be running');
+  } finally { teardown(relay); }
+});
+
+test('#5715 a revoke of the synthetic review task does not stop the agent', () => {
+  // Second, independent half of the fix. Even with the ownership frames
+  // withheld a revoke can still arrive — one already in flight when the socket
+  // dropped, or a hub revoking for its own reasons. A revoke is terminal
+  // because the work now belongs to someone else; for a task no hub ever owned
+  // there is nobody to belong to, so the turn stays valid.
+  const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
+  try {
+    const review = enterReviewCycle(relay);
+    const before = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify({
+      type: 'task_revoke', task_id: review.task_id, reason: 'no active lease for this task',
+    }));
+
+    assert.strictEqual(relay.getCurrentTask(), review,
+      'the review cycle was abandoned by a revoke for a task the hub never owned');
+    const sends = relay.__tmuxSends().slice(before);
+    assert.ok(!sends.some(c => /C-c\s*$/.test(c)),
+      `the agent was interrupted mid-review: ${JSON.stringify(sends)}`);
+    assert.ok(!sends.some(c => /copilot/.test(c)),
+      `the CLI was relaunched mid-review: ${JSON.stringify(sends)}`);
+  } finally { teardown(relay); }
+});
+
+test('#5715 the review survives a flap AND a revoke, then finishes and re-readies', () => {
+  // The outcome the issue is actually about. Everything above asserts a frame
+  // was or was not sent; this one asserts the cycle does the job — the agent
+  // answers its review, the relay books it, and the contributor goes back into
+  // the rotation instead of losing the review and taking a fresh issue.
+  let pane = REVIEW_PANE;
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane });
+  try {
+    const review = enterReviewCycle(relay);
+    const completedBefore = relay.getTasksCompletedCount();
+    pane = IDLE_PANE;
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    relay.handleMessage(JSON.stringify({
+      type: 'task_revoke', task_id: review.task_id, reason: 'no active lease for this task',
+    }));
+
+    // The agent finishes its review.
+    pane = `HIVE_VERDICT: complete — no PR comments to address\n${IDLE_PANE}`;
+    const before = relay.__sent.length;
+    relay.__stallTick();
+
+    const after = relay.__sent.slice(before);
+    assert.ok(after.some(m => m.type === 'task_complete' && m.task_id === review.task_id),
+      `the review never completed: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.getCurrentTask(), null, 'the review must be released when it ends');
+    assert.strictEqual(relay.getTasksCompletedCount(), completedBefore + 1,
+      'a finished review must advance the completion count like any other task');
+    assert.ok(after.some(m => m.type === 'ready'),
+      `the relay must re-advertise for work after the review: ${JSON.stringify(after.map(m => m.type))}`);
+  } finally { teardown(relay); }
+});
+
+test('#5715 negative control: a real leased task still resumes across the same flap', () => {
+  // The guard must be narrow. #5681 depends on this exact path working for
+  // hub-assigned tasks, and a predicate that caught them too would trade one
+  // lost-work bug for another.
+  const relay = loadRelay({ backend: 'copilot' });
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...a) => logs.push(a.join(' '));
+  try {
+    dispatchTask(relay, 'ct-foo/bar-421-1', 421);
+    const before = relay.__sent.length;
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    const after = relay.__sent.slice(before);
+    assert.ok(after.some(m => m.type === 'task_accepted' && m.task_id === 'ct-foo/bar-421-1'),
+      `a leased task must still re-assert itself on reconnect: ${JSON.stringify(after)}`);
+    assert.ok(after.some(m => m.type === 'task_progress' && m.task_id === 'ct-foo/bar-421-1'),
+      `a leased task must still resume: ${JSON.stringify(after)}`);
+    assert.ok(logs.some(l => /Reconnected while working on foo\/bar#421 — resuming/.test(l)),
+      `the real resume line must be unchanged: ${JSON.stringify(logs)}`);
+  } finally { console.log = origLog; teardown(relay); }
+});
+
+test('#5715 negative control: a revoke of a real task is still terminal', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    dispatchTask(relay, 'ct-foo/bar-421-1', 421);
+    const before = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify({
+      type: 'task_revoke', task_id: 'ct-foo/bar-421-1', reason: 'operator stop',
+    }));
+    assert.strictEqual(relay.getCurrentTask(), null,
+      'a revoked leased task must be released — it may already be another contributor\'s');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'copilot');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#6662 — a PR the agent RESEARCHED is not a PR it OPENED.
+//
+// detectPRURL is a regex over pane text and cannot tell the two apart. When it
+// matched a pre-existing PR the relay credited the contributor with someone
+// else's work AND discarded a correct no_work_needed verdict — and it did that
+// in exactly #3987's target population, where a merged reference PR is present
+// by construction and the agent must cite it to justify the verdict at all.
+//
+// Three observed misattributions in one 45-minute session, all third-party PRs
+// merged weeks earlier, all surfaced by the agent running `gh pr list` /
+// `gh pr view` for prior art. The cheapest check catches every one: a PR that
+// merged before the task started cannot be the PR the task opened.
+// ---------------------------------------------------------------------------
+
+// The real metadata of the three PRs from the report.
+const OBSERVED_MISATTRIBUTIONS = [
+  { task: 'bluefin#879', url: 'https://github.com/projectbluefin/bluefin/pull/1103',
+    author: 'mrbobbytables', createdAt: '2026-08-13T00:00:00Z', mergedAt: '2026-08-24T00:00:00Z' },
+  { task: 'bluefin#1126', url: 'https://github.com/projectbluefin/bluefin/pull/1202',
+    author: 'mrbobbytables', createdAt: '2026-09-06T00:00:00Z', mergedAt: '2026-09-07T00:00:00Z' },
+  { task: 'fsdk-containers#130', url: 'https://github.com/projectbluefin/fsdk-containers/pull/136',
+    author: 'castrojo', createdAt: '2026-08-09T00:00:00Z', mergedAt: '2026-08-09T00:00:00Z' },
+];
+
+test('#6662 every observed misattribution is refuted by its own metadata', () => {
+  const relay = loadRelay({});
+  try {
+    // Task started well after all three merged — the real situation.
+    const taskStartedAt = Date.parse('2026-09-11T07:00:00Z');
+    for (const pr of OBSERVED_MISATTRIBUTIONS) {
+      const ev = relay.prAttributionEvidence(
+        { url: pr.url, author: { login: pr.author }, createdAt: pr.createdAt, mergedAt: pr.mergedAt, state: 'MERGED' },
+        { taskStartedAt, contributorLogin: 'Danathar' });
+      assert.strictEqual(ev.status, relay.PR_ATTRIBUTION_REFUTED,
+        `${pr.task}: ${pr.url} must not be attributed to this task`);
+      assert.match(ev.reason, /before this task started/);
+    }
+  } finally { teardown(relay); }
+});
+
+test('#6662 the merged-before-start check stands alone, without an identity', () => {
+  // The authorship half needs HIVE_CONTRIBUTOR_USERNAME, which
+  // contributor-agent.sh defaults to the literal "unknown". The timestamp half
+  // needs nothing, and on its own it catches all three observed cases — so a
+  // relay with no identity is still protected.
+  const relay = loadRelay({});
+  try {
+    const taskStartedAt = Date.parse('2026-09-11T07:00:00Z');
+    const meta = {
+      author: { login: 'mrbobbytables' },
+      createdAt: '2026-08-13T00:00:00Z',
+      mergedAt: '2026-08-24T00:00:00Z',
+      state: 'MERGED',
+    };
+    for (const login of ['', 'unknown', 'UNKNOWN', undefined]) {
+      const ev = relay.prAttributionEvidence(meta, { taskStartedAt, contributorLogin: login });
+      assert.strictEqual(ev.status, relay.PR_ATTRIBUTION_REFUTED,
+        `an absent identity (${JSON.stringify(login)}) must not disable the timestamp check`);
+    }
+    // ...and "unknown" must never be COMPARED as a login, or a relay without an
+    // identity would refute every PR including its own.
+    const ours = relay.prAttributionEvidence(
+      { author: { login: 'somebody' }, createdAt: new Date(taskStartedAt + 60000).toISOString(), mergedAt: null },
+      { taskStartedAt, contributorLogin: 'unknown' });
+    assert.strictEqual(ours.status, relay.PR_ATTRIBUTION_CONFIRMED,
+      'an unavailable identity must skip the authorship check, not fail it');
+  } finally { teardown(relay); }
+});
+
+test('#6662 a PR opened by this contributor during this task is confirmed', () => {
+  const relay = loadRelay({});
+  try {
+    const taskStartedAt = Date.now() - 10 * 60 * 1000;
+    const ev = relay.prAttributionEvidence({
+      author: { login: 'Danathar' },
+      createdAt: new Date(taskStartedAt + 5 * 60 * 1000).toISOString(),
+      mergedAt: null,
+      state: 'OPEN',
+    }, { taskStartedAt, contributorLogin: 'danathar' });
+    assert.strictEqual(ev.status, relay.PR_ATTRIBUTION_CONFIRMED,
+      'login comparison must be case-insensitive');
+
+    // Authored by someone else, during the task: still not ours.
+    const theirs = relay.prAttributionEvidence({
+      author: { login: 'someone-else' },
+      createdAt: new Date(taskStartedAt + 5 * 60 * 1000).toISOString(),
+      mergedAt: null,
+    }, { taskStartedAt, contributorLogin: 'Danathar' });
+    assert.strictEqual(theirs.status, relay.PR_ATTRIBUTION_REFUTED);
+    assert.match(theirs.reason, /authored by someone-else/);
+  } finally { teardown(relay); }
+});
+
+test('#6662 clock skew between this host and GitHub does not refute a real PR', () => {
+  // taskAssignedAt is this host's clock; createdAt is GitHub's. A couple of
+  // minutes of drift is ordinary, and the misattributions this catches are off
+  // by weeks — so the slack costs nothing and stops a genuine PR being refused
+  // over a clock difference.
+  const relay = loadRelay({});
+  try {
+    const taskStartedAt = Date.now();
+    const justBefore = new Date(taskStartedAt - (relay.PR_ATTRIBUTION_CLOCK_SKEW_MS - 1000)).toISOString();
+    assert.strictEqual(
+      relay.prAttributionEvidence({ author: { login: 'me' }, createdAt: justBefore, mergedAt: null },
+        { taskStartedAt, contributorLogin: 'me' }).status,
+      relay.PR_ATTRIBUTION_CONFIRMED);
+    const wellBefore = new Date(taskStartedAt - (relay.PR_ATTRIBUTION_CLOCK_SKEW_MS + 60000)).toISOString();
+    assert.strictEqual(
+      relay.prAttributionEvidence({ author: { login: 'me' }, createdAt: wellBefore, mergedAt: null },
+        { taskStartedAt, contributorLogin: 'me' }).status,
+      relay.PR_ATTRIBUTION_REFUTED);
+  } finally { teardown(relay); }
+});
+
+test('#6662 a researched PR is dropped and the no_work_needed verdict survives', () => {
+  // The headline case, end to end — the `bluefin#879` shape: the agent
+  // researched prior art, cited the merged PR that makes its verdict correct,
+  // and printed the sentinel.
+  //
+  // The URL is under the HARNESS's task repo (foo/bar) on purpose. With
+  // projectbluefin/bluefin it would be dropped by the cross-repo rule before
+  // the attribution logic ever ran, and this test would pass without exercising
+  // the thing it is named for. The metadata is #1103's real metadata.
+  const PANE = [
+    '● Bash(gh pr list --repo foo/bar --search "879" --state all)',
+    '  #1103  MERGED  fix(framework): remove stale hid_sensor_hub karg',
+    '  https://github.com/foo/bar/pull/1103',
+    'HIVE_VERDICT: no_work_needed — merged PRs cover all actionable items',
+    '✻ Cogitating… (esc to interrupt)',
+  ].join('\n');
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'Danathar' },
+    prMeta: {
+      url: 'https://github.com/foo/bar/pull/1103',
+      author: { login: 'mrbobbytables' },
+      createdAt: '2026-08-13T00:00:00Z',
+      mergedAt: '2026-08-24T00:00:00Z',
+      state: 'MERGED',
+    },
+  });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-879', 879);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    // Not this contributor's work — must not be reported as it.
+    assert.strictEqual(completed[0].pr_url, '',
+      "a maintainer's merged PR must not be credited to this contributor");
+    // ...and the verdict it used to discard survives, which is the serious half.
+    assert.strictEqual(completed[0].verdict, 'no_work_needed',
+      'the PR that makes the verdict correct must not be what discards it');
+    assert.match(completed[0].verdict_reason, /merged PRs cover all actionable items/);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#6662 an unverifiable PR is still reported, but does not outrank the sentinel', () => {
+  // gh missing, offline or rate-limited. Dropping the URL here would start
+  // losing real PRs (the inverse failure, #6667), so it is still reported as a
+  // best-effort audit trail — but a regex hit on scrollback is much weaker
+  // evidence than a sentinel the agent deliberately printed, so it no longer
+  // silently overrules it.
+  const PANE = [
+    'saw https://github.com/foo/bar/pull/31 while looking around',
+    'HIVE_VERDICT: no_work_needed — already covered',
+    '✻ Cogitating… (esc to interrupt)',
+  ].join('\n');
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: PANE,
+    prMeta: new Error('gh: command not found'),
+  });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-unverified');
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/31',
+      'an unverifiable PR is still worth reporting as an audit trail');
+    assert.strictEqual(completed[0].verdict, 'no_work_needed',
+      'an unverified scrape must not silently outrank the agent\'s own sentinel');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#6662 resolveTaskPR reports the three-way split it promises', () => {
+  const relay = loadRelay({ prMeta: { author: { login: 'me' }, createdAt: new Date().toISOString(), mergedAt: null } });
+  const log = console.log; console.log = () => {};
+  try {
+    const lines = ['opened https://github.com/foo/bar/pull/9'];
+    const confirmed = relay.resolveTaskPR(lines, { repo: 'foo/bar', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+    assert.strictEqual(confirmed.url, 'https://github.com/foo/bar/pull/9');
+    assert.strictEqual(confirmed.suppressesVerdict, true);
+
+    // Nothing in the pane: no candidate, nothing to suppress.
+    const none = relay.resolveTaskPR(['no urls at all'], { repo: 'foo/bar', taskStartedAt: Date.now() });
+    assert.strictEqual(none.url, '');
+    assert.strictEqual(none.suppressesVerdict, false);
+    assert.strictEqual(none.evidence, null);
+  } finally { console.log = log; teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,14 @@ import (
 //   - fleet_size    : number of connected clankers, SAMPLED hourly
 //   - per_user_done : per-contributor (github_username) completions per hour
 //
+// Every series shares ONE timeline: index i of per_user_done[u] is the same hour
+// as index i of tasks_done, because a rollup appends exactly one bucket to every
+// series — including a zero to each per-user ring for an hour that contributor
+// finished nothing. That alignment is what lets a client read "the last 24
+// hours" as the last 24 buckets, and what makes the per-user sparklines line up
+// with the shared ones instead of stretching a handful of active hours across a
+// strip labelled "last 7 days" (#6543).
+//
 // The store owns ONLY the counting + persistence. Sampling reads live values
 // from the contribute hub; the deltas come from the cumulative per-contributor
 // TasksCompleted counters that already persist per user, so a restart mid-hour
@@ -69,8 +77,10 @@ type metricsPersistShape struct {
 
 // metricsStore is a concurrency-safe ring of hourly buckets per series. Every
 // series is capped at metricsRetentionBuckets; per_user_done is a map of
-// username -> its own capped ring. lastTotals holds the previous cumulative
-// per-user completion counts so each tick can derive the hour's delta.
+// username -> a ring INDEX-ALIGNED with tasksDone (one bucket per rollup tick,
+// zero-filled for hours the user completed nothing). lastTotals holds the
+// previous cumulative per-user completion counts so each tick can derive the
+// hour's delta.
 type metricsStore struct {
 	mu sync.Mutex
 
@@ -115,6 +125,36 @@ func capRing(s []int) []int {
 	return s
 }
 
+// padRing left-pads a per-user ring with leading zero buckets so it is exactly
+// want long, i.e. so its LAST bucket is the same hour as the last bucket of the
+// shared timeline. A contributor who registered mid-window genuinely completed
+// nothing in the hours before they arrived, so leading zeros are the truthful
+// filler, not a guess. An over-long ring is trimmed from the front (oldest
+// first), matching capRing's "keep the recent tail" rule.
+func padRing(s []int, want int) []int {
+	if want <= 0 {
+		return nil
+	}
+	if len(s) == want {
+		return s
+	}
+	if len(s) > want {
+		return append([]int(nil), s[len(s)-want:]...)
+	}
+	return append(make([]int, want-len(s), want), s...)
+}
+
+// allZero reports whether a ring holds no work at all across the retained
+// window. An empty ring counts as all-zero.
+func allZero(s []int) bool {
+	for _, n := range s {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // load restores the series from the PVC file. A missing file is a clean no-op
 // (first boot). A corrupt/unreadable file is logged and ignored — the store
 // starts empty rather than crashing, matching the tombstone/fleet-stats loaders'
@@ -144,16 +184,34 @@ func (m *metricsStore) load() {
 	m.queueDepth = capRing(stored.QueueDepth)
 	m.tasksDone = capRing(stored.TasksDone)
 	m.fleetSize = capRing(stored.FleetSize)
+	// Per-user rings written before #6543 were RAGGED: a bucket was appended only
+	// for an hour the contributor actually completed something, so a ring of 33
+	// entries alongside a 168-bucket shared timeline had no recoverable mapping
+	// from index to hour. Left-padding such a ring would silently CLAIM that all
+	// of that work landed in the most recent 33 hours — which is exactly the wrong
+	// answer for a 24-hour rollup. There are no per-bucket timestamps to do better
+	// with, so a misaligned legacy ring is DROPPED (reset to zeros on the shared
+	// timeline) rather than reinterpreted. Alignment then holds from the next
+	// rollup on. Rings that already match the shared length are kept as-is: they
+	// are aligned by construction.
+	want := len(m.tasksDone)
+	reset := 0
 	m.perUserDone = make(map[string][]int, len(stored.PerUserDone))
 	for user, ring := range stored.PerUserDone {
-		m.perUserDone[user] = capRing(ring)
+		ring = capRing(ring)
+		if len(ring) != want {
+			ring = make([]int, want)
+			reset++
+		}
+		m.perUserDone[user] = ring
 	}
 	if t, err := time.Parse(time.RFC3339, stored.CollectedAt); err == nil {
 		m.collectedAt = t
 	}
 	if m.logger != nil {
 		m.logger.Info("restored contribute metrics from PVC",
-			"buckets", len(m.tasksDone), "users", len(m.perUserDone), "path", m.path)
+			"buckets", len(m.tasksDone), "users", len(m.perUserDone),
+			"realigned_user_series", reset, "path", m.path)
 	}
 }
 
@@ -247,6 +305,7 @@ func (m *metricsStore) rollup(s rollupSample) {
 	}
 
 	hourTasks := 0
+	deltas := make(map[string]int, len(s.userTotals))
 	for user, total := range s.userTotals {
 		delta := total - m.lastTotals[user]
 		if delta < 0 {
@@ -254,10 +313,8 @@ func (m *metricsStore) rollup(s rollupSample) {
 			// Treat as zero for this hour rather than a negative bucket.
 			delta = 0
 		}
-		if delta > 0 {
-			m.perUserDone[user] = capRing(append(m.perUserDone[user], delta))
-			hourTasks += delta
-		}
+		deltas[user] = delta
+		hourTasks += delta
 		m.lastTotals[user] = total
 	}
 
@@ -265,6 +322,30 @@ func (m *metricsStore) rollup(s rollupSample) {
 	m.fleetSize = capRing(append(m.fleetSize, s.fleetSize))
 	m.tasksDone = capRing(append(m.tasksDone, hourTasks))
 	m.collectedAt = s.now.Truncate(time.Hour)
+
+	// Zero-fill EVERY per-user ring onto the shared timeline, so index i means the
+	// same hour in every series. Users seen this tick get their delta (often 0);
+	// users known only from earlier buckets get an explicit 0 so their ring does
+	// not fall behind. padRing aligns a newcomer's first bucket to the tail of the
+	// timeline instead of the head.
+	want := len(m.tasksDone)
+	for user, delta := range deltas {
+		m.perUserDone[user] = capRing(append(padRing(m.perUserDone[user], want-1), delta))
+	}
+	for user, ring := range m.perUserDone {
+		if _, fresh := deltas[user]; fresh {
+			continue
+		}
+		// A contributor whose profile is gone AND who has nothing left inside the
+		// retained window carries no information; drop them rather than growing the
+		// map with all-zero rings forever. Anyone still registered is kept, so their
+		// sparkline reads as a truthful flat line rather than vanishing.
+		if allZero(ring) {
+			delete(m.perUserDone, user)
+			continue
+		}
+		m.perUserDone[user] = capRing(append(padRing(ring, want-1), 0))
+	}
 
 	m.persistLocked()
 }
@@ -352,6 +433,43 @@ func (m *metricsStore) tasksCompleted7d() (int, bool) {
 		total += n
 	}
 	return total, true
+}
+
+// recentWindowBuckets is the trailing window the "issues worked (24h)" figure
+// sums — 24 hourly buckets. Named rather than inlined so the endpoint, the
+// response field name and the tests cannot drift apart.
+const recentWindowBuckets = 24
+
+// userRecent sums the most recent `buckets` hourly buckets of one contributor's
+// completion ring. It returns the sum and how many buckets it actually had to
+// sum: a spoke that has only been up for six hours can report a truthful "6" for
+// covered rather than pretending the number spans a full day.
+//
+// Correct ONLY because the rings are index-aligned with the shared timeline (see
+// rollup): the last N buckets are the last N hours for every contributor. Before
+// #6543 they were not, and this function would have been quietly wrong.
+//
+// known is false when this contributor has no series at all — never rolled up,
+// or registered since the last tick. That is distinct from a real zero (present
+// on the timeline, finished nothing), which the panel words differently.
+func (m *metricsStore) userRecent(user string, buckets int) (sum int, covered int, known bool) {
+	if m == nil || user == "" || buckets <= 0 {
+		return 0, 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ring, ok := m.perUserDone[user]
+	if !ok {
+		return 0, 0, false
+	}
+	start := len(ring) - buckets
+	if start < 0 {
+		start = 0
+	}
+	for _, n := range ring[start:] {
+		sum += n
+	}
+	return sum, len(ring) - start, true
 }
 
 // sampleMetricsInputs reads the live values the rollup buckets: the admitted

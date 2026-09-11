@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -10,8 +11,9 @@ import (
 // Warp-style triage-level view (#2612 part b). A read-only, LIVE-DERIVED grouping
 // of the hive's contribute issues into a lifecycle ladder — Triaging → Ready to
 // implement → Implementing → Reviewing → Closed — computed on each request from
-// the SAME live signals the Operations tab already shows (the ready-work queue,
-// the fleet snapshot's in-flight work) plus the part-(c) PR→issue link. There is
+// the SAME live signals the Operations tab already shows (the raw candidate pool,
+// ready-work queue, and fleet snapshot's in-flight work) plus the part-(c)
+// PR→issue link. There is
 // NO persistent per-issue lifecycle store: a persisted lifecycle is a possible
 // future enhancement but is deliberately out of scope here (issues are transient,
 // sourced live from GitHub). The whole projection is recomputed per request and
@@ -135,10 +137,13 @@ type triageSnapshot struct {
 // ready-queue caps its own visible list). Generous enough to show a real backlog.
 const maxTriageIssuesPerLevel = 60
 
-// buildTriageSnapshot derives the ladder live from the ready queue + fleet snapshot
-// + the PR-link resolver. It issues a bounded PR-link lookup per candidate issue
-// (cached, short-TTL, degrade-to-nil) — never blocking on GitHub — and groups the
-// results by deriveTriageLevel. Read-only; assigns nothing, persists nothing.
+// buildTriageSnapshot derives the ladder live from the raw candidate population,
+// ready queue + fleet snapshot + the PR-link resolver. Ready/in-flight issues get
+// a bounded PR-link lookup (cached, short-TTL, degrade-to-nil); raw candidates that
+// admission withheld are placed directly in Triaging. The latter intentionally
+// avoids turning a disabled or heavily filtered repository into one GitHub Search
+// request per issue merely to explain why its queue is empty. Read-only; assigns
+// nothing, persists nothing.
 func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 	snap := triageSnapshot{}
 	if s == nil || s.contributeHub == nil {
@@ -182,7 +187,9 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 		key := prLinkKey(q.Repo, q.Number)
 		pr := resolver.resolve(ctx, q.Repo, q.Number)
 		place(triageIssue{Repo: q.Repo, Number: q.Number, Title: q.Title, URL: q.URL}, triageSignals{
-			inReadyQueue: true,
+			// Held rows trail the offerable queue so operators can resume them, but
+			// they are not Ready and must not inflate that rung.
+			inReadyQueue: !q.Held,
 			inFleet:      fleetKeys[key],
 			prLink:       pr,
 		})
@@ -196,6 +203,37 @@ func (s *Server) buildTriageSnapshot(ctx context.Context) triageSnapshot {
 		}
 		pr := resolver.resolve(ctx, it.Repo, it.Number)
 		place(it, triageSignals{inFleet: true, prLink: pr})
+	}
+
+	// Finally retain raw scanner candidates that did not survive admission. Before
+	// this pass, the pure deriveTriageLevel mapping had a Triaging case but the
+	// builder never supplied it: it iterated only ReadyQueue and FleetSnapshot, so
+	// every disabled/filtered/cooling candidate disappeared and an affected hive
+	// rendered a completely empty ladder. These items have already failed to reach
+	// Ready and are therefore the observable "awaiting triage" population.
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status != nil {
+		for _, repo := range status.Repos {
+			for _, raw := range repo.ActionableIssues {
+				b, err := json.Marshal(raw)
+				if err != nil {
+					continue
+				}
+				var issue map[string]any
+				if err := json.Unmarshal(b, &issue); err != nil {
+					continue
+				}
+				ref := refFromIssueMap(repo.Full, issue)
+				if ref.Number <= 0 || seen[prLinkKey(repo.Full, ref.Number)] {
+					continue
+				}
+				title, _ := issue["title"].(string)
+				url, _ := issue["url"].(string)
+				place(triageIssue{Repo: repo.Full, Number: ref.Number, Title: title, URL: url}, triageSignals{})
+			}
+		}
 	}
 
 	// Assemble the ordered ladder. Every rung is always present (even at zero) so

@@ -247,7 +247,15 @@ func TestTokenRestartCounterResetRearms(t *testing.T) {
 		t.Fatalf("expected giveUp before reset, got %v", got)
 	}
 
-	// What pollTmuxOutputForAgent does when showsLogin goes false.
+	// What pollTmuxOutputForAgent does when showsLogin goes false AND
+	// shouldResetTokenRestartCap agrees the login actually cleared — a pane
+	// with a CLI marker on an agent well past its boot grace. Routed through
+	// the real predicate so this test cannot keep asserting a reset the poller
+	// no longer performs unconditionally (#6578).
+	started := now.Add(-10 * time.Minute)
+	if !a.shouldResetTokenRestartCap(true, &started, now) {
+		t.Fatal("a recovered agent past the boot grace must be allowed to reset the cap")
+	}
 	a.tokenRestartAttempts = 0
 	a.tokenRestartGaveUp = false
 

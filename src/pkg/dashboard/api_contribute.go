@@ -392,6 +392,12 @@ func (s *Server) registerContributeRoutes() {
 	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
 	// no side effects. See contribute_metrics.go.
 	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
+	// Read-only SELF stats (#6543): the signed-in contributor's own issues-worked
+	// (24h + all-time), PRs produced, and failures. Self-service like interests /
+	// dossier above — the identity is resolved SERVER-SIDE and there is no
+	// username parameter, so this endpoint can only ever answer for its caller
+	// (an anonymous caller gets 401, not someone else's numbers). GET only.
+	s.mux.HandleFunc("GET /api/contribute/me", s.handleContributeMe)
 	// Read-only per-backend RUN SCENARIOS: aggregates over the durable task-run
 	// log (task_run_log.go) — scenario counts, sentinel-compliance share, and
 	// duration percentiles per backend. Public like the other /api/contribute*
@@ -653,6 +659,37 @@ func findContributor(id string) *ContributorProfile {
 		}
 	}
 	return nil
+}
+
+func registrationTokenFromAuthorization(r *http.Request) string {
+	authz := r.Header.Get("Authorization")
+	if strings.HasPrefix(authz, "Bearer ") {
+		const bearerPrefixLen = 7 // len("Bearer ")
+		return authz[bearerPrefixLen:]
+	}
+	if strings.HasPrefix(authz, "token ") {
+		const tokenPrefixLen = 6 // len("token ")
+		return authz[tokenPrefixLen:]
+	}
+	return ""
+}
+
+func contributorProfileFromRegistrationToken(token string) *ContributorProfile {
+	if token == "" {
+		return nil
+	}
+	tokenHash := sha256Hex(token)
+	profiles := listContributorProfiles()
+	for i := range profiles {
+		if secureCompare(profiles[i].RegistrationToken, tokenHash) {
+			return &profiles[i]
+		}
+	}
+	return nil
+}
+
+func (s *Server) contributorProfileFromAuthorization(r *http.Request) *ContributorProfile {
+	return contributorProfileFromRegistrationToken(registrationTokenFromAuthorization(r))
 }
 
 // ── Landing page ───────────────────────────────────────────────────────────
@@ -1548,6 +1585,18 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
 .cc-q-search-clear:hover{color:var(--cc-text-2)}
 .cc-q-filternote{padding:6px 20px;font-size:.72rem;color:var(--cc-muted-2);border-bottom:1px solid var(--cc-border-2)}
+/* ── Your contribution (#6543) — the signed-in contributor's own numbers ────────
+   A quiet tile row: issues worked (24h), issues worked (total), PRs produced, and
+   failures. The PR tile carries the page's green accent because it is the figure
+   that actually distinguishes a session that shipped from one that returned
+   no_work_needed — and the one auto-promotion counts. Same sober ops register as
+   the panels around it; no new colour tokens. */
+.cc-mine{display:grid;grid-template-columns:repeat(auto-fit,minmax(94px,1fr));gap:10px;padding:14px 20px}
+.cc-mine-tile{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:8px;padding:9px 11px}
+.cc-mine-val{font-size:1.35rem;font-weight:700;line-height:1.15;color:var(--cc-text)}
+.cc-mine-tile.is-pr .cc-mine-val{color:var(--cc-green)}
+.cc-mine-lbl{font-size:.68rem;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted);margin-top:3px}
+.cc-mine-sub{font-size:.68rem;color:var(--cc-muted-2);margin-top:2px}
 /* ── My label interests (#2637) — contributor-declared label affinity ───────────
    A quiet self-service editor on the queue card: chips for the labels this viewer
    subscribed to, plus an add field. Shown only to a signed-in contributor. Matching
@@ -2200,7 +2249,7 @@ var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:
 // more accurate statement than "must run on the host."
 //
 // agy IS headless-capable on a host (agy -p, see HEADLESS_BACKENDS in
-// bin/contributor-relay.sh); it stays out of K8S_HEADLESS_BACKENDS
+// bin/contributor-relay.js); it stays out of K8S_HEADLESS_BACKENDS
 // regardless, because a pod has no way to complete its interactive sign-in
 // even once.
 var HOST_ONLY_BACKENDS=['other'];
@@ -2616,6 +2665,22 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      selectTask offers from), My work from the fleet snapshot. All read-only except
      the queue's owner/read-write drag-reorder. Panel order: My work first, then
      Ready-work queue — a pure vertical swap, no id/behavior change. -->
+<!-- Your contribution (#6543): the signed-in contributor's OWN numbers — issues
+     worked in the last 24h and all-time, how many of those produced a pull
+     request, and how many failed. "Tasks completed" alone cannot tell a session
+     that shipped fourteen pull requests from one that returned no_work_needed
+     fourteen times, and the PR count is also what auto-promotion actually reads,
+     so showing it tells a contributor what they are being measured on instead of
+     leaving them to count their own PRs on GitHub. Every field already existed on
+     ContributorProfile; nothing here is a new measurement. Hidden until
+     ccLoadMine() confirms the viewer has a contributor profile on THIS hive — an
+     anonymous or unregistered visitor has no numbers of their own to show. -->
+<div class="ops-card" id="cc-mine-card" style="display:none;margin-bottom:20px">
+<div class="ops-card-head"><h3>Your contribution</h3><span class="ops-card-count" id="cc-mine-tier"></span><!-- Your own completions/hour, last 7 days. Same series as the quota trend;
+     hydrated by ccMetricsPoll once metrics and identity have both loaded. --><span class="spark spark-inline" id="spark-mine" title="Your completions per hour, last 7 days"></span></div>
+<div class="cc-mine" id="cc-mine-body"><div class="ops-empty">Loading your stats&hellip;</div></div>
+<p class="ops-note" id="cc-mine-note" style="padding:0 20px 14px;margin:0"></p>
+</div>
 <div class="ops-card">
 <div class="ops-card-head"><h3>My work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
@@ -2705,8 +2770,8 @@ It clears automatically when the period elapses. An operator can shorten or disa
 </div>
 <!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
      contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
-     Closed. Each level is DERIVED LIVE from the ready queue + fleet snapshot +
-     the PR→issue link (part c); there is no persistent per-issue lifecycle store
+     Closed. Each level is DERIVED LIVE from the raw candidate pool + ready queue
+     + fleet snapshot + the PR→issue link (part c); there is no persistent per-issue lifecycle store
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
@@ -2716,7 +2781,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
 <!-- Grouped per-level issue lists (each collapsible-ish section, capped). -->
 <div class="cc-triage-groups" id="cc-triage-groups"></div>
-<p class="ops-note" style="padding:10px 20px 14px;margin:0">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; each issue is placed on the ladder from what the hive can observe right now (the ready queue, the fleet&rsquo;s in-flight work, and whether a fixing PR is open or merged). Read-only and recomputed on each load; there is no stored per-issue state.</p>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; raw candidates withheld by admission remain in Triaging, while ready work, the fleet&rsquo;s in-flight work, and fixing PRs advance issues through the ladder. Read-only and recomputed on each load; there is no stored per-issue state.</p>
 </div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
@@ -3976,10 +4041,12 @@ function ccMetricsPoll(){
     setSpark('spark-throughput',ccMetrics.tasks_done,SPARK_W,SPARK_H,'#3fb950');
     // (c) Connected-clanker fleet-size trend.
     setSpark('spark-fleet',ccMetrics.fleet_size,SPARK_W,SPARK_H,'#d29922');
-    // (d) Your daily-quota usage trend — the viewer's own per-hour completions.
-    if(ccMeUsername&&ccMetrics.per_user_done&&ccMetrics.per_user_done[ccMeUsername]){
-      setSpark('spark-quota',ccMetrics.per_user_done[ccMeUsername],SPARK_W,SPARK_H,'#388bfd');
-    }
+    // (d) Your own per-hour completions — the daily-quota trend and the matching
+    // trend on the "Your contribution" card. Both read the SAME series, which is
+    // now zero-filled onto the shared 168-bucket timeline (#6543), so it lines up
+    // with the three sparklines above instead of stretching a handful of active
+    // hours across a strip labelled "last 7 days".
+    ccRenderMineSpark();
     // Leaderboard hive-wide trend + per-row sparklines, if the tab is rendered.
     ccRenderLeaderboardSparklines();
   }).catch(function(e){console.error('metrics poll failed',e);});
@@ -5038,6 +5105,10 @@ async function opsPoll(){
   // fetch above (its own try/catch inside ccMetricsPoll) so a metrics hiccup never
   // stalls the panels. Hourly data on the opsPoll cadence is plenty — no fast timer.
   ccMetricsPoll();
+  // "Your contribution" (#6543). Self-throttled to 30s inside ccLoadMine, so
+  // calling it on every 4s tick costs one request per half-minute; keeping the
+  // call here means the tile row refreshes as the viewer's own tasks land.
+  try{ccLoadMine();}catch(e){console.error('contribution stats poll failed',e);}
   var tab=document.getElementById('tab-ops');
   if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);
 }
@@ -5245,7 +5316,7 @@ function ccRenderQueue(flip){
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
   // The server enforces the same boundary independently (403 on the order endpoint).
   el.classList.toggle('cc-q-draggable',!!adminEnabled);
-  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);ccKnownQueueKeys={};return;}
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work is currently assignable &mdash; candidates may be disabled, filtered, on cooldown, dependency-blocked, or in flight.</div>';ccUpdateFilterNote(0,0);ccKnownQueueKeys={};return;}
   var shown=0,total=ccQueue.length;
   // Render over the FULL model, tagging each row with its TRUE position (i) so the
   // shown index and the move-to menu reflect the real queue position even while a
@@ -6259,6 +6330,103 @@ function ccQuotaHTML(variant){
     '<div class="quota__sub">'+(remaining>0?(remaining+' left in your allowance today.'):'You&rsquo;ve used your daily allowance — it refreshes on a rolling 24h window.')+'</div>'+
   '</div>';
 }
+// ── Your contribution (#6543) ─────────────────────────────────────────────────
+// The signed-in contributor's OWN stats, read from the self-service
+// /api/contribute/me (identity resolved server-side — there is no username
+// parameter, so this can only ever be the caller's own record).
+//
+// Throttled to ccMineMinGap instead of riding opsPoll's 4s cadence: these are
+// cumulative counters plus an HOURLY bucket, so a fast poll would spend requests
+// re-reading numbers that cannot have moved.
+var ccMineData=null;   // last /api/contribute/me payload, null until first load
+var ccMineLast=0;      // epoch ms of the last fetch, for the throttle
+var ccMineMinGap=30000;
+function ccLoadMine(force){
+  var now=Date.now();
+  if(!force&&ccMineLast&&(now-ccMineLast)<ccMineMinGap)return;
+  ccMineLast=now;
+  fetch('/api/contribute/me').then(function(r){
+    // 401 (anonymous) and 403 (no profile on this hive) are the NORMAL answers
+    // for a visitor, not failures: the card simply stays hidden. Only a real
+    // transport/parse fault reaches the catch below.
+    if(!r.ok)return null;
+    return r.json();
+  }).then(function(d){
+    if(!d||!d.github_username)return;
+    ccMineData=d;
+    // Adopt the profile's STORED username when we have no viewer identity yet.
+    // The metrics rings are keyed on that exact string, so this is also what lets
+    // the personal sparklines find their series on a tab where the leaderboard
+    // (the other setter of ccMeUsername) never ran.
+    if(!ccMeUsername)ccMeUsername=d.github_username;
+    ccRenderMine();
+    // Paint the sparkline immediately if metrics already landed; otherwise the
+    // next ccMetricsPoll picks it up.
+    try{ccRenderMineSpark();}catch(e){}
+  }).catch(function(e){console.error('contribution stats load failed',e);});
+}
+// ccMineTile renders one stat tile: a number, its label, and an optional short
+// sub-line that qualifies it (never decorates it).
+function ccMineTile(val,label,sub,cls){
+  return '<div class="cc-mine-tile'+(cls?(' '+cls):'')+'">'+
+    '<div class="cc-mine-val">'+val+'</div>'+
+    '<div class="cc-mine-lbl">'+esc(label)+'</div>'+
+    (sub?('<div class="cc-mine-sub">'+esc(sub)+'</div>'):'')+
+  '</div>';
+}
+// ccRenderMine paints the four tiles and reveals the card. Idempotent.
+function ccRenderMine(){
+  var card=document.getElementById('cc-mine-card');
+  var body=document.getElementById('cc-mine-body');
+  if(!card||!body||!ccMineData)return;
+  var d=ccMineData;
+  var num=function(x){return (typeof x==='number'&&isFinite(x))?x:0;};
+  // The 24h tile is only honest when an hourly series actually backs it. A
+  // contributor who registered since the last rollup has no buckets at all, and
+  // printing "0" there would read as "you did nothing today" rather than "not
+  // measured yet" — so that case shows an em dash and says why.
+  var winH=num(d.window_hours)||24;
+  var covered=num(d.window_hours_covered);
+  var recent=d.history_available?String(num(d.tasks_completed_24h)):'&mdash;';
+  var recentSub=!d.history_available?'no hourly history yet'
+    :(covered<winH?(covered+'h of history so far'):'');
+  var done=num(d.total_tasks_completed);
+  var prs=num(d.total_tasks_completed_with_pr);
+  var noPR=Math.max(0,done-prs);
+  var tier=document.getElementById('cc-mine-tier');
+  if(tier)tier.textContent=d.trust_tier?ccTierLabel(d.trust_tier):'';
+  body.innerHTML=
+    ccMineTile(recent,'Issues worked (24h)',recentSub)+
+    ccMineTile(String(done),'Issues worked (total)')+
+    ccMineTile(String(prs),'PRs produced',noPR?(noPR+' shipped no PR'):'','is-pr')+
+    ccMineTile(String(num(d.total_tasks_failed)),'Failed');
+  var note=document.getElementById('cc-mine-note');
+  if(note)note.innerHTML='<b>PRs produced</b> counts only completions that reported a pull request the hub could verify against GitHub &mdash; it is what auto-promotion reads, not the bare completion count. The 24h figure is summed from the same hourly series as the sparklines.';
+  card.style.display='';
+}
+// ccUserSeries resolves the viewer's OWN per-hour completion ring from the cached
+// metrics. A GitHub login is stable per account but not across the surfaces that
+// hand us one (OAuth session vs the case the profile file was written under), so
+// fall back to a case-insensitive match rather than silently drawing a flat line.
+function ccUserSeries(){
+  var pud=ccMetrics&&ccMetrics.per_user_done;
+  if(!pud||!ccMeUsername)return null;
+  if(pud[ccMeUsername])return pud[ccMeUsername];
+  var want=String(ccMeUsername).toLowerCase();
+  for(var k in pud){
+    if(Object.prototype.hasOwnProperty.call(pud,k)&&k.toLowerCase()===want)return pud[k];
+  }
+  return null;
+}
+// ccRenderMineSpark paints the viewer's own completions-per-hour trend into both
+// places that show it (the contribution card and the daily-quota meter). Safe to
+// call any time: it no-ops when metrics or identity are not both resolved.
+function ccRenderMineSpark(){
+  var mine=ccUserSeries();
+  if(!mine)return;
+  setSpark('spark-mine',mine,SPARK_W,SPARK_H,'#3fb950');
+  setSpark('spark-quota',mine,SPARK_W,SPARK_H,'#388bfd');
+}
 // ccRenderQueueEnd paints the end-of-queue block (#2595). show=false (a filter is
 // active) hides it — a partial view isn't "the end". Loads limits lazily on first
 // need. The block always includes the calm "caught up" marker + hive settings;
@@ -6492,15 +6660,7 @@ func (s *Server) resolveContributeCaller(r *http.Request) string {
 	if u := s.resolveViewerUsername(r); u != "" {
 		return u
 	}
-	authz := r.Header.Get("Authorization")
-	var token string
-	if strings.HasPrefix(authz, "Bearer ") {
-		const bearerPrefixLen = 7 // len("Bearer ")
-		token = authz[bearerPrefixLen:]
-	} else if strings.HasPrefix(authz, "token ") {
-		const tokenPrefixLen = 6 // len("token ")
-		token = authz[tokenPrefixLen:]
-	}
+	token := registrationTokenFromAuthorization(r)
 	if token == "" {
 		return ""
 	}
@@ -6605,17 +6765,28 @@ func (s *Server) handleContributeReissueToken(w http.ResponseWriter, r *http.Req
 func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	active := 0
+	actionable, candidates := 0, 0
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
-	}
-	actionable := 0
-	s.statusMu.RLock()
-	if s.status != nil {
-		for _, repo := range s.status.Repos {
-			actionable += len(repo.ActionableIssues)
+		// "Actionable" is the work a contributor can actually be offered, not the
+		// scanner's raw candidate population. Reuse the same admission sweep as the
+		// queue/assignment projection so disabled repositories, holds, cooldowns,
+		// dependency gates, in-flight work and configured filters cannot make this
+		// endpoint advertise work that the relay will reject as no_matching_work.
+		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, false)
+		actionable = snap.offerableTotal
+		candidates = snap.candidateTotal
+	} else {
+		// Defensive fallback for partially constructed test/embedding servers. A
+		// production route always has a contribute hub after registration.
+		s.statusMu.RLock()
+		if s.status != nil {
+			for _, repo := range s.status.Repos {
+				candidates += len(repo.ActionableIssues)
+			}
 		}
+		s.statusMu.RUnlock()
 	}
-	s.statusMu.RUnlock()
 	// #2567: identify WHICH surface answered. The Hub discovery front door and a
 	// selected spoke both serve this exact handler with disjoint-looking payloads
 	// and, until now, no discriminator — a wrong-base-URL request returned 200 and
@@ -6630,9 +6801,51 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"active_contributors": active,
 		"total_registered":    len(profiles),
 		"actionable_items":    actionable,
-		"surface":             s.contributeSurface(),
-		"api_version":         contributorProtocolVersion,
-		"served_sha":          versionShort,
+		// Additive compatibility field for callers that need scanner health or want
+		// to explain why admission reduced the raw population. This is deliberately
+		// not named actionable: candidates may still be disabled or filtered out.
+		"candidate_items": candidates,
+		"surface":         s.contributeSurface(),
+		"api_version":     contributorProtocolVersion,
+		"served_sha":      versionShort,
+	})
+}
+
+// handleAPIv1Queue serves a paginated page of the offerable ready-work set
+// (the same population /api/v1/status counts as actionable_items), so a
+// downstream consumer can enumerate the full backlog instead of only the
+// unpaginated /api/contribute/queue slice (hivecommons/hive#6537). Auth and
+// the contributor allowlist are already enforced by handleAPIv1 before this
+// is reached.
+func (s *Server) handleAPIv1Queue(w http.ResponseWriter, r *http.Request) {
+	limit := readyQueueDefaultLimit
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			jsonError(w, "invalid limit: must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+	offset := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			jsonError(w, "invalid offset: must be a non-negative integer", http.StatusBadRequest)
+			return
+		}
+		offset = n
+	}
+	items, total := []ReadyQueueItem{}, 0
+	if s.contributeHub != nil {
+		items, total = s.contributeHub.admissionQueueRange(limit, offset, false)
+	}
+	jsonResponse(w, map[string]any{
+		"queue":    items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": offset+len(items) < total,
 	})
 }
 
@@ -6842,7 +7055,10 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 // the SSE "hello" frame carries, so the queue renders even if the stream drops.
 func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	queue := []ReadyQueueItem{}
-	resp := map[string]any{}
+	resp := map[string]any{
+		"queue_total": 0,
+		"held_total":  0,
+	}
 	if s.contributeHub != nil {
 		// One snapshot serves the queue and — only when the convergence toggle
 		// is in shadow mode (#4246, default off) — the additive withheld /
@@ -6851,6 +7067,8 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 		diag := s.convergenceDiagnosticsEnabled()
 		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, diag)
 		queue = snap.queue
+		resp["queue_total"] = snap.offerableTotal
+		resp["held_total"] = snap.heldTotal
 		if diag {
 			resp["withheld"] = snap.withheld
 			resp["admission_coverage"] = snap.coverage
@@ -6893,6 +7111,70 @@ const maxLabelInterestLen = 128
 // caller gets 401. This is a self-service PREFERENCE, not an operator control, so
 // it deliberately does NOT require write-tier; any registered contributor may set
 // what work they want surfaced to them.
+// handleContributeMe serves the signed-in contributor their OWN contribution
+// numbers (#6543): issues worked in the last 24 hours, issues worked all-time,
+// how many of those produced a pull request, and how many failed.
+//
+// Every number here already existed and was already load-bearing — TasksWithPR
+// is the auto-promotion currency — but nothing on the Operations page ever
+// showed it back to the person who earned it, so "tasks completed" could not be
+// told apart from "pull requests shipped". This endpoint changes no schema and
+// computes nothing new; it reads the persisted profile and the hourly ring.
+//
+// Identity is resolved server-side (resolveContributeCaller) and there is NO
+// username parameter, so the response is always the caller's own record. That
+// matters because /api/contribute* is a PUBLIC prefix (isPublicPath): the gate
+// has to live in the handler.
+func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
+	username := s.resolveContributeCaller(r)
+	if username == "" {
+		jsonError(w, "Sign in with GitHub to see your contribution stats.", http.StatusUnauthorized)
+		return
+	}
+	profile := findContributor(username)
+	if profile == nil {
+		jsonError(w, "You need a contributor profile on this hive before it can show your stats.", http.StatusForbidden)
+		return
+	}
+
+	// The metrics rings are keyed on the profile's STORED github_username, which
+	// is the case GitHub first registered. A session can hand us a different case
+	// (see findContributor), so key the lookup off the profile, never the caller
+	// string, or the 24h figure silently reads as "no history".
+	seriesKey := profile.GitHubUsername
+	if seriesKey == "" {
+		seriesKey = username
+	}
+	recent, covered, known := s.contributeMetricsStore().userRecent(seriesKey, recentWindowBuckets)
+
+	resp := map[string]any{
+		"github_username": profile.GitHubUsername,
+		"trust_tier":      profile.TrustTier,
+		// Same field names as ContributorProfile so a reader of one payload can
+		// read the other without a translation table.
+		"total_tasks_completed":         profile.TasksCompleted,
+		"total_tasks_completed_with_pr": profile.TasksWithPR,
+		"total_tasks_failed":            profile.TasksFailed,
+		// tasks_completed_24h is the trailing 24 hourly buckets of this
+		// contributor's own completion series. window_hours_covered says how much
+		// history actually backed that sum, so a page can say "6h of history" on a
+		// freshly-started spoke instead of labelling six hours as a day.
+		"tasks_completed_24h": recent,
+		"window_hours":        recentWindowBuckets,
+		"window_hours_covered": func() int {
+			if !known {
+				return 0
+			}
+			return covered
+		}(),
+		// history_available distinguishes "no hourly series for you yet" (the spoke
+		// has not rolled up since you registered) from a genuine zero. Without it a
+		// brand-new contributor and an idle one look identical.
+		"history_available": known,
+	}
+	jsonResponse(w, resp)
+}
+
 func (s *Server) handleContributeInterests(w http.ResponseWriter, r *http.Request) {
 	username := s.resolveContributeCaller(r)
 	if username == "" {
@@ -8269,14 +8551,24 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 	// Require allowlist authorization for every path except /api/v1/me, which is
 	// self-scoped. Fail closed: an empty allowlist authorizes nobody.
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/me") {
-		if _, ok := s.deps.Config.Dashboard.AuthorizedRole(username); !ok {
+		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
 			jsonError(w, "forbidden: not authorized for this endpoint", http.StatusForbidden)
 			return
+		}
+		r.Header.Set("X-Hive-User", username)
+		r.Header.Set("X-Hive-Role", role)
+		if isOwnerRole(role) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
 		}
 	}
 
 	subpath := strings.TrimPrefix(r.URL.Path, "/api/v1")
 	switch subpath {
+	case "/queue":
+		// Paginated ready-work listing: supports ?limit=<int>&offset=<int>
+		// Authentication and allowlist already enforced by handleAPIv1.
+		s.handleAPIv1Queue(w, r)
 	case "/status":
 		s.handleContributeStatus(w, r)
 	case "/activity":
@@ -8312,7 +8604,7 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(subpath, "/prs/") || !strings.HasSuffix(subpath, "/queue-automerge") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
+			_, _ = w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/queue","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")

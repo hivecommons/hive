@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hive-bee.png" alt="Hive" width="120" height="120">
+</p>
+
 # Hive
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14261/badge)](https://www.bestpractices.dev/projects/14261)
@@ -555,7 +559,7 @@ just contribute-setup claude
 just contribute-hive
 ```
 
-Supported CLIs: Claude Code, GitHub Copilot, Pi, Goose, Bob. Contributors start as newcomer (rate-limited) and auto-promote based on completed tasks. Your credentials never leave your machine.
+Supported CLIs: Claude Code, GitHub Copilot, Codex, Goose, Pi, Oh My Pi (`omp`), Bob, Aider, LiteLLM (via Claude Code), Antigravity (`agy`), opencode, Kilo, and Muse Code — the authoritative list is `KNOWN_BACKENDS` in [config/backends.conf](config/backends.conf), and [docs/backend-setup.md](docs/backend-setup.md) covers per-backend setup, auth, and confinement. Contributors start as newcomer (rate-limited) and auto-promote based on completed tasks. Your credentials never leave your machine.
 
 A relay can subscribe to multiple hives with comma-separated `HIVE_HUB` and matching `HIVE_REGISTRATION_TOKEN` values, and operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
 

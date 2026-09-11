@@ -1,0 +1,9 @@
+{
+  "backend": "agy",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "paneShowsBlockingPrompt": false
+  },
+  "note": "agy renders inline at rows 1-16 of a 50-row pane; rows 17-50 are terminal padding, never touched. A blank-including tail (rows 36-50) is always empty here, which is the exact #6413 failure mode: getCLIState() must use the non-blank paneTail to see \"? for shortcuts\" and report ready."
+}

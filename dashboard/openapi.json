@@ -584,6 +584,18 @@
                           },
                           "lastError": {
                             "type": "string"
+                          },
+                          "backendAuthStatus": {
+                            "type": "string",
+                            "description": "Agent backend-auth canary (#6558): ok/unlicensed/token-expired/unreachable/quota, derived from classifyProviderError. Omitted when ok."
+                          },
+                          "backendAuthSince": {
+                            "type": "string",
+                            "description": "RFC 3339 timestamp of when backendAuthStatus's current value began."
+                          },
+                          "backendAuthLastError": {
+                            "type": "string",
+                            "description": "The offending pane line that produced backendAuthStatus."
                           }
                         }
                       }
@@ -2665,14 +2677,42 @@
           "Contributors"
         ],
         "summary": "Contributor hub status",
-        "description": "Returns the contributor hub status including registration state.",
+        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the raw pre-admission scanner population.",
         "responses": {
           "200": {
             "description": "Hub status",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "hub": {
+                      "type": "string"
+                    },
+                    "active_contributors": {
+                      "type": "integer"
+                    },
+                    "total_registered": {
+                      "type": "integer"
+                    },
+                    "actionable_items": {
+                      "type": "integer",
+                      "description": "Uncapped count of issues currently offerable to contributors after admission"
+                    },
+                    "candidate_items": {
+                      "type": "integer",
+                      "description": "Raw scanner candidate count before contributor admission"
+                    },
+                    "surface": {
+                      "type": "string"
+                    },
+                    "api_version": {
+                      "type": "string"
+                    },
+                    "served_sha": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -11506,7 +11546,7 @@
                     },
                     "per_user_done": {
                       "type": "object",
-                      "description": "Map of github_username -> array of per-hour completion counts",
+                      "description": "Map of github_username -> array of per-hour completion counts. Index-aligned with tasks_done: every series shares one timeline and a contributor's idle hours are zero-filled, so the last N entries are the last N hours for every contributor.",
                       "additionalProperties": {
                         "type": "array",
                         "items": {
@@ -11525,6 +11565,68 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/contribute/me": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Get the caller's own contribution stats",
+        "description": "Returns the caller's own contribution numbers: issues worked in the last 24 hours, issues worked all-time, how many of those completions reported a pull request the hub verified, and how many failed. Self-service \u2014 identity is resolved server-side via resolveContributeCaller and there is NO username parameter, so a caller only ever reads their own record. The all-time counters come from the stored ContributorProfile; the 24-hour figure is summed from the trailing 24 buckets of the caller's per-hour series in /api/contribute/metrics.",
+        "responses": {
+          "200": {
+            "description": "Caller's own contribution stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "github_username": {
+                      "type": "string"
+                    },
+                    "trust_tier": {
+                      "type": "string"
+                    },
+                    "total_tasks_completed": {
+                      "type": "integer",
+                      "description": "All-time issues worked by this contributor"
+                    },
+                    "total_tasks_completed_with_pr": {
+                      "type": "integer",
+                      "description": "All-time completions that reported a pull request the hub could verify. This is the figure auto-promotion reads, not the bare completion count."
+                    },
+                    "total_tasks_failed": {
+                      "type": "integer"
+                    },
+                    "tasks_completed_24h": {
+                      "type": "integer",
+                      "description": "Completions in the trailing window_hours hourly buckets. Meaningful only when history_available is true."
+                    },
+                    "window_hours": {
+                      "type": "integer",
+                      "description": "Width of the recent window in hourly buckets (24)"
+                    },
+                    "window_hours_covered": {
+                      "type": "integer",
+                      "description": "How many hourly buckets actually backed tasks_completed_24h, so a spoke with less than a day of history can say so rather than labelling a shorter span \"24h\"."
+                    },
+                    "history_available": {
+                      "type": "boolean",
+                      "description": "False when this contributor has no hourly series yet, which is distinct from a real zero (present on the timeline, finished nothing)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (identity could not be resolved)"
+          },
+          "403": {
+            "description": "No contributor profile exists yet for the caller"
           }
         }
       }
@@ -11671,6 +11773,14 @@
                         }
                       }
                     },
+                    "queue_total": {
+                      "type": "integer",
+                      "description": "Uncapped count of offerable issues; excludes operator-held rows"
+                    },
+                    "held_total": {
+                      "type": "integer",
+                      "description": "Count of operator-held rows surfaced separately from the offerable queue"
+                    },
                     "withheld": {
                       "type": "array",
                       "items": {
@@ -11703,7 +11813,7 @@
           "Contribute"
         ],
         "summary": "Triage lifecycle ladder",
-        "description": "Returns a live-derived, Warp-style grouping of contribute issues into a lifecycle ladder (Triaging -> Ready to implement -> Implementing -> Reviewing -> Closed), computed per request from the ready queue, fleet snapshot, and PR-issue link resolver. No persistent lifecycle store. Public, GET only, read-only.",
+        "description": "Returns a live-derived, Warp-style grouping of contribute issues into a lifecycle ladder (Triaging -> Ready to implement -> Implementing -> Reviewing -> Closed), computed per request from the raw candidate population, ready queue, fleet snapshot, and PR-issue link resolver. Candidates withheld by admission remain visible in Triaging. No persistent lifecycle store. Public, GET only, read-only.",
         "responses": {
           "200": {
             "description": "Triage snapshot",

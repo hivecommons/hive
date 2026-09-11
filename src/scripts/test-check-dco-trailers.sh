@@ -79,6 +79,134 @@ else
   pass "good commit is not reported"
 fi
 
+# --- DCO_WAIVED_COMMITS (hivecommons/hive#6576) -------------------------------
+#
+# A protected branch cannot be repaired: policy forbids rewriting another
+# contributor's commit or signing off on their behalf, so a commit already
+# merged without a trailer has no fix — only a recorded maintainer disposition.
+# The waiver is the instrument for that, and these cases pin the two properties
+# that make it safe to have at all: it can only ever name history that already
+# exists, and it is never silent.
+
+run_checker() { # run_checker <env-assignments...> -- returns output, sets rc
+  set +e
+  output=$(env "$@" bash "$CHECKER" 10 HEAD 2>&1)
+  rc=$?
+  set -e
+}
+
+# A waiver clears the ONE failure it names and leaves the other one failing.
+# This is the property the email allowlist cannot provide: DCO_ALLOWLIST_EMAILS
+# is consulted only after a trailer is found, so it can never clear a
+# missing-signoff.
+run_checker "DCO_WAIVED_COMMITS=${missing_sha}"
+if [ "$rc" -ne 1 ]; then
+  bad "waiving one of two failures should still exit 1 (got ${rc})"
+  echo "$output" | sed 's/^/      | /'
+else
+  pass "a waiver does not mask an unrelated failure"
+fi
+if printf '%s\n' "$output" | grep -q "^WAIVED ${missing_sha} missing-signoff"; then
+  pass "a waived missing-signoff is reported as WAIVED, not hidden"
+else
+  bad "waived commit ${missing_sha} was not reported on the WAIVED line"
+  echo "$output" | sed 's/^/      | /'
+fi
+if printf '%s\n' "$output" | grep -q "^FAIL ${missing_sha}"; then
+  bad "waived commit ${missing_sha} still reported as FAIL"
+fi
+if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha} mismatched-signoff"; then
+  pass "the unwaived commit still fails"
+else
+  bad "unwaived commit ${mismatch_sha} stopped failing"
+fi
+
+# Waiving every failure turns the run green, and the summary still counts them.
+run_checker "DCO_WAIVED_COMMITS=${missing_sha},${mismatch_sha}"
+if [ "$rc" -ne 0 ]; then
+  bad "waiving every failure should exit 0 (got ${rc})"
+  echo "$output" | sed 's/^/      | /'
+else
+  pass "waiving every failure returns green"
+fi
+if printf '%s\n' "$output" | grep -q '2 waived'; then
+  pass "the summary line counts waived commits"
+else
+  bad "summary line did not report 2 waived"
+  echo "$output" | sed 's/^/      | /'
+fi
+# Green-with-waivers must not read the same as clean history: a maintainer
+# scanning runs has to be able to tell "nothing wrong" from "we are accepting
+# known-bad history".
+if printf '%s\n' "$output" | grep -q 'passed (with recorded waivers)'; then
+  pass "a waived-green run is distinguishable from a clean one"
+else
+  bad "waived-green run did not say it was carrying waivers"
+fi
+
+# Separator handling matches DCO_ALLOWLIST_EMAILS (comma/space/newline), and
+# SHA matching is case-insensitive.
+upper_missing=$(printf '%s' "$missing_sha" | tr '[:lower:]' '[:upper:]')
+run_checker "DCO_WAIVED_COMMITS=${upper_missing} ${mismatch_sha}"
+if [ "$rc" -eq 0 ]; then
+  pass "space-separated and upper-case SHAs are accepted"
+else
+  bad "space-separated/upper-case waiver list was not honoured (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# An abbreviated SHA is REFUSED rather than silently matching nothing. A
+# prefix is ambiguous, and a waiver that quietly does nothing would leave the
+# monitor red with a maintainer believing the disposition was recorded.
+run_checker "DCO_WAIVED_COMMITS=${missing_sha:0:12}"
+if [ "$rc" -eq 2 ]; then
+  pass "an abbreviated SHA is rejected with a config error"
+else
+  bad "abbreviated SHA should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+if printf '%s\n' "$output" | grep -qi 'full 40-character'; then
+  pass "the abbreviated-SHA error explains the requirement"
+else
+  bad "abbreviated-SHA error did not explain the requirement"
+fi
+
+# A non-hex entry is a typo, not a waiver.
+run_checker "DCO_WAIVED_COMMITS=not-a-sha-0000000000000000000000000000"
+if [ "$rc" -eq 2 ]; then
+  pass "a non-hex waiver entry is rejected"
+else
+  bad "non-hex waiver entry should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# A waiver on a commit that PASSES is dead weight — reported so it gets
+# removed, but advisory: failing the monitor over config housekeeping would
+# page the same people the waiver exists to stop paging.
+run_checker "DCO_WAIVED_COMMITS=${good_sha}"
+if [ "$rc" -eq 1 ]; then
+  pass "a stale waiver does not change the exit code"
+else
+  bad "stale-waiver run should still exit 1 for the real failures, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+if printf '%s\n' "$output" | grep -q "^STALE-WAIVER ${good_sha}"; then
+  pass "a waiver on a now-passing commit is reported as stale"
+else
+  bad "stale waiver on ${good_sha} was not reported"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The default (no waivers set) is unchanged: everything still fails, and the
+# summary reports zero waived rather than omitting the field.
+run_checker "DCO_WAIVED_COMMITS="
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q '0 waived'; then
+  pass "an empty waiver list is not a config error and reports 0 waived"
+else
+  bad "empty waiver list changed behaviour (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-dco-trailers FAILED"
   exit 1

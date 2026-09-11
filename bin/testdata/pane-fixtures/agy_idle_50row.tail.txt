@@ -1,0 +1,9 @@
+      ▄▀▀▄        Antigravity CLI 1.1.27
+     ▀▀▀▀▀▀       account@example.com (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (High)
+   ▄▀▀    ▀▀▄     ~/.local/state/hive/agent-cwd
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> 
+────────────────────────────────────────────────────────────
+? for shortcuts                        Gemini 3.8 Flash · high

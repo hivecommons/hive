@@ -7,7 +7,7 @@ Hive agents are untrusted code executors: prompts, tool output, and cloned repos
 Two halves of that target hold differently, and the difference matters:
 
 - **Credentials and pushes are constrained on every path.** No agent receives a GitHub token or pushes directly; authorship goes through the App-gated `gh` wrapper and the push broker.
-- **Workspace write confinement depends on the launch path and backend.** The Podman sandbox below is the hub-side boundary. Contributor container mode has its own container boundary. In contributor local mode: claude/litellm and codex have OS-enforced sandboxes; copilot has its own OS-enforced sandbox, wired the same way, gated on the installed CLI actually supporting it; opencode has no sandbox but does get a command-name deny-list (a floor, not a boundary); goose, agy, bob, pi, and aider have **no confinement mechanism this repo can wire at all** and refuse to launch in local mode unless the operator explicitly opts in per backend. See the [per-backend matrix](#per-backend-confinement-on-the-contributor-local-path) below.
+- **Workspace write confinement depends on the launch path and backend.** The Podman sandbox below is the hub-side boundary. Contributor container mode has its own container boundary. In contributor local mode: claude/litellm and codex have OS-enforced sandboxes; copilot has its own OS-enforced sandbox, wired the same way, gated on the installed CLI actually supporting it; opencode has no sandbox but does get a command-name deny-list (a floor, not a boundary); goose, agy, bob, pi, aider, kilo, and omp have **no confinement mechanism this repo can wire at all** and refuse to launch in local mode unless the operator explicitly opts in per backend. See the [per-backend matrix](#per-backend-confinement-on-the-contributor-local-path) below.
 
 **#4918 is what that costs in practice, and it did not require a compromise.** An agent doing correct work on an assigned third-party repo ran that repo's own test suite; a latent defect in two of its tests let a hook escape its stubs and issue `rpm-ostree kargs --append-if-missing=...` against the operator's real deployment. Nothing was written, and the only reason is that the process happened to lack privilege. Benign behaviour was a sufficient precondition, so this is a routine exposure rather than an exceptional one.
 
@@ -20,7 +20,7 @@ This is the part that is easy to get wrong, because the two paths have different
 | | Hub / pod agents (`pkg/agent`) | Contributor relay (`just contribute-hive`) |
 |---|---|---|
 | Runs where | The hive spoke's own container | The contributor's machine |
-| Podman agent sandbox (`agent_sandbox`) | Available, opt-in — see below | **Does not exist on this path.** `SandboxEnabled` is read only by `pkg/agent`; nothing in `bin/contributor-relay.sh`, `bin/contributor-agent.sh` or the `Justfile` consults it |
+| Podman agent sandbox (`agent_sandbox`) | Available, opt-in — see below | **Does not exist on this path.** `SandboxEnabled` is read only by `pkg/agent`; nothing in `bin/contributor-relay.js`, `bin/contributor-agent.sh` or the `Justfile` consults it |
 | The confinement lever | `agent_sandbox` + the per-agent opt-in | Container mode (the default), or a backend-native sandbox in local mode — see the matrix below, coverage varies by backend |
 | Host-state denials (#4938) | Yes | Yes (`config/backends.conf`) |
 | Credentials / pushes | Constrained | Constrained |
@@ -45,6 +45,7 @@ This table is the ground truth for `just contribute-hive <backend> local` — th
 | `bob` | **None.** No sandbox, approval mode, or path-restriction mechanism documented anywhere in Bob Shell's own docs. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_BOB_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `pi` | **None.** `@earendil-works/pi-coding-agent` ships with no sandbox by default; directory confinement exists only via a third-party extension (`pi-permission-modes`) hive does not install or depend on. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `aider` | **None.** No Docker/OS isolation option of any kind. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED=1` |
+| `omp` | **None.** OMP exposes `--auto-approve`, but that controls confirmation prompts rather than filesystem or host-state confinement; Hive does not pass it on the interactive contributor path. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1` |
 
 **The build-cache root, and why it is a grant rather than a hole (#6100).** Every
 compiled toolchain writes to a cache under `$HOME` by default — `GOCACHE` at
@@ -61,9 +62,22 @@ hive owns, rather than `$HOME`. It is a **write root only** — deliberately not
 under, an agent has no reason to `Edit` a build cache, and adding it as a working
 directory would put megabytes of object files in the agent's view of the tree.
 
-The backends with no mechanism (goose, agy, bob, pi, aider, kilo) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all six.
+The backends with no mechanism (goose, agy, bob, pi, aider, kilo, omp) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all seven.
 
 For `agy` specifically, this local-mode refusal used to be a dead end (#5048): `src/Dockerfile.contributor` never installed the `agy` binary, so container mode — the only real boundary any of these five backends can get on this path — was unavailable too, leaving no working path at all. That is now fixed: the image installs `agy` from Google's published, checksummed release tarball, so `just contribute-hive agy` (container mode, the default) actually works. Nothing above about agy's *local*-mode posture changed — it still has no sandbox and still refuses without the escape hatch, exactly like goose/bob/pi/aider.
+
+### Codex in container mode is bounded by the container, not by `workspace-write` (#6653)
+
+The matrix above is about **local** mode, and codex's `workspace-write` entry there is unchanged. Container mode is different, and the difference was a bug for as long as the two shared one hard-coded flag.
+
+`--sandbox workspace-write` is implemented with bubblewrap, and bubblewrap's first act is to create an unprivileged user namespace. The contributor container runs under the runtime's default seccomp profile with nothing relaxed, which denies that syscall — so asking for `workspace-write` there did not produce a weaker sandbox, it produced **no working command at all**: every model-generated command died with `bwrap: No permissions to create a new namespace`, including both of Codex's patch-application paths, leaving the agent to rediscover a working edit mechanism by trial and error on each task. The error text also names a *host* sysctl, pointing operators at a machine that was never the problem.
+
+Hive now resolves the value instead of fixing it, on two independent checks made at launch:
+
+- **Does an outer boundary exist?** The root-owned `/etc/hive/contributor-mode` marker baked into `src/Dockerfile.contributor` — a file, not an env var, so an agent running as `dev` cannot forge it.
+- **Can the nested sandbox actually work?** A direct `unshare --user --map-root-user` probe, the same capability bwrap needs.
+
+Only "container, and no user namespaces" falls back to `danger-full-access`, and it says so in one line on stderr. This is not a weakening: the container is the boundary on that path, and it is the same boundary that was already load-bearing. **Local mode is never downgraded** — there is no outer boundary there, so a blocked probe leaves `workspace-write` in place rather than widening access to the operator's host. An operator who would rather have the nested sandbox can relax the runtime (`--security-opt seccomp=unconfined`) and the probe restores `workspace-write` on its own; the contributor image now ships a real `bubblewrap`, so that path uses a distro-maintained binary instead of Codex's bundled fallback. `HIVE_CODEX_SANDBOX_MODE` pins a value and skips the probe entirely.
 
 ## Current wiring
 

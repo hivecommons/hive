@@ -61,6 +61,31 @@ when part of the issue deliberately stays open — and rejects the request
 otherwise. Pass it whenever the run started from an issue, so a truncated or
 replaced body cannot open a PR that orphans its issue.
 
+When the PR body resolves an issue (`Closes #N`, `Fixes #N`, or
+`Resolves #N`), add the issue-author trailer before the first push with
+`src/scripts/issue-coauthor.sh --amend N` (repeat once per resolved issue).
+`issue-coauthor.sh` is the single source of truth for identity resolution: it
+uses the GitHub API, emits the GitHub noreply address form, and skips cases
+where no human credit is needed, such as bot-filed and self-filed issues.
+
+`hive-open-pr` does not rewrite commits or force-push branches, because the
+branch may already have been pushed or be under review. Instead, it asks
+`issue-coauthor.sh` what trailer a closing issue should have and warns when
+`HEAD` does not already contain it. Resolution failures warn and the PR request
+continues: missing attribution is worth fixing, but must not block a shipped
+fix. A `Refs #N` mention is deliberately not checked because it does not claim
+the issue is resolved. `Co-authored-by:` is only attribution; it is **not** a
+DCO sign-off. Never add `Signed-off-by:` for the issue author or anyone else
+unless that person actually signed off on the commit.
+
+Before writing `Refs #N`, answer the question directly: *does merging this PR
+leave anything for issue #N to track?* If nothing, use `Closes #N` — that is
+the default. Reserve `Refs #N` for an epic/tracker or a deliberately partial
+fix, and say on the same line what remains open. #6411 (`Refs #6319, #6410`,
+a follow-up tracker) and #6434 (a doc recording tracker state) are correct
+uses of `Refs`; most PRs are not those, and #6152/#6547 exist because agents
+defaulted to `Refs` out of caution rather than answering the question.
+
 Flags `gh` accepts but this path does not need — `--draft`, `--fill`, `--web`,
 `--no-maintainer-edit` — are **accepted and ignored**, so an agent's existing
 command line does not need rewriting. Note that `--draft` being ignored means

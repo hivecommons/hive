@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -232,11 +233,23 @@ func TestTaskRunLog_RecordedOnCompletion(t *testing.T) {
 		Result: "completed", Verdict: "no_work_needed", VerdictReason: "smoke",
 		CompletionSignal: "verdict",
 	})
-	time.Sleep(100 * time.Millisecond)
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("run log not written: %v", err)
+	// The handler writes the record asynchronously relative to this
+	// goroutine, and appendTaskRun O_CREATEs the file before writing, so a
+	// fixed sleep can observe an empty or absent file on a loaded runner
+	// (#6453). Poll for a complete newline-terminated record instead.
+	var data []byte
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(b, []byte("\n")) {
+			data = b
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run log not written within 5s: err=%v partial=%q", err, b)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 1 {

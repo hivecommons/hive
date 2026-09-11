@@ -1,0 +1,9 @@
+{
+  "backend": "codex",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "paneShowsBlockingPrompt": false
+  },
+  "note": "A healthy, idle codex pane: old tool-run rows fill the scrollback above the real input chrome ('›', the real 'OpenAI Codex' banner), with no trust/update modal on screen."
+}

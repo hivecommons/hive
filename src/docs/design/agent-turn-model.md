@@ -452,7 +452,7 @@ structured (`status`, `done`, `verdict`, `rationale`, landed effects); no pane
 substring decides whether the turn finished.
 
 This is a prototype boundary, not a new production path. It does not call an
-LLM, replace a backend CLI, or run from `bin/contributor-relay.sh`. A headless
+LLM, replace a backend CLI, or run from `bin/contributor-relay.js`. A headless
 backend adapter would produce the initial plan; the spike starts immediately
 after that model call, where re-entry meets external side effects and where a
 duplicate is more damaging than repeated inference.

@@ -20,7 +20,7 @@ sequenceDiagram
     R->>H: result (PR opened / success / failure)
 ```
 
-- The **work queue** is built from the hive's monitored repos: open, actionable issues that pass the admin's filters. The current depth is visible on the Hub tab and at `GET /api/contribute/status` (as `actionable_items`).
+- The **work queue** is built from the hive's monitored repos: open candidate issues that pass every contributor admission gate (including disabled repositories, holds, cooldowns, in-flight work, dependencies, assignments, and the admin's title/author/label filters). `GET /api/contribute/status` reports that offerable total as `actionable_items`; its additive `candidate_items` field is the raw pre-admission scanner population. `GET /api/contribute/queue` returns the bounded ordered rows plus the uncapped offerable `queue_total` and separately visible `held_total`.
 - The **relay** authenticates with a registration token, receives one task at a time, drives the local CLI inside a tmux session, injects a short-lived GitHub token for the PR, and reports the result. It heartbeats every 30 s and reconnects with exponential backoff; a task is abandoned if the relay observes no forward progress for 30 minutes, or if it crosses an absolute 4-hour backstop. The GitHub token is valid for 55 minutes and is re-minted by the hub before it expires, so a task may outlive any single token ([below](#the-github-token-outlives-the-task-because-the-hub-re-mints-it)).
 - Every contributor has a **trust tier** with per-tier rate limits. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
 
@@ -46,13 +46,23 @@ just contribute-hive claude local  # host mode — relay + CLI directly on your 
 ```
 
 Containerized mode auto-detects the runtime — docker first, then podman — and can be forced with `export HIVE_CONTAINER_RUNTIME=podman`.
-
-### Capability-aware routing
-
-The relay self-reports runtime capabilities during `auth_response`: container runtime, OS/arch, backend CLI version, credential type, protocol version, and Pi readiness where applicable. These values are self-reported and advisory, never a trust or credential-enforcement signal.
-
-The hub may use them only to avoid explicit task mismatches. Task requirements are derived from issue labels such as `needs-container`, `needs-docker`, `needs-podman`, `os/linux`, `arch/amd64`, `backend/copilot`, and `credential/app`. If a client explicitly declares a contradictory value, the hub skips that task for the client; if every otherwise-admissible task is skipped this way, the relay receives `task_unavailable` with reason `capability_mismatch`. A relay that declares nothing, or leaves a field unknown, continues to receive work as before.
 The resolved runtime is passed into the container, so the "attach to the CLI" hints printed from inside it (the status line, and the banner shown when the CLI needs a login) name the engine that actually launched it ([#5145](https://github.com/hivecommons/hive/issues/5145)). In host mode there is no container, and those hints are a plain `tmux attach -t <session>`.
+
+The `just contribute-hive` container defaults to the same workload ceiling as
+`contribute-k8s`: 4 GiB of memory and 2 CPUs. Its combined memory-and-swap cap
+is also 4 GiB, so the container cannot consume another 4 GiB from host swap
+after reaching the RAM limit. Tune the local container for a larger or smaller
+machine with `HIVE_CONTAINER_MEMORY` and `HIVE_CONTAINER_CPUS`:
+
+```bash
+HIVE_CONTAINER_MEMORY=6g HIVE_CONTAINER_CPUS=3 just contribute-hive claude
+```
+
+Set either override to `none` to omit that limit on a host that cannot enforce
+the corresponding cgroup controller.
+
+These overrides affect the `just contribute-hive` container only; Kubernetes
+keeps the resource requests and limits rendered in its generated manifest.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
@@ -76,12 +86,13 @@ Important environment variables:
 | --- | --- | --- |
 | `HIVE_HUB` | value from `contributor.env`, else public hub default | WebSocket hub(s) to subscribe to. Use comma-separated URLs for multi-hub mode. Direct Compose reads the registered value from the mounted config file. |
 | `HIVE_REGISTRATION_TOKEN` | value from `contributor.env` | Registration token(s), positional with `HIVE_HUB` when multiple hubs are listed. Required; run `just contribute-setup` first. |
-| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `pi`, `aider`, `litellm`, `agy`, `opencode`, `kilo`, `muse`, depending on image support and credentials). `agy` has no OS-level sandbox of its own, so run it containerized (`just contribute-hive agy`) — the contributor image ships the `agy` binary; local mode refuses to launch it without `HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1`. `opencode`, `kilo`, and `muse` only run headless (`CONTRIBUTOR_MODE=headless`) — hive has no interactive-tmux wiring for them. |
+| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `pi`, `aider`, `litellm`, `agy`, `opencode`, `kilo`, `muse`, `omp`, depending on image support and credentials). `omp` is interactive-only: Hive starts normal `omp --model <id>` in the prepared tmux cwd and passes no fabricated permission flags. It has no verified local confinement mechanism, so local mode refuses it without `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1`; container mode is the supported boundary. `agy` has the same confinement limit. `opencode`, `kilo`, and `muse` only run headless (`CONTRIBUTOR_MODE=headless`) — hive has no interactive-tmux wiring for them. |
 | `AGENT_MODEL` | unset (backend default) | Optional model override passed to the contributor agent (e.g. `claude-sonnet-4-6`, `gpt-4o`, `gemini-2.5-pro`). Declared to the hive when the relay connects. |
 | `AGENT_REASONING_EFFORT` | unset | Reasoning effort override. Consumed by `codex` (`-c model_reasoning_effort`), by `agy` (`--effort low\|medium\|high`, required whenever a model is set, else agy ignores the model), and by `muse` (`--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max\|ultra`, applied with or without a model; a value outside that set is dropped rather than passed, because muse exits 2 on it). Ignored by other backends. |
 | `CONTRIBUTOR_MODE` | `interactive` | `interactive` keeps a tmux/TTY session. `headless` is for one-shot/no-TTY task delivery. |
 | `HIVE_AGENT_SESSION` | `contributor` | tmux session name for interactive mode. |
 | `HIVE_SESSION` | backend name (`AGENT_BACKEND`) | Optional session label for running multiple relays under one GitHub account (see [Running multiple backends under one account](#running-multiple-backends-under-one-account)). Relays with distinct labels get independent session-scoped identities (`ContributorID#session`) on the hub, so their task leases, assignment cooldowns, failure streaks, and ownership fences do not collide. Auth, trust tier, model admission, and rate-limit accounting stay per-account. Sanitized on the hub: only `[A-Za-z0-9._-]` survive, capped at 32 bytes; a label that sanitizes to empty counts as unset. Set it to the **empty string** to opt out — the relay then declares no session and keeps the bare per-account identity (the historical single-session behavior). |
+| `HIVE_CODEX_SANDBOX_MODE` | probed (see note) | Codex `--sandbox` value. Left unset, hive resolves it at launch instead of hard-coding one: `workspace-write` everywhere it can work, and `danger-full-access` **only** inside the contributor container when that container blocks the unprivileged user namespace `workspace-write`'s bubblewrap needs (#6653). Setting this pins one value and skips the probe. |
 | `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | unset | Drops the defense-in-depth Claude command denylist. In local mode the native filesystem sandbox still applies, so this does not grant host writes. |
 | `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX` | unset | Restores the pre-#4918 unconfined Claude/LiteLLM local posture. Use only on a disposable or externally sandboxed host. |
@@ -93,6 +104,7 @@ Important environment variables:
 | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive pi local` to launch at all. pi ships with no sandbox by default; directory confinement exists only via a third-party extension hive does not depend on. |
 | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive aider local` to launch at all. aider has no sandbox or OS isolation option of any kind. |
 | `HIVE_KILO_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive kilo local` to launch at all. kilo's `--auto` is an unattended auto-approve flag, not a boundary; kilo has no verified sandbox, filesystem allowlist, or command deny-list hive can wire. |
+| `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive omp local` to launch at all. OMP has no sandbox, filesystem allowlist, or command deny-list Hive can wire; local mode refuses to launch without this. |
 
 ### Where each backend reads its instructions
 
@@ -114,6 +126,7 @@ mode fixed for Goose in [#2393](https://github.com/hivecommons/hive/issues/2393)
 | `opencode` | `AGENTS.md`, `CLAUDE.md` |
 | `kilo` | `AGENTS.md`, `CLAUDE.md` |
 | `muse` | `AGENTS.md`, `CLAUDE.md` |
+| `omp` | `AGENTS.md`, `CLAUDE.md` |
 | anything else | `CLAUDE.md` only — the `*` fallback |
 
 A backend that reads neither `CLAUDE.md` nor one of the names above falls into
@@ -161,14 +174,32 @@ their own OS-enforced sandboxes; Copilot now uses its own `--sandbox` (also
 OS-enforced — Seatbelt/bubblewrap/ProcessContainer depending on platform),
 gated on the installed CLI actually supporting the flag; opencode gets a
 command-name deny-list via its own `permission.bash` config (a floor, not a
-filesystem boundary — opencode has no OS sandbox); goose, agy, bob, pi, and
-aider have no confinement mechanism this repo can wire at all, and local mode
-for them **refuses to launch** unless the operator sets that backend's own
+filesystem boundary — opencode has no OS sandbox); goose, agy, bob, pi, aider,
+kilo, and omp have no confinement mechanism this repo can wire at all, and local
+mode for them **refuses to launch** unless the operator sets that backend's own
 `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1`. See
 [sandbox-isolation.md](sandbox-isolation.md)'s per-backend confinement matrix
 for the authoritative, up-to-date state. The `agent_sandbox` Podman path
 documented there remains **hub-side only** — nothing on the contributor path
 reads it.
+
+Codex sandbox mode is probed, not fixed (#6653). `--sandbox workspace-write` is
+implemented with bubblewrap, and bubblewrap's first act is to create an
+unprivileged user namespace. The contributor container denies that syscall under
+the runtime's default seccomp profile, so asking for it there made **every**
+model-generated command fail — including both of Codex's patch-application
+paths, leaving the agent to rediscover a working edit mechanism by trial and
+error on each task — with a `bwrap:` error that misleadingly names a *host*
+sysctl. Hive therefore checks two things at launch: whether an outer boundary
+exists (the root-owned `/etc/hive/contributor-mode` marker baked into the
+contributor image) and whether user namespaces actually work. Only when both say
+"container, and no namespaces" does it fall back to `danger-full-access`, and it
+prints a one-line note saying so. Local mode is never downgraded — there is no
+outer boundary there, so `workspace-write` stands regardless of the probe.
+Relaxing the runtime instead (`--security-opt seccomp=unconfined`) restores
+`workspace-write` automatically, with no variable to set; the contributor image
+also ships a real `bubblewrap` so that path uses a distro-maintained binary
+rather than Codex's bundled fallback.
 
 Codex config-key compatibility: `approvals_reviewer` is passed with `-c`, so it
 depends on the installed Codex release accepting that key. If a version rejects
@@ -251,32 +282,12 @@ Set your model: export AGENT_MODEL=<model>
 ## What happens on a task
 
 1. The hive assigns an issue that fits your trust tier's rate limits and passes the admin's filters.
-2. The relay writes the task context, injects a short-lived GitHub token, and drives your CLI in a tmux session (watch it, or intervene — see below for how to watch without taking the pane).
+2. The relay writes the task context, injects a short-lived GitHub token, and drives your CLI in a tmux session (attach to it to watch — or intervene).
 3. Progress is reported back every 2 minutes; the result (PR opened, success/failure) is reported when the CLI finishes.
 4. Completed tasks that open a PR count toward automatic tier promotion — and toward the hive's public `/leaderboard`.
 
 Contributors never hold long-lived repo credentials: the relay receives short-lived GitHub tokens per task, and API keys for the contributor's own model provider never leave their machine.
 
-### Watching without taking the pane
-
-The relay treats the pane as **yours** while it looks like someone is using it: a watchdog must never type over somebody mid-keystroke, so recovery actions — the API-error retry in particular — stand down. Attaching a client is how you tell it you are there.
-
-That matters more than it sounds, because *attaching* is not the same as *looking*:
-
-| How you watch | Registers a tmux client? | Blocks automatic recovery? |
-|---|---|---|
-| `tmux capture-pane -p -t <session>` | no | no |
-| `tmux attach -t <session>` | yes | while the pane looks in use |
-| The dashboard's browser terminal (`/terminal/?arg=…`) | yes — it proxies to a real `tmux attach-session` | same as a local attach |
-
-So `tmux capture-pane -p -t <session>` is the read-only way to look: it returns a snapshot without ever appearing in `tmux list-clients`. `tmux attach` and the dashboard terminal both put a real client on the session, and the dashboard route is **not** a read-only viewer despite feeling like one.
-
-Leaving a tab attached is fine — it does not park a task by itself. Two things bound it ([#5685](https://github.com/hivecommons/hive/issues/5685)):
-
-- The relay corroborates tmux's `client_activity` against whether the pane actually **changed**. A keystroke draws something; a terminal answering the capability, colour and cursor-position queries the CLI writes does not. So an attached-but-unused tab — which advances `client_activity` on its own — no longer reads as a person.
-- Deferral is capped at `HIVE_HUMAN_PRESENCE_MAX_DEFERRALS` ticks (3, roughly six minutes) regardless. Presence is a signal the relay cannot verify, and a task parked forever on an unverifiable signal is worse than one `try again` landing next to somebody.
-
-`tmux detach-client` remains the unambiguous way to hand the pane back.
 ### The base branch comes from the assignment, not from the checkout
 
 Your relay works one issue at a time out of a single **persistent** checkout under `$HIVE_WORKSPACE_DIR`, and nothing resets it between tasks. The branch you find on disk therefore answers the *previous* task, not the current one.
@@ -500,6 +511,24 @@ The shipped relay declares `environment` only where the cause is unambiguous (CL
 
 Whether the hub should ever *act* on client declarations — the ROUTE half of [#2547](https://github.com/hivecommons/hive/issues/2547) — remains an open maintainer decision, and needs task-side requirements metadata that does not exist yet.
 
+### A PR the agent researched is not a PR it opened
+
+`pr_url` on `task_complete` tells the hub whether work shipped, which picks the issue's cooldown. It comes from a regex over the agent's recent pane output — and a regex cannot tell a PR the agent **opened** from one it merely **read about**. `gh pr list` and `gh issue view --comments` both render full URLs, so an agent researching prior art prints plenty of the latter.
+
+When that happened, two things went wrong at once ([#6662](https://github.com/hivecommons/hive/issues/6662)): the contributor was credited with somebody else's PR, and — the serious half — the `prURL ? null : verdict` precedence **discarded a correct `no_work_needed` verdict**.
+
+That precedence was justified as "a visible PR contradicts 'nothing shippable'". True of a PR this task opened; exactly inverted for a PR a maintainer merged a month ago, where the PR is the evidence that makes the verdict *correct*. And that is [#3987](https://github.com/hivecommons/hive/issues/3987)'s target population by construction — its own step 1 is "an issue's shippable parts land across several PRs referencing it; those PRs merge" — so the very evidence that makes `no_work_needed` right was what discarded it. The issue was then booked as shipped and re-entered the offer pool when no merge materialised: the [#2547](https://github.com/hivecommons/hive/issues/2547) loop #3987 exists to close.
+
+Measured over one 45-minute container session: **3 of 10 completions** attributed a third party's already-merged PR to the contributor and lost a correct verdict. Which tasks landed in that 3 came down to whether the agent happened to print a bare `#1103` — which the regex does not match, so the verdict survived — or a full URL.
+
+A scraped URL is now a **candidate**, not a conclusion. It is checked against GitHub (`gh pr view --json author,createdAt,mergedAt`) and the answer is three-way:
+
+- **Refuted** — merged or created before the task started, or authored by somebody else. Not our work: dropped from `pr_url`, and the verdict stands. The merged-before-start check alone catches all three observed cases, and it needs no identity, so a relay whose `HIVE_CONTRIBUTOR_USERNAME` is unset is still protected. Timestamp comparisons carry a few minutes of slack, because `taskAssignedAt` is the contributor's clock and GitHub's timestamps are GitHub's; the misattributions are off by weeks.
+- **Confirmed** — opened by this contributor during this task. Reported, and it suppresses a `no_work_needed` claim exactly as before.
+- **Unverified** — `gh` missing, offline or rate-limited. Still reported as a best-effort audit trail, because dropping it would start losing real PRs ([#6667](https://github.com/hivecommons/hive/issues/6667) is that failure read in the opposite direction) — but it no longer silently outranks the agent's own sentinel. A regex hit on scrollback prose is much weaker evidence than a line the agent deliberately printed.
+
+The cross-repo fallback is also gone. It returned the first PR URL in *any* repo when nothing matched the task's repo, reasoning that an approximate audit trail beats none. For a value the hub books cooldowns on, an approximate one is a wrong one, and a PR in a different repository cannot be the PR for this task's issue.
+
 ## Reconnecting without losing in-flight work
 
 The relay heartbeats every 30 s and reconnects with exponential backoff (1 s to 60 s). A drop inside that window is meant to be invisible to the agent: the relay keeps its task locally, re-asserts it on the new socket, and carries on typing into the same tmux pane.
@@ -527,13 +556,9 @@ This does not loosen who may claim what. The restored record is one the *hub its
 
 A resume that is genuinely refused — an operator yanked the task, or the relay stopped reporting for longer than the lease window — still ends in `task_revoke`, and that is correct. The relay clears its task and asks for new work.
 
-**Except for the work the relay gave itself.** After every fifth completed task the relay runs a **PR review cycle**: it stops taking new issues and asks its agent to look over the open PRs it has filed, so review comments get answered. That task is built locally — the hub never assigned it, and holds no lease for it.
+**Not every task has a lease, and one of them is the relay's own.** After every fifth completion the relay runs a *PR review cycle*: it stops taking new issues and asks its agent to look over the open PRs it has filed, so review comments get answered. That task is built locally — a `pr-review-…` id, `number: 0`, no `task_assign`, no lease — and for a long time the reconnect path above did not know the difference. It re-asserted the review to a hub that had never heard of it, the hub refused under exactly the server-issued-lease rule described above, and the relay treated the resulting revoke as terminal: stop the agent, relaunch the CLI, ask for fresh work ([#5715](https://github.com/hivecommons/hive/issues/5715)). The tell was in the log line itself — `Reconnected while working on kubestellar/hive#0 — resuming`, naming an issue number that does not exist. On a hive where 1006 closes are routine (29 in under four hours in the report) a review that takes a couple of minutes almost never survived to finish, so PR review coverage silently did not happen.
 
-Everything above therefore does *not* apply to it, and for a while the relay did not know that ([#5715](https://github.com/hivecommons/hive/issues/5715)). It reported progress on the review the same way it reports on real work, the hub answered each claim with `task_revoke` because no lease matched, and the relay treated that revoke as terminal — stopping the agent and asking for fresh work. On a hive where sockets flap this meant PR review coverage silently almost never happened. The revoke did not even need a flap: the first ordinary progress report, three minutes in, was enough.
-
-The relay now withholds the two frames that *claim* a task (`task_accepted`, `task_progress`) for locally-created tasks, and ignores a `task_revoke` for one. Terminal frames still go out, and every hub-assigned task — including external Linear/Jira items, which legitimately carry issue number 0 — behaves exactly as before. A review cycle is now unaffected by a flap.
-
-One consequence worth knowing: an aborted review is *skipped*, not retried. The cycle counter only advances on a real completion, so a review that does not run waits for the next multiple of five rather than being retried at the next opportunity.
+Locally-created tasks are now marked as such, and two things follow. The relay never sends a hub *ownership* frame — `task_accepted` or `task_progress` — for one, because there is no lease for the hub to confirm and the request can only ever be answered with a revoke. And a revoke that names one is ignored rather than acted on: a revoke is terminal because the work now belongs to someone else, and for a task no hub ever owned there is nobody for it to belong to, so the agent's turn is still valid. The two are independent — the first stops the relay provoking a revoke, the second makes the review survive one arriving for any other reason. Everything else is unchanged: the review still runs, still ticks locally, and still reports `task_complete` followed by `ready` when it ends, which is what puts the contributor back in the rotation. Nothing about a hub-assigned task's resume changes.
 
 **A dropped socket is not a failed issue.** The disconnect books a short cooldown on the issue so a second session cannot pick it up during the reconnect window and file a duplicate PR ([#2356](https://github.com/hivecommons/hive/issues/2356)). That cooldown no longer counts toward the consecutive-failure quarantine: three drops on a flaky connection used to park a perfectly workable issue for six hours with nothing having actually failed. Real failures — `task_failed`, the relay's own progress watchdog giving up, the wedged-task backstop — still count, and still quarantine.
 

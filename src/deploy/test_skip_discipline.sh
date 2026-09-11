@@ -246,6 +246,7 @@ check_suite test_standalone_runtime_parity.sh     "PyYAML is absent"   NO_PYYAML
 check_suite test_changelog_reminder.sh            "PyYAML is absent"   NO_PYYAML
 
 check_suite test_contribute_k8s_workload.sh       "'just' is absent"   just
+check_suite test_contributor_container_resources.sh "'just' is absent" just
 check_suite test_entrypoint_system_gitconfig.sh   "git is absent"      git
 
 # The two #5383 suites gate on being root, which cannot be denied by PATH — but

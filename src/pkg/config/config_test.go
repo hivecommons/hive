@@ -1241,15 +1241,36 @@ func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
 	}
 }
 
-func TestAutoMergeConfigRepoExceptionSets(t *testing.T) {
-	cfg := AutoMergeConfig{
-		AllowUnprotectedBase: []string{" o/r ", "", "docs"},
-		NoCIOK:               []string{"config", "o/empty"},
+func TestAutoMergeConfigRepoPolicySets(t *testing.T) {
+	cases := []struct {
+		name    string
+		repos   []string
+		wantSet map[string]bool
+	}{
+		{"unset returns nil", nil, nil},
+		{"empty slice returns nil", []string{}, nil},
+		{"all-blank entries return nil", []string{" ", ""}, nil},
+		{"lowercased and trimmed", []string{" Org/Repo ", "BARE"}, map[string]bool{"org/repo": true, "bare": true}},
 	}
-	if got := cfg.AllowUnprotectedBaseSet(); len(got) != 2 || !got["o/r"] || !got["docs"] {
-		t.Fatalf("AllowUnprotectedBaseSet() = %v", got)
-	}
-	if got := cfg.NoCIOKSet(); len(got) != 2 || !got["config"] || !got["o/empty"] {
-		t.Fatalf("NoCIOKSet() = %v", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := AutoMergeConfig{AllowUnprotectedBase: tc.repos, NoCIOK: tc.repos}
+			for label, got := range map[string]map[string]bool{"AllowUnprotectedBaseSet": cfg.AllowUnprotectedBaseSet(), "NoCIOKSet": cfg.NoCIOKSet()} {
+				if tc.wantSet == nil {
+					if got != nil {
+						t.Fatalf("%s() = %v, want nil", label, got)
+					}
+					continue
+				}
+				if len(got) != len(tc.wantSet) {
+					t.Fatalf("%s() = %v, want %v", label, got, tc.wantSet)
+				}
+				for k := range tc.wantSet {
+					if !got[k] {
+						t.Errorf("%s()[%q] = false, want true", label, k)
+					}
+				}
+			}
+		})
 	}
 }

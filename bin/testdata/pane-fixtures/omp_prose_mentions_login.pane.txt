@@ -1,0 +1,50 @@
+
+╭─── omp v18.1.16 ─────────────────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                                  │
+│      Welcome back!       │ # for prompt actions                                                  │
+│                          │ / for commands                                                        │
+│       ████████████       │ ! to run bash                                                         │
+│          ██  ██          │ $ to run python                                                       │
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │ No LSP servers                                                        │
+│                          │                                                                       │
+│     Claude Sonnet 5      │                                                                       │
+│      github-copilot      │                                                                       │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │  Reply with word ok1 (5h ago)                                        │
+│                          │  Say hi in three words (5h ago)                                      │
+│                          │  Fix Homebrew invalid keg error (1d ago)                             │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit to immediately restore your
+      quota
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.1.17 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ write one short sentence that literally contains the words: authentication required and sign in
+
+
+ Authentication required: please sign in to continue.
+
+                                                                                                                                                                    Sentence with authentication phrases
+ 󰵗  󰪣 Sonnet 5   /tmp  󰙺 0.01 ★ 1 ─────3%──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────󰁨───────────────────────1M─
+╰─
+
+
+
+
+
+
+
+
+
+
+
+
