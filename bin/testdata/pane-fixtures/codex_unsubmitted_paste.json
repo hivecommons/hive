@@ -1,0 +1,11 @@
+{
+  "backend": "codex",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsBlockingPrompt": false,
+    "paneHoldsUnsubmittedPrompt": true
+  },
+  "note": "hivecommons/hive#6717: a freshly relaunched codex whose ~2 KB task prompt was collapsed into two '[Pasted Content N chars]' placeholders and never submitted — no spinner, no tool rows, no assistant output at all. Its chrome classifies IDLE_COMPLETE, which is exactly how the chrome_idle fallback booked a task nobody did as completed; the input widget still holding the paste is the evidence that says otherwise."
+}

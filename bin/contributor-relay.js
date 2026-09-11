@@ -56,6 +56,7 @@ const {
   classifyBlockedOnHumanReason,
   paneLooksBlockedOnHuman,
   paneTail,
+  paneHoldsUnsubmittedPrompt,
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
   paneQuotaExhaustion,
@@ -1827,6 +1828,104 @@ function tmuxSendEnters() {
   }
 }
 
+// ── Confirming the prompt was SUBMITTED, not just typed (#6717) ─────────────
+//
+// tmuxSendEnters() has always been fire-and-forget: the send loop below retries
+// when tmux itself errors, but nothing ever checked whether the keystrokes
+// achieved anything. A TUI that collapses the burst into a paste placeholder
+// swallows those Enters as newlines inside the pasted text, so the prompt sits
+// in the input widget and the agent never runs — while the relay logs
+// "Task prompt sent to CLI" and moves on (see paneHoldsUnsubmittedPrompt).
+//
+// ENTER_COUNT is not the lever. The problem is not a dropped keystroke but a
+// widget consuming newlines as content; three of them are consumed exactly as
+// one is. What does help is giving the widget time to finish processing the
+// burst before the submit arrives, and then LOOKING at the pane and trying
+// again if the prompt is still sitting there.
+const PROMPT_PASTE_SETTLE_MS = 1200;
+const PROMPT_SUBMIT_RETRIES = 3;
+const PROMPT_SUBMIT_RETRY_DELAY_MS = 1500;
+
+// confirmPromptSubmitted re-sends Enter while the pane still shows the prompt
+// collapsed in its input widget, and reports whether it ended up submitted.
+//
+// Returns true both when submission is confirmed and when this backend's
+// widget rendering is unknown to paneHoldsUnsubmittedPrompt() — "no evidence of
+// a stuck prompt" is the only honest answer there, and it is also the
+// pre-#6717 behaviour, so no backend regresses into extra keystrokes it never
+// needed. The chrome-idle veto in progressTick() is the backstop for whatever
+// this cannot see.
+//
+// A bare Enter is the only key sent, and only while the placeholder is still
+// there: on a pane that did submit, the widget is empty (or holding its
+// "Ask Codex to…" placeholder) and an Enter is a no-op.
+function confirmPromptSubmitted() {
+  if (!paneHoldsUnsubmittedPrompt(capturePaneText(), BACKEND)) return true;
+  for (let attempt = 1; attempt <= PROMPT_SUBMIT_RETRIES; attempt++) {
+    console.warn(`Task prompt is still sitting unsubmitted in the ${BACKEND} input widget (collapsed paste) — re-sending Enter, attempt ${attempt}/${PROMPT_SUBMIT_RETRIES}`);
+    try {
+      execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+    } catch (e) {
+      console.error(`Re-sending Enter failed: ${e.message}`);
+    }
+    sleepMs(PROMPT_SUBMIT_RETRY_DELAY_MS);
+    if (!paneHoldsUnsubmittedPrompt(capturePaneText(), BACKEND)) {
+      console.log(`Task prompt submitted after ${attempt} extra Enter(s)`);
+      return true;
+    }
+  }
+  // Deliberately NOT a silent give-up, and deliberately not left for the
+  // 30-minute lease to notice either. The prompt is still in the widget, so the
+  // agent has been told nothing — say so at the moment it is known, and let the
+  // chrome-idle veto turn the resulting empty pane into a FAILURE the hub
+  // re-offers rather than the false completion #6717 reports.
+  console.error(`Task prompt could NOT be submitted to ${BACKEND} after ${PROMPT_SUBMIT_RETRIES} extra Enter(s) — the agent has not been given this task`);
+  return false;
+}
+
+// ── "Has this agent done anything at all since it was prompted?" (#6717) ────
+//
+// The pane as it stood the moment the prompt was delivered. Anything the agent
+// subsequently draws — a spinner, a tool row, prose, a summary, its own echo of
+// the submitted prompt — changes this. A pane still byte-identical to it has
+// produced nothing since being prompted, which is what a never-submitted prompt
+// looks like and what a working (or worked) agent cannot look like.
+//
+// Null when no prompt has been delivered for the current task, in which case
+// nothing is claimed: #5650's taskPromptDelivered guard owns that case and
+// returns before any of this is consulted.
+let promptDeliveryFingerprint = null;
+
+// False only once confirmPromptSubmitted() has SEEN the prompt stuck in the
+// input widget and failed to clear it. Default true so that every backend
+// whose widget rendering is unknown, and every path that never reaches the
+// send loop, behaves exactly as it did before #6717.
+let promptSubmissionConfirmed = true;
+
+function paneFingerprint(tmuxLines) {
+  return Array.isArray(tmuxLines) ? tmuxLines.join('\n') : String(tmuxLines || '');
+}
+
+// paneChangedSinceDelivery reports whether the pane differs from the delivery
+// snapshot — i.e. whether ANY output has appeared since this task's prompt was
+// typed in.
+//
+// PURE, like paneChangedSince() next to it and for the same reason: it reads
+// the already-captured lines and never touches the destructive paneStalled()
+// fingerprint (#5333), and it never updates the delivery snapshot either — the
+// snapshot is a fixed point in this task's history, not a rolling one.
+//
+// An unset snapshot or an empty capture means "no evidence", and both answer
+// TRUE (changed). Direction matters: this function's only caller uses a FALSE
+// to veto a completion, so an absent reading must never be read as grounds to
+// fail a task.
+function paneChangedSinceDelivery(tmuxLines) {
+  if (promptDeliveryFingerprint === null) return true;
+  const fingerprint = paneFingerprint(tmuxLines);
+  if (!fingerprint) return true;
+  return fingerprint !== promptDeliveryFingerprint;
+}
+
 const CLEAR_CONTEXT_THRESHOLD_PCT = 70;
 
 function checkContextUsage() {
@@ -1847,6 +1946,10 @@ function tmuxSendKeys(text) {
   // early return below leaves the agent WITHOUT this prompt, and progressTick()
   // must not judge a task in that state (kubestellar/hive#5650).
   taskPromptDelivered = false;
+  // Same up-front clear, same reason (#6717): a queued or abandoned send has
+  // submitted nothing and left no delivery snapshot to compare a pane against.
+  promptSubmissionConfirmed = true;
+  promptDeliveryFingerprint = null;
   // Hard gate (issue #2203, bug 2): `send-keys -l` types literal keystrokes
   // into whatever owns the pane. If the CLI is not confirmed ready, those
   // keystrokes land on bash, whose readline chokes on the apostrophes in the
@@ -1954,9 +2057,30 @@ function tmuxSendKeys(text) {
         execSync(`tmux send-keys -t ${TMUX_SESSION} C-k`, { timeout: 15000 });
         sleepMs(200);
         execSync(`tmux send-keys -t ${TMUX_SESSION} -l ${shellQuote(text)}`, { timeout: 30000 });
-        sleepMs(300);
+        // #6717: settle before submitting. A task prompt is ~2 KB and arrives
+        // as one burst; a TUI with bracketed-paste handling is still ingesting
+        // it 300ms later, and an Enter that lands while the widget is in that
+        // state is taken as a newline INSIDE the pasted text instead of as
+        // submit. Waiting for the widget to finish is what makes the Enter a
+        // keypress. sleepMs() is a no-op under HIVE_RELAY_TEST_MODE, so this
+        // costs the test suite nothing.
+        sleepMs(PROMPT_PASTE_SETTLE_MS);
         tmuxSendEnters();
         console.log('Task prompt sent to CLI');
+        // #6717: "typed" is not "submitted". Check the pane and re-send Enter
+        // if the prompt is still collapsed in the input widget.
+        //
+        // taskPromptDelivered is set TRUE either way, on purpose. It answers
+        // #5650's question — "did these keystrokes reach the pane" — and they
+        // did; a false here would park the task on progressTick()'s
+        // no-judgement branch until the max-duration lease expired, silently,
+        // half an hour later. The unsubmitted case is instead reported as a
+        // FAILURE by the chrome-idle veto, which has the evidence to say so.
+        promptSubmissionConfirmed = confirmPromptSubmitted();
+        // The delivery snapshot, taken AFTER the submit attempts: everything
+        // the agent draws from here on changes it, and a pane still identical
+        // to it when the chrome-idle grace elapses has produced nothing at all.
+        promptDeliveryFingerprint = paneFingerprint(captureTmuxLines(TMUX_TAIL_LINES));
         taskPromptDelivered = true;
         sent = true;
         break;
@@ -3505,6 +3629,59 @@ function progressTick() {
   const idleWithoutVerdict = paneState === PANE_STATE_IDLE_COMPLETE && !completionVerdict;
   const chromeIdleGraceElapsed = recordChromeIdleTick(idleWithoutVerdict);
 
+  // ── The chrome-idle veto (#6717) ──────────────────────────────────────────
+  //
+  // chrome_idle infers "the agent finished" from a pane that has stopped
+  // changing. That inference has one premise it never checked: that the agent
+  // STARTED. When a task prompt is typed but never submitted — collapsed into
+  // a paste placeholder, the Enters swallowed as content — the pane goes quiet
+  // for the most conclusive reason there is, and the fallback read that silence
+  // as success. Observed live in #6717: an issue booked COMPLETED with no
+  // commit, no branch, no PR and the checkout untouched.
+  //
+  // A false completion is strictly worse than a false failure here. A failure
+  // is re-offered; a completion parks the issue as done and takes it out of the
+  // offer queue, where nothing will ever look at it again.
+  //
+  // Two independent signals are required, both of which the #6717 capture
+  // shows and neither of which a real turn can produce:
+  //
+  //   1. the prompt is STILL collapsed in the input widget, and
+  //   2. the pane has not changed by a single byte since the prompt was
+  //      delivered — no spinner, no tool row, no prose, not even the CLI's own
+  //      echo of the submitted prompt.
+  //
+  // Requiring both is what keeps this from ever failing a task that ran. A CLI
+  // that echoes a submitted paste back into its transcript still satisfies (1)
+  // forever, so (1) alone would fail every task on such a backend; and a pane
+  // byte-identical to its pre-work state cannot belong to an agent that did
+  // anything. Neither is a judgement about the WORK — only about whether any
+  // work was ever started.
+  //
+  // Deliberately scoped to the chrome-idle path. A HIVE_VERDICT line is the
+  // agent's own statement and needs no corroboration from the chrome; it also
+  // cannot be on a pane that never changed, since the baseline suppression in
+  // #5650 already removes the previous task's line.
+  // Signal 1, from either side: the send path already failed to clear the
+  // widget, or the pane still shows a collapsed paste sitting in it.
+  const promptStillInWidget = !promptSubmissionConfirmed ||
+    paneHoldsUnsubmittedPrompt(paneScanLines.join('\n'), BACKEND);
+  // Signal 2. The deep capture is used for the widget above because
+  // paneHoldsUnsubmittedPrompt() scopes itself to the input rows at its end;
+  // the fingerprint compares the same TMUX_TAIL_LINES window the delivery
+  // snapshot was taken from, so the two are the same pane read two ways.
+  const nothingEverRan = idleWithoutVerdict &&
+    promptStillInWidget &&
+    !paneChangedSinceDelivery(tmuxLines);
+  if (chromeIdleGraceElapsed && nothingEverRan) {
+    console.error(`Task ${currentTask.task_id}: the pane has been idle for ${chromeIdleTicks} checks with the task prompt still unsubmitted in the ${BACKEND} input widget and NO output since delivery — the agent never ran this task. Reporting it FAILED so the hub re-offers the issue (#6717).`);
+    resetChromeIdleGrace();
+    // 'environment': this client's own runtime failed to hand the work over.
+    // The agent never saw the task, so nothing about the task itself failed.
+    failCurrentTask(`task prompt was never submitted to the ${BACKEND} CLI — it stayed collapsed in the input widget and the agent produced no output`, { kind: 'environment' });
+    return;
+  }
+
   // A verdict ends the task from ANY pane state. This is the point of the
   // change: an agent that says it is finished is finished, whatever its CLI
   // chose to render around the statement. It is precisely the case the
@@ -3548,6 +3725,16 @@ function progressTick() {
       contributorLogin: CONTRIBUTOR_LOGIN,
     });
     const prURL = prFinding.url;
+    // #6717 item 4: make the weakest completion the loudest line in the log.
+    // A chrome_idle completion with no verdict AND no PR is the exact shape of
+    // the false completion in that issue, and the relay used to record it in
+    // the same register as a clean one. It is not always wrong — an agent that
+    // genuinely found nothing to do but never printed the sentinel lands here
+    // too — so it is a warning to audit, not a failure: the veto above already
+    // owns the cases the relay can actually prove.
+    if (!verdictCompletes && !prURL) {
+      console.warn(`Task ${currentTask.task_id} completed on chrome alone with no HIVE_VERDICT and no PR — nothing in the pane shows what this task produced. Audit this one (#6717).`);
+    }
     // #3987: only report a no_work_needed verdict when no PR was shipped — a
     // visible PR contradicts "nothing shippable" (the hub would override the
     // claim with "shipped" anyway).
@@ -4426,6 +4613,17 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // Per-task prompt-delivery surface (kubestellar/hive#5650).
     getTaskPromptDelivered: () => taskPromptDelivered,
     setTaskPromptDelivered: (v) => { taskPromptDelivered = v; },
+    // Prompt-SUBMISSION surface (#6717): typed is not submitted.
+    PROMPT_PASTE_SETTLE_MS,
+    PROMPT_SUBMIT_RETRIES,
+    confirmPromptSubmitted,
+    paneHoldsUnsubmittedPrompt,
+    paneChangedSinceDelivery,
+    paneFingerprint,
+    getPromptSubmissionConfirmed: () => promptSubmissionConfirmed,
+    setPromptSubmissionConfirmed: (v) => { promptSubmissionConfirmed = v; },
+    getPromptDeliveryFingerprint: () => promptDeliveryFingerprint,
+    setPromptDeliveryFingerprint: (v) => { promptDeliveryFingerprint = v; },
     getDeliveredVerdictBaseline: () => deliveredVerdictBaseline,
     setDeliveredVerdictBaseline: (v) => { deliveredVerdictBaseline = v; },
     setTasksCompletedCount: (v) => { tasksCompletedCount = v; },

@@ -7,8 +7,8 @@ should a potential user be aware of here? Is this perfect defense, works
 decently well, a partial mitigation, etc.?"*
 
 **Answer, measured:** a **partial mitigation**, and a narrow one. Against a
-43-payload adversarial corpus, ioscan's deterministic rules withheld **37%** of
-attack payloads from the agent. **63% reached the agent verbatim** — 44% because
+43-payload adversarial corpus, ioscan's deterministic rules withheld **42%** of
+attack payloads from the agent. **58% reached the agent verbatim** — 40% because
 no rule fired at all, and a further 19% because a rule fired but the input block
 policy does not block at that severity. The control that bounds the consequence
 of a successful injection is **not** ioscan; it is the proxy's hard deny of
@@ -117,14 +117,17 @@ use-versus-mention, not a defect in a specific rule.
 
 ## Where it works, and why
 
-**Unicode steganography is the strongest family (6/8 blocked).** This is the one
+**Unicode steganography is the strongest family (8/8 blocked).** This is the one
 place the design does something a regex cannot: `normalizeUnicodeSteganography`
 strips invisible controls and TAG characters, folds a confusable table, and
 flags suspicious variation selectors *before* the rules run, and separately
 raises `injection.unicode_steganography` at High — which blocks on its own. So
 even a payload whose text the rules would not match is blocked for *carrying
 hidden characters at all*. Zero-width joiners between every rune, the U+E0000
-TAG block, and an RTL override were all caught.
+TAG block, and an RTL override were all caught; the two remaining gaps (a
+fullwidth capital and a soft hyphen) were closed in
+[#6714](https://github.com/hivecommons/hive/pull/6714), which is what took this
+family to 8/8 — see [Rule gaps](#5-rule-gaps-narrow-fixable) below.
 
 **Structural smuggling does not work (4/7 blocked).** Code fences, HTML
 comments, diff hunks and table cells do not hide the words from a scanner that
