@@ -32,7 +32,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -59,6 +59,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     // different BINARY (litellm → claude); it defaults to the identity mapping
     // every other backend has.
     if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
+    if (/backend_perm_flag_shell/.test(cmd)) return `${backendPermShell === null ? backendPerm : backendPermShell}\n`;
     if (/backend_perm_flag/.test(cmd)) return `${backendPerm}\n`;
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
@@ -314,6 +315,33 @@ test('#5652 relaunch reuses the entrypoint launch command instead of container d
         `${backend} relaunch fell back to the container posture: ${sent}`);
     } finally { teardown(relay); }
   }
+});
+
+test('#6673 fallback claude relaunch shell-quotes the host deny list', () => {
+  const rawDeny = 'Bash(sudo:*),Bash(pkexec:*)';
+  const rawPerm = `--dangerously-skip-permissions --permission-mode bypassPermissions --disallowed-tools ${rawDeny}`;
+  const shellPerm = `--dangerously-skip-permissions --permission-mode bypassPermissions --disallowed-tools Bash\\(sudo:\\*\\),Bash\\(pkexec:\\*\\)`;
+  const relay = loadRelay({
+    backend: 'claude',
+    backendPerm: rawPerm,
+    backendPermShell: shellPerm,
+  });
+  try {
+    const cmd = relay.buildLaunchCommand();
+    assert.ok(cmd.includes(shellPerm),
+      `interactive fallback relaunch must use shell-safe flags, got: ${cmd}`);
+    assert.ok(!cmd.includes(`--disallowed-tools ${rawDeny}`),
+      `raw deny-list syntax would be reparsed by the pane shell, got: ${cmd}`);
+
+    const argv = relay.buildHeadlessArgv('prompt');
+    assert.deepStrictEqual(argv.args.slice(0, 5), [
+      '--dangerously-skip-permissions',
+      '--permission-mode',
+      'bypassPermissions',
+      '--disallowed-tools',
+      rawDeny,
+    ], 'headless execFile must keep the deny list as one raw argv value');
+  } finally { teardown(relay); }
 });
 
 // --- agy pane classification: stale narration must not pin WORKING ---------

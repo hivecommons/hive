@@ -677,6 +677,7 @@ const agyEffort = AGY_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : AG
 // (#5652). Older entrypoints fall back to resolving backend flags here.
 let cachedLaunchCommand = null;
 let cachedBackendResolution = null;
+let cachedShellBackendResolution = null;
 
 // resolveBackend() returns the { cmd, perm } pair backends.conf maps this
 // backend to (binary + permission flags). Shared by the interactive launch
@@ -697,6 +698,24 @@ function resolveBackend() {
   }
   cachedBackendResolution = { cmd, perm };
   return cachedBackendResolution;
+}
+
+// resolveBackendShell returns the same backend binary plus permission flags
+// escaped for a shell command line. The interactive tmux launcher types the
+// resulting text into a shell, unlike headless execFile which needs raw argv.
+function resolveBackendShell() {
+  if (cachedShellBackendResolution) return cachedShellBackendResolution;
+  const raw = resolveBackend();
+  const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
+  const confPath = confPaths.find(p => fs.existsSync(p)) || confPaths[0];
+  let perm = raw.perm;
+  try {
+    perm = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_perm_flag_shell ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim();
+  } catch (e) {
+    console.error(`Could not resolve shell backend flags from ${confPath}: ${e.message}`);
+  }
+  cachedShellBackendResolution = { cmd: raw.cmd, perm };
+  return cachedShellBackendResolution;
 }
 
 // modelFlagFor reports the --model flag this backend actually receives, or ''
@@ -960,7 +979,7 @@ function buildLaunchCommand() {
     cachedLaunchCommand = ENTRYPOINT_LAUNCH_CMD;
     return cachedLaunchCommand;
   }
-  const { cmd, perm } = resolveBackend();
+  const { cmd, perm } = resolveBackendShell();
   const modelFlag = modelFlagFor();
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
     ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
