@@ -106,11 +106,11 @@ type Client struct {
 	// `exec hive-open-pr`). nil means "never hold" (backward-compatible no-op).
 	// Set by StartPRRequestWatcher.
 	prHoldLabel func(agent string) bool
-	// selfAuthorizationHoldEnabled returns the live per-hive config switch for
+	// selfAuthorizationHoldEnabled returns the live per-repo config switch for
 	// the #5117 self-authorization hold. It is a callback so dashboard/config
 	// changes are honoured at evaluation time rather than frozen at watcher
 	// startup. nil preserves the pre-existing default-on gate.
-	selfAuthorizationHoldEnabled func() bool
+	selfAuthorizationHoldEnabled func(repo string) bool
 	selfAuthDisabledLoggedMu     sync.Mutex
 	selfAuthDisabledLogged       map[string]bool
 	// prSignedCommits, when set and returning true, makes the PR-request watcher

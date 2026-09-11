@@ -627,6 +627,12 @@ func (g GitHubConfig) SelfAuthorizationHoldEnabled() bool {
 	return *g.SelfAuthorizationHold
 }
 
+// SelfAuthorizationHoldEnvOverrideSet reports whether
+// HIVE_SELF_AUTHORIZATION_HOLD is currently forcing the effective value.
+func (g GitHubConfig) SelfAuthorizationHoldEnvOverrideSet() bool {
+	return g.selfAuthorizationHoldEnvOverride != nil
+}
+
 // AppInstallURL returns the full URL to install the GitHub App.
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new

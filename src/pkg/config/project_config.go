@@ -50,6 +50,10 @@ type ProjectConfig struct {
 	// Optional and additive. Absent — the state of every existing config —
 	// means nothing is paused and the hive behaves exactly as before.
 	PausedRepos []RepoPause `yaml:"paused_repos,omitempty"`
+	// RepoPolicies stores optional per-repository policy overrides keyed by
+	// repo name. project.repos remains the watched-repo identity list; this
+	// sidecar list lets existing string-list configs keep round-tripping.
+	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
 }
 
 const (

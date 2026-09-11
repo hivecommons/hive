@@ -414,7 +414,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent)
 	var selfAuth SelfAuthorization
 	if !res.DuplicateTree && !holdByLevel {
-		if !c.selfAuthorizationHoldActive() {
+		if !c.selfAuthorizationHoldActive(req.Repo) {
 			c.logSelfAuthorizationDisabledOnce(req.Repo, res.Number)
 		} else {
 			selfAuth = c.EvaluateSelfAuthorization(ctx, req.Repo, title, body, req.IssueN)

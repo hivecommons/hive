@@ -1,8 +1,12 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func govServer(t *testing.T) *Server {
@@ -145,5 +149,101 @@ func TestCovGov_Repos(t *testing.T) {
 	}
 	if s.deps.Config.Project.Org != "myorg" {
 		t.Fatalf("org = %q, want myorg", s.deps.Config.Project.Org)
+	}
+}
+
+func TestGovernorReposSelfAuthorizationHoldRoundTrip(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	rec := doPut(s, "/api/config/governor/repos", map[string]any{
+		"repos":                     []string{"myorg/repoA", "myorg/repoB"},
+		"primaryRepo":               "myorg/repoA",
+		"selfAuthorizationHold":     false,
+		"repoSelfAuthorizationHold": map[string]any{"myorg/repoB": true},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repos update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.GitHub.SelfAuthorizationHold == nil || *s.deps.Config.GitHub.SelfAuthorizationHold {
+		t.Fatalf("hive-wide self auth hold = %+v, want false", s.deps.Config.GitHub.SelfAuthorizationHold)
+	}
+	if s.deps.Config.SelfAuthorizationHoldEnabledForRepo("repoA") {
+		t.Fatal("repoA should inherit disabled hive-wide hold")
+	}
+	if !s.deps.Config.SelfAuthorizationHoldEnabledForRepo("repoB") {
+		t.Fatal("repoB explicit override should enable hold")
+	}
+
+	get := doOwnerGet(s, "/api/config/governor")
+	if get.Code != http.StatusOK {
+		t.Fatalf("governor get: want 200, got %d", get.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(get.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if body["selfAuthorizationHold"] != false {
+		t.Fatalf("selfAuthorizationHold response = %v, want false", body["selfAuthorizationHold"])
+	}
+	policies, ok := body["repoSelfAuthorizationHold"].(map[string]any)
+	if !ok {
+		t.Fatalf("repoSelfAuthorizationHold response type %T", body["repoSelfAuthorizationHold"])
+	}
+	repoB, ok := policies["myorg/repoB"].(map[string]any)
+	if !ok || repoB["value"] != true || repoB["effective"] != true {
+		t.Fatalf("repoB policy response = %#v, want value/effective true", policies["myorg/repoB"])
+	}
+}
+
+func TestGovernorReposClearsSelfAuthorizationOverridesOnOrgMigration(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	disabled := false
+	s.deps.Config.Project.RepoPolicies = append(s.deps.Config.Project.RepoPolicies, config.RepoPolicy{
+		Repo:                  "repoA",
+		SelfAuthorizationHold: &disabled,
+	})
+
+	rec := doPut(s, "/api/config/governor/repos", map[string]any{
+		"repos":                     []string{"neworg/repoA"},
+		"primaryRepo":               "neworg/repoA",
+		"repoSelfAuthorizationHold": map[string]any{"myorg/repoA": false},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repos migration: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(s.deps.Config.Project.RepoPolicies) != 0 {
+		t.Fatalf("repo policies after org migration = %+v, want cleared", s.deps.Config.Project.RepoPolicies)
+	}
+	if !s.deps.Config.SelfAuthorizationHoldEnabledForRepo("repoA") {
+		t.Fatal("old org's repo override should not retarget onto the new org")
+	}
+}
+
+func TestGovernorReposClearsSelfAuthorizationOverridesOnPrimaryOnlyOrgMigration(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	s.deps.Config.Project.Repos = []string{"repoA"}
+	s.deps.Config.Project.PrimaryRepo = "repoA"
+	disabled := false
+	s.deps.Config.Project.RepoPolicies = append(s.deps.Config.Project.RepoPolicies, config.RepoPolicy{
+		Repo:                  "repoA",
+		SelfAuthorizationHold: &disabled,
+	})
+
+	rec := doPut(s, "/api/config/governor/repos", map[string]any{
+		"primaryRepo": "neworg/repoA",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("primary-only migration: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Project.Org != "neworg" {
+		t.Fatalf("org = %q, want neworg", s.deps.Config.Project.Org)
+	}
+	if len(s.deps.Config.Project.RepoPolicies) != 0 {
+		t.Fatalf("repo policies after primary-only org migration = %+v, want cleared", s.deps.Config.Project.RepoPolicies)
+	}
+	if !s.deps.Config.SelfAuthorizationHoldEnabledForRepo("repoA") {
+		t.Fatal("old org's repo override should not retarget through primary-only migration")
 	}
 }

@@ -18,13 +18,20 @@ const (
 )
 
 func (c *Engine) selfAuthorizationReleaseBudget() int {
-	if c == nil || c.selfAuthorizationHoldEnabled == nil || c.selfAuthorizationHoldEnabled() {
+	if c == nil || c.selfAuthorizationHoldEnabled == nil {
 		return 0
 	}
 	if c.selfAuthorizationHoldReleaseLimit > 0 {
 		return c.selfAuthorizationHoldReleaseLimit
 	}
 	return defaultSelfAuthorizationReleaseLimit
+}
+
+func (c *Engine) selfAuthorizationHoldActive(repo string) bool {
+	if c == nil || c.selfAuthorizationHoldEnabled == nil {
+		return true
+	}
+	return c.selfAuthorizationHoldEnabled(repo)
 }
 
 func (c *Engine) releaseSelfAuthorizationHoldIfEligible(ctx context.Context, displayRepo, owner, repo string, number int) (bool, error) {

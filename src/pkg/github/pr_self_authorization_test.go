@@ -404,7 +404,7 @@ func TestPRRequestWatcher_ConfigDisabledSkipsSelfAuthorizationHold(t *testing.T)
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.SetSelfAuthorizationHoldEnabled(func() bool { return false })
+	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return false })
 	c.prHoldLabel = func(agent string) bool { return false }
 
 	dir := t.TempDir()
@@ -424,6 +424,32 @@ func TestPRRequestWatcher_ConfigDisabledSkipsSelfAuthorizationHold(t *testing.T)
 	}
 	if comments := srv.postedComments(); len(comments) != 0 {
 		t.Fatalf("posted %d comments, want no #5117 notice when disabled", len(comments))
+	}
+}
+
+func TestPRRequestWatcher_ConfigCallbackReceivesRepo(t *testing.T) {
+	const botLogin = "kubestellar-hive[bot]"
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
+	c := testClient(t, srv.start(t).URL)
+	c.SetAppBotLogin(botLogin)
+	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return repo != "o/r" })
+	c.prHoldLabel = func(agent string) bool { return false }
+
+	dir := t.TempDir()
+	prRequestDirForTest = dir
+	t.Cleanup(func() { prRequestDirForTest = "" })
+
+	if _, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "decompose-phase-1", Base: "main",
+		Title: "phase 1 of the decomposition", Body: "Closes #581", Agent: "quality",
+	}); err != nil {
+		t.Fatalf("WritePRRequest: %v", err)
+	}
+
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if applied := srv.applied(); len(applied) != 0 {
+		t.Fatalf("labels applied = %v, want repo-specific disabled hold skipped", applied)
 	}
 }
 

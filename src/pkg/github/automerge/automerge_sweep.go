@@ -40,9 +40,9 @@ type Options struct {
 	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
 	// (#6258). nil installs no policy; see IntentGate for the semantics.
 	IntentGate *IntentGate
-	// SelfAuthorizationHoldEnabled returns the live per-hive #5117 hold switch.
+	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
-	SelfAuthorizationHoldEnabled      func() bool
+	SelfAuthorizationHoldEnabled      func(repo string) bool
 	SelfAuthorizationHoldReleaseLimit int
 }
 
@@ -64,7 +64,7 @@ type Engine struct {
 	intentGateMu sync.RWMutex
 	intentGate   *IntentGate
 
-	selfAuthorizationHoldEnabled      func() bool
+	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 }
 
@@ -531,7 +531,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			// #5117 hold release must run before the prefilter: the
 			// prefilter skips held PRs outright, and an eligible
 			// self-authorization hold has to be released, not skipped.
-			if selfAuthReleaseBudget > 0 && pr != nil && hgithub.HasHoldLabel(labelNames(pr.Labels)) {
+			if selfAuthReleaseBudget > 0 && pr != nil && !c.selfAuthorizationHoldActive(repo) && hgithub.HasHoldLabel(labelNames(pr.Labels)) {
 				released, err := c.releaseSelfAuthorizationHoldIfEligible(ctx, repo, owner, repoName, number)
 				if err != nil {
 					c.warn("self-authored automerge sweep could not evaluate #5117 hold release", "repo", repo, "pr", number, "error", err)

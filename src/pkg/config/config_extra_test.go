@@ -741,6 +741,58 @@ agents:
 	}
 }
 
+func TestSelfAuthorizationHoldForRepoResolution(t *testing.T) {
+	f := false
+	tr := true
+	cfg := &Config{
+		Project: ProjectConfig{
+			Org:   "acme",
+			Repos: []string{"api", "web"},
+			RepoPolicies: []RepoPolicy{
+				{Repo: "api", SelfAuthorizationHold: &f},
+				{Repo: "web", SelfAuthorizationHold: &tr},
+			},
+		},
+	}
+	if cfg.SelfAuthorizationHoldEnabledForRepo("api") {
+		t.Fatal("repo override false should disable the hold")
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepo("acme/web") {
+		t.Fatal("repo override true should enable the hold for org-qualified repo")
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepo("other") {
+		t.Fatal("repo with no override should inherit default true")
+	}
+
+	cfg.GitHub.SelfAuthorizationHold = &f
+	if cfg.SelfAuthorizationHoldEnabledForRepo("other") {
+		t.Fatal("repo with nil override should inherit hive-wide false")
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepo("web") {
+		t.Fatal("repo override true should win over hive-wide false")
+	}
+}
+
+func TestSetSelfAuthorizationHoldForRepos(t *testing.T) {
+	cfg := &Config{
+		SourcePath: writeTempConfig(t, "project:\n  org: acme\n  repos: [api]\ngithub:\n  token: ghp_tok\nagents:\n  bot:\n    backend: claude\n"),
+		Project:    ProjectConfig{Org: "acme", Repos: []string{"api"}},
+	}
+	f := false
+	if !cfg.SetSelfAuthorizationHoldForRepos(map[string]*bool{"acme/api": &f}) {
+		t.Fatal("setting repo override should report changed")
+	}
+	if cfg.SelfAuthorizationHoldEnabledForRepo("api") {
+		t.Fatal("saved repo override false should disable the hold")
+	}
+	if !cfg.SetSelfAuthorizationHoldForRepos(map[string]*bool{"api": nil}) {
+		t.Fatal("clearing repo override should report changed")
+	}
+	if !cfg.SelfAuthorizationHoldEnabledForRepo("api") {
+		t.Fatal("cleared repo override should inherit default true")
+	}
+}
+
 // With App-bot mode on (the default) and ai_author empty, the effective author
 // is the App bot login; an explicit ai_author still wins; an explicit opt-out
 // yields no author.

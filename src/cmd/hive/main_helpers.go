@@ -2583,9 +2583,9 @@ func enforceHoldGuard(
 	}
 	store := getHoldGuardStore()
 	org := ""
-	selfAuthHoldDisabled := false
+	selfAuthHoldEnabledForRepo := func(string) bool { return true }
 	if cfg != nil {
-		selfAuthHoldDisabled = !cfg.GitHub.SelfAuthorizationHoldEnabled()
+		selfAuthHoldEnabledForRepo = cfg.SelfAuthorizationHoldEnabledForRepo
 		org = cfg.Project.Org
 	}
 
@@ -2646,7 +2646,7 @@ func enforceHoldGuard(
 				"repo", repo, "pr", pr.Number, "head_sha", pr.HeadSHA)
 			continue
 		}
-		if selfAuthHoldDisabled && ghClient != nil {
+		if !selfAuthHoldEnabledForRepo(pr.Repo) && ghClient != nil {
 			selfAuthHold, err := ghClient.LiftedHoldWasSelfAuthorization(ctx, pr.Repo, pr.Number)
 			if err != nil {
 				logger.Warn("hold guard: could not check #5117 self-authorization hold provenance before config-disabled skip",

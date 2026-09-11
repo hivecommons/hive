@@ -17,7 +17,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_DASHBOARD_COOKIE` | No | none | **Client-side only** - read by `hivectl tui`, never by the server. Cookie header value (e.g. `hive_session=...`) carrying a per-user session, for hives that do not accept the shared token: hub-hosted ones, and spokes with an `authorized_users` allowlist. See [hivectl.md, Credentials](hivectl.md#credentials). |
 | `HIVE_DASHBOARD_BIND` | No | `127.0.0.1` for the legacy `dashboard/server.js` | Legacy Node dashboard listen address. Leave unset for loopback-only binding; set `HIVE_DASHBOARD_BIND=0.0.0.0` only when an authenticated reverse proxy or equivalent network control protects the unauthenticated legacy control endpoints. |
 | `HIVE_AUTHORIZED_USERS` | No | none | Comma-separated direct-route dashboard allowlist, with optional `user:role` entries. Used when `dashboard.authorized_users` is empty. |
-| `HIVE_SELF_AUTHORIZATION_HOLD` | No | `github.self_authorization_hold`, default `true` | Process-level override for the #5117 self-authorization hold. Set `false` to let this hive skip and release self-authorization holds while preserving unrelated human holds. |
+| `HIVE_SELF_AUTHORIZATION_HOLD` | No | `github.self_authorization_hold` / `project.repo_policies[].self_authorization_hold`, default `true` | Process-level override for the #5117 self-authorization hold. Set `false` to let this hive skip and release self-authorization holds for every repo while preserving unrelated human holds. |
 | `HIVE_REPO` | No | none | Bootstrap shortcut in `owner/repo` form; fills `project.org`, `project.repos`, and `project.primary_repo` if missing. |
 | `HIVE_LEVEL` | No | config/pack value | ACMM level bootstrap/override used by hosted flows and the entrypoint pack selection. |
 | `HIVE_ID` | No | config or generated id | Stable hive/spoke identifier override; passed through to launched agents. |
@@ -174,8 +174,6 @@ new value at the same time.
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
 | `BD_DASHBOARD_URL` | No | none | Dashboard URL used by `bd kb` integration. |
 | `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by agent credential probing (`pkg/agent/authprobe.go`) for Codex API-key mode, including `CODEX_HOME/auth.json` entries written under the same key. |
-| `OPENAI_HOST` | No | Goose CLI default | OpenAI-compatible API host consumed by Goose and forwarded into contributor containers. |
-| `OPENAI_BASE_PATH` | No | Goose CLI default | OpenAI-compatible API request path consumed by Goose and forwarded into contributor containers. |
 | `CODEX_API_KEY` | No | none | API key read by `pkg/agent/authprobe.go` for the Codex CLI backend; either this or `OPENAI_API_KEY` makes Codex API-key mode count as configured. |
 | `HIVE_AGENT_TOKEN_REFRESH_INTERVAL` | No | `40m` | Go duration overriding the per-agent token refresh interval. Invalid or non-positive values fall back to the default. |
 | `HIVE_CREDENTIAL_WATCHDOG_INTERVAL` | No | `5m` | Go duration overriding how often the credential watchdog verifies each in-use backend credential file. `0` does NOT disable the watchdog — disabling is intentionally not offered. |
@@ -286,7 +284,6 @@ section requires for lookups.
 | `HIVE_HUB_ADMIN_USERNAME` | No | none | Single hub admin username. Consulted alongside `HIVE_HUB_ADMINS`. |
 | `HIVE_HUB_ADMINS` | No | none | Comma-separated hub admin usernames. |
 | `HIVE_HUB_GITHUB_TOKEN` | No | none | Hub-side GitHub token used by the dibs public-repo check. |
-| `HIVE_HUB_AUTH_HEALTH_DOWN_THRESHOLD` | No | `15m` | Go duration **all** enabled agents on a hive must report a failing backend-auth status before the hive's aggregate `auth_health` escalates from `degraded` to `down` (`pkg/hub/auth_health.go`, [#6558](https://github.com/hivecommons/hive/issues/6558)). Unset, empty, unparseable, or non-positive values fall back to the default, which is sized above the spoke's provider-error backoff ceiling so transient upstream retries never trip it. See [Agent backend-auth health canary](fleet-health.md#agent-backend-auth-health-canary-6558). |
 | `HIVE_REACH_REPO_DIR` | No | none (GitHub compare API) | Local clone the reach ancestry check resolves against via `git merge-base --is-ancestor`. The hub image ships no clone, so the compare-API adapter is the default. |
 | `HIVE_REACH_NEVER_RAN_DAYS` | No | `3` | Never-ran grace period in days (integer, > 0). Absent or invalid values fall back to the default. |
 | `HIVE_PROVISION_WORKERS` | No | saved scale setting, else built-in default | Provision queue worker count. The saved dashboard scale setting takes precedence over this variable. |
@@ -320,23 +317,12 @@ only when neither is configured.
 | `HIVE_HEARTBEAT_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke heartbeat signing sub-key. |
 | `HIVE_SESSION_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke session-cookie signing sub-key. |
 | `HIVE_INVITE_KEY` | No | derived from `HIVE_HUB_SECRET` | Per-hive contributor-invite signing key. Symmetric: the spoke both mints and verifies invite tokens with it. |
-| `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID`, else an auto-provisioned per-instance key on a standalone spoke (below) | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
+| `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID` | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
 | `HIVE_SSO_PUBLIC_KEY` | No | none | Ed25519 **public** key a spoke verifies hub-minted SSO handoff tokens with. Holding only the public key, a spoke can verify but cannot mint. |
 | `HIVE_SSO_PUBLIC_KEY_PREV` | No | none | Previous SSO public key, accepted during rotation so a spoke bridges a hub key change. |
 | `HIVE_SSO_KEY` | No | none | Legacy symmetric SSO key, still read for one release so spokes on a pre-cutover Deployment keep working. |
 | `HIVE_SESSION_PUBLIC_KEY` | No | none | Ed25519 **public** key (exactly 64 hex characters) the spoke's Node proxy (`src/proxy/server.js`) verifies hub-minted session cookies with. Set at provisioning and kept converged by the hub's per-hive env reconcile sweep (`pkg/hub/perhive_env_reconcile.go`) — do not hand-edit it on hosted spokes. |
 | `HIVE_SESSION_PUBLIC_KEY_PREV` | No | none | Previous-generation session public key, also accepted by the proxy so terminal sessions keep verifying while a hub key rotation's reconcile sweep walks the fleet (`pkg/hub/hub_pubkey_generations.go`). A deliberately separate variable — a `<hex>,<hex>` list in the primary would be silently truncated by Node and rejected by the Go verifier. Unset on an un-rotated fleet. |
-
-A **standalone** spoke (docker-compose, no hub) has neither `HIVE_HUB_SECRET`
-nor `HIVE_ID`, so the terminal key's self-derive lane above cannot resolve
-either — before #6489 this meant `Open a terminal` on the dashboard 503'd
-forever. `deploy/entrypoint.sh` now auto-provisions a per-instance terminal key
-in that case: it generates one with a CSPRNG the first time the container
-boots, persists it under `/data/.hive/terminal-key` (0600, override the
-directory with `HIVE_TERMINAL_KEY_DIR`) so it survives a restart, and exports it
-as `HIVE_TERMINAL_KEY` before starting either the Go dashboard or the Node
-proxy — so both agree on it from the first request. Set `HIVE_TERMINAL_KEY`
-yourself (e.g. `openssl rand -hex 32`) to override the auto-provisioned value.
 
 ### Hub login providers
 
@@ -381,8 +367,6 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_PRE_AGENT_HOOK` | No | none | Shell snippet `eval`'d by the contributor entrypoint immediately after the `HIVE_ENTRYPOINT_HOOK_DIR` hooks, with the same ordering and override semantics. Runs verbatim with the entrypoint's privileges — treat its value as trusted code. |
 | `HIVE_CONTRIBUTOR_IMAGE` | No | `ghcr.io/hivecommons/hive-contributor:latest` | Image used by `just contribute-hive`. |
 | `HIVE_CONTAINER_RUNTIME` | No | autodetect `docker` or `podman` | Container runtime override for contributor helpers. `just contribute-hive` also passes the runtime it resolved into the container, so the attach hints printed from inside it name the engine that actually launched it rather than assuming `docker` ([#5145](https://github.com/hivecommons/hive/issues/5145)). |
-| `HIVE_CONTAINER_MEMORY` | No | `4g` | Memory ceiling for the container launched by `just contribute-hive`; the combined memory-and-swap ceiling follows the same value. Set `none` or `0` to omit both flags on a host that cannot enforce the memory controller. |
-| `HIVE_CONTAINER_CPUS` | No | `2` | CPU ceiling for the container launched by `just contribute-hive`. Fractional values are accepted by Docker and Podman; set `none` or `0` to omit the flag. |
 | `HIVE_CONTAINER_NAME` | No | `hive-contributor` | Set by `just contribute-hive` on the container it starts. The contributor entrypoint and relay read it for their attach hints; unset means the relay is running in local mode, where the hint is a plain `tmux attach`. |
 | `HIVE_SKIP_VERSION_CHECK` | No | `false` | Skips `just` version freshness check when set to `true`. |
 | `HIVE_SKIP_PULL` | No | `false` | Skips contributor image pull when set to `true`. |
