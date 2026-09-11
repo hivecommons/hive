@@ -1551,7 +1551,7 @@ func TestSweepSelfAuthoredAutoMergesReleasesSelfAuthorizationHoldWhenDisabled(t 
 
 	c := newAutoMergeSweepClient(api.URL)
 	disabled := false
-	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	c.selfAuthorizationHoldEnabled = func(string) bool { return disabled }
 	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
@@ -1590,7 +1590,7 @@ func TestSweepSelfAuthoredAutoMergesDoesNotReleaseHumanHoldWhenDisabled(t *testi
 
 	c := newAutoMergeSweepClient(api.URL)
 	disabled := false
-	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	c.selfAuthorizationHoldEnabled = func(string) bool { return disabled }
 	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
@@ -1647,7 +1647,7 @@ func TestSweepSelfAuthoredAutoMergesDoesNotReleaseLaterHumanHoldWhenDisabled(t *
 
 	c := newAutoMergeSweepClient(api.URL)
 	disabled := false
-	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	c.selfAuthorizationHoldEnabled = func(string) bool { return disabled }
 	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)

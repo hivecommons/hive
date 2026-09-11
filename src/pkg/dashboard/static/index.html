@@ -21316,6 +21316,9 @@ function burnAreaChart() {
 
     function renderGovRepos(repos) {
       const primary = _configState.data.primaryRepo || '';
+      const selfAuthDefault = _configState.data.selfAuthorizationHold !== false;
+      const selfAuthEnvLocked = !!_configState.data.selfAuthorizationHoldEnvLocked;
+      const repoSelfAuth = _configState.data.repoSelfAuthorizationHold || {};
       // ghHost is the hive's forge, derived server-side by ResolvedBaseURL()
       // (base_url, or the api_url host for pooled GHE hives that carry
       // base_url: ""). A hive is single-forge — validateSingleRepoHost rejects
@@ -21348,9 +21351,18 @@ function burnAreaChart() {
         const starTitle = isDefault
           ? 'Default repo (advisory issue lives here)'
           : 'Set as default repo for advisory issue';
+        const policy = repoSelfAuth[r] || {};
+        const hasOverride = Object.prototype.hasOwnProperty.call(policy, 'value');
+        const effectiveHold = selfAuthEnvLocked && Object.prototype.hasOwnProperty.call(policy, 'effective') ? !!policy.effective : (hasOverride ? !!policy.value : selfAuthDefault);
+        const holdTitle = hasOverride
+          ? 'This repo has an explicit #5117 self-authorization hold override.'
+          : 'Inherits the all-repos #5117 self-authorization hold default.';
+        const inheritButton = hasOverride
+          ? '<button class="remove-item" data-action="clearRepoSelfAuthHoldOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the all-repos default">inherit</button>'
+          : '<span style="font-size:0.68rem;color:var(--muted);white-space:nowrap">inherits</span>';
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item" style="align-items:center;gap:6px"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>`;
+        return `<div class="config-list-item" style="align-items:center;gap:6px"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><label title="${holdTitle}" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:var(--muted);white-space:nowrap"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>`;
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -21370,6 +21382,10 @@ function burnAreaChart() {
         : '';
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive${hostNote}. Click the star to set the default repo where the advisory issue is maintained.</p>
+        <div class="config-toggle" style="margin:0 0 12px">
+          <div class="config-toggle-switch ${selfAuthDefault ? 'on' : ''} ${selfAuthEnvLocked ? 'disabled' : ''}" data-action="${selfAuthEnvLocked ? '' : 'toggleSelfAuthDefault'}" data-arg-types="t" title="${selfAuthEnvLocked ? 'HIVE_SELF_AUTHORIZATION_HOLD is set, so the process environment controls this value.' : 'All-repos default for the #5117 self-authorization hold.'}"></div>
+          <span class="config-toggle-label">All repos: hold hive-authored PRs for human sign-off (#5117) <span style="color:var(--muted);font-weight:400">— repo rows can override or inherit this default</span></span>
+        </div>
         <div class="config-list">
           ${list || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No repos configured</div>'}
           <div class="config-list-add" style="align-items:stretch">
@@ -21388,6 +21404,43 @@ function burnAreaChart() {
       _configState.data.primaryRepo = repo;
       markDirty('repos', 'primaryRepo', repo);
       markDirty('repos', 'repos', _configState.data.repos || []);
+      renderConfigTab('Repos');
+    }
+
+    function toggleSelfAuthDefault(el) {
+      if (_configState.data.selfAuthorizationHoldEnvLocked) {
+        showToast('HIVE_SELF_AUTHORIZATION_HOLD is set; the environment controls this value.', 'error');
+        return;
+      }
+      const isOn = el.classList.toggle('on');
+      _configState.data.selfAuthorizationHold = isOn;
+      markDirty('repos', 'selfAuthorizationHold', isOn);
+      renderConfigTab('Repos');
+    }
+
+    function toggleRepoSelfAuthHold(repo, checked) {
+      if (_configState.data.selfAuthorizationHoldEnvLocked) {
+        showToast('HIVE_SELF_AUTHORIZATION_HOLD is set; repo overrides are disabled.', 'error');
+        renderConfigTab('Repos');
+        return;
+      }
+      if (!_configState.data.repoSelfAuthorizationHold) _configState.data.repoSelfAuthorizationHold = {};
+      _configState.data.repoSelfAuthorizationHold[repo] = { value: !!checked, effective: !!checked };
+      markDirty('repos', 'repoSelfAuthorizationHold', Object.fromEntries(Object.entries(_configState.data.repoSelfAuthorizationHold).map(([k, v]) => [k, Object.prototype.hasOwnProperty.call(v, 'value') ? v.value : null])));
+      renderConfigTab('Repos');
+    }
+
+    function clearRepoSelfAuthHoldOverride(repo) {
+      if (_configState.data.selfAuthorizationHoldEnvLocked) {
+        showToast('HIVE_SELF_AUTHORIZATION_HOLD is set; repo overrides are disabled.', 'error');
+        return;
+      }
+      const effective = _configState.data.selfAuthorizationHold !== false;
+      if (!_configState.data.repoSelfAuthorizationHold) _configState.data.repoSelfAuthorizationHold = {};
+      _configState.data.repoSelfAuthorizationHold[repo] = { effective: effective };
+      const payload = Object.fromEntries(Object.entries(_configState.data.repoSelfAuthorizationHold).map(([k, v]) => [k, Object.prototype.hasOwnProperty.call(v, 'value') ? v.value : null]));
+      payload[repo] = null;
+      markDirty('repos', 'repoSelfAuthorizationHold', payload);
       renderConfigTab('Repos');
     }
 

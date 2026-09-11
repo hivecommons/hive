@@ -59,12 +59,20 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	// Build full org/repo paths
 	org := cfg.Project.Org
 	repos := make([]string, 0, len(cfg.Project.Repos))
+	repoSelfAuthorizationHold := make(map[string]map[string]any, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
+		full := repo
 		if strings.Contains(repo, "/") {
 			repos = append(repos, repo)
 		} else {
-			repos = append(repos, org+"/"+repo)
+			full = org + "/" + repo
+			repos = append(repos, full)
 		}
+		entry := map[string]any{"effective": cfg.SelfAuthorizationHoldEnabledForRepo(repo)}
+		if rp, ok := cfg.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
+			entry["value"] = *rp.SelfAuthorizationHold
+		}
+		repoSelfAuthorizationHold[full] = entry
 	}
 
 	// Build notifications — mask sensitive values like the old hive does
@@ -102,9 +110,12 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
 		// on the same Labels tab so operators have one place for label policy.
-		"requireLabels": cfg.Project.IssueFilter.RequireLabels,
-		"repos":         repos,
-		"primaryRepo":   primaryRepo,
+		"requireLabels":                  cfg.Project.IssueFilter.RequireLabels,
+		"repos":                          repos,
+		"primaryRepo":                    primaryRepo,
+		"selfAuthorizationHold":          cfg.GitHub.SelfAuthorizationHoldEnabled(),
+		"repoSelfAuthorizationHold":      repoSelfAuthorizationHold,
+		"selfAuthorizationHoldEnvLocked": cfg.GitHub.SelfAuthorizationHoldEnvOverrideSet(),
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -1698,15 +1709,17 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Repos       []string `json:"repos"`
-		PrimaryRepo *string  `json:"primaryRepo,omitempty"`
+		Repos                     []string         `json:"repos"`
+		PrimaryRepo               *string          `json:"primaryRepo,omitempty"`
+		SelfAuthorizationHold     *bool            `json:"selfAuthorizationHold,omitempty"`
+		RepoSelfAuthorizationHold map[string]*bool `json:"repoSelfAuthorizationHold,omitempty"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if len(body.Repos) == 0 && body.PrimaryRepo == nil {
+	if len(body.Repos) == 0 && body.PrimaryRepo == nil && body.SelfAuthorizationHold == nil && body.RepoSelfAuthorizationHold == nil {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
 	}
@@ -1728,6 +1741,8 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	prevPrimary := s.deps.Config.Project.PrimaryRepo
 	prevBaseURL := s.deps.Config.GitHub.BaseURL
 	prevAPIURL := s.deps.Config.GitHub.APIURL
+	prevSelfAuthHold := s.deps.Config.GitHub.SelfAuthorizationHold
+	prevRepoPolicies := append([]config.RepoPolicy(nil), s.deps.Config.Project.RepoPolicies...)
 
 	spokeHost := s.hiveForgeHost()
 	validateRepos := prevRepos
@@ -1843,6 +1858,8 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
 			s.deps.Config.GitHub.BaseURL = prevBaseURL
 			s.deps.Config.GitHub.APIURL = prevAPIURL
+			s.deps.Config.GitHub.SelfAuthorizationHold = prevSelfAuthHold
+			s.deps.Config.Project.RepoPolicies = prevRepoPolicies
 			if s.deps.GHClient != nil {
 				s.deps.GHClient.SetOrg(prevOrg)
 				s.deps.GHClient.SetRepos(prevRepos)
@@ -1851,6 +1868,19 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.deps.Config.Project.Org != prevOrg {
+		s.deps.Config.ClearRepoPolicies()
+	} else if len(body.Repos) > 0 {
+		s.deps.Config.PruneRepoPoliciesToWatched()
+	}
+	if body.SelfAuthorizationHold != nil {
+		v := *body.SelfAuthorizationHold
+		s.deps.Config.GitHub.SelfAuthorizationHold = &v
+	}
+	if body.RepoSelfAuthorizationHold != nil {
+		s.deps.Config.SetSelfAuthorizationHoldForRepos(body.RepoSelfAuthorizationHold)
+	}
+	s.deps.Config.PruneRepoPoliciesToWatched()
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config", "error", err)

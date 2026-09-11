@@ -46,6 +46,13 @@ project:
 # for hives that are allowed to act on their own findings.
 # github:
 #   self_authorization_hold: true
+#
+# Optional per-repo override for the same policy. Omit a repo entry (or omit
+# self_authorization_hold in it) to inherit github.self_authorization_hold.
+# project:
+#   repo_policies:
+#     - repo: console
+#       self_authorization_hold: false
 
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks

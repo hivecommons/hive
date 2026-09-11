@@ -63,10 +63,10 @@ func IsSelfAuthorizationHoldNotice(body string) bool {
 		strings.Contains(body, selfAuthorizationNoticePhrase)
 }
 
-// SetSelfAuthorizationHoldEnabled installs the live per-hive config callback
+// SetSelfAuthorizationHoldEnabled installs the live per-repo config callback
 // used by the #5117 self-authorization gate. nil preserves the default-on
 // behavior.
-func (c *Client) SetSelfAuthorizationHoldEnabled(fn func() bool) {
+func (c *Client) SetSelfAuthorizationHoldEnabled(fn func(repo string) bool) {
 	if c == nil {
 		return
 	}
@@ -76,11 +76,11 @@ func (c *Client) SetSelfAuthorizationHoldEnabled(fn func() bool) {
 	c.selfAuthDisabledLogged = map[string]bool{}
 }
 
-func (c *Client) selfAuthorizationHoldActive() bool {
+func (c *Client) selfAuthorizationHoldActive(repo string) bool {
 	if c == nil || c.selfAuthorizationHoldEnabled == nil {
 		return true
 	}
-	return c.selfAuthorizationHoldEnabled()
+	return c.selfAuthorizationHoldEnabled(repo)
 }
 
 func (c *Client) logSelfAuthorizationDisabledOnce(repo string, number int) {
