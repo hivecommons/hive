@@ -525,15 +525,32 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 		case <-ctx.Done():
 			return
 		case <-deadline:
-			m.logger.Warn("diagnostic: timed out waiting for copilot error output", "agent", agent.Name)
+			// The diagnostic already killed the agent's real session above, so
+			// parking here would strand the agent dead in StateFailed with no
+			// path back except an operator restart (live signature: quality,
+			// scanner and sec-check on a 14h-old hive all "failed to start:
+			// copilot hung with no output (diagnostic timed out)", every kick
+			// refused for 15h while 245 issues queued). An inconclusive
+			// diagnostic is not a start failure — relaunch, like the other two
+			// branches do, and only fall back to StateFailed if the relaunch
+			// itself fails.
+			m.logger.Warn("diagnostic: timed out waiting for copilot error output, relaunching agent", "agent", agent.Name)
 			agent.LastError = "copilot hung with no output (diagnostic timed out)"
-			agent.State = StateFailed
-			m.audit(AuditAgentStartFailed, agent.Name, auditFields(
-				"outcome", "failure",
-				"backend", agent.effectiveBackend(),
-				"model", agent.effectiveModel(),
-				"error", agent.LastError,
-			))
+			if agent.UID > 0 {
+				killAgentProcesses(agent.UID, m.logger)
+			}
+			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
+			agent.forceRelaunch = true
+			if err := m.RestartWithReason(ctx, agent.Name, "copilot hang diagnostic timed out"); err != nil {
+				m.logger.Warn("diagnostic: restart after timeout failed", "agent", agent.Name, "error", err)
+				agent.State = StateFailed
+				m.audit(AuditAgentStartFailed, agent.Name, auditFields(
+					"outcome", "failure",
+					"backend", agent.effectiveBackend(),
+					"model", agent.effectiveModel(),
+					"error", agent.LastError,
+				))
+			}
 			return
 		case <-ticker.C:
 			output := m.captureTmuxPaneForAgent(agent)
