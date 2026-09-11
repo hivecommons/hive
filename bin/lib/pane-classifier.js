@@ -584,6 +584,61 @@ function paneTail(text, n) {
   return kept.join('\n');
 }
 
+// ── An input widget still holding a prompt nobody submitted (#6717) ──────────
+//
+// The relay delivers a task prompt by typing it into the pane with
+// `tmux send-keys -l` and then sending Enter. A ~2 KB prompt arrives as one
+// burst, and a TUI that implements bracketed-paste handling classifies a burst
+// that fast as PASTED CONTENT: it collapses the blob to a placeholder in its
+// input widget and takes the newlines that follow as content INSIDE the paste
+// rather than as submit. The prompt then sits in the widget, unsent, and the
+// agent never runs.
+//
+// Observed live (#6717, codex-cli 0.154.0): the pane showed the launch banner,
+// no spinner, no tool rows, no assistant output at all, and an input line
+// reading
+//
+//   › [Pasted Content 1024 chars][Pasted Content 1012 chars] very last thing …
+//
+// with the pane byte-identical across two consecutive five-minute checks. The
+// relay logged "Task prompt sent to CLI", the chrome-idle fallback then read
+// that untouched pane as a finished turn, and the hub booked the issue
+// COMPLETED with no commit, no branch and no PR.
+//
+// PER BACKEND, and deliberately only where the rendering has been SEEN. Each
+// CLI spells its placeholder its own way, and a pattern guessed from a
+// different CLI's docs would be a claim about a pane nobody has looked at —
+// in the direction that matters, since this detector can veto a completion.
+// codex is the one observed; add a backend here when its own capture shows it.
+//
+// Note what this deliberately does NOT do: claim the prompt was never
+// submitted just because a placeholder is somewhere on the pane. Several CLIs
+// echo a submitted paste back into the transcript with the same placeholder,
+// so the marker alone is compatible with a turn that ran perfectly. Callers
+// pair it with a second, independent signal — the pane not having changed at
+// all since delivery — before concluding anything; see paneChangedSinceDelivery
+// in bin/contributor-relay.js.
+const PASTE_PLACEHOLDER_PATTERNS = {
+  codex: /\[Pasted Content\b/i,
+};
+
+// How much of the visible tail counts as "the input widget". The placeholder
+// must be down where the input line lives: a prompt whose text scrolled into
+// the transcript above is history, not an unsent prompt. Eight non-blank lines
+// covers the widget plus the status footer and the wrapped remainder of a long
+// input line, which is what the #6717 capture looks like.
+const INPUT_WIDGET_TAIL_LINES = 8;
+
+// paneHoldsUnsubmittedPrompt reports whether the pane's input widget appears to
+// be holding collapsed paste content. False for every backend whose
+// placeholder rendering has not been captured — an unknown CLI makes no claim
+// either way, which keeps this from vetoing completions it knows nothing about.
+function paneHoldsUnsubmittedPrompt(text, backend) {
+  const pattern = PASTE_PLACEHOLDER_PATTERNS[backend];
+  if (!pattern) return false;
+  return pattern.test(paneTail(text, INPUT_WIDGET_TAIL_LINES));
+}
+
 // paneShowsTransientAPIError reports whether the visible tail carries a
 // retryable API failure. Every candidate line must carry the "API Error:"
 // chrome AND a known-retryable pattern, so prose that merely mentions a dropped
@@ -964,6 +1019,10 @@ module.exports = {
   classifyBlockedOnHumanReason,
   paneLooksBlockedOnHuman,
   paneTail,
+  // An input widget still holding an unsubmitted prompt (#6717).
+  PASTE_PLACEHOLDER_PATTERNS,
+  INPUT_WIDGET_TAIL_LINES,
+  paneHoldsUnsubmittedPrompt,
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
   // Quota exhaustion as a distinct, TIME-BOUNDED sub-case of the unretryable

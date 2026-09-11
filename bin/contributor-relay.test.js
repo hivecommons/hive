@@ -7327,6 +7327,16 @@ for (const name of loadPaneFixtures()) {
     });
   }
 
+  if (Object.prototype.hasOwnProperty.call(sidecar.expect, 'paneHoldsUnsubmittedPrompt')) {
+    test(`pane fixture ${name}: paneHoldsUnsubmittedPrompt() is ${sidecar.expect.paneHoldsUnsubmittedPrompt}`, () => {
+      const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+      try {
+        assert.strictEqual(relay.paneHoldsUnsubmittedPrompt(pane, sidecar.backend),
+          sidecar.expect.paneHoldsUnsubmittedPrompt, sidecar.note);
+      } finally { teardown(relay); }
+    });
+  }
+
   for (const fn of ['paneShowsTransientAPIError', 'paneShowsUnretryableAPIError', 'paneShowsLoginRequiredError']) {
     if (Object.prototype.hasOwnProperty.call(sidecar.expect, fn)) {
       test(`pane fixture ${name}: ${fn}() is ${sidecar.expect[fn]}`, () => {
@@ -8274,6 +8284,214 @@ test('#6541 negative control: an authorization refusal still fails fast and stay
     assert.ok(after.some(m => m.type === 'ready'),
       `an authorization refusal must NOT park the loop: ${JSON.stringify(after.map(m => m.type))}`);
     assert.strictEqual(relay.quotaHoldActive(), false);
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// #6717 — a task prompt codex never submitted was reported COMPLETED
+//
+// The relay typed a ~2 KB prompt into codex as one literal burst and then sent
+// Enter. codex classified the burst as PASTED CONTENT, collapsed it into
+// "[Pasted Content N chars]" placeholders in its input widget, and took the
+// three Enters as newlines inside the paste rather than as submit. The agent
+// therefore never ran — and because the resulting pane renders codex's ordinary
+// idle chrome, the chrome_idle fallback read that untouched pane as a finished
+// turn and told the hub the task was COMPLETE. The issue was parked as done
+// with no commit, no branch and no PR, and left the offer queue for good.
+//
+// Two halves, tested separately below:
+//   - delivery: confirm the prompt actually left the input widget, re-sending
+//     Enter while it has not;
+//   - reporting: never let chrome_idle complete a task when the prompt is
+//     still visibly unsubmitted AND the pane has not changed one byte since
+//     delivery. Both signals are required, which is what the last two tests in
+//     this section pin from each side.
+// ---------------------------------------------------------------------------
+
+const UNSUBMITTED_PASTE_PANE = fs.readFileSync(
+  path.join(PANE_FIXTURES_DIR, 'codex_unsubmitted_paste.pane.txt'), 'utf8');
+
+// The same codex, one task earlier, having actually run: tool rows, a summary,
+// and the idle input line back with its rotating placeholder hint. No paste
+// placeholder anywhere, which is what a submitted prompt looks like.
+const CODEX_FINISHED_TURN_PANE = [
+  '• Ran gh issue view 215',
+  '• Ran kubectl version --client',
+  '  Bumped the pinned checksum and opened a PR:',
+  '  https://github.com/foo/bar/pull/77',
+  '',
+  '› Run /review on my current changes',
+  '  gpt-5.6-luna max · ~/.local/state/hive/agent-cwd',
+  '',
+].join('\n');
+
+test('#6717 pane-classifier: a collapsed paste in the input widget is detectable, per backend', () => {
+  assert.strictEqual(
+    paneClassifier.paneHoldsUnsubmittedPrompt(UNSUBMITTED_PASTE_PANE, 'codex'), true,
+    'the live #6717 capture must be recognised as a prompt still sitting in the widget');
+  assert.strictEqual(
+    paneClassifier.paneHoldsUnsubmittedPrompt(CODEX_FINISHED_TURN_PANE, 'codex'), false,
+    'a codex pane whose turn ran must not look like an unsubmitted prompt');
+  // codex's idle input line carries a rotating hint ("› Run /review on my
+  // current changes"), so "the input line is non-empty" could never have been
+  // the test — the placeholder is.
+  assert.strictEqual(
+    paneClassifier.paneHoldsUnsubmittedPrompt(
+      fs.readFileSync(path.join(PANE_FIXTURES_DIR, 'codex_ready.pane.txt'), 'utf8'), 'codex'),
+    false,
+    'the golden idle codex pane must not read as unsubmitted just because its input line has hint text');
+  // A backend whose widget rendering nobody has captured makes NO claim. This
+  // detector can veto a completion, so guessing is the one thing it must not do.
+  assert.strictEqual(
+    paneClassifier.paneHoldsUnsubmittedPrompt(UNSUBMITTED_PASTE_PANE, 'goose'), false,
+    'an unobserved backend must not inherit codex\'s placeholder pattern');
+  // Scoped to the input widget: the same text scrolled up into the transcript
+  // is history, not an unsent prompt.
+  const scrolledAway = UNSUBMITTED_PASTE_PANE + '\n' +
+    Array.from({ length: 12 }, (_, i) => `• Ran step ${i}`).join('\n') + '\n› Run /review\n';
+  assert.strictEqual(
+    paneClassifier.paneHoldsUnsubmittedPrompt(scrolledAway, 'codex'), false,
+    'a placeholder that has scrolled out of the input widget must not count');
+});
+
+test('#6717 paneChangedSinceDelivery answers "no evidence" as CHANGED, never as stuck', () => {
+  const relay = loadRelay({ backend: 'codex' });
+  try {
+    // No snapshot yet (no prompt delivered for this task): nothing is claimed.
+    relay.setPromptDeliveryFingerprint(null);
+    assert.strictEqual(relay.paneChangedSinceDelivery(['anything']), true,
+      'with no delivery snapshot the answer must be "changed" — a missing reading must never be grounds to fail a task');
+    relay.setPromptDeliveryFingerprint(relay.paneFingerprint(['a', 'b']));
+    assert.strictEqual(relay.paneChangedSinceDelivery(['a', 'b']), false,
+      'a byte-identical pane has produced nothing since delivery');
+    assert.strictEqual(relay.paneChangedSinceDelivery(['a', 'b', 'c']), true,
+      'any new output at all counts as the agent having done something');
+    assert.strictEqual(relay.paneChangedSinceDelivery([]), true,
+      'an empty capture is tmux failing to answer, not a stalled agent');
+  } finally { teardown(relay); }
+});
+
+test('#6717 confirmPromptSubmitted re-sends Enter while the prompt is stuck, and reports failure', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: UNSUBMITTED_PASTE_PANE });
+  try {
+    const before = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(relay.confirmPromptSubmitted(), false,
+      'a widget that never clears must be reported as NOT submitted, not assumed delivered');
+    const after = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(after - before, relay.PROMPT_SUBMIT_RETRIES,
+      `every retry in the budget must actually be spent, got ${after - before}`);
+  } finally { teardown(relay); }
+});
+
+test('#6717 confirmPromptSubmitted succeeds as soon as the widget clears', () => {
+  // Armed only after load: loadRelay()'s own readiness polling captures the
+  // pane several times, and counting from zero there would count those too.
+  let armed = false;
+  let captures = 0;
+  const relay = loadRelay({
+    backend: 'codex',
+    // The first capture inside the call still shows the collapsed paste; the
+    // extra Enter submits it, so every capture after that shows a pane in flight.
+    paneText: () => (armed && ++captures > 1
+      ? '• Working (3s • esc to interrupt)\n› \n'
+      : UNSUBMITTED_PASTE_PANE),
+  });
+  armed = true;
+  try {
+    const before = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(relay.confirmPromptSubmitted(), true, 'a widget that clears is submitted');
+    const after = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(after - before, 1,
+      'the retry loop must stop at the first Enter that works, not spend the whole budget');
+  } finally { teardown(relay); }
+});
+
+test('#6717 a backend with no known placeholder rendering is left exactly as it was', () => {
+  // The pre-#6717 send path sent Enter and moved on. For every backend whose
+  // widget nobody has captured, that must still be what happens — no extra
+  // keystrokes, no new failure mode.
+  const relay = loadRelay({ backend: 'goose', paneText: UNSUBMITTED_PASTE_PANE });
+  try {
+    const before = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(relay.confirmPromptSubmitted(), true,
+      'an unobserved backend reports "no evidence of a stuck prompt", which is the honest answer');
+    const after = relay.__tmuxSends().filter(c => /send-keys .* Enter$/.test(c)).length;
+    assert.strictEqual(after, before, 'and it must not send a single extra keystroke');
+  } finally { teardown(relay); }
+});
+
+// THE REGRESSION. This is the #6717 incident end to end: the live pane, a real
+// dispatch through tmuxSendKeys(), and a full chrome-idle grace window.
+test('#6717 a prompt that was never submitted is reported FAILED, not completed', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: UNSUBMITTED_PASTE_PANE });
+  try {
+    dispatchTask(relay, 'ct-6717-unsubmitted', 215);
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.deepStrictEqual(completed, [],
+      'a task whose prompt never left the input widget must NEVER be booked completed — the hub parks the issue as done and stops offering it');
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1,
+      `the task must be handed back so the hub re-offers it, got ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.match(failed[0].reason, /never submitted/,
+      'the reason must name the real cause, so an operator is not left guessing');
+    assert.strictEqual(failed[0].failure_kind, 'environment',
+      'this host failed to hand the work over; nothing about the task itself failed');
+    assert.notStrictEqual(failed[0].permanent, true,
+      'a delivery failure is transient — the next dispatch may well succeed');
+  } finally { teardown(relay); }
+});
+
+// NEGATIVE CONTROL 1 — the veto must not touch a task that ran.
+test('#6717 a codex turn that actually ran still completes on the chrome fallback', () => {
+  let delivered = false;
+  const relay = loadRelay({
+    backend: 'codex',
+    paneText: () => (delivered ? CODEX_FINISHED_TURN_PANE : CODEX_READY_PANE),
+  });
+  try {
+    dispatchTask(relay, 'ct-6717-real-work', 216);
+    delivered = true;
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1,
+      'the veto must cost a non-compliant-but-working agent nothing — that is the whole reason the fallback exists');
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle');
+    assert.deepStrictEqual(relay.__sent.filter(m => m.type === 'task_failed'), [],
+      'and it must not invent a failure for work that shipped');
+  } finally { teardown(relay); }
+});
+
+// NEGATIVE CONTROL 2 — the two signals are required TOGETHER.
+//
+// Some CLIs echo a submitted paste back into the transcript with the same
+// placeholder, so "a placeholder is on the pane" stays true forever after a
+// perfectly good submit. If the placeholder alone could veto, every task on
+// such a backend would be failed. The pane having CHANGED since delivery is
+// what distinguishes the two, and it is the half that carries the veto.
+test('#6717 a placeholder still on a pane that has since produced output does not veto', () => {
+  // Flipped by the test itself once delivery is over, so the two phases are
+  // explicit rather than inferred from a capture count.
+  let delivered = false;
+  const relay = loadRelay({
+    backend: 'codex',
+    // Delivery-time captures show the collapsed paste and it never clears, so
+    // the submit is reported unconfirmed — yet the agent plainly ran: the pane
+    // below it fills with its transcript, placeholder echo and all.
+    paneText: () => (delivered
+      ? `${UNSUBMITTED_PASTE_PANE}\n${CODEX_FINISHED_TURN_PANE}`
+      : UNSUBMITTED_PASTE_PANE),
+  });
+  try {
+    dispatchTask(relay, 'ct-6717-echoed-paste', 217);
+    assert.strictEqual(relay.getPromptSubmissionConfirmed(), false,
+      'precondition: this task\'s submit was never confirmed, so only the pane-change signal can save it');
+    delivered = true;
+    graceTicks(relay, () => relay.__crashTick());
+    assert.deepStrictEqual(relay.__sent.filter(m => m.type === 'task_failed'), [],
+      'output after delivery proves the agent ran; an echoed placeholder must not fail it');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
+      'and the task must still complete normally');
   } finally { teardown(relay); }
 });
 

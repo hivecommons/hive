@@ -17,7 +17,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | Review point | Change |
 > |---|---|
 > | "If I deploy this, what should I worry about?" | New section [If you deploy this, what should you worry about?](#if-you-deploy-this-what-should-you-worry-about) — the attack path stated plainly, a concern/mitigation/non-mitigation table, the three settings that determine exposure, and the worst realistic outcome. |
-> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered, then **measured**: [ioscan-red-team.md](ioscan-red-team.md) runs a 43-payload adversarial corpus and publishes the result — **37% withheld, 63% reached the agent**, with the containment credited to the network deny rules and verified across all four ACMM modes on every test run ([#6685](https://github.com/hivecommons/hive/issues/6685)). |
+> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered, then **measured**: [ioscan-red-team.md](ioscan-red-team.md) runs a 43-payload adversarial corpus and publishes the result — **42% withheld, 58% reached the agent**, with the containment credited to the network deny rules and verified across all four ACMM modes on every test run ([#6685](https://github.com/hivecommons/hive/issues/6685)). |
 > | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check was substring-only — filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and **since fixed**: the proxy now decodes and normalizes outbound bodies before matching canaries. |
 > | "Get an OpenSSF passing badge." | **Already held, and this document was wrong to imply otherwise.** [Project 14261](https://www.bestpractices.dev/projects/14261) reached **passing** (100%) on 2026-08-27 — four days before the review — and `README.md` was displaying it throughout. The badge entry has since been corrected: 70 URLs in its criteria justifications still pointed at the pre-migration `kubestellar` org. Tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). |
 > | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped enforcement tracked in [#6687](https://github.com/hivecommons/hive/issues/6687). |
@@ -290,13 +290,13 @@ repository writes:
    — see [ioscan-red-team.md](ioscan-red-team.md) for the corpus, the
    methodology and the full per-case table. Against 43 adversarial payloads
    across six technique families, the shipped deterministic rules **withheld
-   37% from the agent; 63% reached it verbatim** — 44% because no rule fired,
+   42% from the agent; 58% reached it verbatim** — 40% because no rule fired,
    and a further 19% because a rule fired but the input block policy does not
    block at that severity (`blockedInput` requires Critical, or Injection at
    High+, so every Medium finding is recorded and the raw text is still
    injected). A findings count is therefore **not** a count of attacks
    stopped.
-   Detection is strongly uneven by family: Unicode steganography 6/8 blocked —
+   Detection is strongly uneven by family: Unicode steganography 8/8 blocked —
    the one place the design beats a regex, because hidden characters are
    themselves a High finding — against paraphrased instruction override 2/10
    and split-payload 0/4. The last is structural: each untrusted segment

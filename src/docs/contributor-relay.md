@@ -529,6 +529,24 @@ A scraped URL is now a **candidate**, not a conclusion. It is checked against Gi
 
 The cross-repo fallback is also gone. It returned the first PR URL in *any* repo when nothing matched the task's repo, reasoning that an approximate audit trail beats none. For a value the hub books cooldowns on, an approximate one is a wrong one, and a PR in a different repository cannot be the PR for this task's issue.
 
+### A prompt that was typed is not a prompt that was submitted
+
+The relay delivers a task prompt by typing it into the pane with `tmux send-keys -l` and then sending Enter. A task prompt is around 2 KB, so it arrives as one burst — and a TUI that implements bracketed-paste handling classifies a burst that fast as **pasted content**. codex collapses it to `[Pasted Content 1024 chars]` in its input widget and takes the Enters that follow as newlines *inside* the paste rather than as submit. The prompt sits in the widget, and the agent is never told anything.
+
+Observed live ([#6717](https://github.com/hivecommons/hive/issues/6717), codex-cli 0.154.0): the pane showed the launch banner, the collapsed prompt on the input line, no spinner, no tool rows and no assistant output at all, byte-identical across two consecutive five-minute checks. The relay logged `Task prompt sent to CLI` and, eight minutes later, `completed — signal=chrome_idle`. The hub booked the issue **done** with no commit, no branch and no PR, and it left `/api/contribute/queue`.
+
+`ENTER_COUNT = 3` is not the lever: the problem is not a dropped keystroke but a widget consuming newlines as content, and three are consumed exactly as one is. Three things changed instead.
+
+1. **Settle before submitting.** The send path now waits for the widget to finish ingesting the burst before the Enter goes out, so the Enter is a keypress and not pasted text.
+2. **Verify the submit.** It then re-reads the pane and re-sends Enter while the prompt is still visibly collapsed in the input widget, up to a small budget. The send loop already retried when *tmux* errored; it had never checked whether the keystrokes achieved anything.
+3. **`chrome_idle` may not complete a task that never started.** The fallback infers "the agent finished" from a pane that stopped changing, and that inference had one premise it never checked: that the agent *started*. When the prompt is **still** visibly unsubmitted **and** the pane has not changed by a single byte since delivery, the task is reported `task_failed` with `failure_kind: environment` — so the hub re-offers the issue — instead of `task_complete`, which parks it as finished.
+
+Both signals in (3) are required together, in both directions. Some CLIs echo a submitted paste back into their transcript with the same placeholder, so the placeholder alone would fail every task on such a backend; and a pane byte-identical to its pre-work state cannot belong to an agent that did anything. An agent that genuinely finished without printing `HIVE_VERDICT` still completes on the fallback exactly as it did before, which is the whole reason the fallback exists ([#5376](https://github.com/hivecommons/hive/issues/5376)).
+
+The placeholder rendering is recorded **per backend, and only where a real capture has shown it** — codex today, in `bin/lib/pane-classifier.js` and the shared golden fixture `bin/testdata/pane-fixtures/codex_unsubmitted_paste.pane.txt`. A backend whose widget nobody has captured makes no claim either way, and gets neither the extra Enters nor the veto. This detector can fail a task, so a pattern guessed from another CLI's documentation would be a claim about a pane nobody has looked at, in the direction that costs the most.
+
+Finally, a `chrome_idle` completion carrying **neither** a verdict **nor** a PR is now logged as a warning. It is not always wrong — an agent that found nothing to do but never printed the sentinel lands there too — but it is the shape this bug takes, and nothing in the pane shows what such a task produced.
+
 ## Reconnecting without losing in-flight work
 
 The relay heartbeats every 30 s and reconnects with exponential backoff (1 s to 60 s). A drop inside that window is meant to be invisible to the agent: the relay keeps its task locally, re-asserts it on the new socket, and carries on typing into the same tmux pane.
