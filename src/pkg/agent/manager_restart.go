@@ -409,6 +409,7 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// launchInTmux directly, so without this the relaunched agent kept (or
 	// never got) a token — see mintAgentTokenUnlocked.
 	m.mintAgentTokenUnlocked(ctx, agent)
+	m.bobPreflightUnlocked(agent)
 
 	// Wait for the new shell to initialize before sending the launch command.
 	// Without this, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the
@@ -748,6 +749,7 @@ func (m *Manager) RestartWithReason(ctx context.Context, name, reason string) er
 	genBeforeMint := agent.launchGen
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
+	m.bobPreflightUnlocked(agent)
 	m.mu.Lock()
 	if cur, ok := m.agents[name]; !ok || cur != agent {
 		return fmt.Errorf("agent %s removed during restart", name)

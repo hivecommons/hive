@@ -103,6 +103,12 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 		v.OutputKind = outputKindForLevel(e.ACMMLevel)
 		return v
 	}
+	if e.StatsStale {
+		v.State = HealthStateUnknown
+		v.Reason = "heartbeat stats stale"
+		v.OutputKind = outputKindForLevel(e.ACMMLevel)
+		return v
+	}
 	if rollup.Known == 0 {
 		// Old spoke that predates the divergence signals — we cannot tell able
 		// from stuck, so we cannot assert health.

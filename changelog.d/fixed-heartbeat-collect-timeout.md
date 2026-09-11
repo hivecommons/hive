@@ -1,0 +1,1 @@
+- Keep hub heartbeats from overwriting live agent state and health with stale cached collector data after boot-time collection timeouts.

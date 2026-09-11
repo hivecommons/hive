@@ -104,7 +104,84 @@ func TestSendHeartbeat_TimedOutCollectMarksStatsStale(t *testing.T) {
 	if got := <-stale; got {
 		t.Fatalf("fresh beat was marked StatsStale=true, want false")
 	}
+}
 
+func TestSendHeartbeat_TimedOutCollectOverlaysFreshAgentStats(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	got := make(chan HeartbeatPayload, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p HeartbeatPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		got <- p
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{
+			HiveID:              "hive",
+			Org:                 "org",
+			Agents:              []AgentSummary{{Name: "quality", State: "stopped"}},
+			Health:              map[string]any{"status": "ok"},
+			ProviderLimitReason: "cached provider limit",
+			ProviderLimitAgents: []string{"quality"},
+		}
+	}, nil2Logger())
+	<-got
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	sendHeartbeat(ctx, server.URL,
+		blockUntilClosed(release, &HeartbeatPayload{HiveID: "late"}),
+		nil2Logger(),
+		FreshStatusCollector(func() *HeartbeatPayload {
+			return &HeartbeatPayload{
+				Agents: []AgentSummary{{Name: "quality", State: "running"}},
+				Health: map[string]any{"status": "degraded"},
+			}
+		}))
+
+	p := <-got
+	if !p.StatsStale {
+		t.Fatal("timed-out beat was not marked StatsStale")
+	}
+	if !p.FreshAgentStats {
+		t.Fatal("timed-out beat did not mark FreshAgentStats after overlay")
+	}
+	if len(p.Agents) != 1 || p.Agents[0].State != "running" {
+		t.Fatalf("timed-out beat Agents = %+v, want fresh running state rather than cached stopped state", p.Agents)
+	}
+	if p.Health["status"] != "degraded" {
+		t.Fatalf("timed-out beat Health = %+v, want fresh degraded health rather than cached ok", p.Health)
+	}
+	if p.ProviderLimitReason != "" || len(p.ProviderLimitAgents) != 0 {
+		t.Fatalf("provider limit fields = %q/%v, want fresh empty values to clear cached provider limit", p.ProviderLimitReason, p.ProviderLimitAgents)
+	}
+}
+
+func TestSendHeartbeat_TimedOutCollectMarksCachedStatsStale(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	stale := make(chan bool, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p HeartbeatPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		stale <- p.StatsStale
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{HiveID: "hive", Org: "org", PrimaryRepo: "repo"}
+	}, nil2Logger())
+	if got := <-stale; got {
+		t.Fatalf("fresh beat was marked StatsStale=true, want false")
+	}
 	// Timed-out beat: cached stats, must be marked stale.
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })

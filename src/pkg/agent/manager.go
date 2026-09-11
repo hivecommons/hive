@@ -944,6 +944,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	// Runs with m.mu RELEASED — see mintAgentTokenUnlocked for why holding
 	// m.mu across the outbound mint calls caused a fleet-wide liveness flap.
 	m.mintAgentTokenUnlocked(ctx, agent)
+	m.bobPreflightUnlocked(agent)
 
 	// PHASE 3 — launchInTmux. It was written to be called WITH m.mu held: it
 	// mutates m.mu-guarded AgentProcess fields (State, StartedAt, HasLaunched,
@@ -953,15 +954,8 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	// against AllStatuses()/snapshot() and the model/backend/pause setters —
 	// preserving its original contract exactly (the function is unchanged).
 	//
-	// The launch's own /data reads/writes (ensureTmuxSession has already run
-	// lock-free above; the remaining /data touch is ensureBobAuthSettings on
-	// /data/home for bob agents) are NOT hoisted here — pulling launchInTmux's
-	// deeply interleaved guarded-field writes and NFS I/O apart is a larger,
-	// riskier refactor left for a separate maintainer decision. The three
-	// biggest and most common NFS/proxy blockers (sanitizeGitRemotes,
-	// ensureTmuxSession, WriteAgentToken/mint) are already off the lock above,
-	// which is what breaks the observed fleet-wide liveness flap; a bob-only
-	// /data/home stall under the lock remains a narrower residual.
+	// The remaining subprocess sends below are the actual tmux launch boundary;
+	// Bob's shared-home/file probes have already run lock-free above.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Re-verify under the re-acquired lock: while m.mu was released for Phase 2,
@@ -978,6 +972,26 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return nil
 	}
 	return m.launchInTmux(ctx, agent)
+}
+
+func (m *Manager) bobPreflightUnlocked(agent *AgentProcess) {
+	if agent == nil {
+		return
+	}
+	backend := agent.Config.Backend
+	if agent.BackendOverride != "" {
+		backend = agent.BackendOverride
+	}
+	if backend != bobBackend || m.bobAPIKey() == "" {
+		return
+	}
+	// Bob shared-home repair and readability probes touch /data/home and run
+	// subprocesses. Keep them in unlocked prep phases so a slow PVC or UID
+	// probe cannot block AllStatuses()/heartbeat while boot launches stagger
+	// across the agent fleet.
+	m.ensureBobAuthSettings(agent.Name, bobSharedHome)
+	m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
+	_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
 }
 
 func (m *Manager) Stop(name string) error {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests pin the project-identity carry-forward for DEGRADED beats.
@@ -131,6 +132,82 @@ func TestHeartbeatStatsStaleBeatCarriesProjectIdentityForward(t *testing.T) {
 	}
 	if entry.Name != "hivecommons/hive" {
 		t.Errorf("Name = %q, want hivecommons/hive", entry.Name)
+	}
+}
+
+func TestHeartbeatStatsStaleDoesNotOverwriteFreshAgentsOrHealth(t *testing.T) {
+	srv := degradedCarryTestServer(t)
+	const hiveID = "stale-agents-hive"
+
+	postBeat(t, srv, `{
+			"hive_id":"`+hiveID+`",
+			"org":"hivecommons",
+			"primary_repo":"hive",
+			"repos":["hive"],
+			"dashboard_url":"https://hive.example.test",
+			"agents":[{"name":"quality","state":"running","lastActivityAt":"2026-09-11T15:59:24Z"}],
+			"health":{"status":"degraded","checks":[{"name":"agents","status":"fail"}]}
+		}`)
+	postBeat(t, srv, `{
+			"hive_id":"`+hiveID+`",
+			"org":"hivecommons",
+			"stats_stale":true,
+			"agents":[{"name":"quality","state":"stopped"}],
+			"health":{"status":"ok","checks":[]}
+		}`)
+
+	entry := registryEntryByID(t, srv, hiveID)
+	if !entry.StatsStale {
+		t.Fatal("StatsStale = false, want stale beat surfaced on registry entry")
+	}
+	if len(entry.Agents) != 1 || entry.Agents[0].State != "running" || entry.Agents[0].LastActivityAt == "" {
+		t.Fatalf("Agents = %+v, want prior fresh running/activity state preserved over stale cached stopped state", entry.Agents)
+	}
+	if entry.Health["status"] != "degraded" {
+		t.Fatalf("Health = %+v, want prior fresh degraded health preserved over stale cached ok", entry.Health)
+	}
+	if entry.DashboardURL != "https://hive.example.test" {
+		t.Fatalf("DashboardURL = %q, want previous URL carried across stale beat that omitted it", entry.DashboardURL)
+	}
+}
+
+func TestHeartbeatStatsStaleFreshAgentOverlayUpdatesAgentsButNotGreenHealthVerdict(t *testing.T) {
+	srv := degradedCarryTestServer(t)
+	const hiveID = "stale-fresh-agents-hive"
+
+	postBeat(t, srv, `{
+			"hive_id":"`+hiveID+`",
+			"org":"hivecommons",
+			"primary_repo":"hive",
+			"repos":["hive"],
+			"acmm_level":6,
+			"agents":[{"name":"quality","state":"stopped"}],
+			"health":{"status":"degraded"}
+		}`)
+	postBeat(t, srv, `{
+			"hive_id":"`+hiveID+`",
+			"org":"hivecommons",
+			"stats_stale":true,
+			"fresh_agent_stats":true,
+			"acmm_level":6,
+			"agents":[{"name":"quality","state":"running","expectedActive":true,"enabled":true,"canOpenIssue":true,"canOpenPR":true,"canMerge":true}],
+			"health":{"status":"ok"}
+		}`)
+
+	entry := registryEntryByID(t, srv, hiveID)
+	if len(entry.Agents) != 1 || entry.Agents[0].State != "running" {
+		t.Fatalf("Agents = %+v, want fresh overlay running state accepted", entry.Agents)
+	}
+	if entry.Health["status"] != "ok" {
+		t.Fatalf("Health = %+v, want fresh overlay health accepted on the registry", entry.Health)
+	}
+	if !entry.StatsStale {
+		t.Fatal("StatsStale = false, want stale marker preserved")
+	}
+	rollup := rollupAgents(entry.Agents, hiveBlockers{}, entry.ActionableIssues+entry.ActionablePRs, time.Now())
+	verdict := hiveHealthFor(entry, rollup, GitHubAppHealth{}, entry.ActionableIssues+entry.ActionablePRs, time.Now())
+	if verdict.State != HealthStateUnknown || verdict.Reason != "heartbeat stats stale" {
+		t.Fatalf("health verdict = %+v, want stale/unknown rather than green from stale beat", verdict)
 	}
 }
 

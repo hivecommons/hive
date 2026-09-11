@@ -265,13 +265,18 @@ type RegistryEntry struct {
 	//      spokes too old to report it;
 	//   3. "github.com" at render time, so a chip is never blank.
 	// Empty here means "not reported" — resolved on read, never guessed.
-	GitHubHost       string             `json:"githubHost,omitempty"`
-	Agents           []AgentSummary     `json:"agents,omitempty"`
-	Leaderboard      []LeaderboardEntry `json:"leaderboard,omitempty"`
-	Online           bool               `json:"online"`
-	Upgrading        bool               `json:"upgrading,omitempty"`
-	UpgradeTarget    string             `json:"upgradeTarget,omitempty"`
-	UpgradeStartedAt time.Time          `json:"upgradeStartedAt,omitempty"`
+	GitHubHost  string             `json:"githubHost,omitempty"`
+	Agents      []AgentSummary     `json:"agents,omitempty"`
+	Leaderboard []LeaderboardEntry `json:"leaderboard,omitempty"`
+	Online      bool               `json:"online"`
+	// StatsStale marks a liveness beat whose expensive heartbeat stats came
+	// from cache. The hive is online, but health/agent-derived truth must be
+	// rendered as stale/unknown unless the beat explicitly carried a fresh
+	// in-memory agent overlay.
+	StatsStale       bool      `json:"statsStale,omitempty"`
+	Upgrading        bool      `json:"upgrading,omitempty"`
+	UpgradeTarget    string    `json:"upgradeTarget,omitempty"`
+	UpgradeStartedAt time.Time `json:"upgradeStartedAt,omitempty"`
 	// UpgradeFailed records that the spoke reported an upgrade it could not
 	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
 	// state a human must see, not an in-flight one.
@@ -1918,6 +1923,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return payload.Leaderboard
 		}(),
 		Online:            true,
+		StatsStale:        payload.StatsStale,
 		GitHubAppRequired: payload.GitHubAppRequired,
 		// GitHubAppPermIssue is a full sentence the drift hover renders
 		// verbatim ("The GitHub App is configured but has no installation.
@@ -2149,6 +2155,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// reports its synthetic "available-<id>" org), and the old
 			// tenant's repos must never survive it.
 			if payload.Upgrading || payload.StatsStale || payload.UpgradeFailed {
+				if entry.DashboardURL == "" && h.DashboardURL != "" {
+					entry.DashboardURL = h.DashboardURL
+				}
 				if entry.Org == "" && h.Org != "" {
 					entry.Org = h.Org
 				}
@@ -2166,6 +2175,22 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// Name was computed from the payload's (possibly empty)
 				// fields at build time — recompute it from the carried ones.
 				entry.Name = entry.Org + "/" + entry.PrimaryRepo
+			}
+			if payload.StatsStale && !payload.FreshAgentStats {
+				entry.Agents = h.Agents
+				entry.AgentCount = h.AgentCount
+				entry.Health = h.Health
+				entry.LastWriteCapableKickAt = h.LastWriteCapableKickAt
+				entry.LastKickDisposition = h.LastKickDisposition
+				entry.LastKickSkipReason = h.LastKickSkipReason
+				entry.NotWritableQueued = h.NotWritableQueued
+				entry.ProviderLimitReason = h.ProviderLimitReason
+				entry.ProviderLimitRebuffs = h.ProviderLimitRebuffs
+				entry.ProviderLimitHiveWide = h.ProviderLimitHiveWide
+				entry.ProviderLimitAgents = h.ProviderLimitAgents
+				entry.AgentErrorStreaks = h.AgentErrorStreaks
+				entry.ConsentWedged = h.ConsentWedged
+				entry.NoCadenceAgents = h.NoCadenceAgents
 			}
 			// SECURITY (C1/N3, CWE-639): for an EXISTING entry, Owner is never taken
 			// from the heartbeat body. When this hive has an authoritative SaaS
