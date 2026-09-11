@@ -100,6 +100,11 @@ func TestSpokeKeyResolutionAndRotation(t *testing.T) {
 	}
 	t.Setenv("HIVE_HUB_SECRET", master)
 	t.Setenv(EnvHiveID, "hive-a")
+	// Clear the explicit-injection lanes so the assertion below exercises the
+	// derived path even where the ambient environment (a hive agent sandbox,
+	// a spoke pod) exports these variables.
+	t.Setenv(EnvSSOPublicKey, "")
+	t.Setenv(EnvSSOPublicKeyPrevious, "")
 	if got := SpokeSSOPublicKey(); got != pub {
 		t.Fatalf("SpokeSSOPublicKey derived = %q, want %q", got, pub)
 	}
