@@ -19,7 +19,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | "If I deploy this, what should I worry about?" | New section [If you deploy this, what should you worry about?](#if-you-deploy-this-what-should-you-worry-about) — the attack path stated plainly, a concern/mitigation/non-mitigation table, the three settings that determine exposure, and the worst realistic outcome. |
 > | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered, then **measured**: [ioscan-red-team.md](ioscan-red-team.md) runs a 43-payload adversarial corpus and publishes the result — **37% withheld, 63% reached the agent**, with the containment credited to the network deny rules and verified across all four ACMM modes on every test run ([#6685](https://github.com/hivecommons/hive/issues/6685)). |
 > | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check is substring-only — now filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and recorded as a known weakness. |
-> | "Get an OpenSSF passing badge." | Agreed; being pursued in [#6684](https://github.com/hivecommons/hive/issues/6684). Most passing criteria already met. |
+> | "Get an OpenSSF passing badge." | **Already held, and this document was wrong to imply otherwise.** [Project 14261](https://www.bestpractices.dev/projects/14261) reached **passing** (100%) on 2026-08-27 — four days before the review — and `README.md` was displaying it throughout. The badge entry has since been corrected: 70 URLs in its criteria justifications still pointed at the pre-migration `kubestellar` org. Tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). |
 > | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped enforcement tracked in [#6687](https://github.com/hivecommons/hive/issues/6687). |
 > | "Looks like AI generated this — you should know the answer." | The "Case studies: not applicable" claim was simply **wrong**: `ADOPTERS.md` lists seven adopters, three in production, one running at ACMM L5/L6 across 43 repositories. Replaced with the real table. |
 > | "Go through the open questions and figure them out." | The open-questions section is gone. Every item was run down against the repository and answered in [Questions resolved since first review](#questions-resolved-since-first-review) — including two answers that are "no." |
@@ -823,9 +823,10 @@ repository and answered below. Where the answer is "no," it says no.
   compromise.
 
 - **Does the project intend to pursue the OpenSSF Best Practices Badge?**
-  Resolved: **yes.** It had not been considered before review; it is now
-  tracked in [#6684](https://github.com/hivecommons/hive/issues/6684), with
-  most passing criteria already satisfied.
+  Resolved: **it already holds it.** [Project 14261](https://www.bestpractices.dev/projects/14261)
+  reached the passing level on 2026-08-27, before this question was asked.
+  The question survived in this document only because the document was being
+  written from itself rather than checked against the programme's API.
 
 - **What is the current OpenSSF Scorecard result?** Intentionally not frozen
   into this document — the workflow runs weekly and on every push to `v4`,
