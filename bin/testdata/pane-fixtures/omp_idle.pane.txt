@@ -1,0 +1,50 @@
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Lint/type errors piling up? `omp cleanse` (or /cleanse right here) hunts project diagnostics
+      and fixes them with parallel subagents — esc cancels
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.1.17 is available. Run: omp update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ reply with just the single word: ok1
+
+
+ ok1
+
+
+ reply with just the single word: ok2
+
+
+ ok2
+
+
+ reply with just the single word: ok3
+
+
+ ok3
+
+
+ reply with just the single word: ok4
+
+
+ ok4
+
+
+ reply with just the single word: ok5
+
+
+ ok5
+
+
+ reply with just the single word: ok6
+
+
+ ok6
+
+                                                                                                                                                                                     Reply with word ok1
+ 󰵗  󰪣 Sonnet 5   /tmp  󰙺 0.04 ★ 6 ─────3%──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────󰁨───────────────────────1M─
+╰─

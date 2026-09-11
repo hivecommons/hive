@@ -335,6 +335,35 @@ func restoreCopilotTokens(path, token string) error {
 	return writeCopilotConfig(path, cfg)
 }
 
+// replaceCopilotTokens writes token as the active Copilot CLI identity,
+// replacing any stale logged-in user carried by the shared config.
+func replaceCopilotTokens(path, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	cfg, err := readCopilotConfig(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		cfg = map[string]interface{}{}
+	}
+	if login := githubTokenLogin(token); login != "" {
+		identity := map[string]interface{}{"host": "https://github.com", "login": login}
+		cfg["copilotTokens"] = map[string]interface{}{"https://github.com:" + login: token}
+		cfg["lastLoggedInUser"] = identity
+		cfg["loggedInUsers"] = []interface{}{identity}
+	} else {
+		cfg["copilotTokens"] = map[string]interface{}{
+			"github.com": map[string]interface{}{"token": token},
+		}
+		delete(cfg, "lastLoggedInUser")
+		delete(cfg, "loggedInUsers")
+	}
+	return writeCopilotConfig(path, cfg)
+}
+
 // githubTokenLogin resolves the GitHub login that owns token via GET /user, or
 // "" on any failure. Short-timeout, one call — used only on the rare seed path
 // where the config lacks a valid identity. Overridable in tests.
@@ -391,12 +420,7 @@ func copilotIdentityKey(v interface{}) string {
 	return ""
 }
 
-// extractCopilotToken pulls the first usable token string out of a config.json
-// copilotTokens map, or "" when there is none. The Copilot CLI stores entries
-// in two shapes across versions/login routes — a bare string
-// ({"host:user":"gho_…"}) and an object ({"github.com":{"token":"gho_…"}}) —
-// and this accepts both. It is the inverse of restoreCopilotTokens: the reader
-// side of promoting a CLI-written token back to the hive's durable store.
+// extractCopilotToken returns the active usable token from config.json.
 func extractCopilotToken(path string) string {
 	cfg, err := readCopilotConfig(path)
 	if err != nil {
@@ -406,21 +430,36 @@ func extractCopilotToken(path string) string {
 	if !ok {
 		return ""
 	}
-	for _, v := range tokens {
-		switch t := v.(type) {
-		case string:
-			if s := strings.TrimSpace(t); copilotTokenValueUsable(s) {
-				return s
-			}
-		case map[string]interface{}:
-			if s, ok := t["token"].(string); ok {
-				if s = strings.TrimSpace(s); copilotTokenValueUsable(s) {
-					return s
-				}
-			}
-		}
+	if key := copilotIdentityKey(cfg["lastLoggedInUser"]); key != "" {
+		return copilotTokenFromValue(tokens[key])
 	}
-	return ""
+	var found string
+	for _, v := range tokens {
+		token := copilotTokenFromValue(v)
+		if token == "" {
+			continue
+		}
+		if found != "" && token != found {
+			return ""
+		}
+		found = token
+	}
+	return found
+}
+
+func copilotTokenFromValue(v interface{}) string {
+	var token string
+	switch t := v.(type) {
+	case string:
+		token = t
+	case map[string]interface{}:
+		token, _ = t["token"].(string)
+	}
+	token = strings.TrimSpace(token)
+	if !copilotTokenValueUsable(token) {
+		return ""
+	}
+	return token
 }
 
 // copilotTokenValueUsable reports whether a copilotTokens value is a real

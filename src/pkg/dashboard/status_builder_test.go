@@ -390,6 +390,43 @@ func TestBuildAgents(t *testing.T) {
 	}
 }
 
+func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"supervisor": {
+				ID:          "supervisor",
+				Backend:     "unsloth-local",
+				Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
+				Enabled:     true,
+				DisplayName: "Supervisor",
+				SortOrder:   10,
+			},
+		},
+		Governor: config.GovernorConfig{
+			Gateways: []config.GatewayConfig{{
+				Name:         "unsloth-local",
+				Kind:         config.GatewayKindCustom,
+				Endpoint:     "http://host.docker.internal:8888",
+				DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+			}},
+		},
+	}
+
+	agents := buildAgents(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	if len(agents) != 1 {
+		t.Fatalf("agents len = %d, want 1 for enabled agent using configured gateway backend", len(agents))
+	}
+	if agents[0].Name != "supervisor" {
+		t.Fatalf("agent name = %q, want supervisor", agents[0].Name)
+	}
+	if agents[0].CLI != "unsloth-local" {
+		t.Errorf("agent CLI = %q, want configured gateway backend", agents[0].CLI)
+	}
+	if agents[0].StructuredStatus != "BLOCKED" {
+		t.Errorf("structured status = %q, want BLOCKED to make the missing runtime process visible", agents[0].StructuredStatus)
+	}
+}
+
 // TestBuildAgents_OffByCadence verifies that an agent whose cadence for the
 // current governor mode is a non-kicking value ("pause"/"off") is flagged
 // OffByCadence, while a normally-scheduled agent is not. This is the signal the
@@ -487,6 +524,66 @@ func TestBuildFrontendStatus(t *testing.T) {
 	}
 	if len(payload.Agents) != 1 {
 		t.Errorf("agents len = %d", len(payload.Agents))
+	}
+}
+
+func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		},
+		GitHub: config.GitHubConfig{Token: "tok"},
+	}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:                      "scanner",
+			Config:                    cfg.Agents["scanner"],
+			State:                     agent.StateRunning,
+			OutputBuffer:              agent.NewRingBuffer(10),
+			ProviderErrorClass:        "auth",
+			ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
+			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
+		},
+		"quality": {
+			Name:         "quality",
+			Config:       cfg.Agents["quality"],
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+		},
+	}
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if got := payload.Health["agent_auth"]; got != 0 {
+		t.Fatalf("health.agent_auth = %v, want 0 while a provider auth block is active", got)
+	}
+}
+
+func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		},
+		GitHub: config.GitHubConfig{Token: "tok"},
+	}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:                      "scanner",
+			Config:                    cfg.Agents["scanner"],
+			State:                     agent.StateRunning,
+			OutputBuffer:              agent.NewRingBuffer(10),
+			ProviderErrorClass:        "auth",
+			ProviderErrorLine:         "old auth error",
+			ProviderErrorBackoffUntil: time.Now().Add(-time.Minute),
+		},
+	}
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if got := payload.Health["agent_auth"]; got != 1 {
+		t.Fatalf("health.agent_auth = %v, want 1 after provider auth backoff expires", got)
 	}
 }
 

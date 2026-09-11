@@ -42,6 +42,9 @@ type AgentSummary struct {
 	StartFailureExitCode *int                  `json:"startFailureExitCode,omitempty"`
 	StartFailureSignal   string                `json:"startFailureSignal,omitempty"`
 	Restarts             AgentRestartTelemetry `json:"restarts,omitempty"`
+	BackendAuthStatus    string                `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince     string                `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError string                `json:"backendAuthLastError,omitempty"`
 }
 type AgentRestartTelemetry struct {
 	Total         int    `json:"total,omitempty"`
@@ -78,6 +81,9 @@ type AgentActivity struct {
 	StartFailureExitCode *int
 	StartFailureSignal   string
 	Restarts             AgentRestartTelemetry
+	BackendAuthStatus    string
+	BackendAuthSince     time.Time
+	BackendAuthLastError string
 }
 
 func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
@@ -105,6 +111,8 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartBlocked:         act.StartBlocked,
 		StartFailureExitCode: act.StartFailureExitCode,
 		StartFailureSignal:   act.StartFailureSignal,
+		BackendAuthStatus:    act.BackendAuthStatus,
+		BackendAuthLastError: act.BackendAuthLastError,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -117,6 +125,9 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	}
 	if !act.StartFailureLastAt.IsZero() {
 		as.StartFailureLastAt = act.StartFailureLastAt.UTC().Format(time.RFC3339)
+	}
+	if !act.BackendAuthSince.IsZero() {
+		as.BackendAuthSince = act.BackendAuthSince.UTC().Format(time.RFC3339)
 	}
 	if act.KickInterval > 0 {
 		as.KickIntervalSec = int64(act.KickInterval / time.Second)

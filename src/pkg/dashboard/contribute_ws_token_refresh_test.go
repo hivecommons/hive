@@ -131,7 +131,7 @@ func TestTokenRefreshDue(t *testing.T) {
 
 // TestSendTokenRefreshShape verifies that a token_refresh emitted for an active
 // task carries github_token + token_expires_at with the exact field names the
-// relay's token_refresh handler consumes (bin/contributor-relay.sh), and that
+// relay's token_refresh handler consumes (bin/contributor-relay.js), and that
 // the mint timestamp is advanced so the next refresh is scheduled correctly.
 func TestSendTokenRefreshShape(t *testing.T) {
 	hub := &ContributeWSHub{logger: slog.Default()}

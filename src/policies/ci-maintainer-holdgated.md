@@ -64,20 +64,28 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening Hold-Gated PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a worktree: `git worktree add /tmp/ci-fix-<slug> -b ci/fix-<slug>`
 2. Implement the CI workflow fix
 3. Commit: `git commit -s -m "[ci-maintainer] fix: <description>"`
-4. Push and open a PR with `hold` label — **NEVER merge**:
+4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[ci-maintainer] fix: <short description>" \
-  --body "## CI Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## CI Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "ci,hold"
 ```
 
-CI Maintainer can PR: `.github/workflows/*.yml` changes, dependency pinning, runner config, coverage gates.
+CI Maintainer can PR: dependency pinning, runner config, coverage gates, and composite
+actions under `.github/actions/`.
+CI Maintainer can NOT PR `.github/workflows/*.yml` in this mode: an ISSUES_AND_PRS
+token is minted at the `contributor` tier, which does not carry the Workflows
+permission, so GitHub rejects the push server-side (#6681). File the issue with the
+exact replacement text and say it needs a human or an ISSUES_PRS_MERGE agent to land.
 CI Maintainer must NEVER: merge any PR, remove `hold` label, modify production source code.
 
 ## Writing Beads

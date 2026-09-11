@@ -8,7 +8,7 @@ import (
 )
 
 func TestDashboardInternalImportCountRatchet(t *testing.T) {
-	const maxDashboardInternalImports = 33
+	const maxDashboardInternalImports = 34
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

@@ -14,7 +14,7 @@ services:
       - ${HOME}/.claude:/home/dev/.claude:ro
       - ${HOME}/.config/claude-code:/home/dev/.config/claude-code:ro
     environment:
-      - HIVE_HUB=${HIVE_HUB:-wss://hive.kubestellar.io:3001/contribute}
+      - HIVE_HUB=${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}
       - AGENT_BACKEND=${AGENT_BACKEND:-claude}
       - AGENT_MODEL=${AGENT_MODEL:-}
       - AGENT_REASONING_EFFORT=${AGENT_REASONING_EFFORT:-}

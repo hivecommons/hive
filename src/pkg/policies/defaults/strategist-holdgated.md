@@ -42,13 +42,16 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening Hold-Gated PRs
 
+If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+
 1. Create a worktree: `git worktree add /tmp/strategy-<slug> -b strategy/<slug>`
 2. Write the planning artifact (ROADMAP.md, updated CONTRIBUTING, milestone doc)
 3. Commit: `git commit -s -m "[strategist] planning: <description>"`
-4. Push and open a PR with `hold` label — **NEVER merge**:
+4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
 
 ```bash
-gh pr create --repo "$HIVE_REPO" \
+hive-open-pr --repo "$HIVE_REPO" \
   --title "[strategist] planning: <short description>" \
   --body "## Planning Artifact\n\n<what this document adds or updates>\n\nRelated: #<issue-number>\n\n---\n*Filed by strategist agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
   --label "roadmap,hold"

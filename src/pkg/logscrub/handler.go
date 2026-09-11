@@ -18,7 +18,7 @@ const (
 var TokenPattern = regexp.MustCompile(githubTokenPattern + `|` + jwtPattern)
 
 // secretPattern gives every scrubbed credential shape a stable category name.
-// bin/contributor-relay.sh declares the same closed category set, and the parity
+// bin/contributor-relay.js declares the same closed category set, and the parity
 // test in scrub_test.go fails when either implementation grows without the other.
 type secretPattern struct {
 	category string

@@ -5,7 +5,7 @@
 # integration surface hive does not control: vendors ship CLI updates on their
 # own schedule, and what breaks is the seam — completion detection (#5376),
 # CODEX_HOME handling (#5335), readiness regexes that matched nothing on real
-# output (see the codex arm of getCLIState in bin/contributor-relay.sh). Every
+# output (see the codex arm of getCLIState in bin/contributor-relay.js). Every
 # existing test pins that seam against captured fixtures, so a vendor change
 # ships green here and fails in production. This suite is the live complement:
 # it drives the REAL relay against a fake hub and, where credentials exist,
@@ -81,7 +81,7 @@ skip() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELAY="$ROOT/bin/contributor-relay.sh"
+RELAY="$ROOT/bin/contributor-relay.js"
 REAL_HOME="$HOME"
 
 SMOKE_BACKENDS="${HIVE_SMOKE_BACKENDS:-claude codex}"
@@ -103,7 +103,7 @@ echo "-- A1: HEADLESS_BACKENDS (relay) agrees with KNOWN_BACKENDS (backends.conf
 HEADLESS_KEYS="$(sed -n '/^const HEADLESS_BACKENDS = {$/,/^};$/p' "$RELAY" \
   | grep -E '^  [a-z]+: \{' | sed -E 's/^  ([a-z]+):.*/\1/')"
 if [ -z "$HEADLESS_KEYS" ]; then
-  fail "HEADLESS_BACKENDS table extracted from bin/contributor-relay.sh" \
+  fail "HEADLESS_BACKENDS table extracted from bin/contributor-relay.js" \
        "the sed/grep anchors matched nothing — did the table's formatting change?"
 else
   pass "HEADLESS_BACKENDS table extracted ($(echo "$HEADLESS_KEYS" | wc -l) backends)"
@@ -114,10 +114,9 @@ else
               "relay lists '$k' but config/backends.conf KNOWN_BACKENDS does not" ;;
     esac
   done
-  # The complement is a decision, not an accident: bob and aider drive an
-  # interactive TUI with no one-shot entry point (see the HEADLESS_BACKENDS
-  # header comment). A new backend landing in this list means someone added it
-  # to backends.conf without deciding its headless story.
+  # The complement is a decision, not an accident: aider and bob drive an
+  # interactive TUI with no one-shot entry point; OMP remains interactive-only
+  # until its one-shot argv and exit semantics are separately demonstrated.
   NON_HEADLESS=""
   for k in $KNOWN_BACKENDS; do
     case "
@@ -129,8 +128,8 @@ $k
       *) NON_HEADLESS="$NON_HEADLESS $k" ;;
     esac
   done
-  check "backends without a headless mode are exactly the documented pair" \
-        "aider bob" "$(echo "$NON_HEADLESS" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
+  check "backends without a headless mode are exactly the documented set" \
+        "aider bob omp" "$(echo "$NON_HEADLESS" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
 fi
 
 echo ""
@@ -375,6 +374,64 @@ if [ "$RIG_OK" = "1" ]; then
     fail "fake hub started (S2)"
   fi
   stop_scenario
+
+  echo ""
+  echo "-- S3: OMP interactive stub — task_complete follows its verdict --"
+  if command -v tmux >/dev/null 2>&1; then
+    STUB_OMP="$WORK/stub-omp"
+    mkdir -p "$STUB_OMP" "$WORK/ws-omp"
+    cat > "$STUB_OMP/omp" <<'OMP'
+#!/usr/bin/env node
+process.stdout.write('π > ⬢ github-copilot/gpt-5.6-luna >\n');
+process.stdin.resume();
+process.stdin.once('data', () => {
+  process.stdout.write('HIVE_VERDICT: complete — OMP interactive stub\n');
+  process.stdout.write('π > ⬢ github-copilot/gpt-5.6-luna >\n');
+  setInterval(() => {}, 60000);
+});
+OMP
+    chmod +x "$STUB_OMP/omp"
+    TMUX_SESS="hive-smoke-omp"
+    tmux kill-session -t "$TMUX_SESS" 2>/dev/null || true
+    if start_fakehub s3 && tmux new-session -d -s "$TMUX_SESS" -c "$WORK/ws-omp"; then
+      tmux send-keys -t "$TMUX_SESS" "$(printf %q "$STUB_OMP/omp") --model github-copilot/gpt-5.6-luna" Enter
+      RELAY_LOG="$WORK/relay-omp-interactive.log"
+      (
+        cd "$ROOT" || exit 1
+        PATH="$STUB_OMP:$PATH" \
+        HIVE_RELAY_TEST_TIMING=1 \
+        HOME="$WORK/home-s3" \
+        AGENT_BACKEND=omp \
+        AGENT_MODEL=github-copilot/gpt-5.6-luna \
+        HIVE_AGENT_SESSION="$TMUX_SESS" \
+        HIVE_AGENT_CWD="$WORK/ws-omp" \
+        HIVE_HUB="ws://127.0.0.1:$HUB_PORT/contribute" \
+        HIVE_REGISTRATION_TOKEN=smoke-token \
+        HIVE_WORKSPACE_DIR="$WORK/ws-omp" \
+        HIVE_TASK_FILE="$WORK/task-omp.json" \
+        AGENT_LAUNCH_CMD="$(printf %q "$STUB_OMP/omp") --model github-copilot/gpt-5.6-luna" \
+        HIVE_GH_TOKEN_CACHE="$WORK/gh-omp.cache" \
+        exec node "$RELAY"
+      ) >"$RELAY_LOG" 2>&1 &
+      RELAY_PID=$!
+      if wait_for_terminal "$HUB_LOG" 30; then
+        check "OMP interactive task_complete result" "completed" \
+              "$(msg_field "$HUB_LOG" task_complete .result)"
+        contains "OMP interactive completion carries its verdict sentinel" \
+                 "$(msg_field "$HUB_LOG" task_complete .tmux_output)" "HIVE_VERDICT: complete"
+        check "OMP interactive completion signal is verdict" "verdict" \
+              "$(msg_field "$HUB_LOG" task_complete .completion_signal)"
+      else
+        fail "OMP interactive stub reached task_complete only after its verdict"
+        dump_evidence "S3" "$RELAY_LOG"
+      fi
+    else
+      fail "fake hub + tmux session started (S3)"
+    fi
+    stop_scenario
+  else
+    skip "tmux not installed — OMP interactive stub scenario skipped"
+  fi
 fi
 
 # ── B. Live per-backend scenarios ────────────────────────────────────────────

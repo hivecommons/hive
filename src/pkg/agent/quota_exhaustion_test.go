@@ -9,6 +9,8 @@ func TestPaneShowsQuotaExhausted(t *testing.T) {
 		`API Error: 429 {"error":{"type":"budget_exceeded","message":"Budget has been exceeded!"}}`,
 		"provider spending limit reached (682 refused calls since Fri)",
 		"litellm refused the request on a spending limit (429)",
+		// agy's chrome-less provider quota banner (#6541).
+		"⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 38m29s.",
 		"Oh no! It looks like you've gone over your budget allowance of 1000 Bobcoins. Give me feedback using about my performance and I'll make sure you get rewarded with some extra credits!",
 		"💰 1000.01/1000 (0%) | Current 💬: 0.00",
 	}

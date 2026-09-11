@@ -81,6 +81,15 @@ A classic PAT needs `repo` scope; see
 [github-app-setup.md](https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md#personal-access-token-pat-scopes)
 for the App path and the full scope list.
 
+The dashboard's **Open a terminal** button needs a terminal-assertion signing
+key; a standalone Compose hive like this one auto-provisions a per-instance key
+on first boot (persisted under `/data/.hive/terminal-key` in the `hive-data`
+volume) so it just works, with no extra setup. Set `HIVE_TERMINAL_KEY` in
+`src/.env` yourself (e.g. `openssl rand -hex 32`) if you would rather pin a
+specific value — it always overrides the auto-provisioned one. See
+[env-vars.md](https://github.com/hivecommons/hive/blob/v4/src/docs/env-vars.md#spoke-side-derived-keys)
+for the full resolution order.
+
 ## Verify Your Hive Is Healthy
 
 The gateway publishes port 3001 whether or not the proxy behind it came up, so

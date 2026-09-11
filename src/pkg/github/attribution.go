@@ -51,6 +51,12 @@ const (
 	// AuditActionAgentCommentCreated is the audit action recorded when the
 	// issue-request watcher posts an issue/PR comment on an agent's behalf.
 	AuditActionAgentCommentCreated = "agent_comment_created"
+	// AuditActionAgentIssueRejectedDuplicate is the audit action recorded when
+	// the issue-request watcher REFUSES a create because a maintainer recently
+	// closed an agent-filed issue with the same file-reference set as
+	// not-planned/duplicate (#6463). Audited so the suppression is visible to
+	// operators — a silent gate would be indistinguishable from a lost finding.
+	AuditActionAgentIssueRejectedDuplicate = "agent_issue_rejected_duplicate"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"

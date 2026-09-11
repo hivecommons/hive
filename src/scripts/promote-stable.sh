@@ -132,6 +132,16 @@ normalized_decision() {
   write_output reason "$reason"
 }
 
+# hold_with_reason emits a hold decision in the same shape as
+# normalized_decision for conditions the gate learns about before it has a full
+# set of facts (for example a candidate whose publishing run is still running).
+hold_with_reason() {
+  local reason=$1
+  printf 'decision=hold\nreason=%s\n' "$reason"
+  write_output decision hold
+  write_output reason "$reason"
+}
+
 inspect_raw() {
   docker buildx imagetools inspect "$@"
 }
@@ -386,7 +396,15 @@ promote() {
   else
     stable_generation=${min_stable_generation:-0}
   fi
-  run_created=$(workflow_run_created_at "$repo" "$first_generation")
+  # The candidate digest is pushed part-way through its docker.yml run, so an
+  # hourly promotion that lands in that window sees a candidate whose run has
+  # not completed yet. That is not an error, it is the youngest possible
+  # candidate: report a hold with the reason instead of dying on the empty
+  # lookup, which surfaced as a silent "exit code 1" with no log line.
+  if ! run_created=$(workflow_run_created_at "$repo" "$first_generation"); then
+    hold_with_reason "candidate ${first_digest} comes from docker.yml run ${first_generation}, which has not completed yet; re-evaluate on the next schedule"
+    return 0
+  fi
   run_epoch=$(iso_to_epoch "$run_created")
   now=$(now_epoch)
   age=$((now - run_epoch))

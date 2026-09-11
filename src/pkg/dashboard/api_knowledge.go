@@ -159,6 +159,10 @@ func titleCaseWords(s string) string {
 }
 
 func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
+	if !s.allowKnowledgeExport(w, r) {
+		return
+	}
+
 	if !s.ensureKnowledge() {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		_, _ = w.Write([]byte("# Agent Knowledge\n\nKnowledge base not available.\n"))
@@ -237,6 +241,19 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(body))
 	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sum))
 	_, _ = w.Write([]byte(body))
+}
+
+func (s *Server) allowKnowledgeExport(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Hive-Role") != "" {
+		return true
+	}
+	if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+		r.Header.Set("X-Hive-User", profile.GitHubUsername)
+		r.Header.Set("X-Hive-Role", config.RoleRead)
+		return true
+	}
+	jsonError(w, "knowledge export authentication required", http.StatusUnauthorized)
+	return false
 }
 
 // sortFactsStable orders facts by their natural identifier so an unchanged

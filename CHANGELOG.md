@@ -4,24 +4,278 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## How we maintain this file
 
-- In your PR, add the entry as a fragment file `changelog.d/<category>-<pr-or-slug>.md` (category one of `added`/`changed`/`deprecated`/`fixed`/`security` — see [changelog.d/README.md](changelog.d/README.md)) for user-visible features, fixes, security changes, migrations, deprecations, and breaking changes. Do not append to `## Unreleased
-
-## 2026-09-03 (v4.7.0)
-
-## 2026-09-03 (v4.6.0)
-
-## 2026-09-02 (v4.5.0)
-
-## 2026-09-02 (v4.4.0)
-
-## 2026-09-02 (v4.3.0)
-
-## 2026-09-02 (v4.2.0)
+- In your PR, add the entry as a fragment file `changelog.d/<category>-<pr-or-slug>.md` (category one of `added`/`changed`/`deprecated`/`fixed`/`security` — see [changelog.d/README.md](changelog.d/README.md)) for user-visible features, fixes, security changes, migrations, deprecations, and breaking changes. Do not append to `## Unreleased` directly: one shared heading edited by every PR made unrelated PRs merge-conflict with each other ([#5675](https://github.com/hivecommons/hive/issues/5675)). The transition window for direct edits closed on 2026-09-09; fragments in `changelog.d/` are the accepted route for new PRs.
 - Fragments are compiled into `Unreleased` and moved into a dated release section automatically when a release is cut (`src/scripts/compile-changelog.sh`, driven by `.github/workflows/tagged-release.yml`). If the repository has no release tag for the change, use the merge date rather than inventing a version.
 - Link issues or PRs when useful, but keep entries readable for operators who are not following every PR.
 - Do not include routine refactors, test-only changes, or dependency churn unless they affect users.
 
 ## Unreleased
+
+## 2026-09-11 (v4.28.2)
+
+### Fixed
+
+- Fixed a second OMP readiness regression, found immediately after `#6637` landed: the welcome splash's rotating startup tip can read "Tip: Log in to several accounts of the same provider — `/login` again — and omp load-balances across them automatically", whose literal "Log in" text tripped `classifyReadiness('omp')`'s needs-login gate on an already-authenticated pane, leaving a freshly assigned task queued forever. The "Tip:" paragraph is now stripped before either the onboarding or login gate is tested.
+
+## 2026-09-11 (v4.28.1)
+
+### Fixed
+
+- Fixed the OMP contributor backend never reaching `ready`: its readiness/busy/idle detection (`bin/lib/pane-classifier.js`, `src/pkg/agent/manager.go`) was built against hand-written fixtures rather than a real captured pane, so the splash-only text it matched on fell outside `paneTail`'s window at OMP's actual launch dimensions and disappeared for good after the first exchange, and the busy/idle markers it looked for (`π >`, `esc to interrupt`) do not match anything OMP 18.1.16/18.1.17 renders. Readiness, busy, and idle detection now key off OMP's persistent status-footer chrome, verified against real captures, with the fabricated pane fixtures replaced by live ones.
+
+## 2026-09-11 (v4.28.0)
+
+### Added
+
+- Hive contributors can run Oh My Pi as an interactive backend, with Hive-owned task delivery and completion reporting ([#6623](https://github.com/hivecommons/hive/issues/6623)).
+
+## 2026-09-11 (v4.27.2)
+
+### Security
+
+- Require owner role on the agent-control mutation endpoints (kick, switch, model set, restart, reset-restarts, pin, unpin), closing a gap where any authenticated read-write contributor could restart or reconfigure an agent, or inject an arbitrary prompt into its CLI session ([#6557](https://github.com/hivecommons/hive/issues/6557))
+
+## 2026-09-10 (v4.27.1)
+
+### Fixed
+
+- The dibs cutover preflight now asks crt.sh about the whole registered domain, not just its apex ([#5925](https://github.com/hivecommons/hive/issues/5925)). `q=<domain>` is an **identity** match: it returns certificates whose names are that exact domain and none for its subdomains, which is the actual reason crt.sh was measured seeing 46 of 83 in-window certificates rather than any flakiness — the Let's Encrypt cap is 50 new SAN sets per week per *registered* domain and every subdomain spends from it. The check now unions that query with crt.sh's subdomain wildcard `q=%.<domain>` and counts the two together as one source. Cert Spotter remains the required cross-check and an unreachable Cert Spotter is still refused rather than trusted, but Cert Spotter is rate-limited unauthenticated and a truncated page parses exactly like a complete one, so the point of a complete crt.sh count is that it can now *exceed* a short Cert Spotter answer and block a window that would otherwise have looked open. Feeding a knowingly partial number into a `max()` can only lose issuances. Losing the wildcard half alone degrades to the previous identity-only reading instead of turning the check into a skip.
+- Fixed `src/scripts/issue-coauthor.sh` silently crediting nobody. It folded the issue author's `Co-authored-by:` trailer in with `git interpret-trailers --if-exists doNothing`, and that policy keys on the trailer *name* rather than the whole line — so whenever a commit message already carried any `Co-authored-by:` trailer, the issue author's line was dropped. Because every commit in this repository carries `Co-authored-by: Copilot ...` by convention, the mechanism added in [#6588](https://github.com/hivecommons/hive/issues/6588) was a no-op on essentially every real commit: it exited 0, printed the trailer it had not recorded, and left the filer uncredited on their contribution graph — precisely the "the credit looks recorded while nothing was credited" failure the script was written to prevent. It now uses `addIfDifferent`, which compares the whole trailer line, so it remains idempotent on re-runs while still crediting the filer alongside existing co-authors.
+- The hub dashboard now treats missing or Go zero process start times as unknown instead of rendering multi-century uptimes, and upgrade heartbeats preserve the last known spoke start time so the Uptime column stays accurate during restarts.
+
+## 2026-09-10 (v4.27.0)
+
+### Added
+
+- Agent PR-opening guidance now wires the existing `issue-coauthor.sh` helper into `hive-open-pr`, kick prompts, and bundled policy templates, so resolved-issue attribution is checked on the path agents actually use without duplicating the identity-resolution logic ([#6588](https://github.com/hivecommons/hive/issues/6588)).
+
+### Fixed
+
+- Fixed the staged `dibs.kubestellar.io` legacy-redirect Service, which pointed at a port nothing listens on ([#5925](https://github.com/hivecommons/hive/issues/5925)). `04-dibs-legacy-redirect-externalname.yaml` bridges the `dibs` namespace to the shared redirect backend in `hive-hub` — Ingress backends must be same-namespace — and declared `targetPort: 8080`, the backend **pod's** port. ingress-nginx connects to an ExternalName Service on the port resolved from the Service, and the name it resolves to is itself a ClusterIP Service listening on `80` that forwards to `8080`, so naming `8080` here reached that Service's ClusterIP on a closed port: `upstream timed out (110: Operation timed out) ... server: dibs.kubestellar.io`. Every legacy link hung and then rendered a generic page instead of redirecting — silently broken rather than loudly failing, and only visible once the cutover applied the manifest. Corrected to `targetPort: 80`; `https://dibs.kubestellar.io/ideas/42?x=1` now answers `308` to `https://dibs.hivecommons.dev/ideas/42?x=1` with path and query intact.
+- The dibs cutover preflight no longer reports Let's Encrypt headroom that does
+  not exist. Its quota check read a single certificate transparency source,
+  crt.sh, which for `hivecommons.dev` held 46 of the 83 certificates issued in
+  the rolling 168h window: a strict subset, missing 37 certificates spread
+  across the whole window rather than bunched at the recent end, so the two
+  services simply monitor different CT logs and a retry never cleared it. The
+  check therefore reported `✓ headroom 4` and let the run proceed while the
+  registered domain was already 33 over its cap of 50, which is the one gate
+  that guards the irreversible, quota-spending step ([#5925](https://github.com/hivecommons/hive/issues/5925)).
+  It now queries crt.sh and Cert Spotter, believes whichever sees more (neither
+  can invent an issuance that did not happen, so the higher count is always the
+  nearer one), and counts distinct certificates rather than CT log entries, so
+  a precertificate and its leaf no longer count twice. If either source cannot
+  be reached the check warns instead of passing, because a single-source answer
+  is the undercount above wearing a confident number. On the same domain that
+  previously passed, it now correctly reports 83 and blocks.
+- Fixed an uncaught `TypeError: Cannot read properties of undefined (reading 'then')` thrown on every dashboard load. The deferred-init list calls each entry as `fn().then(...)`, and twelve of its thirteen entries are `async function`s that return a promise for free — but `fetchTimeline` was an ordinary function whose body never returned the promise it created, so `.then` was called on `undefined`. The throw escaped a `setTimeout` callback with nothing to catch it, leaving that entry's promise unsettled, so `Promise.all` never settled and `_deferredLoadPromise` stayed pending for the life of the page. `_afterPaint` awaits that promise, so first-load view restoration — making the agent-detail panel visible, navigating to a section saved in the URL hash — silently never ran, and the timeline's refresh interval was never installed either. The deferred loop now wraps each entry so one bad entry costs its own feature rather than stranding the whole chain, and reports the failure to the console instead of swallowing it ([#6581](https://github.com/hivecommons/hive/issues/6581)).
+- Enabled agents whose backend is a configured model-gateway name now remain visible in the dashboard Agents section even if their runtime process is missing, with a blocked card that explains the missing process instead of silently disappearing ([#6581](https://github.com/hivecommons/hive/issues/6581)).
+
+## 2026-09-10 (v4.26.0)
+
+### Added
+
+- Added `hive-backup restore -file <archive> -dest <data-dir>`, the placement step that decrypting a spoke backup previously stopped short of. `extract` left a tree still carrying the archive's `spoke/` and `beads/` prefixes, which an operator then hand-copied path by path with nothing checking the destination; `restore` applies the mapping (`spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/`) and **refuses** when the destination already belongs to a different hive, so a restore can no longer silently splice one hive's config and GitHub App keys onto another's identity. `-dry-run` reports the plan and runs the identity check without writing; `-force` overrides the guard and says so. Restored credentials and config are written `0600` regardless of what mode the archive claims ([#6529](https://github.com/hivecommons/hive/issues/6529), epic [#6521](https://github.com/hivecommons/hive/issues/6521) item #16).
+- The Operations page now shows a signed-in contributor their own "Your contribution" numbers — issues worked in the last 24 hours, issues worked all-time, how many of those completions produced a pull request the hub verified, and how many failed — via a new self-service `GET /api/contribute/me` endpoint that only ever answers for the caller ([#6543](https://github.com/hivecommons/hive/issues/6543)).
+- Each agent now tracks a `backend_auth` canary (`ok` / `unlicensed` / `token-expired` / `unreachable` / `quota`), derived from the existing provider-error classifier and surfaced on the spoke dashboard and in the hub heartbeat; the hub aggregates it per hive into `auth_health` (`ok` / `degraded` / `down`, default 15-minute down threshold, configurable via `HIVE_HUB_AUTH_HEALTH_DOWN_THRESHOLD`), shows it on the fleet/My-Hives status API and dashboard row, and sends the hive owner one Slack DM the first time a hive goes fully down — so a fleet-wide backend-auth outage like #6500 or #6489 is never silent again ([#6558](https://github.com/hivecommons/hive/issues/6558)).
+- The dashboard and heartbeat health summary now include an `agent_auth` check that fails when any enabled agent is actively blocked by an inference-provider auth error, making fleet-wide Copilot licensing/token failures visible without opening each agent terminal ([#6558](https://github.com/hivecommons/hive/issues/6558)).
+- `/api/status` and the lightweight agent-status stream now include `hiddenAgents`, listing any agent-manager runtime entry left out of the Agents cards along with the stable reason it was omitted for, so an empty or short Agents section is diagnosable without shell access ([#6581](https://github.com/hivecommons/hive/issues/6581)).
+- Issue authors are now credited as co-authors on the commits that resolve their issues. `src/scripts/issue-coauthor.sh <issue>` builds the `Co-authored-by:` trailer from the issue itself — `--amend` adds it to the commit you just made — so filing an accepted issue puts you in the repository's contributor list and on your own GitHub contribution graph rather than leaving you with a closed issue. Much of Hive is written by its maintainers and its own agents, and this makes the issue path a recorded contribution instead of a lesser one ([#6588](https://github.com/hivecommons/hive/issues/6588)). The script always uses the `<id>+<login>@users.noreply.github.com` form (the only address guaranteed to resolve to the account, and one that does not republish a personal address), emits nothing when there is nobody to credit — a bot filed it, or you did — and fails rather than emitting a half-right line, because GitHub silently ignores an address it cannot match: a malformed trailer looks like credit while crediting nobody. Co-authorship is attribution only: it never satisfies anyone's DCO obligation, and a commit carrying only a `Co-authored-by:` still fails the DCO check.
+
+### Fixed
+
+- Copilot model discovery now reports an entitlement rejection instead of hiding it behind a static model list. When GitHub answers the catalog probe with `403 unauthorized: not licensed to use Copilot`, the dashboard's model picker labels every option `(Copilot seat not licensed)` and puts the full explanation — including where to check the seat — on the dropdown's tooltip, and the server logs it at `WARN` rather than `INFO`. Previously the probe's answer was discarded (the HTTP path kept only `upstream returned 403`, dropping the body that says why) and the picker silently served the full static Copilot catalog marked only "(common alias, unverified)", so an owner whose whole fleet had stopped producing output saw a normal-looking model list and no indication that the account, not hive, was the problem. Probe failures that say nothing about the account — no helper installed, a timeout, an unreachable host, a 5xx — are unchanged and stay quiet ([#6500](https://github.com/hivecommons/hive/issues/6500)).
+- Fixed a dashboard Copilot logout permanently disabling the reconciler's PROMOTE direction, so a later in-agent `/login` was never mirrored to the durable store and was lost on the next roll. `handleCopilotAuthLogout` calls `SetCopilotToken("")`, which marked the *empty* token authoritative; `syncCopilotToken` then took the SEED branch and returned early on `authoritative && held == ""`, never reaching PROMOTE. An empty token is now never authoritative — the claim "prefer this over whatever identity the shared CLI config holds" is meaningless without a token to prefer. The invariant is enforced inside `setCopilotToken` rather than at the logout call site, so no future caller can reintroduce the state. Explicit `COPILOT_GITHUB_TOKEN` and just-completed dashboard logins still outrank a stale CLI identity, unchanged from [#6514](https://github.com/hivecommons/hive/pull/6514) ([#6500](https://github.com/hivecommons/hive/issues/6500)).
+- Added `src/scripts/comment-merged-refs.sh`, a post-merge Refs sweep that comments on a still-open issue when a merged PR referenced it with a non-closing keyword (`Refs`, `Ref`, `References`, `Related to`, `See #N`) and no other open PR claims it, asking whether the issue can now be closed — it never auto-closes anything. `.github/workflows/refs-sweep.yml` runs it on a schedule (every 6h, plus `workflow_dispatch`) across PRs merged into `v4`/`v5` in the last N days, and supports `DRY_RUN=1` to print the plan instead of posting. The `hive-open-pr` guidance across policy templates and docs now asks explicitly whether merging a PR leaves anything for its issue to track, defaulting to `Closes #N` when nothing remains ([#6547](https://github.com/hivecommons/hive/issues/6547)).
+- The post-merge DCO monitor can now record a maintainer disposition for a specific protected-branch commit via `DCO_WAIVED_COMMITS`, which is the only instrument that can clear a commit that landed with **no** `Signed-off-by:` trailer at all — the existing `DCO_ALLOWLIST_EMAILS` is consulted only after a trailer is found, and it grants an identity indefinitely rather than accepting one historical commit. Policy forbids repairing such a commit (no rewriting another contributor's work, no signing off on their behalf, per [#6329](https://github.com/hivecommons/hive/issues/6329)), so previously the monitor's only route back to green was waiting ~40 commits for it to fall out of the inspection window while every hourly run paged on a condition nobody could act on. Waivers are never silent: each is printed as `WAIVED`, counted in the summary, and a green run carrying them reads `passed (with recorded waivers)`; a waiver whose commit starts passing is reported as `STALE-WAIVER`. Abbreviated SHAs are rejected rather than silently matching nothing. The monitor also now comments on its tracking issue only when the *set of failing commits changes* — [#6554](https://github.com/hivecommons/hive/issues/6554) collected six identical bot comments in 35 minutes, burying the maintainer triage — and `src/scripts/test-check-dco-trailers.sh`, which existed but was never wired to CI, now runs on any PR touching the checker ([#6576](https://github.com/hivecommons/hive/issues/6576)).
+- Fixed the token-triggered restart cap, which could never actually hold: after three failed attempts the give-up latch was set correctly and then immediately cleared by the boot pane of the very restart that reached it. A pane shows no login prompt while the CLI is still starting, and the poller read that absence as "the login cleared" — so every cycle re-armed the cap and the agent restarted forever at the cooldown's own period. Three hives were observed running at up to **×1334 restarts/24h** (one every ~65s) against a cap of 3, burning spoke CPU and — worse — never surfacing `diagnoseStuckLogin`, so the fleet page showed a restart count instead of the actionable "an operator must log in". The cap now resets only on positive evidence that the CLI came back: past the boot grace (mirroring `watchdog.Classify`'s `booting` guard, reusing this package's own `cliBootGraceSeconds`) **and** with a CLI marker on screen. These agents are blocked on a human device-flow login that no restart can supply, so the cap now does what it was built for and hands off to an operator ([#6578](https://github.com/hivecommons/hive/issues/6578)).
+- Repointed every remaining connectivity default from the retired `hive.kubestellar.io` host to `hive.hivecommons.dev`. These did not fail loudly, which is why they survived the migration: the apex still answers but its 301 **drops the path and query**, and the hosted spoke subdomains under it sit outside the current wildcard certificate and fail the TLS handshake outright. A spoke that cannot complete a handshake never heartbeats, and a hive that misses `maxHeartbeatAge` is marked offline — so a stale default presented as a mysteriously offline hive rather than as a connection error. The contributor agent and its compose file were the worst of these: both defaulted `HIVE_HUB` to `wss://hive.kubestellar.io:3001/contribute`, a host that redirects (which `wss://` will not follow) on a port that is now closed, so every contributor who had not overridden it was dialling a dead endpoint. Also fixed the OpenAPI `servers` entry, which handed a redirecting host to anything generating a client from the spec. The three coupled hub defaults (`defaultHubPublicURL`, `defaultHubCanonicalHost`, `defaultHubSpokeDomain`) are deliberately left alone — they seed session-cookie scoping and redirect trust, are overridden by environment in production, and only move safely as a set.
+
+## 2026-09-10 (v4.25.0)
+
+### Added
+
+- Added a paginated `GET /api/v1/queue` endpoint (`?limit=<int>&offset=<int>`) so downstream consumers can enumerate and page the full actionable backlog reported by `/api/v1/status`, instead of only the small unpaginated `/api/contribute/queue` slice ([#6537](https://github.com/hivecommons/hive/issues/6537)).
+
+### Fixed
+
+- The contributor relay now detects agy's chrome-less "⚠ Individual quota reached" provider quota banner as a fatal API error and dismisses its post-error feedback survey, instead of stalling for 20 minutes and misreporting the task as an `[environment]` failure ([#6541](https://github.com/hivecommons/hive/issues/6541)).
+- Contributors running `just contribute-hive claude` on a Claude subscription (OAuth, no `ANTHROPIC_API_KEY`) no longer stall on Claude Code's first-run "Select login method" chooser with a perfectly valid credential mounted beside it ([#6550](https://github.com/hivecommons/hive/issues/6550)). Claude Code keeps its auth in two files — the token in `~/.claude/.credentials.json` and the session state in `~/.claude.json` — and the container only ever received the first, so the CLI re-ran onboarding on every start. `bin/contributor-agent.sh` seeded the `hasCompletedOnboarding` flag that clears that gate for litellm and for API-key claude (#5103), but not for the default subscription path, which was the one configuration that needed it most; it now seeds for every backend that drives the claude CLI. The relay also recognises the login chooser as `needs-login` instead of letting it fall through to `starting`, so a blocked pane raises the boxed "needs authentication" banner naming the attach command and `/login`, rather than handing the task back at `CLI_READY_TIMEOUT_MS` with the misleading "CLI did not become ready within timeout".
+
+## 2026-09-10 (v4.24.4)
+
+### Fixed
+
+- Stable-channel promotion no longer exits silently with code 1 when the scheduled run races a `docker.yml` publish that is still in progress; it now reports an explicit `hold` naming the in-flight candidate run ([#6537](https://github.com/hivecommons/hive/issues/6537)).
+
+## 2026-09-10 (v4.24.3)
+
+### Fixed
+
+- Standalone, non-hub-provisioned Docker Compose hives now auto-provision a persisted per-instance terminal signing key, so the dashboard's "Open a terminal" button no longer fails with `terminal handoff requires terminal signing key and hive id`; set `HIVE_TERMINAL_KEY` to override it ([#6489](https://github.com/hivecommons/hive/issues/6489)).
+- Fixed the OpenAI-to-Anthropic SSE translator applying a gateway's terminal
+  usage chunk after emitting `message_delta`, so `output_tokens`/`input_tokens`
+  reported to Anthropic-shaped streaming callers could reflect a stale, earlier
+  usage count instead of the upstream gateway's final tally. Found and covered
+  by the gateway-path canary added for #6515.
+
+## 2026-09-10 (v4.24.2)
+
+### Fixed
+
+- Fixed Copilot agents incorrectly reporting that they had no license when a
+  stale or unrelated account remained in the shared CLI config. Explicit
+  `COPILOT_GITHUB_TOKEN` credentials and fresh dashboard logins now replace
+  stale CLI identities, while multi-account configs promote only the selected
+  account instead of whichever token Go map iteration returned first
+  ([#6500](https://github.com/hivecommons/hive/issues/6500)).
+
+## 2026-09-10 (v4.24.1)
+
+### Fixed
+
+- Hosted agents whose Copilot CLI reports "You are not licensed to use Copilot" are now classified as blocked on inference auth (with the pane line surfaced in the dashboard) instead of showing as running while every turn fails ([#6500](https://github.com/hivecommons/hive/issues/6500)).
+
+## 2026-09-10 (v4.24.0)
+
+### Added
+
+- The contribute hub now detects a contributor whose agent runtime is dying at startup and says so at claim time ([#6450](https://github.com/hivecommons/hive/issues/6450)). Previously a relay whose backend failed instantly (e.g. a container launched without its CLI credential) kept claiming assignments and failing them: each failure booked issue cooldowns and degraded the contributor's standing, with no client-visible signal linking it to the broken runtime. Now three consecutive hub-measured sub-minute failures pause that identity's claims for ten minutes, and `selectTask` answers with an explicit `task_unavailable` reason (`contributor_failure_streak`) plus a message naming the streak, the likely cause, and the pause expiry. The streak is cleared by any completion or a genuinely-attempted (slow) failure, and adopted tasks with no hub-measured duration are never counted.
+
+### Fixed
+
+- Contributor status no longer labels the raw scanner pool as assignable work: `actionable_items` and the ready queue now share the same admission pass, while `candidate_items` preserves the pre-admission count and excluded candidates remain visible in the triage ladder instead of disappearing ([#6449](https://github.com/hivecommons/hive/issues/6449)).
+- Added test seams for Gemini model discovery and asynchronous kick status reporting ([#6452](https://github.com/hivecommons/hive/issues/6452)).
+- A scanner finding a maintainer closed as **not planned** or **duplicate** is no longer re-filed indefinitely ([#6463](https://github.com/hivecommons/hive/issues/6463)). The issue-request watcher now scans recently closed App-bot-filed issues before creating: when one was rejected within the last 30 days and names exactly the same set of files (line numbers ignored — they drift with unrelated commits while the finding's subject does not), the create is refused terminally and the result file reports `rejected_duplicate: true` with the closed issue's number and URL, so the agent reads the maintainer's rebuttal instead of rewording the finding and filing it again. The gate fails toward filing on any uncertainty: lookup errors, findings without file references, any file-set difference, `completed` closures (a re-report after a fix may be a real regression), expired rejections, and hives without an App-bot identity all create normally. Refusals are audited as `agent_issue_rejected_duplicate`.
+- Contributor containers launched by `just contribute-hive` now enforce the same 4 GiB memory and 2 CPU ceiling as the generated Kubernetes workload, cap combined memory and swap to protect the contributor's host, and accept `HIVE_CONTAINER_MEMORY` / `HIVE_CONTAINER_CPUS` overrides (`none` omits a limit on hosts without that cgroup controller). When a container exits 137, the recipe now distinguishes a runtime-confirmed OOM kill from another `SIGKILL` and points the operator to either the memory override or host OOM logs instead of reporting only the numeric exit code ([#6485](https://github.com/hivecommons/hive/issues/6485)).
+- The dashboard now shows active agents that are outside the current ACMM pack, including agents explicitly enabled in `hive.yaml` and routed through a named custom model gateway. Pack membership defines the default roster, but the status builder incorrectly treated it as an exclusive allowlist and could therefore leave the Agents section completely blank (for example, an enabled supervisor at L1); inactive pack-paused and disabled entries remain hidden, and the separate hard gate for L5-only operability agents is unchanged ([#6488](https://github.com/hivecommons/hive/issues/6488)).
+- The nginx gateway no longer rewrites application-generated 503 responses into the generic `{"error":"service starting up, please retry"}` body ([#6494](https://github.com/hivecommons/hive/issues/6494)). The `/api/` location intercepted `502 503 504`, so deliberate, actionable 503 JSON errors from the dashboard — such as `/api/terminal/handoff`'s "terminal handoff requires terminal signing key and hive id" — reached operators as a claim that a day-old hive was still starting up ([#6489](https://github.com/hivecommons/hive/issues/6489)). Only gateway-origin failures (502 unreachable, 504 timeout) are synthesized now; upstream 503 bodies pass through untouched.
+
+### Security
+
+- Bumped the pinned optional local LiteLLM proxy in `src/Dockerfile` from 1.96.0 to 1.96.2 to pick up the fix for CVE-2026-84377 (CVSS 6.5): prior to 1.96.2 an authenticated proxy user could smuggle routing parameters (`api_base`, `base_url`, `model_list`, `fallbacks`, `litellm_credential_name`) through nested request fields and redirect outbound provider calls — exfiltrating the operator's configured provider credentials or reaching internal services (SSRF). Only deployments with `governor.litellm.local_proxy: true` run this proxy, but any that do should rebuild (#6473).
+- Restored the `pyyaml` (6.0.3) and `specify-cli` (1.0.5) version pins in `src/Dockerfile` that PR #3340 originally added but that were silently dropped during the v2→src migration, leaving those two `pip3 install` steps building against whatever PyPI serves at build time. Both installs are pinned again via `ARG` variables, closing the supply-chain-injection gap for the last two unpinned installs in the image ([#6479](https://github.com/hivecommons/hive/issues/6479)).
+
+## 2026-09-10 (v4.23.4)
+
+### Fixed
+
+- The contributor relay now recognizes `HIVE_VERDICT` completion sentinels wrapped in Markdown emphasis, so Goose/RamaLama tasks report verdict completion instead of degrading to `chrome_idle`; contributor prompts also request unformatted sentinel lines ([#6492](https://github.com/hivecommons/hive/issues/6492)).
+
+## 2026-09-09 (v4.23.3)
+
+### Changed
+
+- `bin/contributor-relay.sh` — 4,269 lines of Node.js despite the `.sh` name, with no module boundaries — is now `bin/contributor-relay.js` ([#6429](https://github.com/hivecommons/hive/issues/6429)). `git mv` carries its history; a thin POSIX-sh compat wrapper stays at the old `bin/contributor-relay.sh` path (`exec node .../contributor-relay.js "$@"`) because the path is baked into existing deployments, so nothing that still invokes the `.sh` path breaks. The pure pane-classification layer — `paneTail`, the per-backend readiness/login/onboarding tables, `blockingPromptKey`, the transient/unretryable/login-required API-error detectors, and `getCLIState`'s classification logic (now `classifyReadiness`/`classifyPane`) — moves into a new, side-effect-free `bin/lib/pane-classifier.js` CommonJS module with no `process`/tmux access, which the relay now `require`s; behaviour is unchanged, only import paths and internal wiring moved. WS protocol/auth and tmux-session management are left in the relay for a follow-up.
+
+## 2026-09-09 (v4.23.2)
+
+### Changed
+
+- Converged the JS contributor relay's pane-tail helper onto a single
+  non-blank-lines semantics — the last *n* non-blank rows of a
+  `tmux capture-pane -p` dump, matching the Go agent manager's `paneTail`,
+  which has always filtered blanks this way. The relay previously kept a
+  second helper, `paneTailNonBlank`, beside the original blank-including
+  `paneTail`, so the four `TRANSIENT_API_ERROR_TAIL_LINES` detectors stayed on
+  the blank-including tail and were blind to a retryable API error on any CLI
+  that renders inline near the top of its pane — the same shape that caused
+  agy contributors to get stuck at `starting` forever
+  ([#6413](https://github.com/hivecommons/hive/issues/6413)). `paneTail` now
+  has the one semantics everywhere it is used, `paneTailNonBlank` is gone, and
+  new shared golden fixtures under `bin/testdata/pane-fixtures/` are asserted
+  against by both `bin/contributor-relay.test.js` and a new
+  `src/pkg/agent/pane_fixtures_test.go`, so the JS and Go implementations
+  cannot silently diverge again
+  ([#6427](https://github.com/hivecommons/hive/issues/6427)).
+
+### Fixed
+
+- Fixed the `hive.kubestellar.io` legacy redirect dropping the request path and query string on every hop to `hive.hivecommons.dev`, which was destroying GA4 landing-page and campaign-attribution data for the hub; added a drop-detection arm to `bin/ga4-anomaly-detector.sh` so a future traffic collapse (not just a traffic spike) is flagged ([#6430](https://github.com/hivecommons/hive/issues/6430)).
+- The relay's "needs authentication" banner now names the backend that is actually blocked and gives that backend's own remedy ([#6437](https://github.com/hivecommons/hive/issues/6437)). `getCLIState()` reports `needs-login` for `claude`, `copilot`, `gemini`, `bob` and `agy`, but the banner was one hardcoded block announcing "Claude Code needs authentication" and "Then type: /login" for all five — so an operator whose `bob` contributor was blocked on a missing `BOBSHELL_API_KEY` was told to attach to the pane and type a slash command that cannot help. The box is also sized to its contents, so a container-mode attach command no longer overflows the border.
+- A finished `agy` turn is no longer pinned to WORKING and failed by the stall backstop on builds that do not print `? for shortcuts` ([#6438](https://github.com/hivecommons/hive/issues/6438)). `classifyTmuxPane()`'s agy window still used a raw `slice(-15)`, so on a pane shorter than the 50 rows `tmux capture-pane -p` always pads to, it read nothing but blank padding — the same defect [#6413](https://github.com/hivecommons/hive/issues/6413) fixed in `getCLIState()`. It now uses the `paneTailNonBlank()` helper that fix introduced, which is what makes the bare-prompt-plus-model-footer idle rendering reachable again.
+
+## 2026-09-09 (v4.23.1)
+
+### Fixed
+
+- Hardened the `curl` release-tarball download retries in `src/Dockerfile`,
+  `src/Dockerfile.contributor`, and the Dockerfile test fixtures under
+  `src/deploy/` so the existing `--retry-max-time` budget is actually usable:
+  a fixed `--retry-delay 5` with `--retry 8` exhausted all retries in ~40s,
+  so a GitHub release-asset outage lasting longer than a minute failed the
+  build even though a 300s (or 600s) time budget was declared. `--retry` is
+  now 30 (300s budget) or 60 (600s budget) with `--retry-delay 10`, so the
+  full time budget can be spent absorbing a multi-minute upstream 5xx
+  incident ([#6422](https://github.com/hivecommons/hive/issues/6422)).
+- Fixed the hub advertising the retired `hive.kubestellar.io` domain to search
+  engines, social unfurlers and API users. Every public page's `og:url` still
+  named the old host — including the metadata every shared link to `/dashboard`
+  renders from — and no page carried a `rel="canonical"` at all. That matters
+  more than it looks: the legacy host's redirect to `hive.hivecommons.dev`
+  **drops the path**, so every legacy URL lands on the homepage rather than the
+  page that was linked, and with `og:url` as the only canonical signal the hub
+  was pointing crawlers at a domain it no longer serves. All seven pages now
+  carry a self-referencing canonical on the current host, and `og:url` agrees
+  with it. The `/fleet` page gets one for a second reason: `/my-hives` redirects
+  to it, so two paths served one page with nothing naming the preferred one.
+- Fixed the copy-pasteable `curl` examples in the API documentation, which named
+  the retired host and so returned the homepage's HTML instead of JSON (#5925).
+- Fixed hosted-tenant links in the hub dashboard pointing at the retired
+  `hive.kubestellar.io` domain. The dashboard builds `<id>.<domain>` URLs for
+  hosted hives that carry no explicit dashboard URL, and it built them from a
+  hardcoded hostname, so they kept naming the pre-move domain after the fleet
+  moved to `hive.hivecommons.dev`. That is not a cosmetic staleness: the
+  retired name is outside the wildcard certificate the fleet now serves, so
+  those links did not redirect — the browser refused the TLS handshake and
+  showed a certificate warning instead of the tenant's hive. The dashboard now
+  takes the parent domain from the server (`hub_spoke_domain`, derived from
+  `HIVE_HUB_SPOKE_DOMAIN`) and suppresses the link entirely when the domain is
+  not yet known, rather than guessing a host (#5925).
+
+- Fixed the same hardcoded domain in the public landing page's "Contribute Now"
+  and "Open Contribute Page" links. That page is static and cannot be handed the
+  configured domain, so it now derives it from the host it is served on — which
+  is the hub's own host, and therefore the domain hosted spokes hang off — and
+  omits the link when it cannot be derived rather than emitting a guessed one
+  (#5925).
+
+### Security
+
+- Refuse a `workflow_dispatch` `release_sha` for `docker.yml` that is not an ancestor of the dispatched branch, closing a path where any `actions: write` principal could publish an unreviewed commit under a release line's moving tags ([#6419](https://github.com/hivecommons/hive/issues/6419))
+
+## 2026-09-09 (v4.23.0)
+
+### Added
+
+- The dashboard's release-channel rows now show how far each channel is from the stage immediately upstream of it — stable against candidate, candidate against edge — so "how much is waiting to be promoted into stable?" is answerable without leaving the page for a GitHub compare view. Each channel is measured against its ADJACENT stage rather than against the newest one: a stable-vs-edge number would roughly restate candidate's own backlog while hiding which hop is actually stalled. Diverged tracks show both counts (`↓7 ↑3`) instead of a single direction, because the channels routinely follow different branches and one signed number would misreport that. A compare that cannot be resolved renders no distance at all rather than `0`, since "level with upstream" is the one answer that must never be guessed.
+
+### Fixed
+
+- Contributor relay: agy readiness/login/onboarding detection no longer reads a blank pane tail, so interactive agy contributors become ready and receive tasks ([#6413](https://github.com/hivecommons/hive/issues/6413)).
+
+## 2026-09-09 (v4.22.1)
+
+### Fixed
+
+- Model Gateways config panel now points operators looking for Copilot/Claude/Codex/Gemini to the agent CLI backend docs instead of leaving them without a signpost ([#6410](https://github.com/hivecommons/hive/issues/6410)). The Copilot guidance banner already added under **Governor Config → Model Gateways** now names Claude, Codex, and Gemini explicitly instead of only Copilot, and still links to `docs/inference-backends.md`'s "Looking for Copilot (or Claude, Codex, Gemini…)? It is not a Model Gateway" section.
+
+## 2026-09-09 (v4.22.0)
+
+### Added
+
+- A repository can now declare in `.acmm.yml` that an ACMM criterion is satisfied somewhere other than the file the criterion looks for, and the dashboard counts it while marking where the capability actually lives. The ACMM evaluation detects capability by file existence, which cannot distinguish a repo that never built something from a repo that deliberately moved it off-repo — so a maintainer who removes a workflow for a good reason is scored as having lost the capability, and the cheapest way to restore the score is to put the file back. That happened concretely: `Danathar/sensi` deleted `.github/workflows/ai-fix.yml` — an in-repo agent job holding `contents`/`issues`/`pull-requests`/`id-token` write plus an API key, whose `ai-fix-requested` label gate turned out to admit whatever the issue-filing bot labelled rather than expressing a human decision — and handed that work to hive, which was already doing it at L4 across one trust boundary instead of two. Two L4 criteria (`acmm:ai-fix-workflow`, `acmm:copilot-review-apply`) name that one filename, so the security fix alone took L4 from 9/9 to 7/9. A waiver names the criterion, what satisfies it instead, and why; all three are required, and one that cannot say where the capability went is refused. Crucially a waiver **cannot advance a level**: level pass/fail is computed on detected criteria alone, so a repo that waives an entire level shows a full ratio, still does not pass it, and does not move its codebase level — waivers close the distance between *passing* and *full green*, and nothing else. Waived criteria stay visible: a chip on the row, the justification above the pattern list, and a red asterisk on the level line naming what was waived. Repos without an `.acmm.yml` pay no additional GitHub calls, since the root listing the evaluation already fetches settles it. See `src/docs/acmm-waivers.md`.
+
+### Fixed
+
+- The dashboard now explains how to configure GitHub Copilot at the point where operators were getting stuck ([#6319](https://github.com/hivecommons/hive/issues/6319)). Copilot intentionally does not appear under **Governor Config → Model Gateways** because it is a subscription CLI backend rather than an OpenAI-compatible gateway, but the tab previously neither explained that distinction nor linked to setup documentation, making the correct absence look like missing support. The Model Gateways tab now identifies Copilot as a CLI backend, gives the complete in-dashboard path (pin an agent to Copilot, save, then use the agent card's Login action), and links directly to the Copilot inference setup guide. A dashboard regression guard pins the distinction, instructions, link safety attributes, and placement before the gateway actions.
+- Goose contributor containers now inherit configured `OPENAI_HOST` and `OPENAI_BASE_PATH` values, so OpenAI-compatible local inference servers no longer silently fall back to `https://api.openai.com/v1/chat/completions` and fail authentication ([#6400](https://github.com/hivecommons/hive/issues/6400)).
+- Dashboard token-access audit endpoint now skips torn or invalid JSONL lines (reporting a `skipped` count) instead of returning an empty body when the log is read mid-append ([#6407](https://github.com/hivecommons/hive/issues/6407)).
+- The hub dashboard now keeps the full hive status hover available while a spoke is Upgrading, reusing the normal status hover panel (including namespace and access details) on the animated blue pulse indicator.
+
+### Security
+
+- The merge-request watcher now refuses to merge into a base branch that has no GitHub branch protection unless the repo is explicitly allowlisted in `auto_merge.allow_unprotected_base`, and repos with genuinely no CI can be opted in per-repo with `auto_merge.no_ci_ok` to downgrade only the "unverified" CI verdict — the default for both stays refuse (#6281)
 
 ## 2026-09-09 (v4.21.1)
 
@@ -474,6 +728,52 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 ### Security
 
 - The GitHub device-flow login can no longer be hijacked by an anonymous poller. `/api/gh-user-auth/start` and `/poll` are both public routes, the flow state was a single server-wide slot, and the session cookie was minted on whichever caller's poll observed completion — so an attacker polling during a legitimate login (web page or `hivectl login`) could race the operator and walk away with their freshly approved session, up to owner role. `/start` now returns a crypto-random `flow_id` and `/poll` refuses (constant-time) to proceed — and in particular to set any cookie — for a caller that cannot present it. The login page and `hivectl login` carry it automatically; a `hivectl` older than this release must be upgraded to log in against a fixed hive.
+
+## 2026-09-02 (v4.5.0)
+
+### Fixed
+
+- A hub restart no longer throws away every in-flight contributor task ([#5681](https://github.com/kubestellar/hive/issues/5681), ported from v5 [#5688](https://github.com/kubestellar/hive/pull/5688)). A contributor relay holds one task at a time and keeps working through a brief disconnect, re-asserting the task when it reconnects; the hub honours that re-assertion only against a **server-issued lease**, which is deliberate — a client must never be able to assert ownership of work the server did not assign. But leases lived only in the hub's memory, so a restart emptied the registry and *no* in-flight resume could match: the relay was told `no active lease for this task`, its agent was interrupted mid-turn, and the identical issue was handed straight back as a fresh assignment seconds later. Self-upgrade rolls made this routine rather than rare, and it hit every contributor holding a task at the moment of any restart. The lease registry is now persisted to `/data/contributors/task-leases.json` (owner-only, beside the existing contributor ledgers, written via the crash-safe unique-temp + fsync + rename idiom) on every assignment, renewal and release, and restored at startup. Nothing about who may claim what is loosened: the restored record is one the hub itself wrote, a resume is still matched exactly on identity, task id, repo, number and generation, and a lease already past its window is dropped at load rather than restored. Two couplings move with it — the renewed window is what gets persisted (so a task that has been progressing for longer than the 30-minute lease TTL does not come back already expired), and the in-memory assignment-generation counter is advanced past every restored lease at boot, without which a post-restart assignment could mint a fencing token that aliased a pre-restart one. For the first two minutes after a restart a restored lease also holds its work item, so an issue whose relay is still reconnecting is not offered to a second contributor in the meantime.
+- `/api/contribute/activity` now honors its `limit` query parameter against the retained recent activity window, so dashboard and diagnostic callers can request a smaller tail without always receiving 50 entries ([#5704](https://github.com/kubestellar/hive/issues/5704)).
+- NOTICE regeneration now retries the pinned `go-licenses` install before failing, so transient checksum database stream errors no longer fail the attribution gate without a code or module change ([#5716](https://github.com/kubestellar/hive/issues/5716)).
+
+## 2026-09-02 (v4.4.0)
+
+### Added
+
+- `hivectl login` obtains a per-user hive session from the terminal, and `hivectl logout` ends it ([#5651](https://github.com/kubestellar/hive/issues/5651)). Hub-hosted hives and spokes with an `authorized_users` allowlist accept only a per-user session, and until now the only way to hold one outside a browser was to copy the `hive_session` cookie out of devtools. `hivectl login` drives the dashboard's existing GitHub device-flow endpoints — print a one-time code, wait for approval at github.com/login/device, capture the session the poll response mints — and caches it at `$XDG_CONFIG_HOME/hive/sessions.json`, owner-only (0600) and keyed by dashboard URL so one operator can hold sessions for several hives. Every hivectl subcommand and `hivectl tui` then present the cached session automatically, with an explicitly exported `HIVE_DASHBOARD_COOKIE` always taking precedence; the credential itself is never printed. An unauthorized GitHub account gets the server's own refusal (and nothing is cached), a login lost to another operator's concurrent device flow is named rather than surfacing a bare 400, and a cached session that expires or is revoked produces advice to run `hivectl login` again instead of an unexplained 401. No server-side change — the endpoints and the session store are untouched.
+
+### Fixed
+
+- The Podman CI lanes no longer go red fleet-wide when a runner-image Podman bump changes the `podman info` schema ([#5678](https://github.com/kubestellar/hive/issues/5678)). The arm64 and rootless lanes read the environment field-by-field with Go templates, and a Go template hard-fails the whole call (exit 125) the moment any field it names leaves the schema — so when the runner rolled a Podman without `.Host.RootlessNetworkCmd`, a report-only field failed the "arm64 image pull and service startup" check on every PR. The environment steps in all three lanes (arm64, rootless, rootful) now make one `podman info --format json` read and extract fields with `jq` fallbacks, so a renamed or removed field degrades to `unknown` in the report instead of killing the lane, while every load-bearing assertion still fails loudly: the rootless network provider is now asserted as the capability the lanes actually need (a `pasta` or `slirp4netns` provider present for rootless containers, derived from the tool entries when the summary field is absent), the rootful lane refuses to run if `store.graphRoot` cannot be read (its post-run isolation check depends on that path), and an unreadable Podman version fails the 4.x floor check explicitly instead of as a bash integer-comparison error. The rootless probe script's environment report line was hardened the same way, field-by-field with per-field fallback, so it keeps its diagnostics on any Podman.
+
+## 2026-09-02 (v4.3.0)
+
+### Added
+
+- `hivectl tui` can now open a hive that does not accept the shared dashboard token ([#5645](https://github.com/kubestellar/hive/issues/5645)). The TUI only ever presented `HIVE_DASHBOARD_TOKEN` as an `Authorization: Bearer` header, so the two deployments that identify callers by a per-user session instead — hub-hosted hives, and spokes with an `authorized_users` allowlist, where the shared token is deliberately **disabled** because it grants unscoped owner with no per-user identity — could not be opened at all. A new `HIVE_DASHBOARD_COOKIE` carries that session. It takes a cookie *header value* rather than a bare id (`hive_session=…`, several joined with `; `), which is the same string a browser sends, so one variable covers a spoke's `hive_session`, a hub's `hive_hub_user`, and a per-hive terminal assertion riding alongside it. The token and the cookie are independent and both are sent when both are set: which one a hive honours is a property of how it was deployed, not an operator preference. Nothing changes for a hive that works today — the cookie header is omitted entirely when the variable is unset. Acquiring the cookie still means copying it out of a browser session; a terminal login that mints one is tracked separately ([#5651](https://github.com/kubestellar/hive/issues/5651)).
+- `hivectl tui` can now attach to an agent's terminal on a containerized or remote hive ([#5644](https://github.com/kubestellar/hive/issues/5644)). The `a` key used to shell out to a local `tmux attach`, which made it structurally unreachable on the recommended Podman install — the sessions live inside the container under per-agent UIDs — and on any hive reached over the network. Attach now routes by where the session actually is: a loopback dashboard with a genuinely local session keeps the zero-network `tmux attach` fast path, and everything else goes through the dashboard's existing authenticated `/terminal` reverse proxy to the container's ttyd — the same route the web dashboard's "▶ terminal" links use, carrying the same credentials as every other TUI request (`HIVE_DASHBOARD_TOKEN` in the query the websocket gates read, `HIVE_DASHBOARD_COOKIE` for per-user-session hives) plus ttyd's own basic-auth credential derived exactly as the container derives it. No server-side change and no new exposure: ttyd's port stays loopback-only, and an unauthenticated or under-privileged attach is refused in the footer (`owner access required` for a 403; a 401 names both credential variables) before the TUI ever suspends. A remote attach announces which hive and session it went through before the first byte of output, never echoing the token; you detach with tmux's own `prefix + d`, and the TUI resumes and refreshes as it always has.
+
+### Fixed
+
+- `hivectl tui` no longer opens onto four panes reading "waiting for data" when the dashboard has refused the operator's credentials. Rejected reads were swallowed by the poll loop's error policy, so a `401` — the *authentication* failure, indistinguishable on screen from a hive that had gone quiet — produced a full-screen dashboard that would never fill and offered no key that could fix it. Startup now probes once before entering the alternate screen and, on `401` only, prints which credential variables to set and exits with the operator's scrollback intact. Every other outcome still opens the TUI as before: an unreachable hive is one of the main reasons to open it and the panes recover on their own when it returns, and a `403` is a working session whose role is merely too narrow for some reads ([#5645](https://github.com/kubestellar/hive/issues/5645)).
+- Contributor local-mode relay relaunches now preserve the original sandboxed launch command instead of rebuilding permissive container flags.
+- An ACMM pack apply no longer pauses agents the operator created by hand ([#5706](https://github.com/kubestellar/hive/issues/5706)). The pack visibility sweep paused every agent absent from the level's roster with reason "agent not in pack level N" — and since a pack apply runs on **every** startup, an operator-created, operator-resumed agent (e.g. a reviewer-role `adjudicator` added via the dashboard API) was re-paused on every pod roll: resume it, roll the pod, it's paused again. Pause/run state now carries the same operator-ownership marker as models/backends ([#5558](https://github.com/kubestellar/hive/issues/5558)) and governor cadences ([#5668](https://github.com/kubestellar/hive/issues/5668)): creating or importing an agent through the dashboard stamps `pause_owner: operator` (such an agent was never a pack member, so the roster says nothing about whether it should run), and an explicit operator resume claims the same ownership — so an agent the sweep paused before the fix stays resumed across boots after one resume. Operator-owned non-pack agents are left running and named in an INFO log line instead of silently re-paused; agents without the marker keep the existing pack reconciliation, so pack agents still pause on level changes as designed.
+
+## 2026-09-02 (v4.2.0)
+
+### Added
+
+- `hivectl` is now obtainable on hosts installed with `bin/hive-podman-setup.sh` ([#5646](https://github.com/kubestellar/hive/issues/5646)). The recommended Podman install targets image-based hosts (Fedora Silverblue/Bluefin, RHEL image mode) where a Go toolchain cannot be installed, so the only documented way to get the operator CLI — `go build` — was unavailable exactly where the install is supported, leaving `hivectl system status` and the `hivectl tui` finished in [#4907](https://github.com/kubestellar/hive/issues/4907) unreachable. The image now carries a statically built `hivectl` as cargo at `/usr/local/share/hive/hivectl` — deliberately off the container's PATH, because the client must never run inside the runtime it inspects — and the installer's new step 8 extracts it onto the host with `podman create` + `podman cp` (`~/.local/bin` rootless, `/usr/local/bin` rootful, `HIVE_SETUP_BIN_DIR` overrides). Nothing is compiled on the host and nothing new is downloaded, and the client is always the same version as the running hive; a re-run refreshes it to match the image, so `bin/hive-podman-update.sh` followed by a re-run keeps the pair in step. An image built before this change is reported loudly but does not fail an otherwise healthy install. The route cannot rot silently: `src/deploy/test_hivectl_extraction_contract.sh` pins the Dockerfile's stow path, the installer's extraction path, and the documented manual route to each other, and the installer's contract suite drives extraction, idempotent re-runs, the missing-binary path, and a `go` tripwire proving no host build is ever attempted. `src/docs/hivectl.md`'s Quick start now leads with this route and keeps `go build` as the contributor path.
+
+### Changed
+
+- Changelog entries now land as one fragment file per PR under `changelog.d/` instead of every PR appending to `CHANGELOG.md`'s shared `## Unreleased` heading ([#5675](https://github.com/hivecommons/hive/issues/5675)). Appending made any two PRs merging near each other edit the same lines under the same heading, so the second one always hit a structural merge conflict however unrelated the code was — six rebases of unrelated PRs on 2026-09-02 alone. Each PR now writes `changelog.d/<category>-<pr-or-slug>.md` containing exactly its entry (`added`/`changed`/`deprecated`/`fixed`/`security` prefix picks the subsection — see `changelog.d/README.md`), and `src/scripts/compile-changelog.sh` folds fragments into `## Unreleased` inside `tagged-release.yml`: once working-tree-only in the decide job so `derive-release-version.sh` still sees fragment content when judging release-worthiness and the bump, and once for real in the release job, whose release commit carries both the compiled `CHANGELOG.md` and the fragment deletions — so the existing decision, escape-hatch marker, and self-retrigger idempotency machinery are unchanged. A reporting-only `changelog-fragment-guard` check (modelled on testutil-guard, registered in `.github/release-lines.yml`) asks PRs touching `src/**` code for a fragment or a `no-changelog` label; docs-only and test-only changes stay exempt, direct `CHANGELOG.md` edits stayed accepted only during the now-closed transition window ending 2026-09-09 so in-flight PRs could land unreworked, and existing `Unreleased` entries were deliberately not migrated for the same reason. This entry is itself the first fragment.
+
+### Fixed
+
+- Steady-state ACMM pack applies no longer report `created: 1` forever, and no longer silently revert operator-set governor cadences to the pack defaults ([#5632](https://github.com/kubestellar/hive/issues/5632)). The agent manager's process table tracks *enabled* agents only — every config reload rebuilds it from `EnabledAgents()` — so a pack agent the operator disabled (the reporter's `brainstorm`) was evicted on each reload, and `ApplyPack` counted its futile re-registration as a creation on every subsequent apply. `created > 0` is what authorizes a pack to re-assert its governor cadences, so each of those phantom creations reset every operator cadence: the `PUT /api/config/agent/{name}/cadences` write persisted to the overlay and showed in `/api/status`, then quietly snapped back minutes later — including `telemetry`/`operations` reverting to `paused` while showing `paused: false`. Two changes close it. First, re-registering an agent that already exists in the config is now a repair, not a creation: it is logged separately (`readded_agents`), never counted in `created`, never treated as a roster expansion, and is skipped entirely for disabled agents (whose absence from the manager is the correct steady state). Second, governor mode cadences now carry the same operator-ownership marker models and backends gained in [#5558](https://github.com/kubestellar/hive/issues/5558): a cadence set through the dashboard is claimed as operator-owned (`governor.cadence_owners`), and no pack apply — steady-state merge, explicit re-apply, or level change — reconciles an operator-owned cadence back to the pack value, exactly as packs already respect an operator's model choice. Pack-owned cadences still follow the pack, fresh applies still seed the pack's cadences, and the Kubernetes config-reload path now re-adopts operator-owned cadences (with their markers) from the dashboard overlay so a ConfigMap remount cannot drop them from memory.
+- The dashboard's **Lifecycle Timeline** panel is now finished rather than misleading ([#5656](https://github.com/kubestellar/hive/issues/5656)). As shipped, four of its six stages (`classified`, `pr_opened`, `merged`, `blocked`) never had a producer, and the two that existed re-recorded up to 50 `enumerated` events per governor eval cycle into a 500-event ring with no dedupe — so on a live spoke every visible row was `enumerated — 1m ago`, the ring's entire history spanned ~14 minutes while the roll-up claimed a 6h window, and the counters read `0 merged / 0 blocked` on hives that merge constantly. The store now keeps **journeys** — one entry per work item, keyed by `repo#number`, with per-stage first/last timestamps and counts — so re-enumeration refreshes a timestamp instead of flooding, and every stage has a real producer wired into an existing path (no new polling, no new loops): the scheduler's classifier pass records `classified` with the lane/tier it actually routed; the pr-request watcher's PR-opened hook and the attribution audit stream record `pr_opened`; every `pr_merged` audit entry — both automerge sweep paths and `MergePR` (the dashboard queue and merge-watcher merges) — records `merged`; and the fix-loop escalation that hands a PR to a human (`needs-human`) records `blocked` with the failing checks. Journeys persist to `/data/lifecycle-timeline.json` with the atomic-persist idiom, so restarts no longer wipe the panel, and the fleet roll-up now reports how much history actually backs its counts (`coveredMs`) instead of claiming the full window. Panel B renders one row per item with stage chips (`enum → class → kick → pr → merged/blocked`) in place of the raw event list. `pkg/retro` reads kick counts from the journey's per-stage `Count`, so its excessive-kick detection is unchanged.
 
 ## 2026-09-02 (v4.1.1)
 

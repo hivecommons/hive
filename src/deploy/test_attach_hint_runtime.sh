@@ -37,7 +37,7 @@ fail() { echo "  FAIL: $1"; [ $# -gt 1 ] && echo "        $2"; FAIL=$((FAIL + 1)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 JUSTFILE="${ROOT}/Justfile"
 AGENT="${ROOT}/bin/contributor-agent.sh"
-RELAY="${ROOT}/bin/contributor-relay.sh"
+RELAY="${ROOT}/bin/contributor-relay.js"
 
 echo "=== in-container attach hints name the real runtime (#5145) ==="
 

@@ -76,7 +76,7 @@ func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
 	}{
 		{"agent launch stderr scrubbing", "bin/agent-launch.sh"},
 		{"container pane working directory", "bin/contributor-agent.sh"},
-		{"relay protocol compatibility", "bin/contributor-relay.sh"},
+		{"relay protocol compatibility", "bin/contributor-relay.js"},
 		{"scoped GitHub App token isolation", "bin/gh-app-token.sh"},
 		{"pull request default-branch handling", "bin/hive-open-pr.sh"},
 		{"fresh-install release branch", "bin/hive-setup.sh"},
@@ -85,6 +85,14 @@ func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
 		{"contributor recipe behavior", "Justfile"},
 		{"OpenAPI route and schema parity", "dashboard/openapi.json"},
 		{"this trigger contract", ".github/workflows/v2-tests.yml"},
+		// Scripts the shards SHELL OUT TO. Same exemption class as the files
+		// above, reached from the other direction: the guard is not a test
+		// reading a repo file, it is a job step executing one. An edit that
+		// does not start the jobs it changes the behaviour of is untested by
+		// construction — the toolchain installer decides whether a shard can
+		// build at all (#6648), and the reporter runs in every shard.
+		{"race-shard toolchain installer", ".github/scripts/ci-install-tool.sh"},
+		{"slowest-tests reporter", ".github/scripts/slowest-tests.sh"},
 	}
 	for _, input := range externalInputs {
 		t.Run(input.property, func(t *testing.T) {
@@ -101,12 +109,12 @@ func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
 // could make the contract above green without proving any trigger property.
 func TestV2TestsPathMatcherReproducesThePre5388Gap(t *testing.T) {
 	oldPaths := []string{"src/**", "dashboard/openapi.json", ".github/workflows/v2-tests.yml"}
-	for _, changed := range []string{"bin/contributor-relay.sh", "config/backends.conf", "Justfile"} {
+	for _, changed := range []string{"bin/contributor-relay.js", "config/backends.conf", "Justfile"} {
 		if anyPathTriggerMatches(oldPaths, changed) {
 			t.Errorf("pre-#5388 filters unexpectedly match %s; negative control no longer reproduces the exemption", changed)
 		}
 	}
-	if anyPathTriggerMatches([]string{"bin/**", "!bin/contributor-relay.sh"}, "bin/contributor-relay.sh") {
+	if anyPathTriggerMatches([]string{"bin/**", "!bin/contributor-relay.js"}, "bin/contributor-relay.js") {
 		t.Error("a later negative pattern must exclude an earlier positive match")
 	}
 }

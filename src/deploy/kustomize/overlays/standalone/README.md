@@ -101,9 +101,27 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
 
 **Which tags actually exist on `ghcr.io/hivecommons/hive`:**
 
-- Channel tags (`stable`, `candidate`, `edge`, `v4-latest`) and an immutable
-  7-character short-SHA tag for every merge to `v4`. These are what `docker.yml`
-  publishes, and they are the only tags that are guaranteed to exist.
+- Channel and rolling tags, plus an immutable 7-character short-SHA tag for
+  every merge to a release line. These are what `docker.yml` publishes, and they
+  are the only tags that are guaranteed to exist. Which line owns which tag
+  matters, because the channels are **not** a single stability ladder:
+
+  | Tag | Release line | Moved by |
+  |---|---|---|
+  | `v4-latest`, `candidate` | `v4` | every green merge to `v4` |
+  | `stable` | `v4` | the stable-promotion workflow, by digest, after the soak gate |
+  | `v5-latest`, `edge` | `v5` | every green merge to `v5` |
+
+  `latest` is currently moved by **both** lines and so is not safe to deploy —
+  see [#6711](https://github.com/hivecommons/hive/issues/6711). Name the line,
+  the channel, or a digest instead.
+
+  So `edge` is an **active-development `v5` build, not a newer `stable`** — see
+  [release-channels.md](../../../../docs/release-channels.md). A standalone hive
+  that wants the v5 line should track `v5-latest` (or better, a digest resolved
+  from it). Note that `v5` is pre-GA and there is no v4→v5 migration guide yet,
+  so treat the switch as one-way unless you have recorded the digest you came
+  from.
 - `vX.Y.Z` **image** tags are produced only by the automated
   [tagged-release workflow](../../../../docs/releases.md)
   (`.github/workflows/tagged-release.yml`), which retags the just-published short-SHA

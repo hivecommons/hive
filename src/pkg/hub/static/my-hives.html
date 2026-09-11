@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet — Expected vs Actual vs Able</title>
+<!-- This page is reachable at two paths: /fleet serves it and /my-hives (the
+     original path) permanently redirects here. The canonical names /fleet so
+     the two do not compete as separate URLs. -->
+<link rel="canonical" href="https://hive.hivecommons.dev/fleet">
 <style>
   :root {
     --bg: #0d1420; --panel: #131c2b; --line: #22304a; --ink: #d7e2f2;
@@ -596,6 +600,9 @@ function diagnosisHTML(h) {
     add("budget", b, true);
   }
   if (h.inferenceAuthError) add("inference auth", esc(h.inferenceAuthError), true);
+  if (h.authHealth === "down" || h.authHealth === "degraded") {
+    add("agent auth", esc(h.authHealthReason || h.authHealth), true);
+  }
   var blocked = (h.agentVerdicts || []).filter(function (a) { return a.problem && a.blockedReason; });
   if (blocked.length) {
     add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);
@@ -743,6 +750,13 @@ function deltaHTML(a) {
 // A broken GitHub App still outranks parked (auth is broken whether or not the
 // hive is in use); the verdict already reds on it at L2+.
 function hiveHealth(h) {
+  // #6558: EVERY enabled agent has been failing backend auth (unlicensed,
+  // expired token, unreachable gateway, quota) past the threshold. This is
+  // exactly the #6500/#6489 shape — a fleet that produces nothing and whose
+  // healthVerdict therefore never trips red on its own, because there is no
+  // activity left to judge. Check this FIRST so a silently-dead hive can
+  // never hide behind a stale "ok"/"unknown" verdict.
+  if (h.authHealth === "down") return "problem";
   if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
   if (h.allAgentsQuiet) return "parked";
   if (!h.online) return "offline";

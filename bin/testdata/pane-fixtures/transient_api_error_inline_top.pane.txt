@@ -1,0 +1,49 @@
+● Now the app's poll loop:
+
+  Ran 6 shell commands
+
+● API Error: 503 Service Unavailable
+
+✻ Cogitated for 9m 24s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

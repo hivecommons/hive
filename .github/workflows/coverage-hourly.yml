@@ -2,7 +2,10 @@ name: Coverage Hourly
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Off the top-of-the-hour slot: GitHub delays or drops scheduled runs in
+    # its most congested window, and this cron was observed firing every
+    # 2-5h instead of hourly (#6627). :23 is not used by any other workflow.
+    - cron: '23 * * * *'
   workflow_dispatch:
   # No pull_request trigger anymore (#4112). The pre-merge half of this gate —
   # added in #2350's aftermath and moved to v4 in #3903 — now lives in

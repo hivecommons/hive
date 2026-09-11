@@ -203,3 +203,22 @@ func TestSendKickAsync_DeliversAndSettlesDelivered(t *testing.T) {
 	}
 	t.Fatal("kick dispatch never settled")
 }
+
+func TestKickDispatchRegistry_RecordKickDispatchForTest(t *testing.T) {
+	m := &Manager{}
+	now := time.Now().Truncate(time.Second)
+	d := KickDispatch{
+		Agent:     "test-agent",
+		Phase:     KickPhaseDelivered,
+		QueuedAt:  now.Add(-time.Minute),
+		SettledAt: now,
+	}
+	m.RecordKickDispatchForTest(d)
+	got, ok := m.KickDispatchState("test-agent")
+	if !ok {
+		t.Fatal("expected seeded dispatch to be found")
+	}
+	if got.Agent != d.Agent || got.Phase != d.Phase || !got.QueuedAt.Equal(d.QueuedAt) || !got.SettledAt.Equal(d.SettledAt) {
+		t.Fatalf("got %+v, want %+v", got, d)
+	}
+}

@@ -23,8 +23,15 @@ func covCServer(t *testing.T) *Server {
 
 func TestCovC_TokenAccess(t *testing.T) {
 	s := covCServer(t)
-	// tokenAccessLogPath is a const under /var/run — no file in tests, so this
-	// exercises the "no audit log" fallback branch. Owner role required (#3936).
+	// Point tokenAccessLogPath at a path that does not exist so this test
+	// exercises the "no audit log" fallback branch. The default path
+	// (/var/run/hive-metrics/token-access.jsonl) exists on live hive hosts and
+	// its tail line can be a torn mid-append write, which makes the handler's
+	// json.RawMessage passthrough emit invalid JSON and fail the decode below.
+	// Owner role required (#3936).
+	orig := tokenAccessLogPath
+	tokenAccessLogPath = filepath.Join(t.TempDir(), "missing.jsonl")
+	t.Cleanup(func() { tokenAccessLogPath = orig })
 	rec := doOwnerGet(s, "/api/token-access")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("token-access status = %d, want 200", rec.Code)

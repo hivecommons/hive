@@ -861,6 +861,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"commit_messages":          getCommitMessages(),
 		"hub_git_hash":             s.hubGitHash,
 		"hub_git_branch":           s.hubGitBranch,
+		"hub_spoke_domain":         hubSpokeDomain(),
 		"tracked_branches":         s.trackedBranchList(),
 		// Release channels are moving tags; the dashboard renders them as their
 		// own "channel -> image" block above the per-branch rows, and offers

@@ -148,3 +148,53 @@ func (a *AgentProcess) decideTokenRestart(now time.Time) tokenRestartAction {
 	a.lastTokenRestart = now
 	return tokenRestartFire
 }
+
+// shouldResetTokenRestartCap answers whether a pane that is NOT showing a login
+// prompt is evidence the login actually CLEARED — the only condition under
+// which the attempt counter and the give-up latch may be re-armed.
+//
+// The absence of a login prompt is NOT that evidence on its own, and treating
+// it as such is what made the cap unenforceable (#6578). A pane also shows no
+// login prompt while the CLI is still booting — which is the state every token
+// restart produces moments after it fires. So reaching the cap always cleared
+// the cap:
+//
+//	3 restarts → tokenRestartGaveUp latched → the 3rd restart relaunches the
+//	CLI → its boot pane has no login prompt → latch cleared → the CLI finishes
+//	booting and paints the prompt again → repeat, forever.
+//
+// Observed live on three hives at up to ×1334 restarts/24h — one every ~65s,
+// which is exactly tokenRestartCooldownSec plus a boot: the loop ran at the
+// cooldown's own period because the cap re-armed on every cycle.
+//
+// Two conditions must BOTH hold, because each covers a hole the other leaves:
+//
+//   - past the boot grace, so the pane has had time to paint at all. Mirrors
+//     watchdog.Classify's `booting` guard (classify.go), which already refuses
+//     to draw conclusions from a pane younger than BootGrace, and reuses this
+//     package's own cliBootGraceSeconds so the two cannot drift.
+//   - a CLI marker on screen, so something actually rendered. Time alone is
+//     not enough: a CLI slower than the grace to paint, or one that died into
+//     a bare shell, would otherwise re-arm the cap on an empty pane.
+//
+// Failing closed is deliberate. Not resetting costs one thing — the cap stays
+// engaged, so an agent that has already failed three restarts keeps its
+// operator-facing diagnosis instead of silently restarting again. Resetting
+// wrongly costs the restart storm this function exists to end.
+//
+// A nil StartedAt cannot be dated, so it gets NO grace rather than an unbounded
+// one — the same rule watchdog.Classify applies to an undatable observation.
+// The pane-marker condition still gates the reset in that case.
+//
+// Caller holds no lock for the cap fields (they belong to this agent's pane
+// poller); startedAt is passed in because it is owned by the manager and must
+// be read under its lock.
+func (a *AgentProcess) shouldResetTokenRestartCap(paneReady bool, startedAt *time.Time, now time.Time) bool {
+	if !paneReady {
+		return false
+	}
+	if startedAt == nil {
+		return true
+	}
+	return now.Sub(*startedAt) >= time.Duration(cliBootGraceSeconds)*time.Second
+}

@@ -2,7 +2,7 @@
 // WebSocket endpoint that authenticates contributor agents, dispatches tasks
 // (issue fixes, reviews, docs) to whichever machine is connected, and keeps
 // GitHub tokens fresh for the duration of a task. The contributor-side half
-// lives in bin/contributor-relay.sh.
+// lives in bin/contributor-relay.js.
 //
 // Names on the wire (message types, JSON fields, the /contribute route) are
 // deliberately unchanged: ClankeR is the presentation name, not the protocol.
@@ -57,6 +57,11 @@ const (
 	wsTokenRefreshPeriod = 50 * time.Minute
 	wsAuthTimeout        = 30 * time.Second
 	wsMaxMessageSize     = 64 * 1024
+	// repoPermissionTimeout bounds the user-specific permission lookup performed
+	// before rendering an assignment prompt. A slow GitHub API must not hold the
+	// contributor's ready request indefinitely; lookup failure safely falls back
+	// to the fork workflow.
+	repoPermissionTimeout = 5 * time.Second
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -385,7 +390,7 @@ type WSMessage struct {
 	TurnEnvelopeID string `json:"turn_envelope_id,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
-	// bin/contributor-relay.sh). Reassigning the same work item to the same
+	// bin/contributor-relay.js). Reassigning the same work item to the same
 	// contributor will be rejected outright, so the hub should prefer a
 	// different contributor. See kubestellar/hive#2203.
 	Permanent bool `json:"permanent,omitempty"`
@@ -601,6 +606,16 @@ type ContributeWSHub struct {
 	// stays bounded. Guarded by rateMu.
 	assignmentTimes map[string][]time.Time
 	rateMu          sync.Mutex
+	// contributorFailureStreaks tracks, per identity, CONSECUTIVE hub-measured
+	// sub-minute task failures (kubestellar/hive#6450, contribute_failure_streak.go).
+	// Once a streak reaches contributorFailureStreakThreshold, selectTask pauses
+	// that identity's claims for contributorFailureStreakPause and says so with an
+	// explicit contributor_failure_streak negative-ack, so a dying agent runtime
+	// is surfaced to the contributor instead of silently burning issue cooldowns
+	// and standing. Reset by a completion or a slow (genuinely attempted) failure.
+	// Guarded by failureStreakMu.
+	contributorFailureStreaks map[string]contributorFailureStreak
+	failureStreakMu           sync.Mutex
 	// sse is the read-only Server-Sent-Events broadcast registry (contribute_sse.go).
 	// Every appended ActivityEntry is fanned out to subscribed dashboard browsers so
 	// the Operations "command center" renders live. It is purely additive: the fan-out
@@ -1194,7 +1209,7 @@ const quarantineCooldownHours = 6
 
 // permanentFailureWeight is how much a permanent failure (msg.Permanent — the
 // relay exhausted its per-task CLI-restart budget and will not retry, see
-// bin/contributor-relay.sh) counts toward consecutiveFailureQuarantineThreshold.
+// bin/contributor-relay.js) counts toward consecutiveFailureQuarantineThreshold.
 // A permanent failure is a strong "nobody here can do this" signal, so it
 // advances the quarantine counter faster than an ordinary (possibly transient)
 // failure. With a weight of 3 and a threshold of 3, a single permanent failure
@@ -1238,34 +1253,35 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		contributorsDir = server.contributorsDirOrDefault()
 	}
 	hub := &ContributeWSHub{
-		connections:           make(map[string]*ContributorConnection),
-		completedTasks:        make(map[string]time.Time),
-		completedTaskCooldown: make(map[string]time.Duration),
-		completedTaskPRURL:    make(map[string]string),
-		failedTasks:           make(map[string]time.Time),
-		consecutiveFailures:   make(map[string]int),
-		noPRStreaks:           make(map[string]noPRStreakRecord),
-		noWorkVerdicts:        make(map[string]noWorkVerdictRecord),
-		activityFilePath:      contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
-		completedTasksFile:    contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
-		failedTasksFile:       contributorStatePath(contributorsDir, failedTasksFile, "failed-tasks.json"),
-		noPRStreaksFile:       contributorStatePath(contributorsDir, noPRStreaksFile, "no-pr-streaks.json"),
-		taskLeasesFile:        contributorStatePath(contributorsDir, taskLeasesFile, "task-leases.json"),
-		turnEnvelopeDir:       contributorStatePath(contributorsDir, turnEnvelopeDirPath, "turn-envelopes"),
-		taskRunLogFile:        contributorStatePath(contributorsDir, taskRunLogPath, taskRunLogFileName),
-		startedAt:             time.Now(),
-		noWorkVerdictsFile:    filepath.Join(contributorsDir, noWorkVerdictsFileName),
-		asyncActivitySave:     asyncActivitySave,
-		persistActivity:       activityPersistenceEnabled,
-		persistTaskLedgers:    taskLedgerPersistenceEnabled,
-		assignmentTimes:       make(map[string][]time.Time),
-		leases:                make(map[string]*taskLease),
-		yankExclusions:        make(map[string]time.Time),
-		logger:                logger,
-		server:                server,
-		sse:                   newSSERegistry(),
-		stopCh:                make(chan struct{}),
-		doneCh:                make(chan struct{}),
+		connections:               make(map[string]*ContributorConnection),
+		completedTasks:            make(map[string]time.Time),
+		completedTaskCooldown:     make(map[string]time.Duration),
+		completedTaskPRURL:        make(map[string]string),
+		failedTasks:               make(map[string]time.Time),
+		consecutiveFailures:       make(map[string]int),
+		noPRStreaks:               make(map[string]noPRStreakRecord),
+		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
+		activityFilePath:          contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
+		completedTasksFile:        contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
+		failedTasksFile:           contributorStatePath(contributorsDir, failedTasksFile, "failed-tasks.json"),
+		noPRStreaksFile:           contributorStatePath(contributorsDir, noPRStreaksFile, "no-pr-streaks.json"),
+		taskLeasesFile:            contributorStatePath(contributorsDir, taskLeasesFile, "task-leases.json"),
+		turnEnvelopeDir:           contributorStatePath(contributorsDir, turnEnvelopeDirPath, "turn-envelopes"),
+		taskRunLogFile:            contributorStatePath(contributorsDir, taskRunLogPath, taskRunLogFileName),
+		startedAt:                 time.Now(),
+		noWorkVerdictsFile:        filepath.Join(contributorsDir, noWorkVerdictsFileName),
+		asyncActivitySave:         asyncActivitySave,
+		persistActivity:           activityPersistenceEnabled,
+		persistTaskLedgers:        taskLedgerPersistenceEnabled,
+		assignmentTimes:           make(map[string][]time.Time),
+		contributorFailureStreaks: make(map[string]contributorFailureStreak),
+		leases:                    make(map[string]*taskLease),
+		yankExclusions:            make(map[string]time.Time),
+		logger:                    logger,
+		server:                    server,
+		sse:                       newSSERegistry(),
+		stopCh:                    make(chan struct{}),
+		doneCh:                    make(chan struct{}),
 	}
 	hub.loadCompletedTasks()
 	hub.loadFailedTasks()
@@ -3626,15 +3642,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			tokenHash := sha256Hex(msg.RegistrationToken)
-			profiles := listContributorProfiles()
-			var profile *ContributorProfile
-			for i := range profiles {
-				if secureCompare(profiles[i].RegistrationToken, tokenHash) {
-					profile = &profiles[i]
-					break
-				}
-			}
+			profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
 
 			if profile == nil {
 				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
@@ -4308,6 +4316,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 					}
 					h.appendTaskRun(runRec)
+					// #6450: a genuine completion proves the runtime works — clear
+					// the contributor's fast-failure streak.
+					h.resetContributorFailureStreak(identityOf(contributor))
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
 					// Trust credit is gated on the VERIFIED PR, not the reported one:
@@ -4479,6 +4490,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
 					}
 					h.appendTaskRun(runRec)
+					// #6450: book this failure against the CONTRIBUTOR's fast-failure
+					// streak (hub-measured duration; an unknown/adopted-task duration
+					// is not counted). Separate from the per-issue cooldown above:
+					// same failure, two ledgers, two questions ("is this issue
+					// poisoned?" vs "is this contributor's runtime dying?").
+					if !taskAssignedAt.IsZero() {
+						h.recordContributorFastFailure(identityOf(contributor), time.Since(taskAssignedAt), msg.Reason)
+					}
 					contributor.mu.Lock()
 					contributor.profile.TasksFailed++
 					contributor.mu.Unlock()
@@ -4591,7 +4610,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 // was minted, provided a task is still active. This keeps long, human-steered
 // sessions from silently losing push access when the original token expires at
 // wsTokenTTL. The relay's token_refresh handler consumes github_token +
-// token_expires_at (bin/contributor-relay.sh). See #2393 item 2.
+// token_expires_at (bin/contributor-relay.js). See #2393 item 2.
 func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 	tier, repo, due := tokenRefreshDue(c, time.Now())
 	if !due {
@@ -4841,7 +4860,7 @@ func (h *ContributeWSHub) sendTokenRefreshFailed(c *ContributorConnection, reaso
 // sendTokenRefresh writes a token_refresh message carrying the new token and its
 // expiry, then records the new mint time. The field names (github_token,
 // token_expires_at) match exactly what the relay's token_refresh handler
-// consumes in bin/contributor-relay.sh. See #2393 item 2.
+// consumes in bin/contributor-relay.js. See #2393 item 2.
 func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string) error {
 	msg := WSMessage{
 		Type:           "token_refresh",
@@ -5178,6 +5197,51 @@ func repoNameOnly(repo string) string {
 	return repo
 }
 
+// contributorCanPush reports whether the connected contributor can create a
+// branch directly in repoFull. A personal repository cannot be forked back into
+// the same account, so owner equality is both authoritative and deliberately
+// independent of API availability. For organization repositories, GitHub's
+// permission endpoint folds direct, team, organization, and enterprise grants
+// into one effective permission. Any missing dependency, malformed identity,
+// timeout, or API error fails closed to the universally safe fork workflow.
+func (h *ContributeWSHub) contributorCanPush(repoFull, username string) bool {
+	owner, repo, ok := strings.Cut(strings.TrimSpace(repoFull), "/")
+	username = strings.TrimSpace(username)
+	if !ok || owner == "" || repo == "" || username == "" {
+		return false
+	}
+	if strings.EqualFold(owner, username) {
+		return true
+	}
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return false
+	}
+	client := h.server.deps.GHClient.GoGitHub()
+	if client == nil {
+		return false
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, repoPermissionTimeout)
+	defer cancel()
+	level, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, username)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Debug("[contribute-ws] repository permission lookup failed; using fork workflow",
+				"repo", repoFull, "username", username, "error", err)
+		}
+		return false
+	}
+	switch strings.ToLower(level.GetPermission()) {
+	case "admin", "write":
+		return true
+	default:
+		return false
+	}
+}
+
 // taskUnavailableReason* are the machine-readable reasons carried on a
 // task_unavailable negative-ack. They let the relay (and operators reading the
 // log) tell "there is simply no admissible work right now" apart from "the hub
@@ -5235,6 +5299,15 @@ const (
 	// taskUnavailableRoleNotPermitted: the relay requested a spoke agent role, but
 	// the hive config/tier/grant policy does not allow this contributor to claim it.
 	taskUnavailableRoleNotPermitted = "agent_role_not_permitted"
+	// taskUnavailableFailureStreak (kubestellar/hive#6450): this identity's last
+	// contributorFailureStreakThreshold assignments each failed within
+	// contributorFastFailureMax of assignment — the signature of an agent runtime
+	// dying at startup — so claims are paused for contributorFailureStreakPause.
+	// Unlike no_matching_work this is about THIS contributor, not the queue, and
+	// the message names the streak and the pause expiry. Not an enforced-policy
+	// refusal like tier_disabled: it lifts on its own and is reset by any
+	// completion or genuinely-attempted (slow) failure.
+	taskUnavailableFailureStreak = "contributor_failure_streak"
 )
 
 // identityOf returns the stable key that groups a contributor's live
@@ -5352,21 +5425,20 @@ func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
 }
 
 // buildTaskPrompt constructs the exact assignment prompt sent to a contributor's
-// agent for a given issue. It is a PURE function of the task's public metadata
-// (repo / number / title) and deliberately contains NO credential: the scoped
-// github_token is attached to the task_assign WSMessage separately, so this text
-// is safe to preview read-only in the ops tab (#2539). selectTask ships whatever
-// this returns, and the ops preview reads the very same string back off the
-// connection, so "what is previewed" always matches "what runs".
+// agent for a given issue. It is a PURE function of public task metadata and a
+// pre-resolved access mode, and deliberately contains NO credential: the scoped
+// github_token is attached to the task_assign WSMessage separately. The text is
+// therefore safe to preview read-only in the ops tab (#2539). selectTask stores
+// exactly what it ships, so "what is previewed" always matches "what runs".
 // buildTaskPrompt is the GitHub-shaped entry point retained for existing call
-// sites (ops-tab prompt preview, tests). New identity-aware callers use
-// buildTaskPromptForRef.
+// sites and tests. Source-aware callers use buildTaskPromptForRef; live dispatch
+// uses buildTaskPromptForContributor after resolving the contributor's access.
 //
-// One value comes from outside the task's own metadata: the base branch this
-// work belongs on (#5729), which taskBaseBranch derives from the issue title
-// and the branch this hive was built from. That is process-wide build metadata
-// rather than per-request state, so the preview still renders exactly what the
-// agent is sent.
+// Two values come from outside the task itself: the base branch (#5729), which
+// taskBaseBranch derives from the issue title and this hive's build branch, and
+// the access mode (#6654), which selectTask resolves from the connected
+// contributor's GitHub identity. Neither is a credential, and the rendered
+// result stored on the connection is still the exact prompt sent to the agent.
 func buildTaskPrompt(repoFull string, number int, title string) string {
 	return buildTaskPromptForRef(worksource.Ref{Repo: repoFull, Number: number}, title)
 }
@@ -5381,9 +5453,17 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 // carries its URL, because that is the only way an agent can actually open it:
 // there is no `gh issue view` for a Linear ticket.
 //
-// The repository instructions are unchanged and still name the GitHub repo —
-// external work is planned elsewhere but still landed as a PR here.
+// Repository instructions always name the GitHub repo; external work is planned
+// elsewhere but still landed as a PR here.
 func buildTaskPromptForRef(ref worksource.Ref, title string) string {
+	return buildTaskPromptForContributor(ref, title, false)
+}
+
+// buildTaskPromptForContributor renders the checkout workflow selected for the
+// contributor's actual access to the target repository. canPush is resolved by
+// contributorCanPush immediately before dispatch; the credential remains
+// separate from this pure, preview-safe prompt builder.
+func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush bool) string {
 	repoFull := ref.Repo
 	issueRef := ref.Key()
 	if issueRef == "" {
@@ -5406,8 +5486,8 @@ func buildTaskPromptForRef(ref worksource.Ref, title string) string {
 	// was put back on v5 by the agent, because the plan it had already formed
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
-	return buildTaskPromptBody(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()))
+	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint,
+		taskBaseBranch(title, repoFull, upstreamBranch()), canPush)
 }
 
 // taskIDSegment is the per-item component of a task id. For GitHub-backed work
@@ -5549,6 +5629,10 @@ func taskBaseBranch(title, repoFull, hubBranch string) string {
 // resolve one at all, which changes the wording below but never licenses
 // inheriting whatever branch the checkout happens to be on.
 func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch string) string {
+	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch, false)
+}
+
+func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool) string {
 	// The workspace contract (kubestellar/hive#2545): your tmux pane already
 	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
 	// launches the session with -c pointed there), but nothing had put a repo
@@ -5582,14 +5666,36 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 				"is '%s' before you report done. ",
 			b, repoFull, b, b, b)
 	}
+	repoOwner, _, _ := strings.Cut(repoFull, "/")
+	if repoOwner == "" {
+		repoOwner = repoFull
+	}
+	checkoutHint := fmt.Sprintf(
+		"You do NOT have push access to the upstream repo. "+
+			"Create the checkout parent with 'mkdir -p $HIVE_WORKSPACE_DIR/%s', "+
+			"then get a real checkout on disk: "+
+			"'gh repo fork %s --clone=true -- $HIVE_WORKSPACE_DIR/%s' "+
+			"(this creates 'origin' for your fork and 'upstream' for the source repo; "+
+			"if that directory already has a clone from a prior task, 'cd' into it "+
+			"and 'git fetch upstream' instead of re-forking). ",
+		repoOwner, repoFull, repoFull)
+	pushHint := "Push your branch to your fork's 'origin' remote, then open a PR from your fork. "
+	if canPush {
+		checkoutHint = fmt.Sprintf(
+			"You have push access to the upstream repo, so do not fork it. "+
+				"Create the checkout parent with 'mkdir -p $HIVE_WORKSPACE_DIR/%s', "+
+				"then get a real checkout on disk: "+
+				"'gh repo clone %s $HIVE_WORKSPACE_DIR/%s -- --origin upstream' "+
+				"(or, if that directory already has a clone from a prior task, 'cd' "+
+				"into it and ensure the 'upstream' remote points to %s before running "+
+				"'git fetch upstream'). ",
+			repoOwner, repoFull, repoFull, repoFull)
+		pushHint = "Push your branch to the 'upstream' remote, then open a PR from that branch. "
+	}
+
 	return fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+
-			"You do NOT have push access to the upstream repo. "+
-			"Start by getting a real checkout on disk: "+
-			"'gh repo fork %s --clone=true --remote=true "+
-			"$HIVE_WORKSPACE_DIR/%s' (or, if that directory already has a clone "+
-			"from a prior task, 'cd' into it and 'git fetch' instead of "+
-			"re-forking). Then 'cd' into that checkout, read the issue, "+
+			"%sThen 'cd' into that checkout, read the issue, "+
 			"understand what's needed, and take action. "+
 			// #5729: the base branch. Everything above deliberately REUSES a
 			// checkout across tasks, which is exactly what makes the branch
@@ -5620,7 +5726,7 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 			// no reason to think otherwise. The contributor had to intervene by
 			// hand ("don't make them draft. Make sure they are submitted and
 			// ready for review") to get it marked ready.
-			"Push your branch to your fork remote, then open a PR from your fork. "+
+			"%s"+
 			"Open it ready for review, not as a draft (do not pass --draft): a draft "+
 			"is auto-labelled do-not-merge/work-in-progress and cannot merge. If a PR "+
 			"is already open as a draft, mark it ready for review. "+
@@ -5630,11 +5736,12 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 			// verdict, so an issue whose remainder is maintainer-gated stops
 			// re-entering the offer pool every cooldown window. Keep the marker
 			// spelling in sync with detectNoWorkVerdict in
-			// bin/contributor-relay.sh.
+			// bin/contributor-relay.js.
 			"If you determine there is genuinely NOTHING shippable — for example the "+
 			"remaining work is blocked on an unanswered maintainer decision, or merged "+
 			"PRs already cover everything actionable — do NOT open a PR; instead print "+
-			"a single line of the exact form 'HIVE_VERDICT: no_work_needed — <short reason>' "+
+			"a single line of plain text, no Markdown formatting, in the exact form "+
+			"'HIVE_VERDICT: no_work_needed — <short reason>' "+
 			"and stop. "+
 			// #5376: the completion sentinel. The interactive relay used to
 			// infer "this task is done" from the CLI's own terminal chrome —
@@ -5645,19 +5752,19 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 			// input was a vendor's cosmetic rendering rather than a contract.
 			// This line IS the contract: the agent states it is finished. The
 			// relay's detectCompletionVerdict scrapes it; keep the marker
-			// spelling in sync with bin/contributor-relay.sh.
+			// spelling in sync with bin/contributor-relay.js.
 			//
 			// Asked for LAST and on its own line for a reason: the relay reads
 			// a bounded tail of the pane, so a sentinel buried above a long
 			// summary can scroll out of view before the relay looks.
 			"When you HAVE finished the task — the PR is open, or you have "+
 			"otherwise done everything you intend to do — print, as the very "+
-			"last thing you output and on a line by itself, "+
+			"last thing you output and on a line by itself, in plain text, no Markdown formatting: "+
 			"'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, "+
 			"only when you are actually done, and never before starting work. "+
 			"If you printed the no_work_needed line above, that already counts "+
 			"as your completion — do not print both.",
-		repoFull, issueRef, title, sourceHint, repoFull, repoFull, baseHint,
+		repoFull, issueRef, title, sourceHint, checkoutHint, baseHint, pushHint,
 	)
 }
 
@@ -5951,6 +6058,21 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				}
 			}
 		}
+	}
+
+	// #6450: pause claims for an identity whose recent assignments all died
+	// within seconds — a dying agent runtime. Checked after the operator gates
+	// (which are policy and must win the log/refusal narrative) and before the
+	// candidate scan (so a broken runtime cannot book another issue's failure
+	// cooldown). Hub-measured only; see contribute_failure_streak.go.
+	if paused, streak, until := h.contributorFailureStreakActive(identityOf(c), time.Now()); paused {
+		h.logger.Warn("[contribute-ws] refusing task: contributor failure streak",
+			"username", identityOf(c),
+			"consecutive_fast_failures", streak.Count,
+			"paused_until", until.UTC().Format(time.RFC3339))
+		msg := h.taskUnavailable(taskUnavailableFailureStreak)
+		msg.Message = contributorFailureStreakMessage(streak, until)
+		return msg
 	}
 
 	totalAvailable := 0
@@ -6356,9 +6478,10 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// the prompt), so previewing the prompt can never leak the token. buildTaskPrompt
 	// itself carries the #2545 workspace-clone instruction (real checkout into
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
-	prompt := buildTaskPromptForRef(chosen.ref, chosen.title)
+	canPush := h.contributorCanPush(chosen.repoFull, ownUsername)
+	prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, canPush)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPromptForRef(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
+		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush)
 	}
 	// #4105: tell the agent up front — from the hub's own handshake-recorded
 	// invocation values — the exact attribution trailer its PR body must end
@@ -6764,4 +6887,3 @@ func (s *Server) Close() {
 	}
 	s.CloseContributeHub()
 }
-

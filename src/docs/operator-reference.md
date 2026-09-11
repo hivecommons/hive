@@ -82,8 +82,8 @@ For runtime precedence and provenance, see [config-layering.md](config-layering.
 
 ## App self-merge sweep (`auto_merge`)
 
-Two different mechanisms merge PRs automatically, and they share the word
-"automerge" without sharing any configuration:
+Three different mechanisms merge PRs automatically, and they share the word
+"automerge" without sharing much configuration:
 
 - **The human queue** — a merger/owner applies the `governor.labels.automerge`
   label (default `lgtm`) and Hive squash-merges the PR once CI is green. A
@@ -93,6 +93,11 @@ Two different mechanisms merge PRs automatically, and they share the word
   `src/pkg/github/automerge/automerge_sweep.go`) — a background loop that merges the
   App's **own** open PRs with no human queue-approval at all. This is what the
   top-level `auto_merge:` block controls.
+- **The merge-request watcher** (`hive-merge`) — agents request merges through
+  a result-file protocol and the watcher verifies CI evidence itself before
+  merging. It reads two per-repo keys from the same `auto_merge:` block
+  (`allow_unprotected_base`, `no_ci_ok`, below). See
+  [hive-merge.md](hive-merge.md).
 
 The self-merge sweep exists because Prow structurally forbids self-approval: a
 PR the Forge App itself opens can never collect the `lgtm`+`approved` labels
@@ -105,6 +110,8 @@ its own work. The sweep merges such PRs directly over the GitHub REST API
 | `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
 | `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
 | `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
+| `auto_merge.allow_unprotected_base` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo allowlist (`owner/repo` or bare name) that lets [`hive-merge`](hive-merge.md) merge into a base branch with **no** GitHub branch protection. Default refuses, because on such a branch the hive's own CI-evidence gate is the only gate (#6281). |
+| `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). A no-CI repo whose base is also unprotected needs **both** this and `allow_unprotected_base` — the opt-outs are independent. See [hive-merge.md](hive-merge.md). |
 
 **The ACMM gate.** `self_authored: true` (or unset) is necessary but not
 sufficient: the sweep only starts when the hive's `acmm_level` is **6 or
@@ -140,13 +147,22 @@ starve every other GitHub caller, including the agents.
 
 ## Image provenance and tags
 
-Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored to the matching `ghcr.io/kubestellar/*` packages during the Hive Commons org transfer, so both orgs serve digest-identical manifest lists for the same tag. A build of the mainline branch `v4` publishes, in one multi-architecture manifest operation:
+Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored **by digest** into the matching `ghcr.io/kubestellar/*` packages. Post-transfer, `hivecommons` is the native publishing org; the workflow retags the already-built digest into `kubestellar` so that spokes still pinned to the old org keep resolving, and both orgs serve digest-identical manifest lists for the same tag. (A missing cross-org credential is a hard failure in that direction precisely because a one-sided publish would leave `kubestellar` serving stale tags to live spokes.)
 
-- `ghcr.io/hivecommons/hive:v4-latest` — rolling tag for the current HEAD of `origin/v4`;
-- `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tag;
-- `ghcr.io/hivecommons/hive:stable`, `:candidate`, `:edge` — the moving **release channels** (retags of the same digest; see [release-channels.md](release-channels.md)).
+A build of a release line publishes, in one multi-architecture manifest operation:
 
-PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
+- `ghcr.io/hivecommons/hive:<line>-latest` — the rolling tag for the current HEAD of that branch: `v4-latest` on `v4`, `v5-latest` on `v5`;
+- `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tags;
+- that line's moving **release channel** — `v4` merge builds own `:candidate`, `v5` merge builds own `:edge` (retags of the same digest; see [release-channels.md](release-channels.md)).
+
+> **`:latest` is not currently line-scoped.** Both lines' builds move the global `:latest` tag, so it alternates between `v4` and pre-GA `v5` depending on which run finishes last — tracked in [#6711](https://github.com/hivecommons/hive/issues/6711). Until that is fixed, do not deploy `:latest`; name the line (`v4-latest`), the channel (`stable`), or a digest.
+
+Channel ownership is deliberately **per-line**: without the split, every `v4` merge would silently re-point `edge` back onto `v4` minutes after any deliberate promotion of `edge` to `v5` (`src/scripts/publish-image-tags.sh`). Two consequences follow that are easy to get backwards:
+
+- `:stable` is **not** published by a branch build at all. The separate stable-promotion workflow advances it by digest from `candidate`, after the [soak gate](stable-soak-policy.md) passes.
+- `:edge` rides `v5`, so it is an **active-development build of the next line**, not a fresher `:stable`. It is the newest build, not the most proven one.
+
+PR and short-lived branch builds compile the image as a CI gate, but only the long-lived release lines (`v4` and `v5`) push tags. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
 > **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` was bumped off it in #4206; standalone image references now come from one source of truth, [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh).)
 

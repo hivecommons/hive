@@ -1,0 +1,11 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "onboarding",
+    "paneShowsBlockingPrompt": true,
+    "paneShowsInputPrompt": false,
+    "paneShowsActiveWork": false
+  },
+  "note": "OMP's captured startup overlay is dismissed with a bare Enter."
+}

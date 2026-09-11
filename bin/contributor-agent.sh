@@ -2,7 +2,7 @@
 # contributor-agent.sh — Entrypoint for the contributor container.
 #
 # 1. Detects which CLI backend is authenticated
-# 2. Starts contributor-relay.sh — ClankeR, the contributor relay (WebSocket client) — in the background
+# 2. Starts contributor-relay.js — ClankeR, the contributor relay (WebSocket client) — in the background
 # 3. Launches the CLI agent in a tmux session
 # 4. The relay feeds tasks into the tmux session and reports results
 #
@@ -33,7 +33,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
 fi
 
 # Docker -e takes precedence over config file
-export HIVE_HUB="${HIVE_HUB:-wss://hive.kubestellar.io:3001/contribute}"
+export HIVE_HUB="${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}"
 export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-register' first}"
 export AGENT_BACKEND="${_DOCKER_BACKEND:-${AGENT_BACKEND:-claude}}"
 export HIVE_AGENT_SESSION="$TMUX_SESSION"
@@ -70,8 +70,9 @@ fetch_knowledge_export() {
   fi
 
   curl_rc=0
-  curl --silent --show-error --location "${proto_redir_args[@]}" --max-redirs "${KNOWLEDGE_MAX_REDIRS:-3}" \
+  curl --silent --show-error "${proto_redir_args[@]}" \
     --max-time "${KNOWLEDGE_FETCH_MAX_TIME:-15}" \
+    --header "Authorization: Bearer ${HIVE_REGISTRATION_TOKEN}" \
     --output "$tmp_body" \
     --write-out "%{http_code}" \
     "$url" > "$tmp_status" 2>/dev/null || curl_rc=$?
@@ -128,6 +129,10 @@ GOOSECFG
       else
         echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
       fi
+      ;;
+    omp)
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
     codex|pi)
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
@@ -369,6 +374,11 @@ detect_cli() {
         echo "NOT_AUTHED"
       fi
       ;;
+    omp)
+      # OMP supports several provider credential mechanisms. A version probe
+      # proves only that the CLI is present, so do not claim authentication.
+      if omp --version &>/dev/null; then echo "UNVERIFIED"; else echo "NOT_INSTALLED"; fi
+      ;;
     pi)
       if pi --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
@@ -404,6 +414,73 @@ detect_cli() {
 
 if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI:-}" == "1" ]]; then
   detect_cli "$AGENT_BACKEND"
+  exit 0
+fi
+
+# seed_claude_config pre-answers the first-run gates Claude Code raises in
+# ${HOME}/.claude.json, so none of them can park the tmux pane on a menu that
+# nothing inside a container is there to answer. Mirrors the hub's
+# inferenceUserConfigSeed (src/pkg/agent/manager.go) and the same seed
+# bin/test_backend_smoke.sh writes for its throwaway HOME.
+#
+# hasCompletedOnboarding matters for EVERY claude contributor, not just the
+# API-key ones. Claude Code keeps authentication in two files and needs both:
+# ${HOME}/.claude/.credentials.json holds the OAuth token, and
+# ${HOME}/.claude.json holds the session state. A container that mounts a
+# staged ${HOME}/.claude gets a perfectly good, unexpired credential — plus a
+# ${HOME}/.claude.json the CLI writes for itself on first start, carrying
+# oauthAccount but NOT hasCompletedOnboarding. The CLI then re-runs onboarding
+# and draws "Select login method" on top of working credentials. That two-file
+# split is documented for hub-side agents in
+# src/pkg/agent/claude_session_state.go (#4596); the contributor relay walks
+# into the same wall from the other direction.
+#
+# This seeding used to run only for litellm, or for claude when an
+# ANTHROPIC_API_KEY was delivered (#5103, the K8s contributor path).
+# Subscription/OAuth claude — the default `just contribute-hive claude` path —
+# matched neither branch, and so was the one configuration that never got the
+# flag it needed most.
+#
+# The customApiKeyResponses half stays keyed on a key actually being present.
+# It is stored both in full and as its last 20 chars because
+# customApiKeyResponses matching differs across Claude Code versions.
+seed_claude_config() {
+  # Colima cannot bind-mount files, so an operator-supplied .claude.json
+  # arrives as a copy in the hive config dir rather than as a mount. The merge
+  # below runs after it and preserves whatever keys it carries.
+  if [[ "$AGENT_BACKEND" == "claude" ]] && [[ -f "${CONFIG_DIR}/claude-config.json" ]]; then
+    cp "${CONFIG_DIR}/claude-config.json" "${HOME}/.claude.json"
+    chmod 600 "${HOME}/.claude.json"
+  fi
+
+  python3 - <<'SEEDEOF' 2>/dev/null || true
+import json, os
+p = os.path.join(os.path.expanduser('~'), '.claude.json')
+d = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+d['hasCompletedOnboarding'] = True
+d['autoUpdates'] = False
+d['installMethod'] = 'npm'
+key = os.environ.get('ANTHROPIC_API_KEY', '')
+if key:
+    resp = d.setdefault('customApiKeyResponses', {'approved': [], 'rejected': []})
+    approved = resp.setdefault('approved', [])
+    for k in (key, key[-20:]):
+        if k and k not in approved:
+            approved.append(k)
+with open(p, 'w') as f:
+    json.dump(d, f, indent=2)
+SEEDEOF
+  chmod 600 "${HOME}/.claude.json" 2>/dev/null || true
+}
+
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_SEED_CLAUDE_CONFIG:-}" == "1" ]]; then
+  seed_claude_config
   exit 0
 fi
 
@@ -448,6 +525,9 @@ case "$STATUS" in
   BROKEN)
     echo "ERROR: $AGENT_BACKEND CLI is installed but did not run successfully."
     exit 1
+    ;;
+  UNVERIFIED)
+    echo "$AGENT_BACKEND CLI is installed; authentication will be checked in its interactive pane."
     ;;
   OK)
     if [[ "$AGENT_BACKEND" == "pi" ]]; then
@@ -590,7 +670,7 @@ mkdir -p "$HIVE_AGENT_CWD"
 
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
-node "${SCRIPT_DIR}/contributor-relay.sh" &
+node "${SCRIPT_DIR}/contributor-relay.js" &
 RELAY_PID=$!
 
 
@@ -621,45 +701,11 @@ if [[ "$AGENT_BACKEND" == "codex" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then
   REASONING_FLAG="-c 'model_reasoning_effort=\"${AGENT_REASONING_EFFORT}\"'"
 fi
 
-# Copy host .claude.json from hive config dir (Colima can't bind-mount files)
-if [[ "$AGENT_BACKEND" == "claude" ]] && [[ -f "${CONFIG_DIR}/claude-config.json" ]]; then
-  cp "${CONFIG_DIR}/claude-config.json" "${HOME}/.claude.json"
-  chmod 600 "${HOME}/.claude.json"
-fi
-
-# LiteLLM: pre-seed Claude Code config so first-run onboarding and the
-# custom-API-key approval prompt don't block the tmux session. Mirrors the
-# hub's ensureClaudeSettings pattern (src/pkg/agent/manager.go). The key is
-# stored both in full and as its last 20 chars — customApiKeyResponses
-# matching differs across Claude Code versions.
-# Also for claude driven by a delivered ANTHROPIC_API_KEY (#5103, the K8s
-# contributor path): the CLI raises the same custom-API-key approval prompt,
-# which nothing can answer in a headless pod.
-if [[ "$AGENT_BACKEND" == "litellm" ]] || { [[ "$AGENT_BACKEND" == "claude" ]] && [[ -n "${ANTHROPIC_API_KEY:-}" ]]; }; then
-  python3 - <<'PYEOF' 2>/dev/null || true
-import json, os
-p = os.path.join(os.path.expanduser('~'), '.claude.json')
-d = {}
-if os.path.exists(p):
-    try:
-        with open(p) as f:
-            d = json.load(f)
-    except Exception:
-        d = {}
-d['hasCompletedOnboarding'] = True
-d['autoUpdates'] = False
-d['installMethod'] = 'npm'
-key = os.environ.get('ANTHROPIC_API_KEY', '')
-if key:
-    resp = d.setdefault('customApiKeyResponses', {'approved': [], 'rejected': []})
-    approved = resp.setdefault('approved', [])
-    for k in (key, key[-20:]):
-        if k and k not in approved:
-            approved.append(k)
-with open(p, 'w') as f:
-    json.dump(d, f, indent=2)
-PYEOF
-  chmod 600 "${HOME}/.claude.json" 2>/dev/null || true
+# Seed Claude Code's first-run config for every backend that drives the claude
+# CLI. See seed_claude_config above for why OAuth/subscription claude needs
+# this just as much as the API-key paths do.
+if [[ "$AGENT_BACKEND" == "litellm" || "$AGENT_BACKEND" == "claude" ]]; then
+  seed_claude_config
 fi
 
 # Launch the interactive CLI and auto-dismiss its startup prompts — INTERACTIVE

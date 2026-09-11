@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"regexp"
@@ -229,6 +230,9 @@ type AgentStatusPayload struct {
 	Agents           []FrontendAgent           `json:"agents"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	GovMode          string                    `json:"govMode"`
+	// HiddenAgents is diagnostic-only (#6581): runtime entries the manager
+	// reports that were left out of Agents, and why. See HiddenAgentInfo.
+	HiddenAgents []HiddenAgentInfo `json:"hiddenAgents,omitempty"`
 }
 
 // BuildAgentOnlyStatus builds a lightweight agent-only status from in-memory
@@ -238,11 +242,13 @@ func BuildAgentOnlyStatus(
 	agentStatuses map[string]*agent.AgentProcess,
 	cfg *config.Config,
 ) *AgentStatusPayload {
+	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
-		Agents:           buildAgents(agentStatuses, cfg, govState),
+		Agents:           agents,
 		ConfiguredAgents: buildConfiguredAgents(cfg),
 		GovMode:          strings.ToLower(string(govState.Mode)),
+		HiddenAgents:     hidden,
 	}
 }
 
@@ -265,17 +271,22 @@ func BuildFrontendStatus(
 
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
+	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	health := buildHealth(ghClient, ctx)
+	mergeAgentAuthHealth(health, agents)
+
 	payload := &StatusPayload{
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
 		HiveID:              cfg.HiveID,
-		Agents:              buildAgents(agentStatuses, cfg, govState),
+		Agents:              agents,
+		HiddenAgents:        hiddenAgents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
 		Governor:            buildGovernor(govState, cfg),
 		Tokens:              buildTokens(tokenCollector),
 		Repos:               buildRepos(cfg, actionable),
 		Beads:               BuildBeadsFromConfig(beadStores, cfg),
 		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
-		Health:              buildHealth(ghClient, ctx),
+		Health:              health,
 		Budget:              buildBudget(gov, tokenCollector),
 		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses),
 		GHRateLimits:        buildGHRateLimits(ghClient, ctx, cfg),
@@ -290,6 +301,20 @@ func BuildFrontendStatus(
 		Security:            buildSecurity(cfg),
 	}
 	return payload
+}
+
+func mergeAgentAuthHealth(health map[string]any, agents []FrontendAgent) {
+	if health == nil {
+		return
+	}
+	for _, a := range agents {
+		if a.StructuredStatus == "BLOCKED" &&
+			strings.Contains(strings.ToLower(a.StatusEvidence), "blocked: inference (auth)") {
+			health["agent_auth"] = 0
+			return
+		}
+	}
+	health["agent_auth"] = 1
 }
 
 // agentDisabledInConfig reports whether an agent is switched OFF in config —
@@ -316,6 +341,24 @@ func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentPro
 		return !proc.Config.Enabled
 	}
 	return false
+}
+
+// activeOutsidePack reports whether a runtime entry outside the current ACMM
+// pack still represents an agent the operator expects to see. Pack membership
+// is a default roster, not an exclusivity boundary: custom agents and agents
+// explicitly enabled in YAML may legitimately run beside it. The running state
+// wins during config/reconcile races; otherwise enabled and unpaused is the
+// active configuration. Pack-paused or disabled entries remain suppressible as
+// the inactive higher-level "ghost" agents the dashboard filter targets.
+func activeOutsidePack(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+	if proc == nil {
+		return false
+	}
+	if proc.State == agent.StateRunning {
+		return true
+	}
+	return !agentDisabledInConfig(cfg, name, proc) &&
+		!proc.Paused && proc.State != agent.StatePaused
 }
 
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
@@ -514,7 +557,38 @@ func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
 	return count, reason
 }
 
+// HiddenAgentInfo names an entry that IS present in the agent manager's
+// runtime status map but was left out of the Agents cards, and the stable
+// reason category why. It exists so an operator staring at an empty (or
+// short) Agents section on the dashboard can tell, from /api/status alone
+// and without shell access, whether the hive even attempted to surface that
+// agent — closing the observability gap #6581 reopened after #6503: the
+// dashboard is currently silent about every card it declines to render.
+type HiddenAgentInfo struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// Hidden-agent reason categories. Kept as constants (not ad hoc strings at
+// each call site) so a reason can be compared/asserted on on exactly, the same
+// way StartFailureClass is a stable class rather than its rendered sentence.
+const (
+	hiddenReasonBelowACMMGate = "below-acmm-gate"
+	hiddenReasonPackInactive  = "pack-inactive"
+	hiddenReasonDisabled      = "disabled-in-config"
+)
+
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
+	agents, _ := buildAgentsWithHidden(statuses, cfg, govState)
+	return agents
+}
+
+// buildAgentsWithHidden is buildAgents plus the list of runtime entries it
+// declined to surface as cards, and why. Split out from buildAgents so every
+// existing caller (and every existing test) keeps its original single-value
+// signature; only BuildFrontendStatus/BuildAgentOnlyStatus need the second
+// value to publish it on the status payload.
+func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
 	currentMode := strings.ToLower(string(govState.Mode))
 
 	// The watchdog's authority is hive-wide, but it rides each agent's payload
@@ -529,13 +603,76 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 
 	packAllowed := acmmPackAllowedSet(cfg)
 	onDemandSet := config.OnDemandAgentsFromPacks()
+	acmmLevel := 0
+	if cfg.ACMMLevel != nil {
+		acmmLevel = *cfg.ACMMLevel
+	}
 
+	var hidden []HiddenAgentInfo
 	names := make([]string, 0, len(statuses))
-	for name := range statuses {
-		if packAllowed != nil && !packAllowed[name] {
+	// seen marks every name that already went through the runtime-status gate
+	// above — whether it was surfaced as a card or explicitly hidden — so the
+	// config-only pass below only ever considers agents with NO runtime entry
+	// at all. Marking it inside the runtime loop (rather than only when a name
+	// is added to `names`) is load-bearing: without it, an agent the runtime
+	// gate just decided to hide (e.g. paused-outside-pack, still present in
+	// `statuses`) could be re-evaluated by the config pass using a different,
+	// looser signal (agentCfg.Paused instead of the runtime proc state) and
+	// resurrected as a normal card — while simultaneously still listed in
+	// `hidden`. That would undo the ACMM/pack gate the runtime loop just
+	// applied instead of only filling the gap left by agents missing entirely.
+	seen := make(map[string]bool, len(statuses))
+	for name, proc := range statuses {
+		seen[name] = true
+		// The operability-agent gate is a hard availability boundary, unlike
+		// membership in a pack's default roster. Keep it authoritative even if
+		// a stale manager snapshot still contains one of those processes.
+		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
+			slog.Debug("agent card omitted: below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+			continue
+		}
+		if packAllowed != nil && !packAllowed[name] && !activeOutsidePack(cfg, name, proc) {
+			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+			slog.Debug("agent card omitted: outside ACMM pack and not active", "agent", name, "acmm_level", acmmLevel)
 			continue
 		}
 		names = append(names, name)
+	}
+	if cfg != nil {
+		for name, agentCfg := range cfg.Agents {
+			if seen[name] {
+				continue
+			}
+			// Every drop below has to record a reason. The runtime loop above
+			// reports why it omitted a card, but this config-only pass used to
+			// `continue` silently, so an agent that exists in the config and
+			// never got a runtime entry vanished from the UI AND from
+			// hiddenAgents — leaving the diagnostic added for #6581 reporting
+			// an empty list on precisely the configuration that has no cards
+			// (#6652). "No cards and nothing hidden" is indistinguishable from
+			// "the builder never saw your config", which is what made the
+			// original report impossible to act on.
+			if !agentCfg.Enabled {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonDisabled})
+				seen[name] = true
+				continue
+			}
+			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
+				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
+				continue
+			}
+			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+				slog.Debug("agent card omitted: config-only agent outside ACMM pack and paused", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
+				continue
+			}
+			names = append(names, name)
+			seen[name] = true
+		}
 	}
 	sort.Slice(names, func(i, j int) bool {
 		orderI := 100
@@ -555,6 +692,17 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 	agents := make([]FrontendAgent, 0, len(statuses))
 	for _, name := range names {
 		proc := statuses[name]
+		if proc == nil {
+			if cfg == nil {
+				continue
+			}
+			agentCfg, ok := cfg.Agents[name]
+			if !ok {
+				continue
+			}
+			agents = append(agents, buildMissingRuntimeAgent(name, agentCfg, cfg, currentMode, onDemandSet))
+			continue
+		}
 		cli := proc.Config.Backend
 		if proc.BackendOverride != "" {
 			cli = proc.BackendOverride
@@ -701,6 +849,11 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
 		}
+		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+			a.BackendAuthStatus = status
+			a.BackendAuthSince = formatOptionalTime(proc.BackendAuth.Since)
+			a.BackendAuthLastError = proc.BackendAuth.LastError
+		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
@@ -779,7 +932,87 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 
 		agents = append(agents, a)
 	}
-	return agents
+	return agents, hidden
+}
+
+func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *config.Config, currentMode string, onDemandSet map[string]bool) FrontendAgent {
+	agentID := agentCfg.ID
+	if agentID == "" {
+		agentID = name
+	}
+	cli := agentCfg.Backend
+	model := agentCfg.Model
+	cadenceValue := lookupCadenceValueForMode(name, currentMode, cfg)
+	if cadenceValue == "" {
+		cadenceValue = lookupCadenceValue(name, cfg)
+	}
+	onDemand := agentCfg.OnDemand || onDemandSet[name]
+	noCadence := !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
+
+	acmmLevel := 0
+	if cfg.ACMMLevel != nil {
+		acmmLevel = *cfg.ACMMLevel
+	}
+	mode := agent.DefaultAgentMode(name, acmmLevel)
+	if modeStr := agentCfg.Mode; modeStr != "" {
+		if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			mode = parsed
+		}
+	}
+	defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+
+	backendKind := "backend"
+	if config.IsInferenceBackend(cli) {
+		backendKind = "inference backend"
+	} else if gw := cfg.Governor.ResolveGateway(cli); gw != nil && cli != "" {
+		backendKind = "configured gateway backend"
+		if model == "" {
+			model = gw.DefaultModel
+		}
+	}
+	evidence := fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
+	if err := cfg.Governor.ValidateBackend(cli); err != nil {
+		evidence = err.Error()
+	}
+
+	return FrontendAgent{
+		Name:             name,
+		ID:               agentID,
+		DisplayName:      agentCfg.DisplayName,
+		Description:      agentCfg.Description,
+		Role:             agentCfg.Role,
+		SortOrder:        agentCfg.GetSortOrder(),
+		Emoji:            agentCfg.Emoji,
+		Color:            agentCfg.Color,
+		BeadRole:         agentCfg.GetBeadRole(),
+		Managed:          agentCfg.Managed,
+		ReplicaBase:      agentCfg.ReplicaOf,
+		ReplicaIndex:     agentCfg.ReplicaIndex,
+		ReplicaCount:     agentCfg.ReplicaCount,
+		OnDemand:         onDemand,
+		Sandboxed:        agentCfg.SandboxEnabled(cfg.AgentSandbox),
+		Session:          name,
+		State:            string(agent.StateStopped),
+		Busy:             "idle",
+		Paused:           agentCfg.Paused,
+		OffByCadence:     false,
+		NoCadence:        noCadence,
+		CLI:              cli,
+		Model:            model,
+		ReasoningEffort:  agentCfg.ReasoningEffort,
+		Cadence:          cadenceDisplay(cadenceValue),
+		GovBackend:       cli,
+		GovModel:         model,
+		StatsConfig:      resolveStatsSources(loadStatsConfig(name), cfg),
+		Mode:             mode.String(),
+		ModeEmoji:        mode.Emoji(),
+		DefaultMode:      defaultMode.String(),
+		IsCustomMode:     mode != defaultMode,
+		StructuredStatus: "BLOCKED",
+		StatusEvidence:   evidence,
+		LastError:        evidence,
+		Enabled:          true,
+	}
 }
 
 // loadStatsConfig reads the per-agent stats configuration from /data/agents/{name}/stats.json.

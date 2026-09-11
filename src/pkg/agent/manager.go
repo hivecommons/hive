@@ -303,6 +303,9 @@ type AgentProcess struct {
 	ProviderErrorLine           string
 	ProviderErrorBackoffUntil   time.Time
 	providerErrorBackoffAttempt int
+	// BackendAuth is the per-agent backend-auth canary (#6558), derived from
+	// provider-auth failures observed in the CLI pane.
+	BackendAuth BackendAuthState
 	// kickLogPending is true while the current tmux session holds kick output
 	// that has not yet been archived to a per-kick log file (see
 	// kick_logs.go). Set after every kick delivery; cleared when the
@@ -511,15 +514,16 @@ type Manager struct {
 	// consentWedges records consent-screen restarts for the heartbeat's
 	// ConsentWedged signal (#5577). Own mutex, NEVER m.mu — the recording
 	// sites can run with m.mu held. Zero value ready.
-	consentWedges    consentWedgeTracker
-	logger           *slog.Logger
-	workDir          string
-	project          ProjectContext
-	copilotAuthToken string
-	claudeAuthToken  string
-	uidMap           *UIDMap
-	appAuth          AppTokenMinter
-	agentMint        AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	consentWedges                 consentWedgeTracker
+	logger                        *slog.Logger
+	workDir                       string
+	project                       ProjectContext
+	copilotAuthToken              string
+	copilotAuthTokenAuthoritative bool
+	claudeAuthToken               string
+	uidMap                        *UIDMap
+	appAuth                       AppTokenMinter
+	agentMint                     AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not
 	// boot), so a key an operator adds via a Secret/PVC file or the config UI
@@ -691,6 +695,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	// The token stays in the process env so all agents can authenticate for AI
 	// completions; write access is gated by --enable-all-github-mcp-tools flag.
 	copilotToken := os.Getenv("COPILOT_GITHUB_TOKEN")
+	copilotTokenAuthoritative := strings.TrimSpace(copilotToken) != ""
 	if copilotToken == "" {
 		// Fall back to the token persisted by the dashboard's device-flow login.
 		if data, err := os.ReadFile(CopilotUserTokenPath); err == nil {
@@ -710,17 +715,18 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	kickLogDir, kickLogRetention, kickLogMaxBytes := kickLogSettingsFromEnv()
 
 	m := &Manager{
-		agents:           make(map[string]*AgentProcess),
-		idToName:         make(map[string]string),
-		logger:           logger,
-		workDir:          workDir,
-		project:          project,
-		copilotAuthToken: copilotToken,
-		claudeAuthToken:  claudeToken,
-		uidMap:           uidMap,
-		kickLogDir:       kickLogDir,
-		kickLogRetention: kickLogRetention,
-		kickLogMaxBytes:  kickLogMaxBytes,
+		agents:                        make(map[string]*AgentProcess),
+		idToName:                      make(map[string]string),
+		logger:                        logger,
+		workDir:                       workDir,
+		project:                       project,
+		copilotAuthToken:              copilotToken,
+		copilotAuthTokenAuthoritative: copilotTokenAuthoritative,
+		claudeAuthToken:               claudeToken,
+		uidMap:                        uidMap,
+		kickLogDir:                    kickLogDir,
+		kickLogRetention:              kickLogRetention,
+		kickLogMaxBytes:               kickLogMaxBytes,
 	}
 
 	for name, cfg := range agents {

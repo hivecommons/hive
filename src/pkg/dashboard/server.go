@@ -342,9 +342,16 @@ type StatusPayload struct {
 	// StatusInstance identifies the server process that produced the seq.
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
-	StatusInstance   string                    `json:"statusInstance"`
-	HiveID           string                    `json:"hiveId"`
-	Agents           []FrontendAgent           `json:"agents"`
+	StatusInstance string          `json:"statusInstance"`
+	HiveID         string          `json:"hiveId"`
+	Agents         []FrontendAgent `json:"agents"`
+	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
+	// that were left out of Agents (the dashboard cards), each with the stable
+	// reason category it was omitted for. It exists so an operator whose
+	// Agents section renders empty or short can tell, from /api/status alone,
+	// whether the hive even attempted to surface a given agent — see
+	// HiddenAgentInfo (status_builder.go).
+	HiddenAgents     []HiddenAgentInfo         `json:"hiddenAgents,omitempty"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	Governor         FrontendGovernor          `json:"governor"`
 	Tokens           FrontendTokens            `json:"tokens"`
@@ -549,6 +556,14 @@ type FrontendAgent struct {
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
 	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
+	// from the same classifyProviderError verdict as StructuredStatus's
+	// "blocked: inference" evidence, so the dashboard can render an explicit
+	// auth-health badge without re-parsing StatusEvidence prose. Empty status
+	// means ok — also what a legacy agent that predates the field reports.
+	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
 	// Conditions is the watchdog reconciler's observed-truth condition set
 	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
 	// State config echo. Empty until the watchdog's first sweep.
@@ -1394,6 +1409,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				// requires possession of the secret — nothing less (#4134).
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
+			}
+		}
+
+		if !trusted && r.URL.Path == "/api/knowledge/export" {
+			if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+				trusted = true
+				r.Header.Set("X-Hive-User", profile.GitHubUsername)
+				r.Header.Set("X-Hive-Role", config.RoleRead)
 			}
 		}
 
@@ -3032,6 +3055,13 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	return known && !available
 }
 
+func agentProviderAuthBlocked(proc *agent.AgentProcess, now time.Time) bool {
+	return proc != nil &&
+		strings.EqualFold(strings.TrimSpace(proc.ProviderErrorClass), "auth") &&
+		!proc.ProviderErrorBackoffUntil.IsZero() &&
+		now.Before(proc.ProviderErrorBackoffUntil)
+}
+
 func (s *Server) HealthSummary() map[string]any {
 	s.statusMu.RLock()
 	status := s.status
@@ -3255,10 +3285,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		down := 0
 		idle := 0
 		needLogin := 0
+		providerAuth := 0
 		// The names behind the counts. "1 down" alone is unactionable — the
 		// operator's next question is always WHICH one, and the answer was
 		// dropped right here where it was known.
-		var downNames, stalledNames, needLoginNames, idleNames []string
+		var downNames, stalledNames, needLoginNames, idleNames, providerAuthNames []string
 		authFn := getBackendAuthFn()
 		statuses := s.deps.AgentMgr.AllStatuses()
 		if healthAgentStatuses != nil {
@@ -3266,10 +3297,15 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		}
 		currentMode := s.healthGovernorMode()
 		onDemandFromPack := config.OnDemandAgentsFromPacks()
+		now := time.Now()
 		for name, proc := range statuses {
 			if proc.Paused {
 				paused++
 				continue
+			}
+			if !agentDisabledInConfig(s.deps.Config, name, proc) && agentProviderAuthBlocked(proc, now) {
+				providerAuth++
+				providerAuthNames = append(providerAuthNames, name)
 			}
 			if proc.State == agent.StateRunning {
 				// A RUNNING agent sitting at a login prompt is alive but cannot
@@ -3336,6 +3372,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		sort.Strings(idleNames)
 		sort.Strings(stalledNames)
 		sort.Strings(needLoginNames)
+		sort.Strings(providerAuthNames)
 		detail := fmt.Sprintf("%d running", running)
 		if paused > 0 {
 			detail += fmt.Sprintf(", %d paused", paused)
@@ -3376,6 +3413,13 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			detail += fmt.Sprintf(" — within boot grace (agents re-authenticating), age=%s", bootAge.Round(time.Second))
 		}
 		checks = append(checks, check{Name: "agents", Status: st, Detail: detail})
+
+		if providerAuth > 0 {
+			checks = append(checks, check{Name: "agent_auth", Status: "fail", Detail: fmt.Sprintf("%d blocked by inference auth: %s", providerAuth, strings.Join(providerAuthNames, ", "))})
+			fails++
+		} else {
+			checks = append(checks, check{Name: "agent_auth", Status: "pass"})
+		}
 
 		if stalled > 0 {
 			checks = append(checks, check{Name: "stall_detection", Status: "warn", Detail: fmt.Sprintf("%d stalled (no output 30+ min): %s", stalled, strings.Join(stalledNames, ", "))})

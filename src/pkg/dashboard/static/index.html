@@ -4376,7 +4376,7 @@
       const _tokAvg = _tok.avgPerSession || (_tok.sessions > 0 ? Math.floor(_tokTotal / _tok.sessions) : 0);
       return `
         <div class="oc-detail-fields">
-          <div class="oc-detail-field"><div class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${INFERENCE_BACKENDS.includes(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
+          <div class="oc-detail-field"><div class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${isInferenceBackendName(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${isInferenceBackendName(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(a.lastKick || '—')}</div></div>
@@ -6748,7 +6748,7 @@
             return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
           })()}
           <div class="agent-card-details">
-          <div class="agent-field"><span class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
+          <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' <span class="status-badge needs-context" title="CLI flags are stale — restart agent to apply new mode">⚠ restart needed</span>' : ''}</span></div>
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
@@ -8278,17 +8278,27 @@
     const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    function includesNameCI(list, name) {
+      const want = String(name || '').toLowerCase();
+      return !!want && list.some(v => String(v || '').toLowerCase() === want);
+    }
     // Names of Model Gateways configured under Settings → Model Gateways
-    // (e.g. 'openrouter'). Agent routing already resolves a gateway name, but
-    // the backend pickers only listed KNOWN_BACKENDS — so a configured gateway
-    // was never selectable. Populated by fetchConfiguredGateways() at load and
-    // refreshed whenever a gateway is saved/deleted.
+    // (e.g. 'openrouter'). Keep every configured spelling here so agents that
+    // reference a gateway with different casing than a built-in backend still
+    // classify as gateway-backed; backendOptionList() does display-only de-dupe.
     let _configuredGateways = [];
+    function isInferenceBackendName(backend) {
+      return INFERENCE_BACKENDS.includes(backend) || includesNameCI(_configuredGateways, backend);
+    }
+    function canonicalInferenceBackendName(backend) {
+      const want = String(backend || '').toLowerCase();
+      return _configuredGateways.find(g => String(g || '').toLowerCase() === want) || backend;
+    }
     // Combined option list for the backend/method dropdowns: KNOWN_BACKENDS
     // first (stable order), then any configured gateway names not already in
     // KNOWN_BACKENDS (dedup — e.g. a gateway literally named 'litellm').
     function backendOptionList() {
-      return KNOWN_BACKENDS.concat(_configuredGateways.filter(g => !KNOWN_BACKENDS.includes(g)));
+      return KNOWN_BACKENDS.concat(_configuredGateways.filter(g => !includesNameCI(KNOWN_BACKENDS, g)));
     }
     // Fetch configured gateway names from the existing governor endpoint. Kept
     // resilient: any failure leaves _configuredGateways as-is (dropdowns still
@@ -8298,9 +8308,12 @@
         const res = await fetch('/api/config/governor/gateways');
         if (!res.ok) return;
         const data = await res.json();
-        _configuredGateways = (data.gateways || [])
+        const next = (data.gateways || [])
           .map(g => g.name)
-          .filter(name => name && !KNOWN_BACKENDS.includes(name));
+          .filter(name => name);
+        const changed = JSON.stringify(next) !== JSON.stringify(_configuredGateways);
+        _configuredGateways = next;
+        if (changed && window._lastAgents) renderAgents(window._lastAgents);
       } catch (e) { /* keep prior list; dropdowns fall back to KNOWN_BACKENDS */ }
     }
     // Fallback list only — the server now discovers claude models live via
@@ -8421,7 +8434,7 @@
     function backendLabel(b) {
       // Configured gateways (e.g. openrouter) are inference/gateway backends,
       // so they carry the same ⚡ marker as vllm/llm-d/litellm.
-      if (INFERENCE_BACKENDS.includes(b) || _configuredGateways.includes(b)) return b + ' ⚡';
+      if (isInferenceBackendName(b)) return b + ' ⚡';
       if (b === 'agy') return 'Google Antigravity (agy)';
       return b;
     }
@@ -8476,9 +8489,9 @@
       if (SINGLE_OPTION_BACKENDS.includes(backend)) {
         return CLI_FALLBACK_MODELS[backend] || [];
       }
-      const discovered = BACKEND_MODELS[backend];
+      const discovered = BACKEND_MODELS[backend] || BACKEND_MODELS[canonicalInferenceBackendName(backend)];
       if (discovered && discovered.length) return discovered;
-      if (INFERENCE_BACKENDS.includes(backend)) return [];
+      if (isInferenceBackendName(backend)) return [];
       // NOTE (latent trap): any UNKNOWN backend still falls through to the
       // copilot catalog and is offered models it may not support — the exact
       // bug this change fixes for bob. Left as-is deliberately: gateway
@@ -8584,6 +8597,39 @@
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;
     let _cliModelsFetchedAt = 0;
+
+    // BACKEND_MODEL_NOTICES holds, per backend id, the server's explanation
+    // for why a static list is being served when the reason is one the owner
+    // can act on — today: the backend rejected this account's credential or
+    // entitlement (#6500). The option labels carry the short form; this map
+    // carries the full sentence onto the dropdown's tooltip, so the answer is
+    // one hover away from where the owner is already looking instead of only
+    // in a server log.
+    const BACKEND_MODEL_NOTICES = {};
+
+    // applyModelNoticeTitle puts a backend's notice detail on a model <select>
+    // as its tooltip, and clears any stale one when the backend recovers.
+    function applyModelNoticeTitle(sel, backend) {
+      if (!sel) return;
+      const notice = BACKEND_MODEL_NOTICES[backend];
+      if (notice && notice.detail) sel.title = notice.detail;
+      else if (sel.title) sel.removeAttribute('title');
+    }
+
+    // setBackendModelNotice records a backend's notice and refreshes the
+    // tooltip on every model dropdown already on screen for that backend —
+    // the agent cards are rendered independently of this fetch, so a notice
+    // that arrives after they paint still has to reach them.
+    function setBackendModelNotice(backend, notice) {
+      if (notice) BACKEND_MODEL_NOTICES[backend] = notice;
+      else delete BACKEND_MODEL_NOTICES[backend];
+      (window._lastAgents || []).forEach(a => {
+        if (!a || a.cli !== backend) return;
+        document.querySelectorAll(
+          `select[data-change-action="switchModel"][data-agent="${a.name}"]`
+        ).forEach(sel => applyModelNoticeTitle(sel, backend));
+      });
+    }
     // fetchBackendsConfig hits the same /api/config/backends endpoint that
     // powers backend discovery server-side (PR #1843) and populates
     // BACKEND_MODELS for the CLI backends (copilot/claude/gemini/goose) with
@@ -8601,7 +8647,19 @@
         _cliModelsFetchedAt = now;
         (list || []).forEach(b => {
           if (!CLI_BACKENDS.includes(b.id)) return; // inference backends handled by fetchInferenceModels
-          const labelSuffix = b.fallback ? ' (common alias, unverified)' : '';
+          // b.notice: discovery did not merely fail, it was REJECTED — the
+          // backend told hive this account cannot run inference (a Copilot
+          // seat that is no longer licensed, #6500). Say that instead of
+          // "(common alias, unverified)", which reads as a hive-side probe
+          // hiccup and let an owner with dead agents conclude the model
+          // configuration was fine. The list is still offered: blanking it
+          // would leave nothing configurable, and a seat can come back.
+          const labelSuffix = (b.notice && b.notice.label) ? ` (${b.notice.label})`
+            : (b.fallback ? ' (common alias, unverified)' : '');
+          if (b.notice && b.notice.detail) {
+            console.warn(`[models] ${b.id}: ${b.notice.detail}`);
+          }
+          setBackendModelNotice(b.id, b.notice || null);
           const models = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
           BACKEND_MODELS[b.id] = models;
@@ -15731,7 +15789,7 @@ function burnAreaChart() {
 
     async function switchCli(agent, backend) {
       if (!backend) return;
-      const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
+      const label = isInferenceBackendName(backend) ? 'method' : 'CLI';
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
@@ -15771,18 +15829,19 @@ function burnAreaChart() {
 
     async function updateModelDropdown(agent, backend) {
       const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
-      const isInference = INFERENCE_BACKENDS.includes(backend);
+      const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (isInference || isCli) {
         modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';
           sel.disabled = true;
         });
-        const models = isInference ? await fetchInferenceModels(backend) : (await fetchBackendsConfig(), modelsForBackend(backend));
+        const models = isInference ? await fetchInferenceModels(canonicalInferenceBackendName(backend)) : (await fetchBackendsConfig(), modelsForBackend(backend));
         modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
           sel.disabled = false;
+          applyModelNoticeTitle(sel, backend);
         });
       } else {
         modelSelects.forEach(sel => {
@@ -15804,11 +15863,12 @@ function burnAreaChart() {
       const a = (window._lastAgents || []).find(x => x.name === agentName);
       const backend = a && a.cli;
       if (!backend) return;
-      const isInference = INFERENCE_BACKENDS.includes(backend);
+      const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (!isInference && !isCli) return;
       const prev = JSON.stringify(BACKEND_MODELS[backend] || []);
-      const models = isInference ? await fetchInferenceModels(backend) : (await fetchBackendsConfig(), modelsForBackend(backend));
+      const models = isInference ? await fetchInferenceModels(canonicalInferenceBackendName(backend)) : (await fetchBackendsConfig(), modelsForBackend(backend));
+      applyModelNoticeTitle(sel, backend);
       if (JSON.stringify(models) !== prev) {
         const current = sel.value;
         sel.innerHTML = '<option value="">model ▾</option>' +
@@ -17099,8 +17159,14 @@ function burnAreaChart() {
     // fetch('/api/trends') + fetchTimeline() — deferred to _deferredInit
     const TREND_REFRESH_MS = 900000;
     window._timelineData = [];
+    // Returns its promise. _deferredInit calls this as
+    // `fetchTimeline().then(...)`, and without the return that is `.then` on
+    // undefined: an uncaught TypeError on every load which left the whole
+    // deferred chain unresolved forever (#6581). Every other entry in that
+    // list is an `async function`, which returns a promise for free; this one
+    // is not, so the return has to be written.
     function fetchTimeline() {
-      fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
+      return fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
     const TIMELINE_REFRESH_MS = 60000;
     // ── Configuration Dialog ──────────────────────────────────────────
@@ -18520,6 +18586,18 @@ function burnAreaChart() {
           uses a gateway by naming it as its backend. Keys are stored privately on this
           hive — never in hive.yaml, logs, or config downloads.
         </div>
+        <div data-copilot-backend-help style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--surface);font-size:0.8rem;line-height:1.5">
+          <div style="font-weight:600;color:var(--fg);margin-bottom:3px">Looking for Copilot, Claude, Codex, or Gemini?</div>
+          <div style="color:var(--muted)">
+            Copilot is a subscription CLI backend, not a Model Gateway, so it will not
+            appear in this list — the same is true for Claude, Codex, Gemini, and other
+            agent CLI backends. Open an agent's <strong>⚙ General</strong> tab, enable
+            <strong>CLI Pinned</strong>, choose <strong>Copilot</strong> under
+            <strong>CLI Pin Value</strong>, and save. Then use <strong>Login</strong> on
+            that agent's card to authenticate this hive.
+            <a href="https://github.com/hivecommons/hive/blob/v4/docs/inference-backends.md" target="_blank" rel="noopener noreferrer" style="color:var(--cyan);font-weight:600;white-space:nowrap">Copilot setup guide ↗</a>
+          </div>
+        </div>
         <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
           <button data-action="openGatewayForm" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">+ Add gateway</button>
           <button data-action="openOpenRouterFund" style="padding:7px 16px;border:1px solid var(--cyan);border-radius:6px;background:transparent;color:var(--cyan);cursor:pointer;font-weight:600;font-size:0.8rem">⚡ Fund this hive with OpenRouter</button>
@@ -18712,7 +18790,7 @@ function burnAreaChart() {
         // Keep the backend/method pickers' gateway list in sync with the tab.
         _configuredGateways = _gateways
           .map(g => g.name)
-          .filter(name => name && !KNOWN_BACKENDS.includes(name));
+          .filter(name => name);
         renderGatewaysList();
         // Guided jump from a method switch (maybeOpenMethodConfig): if we were
         // sent here to configure a specific kind, open a fresh add-form already
@@ -18822,7 +18900,7 @@ function burnAreaChart() {
       [kind, name].forEach(m => {
         if (m && INFERENCE_BACKENDS.includes(m) && !methods.includes(m)) methods.push(m);
       });
-      if (!methods.includes(name) && name && _configuredGateways.includes(name)) methods.push(name);
+      if (!methods.includes(name) && name && includesNameCI(_configuredGateways, name)) methods.push(name);
       for (const method of methods) {
         let models = [];
         try {
@@ -19426,15 +19504,12 @@ function burnAreaChart() {
 
     function fetchQueueCount() {
       // Use the same source as the Operations tab's Ready-work queue
-      // (/api/contribute/queue) rather than /api/contribute/status'
-      // actionable_items, which is the raw pre-filter pool and does not
-      // apply the Labels/Titles/Authors admission filters configured in
-      // this dialog. Showing actionable_items here misleadingly implied
-      // that many items were queued when only the filtered subset is
-      // actually admissible.
+      // (/api/contribute/queue). Both endpoints now describe admitted work, but
+      // the queue remains this panel's source of truth because queue_total is
+      // uncapped and excludes separately visible operator-held rows.
       fetch('/api/contribute/queue').then(function(r) { return r.json(); }).then(function(d) {
         var el = document.getElementById('hub-queue-count');
-        if (el) el.textContent = ((d.queue || []).length) + ' items in queue';
+        if (el) el.textContent = (d.queue_total != null ? d.queue_total : (d.queue || []).length) + ' items in queue';
       }).catch(function() {
         var el = document.getElementById('hub-queue-count');
         if (el) el.textContent = '—';
@@ -25081,8 +25156,30 @@ function burnAreaChart() {
           () => fetchTimeline().then(() => { setInterval(fetchTimeline, TIMELINE_REFRESH_MS); }),
           () => fetchAgentLogs().then(() => { setInterval(fetchAgentLogs, LOGS_REFRESH_MS); }),
         ];
+        // `Promise.resolve().then(fn)` rather than `fn()`, so ONE bad entry
+        // cannot strand the whole chain (#6581). `fn()` was called bare inside
+        // the setTimeout callback, so an entry that threw synchronously — or
+        // returned undefined and had `.then` called on it, which is what
+        // fetchTimeline did — threw out of the callback with nothing to catch
+        // it. That entry's promise then never settled, so Promise.all never
+        // settled, so resolveAll never ran and _deferredLoadPromise stayed
+        // pending for the life of the page. _afterPaint awaits it, so first-
+        // load view restoration (making #oc-agent-detail active, navigating to
+        // a saved section) silently never happened.
+        //
+        // Wrapping turns a synchronous throw into a rejection, which
+        // `.then(resolve, resolve)` already handles: the entry is recorded as
+        // finished-badly instead of never finishing, and the other twelve
+        // entries still complete. The throw is still reported below rather
+        // than swallowed — the point is that one broken entry degrades to one
+        // broken feature, not to a dashboard that never finishes initialising.
         const allDone = deferred.map((fn, i) =>
-          new Promise(resolve => setTimeout(() => fn().then(resolve, resolve), i * DEFERRED_STAGGER_MS))
+          new Promise(resolve => setTimeout(() => {
+            Promise.resolve().then(fn).then(resolve, err => {
+              console.error('deferred init entry ' + i + ' failed', err);
+              resolve();
+            });
+          }, i * DEFERRED_STAGGER_MS))
         );
         Promise.all(allDone).then(resolveAll);
       }, DEFERRED_INIT_DELAY_MS);

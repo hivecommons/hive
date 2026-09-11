@@ -124,11 +124,29 @@ func (r *kickDispatchRegistry) get(name string) (KickDispatch, bool) {
 	return *d, true
 }
 
+func (r *kickDispatchRegistry) recordForTest(d KickDispatch) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.byAgent == nil {
+		r.byAgent = make(map[string]*KickDispatch)
+	}
+	cp := d
+	r.byAgent[d.Agent] = &cp
+}
+
 // KickDispatchState returns the most recent asynchronous kick dispatch for an
 // agent and whether one exists. The dashboard polls this to report the true
 // outcome after answering the POST with 202.
 func (m *Manager) KickDispatchState(name string) (KickDispatch, bool) {
 	return m.kickDispatches.get(name)
+}
+
+// RecordKickDispatchForTest seeds a KickDispatch directly into the manager's
+// registry. TEST HOOK ONLY: used by dashboard package tests to exercise
+// handleKickStatus response formatting without running a live background kick
+// delivery goroutine.
+func (m *Manager) RecordKickDispatchForTest(d KickDispatch) {
+	m.kickDispatches.recordForTest(d)
 }
 
 // SendKickAsync validates a kick's preconditions synchronously and then

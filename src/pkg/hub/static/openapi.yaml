@@ -10,7 +10,7 @@ info:
     url: https://www.apache.org/licenses/LICENSE-2.0
 
 servers:
-  - url: https://hive.kubestellar.io
+  - url: https://hive.hivecommons.dev
     description: Production hub
 
 tags:

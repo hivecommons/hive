@@ -8,8 +8,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// extractCopilotToken must handle both value shapes the CLI writes: a bare
-// string and a {"token":…} object; and return "" when there is none.
+// extractCopilotToken must handle both value shapes the CLI writes, honor the
+// active identity, and refuse ambiguous multi-account configs.
 func TestExtractCopilotToken(t *testing.T) {
 	dir := t.TempDir()
 	write := func(body string) string {
@@ -43,6 +43,19 @@ func TestExtractCopilotToken(t *testing.T) {
 	}
 	if got := extractCopilotToken(write(`{"copilotTokens":{"github.com":{"token":"********"}}}`)); got != "" {
 		t.Errorf("masked object shape: got %q, want \"\"", got)
+	}
+	// The selected identity wins even when another account also has a token.
+	if got := extractCopilotToken(write(`{"lastLoggedInUser":{"host":"https://github.com","login":"licensed"},"copilotTokens":{"https://github.com:other":"gho_other","https://github.com:licensed":"gho_licensed"}}`)); got != "gho_licensed" {
+		t.Errorf("active identity: got %q, want gho_licensed", got)
+	}
+	// A selected identity with no usable token must not fall through to a
+	// different account, and a config with no selected identity is safe only
+	// when all usable entries represent the same token.
+	if got := extractCopilotToken(write(`{"lastLoggedInUser":"https://github.com:missing","copilotTokens":{"https://github.com:other":"gho_other"}}`)); got != "" {
+		t.Errorf("missing active identity: got %q, want \"\"", got)
+	}
+	if got := extractCopilotToken(write(`{"copilotTokens":{"https://github.com:a":"gho_a","https://github.com:b":"gho_b"}}`)); got != "" {
+		t.Errorf("ambiguous identities: got %q, want \"\"", got)
 	}
 }
 
@@ -108,6 +121,75 @@ func TestSyncCopilotToken_PromoteNoopWhenAlreadyHeld(t *testing.T) {
 	}
 	if _, err := os.Stat(dur); !os.IsNotExist(err) {
 		t.Error("durable file must not be written when nothing changed")
+	}
+}
+
+// An explicitly configured COPILOT_GITHUB_TOKEN has higher precedence than
+// credentials in config.json. The reconciler must preserve that direction
+// instead of promoting a stale, potentially unlicensed CLI identity over it.
+func TestSyncCopilotToken_AuthoritativeTokenReplacesCLIIdentity(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"lastLoggedInUser":{"host":"https://github.com","login":"old"},"loggedInUsers":[{"host":"https://github.com","login":"old"}],"copilotTokens":{"https://github.com:old":"gho_unlicensed"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	origLookup := githubTokenLogin
+	githubTokenLogin = func(token string) string {
+		if token == "ghu_licensed" {
+			return "licensed"
+		}
+		return ""
+	}
+	defer func() { githubTokenLogin = origLookup }()
+
+	m := testManager(5)
+	m.copilotAuthToken = "ghu_licensed"
+	m.copilotAuthTokenAuthoritative = true
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
+		t.Fatalf("action = %v, want seed", act)
+	}
+	if got := extractCopilotToken(cfg); got != "ghu_licensed" {
+		t.Fatalf("active config token = %q, want ghu_licensed", got)
+	}
+	parsed, err := readCopilotConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := copilotIdentityKey(parsed["lastLoggedInUser"]); got != "https://github.com:licensed" {
+		t.Fatalf("active identity = %q, want licensed identity", got)
+	}
+	if _, err := os.Stat(dur); !os.IsNotExist(err) {
+		t.Fatal("authoritative seed must not overwrite the durable source")
+	}
+}
+
+func TestNewManagerMarksEnvironmentCopilotTokenAuthoritative(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "ghu_from_env")
+	m := NewManager(map[string]config.AgentConfig{}, testManager(5).logger, ProjectContext{ACMMLevel: 5})
+	if got := m.CopilotToken(); got != "ghu_from_env" {
+		t.Fatalf("manager token = %q, want ghu_from_env", got)
+	}
+	if !m.copilotAuthTokenAuthoritative {
+		t.Fatal("COPILOT_GITHUB_TOKEN must be authoritative over shared CLI config")
+	}
+}
+
+func TestActivateCopilotTokenUpdatesMemoryWhenConfigWriteFails(t *testing.T) {
+	m := testManager(5)
+	badPath := filepath.Join(t.TempDir(), "missing", "config.json")
+	origPath := sharedCopilotConfigPath
+	sharedCopilotConfigPath = badPath
+	defer func() { sharedCopilotConfigPath = origPath }()
+
+	if err := m.ActivateCopilotToken("ghu_fresh"); err == nil {
+		t.Fatal("ActivateCopilotToken should report the config write failure")
+	}
+	if got := m.CopilotToken(); got != "ghu_fresh" {
+		t.Fatalf("in-memory token = %q, want ghu_fresh", got)
+	}
+	if !m.copilotAuthTokenAuthoritative {
+		t.Fatal("fresh dashboard token must remain authoritative for a retry")
 	}
 }
 
@@ -287,5 +369,83 @@ func TestRestoreCopilotTokens_IdentityShape(t *testing.T) {
 	obj, _ := toks["github.com"].(map[string]interface{})
 	if got, _ := obj["token"].(string); got != "gho_plain" {
 		t.Errorf("no-identity token = %q, want gho_plain under github.com object shape; tokens=%v", got, toks)
+	}
+}
+
+// --- #6500: logout must not leave an authoritative EMPTY token ---------------
+
+// A dashboard logout calls SetCopilotToken(""). If that marked the empty token
+// authoritative, syncCopilotToken's SEED branch would return noop forever
+// (authoritative && held == ""), permanently disabling PROMOTE: an operator who
+// logs out and then runs /login inside an agent would never have that login
+// mirrored to the durable store, losing it on the next roll.
+func TestSetCopilotTokenEmptyIsNeverAuthoritative(t *testing.T) {
+	m := testManager(5)
+
+	m.SetCopilotToken("gho_real")
+	if !m.copilotAuthTokenAuthoritative {
+		t.Fatal("a non-empty explicit token must be authoritative")
+	}
+
+	// The logout path.
+	m.SetCopilotToken("")
+	if m.copilotAuthTokenAuthoritative {
+		t.Fatal("an empty token must never be authoritative (#6500)")
+	}
+
+	// Whitespace is not a token either.
+	m.SetCopilotToken("gho_real")
+	m.SetCopilotToken("   ")
+	if m.copilotAuthTokenAuthoritative {
+		t.Fatal("a whitespace-only token must never be authoritative")
+	}
+}
+
+// End-to-end shape of the regression: log out, then log in inside an agent.
+// The in-agent login must still be promoted to the durable store.
+func TestSyncCopilotToken_PromoteStillWorksAfterLogout(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:me":"gho_fromcli"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+
+	// An operator had logged in via the dashboard, then logged out.
+	m.SetCopilotToken("gho_dashboard")
+	m.SetCopilotToken("")
+
+	// Now someone runs /login inside an agent; the CLI config holds that token.
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncPromote {
+		t.Fatalf("action = %v, want promote after logout (#6500)", act)
+	}
+	if b, _ := os.ReadFile(dur); string(b) != "gho_fromcli" {
+		t.Errorf("durable file = %q, want gho_fromcli", string(b))
+	}
+	if m.CopilotToken() != "gho_fromcli" {
+		t.Errorf("in-memory token = %q, want gho_fromcli", m.CopilotToken())
+	}
+}
+
+// The fix must NOT weaken #6514: a real dashboard/env token still outranks a
+// stale identity sitting in the shared CLI config.
+func TestSyncCopilotToken_AuthoritativeStillWinsAfterFix(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:stale":"gho_stale"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+	m.SetCopilotToken("gho_licensed")
+
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
+		t.Fatalf("action = %v, want seed (authoritative token must replace stale CLI identity)", act)
+	}
+	if got := extractCopilotToken(cfg); got != "gho_licensed" {
+		t.Errorf("config token = %q, want gho_licensed", got)
 	}
 }

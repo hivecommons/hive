@@ -30,7 +30,7 @@ The cost endpoint also redacts the configured gateway API key from native-cost p
 
 ## Two redaction layers, not one
 
-`pkg/logscrub` protects the **Go process**. The contributor relay (`bin/contributor-relay.sh`) is a **separate Node process** that never loads it, and redacts on its own with a `redactTokens()` function. Both exist and both work — but they are separate implementations with separate pattern lists, and reading only the section above would leave you assuming a coverage the relay does not have.
+`pkg/logscrub` protects the **Go process**. The contributor relay (`bin/contributor-relay.js`) is a **separate Node process** that never loads it, and redacts on its own with a `redactTokens()` function. Both exist and both work — but they are separate implementations with separate pattern lists, and reading only the section above would leave you assuming a coverage the relay does not have.
 
 The relay applies `redactTokens()` to agent output before it leaves the host: to the captured tmux tail, and to the combined stdout/stderr tail of a headless task. See [Contributor relay](contributor-relay.md).
 

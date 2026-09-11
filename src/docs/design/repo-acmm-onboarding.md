@@ -1,6 +1,24 @@
 # Automatic repo ACMM onboarding reconciler
 
-Status: Proposed — discussion on #6235.
+Status: Declined (2026-09-09) — kept as a record of the decision.
+
+> **Decision.** The maintainers closed RFC #6235 without adopting it, and RFC
+> #6111 (per-repo ACMM levels under a hive-wide ceiling) is on hold: the hive
+> keeps a single hive-wide ACMM level rather than a level per repository, so a
+> reconciler that drives each repo toward its own target level has no policy
+> to enforce. Nothing below is scheduled for implementation; reopen #6235
+> before building on it.
+>
+> **Per-repo ACMM may still be reachable another way.** Declining per-repo
+> *levels* is not declining per-repo *behaviour*. The direction under
+> discussion on #6111 is a per-repo **mode clamp**: the hive keeps one level
+> (roster driver, dashboard number, ceiling) and a repo may only *lower* the
+> effective policy mode of agents acting on it (`max_mode: advisory | pr`),
+> enforced at the same points (proxy, merge gates, task filtering, prompt
+> context). It composes with per-repo agent scope (#6215) and off-repo
+> criterion waivers (#6264, #6395) and fails closed to the hive-level mode
+> when a repo cannot be resolved. A reconciler that drives repos toward
+> maturity could be revisited on top of that primitive if the need returns.
 
 RFC credit: this design turns the adopter RFC in
 [#6235](https://github.com/hivecommons/hive/issues/6235) into a reviewable plan

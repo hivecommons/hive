@@ -57,6 +57,12 @@ var (
 	// overridable var (test-only seam) rather than referencing the agent
 	// package constant directly everywhere below.
 	copilotUserTokenPath = agent.CopilotUserTokenPath
+
+	// activateCopilotToken is a test seam around the manager operation that
+	// updates both its injected token and the shared Copilot CLI identity.
+	activateCopilotToken = func(m *agent.Manager, token string) error {
+		return m.ActivateCopilotToken(token)
+	}
 )
 
 // copilotAuthFlow holds server-side state for an in-progress device-flow login.
@@ -296,7 +302,9 @@ func (s *Server) pollCopilotToken(ctx context.Context, deviceCode string, interv
 	setDone("device code expired — click Login again")
 }
 
-// saveCopilotToken persists the token and hands it to the agent manager.
+// saveCopilotToken persists the token and makes it the active shared CLI
+// identity. Updating both stores here prevents the periodic reconciler from
+// reversing a fresh dashboard login with an older CLI account.
 func (s *Server) saveCopilotToken(token string) error {
 	tmpPath := copilotUserTokenPath + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(token), 0o600); err != nil {
@@ -306,7 +314,9 @@ func (s *Server) saveCopilotToken(token string) error {
 		return err
 	}
 	if s.deps != nil && s.deps.AgentMgr != nil {
-		s.deps.AgentMgr.SetCopilotToken(token)
+		if err := activateCopilotToken(s.deps.AgentMgr, token); err != nil {
+			return err
+		}
 	}
 	return nil
 }

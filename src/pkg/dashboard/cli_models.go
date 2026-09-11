@@ -184,9 +184,6 @@ const (
 
 	// --- Gemini ---
 
-	// geminiModelsURL lists models available to a Gemini API key.
-	geminiModelsURL = "https://generativelanguage.googleapis.com/v1beta/models"
-
 	// geminiModelsPageSize caps the models page (the API allows up to 1000).
 	geminiModelsPageSize = 200
 
@@ -401,6 +398,41 @@ var gooseProviderStaticModels = map[string][]string{
 type cliModelResult struct {
 	models   []string
 	fallback bool // true when the list is the static fallback, not live discovery
+	// notice explains WHY the fallback is being served, when the reason is
+	// one the operator can act on. Nil for the ordinary cases — no probe
+	// installed, backend not configured, upstream briefly unreachable —
+	// because those are not the operator's problem to fix and labelling them
+	// would be noise. See cliModelNotice.
+	notice *cliModelNotice
+}
+
+// cliModelNotice is an operator-actionable reason a live model list could not
+// be discovered (#6500).
+//
+// Discovery is best-effort by design: every failure degrades to a static list
+// so a dropdown is never empty. That is right for a transient blip, and wrong
+// for an ENTITLEMENT failure — when GitHub answers the Copilot catalog probe
+// with 403 "unauthorized: not licensed to use Copilot", hive has been told
+// definitively that this account cannot run inference, and silently serving
+// twenty static Copilot models makes the picker look healthy while every agent
+// turn fails. On the kubestellar hive an owner debugging dead agents saw a
+// full, normal-looking model list; the definitive answer existed only in a
+// server log line nobody was reading.
+//
+// So a probe failure that is a STATEMENT ABOUT THE ACCOUNT is carried forward
+// to the dashboard rather than dropped. The list is still served — blanking
+// the dropdown would leave the owner unable to configure anything, and a seat
+// can come back — but it is labelled with what upstream actually said.
+type cliModelNotice struct {
+	// Class is the machine-readable kind. "auth" today: the backend rejected
+	// this account's credentials or entitlement.
+	Class string `json:"class"`
+	// Label is a short suffix the model dropdown appends to each option, in
+	// the same idiom as the existing "(common alias, unverified)".
+	Label string `json:"label"`
+	// Detail is the operator-facing sentence: what upstream said and what to
+	// do about it. Never carries a token — see copilotProbeNotice.
+	Detail string `json:"detail"`
 }
 
 type cliModelCacheEntry struct {
@@ -612,8 +644,24 @@ func cliStaticFallback(backend string) []string {
 func (s *Server) discoverCopilotModels() cliModelResult {
 	token := s.copilotToken()
 
+	// notice is set by whichever probe returns an ENTITLEMENT verdict. Both
+	// probes are tried, so a definitive answer from the first is kept even
+	// though the second still runs (it will normally say the same thing, but
+	// the SDK path rides the CLI's stored auth and the HTTP path the token,
+	// so they can legitimately disagree about WHICH credential is dead).
+	var notice *cliModelNotice
+
 	if models, err := s.probeCopilotModelsSDK(token); err != nil {
-		s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
+		notice = copilotProbeNotice(err)
+		if notice != nil {
+			// An entitlement rejection is not a "fall back and move on"
+			// event: it means every agent on this backend is failing right
+			// now. Warn, not Info — this line is the one an operator greps
+			// for when the whole fleet goes quiet (#6500).
+			s.logger.Warn("copilot model discovery rejected by upstream", "class", notice.Class, "err", err.Error())
+		} else {
+			s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
+		}
 	} else if len(models) == 0 {
 		s.logger.Info("copilot SDK model discovery returned no models, falling back to HTTP probe")
 	} else {
@@ -621,7 +669,10 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	}
 
 	if token == "" {
-		return cliModelResult{fallback: true}
+		// No credential at all is "not configured", NOT "not licensed" —
+		// carrying a licence notice here would tell an owner who simply has
+		// not logged in yet to go argue with GitHub about their seat.
+		return cliModelResult{fallback: true, notice: notice}
 	}
 	host := s.copilotAPIHost(token)
 	integrationID := copilotIntegrationID
@@ -632,12 +683,81 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	models, err := fetchCopilotModels(host+copilotModelsPath, token, integrationID)
 	if err != nil || len(models) == 0 {
 		if err != nil {
-			// Do NOT log the token or full URL query; just the failure.
-			s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
+			if n := copilotProbeNotice(err); n != nil {
+				notice = n
+				s.logger.Warn("copilot model discovery rejected by upstream", "class", n.Class, "err", err.Error())
+			} else {
+				// Do NOT log the token or full URL query; just the failure.
+				s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
+			}
 		}
-		return cliModelResult{fallback: true}
+		return cliModelResult{fallback: true, notice: notice}
 	}
 	return cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
+}
+
+// copilotNotLicensedMarker is the phrase GitHub's Copilot API uses when an
+// account's seat is inactive. It arrives as the body of a 403 on the catalog
+// probe ("unauthorized: not licensed to use Copilot") and, separately, as the
+// bare pane line the Copilot CLI renders to an agent — which is why the agent
+// pane classifier matches the same phrase (pkg/agent/pane_classify.go). Keep
+// the two in step: they are reading the same upstream statement on two
+// different surfaces.
+const copilotNotLicensedMarker = "not licensed to use copilot"
+
+// copilotProbeNotice turns a Copilot discovery failure into an operator-facing
+// notice, or nil when the failure says nothing about the account.
+//
+// Only ENTITLEMENT/credential verdicts qualify. A missing helper, a timeout, a
+// TLS failure or an unreachable host are hive-side or transient: they are
+// already logged, and surfacing them in the model picker would train owners to
+// ignore the label. A 401/403 from the catalog endpoint is different — GitHub
+// has answered the question, and the answer is that this account cannot run
+// inference.
+func copilotProbeNotice(err error) *cliModelNotice {
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, copilotNotLicensedMarker):
+		return &cliModelNotice{
+			Class: "auth",
+			Label: "Copilot seat not licensed",
+			Detail: "GitHub rejected this hive's Copilot credential with " +
+				"\"not licensed to use Copilot\", so the model list below is a static guess and " +
+				"agents on this backend cannot run inference. Check the account's seat at " +
+				"github.com/settings/copilot; no hive-side change is needed once it is active again.",
+		}
+	case copilotProbeUnauthorized(lower):
+		return &cliModelNotice{
+			Class: "auth",
+			Label: "Copilot credential rejected",
+			Detail: "GitHub rejected this hive's Copilot credential (HTTP 401/403), so the model " +
+				"list below is a static guess and agents on this backend cannot run inference. " +
+				"Re-run Copilot login, or check the account's seat at github.com/settings/copilot.",
+		}
+	}
+	return nil
+}
+
+// copilotProbeUnauthorized reports whether a probe error is an upstream
+// 401/403 rather than any other numeric coincidence. The HTTP probe formats
+// its own status ("upstream returned 403 ..."), and the SDK helper forwards
+// the CLI's JSON error object, which carries "status":403 — so both are
+// matched explicitly instead of grepping the string for a bare "403", which
+// would also fire on a request id or a model name.
+func copilotProbeUnauthorized(lower string) bool {
+	for _, marker := range []string{
+		"upstream returned 401", "upstream returned 403",
+		`"status":401`, `"status":403`,
+		`"status": 401`, `"status": 403`,
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalizeCopilotModelIDs maps every discovered Copilot catalog id to the
@@ -813,9 +933,37 @@ func fetchCopilotModels(modelsURL, token, integrationID string) ([]string, error
 	}
 	defer closeHTTPBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+		// Include a bounded snippet of the body. The status alone cannot tell
+		// "this account has no Copilot seat" from "this token is wrong", but
+		// the body says so outright — GitHub answers an inactive seat with
+		// "unauthorized: not licensed to use Copilot" (#6500). Discarding it
+		// threw away the one definitive statement hive ever receives about
+		// why the fleet stopped working. The body of an error response is a
+		// diagnostic string, never a credential.
+		return nil, fmt.Errorf("upstream returned %d %s", resp.StatusCode, errorBodySnippet(resp.Body))
 	}
 	return parseCopilotModelsResponse(resp.Body)
+}
+
+// copilotErrorBodyLimit caps how much of a failed Copilot response is folded
+// into the error (and thus into one log line). Enough for the upstream's
+// one-line explanation, never a dump.
+const copilotErrorBodyLimit = 200
+
+// errorBodySnippet reads a bounded, single-line snippet of an error response
+// body for inclusion in an error message. Returns "" when the body is empty or
+// unreadable, so the caller's message degrades to the status alone rather than
+// gaining a dangling separator.
+func errorBodySnippet(r io.Reader) string {
+	raw, err := io.ReadAll(io.LimitReader(r, copilotErrorBodyLimit))
+	if err != nil {
+		return ""
+	}
+	snippet := strings.TrimSpace(strings.ReplaceAll(string(raw), "\n", " "))
+	if snippet == "" {
+		return ""
+	}
+	return "(" + snippet + ")"
 }
 
 // parseCopilotModelsResponse decodes the Copilot /models body and returns the
@@ -859,6 +1007,11 @@ func parseCopilotModelsResponse(r io.Reader) ([]string, error) {
 }
 
 // --- Gemini discovery ---
+
+// geminiModelsURL lists models available to a Gemini API key. It is a var (not
+// a const) solely so tests can point it at an httptest.Server (matching
+// claudePodCredentialsPath).
+var geminiModelsURL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 // discoverGeminiModels lists content-generation models for the configured
 // Gemini API key. Best-effort: no key or a failed call → fallback=true.

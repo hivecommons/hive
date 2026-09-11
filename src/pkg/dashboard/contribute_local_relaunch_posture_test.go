@@ -17,7 +17,7 @@ import (
 //
 // The fix is single-sourcing: the Justfile resolves the launch line once,
 // types it into the pane, and exports the SAME value to the relay as
-// AGENT_LAUNCH_CMD; buildLaunchCommand() in bin/contributor-relay.sh prefers
+// AGENT_LAUNCH_CMD; buildLaunchCommand() in bin/contributor-relay.js prefers
 // that over its own derivation. The launcher half of that contract is pinned by
 // TestContributeHiveExportsLaunchCommandForRelayRelaunch in
 // contribute_pane_cwd_test.go; this file pins the CONSUMER half and the
@@ -57,9 +57,9 @@ func TestRelayReadsTheExactVariableTheLauncherExports(t *testing.T) {
 			"relaunches would re-derive the CONTAINER posture and drop the sandbox (#5652)", launchCmdVar)
 	}
 
-	relay := fileSource(t, "bin/contributor-relay.sh")
+	relay := fileSource(t, "bin/contributor-relay.js")
 	if !strings.Contains(relay, "process.env."+launchCmdVar) {
-		t.Fatalf("bin/contributor-relay.sh no longer reads %s; "+
+		t.Fatalf("bin/contributor-relay.js no longer reads %s; "+
 			"local-mode relaunches would fall back to the container posture (#5652)", launchCmdVar)
 	}
 }
@@ -69,10 +69,10 @@ func TestRelayReadsTheExactVariableTheLauncherExports(t *testing.T) {
 // relaunch path (task exit, crash restart, stall backstop, revoke) goes
 // through — not merely read somewhere in the file.
 func TestRelayBuildLaunchCommandPrefersTheEntrypointLine(t *testing.T) {
-	relay := fileSource(t, "bin/contributor-relay.sh")
+	relay := fileSource(t, "bin/contributor-relay.js")
 	fnStart := strings.Index(relay, "function buildLaunchCommand()")
 	if fnStart < 0 {
-		t.Fatal("buildLaunchCommand() not found in bin/contributor-relay.sh")
+		t.Fatal("buildLaunchCommand() not found in bin/contributor-relay.js")
 	}
 	buildFn := relay[fnStart:]
 	if end := strings.Index(buildFn, "\n}"); end > 0 {

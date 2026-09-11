@@ -299,10 +299,67 @@ check_le_headroom() {
     return
   fi
 
-  local url json counts total count
-  url="https://crt.sh/?q=${LE_REGISTERED_DOMAIN}&output=json"
-  if ! json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$url" 2>/dev/null)"; then
+  local crt_url crt_sub_url cs_url crt_json crt_sub_json cs_json counts total count
+
+  # WHY TWO INDEPENDENT CT SOURCES AND NOT JUST crt.sh.
+  #
+  # crt.sh does return subdomain certificates, but it does not see all of them.
+  # Measured 2026-09-10 for hivecommons.dev, both sources queried for the same
+  # 168h window and deduplicated to distinct certificates:
+  #
+  #   crt.sh        46 in-window   ->  reported "headroom 4", a PASS
+  #   Cert Spotter  83 in-window   ->  33 OVER the cap of 50
+  #
+  # The crt.sh set was a strict SUBSET: 37 certificates were missing from it
+  # and none were missing the other way. The gap was spread across the whole
+  # window (09-03 through 09-09), so it is not ingestion lag that a retry would
+  # clear; the two services simply monitor different CT logs, and no single log
+  # is guaranteed to carry every issuance.
+  #
+  # This matters because the limit is enforced on the CA side against the real
+  # issuance count. A source that sees 55% of it does not produce a slightly
+  # optimistic estimate, it produces a confident PASS while the window is
+  # already exhausted, which is exactly what happened on #5925.
+  #
+  # So: query both, and believe the HIGHER count. Neither source can invent a
+  # certificate that was not issued, so the larger number is always the one
+  # closer to the truth, and disagreement is itself the signal to be careful.
+  # WHY crt.sh IS QUERIED TWICE.
+  #
+  # `q=<domain>` is an IDENTITY match: it returns certificates whose names are
+  # that exact domain, and NONE for its subdomains. That is the whole reason
+  # crt.sh was measured at 46 against a true 83 — not flakiness, but a query
+  # asking a narrower question than the limit is defined over, since the cap is
+  # per REGISTERED domain and every subdomain spends from it. `q=%.<domain>`
+  # (URL-encoded `%25.`) is crt.sh's subdomain wildcard; the union of the two
+  # is the registered domain.
+  #
+  # The two counts are still compared and the higher believed. This does not
+  # make crt.sh a substitute for corroboration — it makes crt.sh contribute a
+  # number about the right SET OF NAMES, so that when Cert Spotter answers
+  # partially (it is rate-limited unauthenticated, and a truncated page parses
+  # like a complete one) crt.sh can exceed it and catch an exhausted window
+  # that Cert Spotter alone would have missed. Feeding a known-incomplete
+  # number into a max() can only ever lose issuances.
+  crt_url="https://crt.sh/?q=${LE_REGISTERED_DOMAIN}&output=json"
+  crt_sub_url="https://crt.sh/?q=%25.${LE_REGISTERED_DOMAIN}&output=json"
+  cs_url="https://api.certspotter.com/v1/issuances?domain=${LE_REGISTERED_DOMAIN}&include_subdomains=true&expand=dns_names"
+  if ! crt_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$crt_url" 2>/dev/null)"; then
     _pf_skip "could not query crt.sh for ${LE_REGISTERED_DOMAIN}; do not treat this as quota headroom"
+    return
+  fi
+  # The subdomain half failing on its own is not fatal: what remains is the
+  # identity count, which is exactly the reading this check already had, still
+  # cross-checked against Cert Spotter. Losing the wildcard query must not turn
+  # a working check into a skip.
+  crt_sub_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$crt_sub_url" 2>/dev/null)" || crt_sub_json="[]"
+  [ -n "$crt_sub_json" ] || crt_sub_json="[]"
+  # ONE SOURCE IS NOT A CROSS-CHECK. If Cert Spotter cannot be reached, what
+  # remains is the crt.sh count alone, and that is the reading measured above
+  # at 55% of the truth. It parses, it looks plausible, and it is wrong in the
+  # unsafe direction. Refuse it the same way an empty body is refused.
+  if ! cs_json="$(curl -fsSL --max-time "$CRT_SH_TIMEOUT_SEC" "$cs_url" 2>/dev/null)"; then
+    _pf_skip "could not reach Cert Spotter to corroborate crt.sh for ${LE_REGISTERED_DOMAIN}; one source is not a cross-check, and crt.sh alone was measured seeing only 46 of 83 in-window certificates, so the count that remains may UNDERCOUNT the registered-domain limit and is NOT headroom"
     return
   fi
 
@@ -327,7 +384,7 @@ check_le_headroom() {
   # re-issue an EXISTING wildcard for, the first is not a possibility, so zero
   # rows can only be the second. Zero rows IN THE WINDOW, out of rows that were
   # actually returned, is a real and useful answer and still passes.
-  if ! counts="$(printf '%s' "$json" | \
+  if ! counts="$(printf '%s\036%s\036%s' "$crt_json" "$crt_sub_json" "$cs_json" | \
       LE_CERT_WINDOW_HOURS="$LE_CERT_WINDOW_HOURS" \
       LE_REGISTERED_DOMAIN="$LE_REGISTERED_DOMAIN" \
       CRT_SH_NOW_UTC="${CRT_SH_NOW_UTC:-}" \
@@ -357,40 +414,102 @@ domain = os.environ.get("LE_REGISTERED_DOMAIN", "").lower()
 cutoff = now - dt.timedelta(hours=window_hours)
 
 try:
-    rows = json.load(sys.stdin)
+    docs = []
+    # The bodies arrive separated by an ASCII record separator, a byte that
+    # cannot occur unescaped inside JSON, so this cannot split a document in
+    # half. Documents 0 and 1 are crt.sh identity and crt.sh subdomain — the
+    # SAME schema, two halves of one registered domain, so they are the one
+    # thing here that IS concatenated. Document 2 is Cert Spotter, a different
+    # schema from a different service, counted separately below.
+    for doc in sys.stdin.read().split("\x1e"):
+        doc = doc.strip()
+        part = json.loads(doc) if doc else []
+        if isinstance(part, dict):
+            part = [part]
+        docs.append(part)
+    while len(docs) < 3:
+        docs.append([])
+    crt_rows, cs_rows = docs[0] + docs[1], docs[2]
 except json.JSONDecodeError:
     print("parse-error", file=sys.stderr)
     sys.exit(2)
-if isinstance(rows, dict):
-    rows = [rows]
 
-seen = set()
-count = 0
-# total counts every row crt.sh returned FOR THIS DOMAIN, regardless of issuer
-# or age. It answers "did crt.sh observe this domain at all", which is what
-# separates a real zero from an unanswered query. Deliberately not filtered by
-# issuer: a domain whose only certificates came from another CA has still been
-# observed, and reading that as "no data" would be its own false alarm.
-total = 0
-for row in rows:
-    names = (str(row.get("common_name", "")) + "\n" + str(row.get("name_value", ""))).lower()
-    if domain and domain not in names:
-        continue
-    total += 1
-    issuer = str(row.get("issuer_name", ""))
-    if "let" not in issuer.lower() or "encrypt" not in issuer.lower():
-        continue
-    not_before = parse_time(row.get("not_before"))
-    if not_before is None or not_before < cutoff:
-        continue
-    ident = str(row.get("id") or row.get("min_cert_id") or row)
-    if ident in seen:
-        continue
-    seen.add(ident)
-    count += 1
+seen_any = set()
+
+
+def crt_identity(row):
+    # Dedupe on the certificate SERIAL, not the crt.sh row id. Every
+    # certificate is logged TWICE, as a precertificate and as the final leaf:
+    # distinct CT entries with distinct crt.sh ids, but ONE issuance against
+    # the limit. Measured for hivecommons.dev, 65 rows collapsed to 49
+    # certificates. Counting rows would inflate the burn by a third, which
+    # fails safe on its own but makes the gate cry wolf on every run, and a
+    # gate that always cries wolf gets bypassed.
+    serial = str(row.get("serial_number", "")).strip().lower().lstrip("0")
+    if serial:
+        return "serial:" + serial
+    return "row:" + str(row.get("id") or row.get("min_cert_id") or row)
+
+
+def crt_count(rows):
+    # total counts every DISTINCT certificate crt.sh returned FOR THIS DOMAIN,
+    # regardless of issuer or age. It answers "did crt.sh observe this domain
+    # at all", which is what separates a real zero from an unanswered query.
+    # Deliberately not filtered by issuer: a domain whose only certificates
+    # came from another CA has still been observed, and reading that as "no
+    # data" would be its own false alarm.
+    total = 0
+    seen = set()
+    for row in rows:
+        names = (str(row.get("common_name", "")) + "\n"
+                 + str(row.get("name_value", ""))).lower()
+        if domain and domain not in names:
+            continue
+        ident = crt_identity(row)
+        if ident not in seen_any:
+            seen_any.add(ident)
+            total += 1
+        issuer = str(row.get("issuer_name", ""))
+        if "let" not in issuer.lower() or "encrypt" not in issuer.lower():
+            continue
+        not_before = parse_time(row.get("not_before"))
+        if not_before is None or not_before < cutoff:
+            continue
+        seen.add(ident)
+    return total, len(seen)
+
+
+def cs_count(rows):
+    # Cert Spotter exposes no serial without also downloading and parsing the
+    # DER, which would add an openssl dependency to a read-only preflight. The
+    # pair (not_before, exact set of dns_names) identifies one issuance just as
+    # well here: a precertificate and its leaf share both. Verified against the
+    # serial-based count for hivecommons.dev, both give 83.
+    total = 0
+    seen = set()
+    for row in rows:
+        names = [str(n).lower() for n in (row.get("dns_names") or [])]
+        if domain and not any(domain in n for n in names):
+            continue
+        total += 1
+        not_before = parse_time(row.get("not_before"))
+        if not_before is None or not_before < cutoff:
+            continue
+        seen.add((row.get("not_before"), tuple(sorted(set(names)))))
+    return total, len(seen)
+
+
+crt_total, crt_in = crt_count(crt_rows)
+cs_total, cs_in = cs_count(cs_rows)
+
+# Believe the HIGHER count. Neither service can invent an issuance that never
+# happened, so the larger number is always the one nearer the truth, and the
+# CA enforces against the truth.
+total = max(crt_total, cs_total)
+count = max(crt_in, cs_in)
 print(total, count)
 ')"; then
-    _pf_skip "crt.sh returned data that could not be parsed; do not treat this as quota headroom"
+    _pf_skip "the certificate transparency sources returned data that could not be parsed; do not treat this as quota headroom"
     return
   fi
 

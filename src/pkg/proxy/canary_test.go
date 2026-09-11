@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,6 +32,41 @@ func TestInspectCanaryEgressDetectsGitHubWrites(t *testing.T) {
 	body, _ := io.ReadAll(req.Body)
 	if !strings.Contains(string(body), c.Token) {
 		t.Fatalf("request body was not restored: %q", body)
+	}
+}
+
+// The canary exists to catch deliberate exfiltration, and a deliberate
+// exfiltrator encodes, so the proxy path — not just the registry — has to see
+// through the encodings a GitHub write body can carry.
+func TestInspectCanaryEgressDetectsEncodedCanaries(t *testing.T) {
+	r := ioscan.NewCanaryRegistry("")
+	c, err := r.Add("scanner")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	bodies := map[string]string{
+		"base64": base64.StdEncoding.EncodeToString([]byte(c.Token)),
+		"hex":    hex.EncodeToString([]byte(c.Token)),
+		"split":  strings.Join(strings.Split(c.Token, ""), ", "),
+	}
+	for name, encoded := range bodies {
+		t.Run(name, func(t *testing.T) {
+			var got ioscan.CanaryLeak
+			p := &GitHubProxy{logger: slog.Default()}
+			p.SetCanaryScanner(true, true, r, func(leak ioscan.CanaryLeak) { got = leak })
+			req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"`+encoded+`"}`))
+			_, deny, detected := p.inspectCanaryEgress("scanner", req)
+			if !detected || !deny {
+				t.Fatalf("got detected=%v deny=%v, want fail-closed block", detected, deny)
+			}
+			if got.Token != c.Token {
+				t.Fatalf("callback leak = %+v, want token %s", got, c.Token)
+			}
+			body, _ := io.ReadAll(req.Body)
+			if !strings.Contains(string(body), encoded) {
+				t.Fatalf("request body was not restored: %q", body)
+			}
+		})
 	}
 }
 

@@ -14,13 +14,42 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WRAPPER="${REPO_ROOT}/bin/gh-wrapper.sh"
+WRAPPER_SRC="${REPO_ROOT}/bin/gh-wrapper.sh"
 
 PASS=0
 FAIL=0
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+# ── Run against a marker-redirected COPY, not the wrapper in place ───────────
+#
+# Every case below means "a staff agent, not a contributor". The wrapper decides
+# that from /etc/hive/contributor-mode — a root-owned marker it reads by
+# CONSTANT path, deliberately ignoring HIVE_CONTRIBUTOR_MODE, because an agent
+# must not be able to redirect its own trust check (#3249). So the env var this
+# harness sets is, correctly, not consulted.
+#
+# Which means the harness silently mis-ran anywhere that marker exists — most
+# obviously INSIDE a hive contributor container, which is exactly where someone
+# debugging contributor behaviour would run it. Eight cases then failed for a
+# reason having nothing to do with the gate under test: `gh auth token` was
+# refused by the contributor auth gate rather than the surface allowlist, the
+# #4044 trusted-file oracle is contributor-gated off, and so on. All eight pass
+# again once the marker is out of the picture.
+#
+# Redirect the constant in a temporary copy — the same pattern, and the same
+# fail-fast guard, that bin/gh-wrapper.test.sh already uses. Production keeps no
+# environment override for this boundary.
+WRAPPER="${WORK}/gh-wrapper-under-test.sh"
+sed "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"|" \
+  "$WRAPPER_SRC" >"$WRAPPER"
+if ! grep -q "CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"" "$WRAPPER"; then
+  echo "FATAL: failed to redirect CONTRIBUTOR_MODE_MARKER in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
+# Absent unless a case creates it: these tests are all non-contributor.
+rm -f "${WORK}/contributor-marker"
 
 STUB="${WORK}/gh-stub"
 STUB_LOG="${WORK}/stub.log"
@@ -225,6 +254,21 @@ assert_blocked "gh gist create is denied (ISSUES_ONLY)" \
   "$(run_wrapper "ISSUES_ONLY" 5 -- gist create /etc/passwd)" surface
 assert_blocked "gh workflow run is denied (ADVISORY)" \
   "$(run_wrapper "ADVISORY" 5 -- workflow run deploy.yml)" surface
+# #6659: the contributor-mode `gh auth` gate was narrowed from a substring match
+# over the whole argv to a match on the parsed SUBCOMMAND. This harness runs
+# NON-contributor, where that gate never applied — so these pin what actually
+# protects a staff agent: the deny-by-default surface allowlist, which does not
+# list `auth` at all. If someone ever "simplifies" by deleting the contributor
+# gate on the assumption it was the only thing blocking auth, these stay green
+# and say why.
+assert_blocked "gh auth token is denied for staff agents (surface allowlist, not the contributor gate)" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- auth token)" surface
+assert_blocked "gh auth login is denied for staff agents" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- auth login)" surface
+# The mirror image: a command whose ARGUMENTS mention auth is decided on its own
+# merits. `search prs` is allowlisted, and the query text is just text.
+assert_reached "a search whose query text is 'auth file' still reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- search prs --repo owner/repo 'auth file')"
 # Denial is per-ACTION, not per-subcommand: an allowed subcommand must not carry
 # a destructive action through with it.
 assert_blocked "an unlisted action on an allowed subcommand is denied (repo archive)" \

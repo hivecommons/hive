@@ -8,7 +8,8 @@
   <meta property="og:title" content="API Reference — Hive">
   <meta property="og:description" content="Hub and spoke API surfaces for the Hive AI-agent orchestration system — auth, quick examples, and the full OpenAPI reference.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://hive.kubestellar.io/api/docs">
+  <meta property="og:url" content="https://hive.hivecommons.dev/api/docs">
+  <link rel="canonical" href="https://hive.hivecommons.dev/api/docs">
   <meta name="description" content="Hive API reference — hub registry, leaderboard, hosted hive provisioning, and spoke integration, with the full OpenAPI schema.">
   <title>API Reference — Hive</title>
   <style>
@@ -219,13 +220,13 @@
       <div class="surface-grid" style="margin-top:2rem">
         <div class="surface-card hub">
           <div class="tag">Hub API</div>
-          <strong style="color:var(--text)"><code>hive.kubestellar.io</code></strong>
+          <strong style="color:var(--text)"><code>hive.hivecommons.dev</code></strong>
           <p>Manages hive registry, users, access control, hosted hive provisioning, leaderboard. Documented below.</p>
         </div>
         <div class="surface-card spoke">
           <div class="tag">Spoke API</div>
           <strong style="color:var(--text)">each hive instance</strong>
-          <p>The actual hive dashboard &mdash; agents, governor, config, contributors, beads, tokens. Available at each hive's URL (e.g. <code>192.168.4.85:3001</code> or <code>hosted-*.hive.kubestellar.io</code>).</p>
+          <p>The actual hive dashboard &mdash; agents, governor, config, contributors, beads, tokens. Available at each hive's URL (e.g. <code>192.168.4.85:3001</code> or <code>hosted-*.hive.hivecommons.dev</code>).</p>
         </div>
       </div>
 
@@ -236,7 +237,7 @@
 
       <div id="tab-connect" class="tab-content active">
         <h2>Base URL</h2>
-        <pre><code>https://hive.kubestellar.io</code></pre>
+        <pre><code>https://hive.hivecommons.dev</code></pre>
 
         <h2>Authentication</h2>
         <p style="font-size:.95rem">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
@@ -249,25 +250,25 @@
         <div class="card">
           <strong>Step 2: Use the cookie in API calls</strong>
           <pre><code># Public — no auth needed
-curl https://hive.kubestellar.io/api/registry
-curl https://hive.kubestellar.io/api/hub/leaderboard
-curl https://hive.kubestellar.io/api/hub/stats
+curl https://hive.hivecommons.dev/api/registry
+curl https://hive.hivecommons.dev/api/hub/leaderboard
+curl https://hive.hivecommons.dev/api/hub/stats
 
 # Authenticated — pass the cookie
 curl -b "hive_hub_user=YOUR_USERNAME" \
-  https://hive.kubestellar.io/api/saas/my-hives</code></pre>
+  https://hive.hivecommons.dev/api/saas/my-hives</code></pre>
         </div>
 
         <h2>Quick Examples</h2>
 
         <div class="card">
           <strong>List all public hives</strong>
-          <pre><code>curl -s https://hive.kubestellar.io/api/registry | jq '.hives[] | {id, name, acmmLevel, governorMode, online}'</code></pre>
+          <pre><code>curl -s https://hive.hivecommons.dev/api/registry | jq '.hives[] | {id, name, acmmLevel, governorMode, online}'</code></pre>
         </div>
 
         <div class="card">
           <strong>Get leaderboard</strong>
-          <pre><code>curl -s https://hive.kubestellar.io/api/hub/leaderboard | jq '.leaderboard[] | {github_username, tasks_completed, current_task}'</code></pre>
+          <pre><code>curl -s https://hive.hivecommons.dev/api/hub/leaderboard | jq '.leaderboard[] | {github_username, tasks_completed, current_task}'</code></pre>
         </div>
 
         <div class="card">
@@ -275,7 +276,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
           <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
   -H "Content-Type: application/json" \
   -d '{"org":"my-org","repos":"my-repo","acmm_level":3,"auth_method":"pat","github_token":"ghp_..."}' \
-  https://hive.kubestellar.io/api/saas/hives</code></pre>
+  https://hive.hivecommons.dev/api/saas/hives</code></pre>
         </div>
 
         <div class="card">
@@ -283,13 +284,13 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
           <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
   -H "Content-Type: application/json" \
   -d '{"username":"collaborator","role":"read-write"}' \
-  https://hive.kubestellar.io/api/saas/hives/HIVE_ID/access</code></pre>
+  https://hive.hivecommons.dev/api/saas/hives/HIVE_ID/access</code></pre>
         </div>
 
         <div class="card">
           <strong>Reset an agent restart counter</strong>
           <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
-  https://hive.kubestellar.io/api/saas/hives/HIVE_ID/agents/AGENT/restarts/reset</code></pre>
+  https://hive.hivecommons.dev/api/saas/hives/HIVE_ID/agents/AGENT/restarts/reset</code></pre>
         </div>
 
         <h2>Spoke Integration</h2>
@@ -298,11 +299,11 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
           <strong>hive.yaml</strong>
           <pre><code>hub:
   enabled: true
-  url: https://hive.kubestellar.io
+  url: https://hive.hivecommons.dev
   is_public: true
   dashboard_url: http://YOUR_IP:3001
   snapshot_url: https://your-snapshot-url</code></pre>
-          <p>Or set the environment variable: <code>HIVE_HUB_URL=https://hive.kubestellar.io</code></p>
+          <p>Or set the environment variable: <code>HIVE_HUB_URL=https://hive.hivecommons.dev</code></p>
           <p style="margin-bottom:0"><strong>Authentication is required.</strong> <code>POST /api/heartbeat</code> rejects any beat without a valid <code>Authorization: Bearer &lt;HIVE_HUB_SECRET&gt;</code> header when the hub has a secret configured, so the settings above only take effect once the hub operator has issued your spoke a <code>HIVE_HUB_SECRET</code>. A spoke configured without one logs <code>hub heartbeat rejected status=401</code> every beat and never appears in the registry.</p>
         </div>
 

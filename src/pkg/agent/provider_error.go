@@ -26,6 +26,9 @@ var (
 )
 
 func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErrorMatch, now time.Time) time.Duration {
+	if status, ok := classifyBackendAuthStatus(match.Class, match.Line); ok {
+		agent.markBackendAuthLocked(status, match.Line, now)
+	}
 	if !agent.ProviderErrorBackoffUntil.IsZero() && now.Before(agent.ProviderErrorBackoffUntil) &&
 		agent.ProviderErrorClass == match.Class && agent.ProviderErrorLine == match.Line {
 		return agent.ProviderErrorBackoffUntil.Sub(now)
@@ -41,7 +44,7 @@ func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErr
 	return delay
 }
 
-func (m *Manager) clearProviderErrorLocked(agent *AgentProcess) {
+func (m *Manager) clearProviderErrorLocked(agent *AgentProcess, now time.Time) {
 	if agent.ProviderErrorClass == "" && agent.ProviderErrorLine == "" && agent.ProviderErrorBackoffUntil.IsZero() {
 		return
 	}
@@ -52,6 +55,7 @@ func (m *Manager) clearProviderErrorLocked(agent *AgentProcess) {
 	agent.ProviderErrorLine = ""
 	agent.ProviderErrorBackoffUntil = time.Time{}
 	agent.providerErrorBackoffAttempt = 0
+	agent.clearBackendAuthLocked(now)
 }
 
 func (m *Manager) providerErrorBackoffRemainingLocked(agent *AgentProcess, now time.Time) time.Duration {
@@ -119,6 +123,8 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		switch {
 		case strings.Contains(lower, "insufficient_quota"):
 			return providerErrorMatch{Class: "quota", Line: trimmed}, true
+		case strings.Contains(lower, "not licensed to use copilot"):
+			return providerErrorMatch{Class: "auth", Line: trimmed}, true
 		case strings.Contains(lower, "rate_limit") ||
 			((strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many requests")) && providerLineHasAPIContext(lower)):
 			return providerErrorMatch{Class: "rate_limit", Line: trimmed}, true

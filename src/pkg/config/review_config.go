@@ -135,7 +135,7 @@ func repoListSet(repos []string) map[string]bool {
 	for _, repo := range repos {
 		repo = strings.TrimSpace(repo)
 		if repo != "" {
-			set[repo] = true
+			set[strings.ToLower(repo)] = true
 		}
 	}
 	if len(set) == 0 {

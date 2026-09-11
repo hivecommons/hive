@@ -297,3 +297,15 @@ func TestBuildTaskPrompt_ForbidsDraftPR(t *testing.T) {
 		t.Errorf("prompt must name the --draft flag it is forbidding; got: %q", prompt)
 	}
 }
+
+// TestBuildTaskPrompt_RequiresPlainTextVerdicts keeps presentation markup out
+// of the machine-readable completion contract. The relay is deliberately
+// tolerant of common Markdown emphasis, but the prompt should still ask every
+// backend to emit the canonical form.
+func TestBuildTaskPrompt_RequiresPlainTextVerdicts(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	if got := strings.Count(prompt, "plain text, no Markdown formatting"); got != 2 {
+		t.Errorf("prompt must require plain text for both verdict instructions; got %d occurrences in: %q", got, prompt)
+	}
+}

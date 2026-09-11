@@ -1,0 +1,1 @@
+- The contributor relay now debounces startup `needs-login` pane classifications before printing the authentication banner, preventing routine CLI relaunch redraws from paging operators while preserving the banner for persistent login failures ([#6668](https://github.com/hivecommons/hive/issues/6668)).

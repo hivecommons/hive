@@ -322,7 +322,7 @@ check_legacy_redirect() {
   case "$code" in
     308) : ;;
     30*)
-      _vf_fail "${DIBS_LEGACY_HOST} returns ${code}, expected 308. The staged annotation sets permanent-redirect-code: \"308\"; another object is answering, or the annotation did not apply."
+      _vf_fail "${DIBS_LEGACY_HOST} returns ${code}, expected 308. The legacy-redirect backend (src/deploy/legacy-redirect/) returns 308 for this host; another object is answering, or the Ingress does not point at the legacy-redirect Service."
       return ;;
     "")
       _vf_fail "${DIBS_LEGACY_HOST} returned no status code"
@@ -341,7 +341,7 @@ check_legacy_redirect() {
   fi
   case "$location" in
     "https://${DIBS_NEW_HOST}"|"https://${DIBS_NEW_HOST}/")
-      _vf_fail "308 to ${location}: the redirect DROPS the path and query. A bare-root check passes and every deep link into dibs breaks. \$request_uri is not reaching the permanent-redirect annotation." ;;
+      _vf_fail "308 to ${location}: the redirect DROPS the path and query. A bare-root check passes and every deep link into dibs breaks. \$request_uri is not reaching the legacy-redirect backend (src/deploy/legacy-redirect/)." ;;
     "")
       _vf_fail "308 with no Location header" ;;
     *)

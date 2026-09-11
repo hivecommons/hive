@@ -1,0 +1,11 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsInputPrompt": true,
+    "paneShowsActiveWork": false
+  },
+  "note": "The relay completion parser consumes HIVE_VERDICT: complete before chrome-idle fallback."
+}

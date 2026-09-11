@@ -7,6 +7,8 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 ## Where to work
 
 - Open issues and pull requests in this repository. Use the issue templates when they are available, and link related issues from the PR body.
+- **A good issue is a real contribution here, not a lesser one.** Much of this repository is written by its maintainers and by the hive's own agents, so the highest-leverage thing an outside contributor can usually do is describe a problem precisely enough to be acted on. When a PR resolves your issue, the commit credits you as a co-author — you appear in the repository's contributor list and on your own GitHub contribution graph, exactly as if you had written the patch. See [Crediting issue authors](#crediting-issue-authors).
+- Pull requests are welcome too, and nothing above changes how they are reviewed.
 - Discuss design and review questions in GitHub issues and PRs so decisions remain public and searchable.
 - Follow the [KubeStellar Code of Conduct](CODE_OF_CONDUCT.md) and [Hive governance](GOVERNANCE.md).
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
@@ -67,6 +69,12 @@ The root [`Justfile`](Justfile) exposes the public contributor relay workflow. R
 | `just hive-api <endpoint>` | Calls a hub API endpoint, defaulting to `/status`, using the configured hive URL. |
 | `just hive-api-docs` | Opens the hub API documentation in a browser. |
 
+Container mode limits the contributor workload to 4 GiB of memory and 2 CPUs,
+matching the `contribute-k8s` workload ceiling. Set `HIVE_CONTAINER_MEMORY` or
+`HIVE_CONTAINER_CPUS` before `just contribute-hive` to tune those limits for
+your machine (for example, `HIVE_CONTAINER_MEMORY=6g just contribute-hive`),
+or set either value to `none` on a host that cannot enforce that controller.
+
 See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) for the end-to-end contributor relay workflow and Kubernetes workload details.
 
 ## Style and quality
@@ -117,19 +125,89 @@ If the hook is not installed, normal Git behavior applies. If it blocks a checko
 
 ## DCO sign-off
 
-Every commit must include a Developer Certificate of Origin sign-off. Use:
+Every commit must include a Developer Certificate of Origin (DCO) sign-off. The
+DCO is your certification that you have the right to submit the contribution
+under this repository's license, and Hive requires it on every non-merge commit.
+Use:
 
 ```bash
 git commit -s
 ```
 
-The sign-off adds a `Signed-off-by:` trailer certifying that you have the right to submit the contribution under this repository's license. If you forget, amend the commit with `git commit --amend -s` and force-push your branch.
+The `-s` flag adds a `Signed-off-by:` trailer using your configured git identity,
+for example:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+The sign-off email must match the commit author email. A GitHub noreply address
+for the same authoring account is also acceptable, in either GitHub form:
+`<login>@users.noreply.github.com` or
+`<id>+<login>@users.noreply.github.com`. Do not sign with an arbitrary second
+personal address unless it is also the commit author email; the checker cannot
+verify that two unrelated email addresses belong to the same person.
+
+Check your local identity before committing:
+
+```bash
+git config user.name
+git config user.email
+```
+
+If your last commit is missing the trailer, or it used the wrong email, fix it
+before review:
+
+```bash
+git commit --amend -s
+git push --force-with-lease
+```
+
+To add sign-offs across a branch, rebase with sign-off and then force-push:
+
+```bash
+git rebase --signoff origin/v4
+git push --force-with-lease
+```
+
+Only rewrite your own pull-request branch. Once bad DCO history lands on a
+protected branch such as `v4`, contributors cannot repair it in place: protected
+branch history is not rewritten, and maintainers must not add a DCO sign-off on
+someone else's behalf. That is why the post-merge checker has narrow per-commit
+waivers for already-merged history; waivers record a maintainer disposition, but
+they are not a substitute for signing new commits correctly.
+
+## Crediting issue authors
+
+When your PR resolves an issue somebody else filed, credit them on the commit with a `Co-authored-by:` trailer ([#6588](https://github.com/hivecommons/hive/issues/6588)). This is what turns "thanks, closing" into a contribution that GitHub actually records: a co-authored commit puts the filer in the repository's contributor list and on their own contribution graph.
+
+`src/scripts/issue-coauthor.sh` builds the trailer from the issue, so you do not have to look the identity up:
+
+```bash
+# print it
+src/scripts/issue-coauthor.sh 6588
+# → Co-authored-by: hanthor <5840441+hanthor@users.noreply.github.com>
+
+# or add it to the commit you just made
+git commit -s -m "🐛 fix: ..."
+src/scripts/issue-coauthor.sh --amend 6588
+```
+
+The script emits nothing (and exits 0) when there is nobody to credit — a bot filed the issue, or you did. It fails rather than emitting a half-right line if the issue or its author cannot be resolved, because GitHub silently ignores an address it cannot match: a malformed trailer looks like credit while crediting nobody.
+
+Two things worth knowing if you write the trailer by hand instead:
+
+- **Use the `<id>+<login>@users.noreply.github.com` form.** It is the only address guaranteed to resolve to the account, and it does not republish a personal address the filer never offered for this repository's git history.
+- **Co-authorship is attribution, not certification.** It does not sign off for anyone: the `Signed-off-by:` trailer is still yours alone, and a commit carrying only a `Co-authored-by:` still fails the DCO check. Adding a co-author never changes your own DCO obligations, and never satisfies theirs.
+
+Credit the filer of the issue the PR fixes, not everyone who commented. If several people's issues are genuinely resolved by one PR, add one trailer each.
 
 ## Pull requests
 
 - Target `v4` for all code and documentation contributions (the active development branch).
 - Start PR titles with the repository's emoji convention, for example `📖 docs: ...`, `🐛 fix: ...`, or `✨ feature: ...`.
 - Include `Fixes #<issue>` lines for issues the PR closes.
+- Credit the issue's author with a `Co-authored-by:` trailer on the commit when the PR resolves somebody else's issue — see [Crediting issue authors](#crediting-issue-authors).
 - Describe what changed, why, and how you tested it.
 - Include the relevant command output or a short note such as `Not run (docs only)` when tests are not applicable.
 - Add a changelog fragment under [`changelog.d/`](changelog.d/README.md) for user-visible changes — features, fixes, security changes, migrations, deprecations, and breaking changes (see "Changelog fragments" below). Routine refactors, test-only changes, and dependency churn are explicitly out of scope — add the `no-changelog` label if the advisory `changelog-fragment-guard` check asks anyway. Do **not** append to `CHANGELOG.md`'s `## Unreleased` section directly: every PR editing that one shared heading is what made unrelated PRs merge-conflict with each other ([#5675](https://github.com/hivecommons/hive/issues/5675)); fragments are compiled into [CHANGELOG.md](CHANGELOG.md) automatically at release time.
@@ -137,7 +215,7 @@ The sign-off adds a `Signed-off-by:` trailer certifying that you have the right 
 
 ## Changelog fragments
 
-One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The complete workflow:
+One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The compiler owns the `###` headings, so do not put headings in a fragment. The complete workflow:
 
 ```bash
 echo '- The relay no longer drops long tasks ([#1234](https://github.com/hivecommons/hive/issues/1234)).' > changelog.d/fixed-1234-relay-drop.md
@@ -145,7 +223,7 @@ git add changelog.d/fixed-1234-relay-drop.md
 git commit -s
 ```
 
-`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. Transition note: direct `CHANGELOG.md` edits are still accepted until 2026-09-09 so in-flight PRs can land unreworked.
+`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. The transition window that let in-flight PRs rely on direct `CHANGELOG.md` edits closed on 2026-09-09. For a user-visible code change, write a fragment instead: the `changelog-fragment-guard` check no longer accepts a direct `CHANGELOG.md` edit as a substitute, and reports `This PR edits CHANGELOG.md's Unreleased section directly; the transition window ended 2026-09-09` before asking for a fragment or `no-changelog` label. If a fragment starts with prose or a heading instead of a `- ` entry bullet, the guard fails with `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`. For refactors, test-only changes, docs-only changes, dependency churn, or other changes that are not user-visible, use the `no-changelog` label when the guard asks instead of adding a fragment.
 
 ## Maintainer resources
 

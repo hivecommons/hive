@@ -44,12 +44,25 @@ func (m *Manager) ReloadClaudeToken() {
 }
 
 // SetCopilotToken updates the cached Copilot token injected into agent
-// environments as COPILOT_GITHUB_TOKEN. Called by the dashboard after a
-// successful device-flow login.
+// environments as COPILOT_GITHUB_TOKEN. A caller setting the token explicitly
+// makes it authoritative over an older token left in the shared CLI config.
 func (m *Manager) SetCopilotToken(token string) {
+	m.setCopilotToken(token, true)
+}
+
+func (m *Manager) setCopilotToken(token string, authoritative bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.copilotAuthToken = token
+	m.copilotAuthTokenAuthoritative = authoritative && strings.TrimSpace(token) != ""
+}
+
+// ActivateCopilotToken makes token the active shared CLI identity as well as
+// the token injected into agent environments.
+func (m *Manager) ActivateCopilotToken(token string) error {
+	err := replaceCopilotTokens(sharedCopilotConfigPath, token)
+	m.setCopilotToken(token, true)
+	return err
 }
 
 // CopilotToken returns the cached Copilot (GitHub OAuth) token, or "" if
@@ -687,13 +700,28 @@ const (
 func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAction {
 	m.mu.RLock()
 	held := strings.TrimSpace(m.copilotAuthToken)
+	authoritative := m.copilotAuthTokenAuthoritative
 	m.mu.RUnlock()
 
 	if copilotCredentialFileHasTokens(configPath) {
-		// PROMOTE: the CLI has a token; mirror it to the durable store unless the
-		// hive already holds exactly it.
 		cliTok := extractCopilotToken(configPath)
-		if cliTok == "" || cliTok == held {
+		if cliTok != "" && cliTok == held {
+			return copilotSyncNoop
+		}
+		if authoritative {
+			if held == "" {
+				return copilotSyncNoop
+			}
+			if err := replaceCopilotTokens(configPath, held); err != nil {
+				m.logger.Warn("copilot session refresh: failed to activate authoritative token",
+					"path", configPath, "error", err)
+				return copilotSyncNoop
+			}
+			m.logger.Info("copilot session refresh: replaced stale CLI identity with authoritative token",
+				"path", configPath)
+			return copilotSyncSeed
+		}
+		if cliTok == "" {
 			return copilotSyncNoop
 		}
 		if err := writeDurableCopilotToken(durablePath, cliTok); err != nil {
@@ -701,7 +729,7 @@ func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAc
 				"path", durablePath, "error", err)
 			return copilotSyncNoop
 		}
-		m.SetCopilotToken(cliTok)
+		m.setCopilotToken(cliTok, false)
 		m.logger.Info("copilot session refresh: promoted in-agent login token to the durable store",
 			"path", durablePath)
 		return copilotSyncPromote
@@ -714,7 +742,11 @@ func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAc
 		// recovery is a manual login.
 		return copilotSyncNoop
 	}
-	if err := restoreCopilotTokens(configPath, held); err != nil {
+	seed := restoreCopilotTokens
+	if authoritative {
+		seed = replaceCopilotTokens
+	}
+	if err := seed(configPath, held); err != nil {
 		m.logger.Warn("copilot session refresh: failed to restore copilotTokens",
 			"path", configPath, "error", err)
 		return copilotSyncNoop

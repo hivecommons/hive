@@ -1,0 +1,11 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "ready",
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsInputPrompt": true,
+    "paneShowsActiveWork": false
+  },
+  "note": "Real tmux capture-pane -p dump (omp 18.1.16, tmux -x 200 -y 50) of an already-authenticated, freshly launched OMP contributor whose welcome splash happened to draw the rotating tip 'Tip: Log in to several accounts of the same provider \u2014 `/login` again \u2014 and omp load-balances across them automatically'. Captured live 2026-09-11 against a real Hive OMP contributor container, immediately after kubestellar/hive#6637 landed: that tip's literal 'Log in' text tripped the needs-login check and the relay queued the freshly assigned task forever instead of typing it in, even though the pane was fully ready. classifyReadiness now strips the 'Tip:' paragraph before testing the onboarding/login gates."
+}
