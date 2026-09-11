@@ -125,13 +125,57 @@ If the hook is not installed, normal Git behavior applies. If it blocks a checko
 
 ## DCO sign-off
 
-Every commit must include a Developer Certificate of Origin sign-off. Use:
+Every commit must include a Developer Certificate of Origin (DCO) sign-off. The
+DCO is your certification that you have the right to submit the contribution
+under this repository's license, and Hive requires it on every non-merge commit.
+Use:
 
 ```bash
 git commit -s
 ```
 
-The sign-off adds a `Signed-off-by:` trailer certifying that you have the right to submit the contribution under this repository's license. If you forget, amend the commit with `git commit --amend -s` and force-push your branch.
+The `-s` flag adds a `Signed-off-by:` trailer using your configured git identity,
+for example:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+The sign-off email must match the commit author email. A GitHub noreply address
+for the same authoring account is also acceptable, in either GitHub form:
+`<login>@users.noreply.github.com` or
+`<id>+<login>@users.noreply.github.com`. Do not sign with an arbitrary second
+personal address unless it is also the commit author email; the checker cannot
+verify that two unrelated email addresses belong to the same person.
+
+Check your local identity before committing:
+
+```bash
+git config user.name
+git config user.email
+```
+
+If your last commit is missing the trailer, or it used the wrong email, fix it
+before review:
+
+```bash
+git commit --amend -s
+git push --force-with-lease
+```
+
+To add sign-offs across a branch, rebase with sign-off and then force-push:
+
+```bash
+git rebase --signoff origin/v4
+git push --force-with-lease
+```
+
+Only rewrite your own pull-request branch. Once bad DCO history lands on a
+protected branch such as `v4`, contributors cannot repair it in place: protected
+branch history is not rewritten, and maintainers must not add a DCO sign-off on
+someone else's behalf. That is why the post-merge checker has narrow per-commit
+waivers for already-merged history; waivers record a maintainer disposition, but
+they are not a substitute for signing new commits correctly.
 
 ## Crediting issue authors
 
