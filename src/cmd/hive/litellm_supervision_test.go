@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // syncBuffer is a goroutine-safe log sink: the supervisor goroutine writes
@@ -74,14 +76,9 @@ func invocationCount(argsFile string) int {
 // deadline passes.
 func waitForInvocations(t *testing.T, argsFile string, n int, deadline time.Duration) {
 	t.Helper()
-	stop := time.Now().Add(deadline)
-	for time.Now().Before(stop) {
-		if invocationCount(argsFile) >= n {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("litellm stub not invoked %d time(s) within %v (got %d)", n, deadline, invocationCount(argsFile))
+	testutil.Eventually(t, deadline, func() bool {
+		return invocationCount(argsFile) >= n
+	}, "litellm stub not invoked %d time(s) within %v (got %d)", n, deadline, invocationCount(argsFile))
 }
 
 // runSupervisor starts superviseLocalLiteLLM against a captured logger and
