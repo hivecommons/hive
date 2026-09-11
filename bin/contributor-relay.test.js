@@ -8095,9 +8095,14 @@ test('#6717 a prompt that was never submitted is reported FAILED, not completed'
 
 // NEGATIVE CONTROL 1 — the veto must not touch a task that ran.
 test('#6717 a codex turn that actually ran still completes on the chrome fallback', () => {
-  const relay = loadRelay({ backend: 'codex', paneText: CODEX_FINISHED_TURN_PANE });
+  let delivered = false;
+  const relay = loadRelay({
+    backend: 'codex',
+    paneText: () => (delivered ? CODEX_FINISHED_TURN_PANE : CODEX_READY_PANE),
+  });
   try {
     dispatchTask(relay, 'ct-6717-real-work', 216);
+    delivered = true;
     graceTicks(relay, () => relay.__crashTick());
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
