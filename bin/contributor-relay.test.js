@@ -6994,7 +6994,7 @@ function enterReviewCycle(relay) {
   return review;
 }
 
-const REVIEW_PANE = `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
+const REVIEW_PANE = `Opened https://github.com/foo/bar/pull/5715\nHIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
 
 test('#5715 the locally-built review task is marked synthetic and carries no work item', () => {
   const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
@@ -7009,6 +7009,39 @@ test('#5715 the locally-built review task is marked synthetic and carries no wor
     assert.strictEqual(
       relay.isLocalOnlyTask({ task_id: 'ct-foo/bar-1-2', kind: 'issue', repo: 'foo/bar', number: 7 }),
       false);
+  } finally { teardown(relay); }
+});
+
+test('#6664 the review cycle searches all open PRs and asks for a verdict', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
+  try {
+    enterReviewCycle(relay);
+    const prompt = relay.getPendingTask();
+    assert.ok(prompt, 'review prompt should be queued while the CLI relaunches');
+    assert.ok(/gh search prs --author @me --state open/.test(prompt),
+      `review must not be scoped to the last completed repo: ${prompt}`);
+    assert.ok(!/gh pr list --repo foo\/bar/.test(prompt),
+      `last-task repo scoping would miss PRs elsewhere: ${prompt}`);
+    assert.ok(/HIVE_VERDICT: complete/.test(prompt),
+      `review tasks need the same completion sentinel as normal tasks: ${prompt}`);
+  } finally { teardown(relay); }
+});
+
+test('#6664 no_work_needed completions do not spend a review cycle on an empty repo', () => {
+  const relay = loadRelay({
+    backend: 'copilot',
+    paneText: `HIVE_VERDICT: no_work_needed — already fixed elsewhere\n${IDLE_PANE}`,
+  });
+  try {
+    relay.setTasksCompletedCount(relay.PR_REVIEW_EVERY_N - 1);
+    dispatchTask(relay, 't-nowork-before-review');
+    relay.__crashTick();
+    assert.strictEqual(relay.getCurrentTask(), null,
+      'the finished task should be cleared');
+    assert.strictEqual(relay.getPendingTask(), null,
+      'a run of no_work_needed tasks must not queue a repo-scoped PR review');
+    assert.ok(relay.__sent.some(m => m.type === 'ready'),
+      'the relay should simply ask for more work');
   } finally { teardown(relay); }
 });
 

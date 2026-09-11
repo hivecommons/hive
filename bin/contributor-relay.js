@@ -2473,6 +2473,7 @@ function checkTmuxIdle() {
 const TASK_GRACE_PERIOD_MS = RELAY_TEST_TIMING ? 0 : 180000;
 let taskAssignedAt = 0;
 let tasksCompletedCount = 0;
+let prsOpenedSinceLastReview = 0;
 // The completed-task count at which the periodic memory-cleanup restart last
 // fired (issue #2596). The restart predicate below is re-entered by the #2203
 // readiness/pending-task guard: the restart queues the prompt, clears cliReady,
@@ -3097,8 +3098,10 @@ function progressTick() {
     progressInterval = null;
     if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
     tasksCompletedCount++;
-    if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
-      console.log(`PR review cycle (${tasksCompletedCount} tasks completed) — checking open PRs`);
+    if (prURL) prsOpenedSinceLastReview++;
+    if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0 && prsOpenedSinceLastReview > 0) {
+      prsOpenedSinceLastReview = 0;
+      console.log(`PR review cycle (${tasksCompletedCount} tasks completed) — checking open PRs across repositories`);
       // `synthetic: true` is the explicit half of isLocalOnlyTask() (#5715):
       // this object is built HERE, by us, and no hub holds a lease for it. The
       // `pr-review-` id prefix says the same thing and is what survives a
@@ -3106,10 +3109,11 @@ function progressTick() {
       // makes the property legible at the one place it becomes true.
       currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: completedRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
       taskAssignedAt = Date.now();
-      const reviewPrompt = `Check your open PRs on ${completedRepo} for review comments. ` +
-        `Run 'GH_TOKEN=$GH_TOKEN gh pr list --repo ${completedRepo} --author @me --state open' to find them. ` +
+      const reviewPrompt = `Check your open PRs across all repositories for review comments. ` +
+        `Run 'GH_TOKEN=$GH_TOKEN gh search prs --author @me --state open --json repository,number,title,url --limit 100' to find them. ` +
         `For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ` +
-        `If no PRs have comments, just say "No PR comments to address."`;
+        `If no PRs have comments, print exactly "HIVE_VERDICT: complete — No PR comments to address." ` +
+        `When you are done, print exactly one final line in the form "HIVE_VERDICT: complete — <short reason>".`;
       tmuxSendKeys(reviewPrompt);
       startProgressReporting();
     } else {
