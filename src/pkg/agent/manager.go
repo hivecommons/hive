@@ -247,10 +247,14 @@ type AgentProcess struct {
 	// solely to serialize concurrent Start(sameName): with m.mu no longer held
 	// across the launch, a second Start would otherwise race the first one's
 	// tmux launch and its guarded-field writes. Guarded by m.mu.
-	launching         bool
-	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
-	LastError         string    // captured from bare copilot diagnostic launch
-	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
+	launching           bool
+	startupLaunchQueued bool
+	startupKickInFlight bool
+	startupKickGen      int
+	pendingStartupKick  string
+	BootstrapOverride   string    // when set, replaces buildBootstrapPrompt output
+	LastError           string    // captured from bare copilot diagnostic launch
+	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
 	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
 	// not clear the login prompt. The restart is a falsifiable theory — "a valid
 	// token exists, the agent just has not picked it up yet" — and this is what
@@ -795,11 +799,13 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
+		agent.startupLaunchQueued = false
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s is not available below ACMM L5", name)
 	}
 
 	if agent.State == StateRunning {
+		agent.startupLaunchQueued = false
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s already running", name)
 	}
@@ -816,6 +822,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 			"error", err.Error(),
 			"stage", "agent_spec",
 		))
+		agent.startupLaunchQueued = false
 		m.mu.Unlock()
 		return err
 	}
@@ -826,6 +833,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// Phase-1 lock and never claims the launch guard.
 		if agent.Paused {
 			agent.State = StatePaused
+			agent.startupLaunchQueued = false
 			m.logger.Info("sandbox agent starting paused", "name", agent.Name, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
 			m.mu.Unlock()
 			return nil
@@ -835,6 +843,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		agent.StartedAt = &now
 		agent.HasLaunched = true
 		agent.LaunchedMode = m.agentMode(agent)
+		agent.startupLaunchQueued = false
 		m.logger.Info("audit: sandbox agent ready", "name", name)
 		m.mu.Unlock()
 		return nil
@@ -853,6 +862,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	defer func() {
 		m.mu.Lock()
 		agent.launching = false
+		agent.startupLaunchQueued = false
 		m.mu.Unlock()
 	}()
 
@@ -1320,7 +1330,7 @@ func (m *Manager) IsPaused(name string) bool {
 	if !ok {
 		return false
 	}
-	return agent.Paused
+	return agent.Paused || agent.State == StatePaused
 }
 
 // SessionMissing reports whether an agent the manager believes is RUNNING has

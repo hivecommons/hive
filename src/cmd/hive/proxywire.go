@@ -348,15 +348,14 @@ func (w *spokeWire) wireSpokeProxyReadyAndLaunch() {
 	// staggered start no longer gates pod readiness. The loop honors w.ctx: on
 	// shutdown the w.ctx-aware stagger returns immediately instead of leaking a
 	// goroutine parked in a bare time.Sleep.
+	enabledAgents := w.cfg.EnabledAgents()
+	startupAgents := startupLaunchNames(enabledAgents, w.onDemandFromPack)
+	w.agentMgr.MarkStartupLaunchQueued(startupAgents)
 	go func() {
 		const agentLaunchDelaySec = 15
 		agentIndex := 0
-		for name, ac := range w.cfg.EnabledAgents() {
-			isOnDemand := ac.OnDemand || w.onDemandFromPack[name]
-			if isOnDemand {
-				w.logger.Info("skipping on-demand agent at startup", "name", name)
-				continue
-			}
+		for _, name := range startupAgents {
+			ac := enabledAgents[name]
 			if agentIndex > 0 {
 				w.logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
 				select {
