@@ -40,6 +40,13 @@ project:
 #   no_ci_ok:
 #     - your-org/docs-only-repo
 
+# GitHub App / PR policy. The #5117 self-authorization hold is on by default:
+# App-authored PRs whose only tracked rationale is an unacknowledged hive-filed
+# issue receive `hold` until a human signs off on the direction. Set false only
+# for hives that are allowed to act on their own findings.
+# github:
+#   self_authorization_hold: true
+
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks
   fail_mode: open                         # open (default) redacts; closed blocks Critical injection kicks and canary leaks

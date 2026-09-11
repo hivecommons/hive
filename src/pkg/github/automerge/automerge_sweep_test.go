@@ -1152,6 +1152,7 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]string{"sha": headSHA},
+				"labels":          issueLabels("", pr.extraLabels),
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
 			number := shaNumber(t, r.URL.Path)
@@ -1179,6 +1180,7 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
+
 	}))
 }
 
@@ -1367,11 +1369,163 @@ func TestSweepSelfAuthoredAutoMergesReportsNoAppBotLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
 	}
+
 	if len(result.Merged) != 0 || len(merged) != 0 {
 		t.Fatalf("result=%+v merge calls=%v, want sweep to no-op without an App bot login", result, merged)
 	}
 	if !strings.Contains(logs.String(), autoMergeWarnNoAppBotLogin) {
 		t.Fatalf("logs = %q, want no-app-bot-login warning", logs.String())
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesReleasesSelfAuthorizationHoldWhenDisabled(t *testing.T) {
+	var merged []int
+	var removed []int
+	var comments []string
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+	base := api.Config.Handler
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"body":       hgithub.SelfAuthorizationNoticeMarker + "\nheld",
+				"user":       map[string]string{"login": testHiveAppBotLogin},
+				"created_at": "2026-09-11T12:00:00Z",
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/events":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"event":      "labeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": testHiveAppBotLogin},
+				"created_at": "2026-09-11T11:59:59Z",
+			}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+			removed = append(removed, 11)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/11/comments":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			comments = append(comments, payload["body"])
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			base.ServeHTTP(w, r)
+		}
+	})
+
+	c := newAutoMergeSweepClient(api.URL)
+	disabled := false
+	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(removed) != 1 || len(comments) != 1 || !strings.Contains(comments[0], "disabled by config") {
+		t.Fatalf("removed=%v comments=%v, want one #5117 hold release", removed, comments)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 1 {
+		t.Fatalf("result=%+v merged=%v, want release only and no same-tick merge", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesDoesNotReleaseHumanHoldWhenDisabled(t *testing.T) {
+	var merged []int
+	var removed []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+	base := api.Config.Handler
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"body": "please keep this on hold until I review it",
+				"user": map[string]string{"login": "clubanderson"},
+			}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+			removed = append(removed, 11)
+			w.WriteHeader(http.StatusOK)
+		default:
+			base.ServeHTTP(w, r)
+		}
+	})
+
+	c := newAutoMergeSweepClient(api.URL)
+	disabled := false
+	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("removed=%v, want human hold untouched", removed)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 1 {
+		t.Fatalf("result=%+v merged=%v, want held PR skipped", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesDoesNotReleaseLaterHumanHoldWhenDisabled(t *testing.T) {
+	var merged []int
+	var removed []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+	base := api.Config.Handler
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/comments":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"body":       hgithub.SelfAuthorizationNoticeMarker + "\nheld",
+				"user":       map[string]string{"login": testHiveAppBotLogin},
+				"created_at": "2026-09-11T12:00:00Z",
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/events":
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"event":      "labeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": testHiveAppBotLogin},
+				"created_at": "2026-09-11T11:59:59Z",
+			}, {
+				"event":      "unlabeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": testHiveAppBotLogin},
+				"created_at": "2026-09-11T12:05:00Z",
+			}, {
+				"event":      "labeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": "clubanderson"},
+				"created_at": "2026-09-11T12:10:00Z",
+			}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+			removed = append(removed, 11)
+			w.WriteHeader(http.StatusOK)
+		default:
+			base.ServeHTTP(w, r)
+		}
+	})
+
+	c := newAutoMergeSweepClient(api.URL)
+	disabled := false
+	c.selfAuthorizationHoldEnabled = func() bool { return disabled }
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("removed=%v, want later human hold untouched", removed)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 1 {
+		t.Fatalf("result=%+v merged=%v, want held PR skipped", result, merged)
 	}
 }
 

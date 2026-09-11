@@ -336,6 +336,7 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WritePRRequest: %v", err)
 	}
+
 	c.ProcessPRRequestsOnce(context.Background())
 
 	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
@@ -368,6 +369,61 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 	}
 	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
 		t.Error("request file survived; the PR was opened, so the request is settled")
+	}
+}
+
+func TestPRRequestWatcher_DefaultConfigStillHoldsSelfAuthorizedPR(t *testing.T) {
+	const botLogin = "kubestellar-hive[bot]"
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
+	c := testClient(t, srv.start(t).URL)
+	c.SetAppBotLogin(botLogin)
+	c.prHoldLabel = func(agent string) bool { return false }
+
+	dir := t.TempDir()
+	prRequestDirForTest = dir
+	t.Cleanup(func() { prRequestDirForTest = "" })
+
+	if _, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "decompose-phase-1", Base: "main",
+		Title: "phase 1 of the decomposition", Body: "Closes #581", Agent: "quality",
+	}); err != nil {
+		t.Fatalf("WritePRRequest: %v", err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
+		t.Fatalf("labels applied = %v, want [hold] by default", applied)
+	}
+	if comments := srv.postedComments(); len(comments) != 1 || !strings.Contains(comments[0], SelfAuthorizationNoticeMarker) {
+		t.Fatalf("comments = %v, want one marked #5117 notice", comments)
+	}
+}
+
+func TestPRRequestWatcher_ConfigDisabledSkipsSelfAuthorizationHold(t *testing.T) {
+	const botLogin = "kubestellar-hive[bot]"
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
+	c := testClient(t, srv.start(t).URL)
+	c.SetAppBotLogin(botLogin)
+	c.SetSelfAuthorizationHoldEnabled(func() bool { return false })
+	c.prHoldLabel = func(agent string) bool { return false }
+
+	dir := t.TempDir()
+	prRequestDirForTest = dir
+	t.Cleanup(func() { prRequestDirForTest = "" })
+
+	if _, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "decompose-phase-1", Base: "main",
+		Title: "phase 1 of the decomposition", Body: "Closes #581", Agent: "quality",
+	}); err != nil {
+		t.Fatalf("WritePRRequest: %v", err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if applied := srv.applied(); len(applied) != 0 {
+		t.Fatalf("labels applied = %v, want no #5117 hold when disabled", applied)
+	}
+	if comments := srv.postedComments(); len(comments) != 0 {
+		t.Fatalf("posted %d comments, want no #5117 notice when disabled", len(comments))
 	}
 }
 

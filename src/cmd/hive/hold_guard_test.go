@@ -46,10 +46,12 @@ func newTestHoldGuardStore(t *testing.T) *holdguard.Store {
 // commit list (snapshot/diff evidence), the drift comment, and the re-applied
 // hold label.
 type holdGuardServer struct {
-	mu       sync.Mutex
-	commits  map[int][]map[string]any // PR number -> commit list served
-	comments []string
-	labels   []string
+	mu            sync.Mutex
+	commits       map[int][]map[string]any // PR number -> commit list served
+	issueComments map[int][]map[string]any
+	issueEvents   map[int][]map[string]any
+	comments      []string
+	labels        []string
 
 	failComments bool
 	failLabels   bool
@@ -69,6 +71,12 @@ func (s *holdGuardServer) handler(t *testing.T) http.Handler {
 			}
 			number := pathPRNumber(t, r.URL.Path)
 			_ = json.NewEncoder(w).Encode(s.commits[number])
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			number := pathIssueNumber(t, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(s.issueComments[number])
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
+			number := pathIssueNumber(t, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(s.issueEvents[number])
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			if s.failComments {
 				http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
@@ -119,6 +127,22 @@ func pathPRNumber(t *testing.T, path string) int {
 		}
 	}
 	t.Fatalf("no PR number in %q", path)
+	return 0
+}
+
+func pathIssueNumber(t *testing.T, path string) int {
+	t.Helper()
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		if p == "issues" && i+1 < len(parts) {
+			n, err := strconv.Atoi(parts[i+1])
+			if err != nil {
+				t.Fatalf("parse issue number from %q: %v", path, err)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no issue number in %q", path)
 	return 0
 }
 
@@ -294,6 +318,103 @@ func TestEnforceHoldGuardDriftBlocksCommentsAndReholds(t *testing.T) {
 	}
 	if len(fake.comments) != 1 {
 		t.Fatalf("comments = %d, want no second comment on the approved lift", len(fake.comments))
+	}
+}
+
+func TestEnforceHoldGuardSkipsSelfAuthorizationReholdWhenDisabled(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
+	}}
+	fake.issueComments = map[int][]map[string]any{
+		7: {{
+			"body":       github.SelfAuthorizationNoticeMarker,
+			"user":       map[string]string{"login": "kubestellar-hive[bot]"},
+			"created_at": "2026-09-11T12:00:00Z",
+		}},
+	}
+	fake.issueEvents = map[int][]map[string]any{
+		7: {{
+			"event":      "labeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "kubestellar-hive[bot]"},
+			"created_at": "2026-09-11T11:59:59Z",
+		}, {
+			"event":      "unlabeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "clubanderson"},
+			"created_at": "2026-09-11T12:10:00Z",
+		}},
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+	disabled := false
+	cfg.GitHub.SelfAuthorizationHold = &disabled
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "f1"}), discardLogger())
+	if len(got) != 0 {
+		t.Fatalf("disabled #5117 hold must not re-review-gate drifted self-authorization holds, got %v", got)
+	}
+	if len(fake.comments)+len(fake.labels) != 0 {
+		t.Fatalf("disabled #5117 hold must not comment or re-apply hold, saw %v / %v", fake.comments, fake.labels)
+	}
+	if _, ok := store.Recorded("acme/widgets", 7); ok {
+		t.Fatal("disabled #5117 hold should clear the holdguard snapshot")
+	}
+}
+
+func TestEnforceHoldGuardPreservesLaterHumanHoldWhenDisabled(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
+	}}
+	fake.issueComments = map[int][]map[string]any{
+		7: {{
+			"body":       github.SelfAuthorizationNoticeMarker,
+			"user":       map[string]string{"login": "kubestellar-hive[bot]"},
+			"created_at": "2026-09-11T12:00:00Z",
+		}},
+	}
+	fake.issueEvents = map[int][]map[string]any{
+		7: {{
+			"event":      "labeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "kubestellar-hive[bot]"},
+			"created_at": "2026-09-11T11:59:59Z",
+		}, {
+			"event":      "unlabeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "clubanderson"},
+			"created_at": "2026-09-11T12:10:00Z",
+		}, {
+			"event":      "labeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "clubanderson"},
+			"created_at": "2026-09-11T12:20:00Z",
+		}, {
+			"event":      "unlabeled",
+			"label":      map[string]string{"name": "hold"},
+			"actor":      map[string]string{"login": "clubanderson"},
+			"created_at": "2026-09-11T12:30:00Z",
+		}},
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+	disabled := false
+	cfg.GitHub.SelfAuthorizationHold = &disabled
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "f1"}), discardLogger())
+	if !got["widgets/7"] {
+		t.Fatalf("later human hold must still be re-review-gated when #5117 hold is disabled, got %v", got)
+	}
+	if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
 	}
 }
 

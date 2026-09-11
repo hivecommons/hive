@@ -67,6 +67,17 @@ type GitHubConfig struct {
 	// changes the mutation cannot express (file modes, symlinks, submodules) or
 	// that are too large — the PR still opens, just unsigned.
 	AppSignedCommits *bool `yaml:"app_signed_commits,omitempty"`
+	// SelfAuthorizationHold controls the #5117 self-authorization hold: when
+	// enabled, an App-authored PR whose only tracked rationale is an
+	// unacknowledged hive-filed issue receives `hold` plus an explanatory
+	// notice. Default ON (nil == true) so existing hives keep the current
+	// governance behavior. Set `self_authorization_hold: false` or
+	// HIVE_SELF_AUTHORIZATION_HOLD=false to disable it for a hive.
+	SelfAuthorizationHold *bool `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	// selfAuthorizationHoldEnvOverride is set by HIVE_SELF_AUTHORIZATION_HOLD
+	// and intentionally never serialized: process env must remain the effective
+	// override even if the dashboard updates the persisted YAML field at runtime.
+	selfAuthorizationHoldEnvOverride *bool `yaml:"-" json:"-"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
@@ -601,6 +612,19 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // signed. Opt-in: nil and false both mean off. See AppSignedCommits.
 func (g GitHubConfig) AppSignedCommitsEnabled() bool {
 	return g.AppSignedCommits != nil && *g.AppSignedCommits
+}
+
+// SelfAuthorizationHoldEnabled reports whether the #5117 self-authorization
+// hold is active for this hive. Default ON preserves the existing policy for
+// every hive that has not explicitly opted out.
+func (g GitHubConfig) SelfAuthorizationHoldEnabled() bool {
+	if g.selfAuthorizationHoldEnvOverride != nil {
+		return *g.selfAuthorizationHoldEnvOverride
+	}
+	if g.SelfAuthorizationHold == nil {
+		return true
+	}
+	return *g.SelfAuthorizationHold
 }
 
 // AppInstallURL returns the full URL to install the GitHub App.
