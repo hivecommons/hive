@@ -1,0 +1,59 @@
+# hivecommons/hive#6648 — self-hosted runner apt egress repair.
+#
+# Symptom: every CI job that installed a toolchain package (gcc, libc6-dev,
+# tmux) failed on the self-hosted runners. `apt-get update` burned its whole
+# timeout budget and then reported that it could not reach archive.ubuntu.com.
+#
+# Root cause, reproduced from inside a runner pod:
+#   * `getent hosts archive.ubuntu.com` returns ONLY AAAA records.
+#   * The cluster has no IPv6 egress at all — even GitHub over IPv6 fails —
+#     so apt spent its retries on addresses that can never be routed.
+#   * IPv4 to archive.ubuntu.com / security.ubuntu.com is also blocked
+#     (curl exit code 000).
+#   * IPv4 to azure.archive.ubuntu.com returns 200. It carries the same
+#     archive, including the security suite.
+#
+# Fix: point apt at the reachable mirror and stop glibc from handing apt the
+# unroutable AAAA records first.
+#
+# Applied to: context `vllm-d`, namespace `arc-systems`, consumed by
+# RunnerDeployment/hivecommons-hive-runners (see runnerdeployment-patch.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-runner-apt-mirror
+  namespace: arc-systems
+  labels:
+    app.kubernetes.io/part-of: hivecommons-hive-runners
+    # The cluster's admission policy (require-ownership-labels) rejects
+    # resources without an owner label; peer resources use `andy`.
+    owner: andy
+  annotations:
+    hivecommons.dev/reason: >-
+      hivecommons/hive#6648 — this cluster has no IPv6 egress and IPv4 egress to
+      archive.ubuntu.com/security.ubuntu.com is blocked, so apt-get update timed
+      out and every job needing gcc or tmux failed. azure.archive.ubuntu.com is
+      reachable over IPv4 from these pods. Redirect apt there and stop glibc
+      preferring the AAAA records that cannot be routed.
+data:
+  ubuntu.sources: |
+    # Managed by ConfigMap hive-runner-apt-mirror — see hivecommons/hive#6648.
+    # archive.ubuntu.com is unreachable from this cluster (no IPv6 egress; IPv4
+    # port 80 times out). azure.archive.ubuntu.com serves the same archive and
+    # is reachable, so it is used for both the main suites and security.
+    Types: deb
+    URIs: http://azure.archive.ubuntu.com/ubuntu/
+    Suites: noble noble-updates noble-backports
+    Components: main universe restricted multiverse
+    Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+    Types: deb
+    URIs: http://azure.archive.ubuntu.com/ubuntu/
+    Suites: noble-security
+    Components: main universe restricted multiverse
+    Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+  99-force-ipv4: |
+    // hivecommons/hive#6648: DNS returns AAAA records for the Ubuntu mirrors but
+    // this cluster has no IPv6 egress, so apt spent its timeout budget on
+    // unroutable addresses before ever trying IPv4. Skip them.
+    Acquire::ForceIPv4 "true";

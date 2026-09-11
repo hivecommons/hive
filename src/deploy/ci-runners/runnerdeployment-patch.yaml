@@ -1,0 +1,36 @@
+# hivecommons/hive#6648 — mount the apt repair into the runner pods.
+#
+# This is a strategic-merge patch against the live
+# RunnerDeployment/hivecommons-hive-runners in namespace `arc-systems`. It is
+# kept as a patch rather than a full manifest because the RunnerDeployment is
+# not otherwise managed from this repository; committing the whole object would
+# invite someone to `kubectl apply` it and clobber replica counts, the runner
+# image, and the GitHub credentials wiring.
+#
+# NOTE on placement: summerwind ARC (actions.summerwind.dev/v1alpha1) takes
+# `volumeMounts` at `spec.template.spec`, NOT under a `containers` entry — the
+# controller grafts them onto the generated runner container. Putting them
+# under `containers:` silently does nothing.
+#
+# Apply with:
+#   kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
+#     --type merge --patch-file src/deploy/ci-runners/runnerdeployment-patch.yaml
+#
+# Applying this rolls all runner pods (the generated name changes), so do it
+# while runners are idle.
+spec:
+  template:
+    spec:
+      volumes:
+        - name: apt-mirror
+          configMap:
+            name: hive-runner-apt-mirror
+      volumeMounts:
+        - name: apt-mirror
+          mountPath: /etc/apt/sources.list.d/ubuntu.sources
+          subPath: ubuntu.sources
+          readOnly: true
+        - name: apt-mirror
+          mountPath: /etc/apt/apt.conf.d/99-force-ipv4
+          subPath: 99-force-ipv4
+          readOnly: true
