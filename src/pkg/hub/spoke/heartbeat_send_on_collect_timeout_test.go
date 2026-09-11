@@ -191,6 +191,94 @@ func TestSendHeartbeat_TimedOutCollectMarksCachedStatsStale(t *testing.T) {
 	}
 }
 
+func TestPostHeartbeatToHubFailureBranches(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	if resp := postHeartbeatToHub(context.Background(), "http://127.0.0.1:1",
+		&HeartbeatPayload{HiveID: "unreachable"}, nil2Logger()); resp != nil {
+		t.Fatalf("unreachable hub response = %+v, want nil", resp)
+	}
+	if _, ok := LastHeartbeatSuccess(); ok {
+		t.Fatal("LastHeartbeatSuccess ok = true after unreachable hub, want false")
+	}
+
+	if resp := postHeartbeatToHub(context.Background(), "://bad-url",
+		&HeartbeatPayload{HiveID: "bad-url"}, nil2Logger()); resp != nil {
+		t.Fatalf("bad URL response = %+v, want nil", resp)
+	}
+
+	if resp := postHeartbeatToHub(context.Background(), "http://example.test",
+		&HeartbeatPayload{HiveID: "bad-json", Health: map[string]any{"bad": make(chan int)}}, nil2Logger()); resp != nil {
+		t.Fatalf("marshal failure response = %+v, want nil", resp)
+	}
+}
+
+func TestPostHeartbeatToHubRejectedAndInvalidJSONResponse(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	rejected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusServiceUnavailable)
+	}))
+	defer rejected.Close()
+	if resp := postHeartbeatToHub(context.Background(), rejected.URL, &HeartbeatPayload{HiveID: "hive"}, nil2Logger()); resp != nil {
+		t.Fatalf("rejected heartbeat response = %+v, want nil", resp)
+	}
+	if _, ok := LastHeartbeatSuccess(); ok {
+		t.Fatal("LastHeartbeatSuccess ok = true after rejected heartbeat, want false")
+	}
+
+	acceptedInvalid := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{"))
+	}))
+	defer acceptedInvalid.Close()
+	before := time.Now().Truncate(time.Second)
+	if resp := postHeartbeatToHub(context.Background(), acceptedInvalid.URL, &HeartbeatPayload{HiveID: "hive"}, nil2Logger()); resp != nil {
+		t.Fatalf("invalid JSON response = %+v, want nil", resp)
+	}
+	if got, ok := LastHeartbeatSuccess(); !ok || got.Before(before) {
+		t.Fatalf("LastHeartbeatSuccess = (%v, %v), want success recorded for accepted invalid response", got, ok)
+	}
+}
+
+func TestPostHeartbeatToHubSuccessfulResponseFields(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q, want bearer secret", got)
+		}
+		_ = json.NewEncoder(w).Encode(HeartbeatResponse{
+			HubGitHash: "hubsha",
+			LatestSHA:  "latestsha",
+			UpgradeTo:  "targetsha",
+			GitHubAppConfig: &HeartbeatGitHubAppConfig{
+				AppID:          1,
+				InstallationID: 2,
+			},
+		})
+	}))
+	defer server.Close()
+
+	t.Setenv(EnvHeartbeatKey, "secret")
+	resp := postHeartbeatToHub(context.Background(), server.URL, &HeartbeatPayload{HiveID: "hive"}, nil2Logger())
+	if resp == nil {
+		t.Fatal("postHeartbeatToHub returned nil, want decoded response")
+	}
+	if resp.HubGitHash != "hubsha" || resp.LatestSHA != "latestsha" || resp.UpgradeTo != "targetsha" {
+		t.Fatalf("response = %+v, want hub/latest/upgrade fields decoded", resp)
+	}
+	if resp.GitHubAppConfig == nil || resp.GitHubAppConfig.AppID != 1 || resp.GitHubAppConfig.InstallationID != 2 {
+		t.Fatalf("GitHubAppConfig = %+v, want decoded config", resp.GitHubAppConfig)
+	}
+}
+
 // TestSendHeartbeat_TimedOutCollectStillAdvancesAttempt proves the #3743
 // liveness win is preserved: even on the cached-payload path, the attempt clock
 // advances and (because the POST now happens) success advances too — so
