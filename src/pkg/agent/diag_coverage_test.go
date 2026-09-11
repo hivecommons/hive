@@ -204,3 +204,57 @@ func TestPollTmuxOutputForAgent_LoginPrompt(t *testing.T) {
 	agent.paneMu.Unlock()
 	_ = needsLogin // recorded per pane content; assertion is best-effort
 }
+
+// TestRunCopilotDiagnostic_TimeoutRelaunches pins the inconclusive-diagnostic
+// path: the bare copilot prints nothing within diagnosticTimeoutSec, so the
+// loop can neither confirm an auth error nor a ready CLI. The diagnostic has
+// already killed the agent's real session by then, so the agent MUST be
+// relaunched rather than parked in StateFailed — otherwise every kick is
+// refused with "failed to start: copilot hung with no output" until an
+// operator intervenes (live: 3 write-capable agents stranded for 15h).
+func TestRunCopilotDiagnostic_TimeoutRelaunches(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	// Silent for longer than the (test-shrunk) diagnostic deadline, then
+	// ready — so the diagnostic times out but the relaunch still settles.
+	p := filepath.Join(stubBinDir, "copilot")
+	orig, err := os.ReadFile(p)
+	if err != nil {
+		t.Skipf("copilot stub not present: %v", err)
+	}
+	script := "#!/bin/sh\nsleep 6\nprintf '\\342\\235\\257 ready\\n'\nexec cat\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(p, orig, 0o755) })
+	t.Setenv("HIVE_WORK_DIR", t.TempDir())
+
+	m := NewManager(map[string]config.AgentConfig{
+		"cxa": {Backend: "copilot"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["cxa"]
+	m.mu.RUnlock()
+	agent.tmuxSession = "hive-a"
+	agent.State = StateRunning
+	before := agent.RestartCount
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	m.runCopilotDiagnostic(ctx, agent)
+	defer cleanupAgent(t, m, "cxa")
+
+	m.mu.RLock()
+	state, count, reason, lastErr := agent.State, agent.RestartCount, agent.LastRestartReason, agent.LastError
+	m.mu.RUnlock()
+	if state == StateFailed {
+		t.Fatalf("diagnostic timeout parked agent in StateFailed (LastError=%q); expected relaunch", lastErr)
+	}
+	if count != before+1 {
+		t.Fatalf("RestartCount = %d, want %d (relaunch after inconclusive diagnostic)", count, before+1)
+	}
+	if reason != "copilot hang diagnostic timed out" {
+		t.Fatalf("LastRestartReason = %q, want %q", reason, "copilot hang diagnostic timed out")
+	}
+}
