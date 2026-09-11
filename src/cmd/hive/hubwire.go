@@ -61,7 +61,8 @@ func (w *spokeWire) wireHubHeartbeat() {
 			hub.SwitchBranchCallback(w.handleHubSwitchBranch),
 			hub.AuthorizedUsersCallback(w.handleHubAuthorizedUsers),
 			hub.ProjectConfigCallback(w.handleHubProjectConfig),
-			hub.GatewayConfigCallback(w.handleHubGatewayConfig))
+			hub.GatewayConfigCallback(w.handleHubGatewayConfig),
+			hub.FreshStatusCollector(w.buildFreshHeartbeatPayload))
 
 		go hub.StartTaskStatusPush(w.ctx, w.hubURL, func() *hub.TaskStatusPayload {
 			reg, active := w.dashSrv.ContributorSummary()
@@ -625,26 +626,177 @@ func heartbeatBudgetState(govState governor.State) (*bool, *int) {
 	return &exhausted, &violations
 }
 
-func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
-	if !w.cfg.Hub.Enabled {
-		return nil
+func (w *spokeWire) heartbeatACMMLevel() int {
+	acmmLvl := 0
+	if w.cfg.ACMMLevel != nil {
+		acmmLvl = *w.cfg.ACMMLevel
 	}
+	return acmmLvl
+}
+
+func (w *spokeWire) heartbeatAgents(govState governor.State, currentMode string, includeBlockingChecks bool) []hub.AgentSummary {
 	statuses := w.agentMgr.AllStatuses()
-	govState := w.gov.GetState()
-	currentMode := strings.ToLower(string(govState.Mode))
 	agents := make([]hub.AgentSummary, 0, len(statuses))
 	for name, proc := range statuses {
 		mode := ""
 		if ac, ok := w.cfg.Agents[name]; (ok && ac.OnDemand) || w.onDemandFromPack[name] {
 			mode = "on_demand"
 		}
+		if includeBlockingChecks {
+			agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
+				hub.AgentActivityFor(w.agentMgr, w.cfg, govState, currentMode, name, proc, w.onDemandFromPack)))
+			continue
+		}
+		act := hub.AgentActivity{
+			Paused:         proc.Paused,
+			PausedTrigger:  proc.PausedTrigger,
+			PausedReason:   proc.PausedReason,
+			PausedBy:       proc.PausedBy,
+			PausedAt:       proc.PausedAt,
+			NeedsLogin:     proc.NeedsLogin,
+			QuotaExhausted: proc.QuotaExhausted,
+			LastActivityAt: proc.LastPaneChange,
+			KickInterval:   hub.HeartbeatKickInterval(govState, name, proc, w.onDemandFromPack),
+			Backend:        proc.Config.Backend,
+			Enabled:        proc.Config.Enabled,
+			CanOpenIssue:   proc.LaunchedMode.CanCreateIssues(),
+			CanOpenPR:      proc.LaunchedMode.CanPush(),
+			CanMerge:       proc.LaunchedMode.CanMerge(),
+			Restarts: hub.AgentRestartTelemetry{
+				Total:      proc.RestartCount,
+				LastReason: proc.LastRestartReason,
+			},
+			StartBlockedReason:   proc.StartFailureReason,
+			StartFailureReason:   proc.StartFailureReason,
+			StartFailureCount:    proc.StartFailureCount,
+			StartFailureLastAt:   proc.StartFailureLastAt,
+			StartBlocked:         proc.StartBlocked,
+			StartFailureExitCode: proc.StartFailureExitCode,
+			StartFailureSignal:   proc.StartFailureSignal,
+		}
+		if proc.BackendOverride != "" {
+			act.Backend = proc.BackendOverride
+		}
+		if proc.StartedAt != nil {
+			act.StartedAt = *proc.StartedAt
+		}
+		if w.cfg != nil {
+			onDemandAgent := false
+			if ac, ok := w.cfg.Agents[name]; ok {
+				onDemandAgent = ac.OnDemand
+				act.Enabled = ac.Enabled
+			}
+			act.ExpectedActive = w.cfg.ExpectedActive(name, currentMode, onDemandAgent, w.onDemandFromPack)
+		}
 		agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
-			hub.AgentActivityFor(w.agentMgr, w.cfg, govState, currentMode, name, proc, w.onDemandFromPack)))
+			act))
 	}
-	acmmLvl := 0
-	if w.cfg.ACMMLevel != nil {
-		acmmLvl = *w.cfg.ACMMLevel
+	return agents
+}
+
+func (w *spokeWire) buildFreshHeartbeatPayload() *hub.HeartbeatPayload {
+	if !w.cfg.Hub.Enabled {
+		return nil
 	}
+	govState := w.gov.GetState()
+	currentMode := strings.ToLower(string(govState.Mode))
+	agents := w.heartbeatAgents(govState, currentMode, false)
+	acmmLvl := w.heartbeatACMMLevel()
+	providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+	lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
+		outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+	return &hub.HeartbeatPayload{
+		HiveID:                  w.cfg.HiveID,
+		Org:                     w.cfg.Project.Org,
+		Repos:                   w.cfg.Project.Repos,
+		PrimaryRepo:             w.cfg.Project.PrimaryRepo,
+		ACMMLevel:               acmmLvl,
+		Agents:                  agents,
+		Governor:                hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+		Health:                  freshHeartbeatHealthSummary(agents),
+		ProviderLimitReason:     providerLimitReason,
+		ProviderLimitRebuffs:    providerLimitRebuffs,
+		ProviderLimitHiveWide:   providerLimitHiveWide,
+		ProviderLimitAgents:     providerLimitAgents,
+		LastWriteCapableKickAt:  lastWriteKickAt,
+		LastKickDisposition:     kickDisposition,
+		LastKickSkipReason:      kickSkipReason,
+		NotWritableQueued:       notWritableQueued,
+		AgentErrorStreaks:       w.tokenCollector.AgentErrorStreaks(),
+		ConsentWedged:           w.agentMgr.ConsentWedgedAgents(),
+		NoCadenceAgents:         w.gov.NoCadenceAgents(),
+		Reporter:                w.reporterName,
+		StartedAt:               w.processStartedAt.UTC().Format(time.RFC3339),
+		DashboardURL:            w.dashboardURLForFreshHeartbeat(),
+		GitHash:                 gitShort,
+		GitBranch:               gitBranch,
+		Version:                 version,
+		HiveType:                w.cfg.Hub.HiveType,
+		ClusterID:               w.cfg.Hub.ClusterID,
+		IsPublic:                w.cfg.Hub.IsPublic,
+		RepoTargetMisconfigured: w.repoTargetMisconfigured(),
+		RepoTargetIssue:         w.repoTargetIssueMessage(),
+	}
+}
+
+func freshHeartbeatHealthSummary(agents []hub.AgentSummary) map[string]any {
+	type check struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+		Detail string `json:"detail,omitempty"`
+	}
+	running := 0
+	down := 0
+	var downAgents []string
+	for _, a := range agents {
+		switch strings.ToLower(a.State) {
+		case "running":
+			running++
+		case "stopped", "failed":
+			if !a.Paused {
+				down++
+				downAgents = append(downAgents, a.Name)
+			}
+		}
+	}
+	checks := []check{{
+		Name:   "heartbeat_stats",
+		Status: "warn",
+		Detail: "expensive heartbeat stats stale; agent state refreshed from memory",
+	}}
+	agentStatus := "pass"
+	agentDetail := fmt.Sprintf("%d running", running)
+	if down > 0 {
+		agentStatus = "fail"
+		agentDetail = fmt.Sprintf("%d running, %d down: %s", running, down, strings.Join(downAgents, ", "))
+	}
+	checks = append(checks, check{Name: "agents", Status: agentStatus, Detail: agentDetail})
+	return map[string]any{
+		"status": "unknown",
+		"checks": checks,
+	}
+}
+
+func (w *spokeWire) dashboardURLForFreshHeartbeat() string {
+	if w.cfg.Hub.DashboardURL != "" {
+		return w.cfg.Hub.DashboardURL
+	}
+	if w.cfg.HiveID != "" && w.cfg.Hub.URL != "" {
+		if u, err := url.Parse(w.cfg.Hub.URL); err == nil && u.Host != "" {
+			return fmt.Sprintf("https://%s.%s", w.cfg.HiveID, u.Host)
+		}
+	}
+	return fmt.Sprintf("http://localhost:%d", w.cfg.Dashboard.Port)
+}
+
+func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
+	if !w.cfg.Hub.Enabled {
+		return nil
+	}
+	govState := w.gov.GetState()
+	currentMode := strings.ToLower(string(govState.Mode))
+	agents := w.heartbeatAgents(govState, currentMode, true)
+	acmmLvl := w.heartbeatACMMLevel()
 	prsMerged, prsRejected, cvesClosed, fleetStatsCollectedAt := w.heartbeatFleetStats()
 	repoActivity, repoActivityCollectedAt, repoActivityWindowHours, repoActivityCountWindowHours := w.heartbeatRepoActivity()
 	// Count agents with a method/model assigned for the hub's

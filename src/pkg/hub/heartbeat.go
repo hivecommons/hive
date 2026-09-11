@@ -298,6 +298,7 @@ type HeartbeatPayload struct {
 	GitHubAppKeysHeld            map[string]string               `json:"github_app_keys_held,omitempty"`
 	ComponentReach               *tracing.ReachReport            `json:"component_reach,omitempty"`
 	StatsStale                   bool                            `json:"stats_stale,omitempty"`
+	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 }
 
 const (

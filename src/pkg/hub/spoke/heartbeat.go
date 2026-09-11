@@ -38,7 +38,11 @@ const (
 	// minimalLivenessPayload), so 10s stays: long enough for a healthy collect,
 	// short enough that the loop keeps ticking well inside staleThreshold.
 	heartbeatTimeout = 10 * time.Second
-	staleThreshold   = 15 * time.Minute
+	// Fresh agent/health overlay must be a best-effort rescue path, not a
+	// second full heartbeat budget. It only reads in-memory state; if it cannot
+	// finish quickly, the hub keeps the previous fresh agent truth instead.
+	heartbeatFreshStatsTimeout = 2 * time.Second
+	staleThreshold             = 15 * time.Minute
 )
 
 // lastHeartbeatSuccessUnix holds the unix-seconds timestamp of the most
@@ -1033,6 +1037,11 @@ type HeartbeatPayload struct {
 	// omitempty so a healthy fresh beat, and every older spoke, sends nothing —
 	// which the hub reads as "stats are fresh", never as an error.
 	StatsStale bool `json:"stats_stale,omitempty"`
+	// FreshAgentStats is true on a StatsStale beat when the spoke refreshed the
+	// cheap in-memory agent/health fields after the full collector timed out.
+	// That lets the hub keep liveness/staleness visible without overwriting
+	// agents and health with an old cached copy.
+	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
 }
 
 const (
@@ -1070,6 +1079,11 @@ type RouteExistenceCheck struct {
 }
 
 type StatusCollector func() *HeartbeatPayload
+
+// FreshStatusCollector returns only cheap, in-memory state that is safe to
+// collect after the full heartbeat collector times out. It must not perform
+// blocking subprocess, tmux, GitHub, Kubernetes, or filesystem I/O.
+type FreshStatusCollector func() *HeartbeatPayload
 
 // UpgradeCallback is called when the hub instructs this hive to upgrade
 // to a specific SHA via the heartbeat response.
@@ -1114,6 +1128,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onGatewayConfig GatewayConfigCallback
 	var onRestartSpoke RestartSpokeCallback
 	var onAgentRestartReset AgentRestartResetCallback
+	var freshCollect FreshStatusCollector
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -1136,6 +1151,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onRestartSpoke = fn
 		case AgentRestartResetCallback:
 			onAgentRestartReset = fn
+		case FreshStatusCollector:
+			freshCollect = fn
 		}
 	}
 
@@ -1189,7 +1206,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 	}
 
-	processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger))
+	processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger, freshCollect))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1200,7 +1217,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			logger.Info("hub heartbeat stopped")
 			return
 		case <-ticker.C:
-			processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger))
+			processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger, freshCollect))
 		}
 	}
 }
@@ -1288,7 +1305,7 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) *HeartbeatResponse {
+func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger, freshCollectors ...FreshStatusCollector) *HeartbeatResponse {
 	// Record the attempt before anything that can bail out early (including a
 	// nil payload from collect): reaching this point proves the loop goroutine
 	// is still running its schedule, which is exactly what liveness needs to
@@ -1343,6 +1360,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 			}
 			logger.Warn("hub heartbeat collect timed out with no cached payload — sending MINIMAL liveness beat (identity only, no stats) so the hub keeps this hive online; loop keeps ticking so liveness stays green")
 			payload = minimal
+			overlayFreshStatsAfterCollectTimeout(ctx, payload, logger, freshCollectors...)
 			payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 			return postHeartbeatToHub(ctx, hubURL, payload, logger)
 		}
@@ -1351,6 +1369,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		// numbers as freshly observed.
 		cached.StatsStale = true
 		payload = cached
+		overlayFreshStatsAfterCollectTimeout(ctx, payload, logger, freshCollectors...)
 		logger.Warn("hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green")
 	} else {
 		// Fresh collect: remember it (a clone, so the in-place filtering below
@@ -1382,6 +1401,75 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	payload.Agents = filteredAgents
 
 	return postHeartbeatToHub(ctx, hubURL, payload, logger)
+}
+
+func overlayFreshStatsAfterCollectTimeout(ctx context.Context, payload *HeartbeatPayload, logger *slog.Logger, freshCollectors ...FreshStatusCollector) {
+	if payload == nil || len(freshCollectors) == 0 || freshCollectors[0] == nil {
+		return
+	}
+	fresh := collectFreshStatsWithTimeout(ctx, freshCollectors[0], heartbeatFreshStatsTimeout, logger)
+	if fresh == nil {
+		return
+	}
+	if len(fresh.Agents) > 0 {
+		payload.Agents = fresh.Agents
+		payload.FreshAgentStats = true
+	}
+	if fresh.Health != nil {
+		payload.Health = fresh.Health
+		payload.FreshAgentStats = true
+	}
+	payload.ACMMLevel = fresh.ACMMLevel
+	if fresh.DashboardURL != "" {
+		payload.DashboardURL = fresh.DashboardURL
+	}
+	payload.Governor = fresh.Governor
+	payload.ProviderLimitReason = fresh.ProviderLimitReason
+	payload.ProviderLimitRebuffs = fresh.ProviderLimitRebuffs
+	payload.ProviderLimitHiveWide = fresh.ProviderLimitHiveWide
+	payload.ProviderLimitAgents = fresh.ProviderLimitAgents
+	payload.LastWriteCapableKickAt = fresh.LastWriteCapableKickAt
+	payload.LastKickDisposition = fresh.LastKickDisposition
+	payload.LastKickSkipReason = fresh.LastKickSkipReason
+	payload.NotWritableQueued = fresh.NotWritableQueued
+	if fresh.NoCadenceAgents != nil {
+		payload.NoCadenceAgents = fresh.NoCadenceAgents
+	}
+	if fresh.ConsentWedged != nil {
+		payload.ConsentWedged = fresh.ConsentWedged
+	}
+	if fresh.AgentErrorStreaks != nil {
+		payload.AgentErrorStreaks = fresh.AgentErrorStreaks
+	}
+}
+
+func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollector, timeout time.Duration, logger *slog.Logger) *HeartbeatPayload {
+	done := make(chan *HeartbeatPayload, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if logger != nil {
+					logger.Warn("hub heartbeat fresh stats collect panicked", "recover", r)
+				}
+				done <- nil
+			}
+		}()
+		done <- collect()
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case payload := <-done:
+		return payload
+	case <-timer.C:
+		if logger != nil {
+			logger.Warn("hub heartbeat fresh stats collect timed out; sending stale cached stats without fresh agent overlay",
+				"timeout", timeout.String())
+		}
+		return nil
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 // postHeartbeat marshals and POSTs a beat to the hub, records success on

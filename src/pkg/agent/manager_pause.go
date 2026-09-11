@@ -225,6 +225,7 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		// re-acquired lock exactly as Start does.
 		m.mu.Unlock()
 		m.mintAgentTokenUnlocked(ctx, agent)
+		m.bobPreflightUnlocked(agent)
 		m.mu.Lock()
 		if cur, ok := m.agents[name]; !ok || cur != agent {
 			m.mu.Unlock()

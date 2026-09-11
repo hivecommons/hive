@@ -113,30 +113,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				config.BobAPIKeyEnvVar))
 			return nil
 		}
-		// Re-assert hive's ownership of the SHARED /data/home/.bob/settings.json
-		// auth block BEFORE bob starts. A persisted selectedType beats
-		// BOBSHELL_DEFAULT_AUTH_TYPE, so without this one agent that ever picked
-		// SSO leaves every bob agent on the hive stuck at the auth prompt.
-		//
-		// NOTE: this writes /data/home/.bob/settings.json, which is on the NFS
-		// RWX PVC — NOT "locals" as an earlier comment claimed. It takes no
-		// Manager lock of its own, but Start still calls launchInTmux with m.mu
-		// held (Phase 3), so an NFS stall here CAN block AllStatuses() for the
-		// NFS timeout. This is the narrower residual left after the Phase-2
-		// hoist (ensureTmuxSession/sanitizeGitRemotes/token writes are already
-		// off the lock); moving bob's /data/home pre-flight off the lock too is
-		// a follow-up for a separate maintainer decision.
-		m.ensureBobAuthSettings(agent.Name, bobSharedHome)
-		// The key resolved above was read by the HIVE process as dev. bob will
-		// read it as the AGENT UID, which is a different question — and the one
-		// that actually failed in production. Probe it and log actionably.
-		// Advisory only: the Secret-mounted copy may still be readable, so this
-		// never blocks a launch that might succeed.
-		m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
-		// bob reports unwritable state dirs only inside its own TUI, so probe
-		// them here as the agent UID and surface any failure in the hive log.
-		// Advisory, like the key probe above — never blocks a launch.
-		_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
+		// Bob's shared-home repair and key/state-dir probes run in Start's
+		// unlocked launch-prep phase before this method reacquires m.mu.
 	}
 
 	var launchCmd string

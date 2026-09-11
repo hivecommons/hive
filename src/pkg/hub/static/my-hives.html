@@ -579,6 +579,7 @@ function diagnosisHTML(h) {
     rows.push('<div class="row"><span class="k">' + esc(label) + '</span><span' + (bad ? ' class="bad"' : '') + '>' + valueHTML + '</span></div>');
   }
   var v = h.healthVerdict || {};
+  if (h.statsStale && !v.state) add("verdict", "heartbeat stats stale", false);
   if (v.state === "red" || v.state === "unknown") {
     var vbits = esc(v.reason || v.state);
     if (v.outputKind) vbits += " · judged on " + esc(v.outputKind);
@@ -758,8 +759,9 @@ function hiveHealth(h) {
   // never hide behind a stale "ok"/"unknown" verdict.
   if (h.authHealth === "down") return "problem";
   if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
-  if (h.allAgentsQuiet) return "parked";
   if (!h.online) return "offline";
+  if (h.statsStale) return "unknown";
+  if (h.allAgentsQuiet) return "parked";
   var v = h.healthVerdict;
   if (v && v.state) {
     if (v.state === "red") return "problem";
