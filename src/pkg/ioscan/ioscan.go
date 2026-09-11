@@ -279,6 +279,9 @@ const (
 	unicodeSteganographyRule    = "injection.unicode_steganography"
 	unicodeSteganographySnippet = "<unicode steganography characters>"
 	unicodeVariationBurstLimit  = 2
+	// Distance from an ASCII character to its Halfwidth/Fullwidth Forms twin,
+	// e.g. 'I' (U+0049) + this == 'Ｉ' (U+FF29).
+	fullwidthASCIIOffset = '\uff21' - 'A'
 )
 
 // base64BlobRe finds standalone base64-looking runs (long, alphabet-only) that
@@ -442,6 +445,13 @@ func isInvisibleControl(r rune) bool {
 	switch r {
 	case '\u180e', '\u200b', '\u200c', '\u200d', '\u200e', '\u200f', '\ufeff':
 		return true
+	// Format characters that render as nothing but split a word, so the rule
+	// regexes stop matching while a human and a model still read the original
+	// directive. U+00AD is the one exploited in #6708; the other two are the
+	// remaining invisibles in the same class, added so the gap is closed as a
+	// family rather than one character at a time.
+	case '\u00ad', '\u034f', '\u061c':
+		return true
 	}
 	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2060' && r <= '\u2064') || (r >= '\u2066' && r <= '\u2069')
 }
@@ -469,6 +479,13 @@ func isASCIIAlphaNum(r rune) bool {
 }
 
 func confusableASCII(r rune) (rune, bool) {
+	// Halfwidth and Fullwidth Forms: every ASCII alphanumeric has a fullwidth
+	// twin at a fixed +0xfee0 offset. Enumerating them one at a time is how
+	// #6708 happened — U+FF29 was missing while its 51 siblings were too, so
+	// the whole block is folded arithmetically instead.
+	if folded, ok := fullwidthASCII(r); ok {
+		return folded, true
+	}
 	switch r {
 	case '\u0391', '\u0410': // Greek/Cyrillic A
 		return 'A', true
@@ -516,6 +533,21 @@ func confusableASCII(r rune) (rune, bool) {
 		return 'x', true
 	case '\u0443':
 		return 'y', true
+	}
+	return 0, false
+}
+
+// fullwidthASCII folds the Halfwidth and Fullwidth Forms block back to ASCII.
+// The mapping is arithmetic: U+FF01..U+FF5E are the printable ASCII range
+// shifted by fullwidthASCIIOffset. Only alphanumerics are folded — punctuation
+// is left alone because fullwidth punctuation is ordinary in CJK prose and
+// folding it would rewrite innocent text.
+func fullwidthASCII(r rune) (rune, bool) {
+	switch {
+	case r >= '\uff21' && r <= '\uff3a', // Ａ-Ｚ
+		r >= '\uff41' && r <= '\uff5a', // ａ-ｚ
+		r >= '\uff10' && r <= '\uff19': // ０-９
+		return r - fullwidthASCIIOffset, true
 	}
 	return 0, false
 }
