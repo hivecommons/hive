@@ -189,6 +189,26 @@ func TestFilterKickableAgents(t *testing.T) {
 	}
 }
 
+func TestStartupLaunchNamesPrioritizesQueueDrainersBeforePausedAgents(t *testing.T) {
+	enabled := map[string]config.AgentConfig{
+		"architect":     {Paused: true},
+		"ci-maintainer": {},
+		"scanner":       {},
+		"quality":       {},
+		"sec-check":     {},
+		"supervisor":    {Paused: true},
+		"brainstorm":    {OnDemand: true},
+		"adjudicator":   {},
+	}
+	onDemand := map[string]bool{"guide": true}
+
+	got := startupLaunchNames(enabled, onDemand)
+	want := []string{"scanner", "ci-maintainer", "quality", "sec-check", "adjudicator", "architect", "supervisor"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("startupLaunchNames = %v, want %v", got, want)
+	}
+}
+
 func kickMsgs(agents ...string) []scheduler.KickMessage {
 	out := make([]scheduler.KickMessage, 0, len(agents))
 	for _, a := range agents {

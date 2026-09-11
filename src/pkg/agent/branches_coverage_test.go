@@ -59,6 +59,72 @@ func TestDeliverStartupKick_DroppedGenMismatch(t *testing.T) {
 	}
 }
 
+func TestDeliverStartupKick_StaleGenerationDoesNotClearCurrentDrain(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-covsk-stale-drain"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"covsk-stale-drain": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["covsk-stale-drain"]
+	agent.tmuxSession = session
+	agent.State = StateRunning
+	agent.launchGen = 2
+	agent.startupKickInFlight = true
+	agent.startupKickGen = 2
+	m.mu.Unlock()
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+
+	m.deliverStartupKick(agent, "stale bootstrap prompt", 1)
+
+	m.mu.RLock()
+	inFlight := agent.startupKickInFlight
+	last := agent.LastKick
+	m.mu.RUnlock()
+	if !inFlight {
+		t.Fatal("stale startup kick goroutine cleared the current launch's in-flight guard")
+	}
+	if last != nil {
+		t.Fatal("stale startup kick delivered despite launch generation mismatch")
+	}
+}
+
+func TestSendKickIgnoresStaleStartupDrainGeneration(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-stale-drain-normal-kick"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"stale-drain-normal-kick": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["stale-drain-normal-kick"]
+	agent.tmuxSession = session
+	agent.State = StateRunning
+	agent.launchGen = 2
+	agent.startupKickInFlight = true
+	agent.startupKickGen = 1
+	m.mu.Unlock()
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+
+	if err := m.SendKick("stale-drain-normal-kick", "deliver normally after relaunch"); err != nil {
+		t.Fatalf("SendKick with only a stale startup drain should deliver normally, got error: %v", err)
+	}
+
+	m.mu.RLock()
+	inFlight := agent.startupKickInFlight
+	msg := agent.LastKickMessage
+	m.mu.RUnlock()
+	if inFlight {
+		t.Fatal("stale startup drain flag was not cleared")
+	}
+	if msg != "deliver normally after relaunch" {
+		t.Fatalf("LastKickMessage = %q, want normal delivery instead of stale deferral", msg)
+	}
+}
+
 func TestDeliverStartupKick_Delivered(t *testing.T) {
 	if !tmuxAvailable() {
 		t.Skip("tmux not available")
@@ -83,6 +149,176 @@ func TestDeliverStartupKick_Delivered(t *testing.T) {
 	m.deliverStartupKick(agent, "bootstrap prompt", 3)
 	if agent.LastKick == nil {
 		t.Error("startup kick should be delivered on matching generation")
+	}
+}
+
+func TestSendKickDuringStartupQueueDeliveredAfterLaunch(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-startup-deferred-stopped"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["scanner"]
+	agent.tmuxSession = session
+	agent.State = StateStopped
+	agent.launchGen = 1
+	m.mu.Unlock()
+
+	m.MarkStartupLaunchQueued([]string{"scanner"})
+	if err := m.SendKick("scanner", "go drain the queue"); err != nil {
+		t.Fatalf("SendKick while startup-queued should defer, got error: %v", err)
+	}
+	if agent.LastKick != nil {
+		t.Fatal("deferred startup kick was delivered before the agent launched")
+	}
+
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+	m.mu.Lock()
+	agent.State = StateRunning
+	agent.startupKickInFlight = true
+	agent.startupKickGen = 1
+	m.mu.Unlock()
+
+	m.deliverStartupKick(agent, "bootstrap prompt", 1)
+
+	if agent.LastKick == nil {
+		t.Fatal("deferred startup kick was not delivered after launch")
+	}
+	if agent.LastKickMessage != "go drain the queue" {
+		t.Fatalf("LastKickMessage = %q, want deferred governor kick", agent.LastKickMessage)
+	}
+	if len(agent.KickHistory) != 1 {
+		t.Fatalf("KickHistory length = %d, want exactly one delivered kick", len(agent.KickHistory))
+	}
+	if agent.KickRefused || agent.KickRefusalReason != "" {
+		t.Fatalf("deferred kick refusal state not cleared: refused=%v reason=%q", agent.KickRefused, agent.KickRefusalReason)
+	}
+}
+
+func TestStartDrainsDeferredKickWithoutBootstrapPrompt(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {
+			Backend:   "claude",
+			LaunchCmd: "printf 'goose is ready\\n'; cat",
+		},
+	}, discardLogger(), ProjectContext{})
+	t.Cleanup(func() { _ = testTmuxCommand("kill-session", "-t", "hive-scanner").Run() })
+
+	m.MarkStartupLaunchQueued([]string{"scanner"})
+	if err := m.SendKick("scanner", "go drain the queue from real Start"); err != nil {
+		t.Fatalf("SendKick while startup-queued should defer, got error: %v", err)
+	}
+	if err := m.Start(context.Background(), "scanner"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		agent := m.agents["scanner"]
+		last := agent.LastKick
+		msg := agent.LastKickMessage
+		historyLen := len(agent.KickHistory)
+		inFlight := agent.startupKickInFlight
+		m.mu.RUnlock()
+		if last != nil {
+			if msg != "go drain the queue from real Start" {
+				t.Fatalf("LastKickMessage = %q, want deferred kick from real Start", msg)
+			}
+			if historyLen != 1 {
+				t.Fatalf("KickHistory length = %d, want one deferred kick and no bootstrap", historyLen)
+			}
+			return
+		}
+		if !inFlight {
+			t.Fatal("startup kick drain stopped before delivering the deferred kick")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("deferred kick was not drained after Start")
+}
+
+func TestStartDrainsDeferredKickWhenReusingExistingCLI(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-reuse"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"reuse": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+
+	m.MarkStartupLaunchQueued([]string{"reuse"})
+	if err := m.SendKick("reuse", "go drain after reuse"); err != nil {
+		t.Fatalf("SendKick while startup-queued should defer, got error: %v", err)
+	}
+	if err := m.Start(context.Background(), "reuse"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		agent := m.agents["reuse"]
+		last := agent.LastKick
+		msg := agent.LastKickMessage
+		historyLen := len(agent.KickHistory)
+		m.mu.RUnlock()
+		if last != nil {
+			if msg != "go drain after reuse" {
+				t.Fatalf("LastKickMessage = %q, want deferred kick after existing CLI reuse", msg)
+			}
+			if historyLen != 1 {
+				t.Fatalf("KickHistory length = %d, want one deferred kick", historyLen)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("deferred kick was not drained after existing CLI reuse")
+}
+
+func TestSendKickDuringStartupKickInFlightReplacesBootstrap(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-startup-deferred-running"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["scanner"]
+	agent.tmuxSession = session
+	agent.State = StateRunning
+	agent.launchGen = 2
+	agent.startupKickInFlight = true
+	agent.startupKickGen = 2
+	m.mu.Unlock()
+
+	if err := m.SendKick("scanner", "go drain live issues"); err != nil {
+		t.Fatalf("SendKick while startup kick is in flight should defer, got error: %v", err)
+	}
+	if agent.LastKick != nil {
+		t.Fatal("kick was typed immediately instead of being deduped through the startup delivery")
+	}
+
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+	m.deliverStartupKick(agent, "bootstrap prompt", 2)
+
+	if agent.LastKick == nil {
+		t.Fatal("deferred kick was not delivered")
+	}
+	if agent.LastKickMessage != "go drain live issues" {
+		t.Fatalf("LastKickMessage = %q, want startup-time SendKick to replace bootstrap", agent.LastKickMessage)
+	}
+	if len(agent.KickHistory) != 1 {
+		t.Fatalf("KickHistory length = %d, want one kick (no bootstrap double-delivery)", len(agent.KickHistory))
 	}
 }
 

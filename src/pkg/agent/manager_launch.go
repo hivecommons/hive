@@ -278,6 +278,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// it exits quickly once the main prompt is visible.
 			go m.dismissInferencePrompts(agent)
 		}
+		if agent.startupLaunchQueued {
+			agent.startupKickInFlight = true
+			agent.startupKickGen = agent.launchGen
+			go m.deliverStartupKick(agent, "", agent.launchGen)
+		}
 		return nil
 	}
 	agent.forceRelaunch = false
@@ -372,9 +377,13 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		go m.watchForTrustPromptForAgent(agent, agentCtx)
 	}
 
-	// Deliver the bootstrap prompt once the CLI is ready — fire-and-forget,
-	// same semantics as the old embedded delivery but gated on readiness.
-	if deferredStartupKick != "" {
+	// Drain startup-time kicks once the CLI is ready — fire-and-forget, same
+	// semantics as the old embedded bootstrap delivery but gated on readiness.
+	// Even without a bootstrap prompt, the goroutine stays armed long enough to
+	// catch governor kicks that arrive while the boot stagger still owns launch.
+	if deferredStartupKick != "" || agent.startupLaunchQueued {
+		agent.startupKickInFlight = true
+		agent.startupKickGen = agent.launchGen
 		go m.deliverStartupKick(agent, deferredStartupKick, agent.launchGen)
 	}
 

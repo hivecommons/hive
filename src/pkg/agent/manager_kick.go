@@ -123,7 +123,13 @@ func (m *Manager) SendKick(name string, message string) error {
 	}
 
 	if agent.State != StateRunning {
+		if m.deferStartupKickLocked(agent, message) {
+			return nil
+		}
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+	}
+	if m.deferStartupKickLocked(agent, message) {
+		return nil
 	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
@@ -176,6 +182,49 @@ func (m *Manager) SendKick(name string, message string) error {
 	m.deliverKickLocked(agent, message, "send-kick")
 
 	return nil
+}
+
+// MarkStartupLaunchQueued tells SendKick that the named agents are still in the
+// boot stagger. A governor/manual kick that arrives before the agent reaches its
+// pane is then held for delivery by the startup kick path instead of being
+// refused as "stopped" and lost for the whole cadence interval.
+func (m *Manager) MarkStartupLaunchQueued(names []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, name := range names {
+		if agent, ok := m.agents[name]; ok {
+			agent.startupLaunchQueued = true
+		}
+	}
+}
+
+// deferStartupKickLocked records the latest kick that arrives while startup
+// owns delivery. It deliberately replaces the normal bootstrap prompt: one
+// readiness-gated kick should be typed into the fresh pane, and the governor's
+// actionable queue message is the fresher, more specific instruction.
+//
+// Caller holds m.mu.
+func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message string) bool {
+	if agent.Paused || agent.State == StatePaused || agent.State == StateFailed {
+		return false
+	}
+	startupKickInFlight := agent.startupKickInFlight && agent.startupKickGen == agent.launchGen
+	if agent.startupKickInFlight && !startupKickInFlight {
+		agent.startupKickInFlight = false
+	}
+	if !agent.startupLaunchQueued && !startupKickInFlight {
+		return false
+	}
+	agent.pendingStartupKick = message
+	agent.KickRefused = true
+	agent.KickRefusalReason = "deferred until startup completes"
+	m.logger.Info("agent kick deferred until startup completes",
+		"name", agent.Name,
+		"state", agent.State,
+		"startup_queued", agent.startupLaunchQueued,
+		"startup_kick_in_flight", startupKickInFlight,
+	)
+	return true
 }
 
 // deliverKickLocked types a message into the agent's CLI and records the
@@ -307,11 +356,13 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	if !m.waitForCLIReadyForAgent(agent) {
 		m.logger.Warn("startup kick dropped: CLI never became ready",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		m.clearStartupKickInFlight(agent, gen)
 		return
 	}
 	if !m.waitForInputPromptForAgent(agent) {
 		m.logger.Warn("startup kick dropped: CLI never reached input prompt",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		m.clearStartupKickInFlight(agent, gen)
 		return
 	}
 
@@ -336,12 +387,37 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.agents[agent.Name]
-	if !ok || current != agent || agent.State != StateRunning || agent.launchGen != gen {
+	if !ok || current != agent || agent.launchGen != gen {
 		m.logger.Warn("startup kick dropped: agent restarted or stopped while waiting",
 			"name", agent.Name, "trigger", "startup")
 		return
 	}
-	m.deliverKickLocked(agent, prompt, "startup")
+	defer func() {
+		agent.startupKickInFlight = false
+	}()
+	if agent.State != StateRunning {
+		m.logger.Warn("startup kick dropped: agent restarted or stopped while waiting",
+			"name", agent.Name, "trigger", "startup")
+		return
+	}
+	trigger := "startup"
+	if agent.pendingStartupKick != "" {
+		prompt = agent.pendingStartupKick
+		agent.pendingStartupKick = ""
+		trigger = "send-kick"
+	}
+	if prompt == "" {
+		return
+	}
+	m.deliverKickLocked(agent, prompt, trigger)
+}
+
+func (m *Manager) clearStartupKickInFlight(agent *AgentProcess, gen int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.agents[agent.Name]; ok && current == agent && agent.startupKickGen == gen {
+		agent.startupKickInFlight = false
+	}
 }
 
 // inferenceKickActionSuffix is appended to every kick sent to an agent whose

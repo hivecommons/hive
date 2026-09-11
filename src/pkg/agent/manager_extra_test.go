@@ -173,6 +173,14 @@ func TestIsPaused(t *testing.T) {
 	if !m.IsPaused("scanner") {
 		t.Error("scanner should be paused")
 	}
+
+	m.mu.Lock()
+	m.agents["scanner"].Paused = false
+	m.agents["scanner"].State = StatePaused
+	m.mu.Unlock()
+	if !m.IsPaused("scanner") {
+		t.Error("scanner in StatePaused should be treated as paused")
+	}
 }
 
 func TestIsPaused_NotFound(t *testing.T) {
