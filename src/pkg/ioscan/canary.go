@@ -2,14 +2,19 @@ package ioscan
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -20,6 +25,8 @@ const (
 	DefaultCanaryPath = "/data/ioscan-canaries.json"
 	CanaryLeakRule    = "canary.leak"
 )
+
+var hexCanaryBlobRe = regexp.MustCompile(`(?i)\b[0-9a-f]{24,}\b`)
 
 type Canary struct {
 	Agent     string    `json:"agent"`
@@ -79,11 +86,12 @@ func (r *CanaryRegistry) Scan(agent, text, source string) (CanaryLeak, bool) {
 	if r == nil || text == "" {
 		return CanaryLeak{}, false
 	}
+	variants := canaryScanVariants(text)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	check := func(m map[string]Canary) (CanaryLeak, bool) {
 		for token, c := range m {
-			if strings.Contains(text, token) {
+			if canaryTextContains(variants, token) {
 				return CanaryLeak{Agent: c.Agent, Token: token, Source: source}, true
 			}
 		}
@@ -100,6 +108,135 @@ func (r *CanaryRegistry) Scan(agent, text, source string) (CanaryLeak, bool) {
 		}
 	}
 	return CanaryLeak{}, false
+}
+
+func canaryTextContains(variants []string, token string) bool {
+	if token == "" {
+		return false
+	}
+	needles := []string{strings.ToLower(token), strings.ToLower(stripCanarySeparators(token))}
+	for _, variant := range variants {
+		for _, needle := range needles {
+			if strings.Contains(variant, needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func canaryScanVariants(text string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		for _, variant := range []string{s, stripCanarySeparators(s), reverseString(s)} {
+			variant = strings.ToLower(variant)
+			if variant == "" {
+				continue
+			}
+			if _, ok := seen[variant]; ok {
+				continue
+			}
+			seen[variant] = struct{}{}
+			out = append(out, variant)
+		}
+	}
+
+	add(text)
+	if decoded, ok := repeatedURLUnescape(text); ok {
+		add(decoded)
+	}
+	for _, decoded := range decodeCanaryBase64Blobs(text) {
+		add(decoded)
+	}
+	for _, decoded := range decodeCanaryHexBlobs(text) {
+		add(decoded)
+	}
+	return out
+}
+
+func stripCanarySeparators(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unicode.IsSpace(r) || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func reverseString(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+func repeatedURLUnescape(s string) (string, bool) {
+	decoded := s
+	changed := false
+	const maxURLDecodePasses = 3
+	for i := 0; i < maxURLDecodePasses; i++ {
+		next, err := url.QueryUnescape(decoded)
+		if err != nil {
+			next, err = url.PathUnescape(decoded)
+		}
+		if err != nil || next == decoded {
+			break
+		}
+		decoded = next
+		changed = true
+	}
+	return decoded, changed
+}
+
+func decodeCanaryBase64Blobs(text string) []string {
+	var out []string
+	for _, blob := range base64BlobRe.FindAllString(text, -1) {
+		clean := stripBase64Whitespace(blob)
+		for _, dec := range []func(string) ([]byte, error){
+			base64.StdEncoding.DecodeString,
+			base64.RawStdEncoding.DecodeString,
+		} {
+			decoded, err := dec(clean)
+			if err == nil && utf8.Valid(decoded) && isMostlyPrintable(decoded) {
+				out = append(out, string(decoded))
+				break
+			}
+		}
+	}
+	return out
+}
+
+func stripBase64Whitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func decodeCanaryHexBlobs(text string) []string {
+	var out []string
+	for _, blob := range hexCanaryBlobRe.FindAllString(text, -1) {
+		if len(blob)%2 != 0 {
+			continue
+		}
+		decoded, err := hex.DecodeString(blob)
+		if err == nil && utf8.Valid(decoded) && isMostlyPrintable(decoded) {
+			out = append(out, string(decoded))
+		}
+	}
+	return out
 }
 
 func CanaryPreamble(token string) string {

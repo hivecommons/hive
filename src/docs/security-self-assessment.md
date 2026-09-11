@@ -203,6 +203,10 @@ repository writes:
    (`ioscan.classifier.enabled`, default `false`) adds semantic
    plain-English-injection detection on top. **Enabled by default**
    (`ioscan.enabled: true` is the default per `ioscan.md:9`).
+   Egress canaries (`HIVE-CANARY-*`) are matched both literally and through
+   common transport encodings/transforms (base64, hex, URL encoding, reversed
+   text, case changes, and whitespace splitting) before proxy output is
+   allowed through.
 
 3. **Per-agent scoped GitHub App tokens and mode-tiered credential issuance**
    (per `security-model.md` Layer 5). Advisory-mode agents receive
