@@ -39,7 +39,9 @@ type Options struct {
 	MutationBoundary effects.Boundary
 	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
 	// (#6258). nil installs no policy; see IntentGate for the semantics.
-	IntentGate *IntentGate
+	IntentGate                    *IntentGate
+	SelfAuthorizationACMMLevel    *int
+	SelfAuthorizationReleaseLimit int
 }
 
 // Engine owns the automerge sweep policy state.
@@ -59,6 +61,9 @@ type Engine struct {
 
 	intentGateMu sync.RWMutex
 	intentGate   *IntentGate
+
+	selfAuthorizationACMMLevel    *int
+	selfAuthorizationReleaseLimit int
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -68,14 +73,16 @@ func New(transport Transport, opts Options) *Engine {
 		ghClient = transport.GoGitHub()
 	}
 	e := &Engine{
-		transport:      transport,
-		gh:             ghClient,
-		logger:         opts.Logger,
-		mergerAuthz:    opts.MergerAuthorizer,
-		requiredChecks: opts.RequiredChecks,
-		approvalDesk:   opts.ApprovalDesk,
-		mutation:       opts.MutationBoundary,
-		intentGate:     opts.IntentGate,
+		transport:                     transport,
+		gh:                            ghClient,
+		logger:                        opts.Logger,
+		mergerAuthz:                   opts.MergerAuthorizer,
+		requiredChecks:                opts.RequiredChecks,
+		approvalDesk:                  opts.ApprovalDesk,
+		mutation:                      opts.MutationBoundary,
+		intentGate:                    opts.IntentGate,
+		selfAuthorizationACMMLevel:    opts.SelfAuthorizationACMMLevel,
+		selfAuthorizationReleaseLimit: opts.SelfAuthorizationReleaseLimit,
 	}
 	if e.mutation == nil {
 		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
@@ -494,6 +501,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 	}
 
 	// See the queued sweep above: paused repos are out of scope for automerge.
+	selfAuthReleaseBudget := c.selfAuthorizationReleaseBudget()
 	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -518,6 +526,26 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			result.Seen++
 			repoSeen++
+			// #5117 hold release must run before the prefilter: the
+			// prefilter skips held PRs outright, and an eligible
+			// self-authorization hold has to be released, not skipped.
+			if selfAuthReleaseBudget > 0 && pr != nil && hgithub.HasHoldLabel(labelNames(pr.Labels)) {
+				released, err := c.releaseSelfAuthorizationHoldIfEligible(ctx, repo, owner, repoName, number)
+				if err != nil {
+					c.warn("self-authored automerge sweep could not evaluate #5117 hold release", "repo", repo, "pr", number, "error", err)
+					result.Skipped++
+					repoSkipped++
+					repoSkipReasons["self-authorization-release-error"]++
+					continue
+				}
+				if released {
+					selfAuthReleaseBudget--
+					result.Skipped++
+					repoSkipped++
+					repoSkipReasons["self-authorization-hold-released"]++
+					continue
+				}
+			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
 				result.Skipped++
 				repoSkipped++
@@ -639,6 +667,9 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	}
 	repos := len(c.transport.Repositories())
 	interval := selfAuthoredSweepInterval(repos)
+	if c.selfAuthorizationACMMLevel == nil {
+		c.selfAuthorizationACMMLevel = acmmLevel
+	}
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()

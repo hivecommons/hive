@@ -106,6 +106,13 @@ type Client struct {
 	// `exec hive-open-pr`). nil means "never hold" (backward-compatible no-op).
 	// Set by StartPRRequestWatcher.
 	prHoldLabel func(agent string) bool
+	// selfAuthorizationACMMLevel returns the hive's current ACMM level for the
+	// #5117 self-authorization gate. It is a callback so promotions/config
+	// reloads are honoured at evaluation time rather than frozen at watcher
+	// startup. nil means "unknown" and preserves the pre-existing gate.
+	selfAuthorizationACMMLevel func() int
+	selfAuthSkipLoggedMu       sync.Mutex
+	selfAuthSkipLogged         map[string]bool
 	// prSignedCommits, when set and returning true, makes the PR-request watcher
 	// re-author each head branch through createCommitOnBranch before opening the
 	// PR, so the commit is GitHub-signed (Verified) and authored by the App bot.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -41,11 +42,186 @@ import (
 // maintainer wants to approve without writing a comment.
 const HumanAckLabel = "approved-direction"
 
+// SelfAuthorizationSkipACMMLevel is the first ACMM level where the #5117
+// self-authorization hold is skipped: hub admin policy decided that a fully
+// autonomous L6 hive may act on hive-filed findings without separate human
+// direction acknowledgement. Levels below L6 keep the #5117 hold behavior.
+const SelfAuthorizationSkipACMMLevel = 6
+
+// SelfAuthorizationNoticeMarker marks comments created by the #5117
+// self-authorization hold, so L6 hives can release only those holds and never
+// remove a human-applied hold by mistake.
+const SelfAuthorizationNoticeMarker = "<!-- hive:self-authorization-hold:5117 -->"
+
+const selfAuthorizationNoticePhrase = "Held for human sign-off on the direction"
+
 // selfAuthCommentPageSize bounds the acknowledgement scan. The first page is
 // enough: the gate needs to know whether ANY human has engaged, and a human who
 // engaged only after 100 bot comments is not the acknowledgement this is
 // looking for.
 const selfAuthCommentPageSize = 100
+
+// SelfAuthorizationHoldSkippedAtACMMLevel reports whether the #5117
+// self-authorization hold is disabled at the current hive maturity level.
+func SelfAuthorizationHoldSkippedAtACMMLevel(level int) bool {
+	return level >= SelfAuthorizationSkipACMMLevel
+}
+
+// IsSelfAuthorizationHoldNotice reports whether a PR comment is the notice the
+// #5117 gate posts. It accepts the stable marker added for new notices and the
+// original visible phrase so already-held PRs can be released at L6.
+func IsSelfAuthorizationHoldNotice(body string) bool {
+	return strings.Contains(body, SelfAuthorizationNoticeMarker) ||
+		strings.Contains(body, selfAuthorizationNoticePhrase)
+}
+
+// SetSelfAuthorizationACMMLevel installs the live ACMM-level callback used by
+// the #5117 self-authorization gate. nil preserves the legacy behavior.
+func (c *Client) SetSelfAuthorizationACMMLevel(fn func() int) {
+	if c == nil {
+		return
+	}
+	c.selfAuthSkipLoggedMu.Lock()
+	defer c.selfAuthSkipLoggedMu.Unlock()
+	c.selfAuthorizationACMMLevel = fn
+	c.selfAuthSkipLogged = map[string]bool{}
+}
+
+func (c *Client) currentSelfAuthorizationACMMLevel() (int, bool) {
+	if c == nil || c.selfAuthorizationACMMLevel == nil {
+		return 0, false
+	}
+	return c.selfAuthorizationACMMLevel(), true
+}
+
+func (c *Client) logSelfAuthorizationSkipOnce(repo string, number, level int) {
+	if c == nil || c.logger == nil {
+		return
+	}
+	key := fmt.Sprintf("%s#%d", repo, number)
+	c.selfAuthSkipLoggedMu.Lock()
+	if c.selfAuthSkipLogged == nil {
+		c.selfAuthSkipLogged = map[string]bool{}
+	}
+	if c.selfAuthSkipLogged[key] {
+		c.selfAuthSkipLoggedMu.Unlock()
+		return
+	}
+	c.selfAuthSkipLogged[key] = true
+	c.selfAuthSkipLoggedMu.Unlock()
+	c.logger.Info("self-authorization hold skipped: ACMM level 6 acts on hive-filed findings",
+		"repo", repo, "pr", number, "level", level)
+}
+
+// HasSelfAuthorizationHoldNotice reports whether the PR has a #5117
+// self-authorization hold notice posted by the Hive App bot.
+func (c *Client) HasSelfAuthorizationHoldNotice(ctx context.Context, repo string, number int) (bool, error) {
+	_, ok, err := c.latestSelfAuthorizationHoldNoticeTime(ctx, repo, number)
+	return ok, err
+}
+
+func (c *Client) latestSelfAuthorizationHoldNoticeTime(ctx context.Context, repo string, number int) (time.Time, bool, error) {
+	if c == nil || c.client == nil {
+		return time.Time{}, false, ErrNoGitHubClient
+	}
+	appBot := strings.TrimSpace(c.appBotLogin)
+	if appBot == "" {
+		return time.Time{}, false, nil
+	}
+	owner, repoName := splitRepoRef(repo, c.org)
+	if owner == "" || repoName == "" {
+		return time.Time{}, false, nil
+	}
+	comments, _, err := c.client.Issues.ListComments(ctx, owner, repoName, number, &gh.IssueListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: selfAuthCommentPageSize},
+	})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	var latest time.Time
+	for _, comment := range comments {
+		if comment == nil || !strings.EqualFold(SafeGetLogin(comment.GetUser()), appBot) {
+			continue
+		}
+		if IsSelfAuthorizationHoldNotice(comment.GetBody()) {
+			if at := comment.GetCreatedAt().Time; at.After(latest) {
+				latest = at
+			}
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, false, nil
+	}
+	return latest, true, nil
+}
+
+// LiftedHoldWasSelfAuthorization reports whether the most recently lifted hold
+// label was the App-authored #5117 self-authorization hold. Historical #5117
+// notices alone are not enough: a later human hold on the same PR must still be
+// protected by the hold guard.
+func (c *Client) LiftedHoldWasSelfAuthorization(ctx context.Context, repo string, number int) (bool, error) {
+	noticeAt, ok, err := c.latestSelfAuthorizationHoldNoticeTime(ctx, repo, number)
+	if err != nil || !ok {
+		return false, err
+	}
+	owner, repoName := splitRepoRef(repo, c.org)
+	if owner == "" || repoName == "" {
+		return false, nil
+	}
+	appBot := strings.TrimSpace(c.appBotLogin)
+	latestIdx := -1
+	var events []*gh.IssueEvent
+	opts := &gh.ListOptions{PerPage: selfAuthCommentPageSize}
+	for {
+		page, resp, err := c.client.Issues.ListIssueEvents(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return false, err
+		}
+		for _, event := range page {
+			if !isHoldLabelEvent(event) {
+				continue
+			}
+			events = append(events, event)
+			if latestIdx < 0 || event.GetCreatedAt().Time.After(events[latestIdx].GetCreatedAt().Time) {
+				latestIdx = len(events) - 1
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if latestIdx < 0 || events[latestIdx].GetEvent() != "unlabeled" {
+		return false, nil
+	}
+	liftedAt := events[latestIdx].GetCreatedAt().Time
+	if !liftedAt.After(noticeAt) {
+		return false, nil
+	}
+	var applied *gh.IssueEvent
+	for _, event := range events {
+		if !isHoldLabelEvent(event) || event.GetEvent() != "labeled" || event.GetCreatedAt().Time.After(liftedAt) {
+			continue
+		}
+		if event.GetCreatedAt().Time.After(noticeAt) {
+			return false, nil
+		}
+		if applied == nil || event.GetCreatedAt().Time.After(applied.GetCreatedAt().Time) {
+			applied = event
+		}
+	}
+	return applied != nil && strings.EqualFold(SafeGetLogin(applied.GetActor()), appBot), nil
+}
+
+func isHoldLabelEvent(event *gh.IssueEvent) bool {
+	if event == nil {
+		return false
+	}
+	if event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled" {
+		return false
+	}
+	return strings.EqualFold(event.GetLabel().GetName(), "hold")
+}
 
 // SetHiveIdentity records which accounts count as "this hive", so the
 // self-authorization gate can recognise an issue the hive filed under a plain
@@ -271,11 +447,12 @@ func splitRepoRef(repo, defaultOwner string) (string, string) {
 // no explanation reads as a malfunction, and the person who has to clear it
 // needs to know what would clear it.
 func selfAuthorizationNotice(finding SelfAuthorization) string {
-	return fmt.Sprintf(`> [!IMPORTANT]
+	return fmt.Sprintf(`%s
+> [!IMPORTANT]
 > **Held for human sign-off on the direction, not on the code.**
 >
 > This PR's only tracked rationale is %s#%d, which the hive filed itself — %s. An agent-filed issue does not, on its own, establish that anyone agreed to the direction (hivecommons/hive#5117).
 >
 > The change may well be right; nothing here is a review of it. To release the hold, acknowledge the direction on that issue — comment on it, assign yourself, or add the `+"`%s`"+` label — and remove the `+"`hold`"+` label here.`,
-		finding.Repo, finding.Issue, finding.Reason, HumanAckLabel)
+		SelfAuthorizationNoticeMarker, finding.Repo, finding.Issue, finding.Reason, HumanAckLabel)
 }

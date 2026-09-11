@@ -1,0 +1,1 @@
+- ACMM level 6 hives now skip and release the #5117 self-authorization hold for App-authored PRs backed only by hive-filed findings, while preserving human-applied holds.

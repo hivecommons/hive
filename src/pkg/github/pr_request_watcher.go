@@ -414,8 +414,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent)
 	var selfAuth SelfAuthorization
 	if !res.DuplicateTree && !holdByLevel {
-		selfAuth = c.EvaluateSelfAuthorization(ctx, req.Repo, title, body, req.IssueN)
-		resp.SelfAuthorized = selfAuth.Held
+		if level, ok := c.currentSelfAuthorizationACMMLevel(); ok && SelfAuthorizationHoldSkippedAtACMMLevel(level) {
+			c.logSelfAuthorizationSkipOnce(req.Repo, res.Number, level)
+		} else {
+			selfAuth = c.EvaluateSelfAuthorization(ctx, req.Repo, title, body, req.IssueN)
+			resp.SelfAuthorized = selfAuth.Held
+		}
 	}
 	if !res.DuplicateTree && (holdByLevel || selfAuth.Held) {
 		if lerr := c.AddLabels(ctx, req.Repo, res.Number, []string{"hold"}); lerr != nil {
