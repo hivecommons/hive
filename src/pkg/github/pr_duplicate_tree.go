@@ -97,10 +97,13 @@ func (c *Client) findOpenPRWithIdenticalTree(ctx context.Context, owner, repo, h
 		inspected++
 		candidateTree, terr := c.commitTreeSHA(ctx, owner, repo, candidateSHA)
 		if terr != nil {
-			// One unreadable candidate must not blind the guard to the rest.
-			// A PR whose head commit was force-pushed away between the list and
-			// the lookup is the ordinary cause, and it is not a duplicate of
-			// anything by then.
+			if isRetryableGitHubError(terr) {
+				return nil, terr
+			}
+			// One definitively unreadable candidate must not blind the guard to
+			// the rest. A PR whose head commit was force-pushed away between the
+			// list and the lookup is the ordinary cause, and it is not a
+			// duplicate of anything by then.
 			c.logger.Warn("duplicate-tree guard: could not read a candidate's tree, skipping it",
 				slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()),
 				slog.String("error", terr.Error()))

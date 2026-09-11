@@ -327,14 +327,14 @@ func TestCreatePR_APIError(t *testing.T) {
 	}
 }
 
-func TestCreatePR_DedupeLookupFailureStillCreates(t *testing.T) {
+func TestCreatePR_DedupeRetryableLookupFailureFailsClosed(t *testing.T) {
+	created := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
-			// Dedupe lookup fails with 500
 			w.WriteHeader(http.StatusInternalServerError)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls"):
-			// But creation succeeds
+			created++
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"number": 10, "html_url": "url/10"})
@@ -345,15 +345,11 @@ func TestCreatePR_DedupeLookupFailureStillCreates(t *testing.T) {
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "org", nil, prTestLogger())
 
-	res, err := c.CreatePR(context.Background(), "repo", "feature", "main", "title", "body")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := c.CreatePR(context.Background(), "repo", "feature", "main", "title", "body"); err == nil || !isRetryableGitHubError(err) {
+		t.Fatalf("dedupe 500 must return retryable error, got %v", err)
 	}
-	if res.Number != 10 {
-		t.Errorf("number = %d, want 10", res.Number)
-	}
-	if res.AlreadyExisted {
-		t.Error("AlreadyExisted should be false for a new PR after failed dedupe")
+	if created != 0 {
+		t.Fatalf("retryable dedupe failure must not create blind PR, got %d creates", created)
 	}
 }
 
