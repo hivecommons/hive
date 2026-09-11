@@ -138,7 +138,11 @@ jobs:
       - name: Install tmux and the latest ${{ matrix.backend }} CLI
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'latest'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+          # Bounded + annotated (#6648): the `latest` lane runs on the
+          # self-hosted hive runners, so a mirror outage hit this step too.
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
+            --require tmux --for 'the backend smoke' \
+            --apt tmux --apk tmux --verify 'tmux -V'
           case "${{ matrix.backend }}" in
             claude) npm install -g @anthropic-ai/claude-code@latest ;;
             codex)  npm install -g @openai/codex@latest ;;

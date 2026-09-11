@@ -1,0 +1,1 @@
+- Documented that `v5-latest`/`edge` are published by the `v5` line and `v4-latest`/`candidate` by `v4`, corrected `operator-reference.md`'s claim that a `v4` build publishes all three channels, and flagged that `:latest` is moved by both lines ([#6711](https://github.com/hivecommons/hive/issues/6711)).

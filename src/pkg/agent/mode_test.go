@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/agentmode"
+)
 
 func TestAgentModeString(t *testing.T) {
 	tests := []struct {
@@ -107,6 +111,14 @@ func TestParseAgentMode(t *testing.T) {
 		if got != tt.want || ok != tt.ok {
 			t.Errorf("ParseAgentMode(%q) = (%v, %v), want (%v, %v)", tt.input, got, ok, tt.want, tt.ok)
 		}
+	}
+}
+
+func TestAgentModeIsAgentmodeAlias(t *testing.T) {
+	var leafMode agentmode.AgentMode = agentmode.ModeIssuesAndPRs
+	var agentMode AgentMode = leafMode
+	if agentMode != ModeIssuesAndPRs {
+		t.Fatalf("agent mode alias = %v, want %v", agentMode, ModeIssuesAndPRs)
 	}
 }
 

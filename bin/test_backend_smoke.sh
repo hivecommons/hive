@@ -383,6 +383,7 @@ if [ "$RIG_OK" = "1" ]; then
     cat > "$STUB_OMP/omp" <<'OMP'
 #!/usr/bin/env node
 process.stdout.write('π > ⬢ github-copilot/gpt-5.6-luna >\n');
+process.stdin.resume();
 process.stdin.once('data', () => {
   process.stdout.write('HIVE_VERDICT: complete — OMP interactive stub\n');
   process.stdout.write('π > ⬢ github-copilot/gpt-5.6-luna >\n');

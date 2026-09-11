@@ -58,6 +58,7 @@ const {
   paneTail,
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
+  paneQuotaExhaustion,
   paneShowsLoginRequiredError,
   paneUnknownAPIErrorLine,
   classifyPane,
@@ -202,6 +203,15 @@ const AUTONOMY_NUDGE_MESSAGE =
 const HEADLESS_MAX_OUTPUT_BYTES = 1048576; // 1 MiB
 
 const TMUX_TAIL_LINES = 15;
+const NEEDS_LOGIN_CONFIRM_TICKS = 3;
+// #6667: the window detectPRURL scans is NOT the 15-line protocol payload.
+// TMUX_TAIL_LINES is sized for the audit trail the hub stores, and of those 15
+// terminal rows roughly ten are TUI chrome — the input box, the status bar, the
+// hint line — so only a handful of real output rows survive. A PR URL the agent
+// genuinely printed scrolls out of that window within seconds of being printed,
+// and the relay then reports no PR for a task that shipped one. Scan deep
+// scrollback for the URL while still sending only the tail upstream.
+const PR_SCAN_LINES = 400;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 90000;
 const RELAY_TEST_TIMING = process.env.HIVE_RELAY_TEST_TIMING === '1';
@@ -256,6 +266,36 @@ const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // kubestellar/hive#2436), wait before re-asking so we neither hang forever
 // (the old silent-nil behaviour) nor busy-loop the hub.
 const TASK_UNAVAILABLE_RETRY_MS = 30000;
+
+// ── Provider quota hold (kubestellar/hive#6541) ──────────────────────────────
+//
+// When the provider refuses on quota, the relay used to fail the task and go
+// straight back to `ready`. The next assignment hit the same wall seconds
+// later, and the cycle repeated for the whole reset window — the reporter
+// measured two provider rejections 45 seconds apart, with distinct provider
+// error IDs, so each one genuinely cost a round-trip, a hub assignment slot,
+// and a hive issue marked failed. Over the 4h42m window agy stated, that is a
+// steady drip of failures for a condition nothing on this host caused and
+// nothing on this host could fix.
+//
+// Quota is a property of the provider ACCOUNT, not of the task, and it EXPIRES.
+// So: stop asking for work, and come back when the provider says to.
+//
+// QUOTA_HOLD_FALLBACK_MS is used when the banner states no expiry (most
+// backends do not print one). Short enough that a wrongly-held relay costs
+// minutes rather than an evening, and the hold re-arms on the next refusal if
+// the quota is genuinely still out.
+const QUOTA_HOLD_FALLBACK_MS = RELAY_TEST_TIMING ? 50 : 15 * 60 * 1000;
+// Hard ceiling on a PARSED window. The duration comes off a provider banner —
+// text this relay does not control and cannot validate — so a malformed or
+// absurd "Resets in 999h" must not wedge a contributor out of the fleet.
+// Whatever the banner claims, the relay re-probes by this point at the latest;
+// if the quota really is still out, the next refusal re-arms the hold.
+const QUOTA_HOLD_MAX_MS = RELAY_TEST_TIMING ? 200 : 6 * 60 * 60 * 1000;
+// Providers round their own countdown down, and the relay's clock is not
+// theirs. Asking one second after the stated reset invites an immediate second
+// refusal and another full hold; a small grace makes the first re-ask count.
+const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
 
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
@@ -400,6 +440,90 @@ function warnOnTokenExpiry(now = Date.now()) {
 
 function nextSeq() { return ++seq; }
 
+// ── Quota hold state (kubestellar/hive#6541) ─────────────────────────────────
+// quotaHoldUntil is the epoch ms at which this relay may ask for work again; 0
+// means not held. quotaHoldReason keeps the provider's own banner line so the
+// release log can say what it was waiting on.
+let quotaHoldUntil = 0;
+let quotaHoldReason = '';
+let quotaHoldTimer = null;
+
+function quotaHoldActive() {
+  return quotaHoldUntil > Date.now();
+}
+
+function formatQuotaHoldRemaining(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0 ? `${h}h${m}m${s}s` : (m > 0 ? `${m}m${s}s` : `${s}s`);
+}
+
+// enterQuotaHold parks the relay until the provider's stated reset.
+//
+// hint is paneQuotaExhaustion()'s { line, resetMs }. A banner with no parseable
+// expiry still gets a hold — the fallback window — because "we know the account
+// is out and we know nothing about when" is still a reason not to ask for the
+// next task immediately.
+//
+// SAID ONCE, AND SAID LOUDLY. Before this, the banner lived only inside the agy
+// pane while the relay log said `[environment]`; an operator reading the log had
+// no way to learn their provider quota was gone for the next four hours, or that
+// switching model/backend was the remedy. This is the only place that
+// information surfaces outside the pane.
+function enterQuotaHold(hint) {
+  const stated = hint && Number.isFinite(hint.resetMs) && hint.resetMs > 0 ? hint.resetMs : null;
+  const holdMs = Math.min(
+    stated !== null ? stated + QUOTA_HOLD_GRACE_MS : QUOTA_HOLD_FALLBACK_MS,
+    QUOTA_HOLD_MAX_MS
+  );
+  const until = Date.now() + holdMs;
+  // Never SHORTEN a live hold: a second banner arriving mid-hold (a raced tick,
+  // or a task that slipped through) restates the same exhaustion, and taking
+  // the smaller window would walk the release time backwards on every repeat.
+  if (until <= quotaHoldUntil) return;
+
+  quotaHoldUntil = until;
+  quotaHoldReason = (hint && hint.line) || 'provider quota exhausted';
+  if (quotaHoldTimer) clearTimeout(quotaHoldTimer);
+
+  console.warn('');
+  console.warn('┌─ PROVIDER QUOTA EXHAUSTED ─────────────────────────────────');
+  console.warn(`│ ${quotaHoldReason}`);
+  console.warn(`│ This is the provider refusing ${BACKEND}, not a fault of this machine.`);
+  console.warn(`│ Not asking the hub for work for ${formatQuotaHoldRemaining(holdMs)}` +
+    `${stated === null ? ' (the banner stated no reset time — will re-probe)' : ' (the reset the provider stated)'}.`);
+  console.warn('│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan.');
+  console.warn('└────────────────────────────────────────────────────────────');
+  console.warn('');
+
+  quotaHoldTimer = setTimeout(() => {
+    quotaHoldTimer = null;
+    releaseQuotaHold('the provider reset window has passed');
+  }, holdMs);
+  // A hold outliving the work it bounds must not keep the process alive on its
+  // own — every other timer here is cleared on a task exit, and this one has no
+  // task to hang off.
+  if (typeof quotaHoldTimer.unref === 'function') quotaHoldTimer.unref();
+}
+
+// releaseQuotaHold clears the hold and re-advertises. The explicit `ready` is
+// the whole point: `ready` is suppressed while held (see sendTo), so nothing
+// else would restart the loop — the hub has heard nothing from this contributor
+// since the hold began and is not going to offer work unprompted.
+function releaseQuotaHold(why) {
+  if (!quotaHoldUntil) return;
+  const was = quotaHoldReason;
+  quotaHoldUntil = 0;
+  quotaHoldReason = '';
+  if (quotaHoldTimer) { clearTimeout(quotaHoldTimer); quotaHoldTimer = null; }
+  console.log(`Provider quota hold released — ${why}. Asking for work again (was: ${was})`);
+  if (!currentTask && !cliReadyFailed) {
+    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+  }
+}
+
 function sendTo(hub, msg) {
   // #5715: a local-only task (the synthetic pr-review cycle) has no
   // server-issued lease, so an ownership frame naming it can only ever be
@@ -411,6 +535,14 @@ function sendTo(hub, msg) {
   // rationale. Everything else about the task is unchanged — it still runs,
   // still ticks locally, and still reports task_complete/ready when it ends.
   if (msg && HUB_OWNERSHIP_FRAMES.has(msg.type) && isLocalOnlyTaskId(msg.task_id)) return;
+  // #6541: while the provider has refused this account on quota, do not ask for
+  // work. Enforced HERE, at the one point every frame passes through, rather
+  // than at each of the eight `ready` call sites — a guard per call site is the
+  // shape that lets the next call site reintroduce the bug, and the whole
+  // failure being fixed is a `ready` that should not have been sent. Only
+  // `ready` is withheld: progress, completion and failure frames for work
+  // already in flight must still reach the hub.
+  if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
     hub.ws.send(JSON.stringify(msg));
   }
@@ -679,6 +811,7 @@ const agyEffort = AGY_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : AG
 // (#5652). Older entrypoints fall back to resolving backend flags here.
 let cachedLaunchCommand = null;
 let cachedBackendResolution = null;
+let cachedShellBackendResolution = null;
 
 // resolveBackend() returns the { cmd, perm } pair backends.conf maps this
 // backend to (binary + permission flags). Shared by the interactive launch
@@ -699,6 +832,24 @@ function resolveBackend() {
   }
   cachedBackendResolution = { cmd, perm };
   return cachedBackendResolution;
+}
+
+// resolveBackendShell returns the same backend binary plus permission flags
+// escaped for a shell command line. The interactive tmux launcher types the
+// resulting text into a shell, unlike headless execFile which needs raw argv.
+function resolveBackendShell() {
+  if (cachedShellBackendResolution) return cachedShellBackendResolution;
+  const raw = resolveBackend();
+  const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
+  const confPath = confPaths.find(p => fs.existsSync(p)) || confPaths[0];
+  let perm = raw.perm;
+  try {
+    perm = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_perm_flag_shell ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim();
+  } catch (e) {
+    console.error(`Could not resolve shell backend flags from ${confPath}: ${e.message}`);
+  }
+  cachedShellBackendResolution = { cmd: raw.cmd, perm };
+  return cachedShellBackendResolution;
 }
 
 // modelFlagFor reports the --model flag this backend actually receives, or ''
@@ -962,7 +1113,7 @@ function buildLaunchCommand() {
     cachedLaunchCommand = ENTRYPOINT_LAUNCH_CMD;
     return cachedLaunchCommand;
   }
-  const { cmd, perm } = resolveBackend();
+  const { cmd, perm } = resolveBackendShell();
   const modelFlag = modelFlagFor();
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
     ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
@@ -1169,8 +1320,11 @@ function runHeadlessTask(task) {
   }, (err, stdout, stderr) => {
     headlessChild = null;
     // Tokens can appear in agent output; redact before the tail leaves the host.
-    const outTail = redactTokens(String(stdout || '') + String(stderr || ''))
-      .split('\n').slice(-TMUX_TAIL_LINES);
+    const outLines = redactTokens(String(stdout || '') + String(stderr || '')).split('\n');
+    const outTail = outLines.slice(-TMUX_TAIL_LINES);
+    // #6667: headless has no TUI chrome, but a build log easily pushes a PR URL
+    // past fifteen lines, so scan the same deep window the interactive path does.
+    const outScan = outLines.slice(-PR_SCAN_LINES);
     // A revoke clears currentTask before killing the child. Ignore any callback
     // that arrives afterwards — including a raced exit 0 — so stale work cannot
     // emit completion after its assignment generation was fenced out.
@@ -1206,7 +1360,7 @@ function runHeadlessTask(task) {
     finish(() => {
       setPiInvocationState('succeeded');
       console.log(`Headless task ${task.task_id} completed (exit 0)`);
-      const prFinding = resolveTaskPR(outTail, {
+      const prFinding = resolveTaskPR(outScan, {
         repo: task.repo,
         taskId: task.task_id,
         taskStartedAt: taskAssignedAt,
@@ -1504,14 +1658,19 @@ function renderBoxedBanner(lines) {
 
 function waitForCLI() {
   let loginMessageShown = false;
+  let needsLoginTicks = 0;
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
       const state = getCLIState();
       if (state === 'ready') {
+        if (loginMessageShown) {
+          console.log('CLI authentication prompt cleared; continuing.');
+        }
         console.log('CLI ready — accepting tasks');
         resolve();
       } else if (state === 'onboarding') {
+        needsLoginTicks = 0;
         // A numbered menu needs its option typed before Enter; a yes/no confirm
         // takes a bare Enter. blockingPromptKey() tells the two apart from the
         // pane text, so this no longer loops uselessly on menu-shaped prompts.
@@ -1522,17 +1681,21 @@ function waitForCLI() {
           else execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
         } catch (_) {}
         setTimeout(check, CLI_READY_POLL_MS);
-      } else if (state === 'needs-login' && !loginMessageShown) {
-        loginMessageShown = true;
-        console.log('');
-        for (const line of renderBoxedBanner(loginBannerLines(BACKEND, ATTACH_COMMAND))) {
-          console.log(line);
+      } else if (state === 'needs-login') {
+        needsLoginTicks++;
+        if (!loginMessageShown && needsLoginTicks >= NEEDS_LOGIN_CONFIRM_TICKS) {
+          loginMessageShown = true;
+          console.log('');
+          for (const line of renderBoxedBanner(loginBannerLines(BACKEND, ATTACH_COMMAND))) {
+            console.log(line);
+          }
+          console.log('');
         }
-        console.log('');
         setTimeout(check, CLI_READY_POLL_MS);
       } else if (Date.now() - start > CLI_READY_TIMEOUT_MS) {
         reject(new Error('CLI did not become ready within timeout'));
       } else {
+        needsLoginTicks = 0;
         setTimeout(check, CLI_READY_POLL_MS);
       }
     };
@@ -1616,7 +1779,11 @@ function armCLIReadyWait() {
     }
     // Only re-advertise if we previously withdrew by failing a task; the normal
     // startup path is already advertised by the auth_ok handler.
-    if (hadFailed) send({ type: 'ready', seq: nextSeq() });
+    if (hadFailed) {
+      send({ type: 'ready', seq: nextSeq() });
+    } else if (!currentTask && currentTaskHub().authenticated) {
+      send({ type: 'ready', seq: nextSeq() });
+    }
     flushPendingTask();
   }).catch(e => {
     cliReadyFailed = true;
@@ -1772,7 +1939,9 @@ function tmuxSendKeys(text) {
     // HIVE_VERDICT line as this task's completion (#5650). Captured here rather
     // than at assignment because this is the moment the transcript stops being
     // "whatever was there" and starts being this task's own.
-    const priorVerdict = detectCompletionVerdict(captureTmuxLines(TMUX_TAIL_LINES));
+    const deliveryBaselineLines = captureTmuxLines(PR_SCAN_LINES);
+    resetTaskAgentActivity(deliveryBaselineLines);
+    const priorVerdict = detectCompletionVerdict(deliveryBaselineLines.slice(-TMUX_TAIL_LINES));
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
@@ -2524,6 +2693,44 @@ const CHROME_IDLE_GRACE_TICKS = Math.max(1, Number(process.env.HIVE_CHROME_IDLE_
 // completion verdict in sight. Reset on task start and on any tick that does
 // not see an unverdicted idle pane.
 let chromeIdleTicks = 0;
+let taskAgentActivityObserved = false;
+let deliveredAgentActivityBaseline = new Map();
+
+function agentActivityLineKey(line) {
+  const s = String(line || '').trim();
+  if (!s) return null;
+  if (detectCompletionVerdict([s])) return s;
+  if (/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/.test(s)) return s;
+  if (/^[●⏺]\s+\S/.test(s)) return s;
+  if (/^[•·▸]\s+(?!(?:Working|Running|Executing|Thinking)\b)\S/i.test(s)) return s;
+  return null;
+}
+
+function agentActivityCounts(lines) {
+  const counts = new Map();
+  for (const line of Array.isArray(lines) ? lines : String(lines || '').split('\n')) {
+    const key = agentActivityLineKey(line);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function recordTaskAgentActivity(lines) {
+  const counts = agentActivityCounts(lines);
+  for (const [key, count] of counts) {
+    if (count > (deliveredAgentActivityBaseline.get(key) || 0)) {
+      taskAgentActivityObserved = true;
+      return true;
+    }
+  }
+  return taskAgentActivityObserved;
+}
+
+function resetTaskAgentActivity(baselineLines) {
+  taskAgentActivityObserved = false;
+  deliveredAgentActivityBaseline = agentActivityCounts(baselineLines || []);
+}
 
 // recordChromeIdleTick advances (or resets) the grace counter and reports
 // whether chrome alone has now earned the right to end the task.
@@ -2674,6 +2881,81 @@ let tasksCompletedCount = 0;
 // treated as already-serviced.
 let lastResetAtCount = -1;
 const PR_REVIEW_EVERY_N = 5;
+
+// ── What the PR review cycle is for, and what it used to review (#6664) ──────
+//
+// Every PR_REVIEW_EVERY_N completions the relay stops taking new issues and
+// asks its agent to answer review comments on the PRs it has filed. Two flaws
+// in the ten lines that did that meant it routinely reviewed NOTHING:
+//
+//   1. It scoped the review to the repo of the single task that had just
+//      finished. A contributor working across eleven repos had PRs in ten of
+//      them permanently invisible to this mechanism — the cadence is per-five-
+//      completions, not per-repo, so coverage never catches up.
+//   2. It fired on COMPLETIONS, not on PRs shipped. A task that correctly
+//      concludes "nothing shippable" still advances the counter and guarantees
+//      that repo has no new PR.
+//
+// Observed: a cycle whose five triggering completions were ALL no_work_needed
+// ran `gh pr list --repo projectbluefin/utah --author @me --state open` against
+// a repo with zero PRs, while twenty open PRs across eleven repos went
+// unreviewed.
+//
+// prsShippedSinceReview counts PRs this relay actually opened since the last
+// review cycle. It is the precondition, and it is what makes suggestion 4 of
+// the report ("skip the cycle when there is nothing to review") fall out for
+// free rather than needing another API call: a cycle now runs only when we know
+// from our own records that at least one PR exists to be reviewed.
+//
+// Deliberately a COUNT, not a latch on the last completion: a PR shipped on
+// completion 3 is still worth reviewing when completion 5 is the one that
+// crosses the cadence. And because the counter keeps accumulating when a cycle
+// is skipped, a quiet run of no_work_needed tasks defers the review rather than
+// starving it — the next multiple of PR_REVIEW_EVERY_N picks it up.
+let prsShippedSinceReview = 0;
+// The repos those PRs went to, most recent last. Used for the operator log line
+// and to give the synthetic task an honest `repo` field; the REVIEW itself is
+// account-scoped, because "which of my PRs have comments" is not a repo-scoped
+// question and scoping it to one repo is the bug.
+let reposShippedSinceReview = [];
+
+// buildReviewPrompt renders the PR review cycle's prompt (#6664).
+//
+// ACCOUNT-SCOPED, NOT REPO-SCOPED. "Which of my PRs have review comments" is
+// not a repo-scoped question, and answering it for one repo is what made this
+// cycle review nothing. `gh search prs --author @me --state open` spans every
+// repository the contributor has filed in — including PRs from earlier
+// sessions, which is most of them and none of which the old prompt could reach.
+// Verified through the contributor gh wrapper: `search prs` is on its allowlist
+// and `--author @me` resolves server-side.
+//
+// shippedRepos is a HINT, not a filter: those are the repos with work landed
+// since the last cycle, so their PRs are the likeliest to have fresh comments.
+// Naming them steers the agent's ordering without narrowing what it may look at
+// — the narrowing is the bug.
+//
+// THE VERDICT LINE IS THE OTHER HALF. The old prompt ended "just say 'No PR
+// comments to address.'" — prose, not a sentinel — so this cycle could only
+// ever complete through the terminal-chrome heuristic that #5376 added
+// HIVE_VERDICT to replace, and that #5353 documents as having produced thirteen
+// separate issues. The review cycle was the one task type that never got the
+// fix, purely because its prompt is assembled here instead of by the hub. The
+// wording mirrors contributorTaskPrompt in src/pkg/dashboard/contribute_ws.go;
+// keep the two in step.
+function buildReviewPrompt(shippedRepos) {
+  const repos = Array.isArray(shippedRepos) ? shippedRepos.filter(Boolean) : [];
+  const hint = repos.length
+    ? `You most recently shipped work to ${repos.join(', ')}, so start there. `
+    : '';
+  return 'Check the open PRs you have filed, across every repository, for review comments. ' +
+    "Run 'GH_TOKEN=$GH_TOKEN gh search prs --author @me --state open --limit 50' to find them. " +
+    hint +
+    'For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ' +
+    'If no PRs have comments, say so and stop — do not look for other work. ' +
+    'When you HAVE finished — every PR with comments is addressed, or there were none — print, as the very ' +
+    'last thing you output and on a line by itself, in plain text, no Markdown formatting: ' +
+    "'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, only when you are actually done.";
+}
 
 // ── Local-only tasks (kubestellar/hive#5715) ────────────────────────────────
 //
@@ -3172,7 +3454,13 @@ function progressTick() {
   }
 
   const paneState = checkTmuxPaneState();
-  const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  // One capture, two windows (#6667). Capturing the deep scrollback and slicing
+  // its tail keeps the protocol payload byte-identical to before while giving
+  // PR detection room to see a URL that has scrolled past the visible rows. It
+  // deliberately does NOT add a second capture-pane call: the pane read is
+  // destructive to the paneStalled() fingerprint (#5333).
+  const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
+  const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
 
   // #5321: forward progress renews the max-duration lease. Recorded here,
   // before any branch below can return, so EVERY pane state gets the credit —
@@ -3207,6 +3495,9 @@ function progressTick() {
     console.warn(`Ignoring the HIVE_VERDICT line already on the pane when ${currentTask.task_id} was dispatched — it is the previous task's verdict, not this one's`);
   }
   const completionVerdict = staleVerdict ? null : paneVerdict;
+  const hasTaskAgentActivity = paneState === PANE_STATE_WORKING
+    ? (taskAgentActivityObserved = true)
+    : recordTaskAgentActivity(paneScanLines);
 
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
@@ -3230,6 +3521,12 @@ function progressTick() {
     paneState === PANE_STATE_FATAL_API_ERROR;
   const verdictCompletes = !!completionVerdict && !apiErrorState;
 
+  if (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed && !verdictCompletes && !hasTaskAgentActivity) {
+    resetChromeIdleGrace();
+    failCurrentTask(`pane went idle before ${BACKEND} produced any task output; prompt may not have been submitted`, { kind: 'environment' });
+    return;
+  }
+
   if (verdictCompletes || (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed)) {
     // How this task ended, recorded so the hub and the operator can tell the
     // trustworthy signal from the fallback — and so per-backend sentinel
@@ -3244,7 +3541,7 @@ function progressTick() {
     // recent output, so the hub can distinguish "shipped a PR" from "just went
     // idle" and pick the right issue cooldown (kubestellar/hive#2393 item 7).
     // Empty when no PR link is found — the hub then applies the short cooldown.
-    const prFinding = resolveTaskPR(tmuxLines, {
+    const prFinding = resolveTaskPR(paneScanLines, {
       repo: currentTask.repo,
       taskId: currentTask.task_id,
       taskStartedAt: taskAssignedAt,
@@ -3303,28 +3600,56 @@ function progressTick() {
       }
     }
     const completedRepo = currentTask.repo;
+    // #6664: a review cycle's own completion must not count as having shipped.
+    // A review pushes fixes to PRs that already exist, so any PR URL on its
+    // pane is one it was READING, and counting it would let each cycle re-arm
+    // the next off its own output — a review loop with no new work behind it.
+    const completedWasReviewCycle = isLocalOnlyTask(currentTask);
     currentTask = null;
     taskAssignedAt = 0;
     clearInterval(progressInterval);
     progressInterval = null;
     if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
     tasksCompletedCount++;
-    if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
-      console.log(`PR review cycle (${tasksCompletedCount} tasks completed) — checking open PRs`);
+    // #6664: record what this completion actually SHIPPED, which is the thing
+    // the review cycle exists to follow up on. A completion is not a PR: the
+    // counter used to conflate the two, so five consecutive no_work_needed
+    // verdicts scheduled a review of a repo with nothing in it.
+    if (prURL && !completedWasReviewCycle) {
+      prsShippedSinceReview++;
+      if (completedRepo && !reposShippedSinceReview.includes(completedRepo)) {
+        reposShippedSinceReview.push(completedRepo);
+      }
+    }
+    if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0 && prsShippedSinceReview > 0) {
+      const shippedRepos = reposShippedSinceReview.slice();
+      console.log(`PR review cycle (${tasksCompletedCount} tasks completed, ` +
+        `${prsShippedSinceReview} PR(s) shipped since the last review in ${shippedRepos.join(', ') || 'no repo'}) — ` +
+        `checking open PRs across every repo`);
+      prsShippedSinceReview = 0;
+      reposShippedSinceReview = [];
       // `synthetic: true` is the explicit half of isLocalOnlyTask() (#5715):
       // this object is built HERE, by us, and no hub holds a lease for it. The
       // `pr-review-` id prefix says the same thing and is what survives a
       // round-trip through HIVE_TASK_FILE, but stating it on the object is what
       // makes the property legible at the one place it becomes true.
-      currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: completedRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
+      //
+      // `repo` is the most recent repo we actually shipped to (#6664) rather
+      // than "whichever repo the fifth task happened to be in". It is local
+      // bookkeeping — taskKey() and the log line — and the review itself is not
+      // scoped to it.
+      const reviewRepo = shippedRepos[shippedRepos.length - 1] || completedRepo;
+      currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: reviewRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
       taskAssignedAt = Date.now();
-      const reviewPrompt = `Check your open PRs on ${completedRepo} for review comments. ` +
-        `Run 'GH_TOKEN=$GH_TOKEN gh pr list --repo ${completedRepo} --author @me --state open' to find them. ` +
-        `For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ` +
-        `If no PRs have comments, just say "No PR comments to address."`;
-      tmuxSendKeys(reviewPrompt);
+      tmuxSendKeys(buildReviewPrompt(shippedRepos));
       startProgressReporting();
     } else {
+      if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
+        // Say why the cycle did not run. Silence here reads as "the review
+        // cadence is broken"; it is doing exactly what it should.
+        console.log(`Skipping the PR review cycle at ${tasksCompletedCount} completions — ` +
+          `no PRs shipped since the last review, so there is nothing new to follow up on (#6664)`);
+      }
       send({ type: 'ready', seq: nextSeq() });
     }
   } else if (paneState === PANE_STATE_IDLE_COMPLETE) {
@@ -3376,10 +3701,29 @@ function progressTick() {
     // by repeating the request (#4400, #4583). Hand the task back honestly so the
     // hub records it and can re-offer it once an operator fixes the cause —
     // rather than claiming a completion that shipped nothing.
-    failCurrentTask(
-      'agent stopped on an API failure a retry cannot clear (authorization or quota)',
-      { kind: 'environment' }
-    );
+    //
+    // QUOTA IS THE SEPARABLE CASE (#6541). Both halves of this bucket refuse the
+    // task, but only quota refuses every OTHER task too, and only quota comes
+    // with an expiry. Handing the task back and immediately advertising `ready`
+    // — which is what this branch did for both — walked straight into the next
+    // refusal, once per assignment, for the whole reset window. So for quota:
+    // skipReady, park the loop, and say so in the reason the hub records, since
+    // "an API failure a retry cannot clear" gives an operator nothing to act on.
+    const quota = paneQuotaExhaustion(tmuxLines.join('\n'));
+    if (quota) {
+      enterQuotaHold(quota);
+      failCurrentTask(
+        `provider quota exhausted for ${BACKEND} — not a fault of this host; ` +
+          `the relay is standing down for ${formatQuotaHoldRemaining(quotaHoldUntil - Date.now())} ` +
+          `and will ask for work again after that (${quota.line})`,
+        { kind: 'environment', skipReady: true }
+      );
+    } else {
+      failCurrentTask(
+        'agent stopped on an API failure a retry cannot clear (authorization or quota)',
+        { kind: 'environment' }
+      );
+    }
   } else {
     // Stall backstop: a pane frozen this long is not evidence of work, and
     // continuing to report "working" would renew the hub's lease forever.
@@ -3506,10 +3850,17 @@ function handleMessage(data, hub) {
         // Only the hub currently in the poll rotation asks for work. A hub
         // that authenticates while it's not its turn just sits connected
         // (heartbeating) until task_unavailable rotates the active slot to it.
-        if (!cliReadyFailed) {
+        if (quotaHoldActive()) {
+          // sendTo() would swallow the ready anyway; say why, or a reconnect
+          // during a hold looks like the relay silently losing interest (#6541).
+          console.log(`Authenticated, but the provider quota is exhausted — withholding ready for ` +
+            `${formatQuotaHoldRemaining(quotaHoldUntil - Date.now())} (${quotaHoldReason})`);
+        } else if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
           sendTo(hub, { type: 'ready', seq: nextSeq() });
-        } else {
+        } else if (cliReadyFailed) {
           console.log('Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers');
+        } else {
+          console.log('Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
         }
       }
       break;
@@ -3556,6 +3907,25 @@ function handleMessage(data, hub) {
         console.log(`Rejecting ${taskKey(msg)} — previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: `previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`, permanent: true });
         sendTo(hub, { type: 'ready', seq: nextSeq() });
+        break;
+      }
+      // #6541: quota-blocked. Withholding `ready` stops us ASKING, but a hub can
+      // still push an assignment — a queued offer, a hub that never saw the last
+      // `ready` consumed, an operator forcing one. Accepting it would spend a
+      // provider round-trip to be refused again and mark a hive issue failed for
+      // a reason that has nothing to do with it. Decline immediately so the hub
+      // can offer it to a contributor who can actually run it, and stay silent
+      // afterwards rather than re-advertising.
+      if (quotaHoldActive()) {
+        const remaining = formatQuotaHoldRemaining(quotaHoldUntil - Date.now());
+        console.log(`Declining ${taskKey(msg)} — provider quota exhausted, standing down for ${remaining}`);
+        sendTo(hub, {
+          type: 'task_failed',
+          seq: nextSeq(),
+          task_id: msg.task_id,
+          reason: `provider quota exhausted for ${BACKEND} — not a fault of this host; declining work for ${remaining} (${quotaHoldReason})`,
+          failure_kind: 'environment',
+        });
         break;
       }
       currentTask = msg;
@@ -3934,6 +4304,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // PR_REVIEW_EVERY_N is exported so a test can enter the REAL cycle rather
     // than hand-build the task it is meant to be asserting about.
     PR_REVIEW_EVERY_N,
+    // PR review cycle scope and trigger (kubestellar/hive#6664).
+    buildReviewPrompt,
+    getPRsShippedSinceReview: () => prsShippedSinceReview,
+    setPRsShippedSinceReview: (v) => { prsShippedSinceReview = v; },
+    getReposShippedSinceReview: () => reposShippedSinceReview.slice(),
+    setReposShippedSinceReview: (v) => { reposShippedSinceReview = Array.isArray(v) ? v.slice() : []; },
     LOCAL_TASK_ID_PREFIX,
     isLocalOnlyTask,
     isLocalOnlyTaskId,
@@ -3950,6 +4326,16 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     paneUnknownAPIErrorLine,
     paneShowsTransientAPIError,
     paneShowsUnretryableAPIError,
+    // Provider quota hold (kubestellar/hive#6541).
+    paneQuotaExhaustion,
+    quotaHoldActive,
+    enterQuotaHold,
+    releaseQuotaHold,
+    getQuotaHoldUntil: () => quotaHoldUntil,
+    getQuotaHoldReason: () => quotaHoldReason,
+    QUOTA_HOLD_FALLBACK_MS,
+    QUOTA_HOLD_MAX_MS,
+    QUOTA_HOLD_GRACE_MS,
     paneShowsLoginRequiredError,
     handleTransientAPIError,
     resetTransientNudgeState,
@@ -3987,6 +4373,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     recordChromeIdleTick,
     resetChromeIdleGrace,
     getChromeIdleTicks: () => chromeIdleTicks,
+    getTaskAgentActivityObserved: () => taskAgentActivityObserved,
+    setTaskAgentActivityObserved: (v) => { taskAgentActivityObserved = !!v; },
+    resetTaskAgentActivity,
     // Max-duration lease surface (kubestellar/hive#5321).
     MAX_TASK_DURATION_MS,
     ABSOLUTE_TASK_DEADLINE_MS,
@@ -4076,6 +4465,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     ATTACH_COMMAND,
     loginBannerLines,
     renderBoxedBanner,
+    NEEDS_LOGIN_CONFIRM_TICKS,
     CONTAINER_NAME,
     CONTAINER_RUNTIME,
     // Coverage for previously untested pure/isolated functions (#4267).
@@ -4094,6 +4484,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     PR_ATTRIBUTION_UNKNOWN,
     PR_ATTRIBUTION_CLOCK_SKEW_MS,
     CONTRIBUTOR_LOGIN,
+    TMUX_TAIL_LINES,
+    PR_SCAN_LINES,
     resolveBackend,
     shellQuote,
     looksLikeModelName,

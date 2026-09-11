@@ -560,6 +560,12 @@ A resume that is genuinely refused — an operator yanked the task, or the relay
 
 Locally-created tasks are now marked as such, and two things follow. The relay never sends a hub *ownership* frame — `task_accepted` or `task_progress` — for one, because there is no lease for the hub to confirm and the request can only ever be answered with a revoke. And a revoke that names one is ignored rather than acted on: a revoke is terminal because the work now belongs to someone else, and for a task no hub ever owned there is nobody for it to belong to, so the agent's turn is still valid. The two are independent — the first stops the relay provoking a revoke, the second makes the review survive one arriving for any other reason. Everything else is unchanged: the review still runs, still ticks locally, and still reports `task_complete` followed by `ready` when it ends, which is what puts the contributor back in the rotation. Nothing about a hub-assigned task's resume changes.
 
+**What the review cycle reviews, and when it runs.** It used to review the repo of the single task that had just finished, and it fired on completions rather than on PRs shipped. Both are wrong, and together they meant it routinely reviewed nothing ([#6664](https://github.com/hivecommons/hive/issues/6664)): a contributor working across eleven repos had PRs in ten of them permanently unreachable, because the cadence is per-five-completions rather than per-repo and so coverage never catches up; and a task that correctly concludes `no_work_needed` still advanced the counter while guaranteeing that repo had no new PR. Observed: a cycle whose five triggering completions were *all* `no_work_needed` ran `gh pr list --repo projectbluefin/utah --author @me --state open` against a repo with zero PRs, while twenty open PRs across eleven repos went unreviewed.
+
+The cycle is now **account-scoped** — `gh search prs --author @me --state open`, which spans every repository the contributor has filed in, including the PRs from earlier sessions that are most of them. The repos work landed in since the last cycle are named in the prompt as a starting point, but only as an ordering hint; narrowing what the agent may look at is the bug. And it runs only when **at least one PR has shipped** since the last review, which is what the relay already records per completion. That also answers "skip the cycle when there is nothing to review" without a second API call: a cycle starts only when the relay's own records show a PR exists to follow up on. The precondition is a count rather than a latch on the last completion, so a PR shipped on completion 3 is still reviewed when completion 5 crosses the cadence, and a skipped cycle defers rather than starves — the accumulated count is picked up at the next multiple. A review cycle's own completion never counts as shipping, or each one would re-arm the next off the PRs it was merely reading.
+
+The prompt also asks for `HIVE_VERDICT: complete` now. The review cycle was the one task type that never got [#5376](https://github.com/hivecommons/hive/issues/5376)'s completion sentinel — purely because its prompt is assembled in the relay rather than by the hub — so it could only ever finish through the terminal-chrome inference that [#5353](https://github.com/hivecommons/hive/issues/5353) documents as having produced thirteen separate issues.
+
 **A dropped socket is not a failed issue.** The disconnect books a short cooldown on the issue so a second session cannot pick it up during the reconnect window and file a duplicate PR ([#2356](https://github.com/hivecommons/hive/issues/2356)). That cooldown no longer counts toward the consecutive-failure quarantine: three drops on a flaky connection used to park a perfectly workable issue for six hours with nothing having actually failed. Real failures — `task_failed`, the relay's own progress watchdog giving up, the wedged-task backstop — still count, and still quarantine.
 
 ### The relay's max-duration ceiling is a progress lease
@@ -587,6 +593,24 @@ the task is not booked idle-complete mid-turn. A retry loop that never resolves
 is still bounded by the pane-stall detector and the absolute duration ceiling
 above; genuine idle completion — the same chrome with no retry line — is
 detected exactly as before.
+
+### Provider quota parks the relay instead of burning a task per window
+
+An exhausted provider quota and an authorization refusal are both unretryable — repeating the request changes nothing either way — and the relay treated them identically: fail the task, advertise `ready`, take the next one. For a 403 that is right. For quota it is a loop, because quota is a property of the provider **account**, not of the task: it applies to every task this contributor could be given, and it **expires**.
+
+[#6541](https://github.com/hivecommons/hive/issues/6541) is what that cost. An agy contributor hit its quota and the relay kept asking for work; each assignment was refused seconds later with its own provider error ID — two rejections 45 seconds apart, confirmed as genuinely separate calls — so every cycle spent a provider round-trip, a hub assignment slot, and a hive issue marked failed, for a window agy itself stated as `Resets in 4h42m28s`. The relay had the reset time on screen and did not use it.
+
+A quota refusal now parks the loop:
+
+- **`ready` is withheld** for the duration, at the single point every frame passes through rather than at each of the eight call sites that send one. Frames about work already in flight — progress, completion, failure — still go out; only the request for *more* work stops.
+- **A pushed assignment is declined**, immediately and with the reason, so the hub can offer it to a contributor who can actually run it. Withholding `ready` stops the relay asking; it does not stop a hub offering.
+- **The window comes from the provider.** `Resets in 4h42m28s` is parsed off the banner, plus a small grace so the first re-ask is not one second early. A banner with no stated expiry — most backends print none — gets a bounded fallback instead, and the hold re-arms if the quota is genuinely still out. A parsed window is capped, because the duration is provider text the relay cannot validate and a malformed `Resets in 999h` must not wedge a contributor out of the fleet.
+- **The operator is told once, clearly.** The banner previously lived only inside the agy pane while the relay log said `[environment]`; nobody reading the log could learn their quota was gone for four hours, or that switching model or backend was the remedy.
+- **The failure says what happened.** `[environment] … the agent CLI is not visibly working` reads as a broken contributor host. The CLI was working perfectly and the provider said no, so the reason now says so.
+
+Only quota takes this path. An authorization refusal is not time-bounded, an operator has to change something, and parking the relay would hide it — a 403 still fails fast and stays available.
+
+The `failure_kind` on the wire is still `environment`: the hub's kinds are `environment` / `task` / `unspecified`, and the field is advisory — the hub records and displays it and does not route or change a work item's failure cooldown on it. A dedicated quota kind, and the cooldown exemption [#6541](https://github.com/hivecommons/hive/issues/6541) asks for, are a hub-side protocol change and are not part of this.
 
 ### The GitHub token outlives the task, because the hub re-mints it
 

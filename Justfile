@@ -1201,7 +1201,26 @@ contribute-hive backend="" mode="docker": check-version
       # image-based host /tmp is a small tmpfs and /var/tmp is read-only to the
       # sandbox, so a build's scratch data has nowhere else to go.
       mkdir -p "$HIVE_AGENT_CACHE_DIR"/{go-build,go-mod,ccache,tmp}
-      BUILD_CACHE_ENV="GOCACHE=$(printf %q "$HIVE_AGENT_CACHE_DIR/go-build")"
+      # HIVE_WORKSPACE_DIR travels on the launch line for EXACTLY the reason the
+      # paragraph above gives, and it is the variable that reason was written
+      # about (#6707). It is exported near the top of this recipe, and that
+      # export reaches the pane only when `tmux new-session` has to START a
+      # server. Run the recipe from inside tmux -- a normal way to run a
+      # long-lived contributor -- and new-session JOINS the running server
+      # instead, so the pane inherits that server's environment, which predates
+      # the export. `-c "$HIVE_WORKSPACE_DIR"` below sets the pane's working
+      # DIRECTORY, not its environment, so it does not cover this.
+      #
+      # What that cost: the hub's task prompt tells the agent to clone into
+      # `$HIVE_WORKSPACE_DIR/<owner>/<repo>`. Unset, that expands to
+      # `/<owner>/<repo>` -- filesystem root -- and `gh repo fork --clone` dies
+      # with "could not create leading directories ... Read-only file system",
+      # after the fork has already been created. Observed on a local-mode codex
+      # contributor; container mode is unaffected because contributor-agent.sh
+      # exports it and starts that container's own tmux server in the same
+      # process.
+      BUILD_CACHE_ENV="HIVE_WORKSPACE_DIR=$(printf %q "$HIVE_WORKSPACE_DIR")"
+      BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOCACHE=$(printf %q "$HIVE_AGENT_CACHE_DIR/go-build")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOMODCACHE=$(printf %q "$HIVE_AGENT_CACHE_DIR/go-mod")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOTMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"

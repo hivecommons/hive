@@ -125,13 +125,57 @@ If the hook is not installed, normal Git behavior applies. If it blocks a checko
 
 ## DCO sign-off
 
-Every commit must include a Developer Certificate of Origin sign-off. Use:
+Every commit must include a Developer Certificate of Origin (DCO) sign-off. The
+DCO is your certification that you have the right to submit the contribution
+under this repository's license, and Hive requires it on every non-merge commit.
+Use:
 
 ```bash
 git commit -s
 ```
 
-The sign-off adds a `Signed-off-by:` trailer certifying that you have the right to submit the contribution under this repository's license. If you forget, amend the commit with `git commit --amend -s` and force-push your branch.
+The `-s` flag adds a `Signed-off-by:` trailer using your configured git identity,
+for example:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+The sign-off email must match the commit author email. A GitHub noreply address
+for the same authoring account is also acceptable, in either GitHub form:
+`<login>@users.noreply.github.com` or
+`<id>+<login>@users.noreply.github.com`. Do not sign with an arbitrary second
+personal address unless it is also the commit author email; the checker cannot
+verify that two unrelated email addresses belong to the same person.
+
+Check your local identity before committing:
+
+```bash
+git config user.name
+git config user.email
+```
+
+If your last commit is missing the trailer, or it used the wrong email, fix it
+before review:
+
+```bash
+git commit --amend -s
+git push --force-with-lease
+```
+
+To add sign-offs across a branch, rebase with sign-off and then force-push:
+
+```bash
+git rebase --signoff origin/v4
+git push --force-with-lease
+```
+
+Only rewrite your own pull-request branch. Once bad DCO history lands on a
+protected branch such as `v4`, contributors cannot repair it in place: protected
+branch history is not rewritten, and maintainers must not add a DCO sign-off on
+someone else's behalf. That is why the post-merge checker has narrow per-commit
+waivers for already-merged history; waivers record a maintainer disposition, but
+they are not a substitute for signing new commits correctly.
 
 ## Crediting issue authors
 
@@ -171,7 +215,7 @@ Credit the filer of the issue the PR fixes, not everyone who commented. If sever
 
 ## Changelog fragments
 
-One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The complete workflow:
+One file per PR, named `changelog.d/<category>-<pr-or-slug>.md` where the category (`added`, `changed`, `deprecated`, `fixed`, `security`) picks the CHANGELOG subsection — and, through it, the semver bump of the next release. The file's content is exactly your entry: a single `- ` bullet in the same narrative style as existing `CHANGELOG.md` entries, no headings. The compiler owns the `###` headings, so do not put headings in a fragment. The complete workflow:
 
 ```bash
 echo '- The relay no longer drops long tasks ([#1234](https://github.com/hivecommons/hive/issues/1234)).' > changelog.d/fixed-1234-relay-drop.md
@@ -179,7 +223,7 @@ git add changelog.d/fixed-1234-relay-drop.md
 git commit -s
 ```
 
-`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. Transition note: direct `CHANGELOG.md` edits are still accepted until 2026-09-09 so in-flight PRs can land unreworked.
+`changelog.d/README.md` has the full format, the `no-changelog` exemption, and the release-marker escape hatch. The transition window that let in-flight PRs rely on direct `CHANGELOG.md` edits closed on 2026-09-09. For a user-visible code change, write a fragment instead: the `changelog-fragment-guard` check no longer accepts a direct `CHANGELOG.md` edit as a substitute, and reports `This PR edits CHANGELOG.md's Unreleased section directly; the transition window ended 2026-09-09` before asking for a fragment or `no-changelog` label. If a fragment starts with prose or a heading instead of a `- ` entry bullet, the guard fails with `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`. For refactors, test-only changes, docs-only changes, dependency churn, or other changes that are not user-visible, use the `no-changelog` label when the guard asks instead of adding a fragment.
 
 ## Maintainer resources
 

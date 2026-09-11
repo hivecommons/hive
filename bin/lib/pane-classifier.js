@@ -116,6 +116,96 @@ const CHROMELESS_QUOTA_BANNER_RE = /^\s*⚠\s[^\n]*\bquota reached\b/i;
 // an error the agent already recovered from read as current.
 const TRANSIENT_API_ERROR_TAIL_LINES = 12;
 
+// ── Quota exhaustion, separated from the rest of the unretryable set (#6541) ──
+//
+// paneShowsUnretryableAPIError above answers one question: "can a retry clear
+// this?" — and for an authorization refusal and an exhausted quota the answer is
+// equally no. But they are not the same KIND of no, and the difference is what
+// the relay's follow-up comment on #6541 is about:
+//
+//   - An authorization refusal ("not allowed to access model", API Error: 403)
+//     is a property of the CONFIGURATION. It is not time-bounded and nothing
+//     changes until an operator changes something.
+//   - A quota exhaustion is a property of the provider ACCOUNT, it applies to
+//     every task this contributor could be given, and it EXPIRES — agy prints
+//     the expiry in plain text ("Resets in 4h42m28s").
+//
+// Treating the second like the first is the remaining defect: the relay
+// correctly classified every quota cycle and then asked the hub for another
+// task anyway, so a 4h42m window produced a steady drip of failed hive issues,
+// each one a real provider round-trip (the reporter confirmed two rejections 45
+// seconds apart carrying distinct provider error IDs).
+//
+// This subset is deliberately NOT all of UNRETRYABLE_API_ERROR_PATTERNS: only
+// the wordings that mean "you have run out for now", never the ones that mean
+// "you may not". Getting that wrong in the permissive direction would park a
+// relay for an hour on a misconfiguration it should have reported immediately.
+const QUOTA_EXHAUSTION_PATTERNS = [
+  'exceeded your monthly quota',
+  'used all your copilot free chat requests',
+  'individual quota reached',
+  'budget_exceeded',
+  'budget has been exceeded',
+  'provider spending limit reached',
+  'refused the request on a spending limit',
+  'gone over your budget allowance',
+  'upgrade your subscription to increase your limits',
+];
+
+// "Resets in 4h42m28s" / "Resets in 38m29s" / "resets in 90s". Anchored on the
+// verb so a duration elsewhere on the line (a turn timer, a token count) is not
+// read as an expiry.
+const QUOTA_RESET_RE = /\bresets?\s+in\s+((?:\d+\s*[dhms]\s*)+)/i;
+const QUOTA_RESET_UNIT_MS = { d: 86400000, h: 3600000, m: 60000, s: 1000 };
+
+// parseQuotaResetMs returns the milliseconds until the stated reset, or null
+// when the line carries no parseable expiry. Returns null rather than 0 for an
+// all-zero duration: "Resets in 0s" is more likely a render artifact than a
+// promise that the quota is already back, and the caller's fallback window is
+// the safer answer.
+function parseQuotaResetMs(line) {
+  const m = QUOTA_RESET_RE.exec(String(line || ''));
+  if (!m) return null;
+  let total = 0;
+  const parts = m[1].match(/\d+\s*[dhms]/gi) || [];
+  for (const part of parts) {
+    const value = parseInt(part, 10);
+    const unit = part[part.length - 1].toLowerCase();
+    if (!Number.isFinite(value) || !QUOTA_RESET_UNIT_MS[unit]) return null;
+    total += value * QUOTA_RESET_UNIT_MS[unit];
+  }
+  return total > 0 ? total : null;
+}
+
+// paneQuotaExhaustion reports the quota banner in the visible tail, if any, as
+// { line, resetMs } — resetMs null when the banner states no expiry. Returns
+// null when the tail carries no quota banner at all, INCLUDING when it carries
+// some other unretryable error: an authorization refusal must keep taking the
+// plain fatal path.
+//
+// Gated exactly as paneShowsUnretryableAPIError is, and for the same reason: a
+// bare substring match would let an agent that merely WRITES about quotas —
+// this repo's own sources contain every string in the list — park its relay.
+// Either agy's ⚠ line-start chrome, or Claude's "API Error:" chrome, plus the
+// wording. Two independent signals, never one.
+function paneQuotaExhaustion(text) {
+  const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const chromed = CHROMELESS_QUOTA_BANNER_RE.test(line) || lower.includes('api error:');
+    if (!chromed) continue;
+    if (!QUOTA_EXHAUSTION_PATTERNS.some((pat) => lower.includes(pat))) continue;
+    // The expiry may be on the banner line or wrapped onto the next one, so
+    // parse against the whole tail once a banner is confirmed. Confirmation
+    // stays line-wise; only the duration lookup widens.
+    return {
+      line: line.trim(),
+      resetMs: parseQuotaResetMs(line) ?? parseQuotaResetMs(lines.join(' ')),
+    };
+  }
+  return null;
+}
+
 function blockingPromptKey(text, backend) {
   // codex: "Do you trust the contents of this directory?" → 1. Yes, continue
   if (/Do you trust the contents of this directory/.test(text)) return '1';
@@ -876,6 +966,10 @@ module.exports = {
   paneTail,
   paneShowsTransientAPIError,
   paneShowsUnretryableAPIError,
+  // Quota exhaustion as a distinct, TIME-BOUNDED sub-case of the unretryable
+  // set (#6541) — what lets the relay stop asking for work and come back.
+  paneQuotaExhaustion,
+  parseQuotaResetMs,
   paneShowsLoginRequiredError,
   paneUnknownAPIErrorLine,
   classifyPane,

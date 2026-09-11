@@ -32,7 +32,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -59,6 +59,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     // different BINARY (litellm → claude); it defaults to the identity mapping
     // every other backend has.
     if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
+    if (/backend_perm_flag_shell/.test(cmd)) return `${backendPermShell === null ? backendPerm : backendPermShell}\n`;
     if (/backend_perm_flag/.test(cmd)) return `${backendPerm}\n`;
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
@@ -314,6 +315,33 @@ test('#5652 relaunch reuses the entrypoint launch command instead of container d
         `${backend} relaunch fell back to the container posture: ${sent}`);
     } finally { teardown(relay); }
   }
+});
+
+test('#6673 fallback claude relaunch shell-quotes the host deny list', () => {
+  const rawDeny = 'Bash(sudo:*),Bash(pkexec:*)';
+  const rawPerm = `--dangerously-skip-permissions --permission-mode bypassPermissions --disallowed-tools ${rawDeny}`;
+  const shellPerm = `--dangerously-skip-permissions --permission-mode bypassPermissions --disallowed-tools Bash\\(sudo:\\*\\),Bash\\(pkexec:\\*\\)`;
+  const relay = loadRelay({
+    backend: 'claude',
+    backendPerm: rawPerm,
+    backendPermShell: shellPerm,
+  });
+  try {
+    const cmd = relay.buildLaunchCommand();
+    assert.ok(cmd.includes(shellPerm),
+      `interactive fallback relaunch must use shell-safe flags, got: ${cmd}`);
+    assert.ok(!cmd.includes(`--disallowed-tools ${rawDeny}`),
+      `raw deny-list syntax would be reparsed by the pane shell, got: ${cmd}`);
+
+    const argv = relay.buildHeadlessArgv('prompt');
+    assert.deepStrictEqual(argv.args.slice(0, 5), [
+      '--dangerously-skip-permissions',
+      '--permission-mode',
+      'bypassPermissions',
+      '--disallowed-tools',
+      rawDeny,
+    ], 'headless execFile must keep the deny list as one raw argv value');
+  } finally { teardown(relay); }
 });
 
 // --- agy pane classification: stale narration must not pin WORKING ---------
@@ -739,6 +767,7 @@ test('agy Gemini idle pane reports its visible PR as task_complete', () => {
   const relay = loadRelay({ backend: 'agy', paneText: AGY_GEMINI_IDLE_PANE });
   try {
     dispatchTask(relay, 'ct-agy-gemini-idle');
+    relay.setTaskAgentActivityObserved(true);
     // #5376: this pane carries no HIVE_VERDICT line, so it completes on the
     // chrome-idle FALLBACK — after the grace window, not on the first tick.
     graceTicks(relay, () => relay.__crashTick());
@@ -2275,6 +2304,7 @@ test('only the active hub is sent ready on auth_ok; the other waits its turn', (
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
     const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -2388,6 +2418,7 @@ test('task_unavailable on the active hub rotates the poll slot to the next hub',
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
     const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -3221,6 +3252,7 @@ test('only the active hub is sent ready on auth_ok; the other waits its turn', (
     const sentA = [], sentB = [];
     hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
     hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -3348,6 +3380,7 @@ test('task_unavailable on the active hub rotates the poll slot to the next hub',
     const sentA = [], sentB = [];
     hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
     hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+    relay.setCliReady(true);
 
     relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
     assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
@@ -4712,6 +4745,7 @@ test('#5094 a completed turn whose summary mentions a quota phrase is still comp
     assert.strictEqual(relay.classifyTmuxPane(pane), relay.PANE_STATE_IDLE_COMPLETE);
     relay.setCliReady(true);
     assignTask(relay, 't-prose');
+    relay.setTaskAgentActivityObserved(true);
     // #5376: chrome-only completion, so it needs the grace window.
     graceTicks(relay, () => relay.__crashTick());
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
@@ -5467,10 +5501,31 @@ function captureBannerDuringLoad(opts) {
   return { relay, output: lines.join('\n') };
 }
 
+function captureStartupWithImmediateTimers(opts, maxTimers = 10) {
+  const lines = [];
+  const realLog = console.log;
+  const realSetTimeout = global.setTimeout;
+  let timers = 0;
+  console.log = (...args) => { lines.push(args.join(' ')); };
+  global.setTimeout = (fn) => {
+    timers++;
+    if (timers <= maxTimers) fn();
+    return { unref() {} };
+  };
+  let relay;
+  try {
+    relay = loadRelay(opts);
+  } finally {
+    console.log = realLog;
+    global.setTimeout = realSetTimeout;
+  }
+  return { relay, output: lines.join('\n') };
+}
+
 test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code\'s', () => {
-  const { relay, output } = captureBannerDuringLoad({
+  const { relay, output } = captureStartupWithImmediateTimers({
     backend: 'bob',
-    cliStates: ['Enter Bob-Shell API Key\n'],
+    cliStates: ['Enter Bob-Shell API Key\n', 'Enter Bob-Shell API Key\n', 'Enter Bob-Shell API Key\n'],
   });
   try {
     assert.ok(/needs authentication/.test(output),
@@ -5481,6 +5536,29 @@ test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code
       'a blocked bob is announced as Claude Code');
     assert.ok(!/Then type: \/login/.test(output),
       'bob cannot be authenticated by typing /login into the pane');
+  } finally { teardown(relay); }
+});
+
+test('#6668 waitForCLI ignores a single transient needs-login poll during startup', () => {
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'agy',
+    cliStates: ['Select login method\n', AGY_READY_PANE],
+  });
+  try {
+    assert.ok(!/needs authentication/.test(output),
+      `a one-poll startup race must not page the operator:\n${output}`);
+    assert.ok(/CLI ready/.test(output), `the healthy session should recover normally:\n${output}`);
+  } finally { teardown(relay); }
+});
+
+test('#6668 waitForCLI prints the banner only after repeated needs-login polls', () => {
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'agy',
+    cliStates: ['Select login method\n', 'Select login method\n', 'Select login method\n'],
+  });
+  try {
+    assert.ok(/Antigravity \(agy\) needs authentication/.test(output),
+      `a persistent login prompt must still page the operator:\n${output}`);
   } finally { teardown(relay); }
 });
 
@@ -5551,19 +5629,12 @@ test('#5145 the needs-authentication banner prints the resolved command', () => 
   // waitForCLI() is armed during module load in interactive mode and its first
   // poll runs synchronously, so a pane that reads as needs-login makes the
   // banner print while loadRelay() is still running — capture around it.
-  const lines = [];
-  const oldLog = console.log;
-  console.log = (msg) => { lines.push(String(msg)); };
-  let relay;
-  try {
-    relay = loadRelay({
-      backend: 'claude',
-      cliStates: ['Please run /login\n'],
-      env: { HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c', HIVE_CONTAINER_RUNTIME: 'podman' },
-    });
-  } finally {
-    console.log = oldLog;
-  }
+  const { relay, output } = captureStartupWithImmediateTimers({
+    backend: 'claude',
+    cliStates: ['Please run /login\n', 'Please run /login\n', 'Please run /login\n'],
+    env: { HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c', HIVE_CONTAINER_RUNTIME: 'podman' },
+  });
+  const lines = output.split('\n');
   try {
     assert.ok(lines.some(l => l.includes('needs authentication')),
       `the login banner did not fire; captured:\n${lines.join('\n')}`);
@@ -5837,6 +5908,44 @@ test('#5353 a reported completion stops the agent and drops its token', () => {
     assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
       'a completed task left its repo-scoped GitHub token on disk, valid for the rest of wsTokenTTL');
     assertAgentStopped(relay.__tmuxSends().slice(before), 'copilot');
+  } finally { teardown(relay); }
+});
+
+test('#6667 a PR scrolled out of the 15-line payload window is still reported', () => {
+  // The inverse of #6662. detectPRURL used to be handed the same fifteen lines
+  // the relay sends upstream as tmux_output, and in a real TUI roughly ten of
+  // those rows are chrome — input box, status bar, hint line. A PR URL the
+  // agent genuinely printed leaves that window almost immediately, so the relay
+  // reported no PR for a task that shipped one, and the hub applied the short
+  // "just went idle" cooldown to work that was actually complete.
+  //
+  // Build exactly that pane: the URL is printed, then ordinary build noise
+  // pushes it well past fifteen rows, then the verdict lands at the bottom.
+  const noise = Array.from({ length: 60 }, (_, i) => `  compiling module ${i}`);
+  const paneText = [
+    'Pull request opened: https://github.com/foo/bar/pull/4242',
+    ...noise,
+    'HIVE_VERDICT: complete — PR is open',
+    '',
+    '/ commands for help',
+  ].join('\n');
+
+  const relay = loadRelay({ backend: 'copilot', paneText });
+  try {
+    dispatchTask(relay, 't-scrolled-pr');
+    relay.__stallTick();
+
+    const completed = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(completed, 'expected a completion');
+    assert.strictEqual(completed.pr_url, 'https://github.com/foo/bar/pull/4242',
+      'the PR the agent opened scrolled past the payload window and was dropped');
+
+    // The deeper scan must not widen what goes upstream: tmux_output stays the
+    // bounded audit tail, or every completion starts shipping the whole pane.
+    assert.ok(completed.tmux_output.length <= relay.TMUX_TAIL_LINES,
+      `tmux_output grew to ${completed.tmux_output.length} lines, must stay within TMUX_TAIL_LINES`);
+    assert.ok(!completed.tmux_output.join('\n').includes('Pull request opened'),
+      'setup check: the URL must be outside the payload tail, or this test proves nothing');
   } finally { teardown(relay); }
 });
 
@@ -6211,6 +6320,7 @@ test('#5376 a non-compliant agent still completes — via the bounded chrome-idl
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-noncompliant');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
@@ -6220,6 +6330,70 @@ test('#5376 a non-compliant agent still completes — via the bounded chrome-idl
     assert.strictEqual(completed[0].completion_signal, 'chrome_idle',
       'the weaker signal must be labelled, so per-backend non-compliance is measurable');
     assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/777');
+  } finally { teardown(relay); }
+});
+
+test('#6717 codex idle with an unsubmitted pasted prompt is failed, not completed', () => {
+  const CODEX_READY = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '› Ask Codex to do the task',
+  ].join('\n');
+  const UNSUBMITTED_PROMPT = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '│                                                │',
+    '│ model:     gpt-5.6-luna max   /model to change │',
+    '│ directory: ~/.local/state/hive/agent-cwd       │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '  Tip: NEW: Prevent sleep while running is now available in /experimental.',
+    '',
+    '',
+    '› [Pasted Content 1024 chars][Pasted Content 1012 chars] very last thing you output and on a line by itself, HIVE_VERDICT: complete — <short reason',
+    '',
+    '  gpt-5.6-luna max · ~/.local/state/hive/agent-cwd',
+  ].join('\n');
+  let pane = CODEX_READY;
+  const relay = loadRelay({ backend: 'codex', paneText: () => pane });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-unsubmitted-codex');
+    pane = UNSUBMITTED_PROMPT;
+    assert.strictEqual(relay.classifyTmuxPane(UNSUBMITTED_PROMPT), relay.PANE_STATE_IDLE_COMPLETE,
+      'setup: codex renders the unsent pasted prompt as idle chrome');
+    graceTicks(relay, () => relay.__crashTick());
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'chrome idleness alone must not report completion when the agent produced nothing');
+    assert.strictEqual(failed.length, 1, 'the hub must get a non-success outcome so it can re-offer the issue');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.match(failed[0].reason, /prompt may not have been submitted/);
+  } finally { teardown(relay); }
+});
+
+test('#6717 codex chrome-idle still completes after new assistant output', () => {
+  const CODEX_READY = [
+    '╭────────────────────────────────────────────────╮',
+    '│ >_ OpenAI Codex (v0.154.0)                     │',
+    '╰────────────────────────────────────────────────╯',
+    '',
+    '› Ask Codex to do the task',
+  ].join('\n');
+  let pane = CODEX_READY;
+  const relay = loadRelay({ backend: 'codex', paneText: () => pane });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-codex-finished-fast');
+    pane = CODEX_DONE_SUMMARY_WITH_VERB;
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'new codex assistant output must keep a real fast completion from looking unsubmitted');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle');
   } finally { teardown(relay); }
 });
 
@@ -6239,6 +6413,7 @@ test('#5376 an idle pane awaiting its verdict is not handed to the stall backsto
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-idle-stall');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => {
       relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
       relay.__stallTick();
@@ -6285,6 +6460,7 @@ test('#5376 the grace window does not carry across tasks', () => {
   try {
     relay.setCliReady(true);
     assignTask(relay, 't-one');
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1, 'setup: first task completes');
 
@@ -7081,6 +7257,7 @@ test('#5650 a stale verdict does not block the chrome-idle fallback either', () 
   try {
     relay.setCliReady(true);
     assignTask(relay, 'ct-fallback', 5646);
+    relay.setTaskAgentActivityObserved(true);
     graceTicks(relay, () => relay.__crashTick());
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
@@ -7356,7 +7533,9 @@ test('#6541 agy post-error survey modal is dismissed with 0 (Skip)', () => {
 
 // Complete a real task so the relay enters its own PR review cycle, and return
 // the synthetic task it built. PR_REVIEW_EVERY_N - 1 completions are staged so
-// this one crosses the threshold.
+// this one crosses the threshold, and the completing task SHIPS A PR — since
+// #6664 the cadence alone no longer starts a cycle, because a run of
+// no_work_needed completions guarantees there is nothing to review.
 function enterReviewCycle(relay) {
   relay.setTasksCompletedCount(relay.PR_REVIEW_EVERY_N - 1);
   dispatchTask(relay, 't-before-review');
@@ -7377,7 +7556,9 @@ function enterReviewCycle(relay) {
   return review;
 }
 
-const REVIEW_PANE = `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
+// Carries a PR URL under the harness's task repo so the completing task counts
+// as having SHIPPED one — the #6664 precondition for the cycle running at all.
+const REVIEW_PANE = `Opened https://github.com/foo/bar/pull/77\nHIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
 
 test('#5715 the locally-built review task is marked synthetic and carries no work item', () => {
   const relay = loadRelay({ backend: 'copilot', paneText: REVIEW_PANE });
@@ -7747,6 +7928,353 @@ test('#6662 resolveTaskPR reports the three-way split it promises', () => {
     assert.strictEqual(none.suppressesVerdict, false);
     assert.strictEqual(none.evidence, null);
   } finally { console.log = log; teardown(relay); }
+});
+
+// kubestellar/hive#6664 — the review cycle must review the contributor's PRs,
+// and must only run when there are some.
+//
+// It scoped the review to the repo of the single task that had just finished,
+// and it fired on completions rather than on PRs shipped. Observed: a cycle
+// whose five triggering completions were ALL no_work_needed ran
+// `gh pr list --repo projectbluefin/utah --author @me --state open` against a
+// repo with zero PRs, while twenty open PRs across eleven repos went unreviewed.
+// ---------------------------------------------------------------------------
+
+// Completing at the cadence boundary, with a pane the test controls.
+function completeAtCadence(relay, pane, taskId) {
+  const r = loadRelay({ backend: 'copilot', paneText: pane });
+  r.setTasksCompletedCount(r.PR_REVIEW_EVERY_N - 1);
+  dispatchTask(r, taskId);
+  r.__stallTick();
+  return r;
+}
+
+const SHIPPED_PANE = `Opened https://github.com/foo/bar/pull/77\nHIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
+const NO_WORK_PANE = `HIVE_VERDICT: no_work_needed — merged PRs already cover this\n${IDLE_PANE}`;
+
+test('#6664 five no_work_needed completions do not start a review cycle', () => {
+  // The observed incident. The counter used to conflate "completed" with
+  // "shipped", so a run of correct no_work_needed verdicts scheduled a review
+  // of a repo that by construction had nothing in it.
+  const log = [];
+  const orig = console.log; console.log = (...a) => log.push(a.join(' '));
+  const relay = completeAtCadence(null, NO_WORK_PANE, 't-nowork');
+  try {
+    assert.strictEqual(relay.getCurrentTask(), null,
+      'a cycle must not start when nothing has shipped since the last review');
+    assert.ok(relay.__sent.some(m => m.type === 'ready'),
+      'the relay must go back to normal work instead of reviewing nothing');
+    assert.ok(log.some(l => /Skipping the PR review cycle/.test(l)),
+      `the skip must be explained, not silent: ${JSON.stringify(log)}`);
+  } finally { console.log = orig; teardown(relay); }
+});
+
+test('#6664 a completion that ships a PR does start the cycle', () => {
+  const log = [];
+  const orig = console.log; console.log = (...a) => log.push(a.join(' '));
+  const relay = completeAtCadence(null, SHIPPED_PANE, 't-shipped');
+  try {
+    const review = relay.getCurrentTask();
+    assert.ok(review && review.task_id.startsWith('pr-review-'),
+      'a shipped PR at the cadence boundary must start the review cycle');
+    // The counters reset with the cycle, or the next one would double-count.
+    assert.strictEqual(relay.getPRsShippedSinceReview(), 0);
+    assert.deepStrictEqual(relay.getReposShippedSinceReview(), []);
+    assert.ok(log.some(l => /PR review cycle .*1 PR\(s\) shipped/.test(l)),
+      `the log must say what triggered it: ${JSON.stringify(log)}`);
+  } finally { console.log = orig; teardown(relay); }
+});
+
+test('#6664 a PR shipped earlier in the window still earns a review', () => {
+  // Deliberately a COUNT, not a latch on the last completion: a PR shipped on
+  // completion 3 is still worth reviewing when completion 5 crosses the
+  // cadence. And a skipped cycle defers rather than starves — the accumulated
+  // count is picked up at the next multiple.
+  const relay = loadRelay({ backend: 'copilot', paneText: NO_WORK_PANE });
+  const orig = console.log; console.log = () => {};
+  try {
+    relay.setPRsShippedSinceReview(1);
+    relay.setReposShippedSinceReview(['foo/bar']);
+    relay.setTasksCompletedCount(relay.PR_REVIEW_EVERY_N - 1);
+    dispatchTask(relay, 't-nowork-but-shipped-earlier');
+    relay.__stallTick();
+    const review = relay.getCurrentTask();
+    assert.ok(review && review.task_id.startsWith('pr-review-'),
+      'a PR shipped earlier in the window must still be reviewed');
+  } finally { console.log = orig; teardown(relay); }
+});
+
+test('#6664 a review cycle does not re-arm the next one off its own output', () => {
+  // A review pushes fixes to PRs that already exist, so any PR URL on its pane
+  // is one it was READING. Counting that would let each cycle arm the next with
+  // no new work behind it.
+  const relay = loadRelay({ backend: 'copilot', paneText: SHIPPED_PANE });
+  const orig = console.log; console.log = () => {};
+  try {
+    relay.setCurrentTask({
+      task_id: 'pr-review-1', kind: 'review', repo: 'foo/bar', number: 0,
+      title: 'Review open PRs for comments', synthetic: true,
+    });
+    relay.setCliReady(true);
+    relay.setTaskPromptDelivered(true);
+    relay.setDeliveredVerdictBaseline(null);
+    relay.setPRsShippedSinceReview(0);
+    relay.__stallTick();
+    assert.strictEqual(relay.getPRsShippedSinceReview(), 0,
+      "a review cycle's own completion must not count as shipping a PR");
+  } finally { console.log = orig; teardown(relay); }
+});
+
+test('#6664 the review prompt is account-scoped, not scoped to one repo', () => {
+  const relay = loadRelay({});
+  try {
+    const prompt = relay.buildReviewPrompt(['foo/bar']);
+    // The bug: `gh pr list --repo <one repo>` could never reach PRs anywhere
+    // else, and the cadence is per-completion so coverage never caught up.
+    assert.ok(!/--repo\s/.test(prompt),
+      `the review must not be narrowed to a single repo: ${prompt}`);
+    assert.match(prompt, /gh search prs --author @me --state open/,
+      'the account-wide search is what spans every repo the contributor filed in');
+    assert.match(prompt, /across every repository/);
+    // Shipped repos are a hint for ordering, never a filter.
+    assert.match(prompt, /most recently shipped work to foo\/bar, so start there/);
+    // ...and the prompt still works with nothing to hint at.
+    const bare = relay.buildReviewPrompt([]);
+    assert.ok(!/start there/.test(bare), `no hint when nothing shipped: ${bare}`);
+    assert.match(bare, /gh search prs --author @me --state open/);
+  } finally { teardown(relay); }
+});
+
+test('#6664 the review prompt asks for the HIVE_VERDICT sentinel', () => {
+  // The review cycle was the one task type whose prompt never got #5376's
+  // completion sentinel, purely because it is assembled in the relay instead of
+  // by the hub — so it could only ever complete through the terminal-chrome
+  // inference that #5353 documents as having produced thirteen issues.
+  const relay = loadRelay({});
+  try {
+    const prompt = relay.buildReviewPrompt(['foo/bar']);
+    assert.match(prompt, /HIVE_VERDICT: complete — <short reason>/);
+    assert.match(prompt, /as the very last thing you output and on a line by itself/);
+    assert.match(prompt, /Print it exactly once/);
+    // The old prose ending is gone — it was the thing that had to be inferred.
+    assert.ok(!/just say "No PR comments to address\."/.test(prompt), prompt);
+    // The sentinel must be LAST, or a long summary scrolls it out of the tail
+    // the relay reads.
+    assert.ok(prompt.trimEnd().endsWith("only when you are actually done."),
+      `the sentinel instruction must be the final clause: ${prompt.slice(-160)}`);
+  } finally { teardown(relay); }
+});
+
+test('#6664 the prompt the relay actually dispatches is the account-scoped one', () => {
+  // buildReviewPrompt being right is not the same as it being what reaches the
+  // agent; the bug lived at the call site, which built its own string inline.
+  //
+  // Completing a task stops the agent and relaunches the CLI, so the review
+  // prompt is QUEUED rather than typed (tmuxSendKeys gates on cliReady, #2203
+  // bug 2) and flushed a moment later when readiness is confirmed. The queue is
+  // therefore where the dispatched prompt is observable at this instant.
+  const relay = completeAtCadence(null, SHIPPED_PANE, 't-prompt');
+  const orig = console.log; console.log = () => {};
+  try {
+    const dispatched = relay.getPendingTask() ||
+      relay.__tmuxSends().filter(c => /gh search prs|gh pr list/.test(c)).join('\n');
+    assert.ok(dispatched, 'the review prompt was neither typed nor queued');
+    assert.match(dispatched, /gh search prs --author @me --state open/);
+    assert.ok(!/gh pr list --repo/.test(dispatched),
+      `the single-repo listing must be gone from the live prompt: ${dispatched}`);
+    assert.match(dispatched, /HIVE_VERDICT: complete/);
+  } finally { console.log = orig; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#6541 (follow-up) — a quota-blocked relay must stop asking.
+//
+// Classification landed first: every cycle was correctly identified as a fatal
+// provider refusal. The relay then asked the hub for another task anyway, hit
+// the same wall seconds later, and repeated that for the whole reset window —
+// two provider rejections 45 seconds apart with distinct provider error IDs,
+// so each one really was a round-trip, an assignment slot and a hive issue
+// marked failed. Quota is a property of the provider ACCOUNT, not the task,
+// and it expires; agy prints the expiry on the banner.
+// ---------------------------------------------------------------------------
+
+const AGY_QUOTA_BANNER =
+  '⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h42m28s.';
+
+test('#6541 quota exhaustion is separated from the rest of the unretryable set', () => {
+  const hit = paneClassifier.paneQuotaExhaustion(AGY_QUOTA_BANNER + '\n');
+  assert.ok(hit, 'the agy banner must be recognised as quota, not just as unretryable');
+  assert.strictEqual(hit.resetMs, ((4 * 60 + 42) * 60 + 28) * 1000);
+  assert.match(hit.line, /Individual quota reached/);
+
+  // An AUTHORIZATION refusal is equally unretryable and must NOT be read as
+  // quota: it is not time-bounded, nothing expires, and parking the relay for
+  // hours on a misconfiguration would hide it instead of reporting it.
+  assert.ok(paneClassifier.paneShowsUnretryableAPIError('API Error: 403 not allowed to access model\n'));
+  assert.strictEqual(paneClassifier.paneQuotaExhaustion('API Error: 403 not allowed to access model\n'), null);
+
+  // Chromed quota (claude) is quota too, with no stated expiry.
+  const chromed = paneClassifier.paneQuotaExhaustion('● API Error: 429 {"type":"budget_exceeded"}\n');
+  assert.ok(chromed, 'a chromed quota refusal is still quota');
+  assert.strictEqual(chromed.resetMs, null);
+
+  // Two independent signals, as everywhere else in this classifier: prose that
+  // merely mentions the wording must not park a relay. This repo contains every
+  // one of these strings.
+  assert.strictEqual(paneClassifier.paneQuotaExhaustion(
+    'I added individual quota reached to the pattern list\n'), null);
+});
+
+test('#6541 parseQuotaResetMs reads the provider countdown, and refuses junk', () => {
+  const p = paneClassifier.parseQuotaResetMs;
+  assert.strictEqual(p('Resets in 38m29s.'), (38 * 60 + 29) * 1000);
+  assert.strictEqual(p('resets in 90s'), 90000);
+  assert.strictEqual(p('Resets in 2h'), 7200000);
+  assert.strictEqual(p('Resets in 1d2h3m4s'), 86400000 + 7200000 + 180000 + 4000);
+  // Anchored on the verb: a duration elsewhere on the line is not an expiry.
+  assert.strictEqual(p('Thought for 3s, 499 tokens'), null);
+  assert.strictEqual(p('⚠ Individual quota reached.'), null);
+  // An all-zero countdown is likelier a render artifact than a promise the
+  // quota is already back; the caller's fallback window is the safer answer.
+  assert.strictEqual(p('Resets in 0s'), null);
+});
+
+test('#6541 a quota refusal parks the loop instead of asking for the next task', () => {
+  const relay = loadRelay({ backend: 'agy', paneText: `● Bash(ls -la)\n${AGY_QUOTA_BANNER}\n` });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    dispatchTask(relay, 't-quota');
+    const before = relay.__sent.length;
+    relay.__stallTick();
+    const after = relay.__sent.slice(before);
+
+    const failed = after.find(m => m.type === 'task_failed');
+    assert.ok(failed, `the task must still be handed back: ${JSON.stringify(after.map(m => m.type))}`);
+    // The misattribution the issue is about: "[environment] … not visibly
+    // working" reads as a broken contributor host. The CLI worked perfectly.
+    assert.match(failed.reason, /provider quota exhausted/);
+    assert.match(failed.reason, /not a fault of this host/);
+    assert.ok(!/not visibly working/.test(failed.reason),
+      `a provider refusal must not be reported as a dead CLI: ${failed.reason}`);
+
+    // THE FIX: no `ready`. Before this, the next assignment arrived seconds
+    // later and hit the same wall.
+    assert.ok(!after.some(m => m.type === 'ready'),
+      `a quota-blocked relay must not advertise for work: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.quotaHoldActive(), true);
+    // The hold runs to the reset the provider itself stated, not a guess.
+    const holdMs = relay.getQuotaHoldUntil() - Date.now();
+    assert.ok(holdMs > 4 * 60 * 60 * 1000, `expected the stated ~4h42m window, got ${holdMs}ms`);
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#6541 `ready` is withheld at the send choke point for the whole hold', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 60 * 60 * 1000 });
+    const before = relay.__sent.length;
+    // Every other route back into the loop: the hub's negative-ack retry, a
+    // reconnect, a task exit. None of them may restart it.
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    relay.setCurrentTask({ task_id: 't-x', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' });
+    relay.failCurrentTask('unrelated failure during the hold');
+    const after = relay.__sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'ready'),
+      `no route may advertise readiness during a quota hold: ${JSON.stringify(after.map(m => m.type))}`);
+    // ...but frames about work already in flight still go out. Withholding
+    // those would strand the hub on a task it thinks is running.
+    assert.ok(after.some(m => m.type === 'task_failed'),
+      'only `ready` is withheld — failure/progress frames must still be delivered');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#6541 a pushed assignment during a hold is declined, not attempted', () => {
+  // Withholding `ready` stops us ASKING; a hub can still push an offer. Taking
+  // it would spend a provider round-trip to be refused again and mark a hive
+  // issue failed for a reason that has nothing to do with it.
+  const relay = loadRelay({ backend: 'agy' });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 60 * 60 * 1000 });
+    const before = relay.__sent.length;
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign', task_id: 't-pushed', kind: 'issue', repo: 'foo/bar', number: 9, title: 'pushed',
+    }));
+    const after = relay.__sent.slice(before);
+    assert.strictEqual(relay.getCurrentTask(), null, 'a quota-blocked relay must not take the task');
+    const declined = after.find(m => m.type === 'task_failed' && m.task_id === 't-pushed');
+    assert.ok(declined, `the offer must be declined so another contributor gets it: ${JSON.stringify(after)}`);
+    assert.match(declined.reason, /provider quota exhausted/);
+    assert.ok(!after.some(m => m.type === 'ready'),
+      'declining must not be followed by re-advertising');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#6541 the hold releases and re-advertises exactly once', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 60 * 60 * 1000 });
+    const before = relay.__sent.length;
+    relay.releaseQuotaHold('test');
+    assert.strictEqual(relay.quotaHoldActive(), false);
+    const after = relay.__sent.slice(before);
+    assert.strictEqual(after.filter(m => m.type === 'ready').length, 1,
+      `release must restart the loop exactly once: ${JSON.stringify(after.map(m => m.type))}`);
+    // Releasing an already-released hold is a no-op, not a second ready.
+    relay.releaseQuotaHold('again');
+    assert.strictEqual(relay.__sent.slice(before).filter(m => m.type === 'ready').length, 1);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#6541 a hold is bounded, never shortened, and survives an unparseable banner', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    // No stated expiry — most backends print none. Still a hold: "the account
+    // is out and we do not know when" is a reason not to ask immediately.
+    relay.enterQuotaHold({ line: 'API Error: 429 budget_exceeded', resetMs: null });
+    assert.strictEqual(relay.quotaHoldActive(), true);
+    const fallbackUntil = relay.getQuotaHoldUntil();
+    assert.ok(Math.abs(fallbackUntil - (Date.now() + relay.QUOTA_HOLD_FALLBACK_MS)) < 5000);
+
+    // A second banner mid-hold restates the same exhaustion. Taking the smaller
+    // window would walk the release time backwards on every repeat.
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 1000 });
+    assert.strictEqual(relay.getQuotaHoldUntil(), fallbackUntil,
+      'a repeat banner must never shorten a live hold');
+
+    // The duration comes off provider text this relay cannot validate, so an
+    // absurd claim must not wedge a contributor out of the fleet.
+    relay.releaseQuotaHold('reset for the cap check');
+    relay.enterQuotaHold({ line: 'Resets in 999h', resetMs: 999 * 60 * 60 * 1000 });
+    assert.ok(relay.getQuotaHoldUntil() - Date.now() <= relay.QUOTA_HOLD_MAX_MS,
+      'a parsed window must be capped');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#6541 negative control: an authorization refusal still fails fast and stays available', () => {
+  // The other half of the fatal bucket is unchanged. A 403 is not time-bounded,
+  // an operator has to fix it, and parking the relay would hide it.
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: '● API Error: 403 not allowed to access model\n/ commands for help\n',
+  });
+  try {
+    dispatchTask(relay, 't-403');
+    const before = relay.__sent.length;
+    relay.__stallTick();
+    const after = relay.__sent.slice(before);
+    const failed = after.find(m => m.type === 'task_failed');
+    assert.ok(failed, 'a 403 must still hand the task back');
+    assert.match(failed.reason, /a retry cannot clear/);
+    assert.ok(after.some(m => m.type === 'ready'),
+      `an authorization refusal must NOT park the loop: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.quotaHoldActive(), false);
+  } finally { teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------

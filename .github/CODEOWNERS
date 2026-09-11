@@ -1,33 +1,33 @@
-# CODEOWNERS — mandatory review for security-sensitive files on v4.
+# CODEOWNERS — scoped mandatory review for security-sensitive files on v4.
 #
-# NOTE: This file is inert until "Require review from Code Owners" is
-# enabled in the v4 branch protection rule. That is deliberately NOT
-# enabled as part of this change — the repo's automation currently merges
-# green PRs without human review, and turning on enforcement here would
-# block that automation. Enabling enforcement is a separate operator
-# decision with workflow implications and should be made explicitly.
+# Keep this list intentionally narrow. Hive's automation merges ordinary green
+# PRs, so code-owner review is enforceable only if CODEOWNERS covers the files
+# whose changes can directly alter security boundaries.
+#
+# After this file lands, enable "Require review from Code Owners" on the v4
+# branch protection rule. Non-security paths are intentionally omitted so the
+# agent fleet can continue to merge routine changes without human review.
 
 # Security-sensitive build and image files
-src/Dockerfile                       @clubanderson
-src/Dockerfile.contributor           @clubanderson
-src/Dockerfile.hub                   @clubanderson
+src/Dockerfile                       @clubanderson @hanthor @Danathar
+src/Dockerfile.contributor           @clubanderson @hanthor @Danathar
+src/Dockerfile.hub                   @clubanderson @hanthor @Danathar
+src/scripts/check-suid-contract.sh   @clubanderson @hanthor @Danathar
 
-# CI/CD workflows (GITHUB_TOKEN write access, security gates)
-.github/workflows/                  @clubanderson
+# CI/CD workflows (GITHUB_TOKEN write access, release, and security gates)
+.github/workflows/**                 @clubanderson @hanthor @Danathar
 
 # Kubernetes deployment, RBAC, and secret manifests
-src/deploy/                          @clubanderson
+src/deploy/**                        @clubanderson @hanthor @Danathar
 
-# Token-handling and agent launch scripts
-bin/agent-launch.sh                 @clubanderson
-bin/contributor-agent.sh            @clubanderson
+# Egress proxy policy and GitHub API mediation
+src/pkg/proxy/**                     @clubanderson @hanthor @Danathar
 
-# gh CLI wrapper — enforces REAL_GH security-mode gating
-bin/gh-wrapper.sh                   @clubanderson
-
-# Core agent manager (exec construction, su-exec SUID invocation)
-src/pkg/agent/                       @clubanderson
-
-# Hub key and session/cookie machinery
-src/pkg/hub/hub_keys.go              @clubanderson
-src/pkg/hub/hub_cookie.go            @clubanderson
+# Hub key, cookie, impersonation, OAuth, SSO, and session machinery
+src/pkg/hub/*key*.go                 @clubanderson @hanthor @Danathar
+src/pkg/hub/*keys*.go                @clubanderson @hanthor @Danathar
+src/pkg/hub/*cookie*.go              @clubanderson @hanthor @Danathar
+src/pkg/hub/*session*.go             @clubanderson @hanthor @Danathar
+src/pkg/hub/*oauth*.go               @clubanderson @hanthor @Danathar
+src/pkg/hub/*sso*.go                 @clubanderson @hanthor @Danathar
+src/pkg/hub/*impersonat*.go          @clubanderson @hanthor @Danathar

@@ -575,6 +575,7 @@ type HiddenAgentInfo struct {
 const (
 	hiddenReasonBelowACMMGate = "below-acmm-gate"
 	hiddenReasonPackInactive  = "pack-inactive"
+	hiddenReasonDisabled      = "disabled-in-config"
 )
 
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
@@ -640,10 +641,33 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 	}
 	if cfg != nil {
 		for name, agentCfg := range cfg.Agents {
-			if seen[name] || !agentCfg.Enabled || !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			if seen[name] {
+				continue
+			}
+			// Every drop below has to record a reason. The runtime loop above
+			// reports why it omitted a card, but this config-only pass used to
+			// `continue` silently, so an agent that exists in the config and
+			// never got a runtime entry vanished from the UI AND from
+			// hiddenAgents — leaving the diagnostic added for #6581 reporting
+			// an empty list on precisely the configuration that has no cards
+			// (#6652). "No cards and nothing hidden" is indistinguishable from
+			// "the builder never saw your config", which is what made the
+			// original report impossible to act on.
+			if !agentCfg.Enabled {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonDisabled})
+				seen[name] = true
+				continue
+			}
+			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
+				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
 				continue
 			}
 			if packAllowed != nil && !packAllowed[name] && agentCfg.Paused {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+				slog.Debug("agent card omitted: config-only agent outside ACMM pack and paused", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
 				continue
 			}
 			names = append(names, name)

@@ -17,9 +17,9 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > | Review point | Change |
 > |---|---|
 > | "If I deploy this, what should I worry about?" | New section [If you deploy this, what should you worry about?](#if-you-deploy-this-what-should-you-worry-about) — the attack path stated plainly, a concern/mitigation/non-mitigation table, the three settings that determine exposure, and the worst realistic outcome. |
-> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered: **no red-teaming exists.** Efficacy is now described as unmeasured and partial, with the containment credited to the network deny rules instead. Evaluation tracked in [#6685](https://github.com/hivecommons/hive/issues/6685). |
-> | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check is substring-only — now filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and recorded as a known weakness. |
-> | "Get an OpenSSF passing badge." | Agreed; being pursued in [#6684](https://github.com/hivecommons/hive/issues/6684). Most passing criteria already met. |
+> | "Have you red teamed `ioscan`? Is this perfect defense or partial mitigation?" | Answered, then **measured**: [ioscan-red-team.md](ioscan-red-team.md) runs a 43-payload adversarial corpus and publishes the result — **37% withheld, 63% reached the agent**, with the containment credited to the network deny rules and verified across all four ACMM modes on every test run ([#6685](https://github.com/hivecommons/hive/issues/6685)). |
+> | "What is redaction for? What about base64-encoded exfiltration?" | Log scrubbing re-scoped as log hygiene, explicitly **not** an exfiltration control. Running the question against the canary path found a real gap — the egress check was substring-only — filed as [#6686](https://github.com/hivecommons/hive/issues/6686) and **since fixed**: the proxy now decodes and normalizes outbound bodies before matching canaries. |
+> | "Get an OpenSSF passing badge." | **Already held, and this document was wrong to imply otherwise.** [Project 14261](https://www.bestpractices.dev/projects/14261) reached **passing** (100%) on 2026-08-27 — four days before the review — and `README.md` was displaying it throughout. The badge entry has since been corrected: 70 URLs in its criteria justifications still pointed at the pre-migration `kubestellar` org. Tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). |
 > | "This is a huge risk. Why not mitigate it?" | Half was mitigated: the roster went from **one maintainer to three**, across three affiliations, with a documented security-response process. The unmitigated half — unenforced code ownership — is now stated as the largest remaining process risk, with scoped enforcement tracked in [#6687](https://github.com/hivecommons/hive/issues/6687). |
 > | "Looks like AI generated this — you should know the answer." | The "Case studies: not applicable" claim was simply **wrong**: `ADOPTERS.md` lists seven adopters, three in production, one running at ACMM L5/L6 across 43 repositories. Replaced with the real table. |
 > | "Go through the open questions and figure them out." | The open-questions section is gone. Every item was run down against the repository and answered in [Questions resolved since first review](#questions-resolved-since-first-review) — including two answers that are "no." |
@@ -52,7 +52,7 @@ writing) wherever a specific mechanism is asserted.
 | Software | [hivecommons/hive](https://github.com/hivecommons/hive) |
 | Security Provider | No — Hive is not itself a security product. It is an agent-orchestration platform whose core value proposition includes constraining the blast radius of the AI agents it runs; see [Overview](#overview) below. |
 | Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
-| SBOM | Not currently attached to images, for a specific and non-obvious reason rather than by oversight. `build-push-action` attaches provenance/SBOM attestations by default, and an attestation can only be carried by an OCI image *index* — which changed the published artifact from a plain manifest to `application/vnd.oci.image.index.v1+json`. That form let a `COPY --from` layer ship an overlayfs metacopy redirect for `/usr/local/bin/hive`, which containerd/k3s and rootless podman present as **non-executable**, crash-looping the image ([#3760](https://github.com/hivecommons/hive/issues/3760), now closed). `provenance: false`/`sbom: false` (`docker.yml:295,346,631,818`) is the fix for that runtime defect. The correct resolution is to generate the SBOM **out-of-band** (e.g. a syft/Trivy step publishing a release artifact) so the image manifest stays plain — tracked in [#6688](https://github.com/hivecommons/hive/issues/6688). |
+| SBOM | Tagged releases publish standalone SPDX JSON SBOM release assets for `hive`, `hive-contributor`, and `hive-hub` (`hive-v<version>-sbom.spdx.json`, `hive-contributor-v<version>-sbom.spdx.json`, `hive-hub-v<version>-sbom.spdx.json`) generated by Syft against the already-published GHCR images; see [releases.md](releases.md#software-bill-of-materials-sbom). These are deliberately **out-of-band** files, not in-image attestations. `docker.yml` keeps `provenance: false`/`sbom: false` (`docker.yml:295,346,631,818`) because `build-push-action` attestations force an OCI image index and reintroduced the #3760 container-runtime crash loop. The guard in `src/scripts/check-no-image-attestations.sh` asserts the image builds keep plain manifests. |
 | Security links | See table below |
 
 | Doc | URL |
@@ -193,7 +193,7 @@ control removes it; the controls bound the consequences.
 |---|---|---|
 | Attacker text talks an agent into **merging** malicious code | `PUT /pulls/{n}/merge` is **hard-denied for every ACMM mode** at the proxy (`rules.go:215-226`), as is the GraphQL merge mutation. The agent never holds a credential path to merge; `hive-merge` runs as Hive with a SHA-pinned eligibility binding. | `ioscan`. A sufficiently clever prompt defeats a scanner; it does not defeat a rule table the model never sees. |
 | Attacker text talks an agent into **opening a PR** with a backdoor | `POST /pulls` is likewise hard-denied for every mode. PR creation goes through `hive-open-pr` as the App bot, attribution-stamped and audit-logged. | Nothing prevents the *content* of a legitimately-created PR from being attacker-influenced. Review it like any other PR. |
-| Attacker exfiltrates your **secrets** via the agent | Mode-tiered tokens mean low-tier agents never hold code-write credentials. Optional `ioscan` canaries detect prompt contents echoed into outbound GitHub writes at the proxy. | Canaries are **default-off** and substring-matched — see the [encoding gap](#three-most-significant-known-weaknesses). Non-GitHub egress is tunneled without inspection. |
+| Attacker exfiltrates your **secrets** via the agent | Mode-tiered tokens mean low-tier agents never hold code-write credentials. Optional `ioscan` canaries detect prompt contents echoed into outbound GitHub writes at the proxy, including base64/hex/URL-encoded, reversed and split spellings of the token. | Canaries are **default-off**, and their transform list is finite — an encoding it does not model still passes. `git-receive-pack` bodies are unscannable, and non-GitHub egress is tunneled without inspection. |
 | Agent burns your **inference budget** in a loop | Seven-day rolling token budget suppresses kicks on exhaustion. | Nothing caps the *rate* within budget. |
 | Compromised agent attacks **other agents** on the same spoke | Per-UID separation stops tmux attach and token-file reads. | Shared container/kernel. See weakness #2. |
 
@@ -276,34 +276,67 @@ repository writes:
    (`ioscan.classifier.enabled`, default `false`) adds semantic
    plain-English-injection detection on top. **Enabled by default**
    (`ioscan.enabled: true` is the default per `ioscan.md:9`).
+   Egress canaries (`HIVE-CANARY-*`) are matched both literally and through
+   the transport encodings a body can carry: base64 (standard and URL-safe,
+   padded or not, line-wrapped, and one level of nesting), hex (either case,
+   with per-byte separators or `\x`/`0x` escapes), percent-encoding, reversed
+   text, case changes, homoglyph and zero-width substitution, and separator
+   splitting — plus any intact 16-hex-character window of a token's random
+   half, so a token broken across a body still trips. Decoding recurs a
+   bounded number of passes with a byte budget, because the body being
+   decoded is attacker-influenced.
 
-   **How well does it work? Honestly: unmeasured, and it should be read as a
-   partial mitigation rather than a defense.** No red-team exercise,
-   adversarial evaluation, or measured detection rate exists for `ioscan` —
-   the package has 56 unit tests across its rule, Unicode, classifier and
-   canary paths, but unit tests establish that known shapes are caught, not
-   that unknown ones are. A prospective user should assume a determined,
-   encoding-aware attacker defeats it. What `ioscan` reliably does is (a)
-   raise the cost of the *casual* injection attempt, (b) normalize away an
-   entire class of invisible-character and homoglyph tricks deterministically,
-   and (c) produce an auditable record that something was withheld. What
-   contains the *consequence* of a successful injection is not `ioscan` at
-   all: it is the hard-denied PR-create/merge relays and the mode-tiered
-   token scope, neither of which the model can argue with. Operators should
-   size their trust accordingly, and the project commits to publishing a
-   red-team evaluation rather than leaving efficacy asserted
-   ([#6685](https://github.com/hivecommons/hive/issues/6685)).
+   **How well does it work? Measured: a partial mitigation, and a narrow one**
+   — see [ioscan-red-team.md](ioscan-red-team.md) for the corpus, the
+   methodology and the full per-case table. Against 43 adversarial payloads
+   across six technique families, the shipped deterministic rules **withheld
+   37% from the agent; 63% reached it verbatim** — 44% because no rule fired,
+   and a further 19% because a rule fired but the input block policy does not
+   block at that severity (`blockedInput` requires Critical, or Injection at
+   High+, so every Medium finding is recorded and the raw text is still
+   injected). A findings count is therefore **not** a count of attacks
+   stopped.
+   Detection is strongly uneven by family: Unicode steganography 6/8 blocked —
+   the one place the design beats a regex, because hidden characters are
+   themselves a High finding — against paraphrased instruction override 2/10
+   and split-payload 0/4. The last is structural: each untrusted segment
+   (title, body, each comment) is scanned separately, so a phrase split across
+   two comments is never a single string for any rule to match. The cost side
+   is real too: **2 of 6 benign controls were redacted**, including an issue
+   *reporting* a prompt-injection bug.
+   A prospective user should assume a determined, encoding-aware attacker
+   defeats it — that is now a measurement rather than a caution. What `ioscan`
+   reliably does is (a) raise the cost of the *casual* injection attempt, (b)
+   normalize away an entire class of invisible-character and homoglyph tricks
+   deterministically, and (c) produce an auditable record that something was
+   withheld. What contains the *consequence* of a successful injection is not
+   `ioscan` at all: it is the hard-denied PR-create/merge relays and the
+   mode-tiered token scope, neither of which the model can argue with — and
+   that containment is now verified across all four ACMM modes by
+   `TestRedTeamContainmentHoldsForEveryMode` on every test run rather than
+   asserted here. Operators should size their trust accordingly. The
+   evaluation's own limits are stated in it: the optional LLM classifier is
+   default-off and its contribution remains unmeasured, and the corpus covers
+   the input path only.
 
    **Exfiltration detection (`ioscan.canaries`, default off).** A per-agent
    `HIVE-CANARY-<48 hex>` token is planted in the agent's prompt, and the
    egress proxy scans outbound GitHub request bodies for it
    (`github_proxy.go:1179-1205`): a hit is positive evidence that prompt
    contents reached a write, and is audit-logged and — with
-   `fail_mode: closed` — blocked. Two limits are stated rather than implied:
-   the match is a literal substring test (`canary.go`, `strings.Contains`),
-   so **an encoded canary is not detected**, and `git-receive-pack` bodies
-   are opaque to it, so a push is only stopped when fail-closed is set. Both
-   are tracked in [Known weaknesses](#three-most-significant-known-weaknesses).
+   `fail_mode: closed` — blocked. The match is no longer a literal substring
+   test: `CanaryRegistry.Scan` normalizes the body and decodes what it finds
+   before matching, so the encodings listed above are caught
+   ([#6686](https://github.com/hivecommons/hive/issues/6686)). Two limits
+   remain, and are stated rather than implied: the transform list is
+   **finite and enumerated**, so an encoding it does not model — a cipher, a
+   custom alphabet, a canary spliced into the middle of an unrelated base64
+   run, or a token cut into pieces shorter than a 16-character window and
+   spread across separate requests — still passes; and `git-receive-pack`
+   bodies are opaque to the scan, so a push is only stopped when fail-closed
+   is set (tracked in
+   [Known weaknesses](#three-most-significant-known-weaknesses)). A canary
+   hit remains positive evidence; a miss has never been proof of absence.
 
 3. **Per-agent scoped GitHub App tokens and mode-tiered credential issuance**
    (per `security-model.md` Layer 5). Advisory-mode agents receive
@@ -368,11 +401,13 @@ repository writes:
   containment. The controls that do bear on that attack are elsewhere and are
   also imperfect: mode-tiered token scoping means a low-tier agent has no
   code-write credential to leak in the first place; `ioscan`'s canary check
-  at the proxy catches prompt contents reaching an outbound GitHub write
-  (but, as noted above, only as a literal substring — the base64 case defeats
-  it too, and closing that gap is tracked in
-  [#6686](https://github.com/hivecommons/hive/issues/6686)); and non-GitHub
-  destinations are tunneled without inspection at all. An operator who needs
+  at the proxy catches prompt contents reaching an outbound GitHub write,
+  and — unlike log scrubbing — it does decode base64, hex and percent-encoded
+  bodies and normalize away splitting before matching
+  ([#6686](https://github.com/hivecommons/hive/issues/6686)), though only for
+  the transforms it enumerates and only for the canary token rather than for
+  credentials at large; and non-GitHub destinations are tunneled without
+  inspection at all. An operator who needs
   a hard guarantee against credential egress should not rely on any of these
   and should scope the credentials themselves.
 - **Ed25519-only session/SSO verification** (`security-model.md` "Sessions
@@ -402,18 +437,20 @@ project-level compliance signals:
   (`scorecard.yml`, via a SHA-pinned reusable workflow in
   `hivecommons/infra`); results publish to the repository's code-scanning
   alerts. No specific score floor is gated in CI at present.
-- **OpenSSF Best Practices Badge**: **not yet held — and being pursued.** At
-  first review of this assessment the project had not registered, and
-  TAG-Security's feedback was that a passing badge is achievable
-  low-hanging fruit whose criteria are things the project should be doing
-  anyway. The maintainers agree; registration and criteria completion are
-  tracked in [#6684](https://github.com/hivecommons/hive/issues/6684), and
-  this document will carry the badge ID and level once awarded rather than a
-  promise. The substantive prerequisites — OSI license, public VCS, private
-  vulnerability reporting, documented contribution process, automated test
-  suite in CI, static analysis, and no known unpatched vulnerabilities — are
-  already satisfied; what is missing is the registration and self-certification
-  itself.
+- **OpenSSF Best Practices Badge**: **held at the `passing` level** — project
+  [14261](https://www.bestpractices.dev/projects/14261), achieved 2026-08-27,
+  100% of the passing criteria (all 67 Met or Not-Applicable). This is a
+  maintainer **self**-certification against published criteria, publicly
+  auditable per-criterion — not a third-party audit, and so not a
+  counter-example to the "no formal security certification" sentence above.
+  The badge is displayed in `README.md` and its state is live, so the image
+  tracks the project's current level rather than the level at the time of this
+  writing; no level beyond `passing` is claimed here, for the same reason the
+  Scorecard number above is not frozen into this document. TAG-Security's
+  feedback was that a passing badge is achievable low-hanging fruit whose
+  criteria are things the project should be doing anyway; the maintainers
+  agreed, and [#6684](https://github.com/hivecommons/hive/issues/6684) tracked
+  it to completion.
 - **DCO (Developer Certificate of Origin)**: enforced for human contributors
   via `copilot-dco.yml` and is a stated policy requirement for agent-authored
   commits (`git commit -s`) per `security-model.md` Layer 5 — described there
@@ -421,10 +458,12 @@ project-level compliance signals:
   guarantee,"* i.e. Hive asks agents to sign off but the hard gate is a
   repo-side branch-protection setting the operator must also enable.
 - **License**: Apache License 2.0 (`LICENSE`), OSI-approved, CNCF-preferred.
-- **No formal SBOM** is currently attached to release artifacts — for the
-  container-runtime reason explained under [Metadata](#metadata), with the
-  out-of-band path recorded in
-  [Questions resolved since first review](#questions-resolved-since-first-review).
+- **SBOMs**: tagged releases attach standalone SPDX JSON SBOM files for each
+  published image (`hive`, `hive-contributor`, `hive-hub`) as GitHub Release
+  assets, generated by Syft against the already-published GHCR images. They
+  are intentionally not attached to image manifests; the container-runtime
+  reason is explained under [Metadata](#metadata) and in
+  [releases.md](releases.md#software-bill-of-materials-sbom).
 
 ## Secure development practices
 
@@ -453,7 +492,9 @@ project-level compliance signals:
   `gh`, goose, `su-exec`).
 - **No SBOM/provenance attestation** is attached to built images — explicitly
   disabled (`sbom: false`, citing issue #3760) rather than merely absent by
-  omission. Not yet assessed whether #3760 documents a planned reintroduction.
+  omission. Release SBOMs are generated out-of-band as standalone SPDX JSON
+  files and attached to the GitHub Release, so the published image manifests
+  stay plain.
 - **Maintainer roster**: `OWNERS` lists **three** approvers/reviewers —
   Andy Anderson (@clubanderson, IBM), James Reilly (@hanthor, Universal
   Blue) and Doug Baggett (@Danathar, independent). This is a change since
@@ -464,22 +505,14 @@ project-level compliance signals:
   Maintainer Committee table in upstream `GOVERNANCE-HIVE.md`, and the file
   says so explicitly, calling drift "a governance drift bug, not a
   housekeeping detail."
-- **CODEOWNERS**: `.github/CODEOWNERS` covers security-sensitive paths
-  (Dockerfiles, workflows, deploy manifests, launch scripts, key/cookie
-  code) but is **advisory only** — "Require review from Code Owners" is not
-  enabled in `v4` branch protection (verified against the live branch
-  protection API: no required pull-request reviews are configured; one
-  required status check is). The reason is stated in the file's own header:
-  the repository's automation merges green PRs, and enforcement would block
-  it. Two honest consequences follow. First, every path in that file
-  currently resolves to a single owner (`@clubanderson`) even though three
-  maintainers now exist — a lag between the governance change and the
-  ownership file, being corrected. Second, and more important: a change to
-  the proxy deny-rule table or the SUID contract script can merge on green
-  CI without a human security reviewer. That is a real gap between what
-  CODEOWNERS implies and what branch protection enforces, and it is the
-  project's largest remaining process risk — see
-  [Known weaknesses](#three-most-significant-known-weaknesses).
+- **CODEOWNERS**: `.github/CODEOWNERS` is scoped to the security-sensitive
+  paths whose changes can directly alter security boundaries (proxy policy,
+  Dockerfiles, workflow definitions, deploy manifests, SUID contract checks,
+  and key/cookie/session handling), and every entry names all three current
+  maintainers (`@clubanderson`, `@hanthor`, `@Danathar`). The remaining
+  repo-side step is enabling "Require review from Code Owners" in `v4` branch
+  protection; until that is enabled, CODEOWNERS is still advisory rather than
+  enforced — see [Known weaknesses](#three-most-significant-known-weaknesses).
 
 ### Communication channels
 
@@ -624,29 +657,22 @@ because a self-assessment that only lists strengths is not credible:
    availability.
 
    **What remains unmitigated is the enforcement gap, and it is real.**
-   `.github/CODEOWNERS` covers the security-sensitive paths — Dockerfiles,
-   CI workflows, deploy manifests, launch scripts, key/cookie handling — but
-   "Require review from Code Owners" is **not enabled** in `v4` branch
-   protection, which the live API confirms: no required pull-request reviews
-   are configured at all. Every path in that file also still resolves to a
-   single owner, lagging the governance change. The net effect is that a
-   change to the MITM proxy's deny-rule table — the control this document
-   credits as the thing an attacker cannot argue with — can merge on green
-   CI with no human security reviewer.
+   `.github/CODEOWNERS` now covers only the security-sensitive paths —
+   Dockerfiles, CI workflows, deploy manifests, SUID contract checks, proxy
+   policy, and key/cookie/session handling — and lists all three current
+   maintainers on every entry. But "Require review from Code Owners" still
+   has to be enabled in `v4` branch protection after the scoped file lands.
+   Until then, a change to the MITM proxy's deny-rule table — the control
+   this document credits as the thing an attacker cannot argue with — can
+   merge on green CI with no human security reviewer.
 
    **Why it has not simply been turned on.** This is the honest trade at the
    center of the project: Hive is substantially self-hosting, and its own
-   agent fleet merges green PRs. Enabling required code-owner review would
-   halt that automation repository-wide, which is why `CODEOWNERS` itself
-   documents the choice in its header rather than leaving it implicit. That
-   is an explanation, not a justification, and the maintainers do not offer
-   it as one. The defensible resolution is not "all or nothing" but a
-   **scoped** enforcement rule covering only the security-critical paths
-   (proxy rules, SUID contract, workflows, deploy manifests, key handling),
-   leaving ordinary code paths on the automated merge path. That is tracked
-   in [#6687](https://github.com/hivecommons/hive/issues/6687), together
-   with updating `CODEOWNERS` to list all three maintainers so enforcement
-   is survivable when it lands.
+   agent fleet merges green PRs. Enabling required code-owner review with
+   broad coverage would halt that automation repository-wide. The defensible
+   resolution is not "all or nothing" but the scoped ownership file above,
+   leaving ordinary code paths on the automated merge path while making the
+   human-review boundary enforceable for security-critical changes.
 
    Until that ships, an evaluator should treat "the deny-rule table is
    enforced in code" as true and "the deny-rule table is protected from
@@ -666,20 +692,16 @@ can be much longer. This is a real, if secondary, forensic-capability limit
 on the accountability mechanism this document otherwise credits as a
 strength.
 
-Two further narrow gaps, surfaced because they were found while responding to
+One further narrow gap, surfaced because it was found while responding to
 TAG-Security review and it would be poor practice to let review-driven
-discoveries go unrecorded:
+discoveries go unrecorded. (A second one recorded here in revision 2 — that
+the canary egress check matched literal substrings only, so a base64-encoded
+canary passed unflagged — has since been closed: `CanaryRegistry.Scan`
+decodes and normalizes before matching, and the residual limit is now the
+finite transform list described under
+[Critical security components](#critical-security-components), not the
+absence of decoding.)
 
-- **The canary egress check is not encoding-aware.** `CanaryRegistry.Scan`
-  tests with `strings.Contains`, so an agent induced to emit its canary
-  base64-encoded, hex-encoded, reversed, or split across a body passes the
-  proxy check unflagged — even though `ioscan`'s *input* path does decode
-  base64 and normalize Unicode before scanning. The asymmetry is an
-  oversight rather than a decision, and is tracked in
-  [#6686](https://github.com/hivecommons/hive/issues/6686). Note the control
-  degrades to "no worse than not having it," not to a false assurance, since
-  a canary hit is positive evidence and a miss was never treated as proof of
-  absence.
 - **`git-receive-pack` bodies are opaque to canary scanning.** A `git push`
   is pack-encoded, so the proxy cannot inspect it for leaked markers; with
   `fail_mode: closed` the push is refused outright, and otherwise it
@@ -710,20 +732,26 @@ repository's code-scanning alerts. This assessment deliberately does not
 freeze a numeric score into the text — it moves independently of this
 document — and a reviewer should pull the current result.
 
-**OpenSSF Best Practices Badge: not yet held, and now being pursued.** The
-first revision of this document recorded this as "not yet assessed whether
-this is planned," which was an evasion; TAG-Security review called it out,
-and the answer is that the project had simply not done it. It is planned, and
-tracked in [#6684](https://github.com/hivecommons/hive/issues/6684). The
-passing-level criteria are largely met already — OSI-approved license
-(Apache-2.0), public version-controlled source, documented contribution
-process, private vulnerability reporting via GitHub Security Advisories, an
-automated test suite gating every PR, static analysis in CI, digest-pinned
-dependencies, and no known unpatched vulnerabilities — so the outstanding
-work is registration and self-certification rather than engineering. When the
-badge is awarded this section will carry its ID and level; until then it
-carries the issue number, because a tracked commitment is worth more to a
-reviewer than a claim.
+**OpenSSF Best Practices Badge: held at the passing level.** The project is
+registered as [project 14261](https://www.bestpractices.dev/projects/14261)
+and reached **passing** (100% of the passing criteria) on **2026-08-27**; it
+has not lapsed since. The badge is displayed in `README.md` and its live
+status is available from `https://www.bestpractices.dev/projects/14261/badge`.
+Silver and gold are not claimed. The badge is self-certified, as the
+programme intends, so its value to a reviewer is not the graphic but the
+per-criterion written justifications behind it, each linking to the specific
+file, workflow or policy that satisfies it — those can be checked rather than
+taken on trust.
+
+Two earlier revisions of this section were wrong about this, in opposite
+directions, and both errors are worth recording. The first said the badge was
+"not yet assessed whether this is planned," which was an evasion rather than
+an answer; TAG-Security review called it out. The correction then overshot by
+describing the badge as not yet held and merely "being pursued" — but it had
+in fact been awarded on 2026-08-27, four days before that review. In both
+cases this document was written from itself rather than re-derived from
+observable state, which is the same defect that left the maintainer count
+stale. The badge status above is taken from the programme's public API.
 
 ### Case studies
 
@@ -781,13 +809,11 @@ repository and answered below. Where the answer is "no," it says no.
   containerd/k3s and rootless podman. Attestations force the artifact into an
   OCI image *index*, which permitted an overlayfs metacopy redirect that
   presented the binary as non-executable. Disabling them was the fix for a
-  crash-loop, not a deprioritization of supply-chain metadata. The path
-  forward is therefore not "re-enable the flag" — that would reintroduce the
-  defect — but to generate the SBOM **out-of-band** and publish it as a
-  release artifact, leaving the image manifest plain. Tracked in
-  [#6688](https://github.com/hivecommons/hive/issues/6688), which also adds a
-  CI assertion that the published manifest media type stays a plain image
-  manifest, so the constraint becomes enforced rather than comment-documented.
+  crash-loop, not a deprioritization of supply-chain metadata. The release
+  workflow now generates SBOMs **out-of-band** and publishes them as GitHub
+  Release assets, leaving the image manifest plain; the
+  `check-no-image-attestations.sh` guard keeps future `docker.yml` changes
+  from silently reattaching in-image attestations.
 
 - **Does any external channel exist for security-relevant project
   communication?** Resolved: **no, by design.** `CONTRIBUTING.md` directs all
@@ -808,9 +834,10 @@ repository and answered below. Where the answer is "no," it says no.
   compromise.
 
 - **Does the project intend to pursue the OpenSSF Best Practices Badge?**
-  Resolved: **yes.** It had not been considered before review; it is now
-  tracked in [#6684](https://github.com/hivecommons/hive/issues/6684), with
-  most passing criteria already satisfied.
+  Resolved: **it already holds it.** [Project 14261](https://www.bestpractices.dev/projects/14261)
+  reached the passing level on 2026-08-27, before this question was asked.
+  The question survived in this document only because the document was being
+  written from itself rather than checked against the programme's API.
 
 - **What is the current OpenSSF Scorecard result?** Intentionally not frozen
   into this document — the workflow runs weekly and on every push to `v4`,

@@ -60,7 +60,53 @@ env:
   # author, but a blank line separates it from a trailing Co-authored-by, so
   # `git interpret-trailers --parse` sees only the last block. Cosmetic;
   # accepted by maintainer disposition in #6605. Root cause fixed in #6606.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52'
+  #
+  # 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 — "📖 Revise security
+  # self-assessment after CNCF TAG-Security review" (#6692). Same person,
+  # two addresses: authored as andy@clubanderson.com, signed off as
+  # clubanderson@gmail.com (both the maintainer's own). Sign-off intent is
+  # unambiguous; branch is protected, so the trailer cannot be repaired
+  # in place. Accepted by maintainer disposition in #6703.
+  #
+  # 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 — "📖 Record OpenSSF Best
+  # Practices Badge in security self-assessment" (#6697). The same
+  # two-addresses-one-person case as 7e01fee4 above, in its other direction:
+  # authored as andy@clubanderson.com, signed off as
+  # clubanderson@users.noreply.github.com — GitHub's noreply address for that
+  # very account, so the identity is verifiable rather than merely plausible.
+  # Sign-off intent is unambiguous; the branch is protected, so the trailer
+  # cannot be repaired in place. Reported by the monitor in #6716.
+  #
+  # 65b9c67341962834e27c28b0d833b8b03fe91ac9 — "docs(security): the compliance
+  # list still says the badge is not held" (#6698).
+  # cfaf4988779ed52a03670d0b6824a3517117be82 — "fix(contributor): review the
+  # PRs the contributor has, not one repo's" (#6694).
+  # Both authored by Danathar as doug.baggett@gmail.com and signed off as
+  # danathar@users.noreply.github.com — GitHub's noreply address for the very
+  # account that authored them, so the identity is verifiable rather than
+  # merely plausible, and the pre-merge DCO app accepted both on that basis.
+  # Rewriting a contributor's commit or signing off on their behalf is
+  # forbidden by #6329, and v4 is protected, so a waiver is the only available
+  # disposition. Reported by the monitor in #6716.
+  #
+  # These two are not a new failure mode — they are the FOURTH and FIFTH
+  # instance of one: our checker is stricter than the pre-merge DCO app, which
+  # treats a GitHub noreply address as the author's own. Waiving each occurrence
+  # does not converge. #6721 tracks teaching the checker that rule so the
+  # monitor stops paging for sign-offs that were already accepted at merge time.
+  #
+  # 4601f926ffab6386fb07c3bc624b18041ec338d7 - "Make OpenSSF badge status
+  # consistent across the self-assessment" (#6715). Authored by Andy Anderson
+  # as andy@clubanderson.com, signed off as clubanderson@users.noreply.github.com
+  # - the same account's GitHub noreply address, exactly like 5cd49b22 above.
+  # Reported by the monitor in #6729.
+  #
+  # This is the SIXTH instance, and it arrived within a day of the fifth, which
+  # is the whole argument of #6721: the waiver list grows once per merge cycle
+  # and never converges, because nothing here is actually wrong. Every one of
+  # these sign-offs was accepted by the pre-merge DCO app. When #6721 lands,
+  # the noreply entries become STALE-WAIVER and should be deleted wholesale.
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 8fe6bb34626af4277394fcd87de2cd7eb797cc52 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 5cd49b2285af11fe6e6d8bfa9da16c7e4365a692 65b9c67341962834e27c28b0d833b8b03fe91ac9 cfaf4988779ed52a03670d0b6824a3517117be82 4601f926ffab6386fb07c3bc624b18041ec338d7'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
@@ -103,6 +149,8 @@ jobs:
       - name: Check recent DCO trailers
         id: dco
         if: github.event_name != 'push' || matrix.branch == github.ref_name
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
           src/scripts/check-dco-trailers.sh "${DCO_COMMIT_LIMIT}" HEAD > dco-report.txt 2>&1

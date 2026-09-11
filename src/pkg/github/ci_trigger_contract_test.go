@@ -85,6 +85,14 @@ func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
 		{"contributor recipe behavior", "Justfile"},
 		{"OpenAPI route and schema parity", "dashboard/openapi.json"},
 		{"this trigger contract", ".github/workflows/v2-tests.yml"},
+		// Scripts the shards SHELL OUT TO. Same exemption class as the files
+		// above, reached from the other direction: the guard is not a test
+		// reading a repo file, it is a job step executing one. An edit that
+		// does not start the jobs it changes the behaviour of is untested by
+		// construction — the toolchain installer decides whether a shard can
+		// build at all (#6648), and the reporter runs in every shard.
+		{"race-shard toolchain installer", ".github/scripts/ci-install-tool.sh"},
+		{"slowest-tests reporter", ".github/scripts/slowest-tests.sh"},
 	}
 	for _, input := range externalInputs {
 		t.Run(input.property, func(t *testing.T) {
