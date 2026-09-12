@@ -169,3 +169,97 @@ func TestValidatePRRequestClaims_LeavesCompleteIssueClosingReference(t *testing.
 		t.Fatalf("title/body changed: %q / %q", title, body)
 	}
 }
+
+// TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation is the
+// break-it-proof for kubestellar/hive#6781. Before the humanFiledBugReason
+// gate, a human maintainer's bug labeled "bug" with no hive attribution
+// trailer was auto-closed on merge via "Closes #N", leaving the reporter
+// unable to reopen (the App bot was the closer). The regression that
+// #6500 → #6762/#6767 was filed against was exactly this shape.
+//
+// With the gate, that Closes # is downgraded to Refs #. Neutering
+// humanFiledBugReason to return "" restores the old behaviour and fails this
+// test — proving the enforcement is behavioural, not documentation.
+func TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation(t *testing.T) {
+	// A maintainer-filed bug: has the "bug" label, no hive attribution
+	// trailer in the body, and User.Type is "User" (not "Bot").
+	issue := map[string]any{
+		"number": 6500,
+		"title":  "Copilot license check false-fails",
+		"body":   "The strategist agent claims no Copilot license. Steps to reproduce:\n1. Do X\n2. Y happens",
+		"state":  "open",
+		"labels": []map[string]string{{"name": "bug"}},
+		"user":   map[string]any{"login": "MikeSpreitzer", "type": "User"},
+	}
+	srv := claimValidationServer(t, nil, issue)
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+
+	title, body, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Head: "agent/fix", Title: "fix copilot check", Body: "Closes #6500\n\nDetails",
+	})
+	if err != nil {
+		t.Fatalf("validatePRRequestClaims: %v", err)
+	}
+	if body != "Refs #6500\n\nDetails" {
+		t.Fatalf("body was not downgraded (Closes # would let the App bot auto-close a maintainer bug on merge, and the reporter cannot reopen): got %q", body)
+	}
+	if title != "fix copilot check" {
+		t.Fatalf("title mutated unexpectedly: %q", title)
+	}
+}
+
+// TestValidatePRRequestClaims_LeavesAgentFiledBugClosingReference confirms the
+// gate is scoped: an agent's own bug-labeled finding still auto-closes on
+// merge. Detection: the body carries AttributionTrailerPrefix.
+func TestValidatePRRequestClaims_LeavesAgentFiledBugClosingReference(t *testing.T) {
+	issue := map[string]any{
+		"number": 6781,
+		"title":  "[strategist] closed-unverified loop",
+		"body":   "Details.\n\n— hive: agent=strategist backend=copilot model=claude-sonnet-4-6",
+		"state":  "open",
+		"labels": []map[string]string{{"name": "bug"}, {"name": "agent/strategist"}},
+		"user":   map[string]any{"login": "kubestellar-hive", "type": "Bot"},
+	}
+	srv := claimValidationServer(t, nil, issue)
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+
+	title, body, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Head: "agent/fix", Title: "fix loop", Body: "Closes #6781",
+	})
+	if err != nil {
+		t.Fatalf("validatePRRequestClaims: %v", err)
+	}
+	if title != "fix loop" || body != "Closes #6781" {
+		t.Fatalf("agent-filed bug should still be closeable: %q / %q", title, body)
+	}
+}
+
+// TestValidatePRRequestClaims_HonoursReporterConfirmation confirms that a
+// maintainer/reporter can opt in to auto-close by dropping the
+// humanFiledBugConfirmationMarker in the body — a documented, low-friction
+// override that keeps the gate from becoming a hard block on all human bugs.
+func TestValidatePRRequestClaims_HonoursReporterConfirmation(t *testing.T) {
+	issue := map[string]any{
+		"number": 42,
+		"title":  "reporter-confirmed bug",
+		"body":   "Steps to reproduce ...\n\nhive: reporter-confirmed",
+		"state":  "open",
+		"labels": []map[string]string{{"name": "bug"}},
+		"user":   map[string]any{"login": "some-maintainer", "type": "User"},
+	}
+	srv := claimValidationServer(t, nil, issue)
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+
+	title, body, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Head: "agent/fix", Title: "fix it", Body: "Closes #42",
+	})
+	if err != nil {
+		t.Fatalf("validatePRRequestClaims: %v", err)
+	}
+	if title != "fix it" || body != "Closes #42" {
+		t.Fatalf("reporter-confirmed bug should remain Closes-able: %q / %q", title, body)
+	}
+}

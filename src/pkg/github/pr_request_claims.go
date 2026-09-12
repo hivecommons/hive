@@ -159,7 +159,11 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		if err != nil {
 			return "", "", fmt.Errorf("validating closing reference %s#%d: %w", ref.Repo, ref.Issue, err)
 		}
-		if reason := incompleteIssueReason(issue); reason != "" {
+		reason := incompleteIssueReason(issue)
+		if reason == "" {
+			reason = humanFiledBugReason(issue)
+		}
+		if reason != "" {
 			key := claimKey(strings.ToLower(refOwner+"/"+refRepo), ref.Issue)
 			downgrade[key] = reason
 			c.logger.Warn("pr-request watcher: downgraded closing reference to Refs",
@@ -204,6 +208,132 @@ func incompleteIssueReason(issue *gh.Issue) string {
 		return "issue has unchecked task items"
 	}
 	return ""
+}
+
+// humanFiledBugConfirmationMarker is the case-insensitive marker a reporter (or
+// a maintainer with write access) can drop into the issue body — or add as a
+// label — to explicitly permit the App bot to auto-close the issue via a PR's
+// closing keyword. When present, humanFiledBugReason returns "" and normal
+// Closes # → auto-close behaviour is preserved.
+//
+// The marker is deliberately short and unambiguous so it can be pasted into a
+// comment quote-block or copied from CONTRIBUTING without transcription risk.
+const humanFiledBugConfirmationMarker = "hive: reporter-confirmed"
+
+// humanFiledBugReason returns a non-empty downgrade reason when issue is a
+// human-filed bug report that has NOT been marked as reporter-confirmed. When
+// this reason is applied by validatePRRequestClaims the PR body's "Closes #N"
+// is rewritten to "Refs #N", so a merge does NOT auto-close the reporter's
+// bug (kubestellar/hive#6781).
+//
+// Why this exists. GitHub auto-closes an issue on the merge of a PR that
+// carries "Closes #N", attributed to whoever pushed the merge — for the hive,
+// that is the App bot. GitHub only lets an issue be reopened by users with
+// write access or by whoever closed it, so the ORIGINAL REPORTER cannot
+// reopen an App-bot-closed issue if the symptom persists. #6500 was closed
+// this way while the symptom was still live; @MikeSpreitzer could not reopen
+// and re-filed the identical bug as #6767 and #6762. One unverified closure
+// booked two extra maintainer-filed bugs within hours.
+//
+// The philosophy mirrors isEvidenceLessCompletion in
+// pkg/dashboard/contribute_ws.go (#6730): do not act — including "act by
+// merging a Closes"-carrying PR — on a weak signal. A merged PR is evidence
+// the CODE landed; it is NOT evidence the REPORTER'S SYMPTOM is gone. The
+// reporter (or a maintainer) confirms that by dropping
+// humanFiledBugConfirmationMarker on the issue.
+//
+// Scope. This gate ONLY applies to bugs filed by HUMANS. An agent's own
+// bug-labeled finding — always stamped with AttributionTrailerPrefix, and
+// often authored by an App/Bot account — is not affected: the App bot may
+// still Closes # those, since the reporter is itself. See isHumanFiledBugReport
+// for the exact detector.
+func humanFiledBugReason(issue *gh.Issue) string {
+	if !isHumanFiledBugReport(issue) {
+		return ""
+	}
+	if hasReporterConfirmation(issue) {
+		return ""
+	}
+	return "human-filed bug: reporter must confirm the fix before auto-closing (add " +
+		strconv.Quote(humanFiledBugConfirmationMarker) + " to the issue body or apply the same label); " +
+		"see kubestellar/hive#6781"
+}
+
+// bugLabelNames is the small closed set of label names the hive treats as a
+// "this issue is a bug report". Kept case-insensitive and space-insensitive via
+// normalizeBugLabelName. If a project uses another label, humanFiledBugReason
+// simply does not fire and current behaviour is preserved — this gate never
+// causes a false downgrade for issues it did not identify as bugs.
+var bugLabelNames = map[string]struct{}{
+	"bug":              {},
+	"kind/bug":         {},
+	"type/bug":         {},
+	"type:bug":         {},
+	"adoption-blocker": {},
+}
+
+func normalizeBugLabelName(name string) string {
+	// Collapse "type: bug" and "Type / Bug" onto the canonical "type:bug".
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "")
+}
+
+// isHumanFiledBugReport reports whether issue is a bug filed by a human. Three
+// conservative signals combine — a missing signal returns false so we never
+// gate agent-filed findings (which are safe to auto-close, since the reporter
+// is the hive itself):
+//
+//  1. A bug-family label is present (bug / kind/bug / type/bug / type:bug /
+//     adoption-blocker; matched via normalizeBugLabelName).
+//  2. The body does NOT carry AttributionTrailerPrefix ("— hive:"). Every
+//     hive-mediated create is stamped by AppendTrailer with that greppable
+//     marker; if it is present, the issue came from the hive (an agent
+//     finding), not from a maintainer.
+//  3. The author is not a Bot. An App-installation-token-authored issue
+//     carries User.Type == "Bot"; if the issue came from a bot account, it is
+//     not a human report and this gate does not apply.
+//
+// All three must hold. Missing any one keeps current auto-close behaviour, so
+// the gate is fail-open on ambiguity by design: an agent's bug finding stays
+// closeable, and a maintainer's bug is protected.
+func isHumanFiledBugReport(issue *gh.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	hasBug := false
+	for _, l := range issue.Labels {
+		if _, ok := bugLabelNames[normalizeBugLabelName(l.GetName())]; ok {
+			hasBug = true
+			break
+		}
+	}
+	if !hasBug {
+		return false
+	}
+	if strings.Contains(issue.GetBody(), AttributionTrailerPrefix) {
+		return false
+	}
+	if issue.User != nil && strings.EqualFold(issue.User.GetType(), "Bot") {
+		return false
+	}
+	return true
+}
+
+// hasReporterConfirmation reports whether the reporter has explicitly opted
+// in to auto-close via the marker (in the body) or the corresponding label.
+// Body match is case-insensitive so a marker pasted in mixed case is honoured.
+func hasReporterConfirmation(issue *gh.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(issue.GetBody()), humanFiledBugConfirmationMarker) {
+		return true
+	}
+	for _, l := range issue.Labels {
+		if strings.EqualFold(strings.TrimSpace(l.GetName()), humanFiledBugConfirmationMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]string) string {
