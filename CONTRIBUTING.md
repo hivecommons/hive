@@ -177,6 +177,49 @@ someone else's behalf. That is why the post-merge checker has narrow per-commit
 waivers for already-merged history; waivers record a maintainer disposition, but
 they are not a substitute for signing new commits correctly.
 
+### How the DCO is enforced
+
+Four workflows check sign-offs, at different points and for different failure
+classes. The first two run at pull-request time, **while your branch is still
+writable** — if either fails, fix it by rewriting your branch as shown above.
+The last two report on protected-branch history that can no longer be
+rewritten; their failures are resolved by maintainer disposition, not by you.
+
+- **Copilot DCO** (`.github/workflows/copilot-dco.yml`) — runs on every pull
+  request. Every non-merge commit on the PR branch must carry a
+  `Signed-off-by:` trailer matching the commit author's email (or an
+  acceptable GitHub noreply form of it, as described above). This is the check
+  you will see most often; remediation is `git commit --amend -s` or
+  `git rebase --signoff`.
+- **DCO squash attribution** (`.github/workflows/dco-squash-attribution.yml`,
+  the "Sign-off survives the squash" check) — runs on every pull request.
+  Rejects a human-authored PR whose commits are signed off only by a bot
+  identity. GitHub's squash merge writes the landing commit with the *PR
+  author* as author while keeping the branch commit's message — and therefore
+  its bot `Signed-off-by:` — producing a human-authored commit signed off by a
+  bot on history that can no longer be fixed
+  ([#6798](https://github.com/hivecommons/hive/issues/6798)). So a sign-off
+  that is valid on each branch commit can still fail here. Fix: re-sign the
+  branch commits with your own identity (`git rebase --signoff` after setting
+  your `user.email`). The check is skipped when the PR author is itself a bot.
+- **DCO push-delta gate** (`.github/workflows/dco-push-delta.yml`) — runs on
+  direct pushes to `v4`/`v5` and checks exactly the commits that push
+  introduced ([#6756](https://github.com/hivecommons/hive/issues/6756)). This
+  is a detection gate, not a rejection gate: by the time it turns red, the
+  commits are already on the protected branch, so the failure is recorded and
+  dispositioned rather than fixed in place.
+- **Post-merge DCO trailer check** (`.github/workflows/dco-post-merge.yml`) —
+  hourly sweep of a rolling window of recent `v4`/`v5` history. It owns the
+  waiver accounting (`DCO_WAIVED_COMMITS` for single historical commits,
+  `DCO_ALLOWLIST_EMAILS` for maintainer-accepted identities) and files issues
+  on failures. The waiver semantics — what each instrument accepts and its
+  blast radius — are documented in
+  [`src/docs/v5-sync-policy.md`](src/docs/v5-sync-policy.md#inherited-dco-failures-from-v4).
+
+All four reuse the same trailer validation (`src/scripts/check-dco-trailers.sh`
+for the range-scanning gates), so they cannot disagree about what a valid
+sign-off looks like.
+
 ## Crediting issue authors
 
 When your PR resolves an issue somebody else filed, credit them on the commit with a `Co-authored-by:` trailer ([#6588](https://github.com/hivecommons/hive/issues/6588)). This is what turns "thanks, closing" into a contribution that GitHub actually records: a co-authored commit puts the filer in the repository's contributor list and on their own contribution graph.
