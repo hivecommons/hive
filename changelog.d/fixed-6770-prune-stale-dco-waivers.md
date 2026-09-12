@@ -1,0 +1,1 @@
+- The DCO monitor no longer pages on stale waivers: five sign-offs that were only ever rejected by checker bugs are removed from the waiver list, leaving just the two commits whose history genuinely cannot be repaired.
