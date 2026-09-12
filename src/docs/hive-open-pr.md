@@ -84,7 +84,10 @@ the default. Reserve `Refs #N` for an epic/tracker or a deliberately partial
 fix, and say on the same line what remains open. #6411 (`Refs #6319, #6410`,
 a follow-up tracker) and #6434 (a doc recording tracker state) are correct
 uses of `Refs`; most PRs are not those, and #6152/#6547 exist because agents
-defaulted to `Refs` out of caution rather than answering the question.
+defaulted to `Refs` out of caution rather than answering the question. Note
+that even a correct `Closes #N` can be downgraded to `Refs #N` by the watcher
+when auto-closing the issue would be unsafe — see
+[Policy gates](#policy-gates-that-change-or-reject-your-request) below.
 
 Flags `gh` accepts but this path does not need — `--draft`, `--fill`, `--web`,
 `--no-maintainer-edit` — are **accepted and ignored**, so an agent's existing
@@ -103,6 +106,68 @@ comment on it will fail.
 
 To confirm, poll the `.result.json` written next to the request file, or simply
 look for the PR.
+
+## Policy gates that change or reject your request
+
+Beyond the empty-body and `--issues` checks above, the watcher applies three
+policy gates before opening the PR. Two can rewrite what you wrote; one rejects
+the request outright.
+
+### `Closes #N` can be silently downgraded to `Refs #N`
+
+The watcher (`pkg/github.validatePRRequestClaims`) looks up every issue your
+title or body claims to close and rewrites `Closes #N` (also `Fixes`/`Resolves`)
+to `Refs #N` in the **opened PR** when auto-closing that issue on merge would be
+unsafe:
+
+- **The issue is a tracker or epic** — an `epic`/`tracker`/`meta-tracker`
+  label, an `[epic]`/`[tracker]` title prefix, or tracker-shaped content.
+- **The issue has unchecked task items** — a `- [ ]` list with open boxes means
+  the issue is not done when your PR merges.
+- **The issue is a human-filed bug that the reporter has not confirmed fixed**
+  ([#6781](https://github.com/hivecommons/hive/issues/6781)). Merges land under
+  the App bot, and GitHub does not let a reporter without write access reopen
+  an issue the App bot closed — so an unverified auto-close locks the reporter
+  out (that dead end produced [#6762](https://github.com/hivecommons/hive/issues/6762)
+  and [#6767](https://github.com/hivecommons/hive/issues/6767)). The gate
+  triggers only when **all** of these hold: a bug-family label (`bug`,
+  `kind/bug`, `type/bug`, `type:bug`, `adoption-blocker`), no `— hive:`
+  attribution trailer in the body (so agent-filed findings are unaffected), and
+  a non-Bot author. The reporter or a maintainer opts back in to auto-close by
+  adding `hive: reporter-confirmed` to the issue body or applying it as a
+  label; the downgrade then does not fire and `Closes #N` goes through.
+
+So if the PR that opened says `Refs #N` where you wrote `Closes #N`, the
+watcher downgraded it — check the hive log for
+`pr-request watcher: downgraded closing reference to Refs`, which names the
+issue and the reason. A merged fix is evidence the code landed, not that the
+reporter's symptom is gone; the issue stays open until the reporter confirms.
+
+### Base drift: a branch cut from the wrong line is rejected
+
+A head more than **100 commits behind its base** is rejected permanently
+([#6807](https://github.com/hivecommons/hive/issues/6807)). A branch cut from
+the base's own tip is behind by minutes-to-hours of commits; one cut from a
+*different* branch (typically the repository default when the PR targets
+another line) carries the full divergence — observed at 546 commits, producing
+170+-file unmergeable PRs whose diff is mostly the target branch's own history
+rendered as deletions. No metadata change can fix this, so the request is
+quarantined as `.rejected` with re-cut instructions in `.result.json`:
+
+```sh
+git fetch origin <base> && git checkout -b <branch> origin/<base>
+# re-apply your commits, push, and issue a fresh hive-open-pr request
+```
+
+Always create working branches from `origin/<target-branch>` — the branch the
+PR will target — never from whatever the checkout happens to be on.
+
+### Title claims are checked against the diff
+
+A title containing `workflow`, `test`, or `migration` is verified against the
+compared file list: if the diff contains no file of that kind, the request is
+rejected (`title claims test but diff contains no test file`). Retitle the PR
+to describe what the diff actually changes.
 
 ## Diagnosing a PR request that never opens
 
