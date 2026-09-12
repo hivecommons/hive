@@ -62,6 +62,16 @@ git add file.txt
 git commit -q -m $'arbitrary second address signoff commit\n\nSigned-off-by: Second Address Author <clubanderson@gmail.com>'
 second_address_sha=$(git rev-parse HEAD)
 
+# Sign-off in an EARLIER trailer block than a trailing Co-authored-by:
+# `git interpret-trailers --parse` sees only the last block, but the pre-merge
+# DCO app scans every line, so this must pass (#6605, v5 639f49e9).
+git config user.name 'Multi Block Author'
+git config user.email 'multiblock@example.com'
+echo multi-block >> file.txt
+git add file.txt
+git commit -q -m $'multi trailer block commit\n\nSigned-off-by: Multi Block Author <multiblock@example.com>\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
+multi_block_sha=$(git rev-parse HEAD)
+
 set +e
 output=$(DCO_AUTHOR_LOGIN_MAP="${noreply_good_sha}=noreply-author ${noreply_bad_sha}=different-author ${second_address_sha}=clubanderson" bash "$CHECKER" 10 HEAD 2>&1)
 rc=$?
@@ -116,6 +126,12 @@ if printf '%s\n' "$output" | grep -q "^FAIL ${good_sha}"; then
   bad "good commit ${good_sha} should not be reported"
 else
   pass "good commit is not reported"
+fi
+
+if printf '%s\n' "$output" | grep -q "^FAIL ${multi_block_sha}"; then
+  bad "sign-off in an earlier trailer block ${multi_block_sha} should not be reported"
+else
+  pass "sign-off separated from a trailing Co-authored-by block is accepted"
 fi
 
 # --- DCO_WAIVED_COMMITS (hivecommons/hive#6576) -------------------------------

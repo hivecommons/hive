@@ -246,9 +246,15 @@ is_bot_author() {
   esac
 }
 
+# Scan the WHOLE commit body for Signed-off-by lines, not just the final
+# trailer block. `git interpret-trailers --parse` reads only the last
+# paragraph, so a body like "Signed-off-by: ...\n\nCo-authored-by: ..." —
+# which the pre-merge DCO app accepts, because it greps every line — was
+# reported here as missing-signoff (#6605/8fe6bb34 waived for exactly this;
+# v5 639f49e9 re-triggered it). Matching the pre-merge check's line-based
+# rule keeps this monitor from paging on sign-offs already accepted at merge.
 extract_signoff_emails() {
   git log -1 --format=%B "$1" |
-    git interpret-trailers --parse |
     awk '
       tolower($0) ~ /^signed-off-by:[[:space:]]*/ {
         line=$0
