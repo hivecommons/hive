@@ -1,0 +1,90 @@
+name: Issue Reopen Command
+
+# Gives an issue's own reporter a way to reopen it (#6762).
+#
+# GitHub only permits reopening an issue by someone with write access, or by
+# whoever closed it. Hive issues are closed by the App bot on merge, so a
+# reporter without write access — which is every outside bug reporter, and was
+# @MikeSpreitzer on #6500 — structurally cannot reopen their own report when
+# an agent closes it prematurely. Their only recourse is to re-file the same
+# bug from scratch, which is what produced the duplicate #6767 and the
+# meta-report #6762 within hours of one closure.
+#
+# #6794 attacks the same loop from the other end, by stopping agent PRs from
+# auto-closing human-filed bug reports at all. That is the better fix and is
+# the primary one; this workflow is the backstop for the cases it cannot
+# cover — a bug closed before #6794 landed, a closure by a human who then
+# turns out to be wrong, and agents that shell out to `gh pr create` directly
+# and so bypass the PR-body seam entirely (#6415).
+#
+# Authorisation is deliberately narrow: the issue's own author, or anyone who
+# already has write access (for whom this is merely a convenience, since
+# GitHub would let them use the button). Everyone else is told no, so this
+# cannot become a way for an arbitrary account to churn issue state.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reopen:
+    name: Reopen on reporter request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # issue_comment fires for pull requests too; `.pull_request` is present
+    # only on those. Reopening a PR is a different operation with different
+    # consequences, so this is scoped to real issues.
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.issue.state == 'closed' &&
+      startsWith(github.event.comment.body, '/reopen')
+    steps:
+      - name: Reopen if the requester is the reporter or a collaborator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+
+          allowed=false
+          reason=''
+          if [ "${COMMENTER}" = "${ISSUE_AUTHOR}" ]; then
+            allowed=true
+            reason="reported this issue"
+          else
+            # A user with no access at all 404s here rather than returning a
+            # permission, so failure must not abort the step.
+            perm=$(gh api "repos/${REPO}/collaborators/${COMMENTER}/permission" \
+              --jq '.permission' 2>/dev/null || echo 'none')
+            case "${perm}" in
+              admin|maintain|write)
+                allowed=true
+                reason="has ${perm} access"
+                ;;
+            esac
+          fi
+
+          if [ "${allowed}" != true ]; then
+            echo "::notice::/reopen from ${COMMENTER} ignored - not the reporter and no write access"
+            gh issue comment "${ISSUE}" --repo "${REPO}" --body \
+              "@${COMMENTER} \`/reopen\` is limited to the issue's own reporter (@${ISSUE_AUTHOR}) and to people with write access. If you are hitting this problem too, please say so here and the reporter or a maintainer can reopen it."
+            exit 0
+          fi
+
+          echo "reopening #${ISSUE} for ${COMMENTER} (${reason})"
+          gh issue reopen "${ISSUE}" --repo "${REPO}"
+          # Written to a file rather than inlined: a multi-line --body inside a
+          # YAML block scalar picks up the block's indentation and renders as a
+          # code block on GitHub.
+          {
+            printf 'Reopened at the request of @%s, who %s.\n\n' "${COMMENTER}" "${reason}"
+            printf 'If this was closed by a merged PR, the fix it contained did not resolve the problem - please add whatever you are still seeing so it is not closed the same way again. See #6762 for why this command exists.\n'
+          } > /tmp/reopen-comment.md
+          gh issue comment "${ISSUE}" --repo "${REPO}" --body-file /tmp/reopen-comment.md
