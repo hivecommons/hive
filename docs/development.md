@@ -88,18 +88,20 @@ go test $PKGS         -short -race -count=1                      # test (rest i/
 
 The workflow shards for wall-clock only: `pkg/hub` and `pkg/agent` are each
 sliced across several jobs by test *function* (they are single packages too
-slow to run whole), and everything else from `go list ./pkg/... ./cmd/...` is
+slow to run whole), and everything else from
+`go list ./pkg/... ./cmd/... ./internal/...` is
 partitioned into balanced buckets. Every shard also runs with `-v` and posts
 its slowest test functions to the job's step summary — look there before
 reaching for a local profile when the gate feels slow. Scheduled runs add
 `-shuffle=on` (the seed is in the log); the PR gate does not, so an
-order-dependent test shows up as a filed issue rather than as a red PR. The union of the shards is the whole of `./pkg/...` and
-`./cmd/...`, so what changes between your loop and the gate is the *flags*, not
-the coverage. To reproduce the gate locally in one unsharded run:
+order-dependent test shows up as a filed issue rather than as a red PR. The union of the shards is the whole of `./pkg/...`,
+`./cmd/...`, and `./internal/...` (the shared test helpers in
+`internal/testutil`), so what changes between your loop and the gate is the
+*flags*, not the coverage. To reproduce the gate locally in one unsharded run:
 
 ```bash
 cd src
-go test ./pkg/... ./cmd/... -short -race -count=1
+go test ./pkg/... ./cmd/... ./internal/... -short -race -count=1
 ```
 
 What each flag changes:
@@ -137,7 +139,7 @@ Two flags that appear in CI but are *not* part of the PR gate:
   test is.
 
 Neither the PR gate nor the cron runs `./test/...`: both enumerate
-`./pkg/... ./cmd/...` explicitly, and the integration suite additionally needs
+`./pkg/... ./cmd/... ./internal/...` explicitly, and the integration suite additionally needs
 the `integration` build tag and a live hive, as described above.
 
 ## Format and lint expectations
