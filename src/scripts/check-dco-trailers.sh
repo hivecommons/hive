@@ -39,7 +39,10 @@ skip_bots="${DCO_SKIP_BOT_AUTHORS:-true}"
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: check-dco-trailers.sh [commit-limit] [ref]
+Usage: check-dco-trailers.sh [commit-limit] [ref-or-range]
+
+  ref-or-range may be a commit-ish (inspect that many recent commits) or a
+  two-dot range <before>..<after> (inspect exactly the commits in the range).
 
 Environment:
   DCO_COMMIT_LIMIT       Number of recent commits to inspect (default: 50)
@@ -68,10 +71,40 @@ if [ "$limit" -eq 0 ]; then
   exit 2
 fi
 
-if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
-  echo "ref does not resolve to a commit: $ref" >&2
-  exit 2
-fi
+# `ref` may be a single commit-ish (the rolling-window form used by the hourly
+# monitor) or a two-dot RANGE like <before>..<after>. The range form exists for
+# the push gate (#6756): `git rev-list -n N <tip>` walks back from the tip in
+# commit order, which is NOT the set a push introduced. On a merge push — every
+# v4->v5 sync is one — that walk interleaves commits that were already on the
+# branch, so a tip-plus-count scan reports history the push did not touch.
+# Passing the real <before>..<after> makes the scan exactly the pushed commits.
+case "$ref" in
+  *...*)
+    echo "three-dot (symmetric difference) ranges are not supported: $ref" >&2
+    exit 2
+    ;;
+  *..*)
+    range_left="${ref%%..*}"
+    range_right="${ref##*..}"
+    # An open-ended range silently means HEAD, which would hide a typo.
+    if [ -z "$range_left" ] || [ -z "$range_right" ]; then
+      echo "range endpoints must both be specified: $ref" >&2
+      exit 2
+    fi
+    for range_end in "$range_left" "$range_right"; do
+      if ! git rev-parse --verify --quiet "${range_end}^{commit}" >/dev/null; then
+        echo "ref does not resolve to a commit: $range_end (in range $ref)" >&2
+        exit 2
+      fi
+    done
+    ;;
+  *)
+    if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+      echo "ref does not resolve to a commit: $ref" >&2
+      exit 2
+    fi
+    ;;
+esac
 
 lower() { tr '[:upper:]' '[:lower:]'; }
 
@@ -352,8 +385,14 @@ EOF_SIGNOFFS
   fi
 done < <(git rev-list -n "$limit" "$ref")
 
-printf 'DCO trailer check inspected %s recent commits on %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived).\n' \
-  "$limit" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count"
+# "recent commits on <tip>" would misdescribe a range scan, where the commits
+# are the push delta rather than the newest N reachable from a tip.
+case "$ref" in
+  *..*) scanned_scope='commits in' ;;
+  *)    scanned_scope='recent commits on' ;;
+esac
+printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived).\n' \
+  "$limit" "$scanned_scope" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count"
 
 # Waived commits print on every run, above the failures. A disposition that
 # produced no output would be an invisible hole in a compliance check; keeping

@@ -262,6 +262,72 @@ else
   echo "$output" | sed 's/^/      | /'
 fi
 
+# --- range mode (#6756 push gate) -------------------------------------------
+#
+# The push gate must inspect exactly the commits a push introduced. Passing a
+# tip plus a count cannot express that: `git rev-list -n N <tip>` walks back in
+# commit order, so on a merge push (every v4->v5 sync is one) it reports
+# commits that were already on the branch. A two-dot range is the only form
+# that means "just these commits".
+run_checker_ref() { # run_checker_ref <ref-or-range> <env-assignments...>
+  ref_arg="$1"
+  shift
+  set +e
+  output=$(env "DCO_AUTHOR_LOGIN_MAP=${noreply_good_sha}=noreply-author ${noreply_bad_sha}=different-author ${second_address_sha}=clubanderson" "$@" bash "$CHECKER" 10 "$ref_arg" 2>&1)
+  rc=$?
+  set -e
+}
+
+# A range reports the failure INSIDE it and stays silent about the identical
+# failure just outside it. If the range were being ignored and the tip scanned
+# instead, missing_sha would appear too.
+run_checker_ref "${missing_sha}..${mismatch_sha}" "DCO_WAIVED_COMMITS="
+if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha}" &&
+   ! printf '%s\n' "$output" | grep -qE "^(FAIL|WAIVED|STALE-WAIVER) ${missing_sha}"; then
+  pass "a range inspects only the commits it contains"
+else
+  bad "range scan leaked commits from outside the range (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The summary must not call a range scan "recent commits on <tip>" — that
+# wording is what made the tip-plus-count bug look correct in review.
+if printf '%s\n' "$output" | grep -q "commits in ${missing_sha}..${mismatch_sha}"; then
+  pass "a range scan is described as a range in the summary"
+else
+  bad "range summary still uses rolling-window wording"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# A range whose commits are all clean passes, so the gate is green for an
+# ordinary good push rather than inheriting older unrelated history.
+run_checker_ref "${mismatch_sha}..${noreply_good_sha}" "DCO_WAIVED_COMMITS="
+if [ "$rc" -eq 0 ]; then
+  pass "a range containing only well-signed commits passes"
+else
+  bad "clean range should exit 0, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# A typo'd endpoint must be a config error, not an empty (silently green) scan.
+run_checker_ref "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef..${mismatch_sha}" "DCO_WAIVED_COMMITS="
+if [ "$rc" -eq 2 ]; then
+  pass "an unresolvable range endpoint is a config error"
+else
+  bad "bad range endpoint should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# Three-dot is symmetric difference; accepting it would silently scan commits
+# on the other side of the fork, which is never what a push gate wants.
+run_checker_ref "${missing_sha}...${mismatch_sha}" "DCO_WAIVED_COMMITS="
+if [ "$rc" -eq 2 ]; then
+  pass "a three-dot range is rejected rather than silently reinterpreted"
+else
+  bad "three-dot range should exit 2, got ${rc}"
+  echo "$output" | sed 's/^/      | /'
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-dco-trailers FAILED"
   exit 1

@@ -9,9 +9,10 @@ name: DCO push-delta gate
 # unrelated STALE-WAIVER output and aged history, so the "this push you
 # just made was rejected" signal is blurred.
 #
-# This workflow inspects EXACTLY the commits introduced by the push
-# (event.before..event.after) so the run status is unambiguously scoped to
-# the new commits and nothing else — this is the "new pushes must be clean"
+# This workflow inspects EXACTLY the commits introduced by the push, by
+# handing check-dco-trailers.sh the literal event.before..event.after range,
+# so the run status is unambiguously scoped to the new commits and nothing
+# else — this is the "new pushes must be clean"
 # rule, deliberately narrower than dco-post-merge.yml's "recent window must
 # be clean" scan. It reuses src/scripts/check-dco-trailers.sh so the push
 # gate and the hourly monitor can never disagree about what a valid
@@ -69,7 +70,12 @@ jobs:
             mode='branch-deleted'
           else
             count=$(git rev-list --count "${BEFORE}..${AFTER}")
-            ref="${AFTER}"
+            # Pass the RANGE, not the tip. `git rev-list -n <count> <tip>`
+            # walks back from the tip in commit order, which on a merge push
+            # interleaves commits that were already on the branch: measured on
+            # the real v5 sync merge 783ec871, a tip+count scan inspected 9
+            # commits of which 7 were not in the push at all.
+            ref="${BEFORE}..${AFTER}"
             mode='delta'
           fi
           echo "mode=${mode}"
@@ -85,14 +91,22 @@ jobs:
         if: steps.range.outputs.mode != 'branch-deleted' && steps.range.outputs.count != '0'
         env:
           # Kept in lockstep with dco-post-merge.yml so the push gate and
-          # the hourly monitor accept the same identity dispositions. The
-          # per-SHA DCO_WAIVED_COMMITS list is intentionally NOT mirrored
-          # here: it names historical commits that already exist on the
-          # protected branch, and by construction none of them can appear
-          # inside a fresh event.before..event.after range. A newly pushed
-          # commit that would require a waiver is exactly what this gate
-          # must reject loudly, so the maintainer disposition path stays
-          # visible.
+          # the hourly monitor accept the same identity dispositions.
+          #
+          # DCO_WAIVED_COMMITS is mirrored deliberately. A v4->v5 sync push
+          # introduces v4 commits to v5 for the first time, so they DO appear
+          # in that push's range — including any commit carrying a maintainer
+          # disposition because it cannot be repaired on a protected branch
+          # (b798382a has no trailer at all and its author is an outside
+          # contributor; rewriting it is forbidden by #6329). Without the
+          # mirror, the next such commit red-lines every sync push with no
+          # escape short of editing this file, and a gate nobody can satisfy
+          # is a gate that gets switched off.
+          #
+          # This does not weaken the gate: a waiver names a full SHA of
+          # history that already exists, so it can never pre-approve a
+          # genuinely new bad commit — which still fails loudly.
+          DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01'
           DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com'
           DCO_SKIP_BOT_AUTHORS: 'true'
           GITHUB_TOKEN: ${{ github.token }}
