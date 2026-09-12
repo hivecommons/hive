@@ -921,6 +921,38 @@ func TestGitSource_InitSyncFullClone(t *testing.T) {
 	}
 }
 
+func TestKnowledgeAPI_ConnectGitSource_UsesKnowledgeBaseDirSeam(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	src := makeHTTPSourceRepo(t)
+	base := t.TempDir()
+	oldBase := knowledgeBaseDir
+	knowledgeBaseDir = base
+	t.Cleanup(func() { knowledgeBaseDir = oldBase })
+
+	api := &KnowledgeAPI{logger: covLogger()}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	if err := api.ConnectGitSource(ctx, GitSourceConfig{
+		Name:  "docs-src",
+		URL:   src,
+		Layer: LayerProject,
+	}); err != nil {
+		t.Fatalf("ConnectGitSource: %v", err)
+	}
+	if len(api.gitSources) != 1 {
+		t.Fatalf("gitSources = %d, want 1", len(api.gitSources))
+	}
+	cloneDir := api.gitSources[0].CloneDir()
+	wantPrefix := filepath.Join(base, "git-sources") + string(filepath.Separator)
+	if !strings.HasPrefix(cloneDir, wantPrefix) {
+		t.Fatalf("clone dir = %q, want under %q", cloneDir, wantPrefix)
+	}
+	if !api.gitSources[0].Ready() {
+		t.Fatal("expected git source ready after successful connect")
+	}
+}
+
 func TestGitSource_InitSparseSubpath(t *testing.T) {
 	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
 	src := makeHTTPSourceRepo(t)

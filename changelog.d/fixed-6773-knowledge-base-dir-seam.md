@@ -1,0 +1,1 @@
+- Fix git-source knowledge directory handling to honor the hermetic knowledgeBaseDir test seam.

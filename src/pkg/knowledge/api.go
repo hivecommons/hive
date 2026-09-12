@@ -794,7 +794,7 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	}
 	k.mu.RUnlock()
 
-	gs := newGitSourceForConnect(config, localKnowledgeDir, k.logger)
+	gs := newGitSourceForConnect(config, knowledgeBaseDir, k.logger)
 	if err := initGitSourceForConnect(gs, ctx); err != nil {
 		return err
 	}
@@ -1239,7 +1239,7 @@ func (k *KnowledgeAPI) ObsidianSync(ctx context.Context, req ObsidianSyncRequest
 }
 
 func (k *KnowledgeAPI) obsidianSyncToFile(slug, title, factType, layer string, confidence float64, tags []string, req ObsidianSyncRequest) string {
-	dir := filepath.Join(localKnowledgeDir, layer)
+	dir := filepath.Join(knowledgeBaseDir, layer)
 	_ = os.MkdirAll(dir, 0o755)
 
 	filename := slug + ".md"

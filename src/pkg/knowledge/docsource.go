@@ -359,7 +359,7 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 // (e.g. /data/hive.yaml, /secrets/*, /etc/passwd).
 // Tests that use a DocumentSource with a file outside the knowledge dir must
 // override this variable for the duration of the test.
-var allowedFilePrefixes = []string{localKnowledgeDir + "/"}
+var allowedFilePrefixes = []string{knowledgeBaseDir + string(filepath.Separator)}
 
 // validateLocalFilePath rejects any file_path that falls outside the
 // allowed knowledge directory. The path is cleaned before comparison to
@@ -371,7 +371,7 @@ func validateLocalFilePath(path string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("file_path %q is outside the allowed knowledge directory (%s)", path, localKnowledgeDir)
+	return fmt.Errorf("file_path %q is outside the allowed knowledge directory (%s)", path, knowledgeBaseDir)
 }
 
 // validateFilePath checks the file_path on this DocumentSource. Uses the
