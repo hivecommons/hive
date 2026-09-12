@@ -70,13 +70,24 @@ purpose=${purpose:-this job}
 # broken route, and waiting longer only makes the report slower — it never
 # makes it succeed.
 APT_TIMEOUT_SECONDS="${HIVE_CI_APT_TIMEOUT_SECONDS:-10}"
-# END-TO-END ceiling for the whole install, not per invocation. Deliberately so:
-# a per-call ceiling of N gives a worst case of 2N (update + install), which for
-# any N large enough to be safe on a healthy runner is no better than the 2+
-# minutes #6648 is about. Budgeting once and handing each call what is LEFT
-# makes this number mean what it says — "this step cannot take longer than this
-# to fail".
+# END-TO-END ceiling for the NETWORK phase (update + download), not per
+# invocation. Deliberately so: a per-call ceiling of N gives a worst case of 2N
+# (update + download), which for any N large enough to be safe on a healthy
+# runner is no better than the 2+ minutes #6648 is about. Budgeting once and
+# handing each call what is LEFT makes this number mean what it says — "the
+# network cannot stall this step for longer than this".
+#
+# This ceiling covers ONLY the parts that touch the mirrors. It must NOT cover
+# dpkg's local unpack/configure work: installing gcc+libc6-dev pulls ~100
+# packages and configuring them routinely takes over a minute on the hive
+# runners, which is legitimate CPU/disk time, not a dead route. Wrapping the
+# whole `apt-get install` in this budget killed healthy installs mid-configure
+# (four consecutive v2 Tests failures on v4, 2026-09-12 08:17–11:00Z).
 APT_DEADLINE_SECONDS="${HIVE_CI_APT_DEADLINE_SECONDS:-60}"
+# Separate, generous ceiling for the LOCAL phase (dpkg unpack/configure from
+# already-downloaded .debs). No network involved: this only guards against a
+# wedged dpkg, so it can be long without weakening the fail-fast promise above.
+APT_LOCAL_DEADLINE_SECONDS="${HIVE_CI_APT_LOCAL_DEADLINE_SECONDS:-300}"
 deadline_at=$(( $(date +%s) + APT_DEADLINE_SECONDS ))
 budget_remaining() {
   local left=$(( deadline_at - $(date +%s) ))
@@ -104,7 +115,7 @@ fail_with_remediation() {
     echo "    3. Point the repo variable HIVE_RUNNER_LABELS at '[\"ubuntu-latest\"]' to"
     echo "       run on GitHub-hosted runners, which ship ${require} preinstalled."
     echo ""
-    echo "  Bounded at ${APT_TIMEOUT_SECONDS}s per fetch and ${APT_DEADLINE_SECONDS}s for the whole step,"
+    echo "  Bounded at ${APT_TIMEOUT_SECONDS}s per fetch and ${APT_DEADLINE_SECONDS}s for the network phase,"
     echo "  so a dead mirror fails in seconds instead of minutes (kubestellar/hive#6648)."
     echo ""
   } >&2
@@ -139,6 +150,17 @@ run_bounded() {
   fi
 }
 
+# For the LOCAL (no-network) phase: a flat generous ceiling, independent of the
+# network budget above, so slow-but-healthy dpkg configure work is never killed
+# by a deadline that exists to catch dead mirrors.
+run_local_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$APT_LOCAL_DEADLINE_SECONDS" "$@"
+  else
+    "$@"
+  fi
+}
+
 apt_opts=(
   -o "Acquire::http::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Acquire::https::Timeout=${APT_TIMEOUT_SECONDS}"
@@ -151,13 +173,22 @@ apt_opts=(
 apt_install() {
   local sudo_prefix=("$@")
   # `apt-get update` EXITS 0 when every mirror fails — it downgrades unreachable
-  # sources to `W:` warnings. So its status cannot be the gate; the install
+  # sources to `W:` warnings. So its status cannot be the gate; the download
   # below is what actually proves an index was fetched. Its failure is reported,
-  # not swallowed, but it is the install that decides.
+  # not swallowed, but it is the download that decides.
   run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" update -qq \
     || echo "ci-install-tool: apt-get update did not complete cleanly; attempting the install anyway" >&2
+  # NETWORK phase: fetch the .debs under the fail-fast budget. This is the part
+  # a dead mirror can stall, so it is the only part the #6648 deadline covers.
   # shellcheck disable=SC2086 # apt_pkgs is a deliberate space-separated list
-  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install -y -qq $apt_pkgs
+  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install --download-only -y -qq $apt_pkgs \
+    || return 1
+  # LOCAL phase: unpack/configure from the cache just fetched. No network here —
+  # configuring gcc's ~100-package closure legitimately takes >60s on the hive
+  # runners, so this runs under its own generous ceiling instead of whatever
+  # scraps remain of the network budget.
+  # shellcheck disable=SC2086 # apt_pkgs is a deliberate space-separated list
+  run_local_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install -y -qq $apt_pkgs
 }
 
 if [ -n "$apt_pkgs" ] && command -v apt-get >/dev/null 2>&1; then
