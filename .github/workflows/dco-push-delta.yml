@@ -1,0 +1,103 @@
+name: DCO push-delta gate
+
+# Push-time counterpart to copilot-dco.yml (#6756).
+#
+# copilot-dco.yml runs on `pull_request` and therefore cannot see a DIRECT
+# push to v4/v5 — the exact bypass #6756 was filed about. dco-post-merge.yml
+# does run on push, but over a rolling 50-commit window mixed with waiver
+# housekeeping: a newly pushed bad commit's FAIL line sits alongside
+# unrelated STALE-WAIVER output and aged history, so the "this push you
+# just made was rejected" signal is blurred.
+#
+# This workflow inspects EXACTLY the commits introduced by the push
+# (event.before..event.after) so the run status is unambiguously scoped to
+# the new commits and nothing else — this is the "new pushes must be clean"
+# rule, deliberately narrower than dco-post-merge.yml's "recent window must
+# be clean" scan. It reuses src/scripts/check-dco-trailers.sh so the push
+# gate and the hourly monitor can never disagree about what a valid
+# Signed-off-by looks like.
+#
+# LIMIT ACKNOWLEDGED: this is a DETECTION gate, not a REJECTION gate.
+# GitHub Actions cannot prevent a push after the fact — only branch
+# protection can. See the PR body for the exact settings a maintainer must
+# still flip on hivecommons/hive to convert this red X into a hard block.
+#
+# The dco-post-merge.yml monitor is deliberately left in place: it owns the
+# hourly cron sweep, the DCO_WAIVED_COMMITS accounting, and the issue-
+# creation flow. This workflow only adds a sharp push-scoped signal on top.
+
+on:
+  push:
+    branches:
+      - v4
+      - v5
+
+permissions:
+  contents: read
+
+jobs:
+  dco-push-delta:
+    name: DCO check on newly pushed commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Determine pushed commit range
+        id: range
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          zero='0000000000000000000000000000000000000000'
+          # A brand-new branch push reports before=000...0, and a branch-
+          # deletion push reports after=000...0. In both cases before..after
+          # is not a valid range; fall back to inspecting a small recent
+          # window on whichever tip exists so the gate is never silently
+          # skipped.
+          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "${zero}" ]; then
+            count=50
+            ref="${AFTER}"
+            mode='fallback-new-branch'
+          elif [ -z "${AFTER}" ] || [ "${AFTER}" = "${zero}" ]; then
+            echo 'push deletes the branch; nothing to inspect'
+            count=0
+            ref=''
+            mode='branch-deleted'
+          else
+            count=$(git rev-list --count "${BEFORE}..${AFTER}")
+            ref="${AFTER}"
+            mode='delta'
+          fi
+          echo "mode=${mode}"
+          echo "count=${count}"
+          echo "ref=${ref}"
+          {
+            echo "mode=${mode}"
+            echo "count=${count}"
+            echo "ref=${ref}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run DCO checker on the pushed range
+        if: steps.range.outputs.mode != 'branch-deleted' && steps.range.outputs.count != '0'
+        env:
+          # Kept in lockstep with dco-post-merge.yml so the push gate and
+          # the hourly monitor accept the same identity dispositions. The
+          # per-SHA DCO_WAIVED_COMMITS list is intentionally NOT mirrored
+          # here: it names historical commits that already exist on the
+          # protected branch, and by construction none of them can appear
+          # inside a fresh event.before..event.after range. A newly pushed
+          # commit that would require a waiver is exactly what this gate
+          # must reject loudly, so the maintainer disposition path stays
+          # visible.
+          DCO_ALLOWLIST_EMAILS: 'raul.mturrubiates@gmail.com'
+          DCO_SKIP_BOT_AUTHORS: 'true'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash src/scripts/check-dco-trailers.sh \
+            "${{ steps.range.outputs.count }}" \
+            "${{ steps.range.outputs.ref }}"
