@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -444,6 +445,121 @@ func TestSyncCopilotToken_AuthoritativeStillWinsAfterFix(t *testing.T) {
 
 	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
 		t.Fatalf("action = %v, want seed (authoritative token must replace stale CLI identity)", act)
+	}
+	if got := extractCopilotToken(cfg); got != "gho_licensed" {
+		t.Errorf("config token = %q, want gho_licensed", got)
+	}
+}
+
+// --- #6767: authoritative-but-known-bad token must not clobber recovery -----
+
+// The exact scenario @MikeSpreitzer reported on v4 commit 917713cf: the hive
+// boots with a licensed-at-the-time COPILOT_GITHUB_TOKEN (authoritative). The
+// upstream Copilot seat for that identity later stops being licensed, so every
+// copilot agent prints "You are not licensed to use Copilot" (Request ID …).
+// An operator opens the agent Terminal and runs /login with a DIFFERENT,
+// currently-licensed identity — the CLI writes the fresh token into the shared
+// config.json. Before this fix the next syncCopilotToken tick (~30 s later)
+// unconditionally rewrote that fresh token back to the stale-authoritative
+// one, so agents worked briefly and then reverted to "not licensed" — the
+// exact "went back to saying" loop Mike posted on 2026-09-11.
+//
+// After the fix: once markProviderErrorLocked has recorded a copilot agent as
+// BackendAuthUnlicensed, syncCopilotToken must treat a differing real cliTok
+// as an in-agent recovery /login and PROMOTE it over the known-bad token.
+func TestSyncCopilotToken_AuthoritativeYieldsToRecoveryAfterUnlicensed_6767(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	// The recovering operator's /login has just written this token.
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:mike":"gho_recovery"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+
+	m := testManager(5)
+	scanner := &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+	m.agents["scanner"] = scanner
+	// Fleet was configured with a token that WAS licensed at boot.
+	m.SetCopilotToken("gho_stale_authoritative")
+
+	// Fleet-wide "not licensed to use Copilot" — the message from the issue.
+	// markProviderErrorLocked is called under m.mu.
+	m.mu.Lock()
+	m.markProviderErrorLocked(scanner, providerErrorMatch{
+		Class: "auth",
+		Line:  "✗ You are not licensed to use Copilot. (Request ID: 2686:2B2C94:EA7FE5:105C478:6AA463E1)",
+	}, time.Now())
+	m.mu.Unlock()
+
+	// The reconciler tick that used to clobber the recovery /login.
+	act := m.syncCopilotToken(cfg, dur)
+	if act != copilotSyncPromote {
+		t.Fatalf("action = %v, want promote (recovery /login must survive a known-bad authoritative token) — #6767", act)
+	}
+	if got := extractCopilotToken(cfg); got != "gho_recovery" {
+		t.Errorf("config token = %q, want gho_recovery (recovery login preserved)", got)
+	}
+	if got, _ := os.ReadFile(dur); string(got) != "gho_recovery" {
+		t.Errorf("durable file = %q, want gho_recovery (recovery login promoted)", string(got))
+	}
+	if got := m.CopilotToken(); got != "gho_recovery" {
+		t.Errorf("in-memory token = %q, want gho_recovery", got)
+	}
+}
+
+// The rejection latch is one-shot per token: once a subsequent
+// setCopilotToken installs a different value (dashboard re-login, env change,
+// or the PROMOTE above), authoritative precedence is rearmed. Without this
+// the rejected flag would sit true forever and #6514's stale-account
+// protection would be permanently defeated after the first upstream 403.
+func TestCopilotAuthTokenRejectedClearsOnNewToken_6767(t *testing.T) {
+	m := testManager(5)
+	m.SetCopilotToken("gho_first")
+	m.mu.Lock()
+	m.copilotAuthTokenRejected = true
+	m.mu.Unlock()
+
+	// Same value must NOT clear the latch — the operator hasn't recovered.
+	m.SetCopilotToken("gho_first")
+	m.mu.RLock()
+	stillRejected := m.copilotAuthTokenRejected
+	m.mu.RUnlock()
+	if !stillRejected {
+		t.Fatal("re-setting the same token must not clear the rejection latch")
+	}
+
+	// A truly new token means the operator supplied fresh credentials.
+	m.SetCopilotToken("gho_recovered")
+	m.mu.RLock()
+	cleared := !m.copilotAuthTokenRejected
+	auth := m.copilotAuthTokenAuthoritative
+	m.mu.RUnlock()
+	if !cleared {
+		t.Error("installing a different token must clear the rejection latch")
+	}
+	if !auth {
+		t.Error("a fresh non-empty token must be authoritative again after recovery")
+	}
+}
+
+// #6514 must still hold when there is NO upstream evidence the authoritative
+// token is bad: a stale account sitting in the shared CLI config still loses
+// to a real dashboard/env token. This is the "did the fix regress the
+// previous fix?" guard.
+func TestSyncCopilotToken_AuthoritativeStillWinsWithoutRejection_6767(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"https://github.com:stale":"gho_stale"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+	m.SetCopilotToken("gho_licensed")
+	// No copilot agent has reported "not licensed" — nothing latched.
+
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
+		t.Fatalf("action = %v, want seed (authoritative token still wins when it hasn't been rejected)", act)
 	}
 	if got := extractCopilotToken(cfg); got != "gho_licensed" {
 		t.Errorf("config token = %q, want gho_licensed", got)

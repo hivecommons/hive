@@ -470,6 +470,17 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	// copilotAuthTokenRejected records that the currently-held authoritative
+	// Copilot token has been observed being rejected upstream by GitHub's
+	// Copilot API ("not licensed to use Copilot" — #6500/#6767). Once set, the
+	// reconciler stops treating the authoritative claim as inviolate: a
+	// different, real token seen in the shared CLI config (an in-agent
+	// /login recovery) is PROMOTED over the known-bad authoritative token
+	// instead of being clobbered by it 30 s later. Cleared whenever
+	// setCopilotToken installs a value that differs from the current one, so
+	// a successful recovery (or dashboard re-login) rearms authoritative
+	// precedence for whatever fresh token the operator supplied.
+	copilotAuthTokenRejected bool
 	claudeAuthToken               string
 	uidMap                        *UIDMap
 	appAuth                       AppTokenMinter
@@ -748,6 +759,13 @@ func (m *Manager) SetCopilotToken(token string) {
 func (m *Manager) setCopilotToken(token string, authoritative bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// A newly-installed token — whether a dashboard re-login, an env var, or
+	// a promoted in-agent /login — represents fresh operator intent, so any
+	// prior "authoritative token rejected by Copilot" latch must be cleared.
+	// Without this, the recovery path #6767 depends on would only fire once.
+	if strings.TrimSpace(token) != strings.TrimSpace(m.copilotAuthToken) {
+		m.copilotAuthTokenRejected = false
+	}
 	m.copilotAuthToken = token
 	// INVARIANT: an EMPTY token is never authoritative (#6500).
 	//
@@ -1601,6 +1619,7 @@ func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAc
 	m.mu.RLock()
 	held := strings.TrimSpace(m.copilotAuthToken)
 	authoritative := m.copilotAuthTokenAuthoritative
+	rejected := m.copilotAuthTokenRejected
 	m.mu.RUnlock()
 
 	if copilotCredentialFileHasTokens(configPath) {
@@ -1608,11 +1627,19 @@ func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAc
 		if cliTok != "" && cliTok == held {
 			return copilotSyncNoop
 		}
-		// SEED: explicit configuration and a just-completed dashboard login
-		// outrank whatever identity a shared config inherited. GitHub documents
-		// COPILOT_GITHUB_TOKEN as the CLI's highest-precedence credential; the
-		// reconciler must not silently reverse that precedence 30 seconds later.
-		if authoritative {
+		// #6767: if the authoritative token has been observed being rejected
+		// upstream by Copilot ("not licensed to use Copilot"), a DIFFERENT
+		// real token now sitting in the shared CLI config is almost certainly
+		// an operator's recovery /login — the exact case @MikeSpreitzer
+		// reported. Clobbering it with the known-bad authoritative token
+		// would put every agent right back at "not licensed" 30 s later,
+		// which is the loop the second closure of #6500 missed. Fall through
+		// to PROMOTE so the fresh token becomes the durable one.
+		if authoritative && !(rejected && cliTok != "" && cliTok != held) {
+			// SEED: explicit configuration and a just-completed dashboard login
+			// outrank whatever identity a shared config inherited. GitHub documents
+			// COPILOT_GITHUB_TOKEN as the CLI's highest-precedence credential; the
+			// reconciler must not silently reverse that precedence 30 seconds later.
 			if held == "" {
 				return copilotSyncNoop
 			}
@@ -6081,6 +6108,19 @@ func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErr
 	// the backoff timer itself is not restarted.
 	if status, ok := classifyBackendAuthStatus(match.Class, match.Line); ok {
 		agent.markBackendAuthLocked(status, match.Line, now)
+		// #6767: an unlicensed verdict against a copilot agent is direct
+		// upstream evidence that whatever Copilot token this agent is
+		// actually using has no license. If the hive currently treats a
+		// token as AUTHORITATIVE, that same token is the one being pinned
+		// into every agent's environment (COPILOT_GITHUB_TOKEN) and into
+		// the shared CLI config, so the "not licensed" verdict IS a verdict
+		// on the authoritative token. Latch that here so syncCopilotToken
+		// stops clobbering an operator's recovery /login with the known-bad
+		// authoritative token. Cleared as soon as setCopilotToken installs
+		// a different value (recovery succeeded, or dashboard re-login).
+		if status == BackendAuthUnlicensed && agent.Config.Backend == "copilot" && m.copilotAuthTokenAuthoritative {
+			m.copilotAuthTokenRejected = true
+		}
 	}
 	if !agent.ProviderErrorBackoffUntil.IsZero() && now.Before(agent.ProviderErrorBackoffUntil) &&
 		agent.ProviderErrorClass == match.Class && agent.ProviderErrorLine == match.Line {

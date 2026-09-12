@@ -1,0 +1,1 @@
+- fix(copilot): let a recovery /login survive a known-bad authoritative token — once a copilot agent has been observed unlicensed upstream, the reconciler stops clobbering a different in-agent /login with the rejected authoritative token (#6500, #6767).
