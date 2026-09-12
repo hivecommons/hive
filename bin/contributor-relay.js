@@ -2797,6 +2797,18 @@ const CHROME_IDLE_GRACE_TICKS = Math.max(1, Number(process.env.HIVE_CHROME_IDLE_
 // completion verdict in sight. Reset on task start and on any tick that does
 // not see an unverdicted idle pane.
 let chromeIdleTicks = 0;
+// Pane fingerprint captured at the last IDLE_COMPLETE tick that credited the
+// grace counter (#6775). The chrome-idle path infers "the agent finished" from
+// a pane classified IDLE_COMPLETE — but classification is a per-frame read.
+// A backend that renders a busy frame classifiers do not recognise as activity
+// (pi's progress percentages are the observed case) satisfies IDLE_COMPLETE
+// while the transcript is still growing: three consecutive misreads then end
+// a task that was actively producing output. Requiring the pane to be
+// byte-identical between consecutive credited ticks is what separates "still
+// producing output the classifier does not see" from "actually finished with
+// no verdict emitted": a pane whose fingerprint changed between ticks CANNOT
+// be idle, whatever classifyPane() said about either frame in isolation.
+let chromeIdleFingerprint = null;
 let taskAgentActivityObserved = false;
 let deliveredAgentActivityBaseline = new Map();
 
@@ -2843,10 +2855,39 @@ function resetTaskAgentActivity(baselineLines) {
 // lines and never reads the pane itself. paneStalled() is destructive — the
 // first call seeing new output consumes it (#5333) — so nothing on the tick
 // path may take a second reading.
-function recordChromeIdleTick(idleWithoutVerdict) {
+//
+// #6775: `currentFingerprint`, when provided, gates the increment on the pane
+// being byte-identical to the last credited tick. classifyPane() is a
+// per-frame reading, and pi's busy pane can render frames that read as
+// IDLE_COMPLETE (a `\d+\.\d+%` progress line satisfies both hasIdlePrompt and
+// hasCompletionMarker with no working-verb match). Three such frames in a row
+// used to end a task in flight. Requiring the FINGERPRINT to be unchanged
+// between credited ticks means a pane still producing output — however the
+// classifier reads any single frame — can never fire chrome_idle: the bytes
+// moved. A frame with a fresh fingerprint restarts the count at 1 and adopts
+// that fingerprint as the new baseline; a matching frame advances toward the
+// full window. Callers that cannot supply a fingerprint (the existing #5376
+// regression test drives this directly, without a pane) omit the argument
+// and get the pre-#6775 behaviour, which is safe: production always supplies
+// one.
+function recordChromeIdleTick(idleWithoutVerdict, currentFingerprint) {
   if (!idleWithoutVerdict) {
     chromeIdleTicks = 0;
+    chromeIdleFingerprint = null;
     return false;
+  }
+  if (typeof currentFingerprint === 'string' && currentFingerprint !== '') {
+    if (chromeIdleFingerprint !== null && currentFingerprint !== chromeIdleFingerprint) {
+      // Pane content moved between two IDLE_COMPLETE readings — output was
+      // produced, so this pane is not idle regardless of what classifyPane()
+      // said about either frame. Restart the count with this frame as the new
+      // baseline: the pane may still settle, but nothing so far has held long
+      // enough to be trusted.
+      chromeIdleTicks = 1;
+      chromeIdleFingerprint = currentFingerprint;
+      return chromeIdleTicks >= CHROME_IDLE_GRACE_TICKS;
+    }
+    chromeIdleFingerprint = currentFingerprint;
   }
   chromeIdleTicks++;
   return chromeIdleTicks >= CHROME_IDLE_GRACE_TICKS;
@@ -2854,6 +2895,7 @@ function recordChromeIdleTick(idleWithoutVerdict) {
 
 function resetChromeIdleGrace() {
   chromeIdleTicks = 0;
+  chromeIdleFingerprint = null;
 }
 
 let lastPaneFingerprint = null;
@@ -3593,8 +3635,14 @@ function progressTick() {
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
   // may end a task on its own. A verdict short-circuits the wait entirely.
+  //
+  // #6775: the idle reading must also be STABLE across those ticks. Passing
+  // the current pane fingerprint makes recordChromeIdleTick refuse to credit a
+  // tick whose bytes differ from the previous credited one — a pane still
+  // producing output cannot pretend to be idle just because classifyPane()
+  // misread a busy frame (pi's progress percentages were the observed case).
   const idleWithoutVerdict = paneState === PANE_STATE_IDLE_COMPLETE && !completionVerdict;
-  const chromeIdleGraceElapsed = recordChromeIdleTick(idleWithoutVerdict);
+  const chromeIdleGraceElapsed = recordChromeIdleTick(idleWithoutVerdict, paneFingerprint(tmuxLines));
 
   // ── The chrome-idle veto (#6717) ──────────────────────────────────────────
   //

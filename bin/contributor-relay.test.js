@@ -6459,6 +6459,47 @@ test('#5376 recordChromeIdleTick fires only after the full consecutive window', 
   } finally { teardown(relay); }
 });
 
+test('#6775 chrome_idle grace requires pane STABILITY across ticks — a busy pane misclassified IDLE_COMPLETE frame-by-frame can never fire', () => {
+  // The pi backend renders progress as `\d+\.\d+%`, and pane-classifier.js's
+  // `pi` branch matches that single token against both hasIdlePrompt and
+  // hasCompletionMarker while isWorking's narrow verb list finds nothing to
+  // catch on. Every frame of a working pi pane therefore classifies
+  // IDLE_COMPLETE, and CHROME_IDLE_GRACE_TICKS such frames in a row used to
+  // end the live task with signal=chrome_idle, no HIVE_VERDICT and no PR —
+  // the exact log lines quoted in #6775. The fix requires the pane to be
+  // BYTE-IDENTICAL between credited ticks: a pane whose bytes moved cannot
+  // be idle whatever any single frame's classification said, so a still-
+  // producing pi pane can never accumulate the window.
+  const relay = loadRelay({});
+  try {
+    relay.resetChromeIdleGrace();
+    // A working pane whose content is still changing tick-by-tick. Feed many
+    // ticks — well past the full window — with a fresh fingerprint each time.
+    for (let i = 0; i < relay.CHROME_IDLE_GRACE_TICKS * 3; i++) {
+      const changingFrame = `π > Working on task…\n47.${i}% (auto)\ntokens)`;
+      const elapsed = relay.recordChromeIdleTick(true, changingFrame);
+      assert.strictEqual(
+        elapsed, false,
+        `tick ${i} must not fire while the pane is still producing output (fingerprint changed from the previous credited tick) — this is the exact #6775 defect`,
+      );
+    }
+    // And a pane that has actually gone quiet — same bytes across the full
+    // window — still fires exactly as #5376 promised.
+    relay.resetChromeIdleGrace();
+    const stable = 'π > \n100.0% (auto)\ntokens)';
+    for (let i = 1; i < relay.CHROME_IDLE_GRACE_TICKS; i++) {
+      assert.strictEqual(
+        relay.recordChromeIdleTick(true, stable), false,
+        `stable tick ${i} must not fire before the full window`,
+      );
+    }
+    assert.strictEqual(
+      relay.recordChromeIdleTick(true, stable), true,
+      'the last tick of a byte-stable idle window still fires — chrome_idle remains the bounded fallback #5376 intended',
+    );
+  } finally { teardown(relay); }
+});
+
 // ---------------------------------------------------------------------------
 // kubestellar/hive#5447 — a failed re-mint must be visible to the relay, and
 // token_expires_at must actually be read.
