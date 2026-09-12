@@ -165,6 +165,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 	var req ReviewRequest
 	if err := json.Unmarshal(data, &req); err != nil {
+		// A torn read is not a malformed request: leave it for the next tick
+		// rather than destroying it. See quarantinable.
+		if !quarantinable(path, nowFn()) {
+			return
+		}
 		c.writeReviewResult(path, ReviewResponse{OK: false, Error: "invalid JSON: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
 		c.reviewRetries.clear(path)
@@ -275,7 +280,7 @@ func (c *Client) denyReviewRequest(path string, req ReviewRequest, reason string
 func (c *Client) writeReviewResult(reqPath string, resp ReviewResponse) {
 	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
 	if b, err := json.MarshalIndent(resp, "", "  "); err == nil {
-		_ = os.WriteFile(out, b, 0o644)
+		_ = writeRequestFile(out, b)
 	}
 }
 
@@ -291,7 +296,7 @@ func WriteReviewRequest(dir string, req ReviewRequest) (string, error) {
 	}
 	name := fmt.Sprintf("%s-%d.json", sanitizeAgentName(req.Agent), time.Now().UnixNano())
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	if err := writeRequestFile(path, b); err != nil {
 		return "", err
 	}
 	return path, nil

@@ -274,6 +274,7 @@ func TestMergeRequestWatcher_BadJSONQuarantined(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ageForQuarantine(t, bad)
 	c.ProcessMergeRequestsOnce(context.Background())
 
 	if merges != 0 {

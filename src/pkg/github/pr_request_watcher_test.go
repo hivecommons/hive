@@ -167,6 +167,7 @@ func TestPRRequestWatcher_QuarantinesBadJSON(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ageForQuarantine(t, bad)
 	c.ProcessPRRequestsOnce(context.Background())
 
 	if _, err := os.Stat(bad); !os.IsNotExist(err) {

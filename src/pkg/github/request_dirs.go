@@ -3,6 +3,8 @@ package github
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
+	"time"
 )
 
 // requestDirMode is the mode every agent-facing request queue must end up with.
@@ -67,4 +69,71 @@ func ensureRequestDir(logger *slog.Logger, kind, dir string) bool {
 func PrepareRequestDirs(logger *slog.Logger) {
 	ensureRequestDir(logger, "pr", prRequestDir())
 	ensureRequestDir(logger, "issue", issueRequestDir())
+}
+
+// inFlightGrace is how long a request file whose contents do not parse is
+// assumed to still be mid-write rather than genuinely malformed. See
+// quarantinable.
+const inFlightGrace = 5 * time.Second
+
+// writeRequestFile publishes one request/result file atomically.
+//
+// os.WriteFile opens with O_CREATE|O_TRUNC and writes separately, so a watcher
+// scan landing in between sees the final ".json" name holding zero bytes. That
+// content does not unmarshal, and every watcher's response to unparseable JSON
+// is to quarantine the file as ".bad" — so a perfectly valid request was
+// destroyed purely because the scan won the race. Writing to a temp name the
+// scanners ignore and rename(2)-ing it into place makes the entry appear only
+// once it is complete; rename is atomic within a directory.
+//
+// The ".tmp" suffix is load-bearing: every scanner requires a ".json" suffix,
+// so an in-progress "<name>.json.tmp" is invisible to them.
+func writeRequestFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if tmp != "" {
+			_ = os.Remove(tmp) // no-op once the rename succeeded
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes 0600; request queues are group-readable by design.
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	tmp = ""
+	return nil
+}
+
+// quarantinable reports whether a file that failed to parse should be treated
+// as permanently bad (renamed aside) rather than retried on the next tick.
+//
+// Our own writers are atomic, but the request queues are drop-boxes: an agent
+// may append with a plain shell redirect, which has the same torn-read window.
+// Quarantining is destructive and unrecoverable, so it is only correct once the
+// file has stopped changing. A file that is empty, or was modified within
+// inFlightGrace, is assumed to still be in flight and is left alone; a stale
+// unparseable file is genuinely malformed.
+func quarantinable(path string, now time.Time) bool {
+	st, err := os.Stat(path)
+	if err != nil {
+		return false // vanished; nothing to quarantine
+	}
+	if st.Size() == 0 {
+		return false
+	}
+	return now.Sub(st.ModTime()) >= inFlightGrace
 }

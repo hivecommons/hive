@@ -235,6 +235,7 @@ func TestIssueRequestWatcher_QuarantinesMalformed(t *testing.T) {
 
 	badJSON := dir + "/agent-1.json"
 	_ = os.WriteFile(badJSON, []byte("{not json"), 0o644)
+	ageForQuarantine(t, badJSON)
 	noTitle, _ := WriteIssueRequest(dir, IssueRequest{Repo: "o/r", Agent: "a"})
 	badKind, _ := WriteIssueRequest(dir, IssueRequest{Kind: "wat", Repo: "o/r", Title: "t", Agent: "a"})
 	noNumber, _ := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Body: "b", Agent: "a"})

@@ -231,6 +231,11 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	}
 	var req MergeRequest
 	if err := json.Unmarshal(data, &req); err != nil {
+		// A torn read is not a malformed request: leave it for the next tick
+		// rather than destroying it. See quarantinable.
+		if !quarantinable(path, nowFn()) {
+			return
+		}
 		c.writeMergeResult(path, MergeResponse{OK: false, Error: "invalid JSON: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
 		c.logger.Warn("merge-request watcher: bad request file quarantined",
@@ -395,7 +400,7 @@ func priorMergeCIWaits(reqPath string) int {
 func (c *Client) writeMergeResult(reqPath string, resp MergeResponse) {
 	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
 	if b, err := json.MarshalIndent(resp, "", "  "); err == nil {
-		_ = os.WriteFile(out, b, 0o644)
+		_ = writeRequestFile(out, b)
 	}
 }
 
@@ -411,7 +416,7 @@ func WriteMergeRequest(dir string, req MergeRequest) (string, error) {
 	}
 	name := fmt.Sprintf("%s-%d.json", sanitizeAgentName(req.Agent), time.Now().UnixNano())
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	if err := writeRequestFile(path, b); err != nil {
 		return "", err
 	}
 	return path, nil
