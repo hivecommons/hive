@@ -554,7 +554,30 @@ func TestStart_FreshClone(t *testing.T) {
 func TestStart_PollPicksUpNewCommit(t *testing.T) {
 	bareURL, workDir := setupBareRepo(t)
 
-	localDir := filepath.Join(t.TempDir(), "clone")
+	// Do NOT use t.TempDir() for the clone: pollLoop only observes ctx
+	// cancellation between ticks, so a `git pull` spawned by pull() can
+	// still be rewriting .git when the test returns. t.TempDir's cleanup
+	// does a single os.RemoveAll and fails the test with "directory not
+	// empty" if it loses that race. Use a private temp dir with a
+	// retrying cleanup instead.
+	localRoot, err := os.MkdirTemp("", "policy-poll-test")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			err := os.RemoveAll(localRoot)
+			if err == nil || time.Now().After(deadline) {
+				if err != nil {
+					t.Logf("cleanup of %s: %v (in-flight git pull?)", localRoot, err)
+				}
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	localDir := filepath.Join(localRoot, "clone")
 
 	// Use a short poll interval so the test completes quickly.
 	const pollInterval = 200 * time.Millisecond
