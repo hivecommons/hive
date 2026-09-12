@@ -91,12 +91,30 @@ func stripGitConfigArgs(args []string) []string {
 
 type sandboxFakeLauncher struct {
 	waitForCancel bool
+	// started, when non-nil, is closed once Run begins so a test can prove
+	// the sandbox execution is in flight. Single-use: reuse across kicks
+	// would close it twice and panic.
+	started chan struct{}
+	// release, when non-nil, blocks Run until the test closes it (or the
+	// context is cancelled). This pins the "sandbox is running" window open
+	// deterministically instead of racing the goroutine to completion.
+	release chan struct{}
 }
 
 func (l sandboxFakeLauncher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
+	if l.started != nil {
+		close(l.started)
+	}
 	if l.waitForCancel {
 		<-ctx.Done()
 		return sandbox.Result{Stderr: ctx.Err().Error(), ExitCode: -1}, ctx.Err()
+	}
+	if l.release != nil {
+		select {
+		case <-l.release:
+		case <-ctx.Done():
+			return sandbox.Result{Stderr: ctx.Err().Error(), ExitCode: -1}, ctx.Err()
+		}
 	}
 	if err := os.WriteFile(filepath.Join(spec.Workspace, "agent-report.json"), []byte(`{"lane":"scanner","kind":"summary","findings":[],"prs_opened":[],"beads_filed":[],"summary":"ok"}`), 0o660); err != nil {
 		return sandbox.Result{}, err
@@ -209,7 +227,13 @@ func TestManagerSandboxStateMachine(t *testing.T) {
 	}
 	m := NewManager(cfg, quietTestLogger(), ProjectContext{Org: "kubestellar", Repos: []string{"hive"}})
 	m.SetSandboxConfig(config.AgentSandboxConfig{Enabled: true, Image: "agent-image", WorkspaceDir: t.TempDir()})
-	m.SetSandboxLauncher(sandboxFakeLauncher{})
+	// Gate the fake launcher: without the release channel the sandbox
+	// goroutine can finish and return the agent to idle before the second
+	// SendKick below, so the "refused" assertion raced the scheduler and
+	// flaked under full-suite load.
+	started := make(chan struct{})
+	release := make(chan struct{})
+	m.SetSandboxLauncher(sandboxFakeLauncher{started: started, release: release})
 	m.setSandboxRunnerForTest(&sandboxFakeRunner{})
 	if err := m.Start(context.Background(), "scanner"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -220,10 +244,16 @@ func TestManagerSandboxStateMachine(t *testing.T) {
 	if err := m.SendKick("scanner", "fix"); err != nil {
 		t.Fatalf("SendKick: %v", err)
 	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sandbox launcher was never invoked")
+	}
 	if err := m.SendKick("scanner", "again"); err == nil {
 		t.Fatal("second kick while sandbox is running should be refused")
 	}
-	deadline := time.Now().Add(time.Second)
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if got := m.AllStatuses()["scanner"].State; got == StateIdle {
 			return
