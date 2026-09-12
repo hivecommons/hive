@@ -477,6 +477,62 @@ Run both of the first two. They are the two halves of the container health probe
 
 `/api/livez` is deliberately process-focused: the Kubernetes manifest notes that stale hub heartbeat state belongs in deeper health reporting and should not crash-loop a healthy pod.
 
+## The version badge says `⚠ auto-update failed` or `⟳ auto-update retrying`
+
+These two badges next to the version SHA surface the spoke's own self-upgrade
+bookkeeping ([#6765](https://github.com/hivecommons/hive/issues/6765)). A spoke
+that is instructed to upgrade (by the hub, or via **Self Upgrade**) records the
+attempt at `/data/upgrade-requested` on the PVC and restarts its pod; the marker
+is removed on the boot that actually lands the new image. A marker that is still
+present therefore always describes an upgrade that has **not** landed, and the
+badge renders its state:
+
+- **`⟳ auto-update retrying n/5`** — the pod restarted on the *same* image, so
+  the previous attempt failed; the spoke is retrying with exponential backoff
+  (2 minutes before retry #2, doubling per attempt, capped at 30 minutes).
+- **`⚠ auto-update failed`** (red) — the retry budget of 5 attempts is
+  exhausted for this (current → target) pair, the spoke has given up, and it
+  has reported the failure to the hub. It will not retry until a **new** target
+  is armed — a new target always gets a fresh budget, so a fix that arrives
+  late (an RBAC Role applied after the fact, a registry blip) still converges
+  on the next instructed upgrade.
+
+While a marker exists, the `Queued for auto-upgrade` hint is suppressed — an
+upgrade that is actively failing is not "queued", and before
+[#6765](https://github.com/hivecommons/hive/issues/6765) those two states were
+indistinguishable.
+
+Both badge tooltips carry the target SHA, the attempt count, the first-requested
+time, and the last error. The same data is available without the dashboard:
+
+```bash
+# Through the API — the upgradeMarker field of /api/version
+curl -fsS http://127.0.0.1:3002/api/version | jq .upgradeMarker
+
+# Or read the marker itself off the PVC
+kubectl -n hive exec deploy/hive -- cat /data/upgrade-requested
+```
+
+The two dominant causes, in order:
+
+1. **The spoke cannot patch its own Deployment.** Self-upgrade works by the
+   spoke get/patching the `hive` Deployment in its own namespace, which needs
+   the `hive-self-upgrade` Role and RoleBinding on the spoke's ServiceAccount.
+   The retry log (`self-upgrade retrying after a failed attempt`) and the
+   terminal error (`self-upgrade FAILED: giving up after repeated attempts`)
+   both carry the last error and this hint. The manifests are in
+   [manual-provisioning.md](manual-provisioning.md) (RBAC section).
+2. **The Deployment tracks a tag that can never deliver the target SHA** — for
+   example a pinned digest or a stale floating tag, so patching the Deployment
+   rolls the pod onto the same image every time. Check what the Deployment's
+   image field tracks against the armed target, and see
+   [release-channels.md](release-channels.md) for how targets are resolved
+   through the tracked tag.
+
+A failed self-upgrade also exits the process with code **17**
+(`selfUpgradeFailureExitCode`) rather than 0, so the failure is visible in the
+container's termination state instead of looking like a clean shutdown.
+
 ## Podman (Quadlet) deployments: failure modes Docker does not have
 
 These are specific to running Hive as systemd units. Everything else in this guide applies unchanged; the install-side counterpart is the **Traps** section of [podman-standalone-quadlet.md](podman-standalone-quadlet.md).
