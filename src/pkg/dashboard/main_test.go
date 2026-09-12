@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +65,25 @@ func TestMain(m *testing.M) {
 	http.DefaultTransport = guarded
 	http.DefaultClient.Transport = guarded
 
-	os.Exit(m.Run())
+	// Filesystem counterpart of the network guard above: newAuditLog wires a
+	// lumberjack writer at the package-level auditLogPath (/data/audit.jsonl)
+	// whenever /data exists. On a live hive host that is the REAL audit log —
+	// observed as ~450 "audit log write failed ... permission denied" rotation
+	// attempts against /data/audit.jsonl during a plain `go test ./pkg/dashboard`
+	// run, and on a host where the test uid CAN write, test entries would be
+	// interleaved into (and rotate away) production audit data. Point the path
+	// at a per-run temp file before any test constructs a server. Tests that
+	// need specific on-disk content already use loadFromDiskPath with their
+	// own files, so none depend on the production default.
+	auditDir, err := os.MkdirTemp("", "dashboard-test-audit-")
+	if err != nil {
+		panic("dashboard TestMain: cannot create temp audit dir: " + err.Error())
+	}
+	auditLogPath = filepath.Join(auditDir, "audit.jsonl")
+
+	code := m.Run()
+	os.RemoveAll(auditDir)
+	os.Exit(code)
 }
 
 // isLoopbackAddr reports whether a dial target is a loopback host, i.e. an
