@@ -116,6 +116,100 @@ func TestPRRequestWatcherRejectsInternalMetadata(t *testing.T) {
 	}
 }
 
+// TestPRRequestWatcherRejectsBaseDrift covers hivecommons/hive#6807: a head
+// cut from the repository default instead of the PR target compares hundreds
+// of commits behind the base. The watcher must reject the request loudly
+// instead of opening an unmergeable, unreviewable PR.
+func TestPRRequestWatcherRejectsBaseDrift(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/compare/testing...quality/fix":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"behind_by": 546,
+				"files":     []map[string]string{},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/pulls":
+			created++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.prAuthz = func(string, int) error { return nil }
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "quality/fix", Base: "testing", Title: "fix: small change", Body: "a real change", Agent: "quality",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if created != 0 {
+		t.Fatalf("wrongly-cut branch must not create a PR; got %d creates", created)
+	}
+	if _, err := os.Stat(reqPath + ".rejected"); err != nil {
+		t.Fatalf("drifted request was not quarantined as .rejected: %v", err)
+	}
+	result, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"546 commits behind", "origin/testing"} {
+		if !strings.Contains(string(result), want) {
+			t.Errorf("result %q does not contain %q", result, want)
+		}
+	}
+}
+
+// TestValidatePRRequestContentAllowsOrdinaryStaleness pins the boundary: a
+// branch cut from the base's own tip is behind only by commits that landed
+// since the cut, which must not trip the drift gate.
+func TestValidatePRRequestContentAllowsOrdinaryStaleness(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"behind_by": prRequestMaxBaseDriftCommits,
+			"files":     []map[string]string{},
+		})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	err := c.validatePRRequestContent(context.Background(), PRRequest{Repo: "o/r", Base: "testing", Head: "fix"})
+	if err != nil {
+		t.Fatalf("behind_by at the limit must pass, got: %v", err)
+	}
+}
+
+// TestValidatePRRequestContentDriftBeatsFileLimit pins the check order: a
+// wrongly-cut branch usually also exceeds the 300-file compare scan cap, and
+// the file-cap error is retried as transient forever. The drift rejection —
+// permanent, with the actual cause — must win.
+func TestValidatePRRequestContentDriftBeatsFileLimit(t *testing.T) {
+	files := make([]map[string]string, githubCompareFileLimit)
+	for i := range files {
+		files[i] = map[string]string{"filename": "f", "patch": ""}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 546, "files": files})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.Default())
+
+	err := c.validatePRRequestContent(context.Background(), PRRequest{Repo: "o/r", Base: "testing", Head: "fix"})
+	if _, policy := prBaseDriftReason(err); !policy {
+		t.Fatalf("want base-drift rejection to take precedence over the file-scan cap, got: %v", err)
+	}
+}
+
 func TestValidatePRRequestContentUsesExplicitBase(t *testing.T) {
 	var comparePath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

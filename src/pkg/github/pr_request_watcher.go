@@ -293,6 +293,13 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			c.rejectPRRequest(path, req, "content", reason, nowFn)
 			return
 		}
+		// A head cut from the wrong branch (hivecommons/hive#6807) is as
+		// permanent as leaked metadata: retrying the same request can never
+		// shrink the divergence — only re-cutting the branch can.
+		if reason, policy := prBaseDriftReason(err); policy {
+			c.rejectPRRequest(path, req, "base-drift", reason, nowFn)
+			return
+		}
 		c.failPRRequest(path, req, err, nowFn)
 		return
 	}

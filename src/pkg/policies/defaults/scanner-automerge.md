@@ -82,7 +82,7 @@ ISSUES:
 REPO: <org>/<repo>
 
 Steps:
-1. git worktree add /tmp/scanner-fix-<lowest-number> -b scanner/fix-<lowest-number> origin/main
+1. git worktree add /tmp/scanner-fix-<lowest-number> -b scanner/fix-<lowest-number> origin/<target-branch> (the branch the PR will target — the repository default unless the work names another; never assume `main`)
 2. Read each issue: gh issue view <number> --repo <org>/<repo>
 3. Verify the bugs exist in code — read files, confirm the patterns
 4. If any issue is invalid or already fixed: comment with evidence, close as "not planned"

@@ -12,6 +12,42 @@ import (
 
 const githubCompareFileLimit = 300
 
+// prRequestMaxBaseDriftCommits caps how far a candidate head may sit BEHIND
+// its PR base at open time. A working branch cut from the base's own tip is
+// behind by however many commits landed since the cut — minutes to hours on
+// this path, tens at the outside. A branch cut from a DIFFERENT branch (the
+// repository default instead of the PR target, hivecommons/hive#6807) is
+// behind by the full divergence between the two lines — observed at 546
+// commits, producing 170+-file unmergeable PRs whose diff is mostly the
+// target branch's own work rendered as deletions. Opening such a PR silently
+// is strictly worse than failing the request: nobody can review it, and
+// merging it would revert the target. The limit converts that mistake into a
+// loud agent-side rejection with the re-cut instructions in the error.
+const prRequestMaxBaseDriftCommits = 100
+
+// prBaseDriftError is a permanent policy mismatch, like
+// prContentMetadataError: no change to the request metadata can make a
+// wrongly-cut branch mergeable — only re-cutting the branch can.
+type prBaseDriftError struct {
+	base     string
+	head     string
+	behindBy int
+}
+
+func (e *prBaseDriftError) Error() string {
+	return fmt.Sprintf(
+		"head %q is %d commits behind base %q (limit %d) — the working branch appears to be cut from a different branch than the PR target; re-create it from the target tip ('git fetch origin %s && git checkout -b <branch> origin/%s'), re-apply your commits, and push again",
+		e.head, e.behindBy, e.base, prRequestMaxBaseDriftCommits, e.base, e.base)
+}
+
+func prBaseDriftReason(err error) (string, bool) {
+	var driftErr *prBaseDriftError
+	if !errors.As(err, &driftErr) {
+		return "", false
+	}
+	return driftErr.Error(), true
+}
+
 var compareHunkRE = regexp.MustCompile(`^@@ -(?:\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // prContentMetadataError is a permanent policy mismatch: changing the request
@@ -63,6 +99,13 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 	}
 	if comparison == nil {
 		return fmt.Errorf("validating PR content metadata in %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, head)
+	}
+	// Base-drift gate (hivecommons/hive#6807), checked BEFORE the file-count
+	// cap below: a branch cut from the wrong line usually also blows past the
+	// 300-file scan limit, and that error is retried as transient forever,
+	// while this one is a permanent rejection with the actual cause.
+	if behind := comparison.GetBehindBy(); behind > prRequestMaxBaseDriftCommits {
+		return &prBaseDriftError{base: base, head: head, behindBy: behind}
 	}
 	// GitHub exposes changed files only on the first compare page and caps that
 	// list at 300. Do not claim a clean scan when later files may be invisible.

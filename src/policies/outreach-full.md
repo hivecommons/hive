@@ -51,7 +51,7 @@ gh issue create --repo "$HIVE_REPO" \
 
 If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
-1. Create a worktree: `git worktree add /tmp/outreach-<slug> -b outreach/<slug>`
+1. Create a worktree cut from the branch the PR will target — the repository default unless the work names another; never whatever branch the checkout happens to be on: `git worktree add /tmp/outreach-<slug> -b outreach/<slug> origin/<target-branch>`
 2. Inventory every product, security, integration, compatibility, and roadmap claim the content will make
 3. Verify each claim against the current repository and released artifacts; record an exact citation for it and remove any claim you cannot prove
 4. Stop and ask a human if the content would make a regulatory/compliance claim or needs an unapproved roadmap commitment
