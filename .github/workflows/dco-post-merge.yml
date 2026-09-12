@@ -92,6 +92,23 @@ env:
   # checker being stricter than the pre-merge DCO app — six of the eight
   # entries this list ever held turned out to be the latter.
   #
+  # d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b — the squash of #6796, reported
+  # by the monitor in #6798. A NEW class, not another noreply mismatch: branch
+  # commit f222e73e was authored AND signed off by Copilot, which is internally
+  # consistent and which DCO_SKIP_BOT_AUTHORS skips. GitHub's squash merge then
+  # wrote the landing commit with the pull request's author — a human — while
+  # keeping the bot's Signed-off-by, producing author=Andy Anderson
+  # <andy@clubanderson.com> signed-off-by=223556219+copilot@users.noreply.
+  # github.com. The mismatch was created BY the merge, so it could not have been
+  # caught on the branch by any check we had, and v4 is protected so it cannot
+  # be repaired now.
+  #
+  # Unlike the noreply entries removed above, this one is a real mismatch and a
+  # waiver is the correct instrument. It should also be the LAST of its kind:
+  # dco-squash-attribution.yml now fails a human-authored pull request whose
+  # commits sign off as a bot, at PR time, while the branch is still writable.
+  # If this list ever gains a second d8f376e8-shaped entry, that gate regressed.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -103,7 +120,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that

@@ -1,0 +1,47 @@
+name: DCO squash attribution
+
+# Pre-merge counterpart to dco-post-merge.yml for one specific class (#6798).
+#
+# The post-merge monitor skips bot-authored commits, so a branch commit both
+# authored AND signed off by Copilot passes every check we run today. GitHub's
+# squash merge then writes the landing commit with the PULL REQUEST's author -
+# a human - while keeping that message and its bot Signed-off-by. The commit
+# that reaches the protected branch is therefore a human-authored commit signed
+# off by a bot, which is a genuine mismatched-signoff on history that can no
+# longer be rewritten. d8f376e8 (the squash of #6796) is exactly this.
+#
+# This runs at pull_request time because that is the only point where the
+# commit is still writable and the contributor can simply re-sign it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  squash-attribution:
+    name: Sign-off survives the squash
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # The merge commit GitHub synthesises for a PR is not what gets
+          # squashed; the PR's own commits are. Check those.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Self-test the attribution checker
+        run: bash src/scripts/test-check-squash-signoff-attribution.sh
+
+      - name: Check sign-off attribution across the PR's commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          bash src/scripts/check-squash-signoff-attribution.sh \
+            "${BASE_SHA}" "${HEAD_SHA}" "${PR_AUTHOR_LOGIN}"

@@ -1,0 +1,1 @@
+- Pull requests that sign off as a bot are now rejected before merge, because GitHub squash rewrites them into human-authored commits carrying a bot sign-off that can never be repaired on a protected branch.
