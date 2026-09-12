@@ -437,6 +437,51 @@ func TestContributeLandingHasWatsonxOption(t *testing.T) {
 	}
 }
 
+// TestContributeLitellmFlavorsMapToLitellmSetup pins the #6821 fix: the
+// openrouter/vllm/llm-d/watsonx CLI options are UI flavors of the litellm
+// backend, and the generated commands must invoke `just contribute-setup
+// litellm` — the Justfile rejects the flavor names ("Unknown backend
+// 'openrouter'"). The mapping lives in SETUP_BACKEND and is applied both to
+// the copy-paste command templates and to the per-client default prompt.
+func TestContributeLitellmFlavorsMapToLitellmSetup(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		// Flavor → real Justfile backend map, and its two consumers.
+		`var SETUP_BACKEND={openrouter:'litellm',vllm:'litellm','llm-d':'litellm',watsonx:'litellm'};`,
+		`function setupBackend(v){return SETUP_BACKEND[v]||v;}`,
+		`var backend=setupBackend(cli);`,
+		`'  4. just contribute-setup '+setupBackend(v)+'\n'+`,
+		// Command templates substitute the mapped backend, not the raw
+		// option value, everywhere the CLI placeholder appears.
+		`.replace(/CLI/g,backend)`,
+		// Headless capability is judged on the real backend too, so litellm
+		// flavors never trip the Kubernetes no-headless-mode warning.
+		`K8S_HEADLESS_BACKENDS[backend]`,
+		// OpenRouter model selection is documented in the env block (#6821).
+		`any OpenRouter model ID works`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/contribute litellm-flavor mapping missing %q", want)
+		}
+	}
+
+	if strings.Contains(body, `.replace(/CLI/g,cli)`) {
+		t.Errorf("/contribute still substitutes the raw option value into command templates; flavors like openrouter would generate 'just contribute-setup openrouter', which the Justfile rejects")
+	}
+}
+
 // TestContributeK8sHeadlessCapability enumerates every backend the Kubernetes
 // run-mode reasons about and pins whether it is headless-capable, so adding a
 // backend forces an explicit decision here rather than silently defaulting to
