@@ -1420,6 +1420,28 @@ function recoverWedgedShell() {
 // C-c, with the same delays the memory-cleanup restart path has used since
 // #2596, is what actually exits the CLI.
 //
+// #6776: two C-cs is what claude/codex/agy honour, and no more. The pi CLI
+// is neither, and does NOT terminate on C-c: after this sequence the pi
+// process is still the pane's foreground program, and the subsequent
+// `relaunchCLI()` types its launch command at a still-running pi as if it
+// were a chat prompt — which pi accepts as more conversation. Every task
+// then runs in the same pi session with the previous task's context and the
+// previous task's scoped token still in scope, until pi compacts.
+//
+// The fix for pi is a definitive one: after the best-effort C-c, force the
+// pane's foreground process to be killed by `tmux respawn-pane -k`, which
+// terminates the current pane process and re-executes the pane's default
+// shell. That guarantees the pi instance is gone before `relaunchCLI()`
+// types its launch command, and guarantees each task starts a fresh pi
+// context, which is what the issue asked for ("Consider starting each task
+// in a fresh pi context so prior-task history and the scoped token cannot
+// leak into the next task."). The paneReadinessWait contract does the rest.
+//
+// Kept behind a BACKEND check on purpose: claude, codex and agy exit cleanly
+// on the second C-c, and respawn-pane on them would throw away a perfectly
+// good long-lived CLI on every task boundary — the exact churn the two-C-c
+// path was written to avoid.
+//
 // Best-effort by design: if tmux is unreachable the caller is already on a
 // failure path, and a relaunch that lands badly is recovered by the
 // armCLIReadyWait() contract rather than by anything here.
@@ -1429,6 +1451,14 @@ function quitLiveCLI() {
     sleepMs(1000);
     execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
     sleepMs(2000);
+    if (BACKEND === 'pi') {
+      // pi does not exit on C-c (#6776). respawn-pane -k kills the pane's
+      // current foreground program and re-executes the pane's default shell,
+      // so the pi process is gone for certain and the relaunch below lands
+      // in a bare shell — the state the relaunch path assumes.
+      execSync(`tmux respawn-pane -k -t ${TMUX_SESSION}`, { timeout: 15000 });
+      sleepMs(500);
+    }
   } catch (_) {}
 }
 

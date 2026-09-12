@@ -945,6 +945,40 @@ test('quitLiveCLI sends two Ctrl-Cs and nothing else — a single one only cance
   } finally { teardown(relay); }
 });
 
+test('#6776 quitLiveCLI on the pi backend actually kills the pi process — two Ctrl-Cs alone do not, so the pane is respawned', () => {
+  // pi does not exit on C-c: after the two-C-c sequence the pi CLI is still
+  // the pane's foreground program, and the subsequent relaunch types its
+  // launch command at a still-running pi as chat. Every task then runs in
+  // the same pi session with accumulated context and the previous task's
+  // scoped token still in scope, until pi compacts. Fixed by respawn-pane
+  // -k after the C-c, which kills the pane's current foreground program
+  // for certain and re-executes its default shell — pi is gone by the time
+  // relaunchCLI() types its launch command, and every task starts fresh.
+  const relay = loadRelay({ backend: 'pi', model: 'openai/gpt-5', env: { OPENAI_API_KEY: 'test' } });
+  try {
+    const before = relay.__commands.length;
+    relay.quitLiveCLI();
+    const after = relay.__commands.slice(before);
+    // The two C-cs must still fire (defence in depth — a pi that DID happen
+    // to honour C-c would exit cleanly before respawn-pane runs; a claude
+    // muscle-memory reader should still see the familiar pair).
+    const ctrlCs = after.filter(c => /send-keys\s+-t\s+\S+\s+C-c\b/.test(c));
+    assert.strictEqual(
+      ctrlCs.length, 2,
+      `expected two C-c sends for parity with the claude/codex/agy path, got ${JSON.stringify(after)}`,
+    );
+    // The load-bearing new step: respawn-pane -k kills the pi process for
+    // certain. Without this the two C-cs return, tmux still shows pi as the
+    // pane's foreground command, and relaunchCLI() types its launch line
+    // into a live pi as a chat message — the #6776 shape.
+    const respawn = after.find(c => /tmux\s+respawn-pane\b.*-k\b/.test(c) || /tmux\s+respawn-pane\s+-k\b/.test(c));
+    assert.ok(
+      respawn,
+      `pi quitLiveCLI must respawn the pane after the C-cs so the pi process is definitively gone — got ${JSON.stringify(after)}`,
+    );
+  } finally { teardown(relay); }
+});
+
 test('a pane that reaches real IDLE_COMPLETE between stall ticks is reported as a normal completion, PR and all', () => {
   // The exact live scenario: paneText starts frozen (mid stall), then -- before
   // the SECOND confirmation tick -- the CLI's real completion appears, agy back
