@@ -61,6 +61,10 @@ pinned:
   # watches v4 and v5 only: v4 is the source line whose Tide squash commits
   # triggered #6312, and v5 is the sync target that inherits those commits.
   dco-post-merge.yml: [v5, -v2]
+  # Push-scoped delta DCO gate (#6756). Same v4/v5 coverage and reasoning as
+  # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 the
+  # sync target inheriting them; v2 is sunset and takes no pushes.
+  dco-push-delta.yml: [v5, -v2]
   go-security-analysis.yml: []
   podman-arm64-lane.yml: []
   podman-contract.yml: []
