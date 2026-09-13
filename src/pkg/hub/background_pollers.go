@@ -1,6 +1,9 @@
 package hub
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // StartBackgroundPollers launches the hub's long-lived SaaS pollers. It is the
 // explicit lifecycle entrypoint the composition root (cmd/hive runHub) calls
@@ -15,15 +18,32 @@ import "context"
 // GitHub API and read the package-level saas path variables, so starting them
 // must remain an explicit, caller-owned choice.
 //
-// The provided ctx bounds every poller; cancelling it stops them all.
-func (s *HubServer) StartBackgroundPollers(ctx context.Context) {
-	go s.startProvisionWatcher(ctx)
-	go s.StartLatestSHAPoller(ctx)
+// The provided ctx bounds every poller; cancelling it stops them all. The
+// returned channel closes once every poller goroutine has exited, giving
+// callers (the composition root ignores it; tests rely on it) a deterministic
+// join for that contract.
+func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} {
+	var wg sync.WaitGroup
+	start := func(poller func(context.Context)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			poller(ctx)
+		}()
+	}
+	start(s.startProvisionWatcher)
+	start(s.StartLatestSHAPoller)
 	// Periodically probe every spoke's unauthenticated /api/status and alert
 	// on any that answer 200 (wide open) — catches auth drift automatically.
-	go s.StartAuthAudit(ctx)
+	start(s.StartAuthAudit)
 	// Advisory-suppression profile (#4167): one structured log line every
 	// cycle saying how many hives are stale and how many are stale but
 	// UNREPORTED. Read-only measurement — no alert, no registry write.
-	go s.StartAdvisoryDiagnostics(ctx)
+	start(s.StartAdvisoryDiagnostics)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	return done
 }

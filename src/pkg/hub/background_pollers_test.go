@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,11 +25,11 @@ import (
 // an already-cancelled context against the fake GitHub/GHCR fixture. Each
 // poller runs its synchronous startup work (the SHA poller's pre-loop fetch is
 // the observable proof the wrapper launched it) and then exits on ctx.Done()
-// instead of blocking on its ticker. The test then waits for the goroutine
-// count to return to its pre-call baseline: that join is both the assertion
-// that cancel stops every poller and the guard that keeps the daemons from
-// outliving the per-test temp dirs (the same lifetime hazard
-// TestStartLatestSHAPollerPreLoop handles with an explicit join).
+// instead of blocking on its ticker. The test then waits on the wrapper's
+// returned done channel: that join is both the assertion that cancel stops
+// every poller and the guard that keeps the daemons from outliving the
+// per-test temp dirs (the same lifetime hazard TestStartLatestSHAPollerPreLoop
+// handles with an explicit join).
 func TestStartBackgroundPollers_LaunchesAndStopsOnCancel(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
@@ -54,8 +53,8 @@ func TestStartBackgroundPollers_LaunchesAndStopsOnCancel(t *testing.T) {
 		}
 	})
 	// Without keep-alives every handler goroutine and client read loop exits
-	// as soon as its response is written, so the goroutine-count join below
-	// isn't confused by idle pooled connections.
+	// as soon as its response is written, so no idle pooled connections keep
+	// touching the fixture after the pollers are joined.
 	srv.Config.SetKeepAlivesEnabled(false)
 
 	// Keep the image-pulls snapshot fetch off the real github.com.
@@ -72,13 +71,11 @@ func TestStartBackgroundPollers_LaunchesAndStopsOnCancel(t *testing.T) {
 	// pre-loop fetch has something observable to populate.
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 
-	baseline := runtime.NumGoroutine()
-
 	// Pre-cancelled: each poller performs its synchronous startup pass, then
 	// its select sees ctx.Done() and returns instead of waiting on a ticker.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s.StartBackgroundPollers(ctx)
+	done := s.StartBackgroundPollers(ctx)
 
 	// Launch proof: the wrapper must have started the SHA poller, whose
 	// pre-loop fetch populates v2 from the fake. Non-fatal on timeout (the
@@ -95,20 +92,17 @@ func TestStartBackgroundPollers_LaunchesAndStopsOnCancel(t *testing.T) {
 	}
 
 join:
-	// Any in-flight commit-order resolvers spawned by the fetch must finish
-	// before they can be counted out of the goroutine total.
-	waitForCommitOrderResolvers(t)
-
-	// Cancel contract + join: all four pollers (and their transient HTTP
-	// goroutines) must exit, returning the count to the pre-call baseline.
-	// This wait runs before the deferred temp-dir cleanup, so no poller is
-	// still reading the saas path variables when the dirs are torn down.
-	joinDeadline := time.Now().Add(10 * time.Second)
-	for runtime.NumGoroutine() > baseline {
-		if time.Now().After(joinDeadline) {
-			t.Fatalf("pollers did not stop on cancelled context: %d goroutines, baseline %d",
-				runtime.NumGoroutine(), baseline)
-		}
-		time.Sleep(20 * time.Millisecond)
+	// Cancel contract + join: every poller goroutine must exit, closing the
+	// wrapper's done channel. This wait runs before the deferred temp-dir
+	// cleanup and global restores, so no poller is still reading the saas path
+	// variables (or pullPackagePageURL) when they are torn down or restored.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("pollers did not stop on cancelled context: done channel still open after 10s")
 	}
+
+	// Any in-flight commit-order resolvers spawned by the fetch must also
+	// finish before the temp dirs are removed.
+	waitForCommitOrderResolvers(t)
 }
