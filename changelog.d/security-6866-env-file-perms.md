@@ -1,0 +1,1 @@
+- Setup scripts (`hive-setup.sh`, `bootstrap-lxc.sh`, `install.sh`) now create token-bearing `.env` files with `0600` permissions instead of the default umask, so local users can no longer read `HIVE_GITHUB_TOKEN`, `HIVE_DASHBOARD_TOKEN`, or `ANTHROPIC_API_KEY`.
