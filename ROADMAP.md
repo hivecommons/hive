@@ -30,6 +30,16 @@ v4 is the default branch and the supported stable line.
   (see [SECURITY.md](SECURITY.md)).
 - Structural or protocol-level changes do not land here directly; they go
   through the v5 RFC process first, keeping v4 low-risk to track.
+- Feature freeze (accepted 2026-09-09,
+  [#6346](https://github.com/hivecommons/hive/issues/6346)): v4
+  feature-freezes when all **Release train** rows of the
+  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
+  are green, **or on 2026-10-15, whichever comes first**. After the freeze,
+  v4 accepts security fixes and critical fixes only, and v4→v5 movement is
+  cherry-pick-only (no batch syncs), each cherry-pick carrying its own
+  DCO-valid sign-off. See the
+  [v4 lifecycle policy](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md#v4-lifecycle-policy-accepted)
+  section for the full accepted text.
 - Support window: v4 remains supported through v5 development. The v4 EOL
   announcement is **blocked on completion of the
   [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)**
