@@ -70,6 +70,20 @@ const (
 	// of open PRs cannot stall an enumeration cycle indefinitely.
 	claimSearchMaxPages = 10
 
+	// mergedClaimScanWindow bounds how far back the merged-PR settle scan
+	// looks (kubestellar/hive#6867). A PR that merged without a closing
+	// keyword leaves its issue open, and once the PR is no longer open the
+	// claim vanished from the ledger entirely — so the issue was re-offered
+	// to contributors (and re-dispatched to agents) whose only possible
+	// verdict was "already resolved on main", a full task cycle each
+	// (measured downstream at ~34% of contributor sessions). Scanning
+	// recently-merged PRs keeps those claims alive for this window after
+	// merge, long enough for the post-merge refs sweep and a human to close
+	// the issue, but bounded so a deliberately-open remainder (an epic's
+	// `Refs #N`) is never stranded forever. Matches claimLedgerTTL so every
+	// bound on a claim's influence agrees.
+	mergedClaimScanWindow = claimLedgerTTL
+
 	// ClaimLedgerPath is the on-PVC location of the persisted claim ledger.
 	// /data is the hive's PersistentVolumeClaim mount, so the ledger survives
 	// the pod restarts that caused the incident this guard exists to prevent.
@@ -144,6 +158,19 @@ type IssueClaim struct {
 	// ledgers unmarshal as strong claims and keep their existing suppression
 	// across the upgrade.
 	Reference bool `json:"reference,omitempty"`
+	// MergedPR marks a claim recovered from a recently-MERGED pull request
+	// rather than an open one (kubestellar/hive#6867). The work it claims is
+	// already on main; the issue is still open only because the PR carried no
+	// closing keyword (or GitHub could not act on one). Such an issue must
+	// not be offered to a contributor or dispatched to an agent — the only
+	// possible outcome is a wasted "already resolved" cycle — so a merged
+	// claim suppresses exactly like its open counterpart, bounded by
+	// mergedClaimScanWindow after merge instead of by the PR staying open.
+	// Omitempty-false, so pre-#6867 ledgers unmarshal as open-PR claims and
+	// keep their existing semantics across the upgrade.
+	MergedPR bool `json:"merged_pr,omitempty"`
+	// MergedAt is when the claiming PR merged. Zero unless MergedPR is set.
+	MergedAt time.Time `json:"merged_at,omitempty"`
 }
 
 // claimRank orders claims by evidential strength, highest first. It exists so
@@ -156,17 +183,31 @@ type IssueClaim struct {
 // exists so the agent-side filter can never be blinded by an external PR racing
 // the map. Equal ranks let the later claim win, matching the pre-#3980 behavior
 // of a plain map assignment.
+//
+// Within each evidential tier an OPEN PR outranks a MERGED one (#6867): an
+// open PR means someone is actively on the issue right now — the more current
+// signal, and the one whose red+stale release valve must keep functioning —
+// while a merged claim only records that past work landed. Across tiers,
+// evidence still wins: a merged `Fixes #N` (the work is done) outranks an open
+// `Refs #N` (someone is doing related work), so a settled issue is not
+// re-offered just because a follow-up references it.
 func claimRank(c IssueClaim) int {
+	var tier int
 	switch {
 	case !c.Reference && !c.ExternalAuthor:
-		return 3
+		tier = 3
 	case !c.Reference && c.ExternalAuthor:
-		return 2
+		tier = 2
 	case c.Reference && !c.ExternalAuthor:
-		return 1
+		tier = 1
 	default:
-		return 0
+		tier = 0
 	}
+	rank := tier * 2
+	if !c.MergedPR {
+		rank++
+	}
+	return rank
 }
 
 // Key identifies the issue a claim covers.
@@ -374,6 +415,73 @@ func (h HiveIdentity) IsZero() bool {
 	return h.AIAuthor == "" && h.AppLogin == ""
 }
 
+// claimsFromPR parses the issue claims a single PR makes, applying the three
+// evidence tiers in strength order: closing keyword in title/body, issue
+// number in the branch name, then a non-closing reference in title/body
+// (marked Reference). Shared by the open-PR scan and the merged-PR settle
+// scan (#6867) so both grade evidence identically.
+func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now time.Time) []IssueClaim {
+	author := safeGetLogin(pr.GetUser())
+	// #3768: claims are no longer restricted to hive-authored PRs.
+	// A human contributor's open PR claims its issue too — marked
+	// ExternalAuthor below so the agent-side filter can keep
+	// ignoring it while the contribute queue honours it.
+	external := !identity.Matches(author)
+	// Title and body are both scanned: `Fixes #N` conventionally
+	// lives in the body, but many agents put it in the title.
+	text := pr.GetTitle() + "\n" + pr.GetBody()
+	refs := ParseClaimedIssues(text, repo)
+
+	// Secondary heuristic for PRs that reference no issue at all
+	// (in the real incident, PR #443's body was literally "test").
+	// Body parsing cannot see those, but agents conventionally
+	// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
+	// head ref recovers the link. Only consulted when the body and
+	// title yielded nothing, so an explicit `Fixes #N` always wins.
+	if len(refs) == 0 {
+		if n, ok := issueFromBranchName(headRef(pr)); ok {
+			refs = []ClaimedRef{{Repo: repo, Issue: n}}
+		}
+	}
+
+	// Third and weakest tier (#3980): a PR that references an issue
+	// without a closing keyword ("Refs #N", "Part of #N") and whose
+	// branch name carries no issue number. Such a PR is working the
+	// issue but deliberately not claiming to finish it, and until
+	// now produced NO claim at all — so the contribute queue kept
+	// re-offering an issue whose work was already open in a PR.
+	//
+	// Ordered last on purpose. The two tiers above are unchanged and
+	// still win, so no claim that exists today changes its target or
+	// its strength; this only fills in PRs that previously yielded
+	// nothing. Marked Reference so FilterClaimedIssues can keep
+	// agent work flowing on a partially-addressed issue.
+	reference := false
+	if len(refs) == 0 {
+		if refRefs := ParseReferencedIssues(text, repo); len(refRefs) > 0 {
+			refs = refRefs
+			reference = true
+		}
+	}
+
+	claims := make([]IssueClaim, 0, len(refs))
+	for _, ref := range refs {
+		claims = append(claims, IssueClaim{
+			Repo:            ref.Repo,
+			Issue:           ref.Issue,
+			PRNumber:        pr.GetNumber(),
+			PRRepo:          repo,
+			PRURL:           pr.GetHTMLURL(),
+			PRAuthor:        author,
+			ObservedAt:      now,
+			FirstObservedAt: now,
+			ExternalAuthor:  external,
+			Reference:       reference,
+		})
+	}
+	return claims
+}
+
 // FetchClaims lists open PRs across the client's configured repos and returns
 // the issue claims parsed from their titles and bodies. Claims from PRs the
 // hive did not author are included and marked ExternalAuthor
@@ -381,6 +489,14 @@ func (h HiveIdentity) IsZero() bool {
 // an issue a human contributor's open PR already fixes, while
 // FilterClaimedIssues treats them as a WEAK claim that defers (but does not
 // permanently suppress) agent work (kubestellar/hive#4929).
+//
+// It also scans PRs MERGED within mergedClaimScanWindow (#6867): a fix that
+// merged without a closing keyword leaves its issue open, and before this scan
+// the claim vanished the moment the PR left the open set — so the still-open
+// issue went straight back into the offer pool and every taker could only
+// rediscover "already resolved on main" at full task cost. Those claims are
+// marked MergedPR and suppress like their open counterparts, bounded by the
+// scan window after merge.
 //
 // A per-repo API failure is reported via err but the successfully-scanned repos
 // are still returned, so the caller can merge partial results into the ledger
@@ -394,6 +510,7 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 	}
 
 	now := time.Now()
+	mergedCutoff := now.Add(-mergedClaimScanWindow)
 	var claims []IssueClaim
 	var firstErr error
 
@@ -418,68 +535,68 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 				if pr == nil {
 					continue
 				}
-				author := safeGetLogin(pr.GetUser())
-				// #3768: claims are no longer restricted to hive-authored PRs.
-				// A human contributor's open PR claims its issue too — marked
-				// ExternalAuthor below so the agent-side filter can keep
-				// ignoring it while the contribute queue honours it.
-				external := !identity.Matches(author)
-				// Title and body are both scanned: `Fixes #N` conventionally
-				// lives in the body, but many agents put it in the title.
-				text := pr.GetTitle() + "\n" + pr.GetBody()
-				refs := ParseClaimedIssues(text, repo)
-
-				// Secondary heuristic for PRs that reference no issue at all
-				// (in the real incident, PR #443's body was literally "test").
-				// Body parsing cannot see those, but agents conventionally
-				// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
-				// head ref recovers the link. Only consulted when the body and
-				// title yielded nothing, so an explicit `Fixes #N` always wins.
-				if len(refs) == 0 {
-					if n, ok := issueFromBranchName(headRef(pr)); ok {
-						refs = []ClaimedRef{{Repo: repo, Issue: n}}
-					}
-				}
-
-				// Third and weakest tier (#3980): a PR that references an issue
-				// without a closing keyword ("Refs #N", "Part of #N") and whose
-				// branch name carries no issue number. Such a PR is working the
-				// issue but deliberately not claiming to finish it, and until
-				// now produced NO claim at all — so the contribute queue kept
-				// re-offering an issue whose work was already open in a PR.
-				//
-				// Ordered last on purpose. The two tiers above are unchanged and
-				// still win, so no claim that exists today changes its target or
-				// its strength; this only fills in PRs that previously yielded
-				// nothing. Marked Reference so FilterClaimedIssues can keep
-				// agent work flowing on a partially-addressed issue.
-				reference := false
-				if len(refs) == 0 {
-					if refRefs := ParseReferencedIssues(text, repo); len(refRefs) > 0 {
-						refs = refRefs
-						reference = true
-					}
-				}
-
-				for _, ref := range refs {
-					claims = append(claims, IssueClaim{
-						Repo:            ref.Repo,
-						Issue:           ref.Issue,
-						PRNumber:        pr.GetNumber(),
-						PRRepo:          repo,
-						PRURL:           pr.GetHTMLURL(),
-						PRAuthor:        author,
-						ObservedAt:      now,
-						FirstObservedAt: now,
-						ExternalAuthor:  external,
-						Reference:       reference,
-					})
-				}
+				claims = append(claims, claimsFromPR(pr, repo, identity, now)...)
 			}
 			if resp == nil || resp.NextPage == 0 {
 				break
 			}
 			opts.Page = resp.NextPage
+		}
+
+		// Merged-PR settle scan (#6867). Closed PRs sorted by most recently
+		// updated: once a page crosses the cutoff every later PR is older
+		// still, so the loop stops — in the steady state this is a single
+		// page per repo. A closed-without-merge PR yields no claim (its issue
+		// is genuinely released back for work, unchanged), and a PR merged
+		// before the cutoff is skipped even when a later comment bumped its
+		// updated_at.
+		mopts := &gh.PullRequestListOptions{
+			State:       "closed",
+			Sort:        "updated",
+			Direction:   "desc",
+			ListOptions: gh.ListOptions{PerPage: claimSearchPerPage},
+		}
+		for page := 0; page < claimSearchMaxPages; page++ {
+			prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, mopts)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("listing merged PRs for %s/%s: %w", owner, repoName, err)
+				}
+				if c.logger != nil {
+					c.logger.Warn("merged-pr-claim scan failed for repo", "repo", repo, "error", err)
+				}
+				break
+			}
+			pastWindow := false
+			for _, pr := range prs {
+				if pr == nil {
+					continue
+				}
+				if pr.GetUpdatedAt().Time.Before(mergedCutoff) {
+					pastWindow = true
+					break
+				}
+				mergedAt := pr.GetMergedAt().Time
+				if mergedAt.IsZero() || mergedAt.Before(mergedCutoff) {
+					continue
+				}
+				for _, claim := range claimsFromPR(pr, repo, identity, now) {
+					claim.MergedPR = true
+					claim.MergedAt = mergedAt
+					// Anchor the weak-claim deferral window at the merge, not
+					// at first observation: a merged `Refs #N` defers its
+					// issue's remainder for weakClaimDeferWindow measured from
+					// when the work actually landed, and Reconcile carries an
+					// earlier open-scan anchor forward when the same PR was
+					// already claiming the issue before it merged.
+					claim.FirstObservedAt = mergedAt
+					claims = append(claims, claim)
+				}
+			}
+			if pastWindow || resp == nil || resp.NextPage == 0 {
+				break
+			}
+			mopts.Page = resp.NextPage
 		}
 	}
 
@@ -843,8 +960,9 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		if claim.ExternalAuthor || claim.Reference {
 			// The red+stale valve applies BEFORE the window: a dead PR defers
 			// nothing, which keeps an abandoned weak claim from costing the
-			// issue three days.
-			if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+			// issue three days. A MERGED claim (#6867) never takes the valve —
+			// its work already landed, so check state is meaningless for it.
+			if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
 				kept = append(kept, issue)
 				continue
 			}
@@ -859,6 +977,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 						"pr_url", claim.PRURL,
 						"external", claim.ExternalAuthor,
 						"reference", claim.Reference,
+						"merged", claim.MergedPR,
 						"first_observed", claim.FirstObservedAt,
 					)
 				}
@@ -866,7 +985,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			}
 			suppressed++
 			if logger != nil {
-				logger.Info("deferring issue: open PR weakly claims it",
+				logger.Info("deferring issue: PR weakly claims it",
 					"repo", issue.Repo,
 					"issue", issue.Number,
 					"issue_title", issue.Title,
@@ -876,6 +995,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 					"pr_author", claim.PRAuthor,
 					"external", claim.ExternalAuthor,
 					"reference", claim.Reference,
+					"merged", claim.MergedPR,
 					"first_observed", claim.FirstObservedAt,
 				)
 			}
@@ -886,7 +1006,9 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// claim.PRNumber (which may differ from the issue's repo for cross-repo
 		// closes). A healthy PR — green, pending, or a recently-moved head —
 		// fails this predicate and is still suppressed, exactly as before.
-		if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+		// A MERGED strong claim (#6867) never takes the valve: its work is on
+		// main, so there is no dead PR to release the issue from.
+		if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
 			kept = append(kept, issue)
 			if logger != nil {
 				logger.Info("releasing issue: claiming PR red+stale",
@@ -902,13 +1024,14 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		}
 		suppressed++
 		if logger != nil {
-			logger.Info("suppressing issue already claimed by an open hive PR",
+			logger.Info("suppressing issue already claimed by a hive PR",
 				"repo", issue.Repo,
 				"issue", issue.Number,
 				"issue_title", issue.Title,
 				"claimed_by_pr", claim.PRNumber,
 				"pr_url", claim.PRURL,
 				"pr_author", claim.PRAuthor,
+				"merged", claim.MergedPR,
 			)
 		}
 	}

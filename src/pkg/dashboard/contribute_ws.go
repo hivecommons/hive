@@ -6268,9 +6268,10 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			if !decision.admitted {
 				switch decision.reason {
 				case contributorAdmissionReasonOpenPRClaim:
-					h.logger.Info("[contribute-ws] skip: issue already claimed by an open PR",
+					h.logger.Info("[contribute-ws] skip: issue already claimed by a PR",
 						"repo", repo.Full, "number", number,
-						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor)
+						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
+						"merged", decision.claim.MergedPR)
 				case contributorAdmissionReasonWorkflowBlocked:
 					h.logger.Info("[contribute-ws] skip: issue is blocked by workflow state",
 						"repo", repo.Full, "number", number)
