@@ -64,10 +64,11 @@ docker compose -f src/docker-compose.yaml build
 
 echo "=== Phase 5: Create .env template ==="
 if [ ! -f "${ENV_FILE}" ]; then
-  # The operator fills real tokens into this file — create it 0600 so it is
-  # never world-readable, before or after the tokens go in.
-  touch "${ENV_FILE}"
-  chmod 600 "${ENV_FILE}"
+  # The operator fills real tokens into this file — create it under umask 077
+  # so it is 0600 from the first byte, never world-readable, before or after
+  # the tokens go in.
+  (
+  umask 077
   cat > "${ENV_FILE}" <<'ENVEOF'
 # Hive environment — fill in before running docker compose up
 #
@@ -88,9 +89,13 @@ NTFY_SERVER=
 # NTFY_TOPIC: notification topic name (e.g., hive-myproject)
 NTFY_TOPIC=
 ENVEOF
+  )
   echo ">>> EDIT ${ENV_FILE} with your tokens before starting <<<"
 else
-  echo ".env already exists, skipping"
+  # Bootstraps before this fix created the file with the default umask (0644),
+  # so a re-run on an upgraded host must tighten the existing tokens too.
+  chmod 600 "${ENV_FILE}"
+  echo ".env already exists, skipping (permissions tightened to 0600)"
 fi
 
 echo ""
