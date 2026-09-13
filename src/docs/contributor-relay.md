@@ -464,7 +464,8 @@ kubectl -n my-namespace rollout status deploy/hive-contributor
 The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, `goose`, and `agy` (`agy -p`, verified on 1.1.13) — but **`agy` stays out of `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist regardless**: it signs in through an interactive Google OAuth flow with no API-key mode, and a pod has no way to complete that sign-in even once (unlike the container path, where an operator can attach and run `agy` interactively, or the relay can stage an already-signed-in `~/.gemini`). Headless `agy` is verified only on a host that has already signed in. `opencode` has a verified one-shot invocation (`opencode run "<prompt>"`, [#4970](https://github.com/hivecommons/hive/issues/4970)) but is **not yet** in `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist: whether `opencode auth login`'s credential file supports non-interactive, unattended use in a fresh pod is unverified, so it currently runs headless on a host that has already signed in, the same posture as `agy`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
 
 **If you need `agy`, `opencode`, or `kilo` on the K8s path**, the allowlist is
-`HEADLESS_BACKENDS="claude litellm copilot codex goose"` (`Justfile:1692`) and
+`HEADLESS_BACKENDS="claude litellm copilot codex goose"` (defined in the
+`contribute-k8s` recipe in `Justfile`) and
 `just contribute-k8s` refuses anything outside it. Two workarounds: pick a
 supported headless backend, or run the backend attended on the container/local
 path (`just contribute-hive <backend>`), where an operator can complete an

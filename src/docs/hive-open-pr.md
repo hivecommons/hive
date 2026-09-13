@@ -127,9 +127,14 @@ unsafe:
 - **The issue is a human-filed bug that the reporter has not confirmed fixed**
   ([#6781](https://github.com/hivecommons/hive/issues/6781)). Merges land under
   the App bot, and GitHub does not let a reporter without write access reopen
-  an issue the App bot closed — so an unverified auto-close locks the reporter
-  out (that dead end produced [#6762](https://github.com/hivecommons/hive/issues/6762)
-  and [#6767](https://github.com/hivecommons/hive/issues/6767)). The gate
+  an issue the App bot closed — so an unverified auto-close strands the
+  reporter (that dead end produced [#6762](https://github.com/hivecommons/hive/issues/6762)
+  and [#6767](https://github.com/hivecommons/hive/issues/6767)). A reporter can
+  now comment `/reopen` on their own closed issue to reopen it
+  ([#6799](https://github.com/hivecommons/hive/issues/6799),
+  `.github/workflows/issue-reopen-command.yml`), but that is a backstop — this
+  downgrade gate is the primary control that stops the bad close from
+  happening at all. The gate
   triggers only when **all** of these hold: a bug-family label (`bug`,
   `kind/bug`, `type/bug`, `type:bug`, `adoption-blocker`), no `— hive:`
   attribution trailer in the body (so agent-filed findings are unaffected), and
