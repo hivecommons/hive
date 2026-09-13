@@ -7697,8 +7697,16 @@ func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.Rest
 	return out
 }
 
+// persistPathsForRuntime resolves the file set persistState writes. It is a
+// package var (the same seam pattern as githubAppTokenCachePath) rather than a
+// direct defaultPersistPaths() call so the wrapper's delegation can be pinned
+// by a test without writing the live /data files the default set hardwires
+// (#6846). persistState is synchronous, so a test that swaps and restores
+// this var cannot race a goroutine still reading it.
+var persistPathsForRuntime = defaultPersistPaths
+
 func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
-	persistStateWithPaths(agentMgr, gov, cfg, path, logger, dashSrv, wd, defaultPersistPaths())
+	persistStateWithPaths(agentMgr, gov, cfg, path, logger, dashSrv, wd, persistPathsForRuntime())
 }
 
 func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {

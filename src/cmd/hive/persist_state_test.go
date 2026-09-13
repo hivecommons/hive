@@ -316,3 +316,73 @@ func assertJSONRoundTrip[T any](t *testing.T, dir, path string, want []T) {
 }
 
 func floatPtr(v float64) *float64 { return &v }
+
+// persistState is the one-line wrapper every production persistence call site
+// (the periodic save loop, the pause/resume callbacks, shutdown) goes through;
+// the only thing it adds over persistStateWithPaths is WHICH path set gets
+// used. Pin both halves of that contract: the seam defaults to the canonical
+// /data set, and the wrapper threads whatever the seam returns into the writer
+// rather than, say, a zero persistPaths that would silently drop every history
+// file. The seam is swapped for a fixture-dir set so the test never touches the
+// live /data files (#6846).
+func TestPersistStateResolvesPathsThroughRuntimeSeam(t *testing.T) {
+	if got, want := persistPathsForRuntime(), defaultPersistPaths(); got != want {
+		t.Fatalf("persistPathsForRuntime() = %+v, want defaultPersistPaths() = %+v", got, want)
+	}
+
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	oldRuntimeConfig := config.RuntimeConfigFile
+	oldDashboardOverlay := config.DashboardOverlayFile
+	config.RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	config.DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
+	t.Cleanup(func() {
+		config.RuntimeConfigFile = oldRuntimeConfig
+		config.DashboardOverlayFile = oldDashboardOverlay
+	})
+
+	paths := persistStateTestPaths(dir)
+	calls := 0
+	oldPaths := persistPathsForRuntime
+	persistPathsForRuntime = func() persistPaths {
+		calls++
+		return paths
+	}
+	t.Cleanup(func() { persistPathsForRuntime = oldPaths })
+
+	statePath := filepath.Join(dir, "hive-state.json")
+	cfgPath := filepath.Join(dir, "hive.yaml")
+	cfg := &config.Config{
+		SourcePath: cfgPath,
+		Project:    config.ProjectConfig{Org: "testorg", Name: "testhive", Repos: []string{"repo"}},
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Role: "scanner", Backend: "claude", Model: "sonnet", Enabled: true},
+		},
+		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
+			"surge": {Threshold: 20},
+			"busy":  {Threshold: 10},
+			"quiet": {Threshold: 2},
+			"idle":  {Threshold: 0},
+		}},
+	}
+	if err := os.WriteFile(cfgPath, []byte("project:\n  org: testorg\nagents:\n  scanner:\n    role: scanner\n"), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	gov := governor.New(cfg.Governor, cfg.Agents, logger)
+	// One evaluation gives the governor a non-empty eval and mode history, so
+	// the history files are the observable proof that the seam's path set —
+	// not the default one — reached the writer.
+	gov.Evaluate(25, 0, 0, 0)
+
+	persistState(mgr, gov, cfg, statePath, logger, nil, nil)
+
+	if calls != 1 {
+		t.Fatalf("persistPathsForRuntime called %d times, want 1", calls)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("state file not written to %q: %v", statePath, err)
+	}
+	assertJSONRoundTrip(t, dir, paths.SparklineHistory, gov.EvalHistory())
+	assertJSONRoundTrip(t, dir, paths.ModeHistory, gov.ModeHistory())
+}
