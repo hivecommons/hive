@@ -18,7 +18,11 @@ import (
 var stubBinDir string
 
 func testTmuxCommand(args ...string) *exec.Cmd {
-	tmuxArgs := append([]string{"-L", defaultTmuxSocket}, args...)
+	return testTmuxCommandOnSocket(defaultTmuxSocket, args...)
+}
+
+func testTmuxCommandOnSocket(socket string, args ...string) *exec.Cmd {
+	tmuxArgs := append([]string{"-L", socket}, args...)
 	return exec.Command("tmux", tmuxArgs...)
 }
 

@@ -48,6 +48,17 @@ func newBreakerTestManager(t *testing.T, specs map[string]breakerAgentSpec) *Man
 		}
 	}
 	m.mu.Unlock()
+	t.Cleanup(func() {
+		m.mu.RLock()
+		agents := make([]*AgentProcess, 0, len(m.agents))
+		for _, agent := range m.agents {
+			agents = append(agents, agent)
+		}
+		m.mu.RUnlock()
+		for _, agent := range agents {
+			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
+		}
+	})
 	return m
 }
 

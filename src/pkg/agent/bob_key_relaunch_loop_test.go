@@ -46,24 +46,30 @@ func TestRelaunchBobAgentsAwaitingKeyRelaunchLoop(t *testing.T) {
 		"scanner": {Backend: bobBackend},
 	}, discardLogger(), ProjectContext{})
 	m.SetBobAPIKeyResolver(func() string { return "resolved-test-key" })
+	forceSharedUID(t, m, "scanner")
+	t.Cleanup(func() { cleanupAgent(t, m, "scanner") })
 
 	const sentinel = "sentinel: parked before key save"
 	parkAgentForMissingKeyLocked(m, "scanner", sentinel)
 
-	m.mu.RLock()
+	m.mu.Lock()
 	agent := m.agents["scanner"]
-	m.mu.RUnlock()
+	// This test drives a real stale session through the Manager, so it needs
+	// the manager and fixture to target the same server. Keep that server
+	// private: other behavioural tests also use the conventional
+	// hive-scanner session name on the package-wide test server.
+	// Keep the suffix to one character: tmux socket paths have a length limit.
+	agent.tmuxSocket = defaultTmuxSocket + "b"
+	m.mu.Unlock()
 
 	// A stale key-less session must exist so the loop's kill-session step has
 	// something real to tear down (the load-bearing half of the fix: the old
 	// pane's shell can never learn the key).
-	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommandOnSocket(agent.tmuxSocket, "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
 	}
-	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 
 	got := m.RelaunchBobAgentsAwaitingKey(context.Background())
-	defer cleanupAgent(t, m, "scanner")
 
 	// Start's park-and-return branches deliberately return nil (one agent must
 	// never abort the fleet), so with or without a bob binary on PATH the
