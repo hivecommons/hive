@@ -75,14 +75,18 @@ func TestMain(m *testing.M) {
 	// at a per-run temp file before any test constructs a server. Tests that
 	// need specific on-disk content already use loadFromDiskPath with their
 	// own files, so none depend on the production default.
-	auditDir, err := os.MkdirTemp("", "dashboard-test-audit-")
+	testDataDir, err := os.MkdirTemp("", "dashboard-test-data-")
 	if err != nil {
-		panic("dashboard TestMain: cannot create temp audit dir: " + err.Error())
+		panic("dashboard TestMain: cannot create temp data dir: " + err.Error())
 	}
-	auditLogPath = filepath.Join(auditDir, "audit.jsonl")
+	auditLogPath = filepath.Join(testDataDir, "audit.jsonl")
+	// Prompt save/bake/import all persist templates through this one seam. Keep
+	// the production default in api.go, but point package tests at this run's
+	// private directory before any test can construct a dashboard server.
+	promptTemplateSaveDir = filepath.Join(testDataDir, "policies")
 
 	code := m.Run()
-	os.RemoveAll(auditDir)
+	os.RemoveAll(testDataDir)
 	os.Exit(code)
 }
 

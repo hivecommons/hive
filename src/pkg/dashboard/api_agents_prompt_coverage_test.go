@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -35,6 +37,12 @@ func enableAllowlist(deps *Dependencies) {
 	deps.Config.Variables.Security.GitHubPromptAllowlist = []string{"myorg/repo1"}
 }
 
+func TestPromptTemplateSaveDirIsTestLocal(t *testing.T) {
+	if promptTemplateSaveDir == defaultPromptTemplateSaveDir {
+		t.Fatalf("dashboard tests must not write prompt templates to %q", defaultPromptTemplateSaveDir)
+	}
+}
+
 func TestCovAP_BakePromptSource_Denied(t *testing.T) {
 	s, deps, _ := apServerWithGH(t)
 	// Allowlist NOT enabled → GitHubPromptAllowed false → denied error.
@@ -51,11 +59,12 @@ func TestCovAP_BakePromptSource_FetchOnceRuns(t *testing.T) {
 	enableAllowlist(deps)
 	cfg := deps.Config.Agents["scanner"]
 	cfg.PromptSource = &config.PromptSourceConfig{Type: "github", Owner: "myorg", Repo: "repo1", Path: "PROMPT.md"}
-	// Allowlisted → FetchOnce runs against the mock. The subsequent write to
-	// promptTemplateSaveDir (/data/policies) may fail in the test sandbox; either
-	// way the fetch + allowlist branches are exercised. We only assert it does not
-	// panic and returns (nil OR a write error), covering the success-path code.
-	_ = s.bakePromptSource(deps.Ctx, "scanner", &cfg)
+	if err := s.bakePromptSource(deps.Ctx, "scanner", &cfg); err != nil {
+		t.Fatalf("bakePromptSource: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(promptTemplateSaveDir, "scanner.md")); err != nil {
+		t.Fatalf("baked template missing from test directory: %v", err)
+	}
 }
 
 // ---- handleAgentPromptSave prompt-source branches ----
@@ -92,12 +101,16 @@ func TestCovAP_PromptSave_PromptSourceDenied(t *testing.T) {
 
 func TestCovAP_PromptSave_InlineTemplate(t *testing.T) {
 	s, _, _ := apServerWithGH(t)
-	// Inline template save writes to promptTemplateSaveDir (/data/policies) which
-	// may not be writable in the sandbox → 500. Either 200 or 500 exercises the
-	// inline branch (MkdirAll + WriteFile).
 	rec := doPut(s, "/api/config/agent/scanner/prompt", map[string]any{"template": "my prompt body"})
-	if rec.Code != http.StatusOK && rec.Code != http.StatusInternalServerError {
-		t.Fatalf("inline save: unexpected %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inline save: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	got, err := os.ReadFile(filepath.Join(promptTemplateSaveDir, "scanner.md"))
+	if err != nil {
+		t.Fatalf("read saved template: %v", err)
+	}
+	if string(got) != "my prompt body" {
+		t.Fatalf("saved template = %q, want %q", got, "my prompt body")
 	}
 }
 

@@ -4411,8 +4411,8 @@ func (s *Server) loadPromptTemplateRaw(name string) string {
 			)
 		}
 	}
-	// Check /data/policies first (user-saved templates)
-	userPath := fmt.Sprintf("/data/policies/%s", templateName)
+	// Check the user-saved templates first.
+	userPath := filepath.Join(promptTemplateSaveDir, templateName)
 	if data, err := os.ReadFile(userPath); err == nil {
 		return string(data)
 	}
@@ -4427,7 +4427,12 @@ func (s *Server) loadPromptTemplateRaw(name string) string {
 	return ""
 }
 
-const promptTemplateSaveDir = "/data/policies"
+const defaultPromptTemplateSaveDir = "/data/policies"
+
+// promptTemplateSaveDir is the durable location for operator-saved and baked
+// prompt templates. Tests redirect it before any server is constructed so a
+// prompt-save exercise cannot overwrite a live template on a hive host.
+var promptTemplateSaveDir = defaultPromptTemplateSaveDir
 
 func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
