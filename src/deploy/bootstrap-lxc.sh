@@ -64,6 +64,10 @@ docker compose -f src/docker-compose.yaml build
 
 echo "=== Phase 5: Create .env template ==="
 if [ ! -f "${ENV_FILE}" ]; then
+  # The operator fills real tokens into this file — create it 0600 so it is
+  # never world-readable, before or after the tokens go in.
+  touch "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
   cat > "${ENV_FILE}" <<'ENVEOF'
 # Hive environment — fill in before running docker compose up
 #

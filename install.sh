@@ -66,7 +66,7 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE"
   echo "Copy the template first:"
   echo "  sudo mkdir -p $(dirname "$ENV_FILE")"
-  echo "  sudo cp $REPO_DIR/config/agent.env.example $ENV_FILE"
+  echo "  sudo install -m 600 $REPO_DIR/config/agent.env.example $ENV_FILE"
   echo "  sudo \$EDITOR $ENV_FILE"
   exit 1
 fi

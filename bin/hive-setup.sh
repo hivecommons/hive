@@ -296,6 +296,10 @@ log "  Compose: ${COMPOSE_OUT}"
 log "Phase 7/8: Writing .env file..."
 
 ENV_FILE="${HIVE_DIR}/.env"
+# Contains live credentials — create 0600 so other local users cannot read it.
+rm -f "$ENV_FILE"
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 cat > "$ENV_FILE" << ENVEOF
 HIVE_GITHUB_TOKEN=${GH_TOKEN}
 HIVE_DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
