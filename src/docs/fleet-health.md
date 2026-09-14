@@ -287,7 +287,8 @@ provider-error classifier the dashboard already uses
 |---|---|
 | `ok` | The agent's last completed turn succeeded, or it has never seen an auth-shaped provider error. |
 | `unlicensed` | The provider rejected the account/token as not licensed to use this backend (the #6500 shape). |
-| `token-expired` | The provider returned an auth failure (401/403) that isn't the licensing message. |
+| `token-expired` | The provider rejected a **credential**: a 401, bad credentials, or an invalid/expired key/token. Re-login is the remedy. |
+| `forbidden` | An auth-class rejection whose cause the pane does not spell out — a bare `403 Forbidden` with neither the `not licensed` wording nor a recognised credential rejection (#6500). Reported honestly as "authorization denied, cause undetermined" rather than guessing an expiry: a re-login may not help (it can be an entitlement or org-policy denial). The pane is still relaunched onto a refreshed token in case a stale credential caused it. |
 | `unreachable` | The inference backend itself could not be reached (the #6489 shape). |
 | `quota` | The provider is refusing calls on quota grounds. |
 

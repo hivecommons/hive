@@ -30,6 +30,27 @@ func TestClassifyBackendAuthStatus(t *testing.T) {
 			wantOK:     true,
 		},
 		{
+			name:       "bare 403 forbidden is undetermined, not a false expiry (#6500)",
+			class:      "auth",
+			line:       "API Error: 403 Forbidden",
+			wantStatus: BackendAuthForbidden,
+			wantOK:     true,
+		},
+		{
+			name:       "403 whose body still says not licensed is unlicensed (#6500)",
+			class:      "auth",
+			line:       "unauthorized: not licensed to use Copilot",
+			wantStatus: BackendAuthUnlicensed,
+			wantOK:     true,
+		},
+		{
+			name:       "bad credentials wording is token-expired",
+			class:      "auth",
+			line:       "Error: Bad credentials",
+			wantStatus: BackendAuthTokenExpired,
+			wantOK:     true,
+		},
+		{
 			name:       "quota class is quota",
 			class:      "quota",
 			line:       "insufficient_quota",
@@ -84,6 +105,33 @@ func newBackendAuthTestAgent(t *testing.T) *AgentProcess {
 	agent := m.agents["vinf"]
 	m.mu.RUnlock()
 	return agent
+}
+
+// TestMarkProviderErrorLockedBare403IsUndetermined drives the REAL path from a
+// pane a Copilot enterprise 403 renders — a bare "API Error: 403 Forbidden"
+// with no "not licensed" wording — through classifyProviderError and
+// markProviderErrorLocked, and asserts the canary reports the honest
+// BackendAuthForbidden ("cause undetermined") rather than the false
+// BackendAuthTokenExpired it used to assert (#6500). A token expiry the code
+// never verified must not be presented to an operator as one.
+func TestMarkProviderErrorLockedBare403IsUndetermined(t *testing.T) {
+	t.Setenv(ProviderErrorBackoffBaseEnv, "10s")
+	t.Setenv(ProviderErrorBackoffMaxEnv, "40s")
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	match, ok := classifyProviderError("API Error: 403 Forbidden\n")
+	if !ok || match.Class != "auth" {
+		t.Fatalf("classifyProviderError(403) = %+v, ok=%v; want auth class", match, ok)
+	}
+	m.markProviderErrorLocked(agent, match, time.Now())
+	if agent.BackendAuth.Status != BackendAuthForbidden {
+		t.Fatalf("BackendAuth.Status = %q, want %q", agent.BackendAuth.Status, BackendAuthForbidden)
+	}
 }
 
 func TestMarkBackendAuthLocked_FirstObservationSetsSince(t *testing.T) {

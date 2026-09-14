@@ -91,6 +91,26 @@ func TestPlanCopilotTokenPropagation_RelaunchesOnlyRejectedPanes(t *testing.T) {
 	}
 }
 
+// A bare 403 verdict (BackendAuthForbidden — cause undetermined but still an
+// upstream rejection) is a hard-auth state a token swap can plausibly clear, so
+// a running pane carrying it must be relaunched onto the fresh token exactly
+// like an unlicensed or token-expired pane (#6500). Reporting the 403 honestly
+// instead of as a false expiry must not cost the agent its recovery.
+func TestPlanCopilotTokenPropagation_RelaunchesForbiddenPane(t *testing.T) {
+	m := testManager(5)
+	m.copilotAuthToken = "gho_fresh"
+	m.agents["scanner"] = copilotAgent("scanner", "hive-scanner", BackendAuthForbidden, StateRunning)
+	m.agents["guide"] = copilotAgent("guide", "hive-guide", BackendAuthOK, StateRunning)
+
+	plan := planFor(t, m)
+	if !plan["scanner"].Relaunch {
+		t.Errorf("forbidden pane not relaunched onto fresh token: %+v", plan["scanner"])
+	}
+	if plan["guide"].Relaunch {
+		t.Errorf("healthy pane must not be relaunched: %+v", plan["guide"])
+	}
+}
+
 // Agents on another backend, and agents with no session yet, are not ours to
 // touch — a claude agent's pane has no COPILOT_GITHUB_TOKEN to refresh and a
 // session-less agent gets the current token at creation.

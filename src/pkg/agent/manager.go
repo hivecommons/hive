@@ -850,15 +850,17 @@ type copilotTokenPropagation struct {
 
 // copilotSessionCarriesRejectedToken reports whether an agent's last observed
 // backend-auth verdict means the CLI running in its pane RIGHT NOW is using a
-// credential Copilot has already refused. Only the two hard-auth verdicts
-// count: quota and unreachable are not credential problems, and swapping the
-// token cannot help them.
+// credential Copilot has already refused. The hard-auth verdicts count:
+// unlicensed, token-expired, and a bare 403 forbidden (cause undetermined but
+// still an upstream rejection a token swap can plausibly clear). Quota and
+// unreachable are not credential problems, and swapping the token cannot help
+// them.
 func copilotSessionCarriesRejectedToken(a *AgentProcess) bool {
 	if a == nil || a.Config.Backend != "copilot" {
 		return false
 	}
 	switch a.BackendAuth.Status {
-	case BackendAuthUnlicensed, BackendAuthTokenExpired:
+	case BackendAuthUnlicensed, BackendAuthTokenExpired, BackendAuthForbidden:
 		return true
 	default:
 		return false

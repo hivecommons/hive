@@ -352,7 +352,7 @@ problem, and the recovery is:
 
 Within that tick the hive **promotes** the token you just logged in with to its
 durable store and then moves the fleet onto it: agents whose `backend_auth`
-reads `unlicensed` or `token-expired` (see
+reads `unlicensed`, `token-expired`, or `forbidden` (see
 [fleet-health.md](fleet-health.md#agent-backend-auth-health-canary-6558)) are
 relaunched onto the new credential, and healthy agents get it pushed into their
 session environment for their next relaunch. You should not have to restart

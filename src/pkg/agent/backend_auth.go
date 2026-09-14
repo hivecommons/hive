@@ -25,7 +25,51 @@ const (
 	BackendAuthTokenExpired = "token-expired"
 	BackendAuthUnreachable  = "unreachable"
 	BackendAuthQuota        = "quota"
+	// BackendAuthForbidden is an auth-class rejection whose specific cause the
+	// pane text does NOT reveal — a bare HTTP 403 with no "not licensed" wording
+	// and no credential-rejection wording (#6500). The Copilot enterprise API
+	// returns exactly this: its entitlement failure is an HTTP 403 whose body is
+	// "unauthorized: not licensed to use Copilot", and when a CLI renders only
+	// the bare status the code cannot tell a revoked seat from a stale token
+	// from an org policy. Reporting "token-expired" here — as this file did
+	// before — asserts a credential expiry the code never verified and sends an
+	// operator to re-login, which cannot fix an entitlement 403. That confident
+	// wrong verdict IS the "false claim of lack of credentials" this issue is
+	// about, so an unattributable 403 is reported as its own honest state
+	// instead of being collapsed into a definitive expiry claim.
+	BackendAuthForbidden = "forbidden"
 )
+
+// credentialRejectionSignals are the substrings in an auth-class pane line that
+// DO identify a rejected credential — a 401, an explicit bad/invalid/expired
+// credential, or a failed key verification — for which re-login is the correct
+// remedy. Their ABSENCE from an auth-class line (e.g. a bare 403 Forbidden)
+// means the cause is not verifiable from the pane, and the verdict must stay
+// BackendAuthForbidden rather than asserting an expiry (#6500).
+var credentialRejectionSignals = []string{
+	"401",
+	"unauthorized",
+	"bad credentials",
+	"could not be validated",
+	"invalid api key",
+	"invalid or expired",
+	"api key verification failed",
+	"token expired",
+	"expired token",
+	"expired api key",
+}
+
+// lineIndicatesCredentialRejection reports whether an auth-class line carries
+// wording that identifies a rejected credential (as opposed to a bare
+// authorization denial whose cause is undetermined).
+func lineIndicatesCredentialRejection(lower string) bool {
+	for _, sig := range credentialRejectionSignals {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+	return false
+}
 
 // backendAuthErrorLimit caps how much of the offending pane line is retained
 // in BackendAuthState.LastError, matching the limit classifyProviderError's
@@ -51,15 +95,29 @@ type BackendAuthState struct {
 func classifyBackendAuthStatus(class, line string) (status string, ok bool) {
 	switch class {
 	case "auth":
-		// classifyProviderError's "auth" class covers both the explicit
-		// "not licensed to use copilot" text (a revoked/expired seat — #6500)
-		// and a bare 401/403 status. The license wording is unambiguous;
-		// everything else in this class is a rejected credential, which reads
-		// as an expired token rather than a licensing problem.
-		if strings.Contains(strings.ToLower(line), "not licensed") {
+		// classifyProviderError's "auth" class covers the explicit "not
+		// licensed to use copilot" text (a revoked/expired seat — #6500), a
+		// bare 401/credential rejection, AND a bare 403 Forbidden whose cause
+		// the pane does not spell out. Only the first two justify a definitive
+		// verdict:
+		//   - "not licensed": an entitlement failure, reported verbatim.
+		//   - a recognised credential rejection (401, bad/invalid/expired
+		//     credential): an expired/rejected token, for which re-login helps.
+		// Anything else in this class — most importantly a bare 403 — is an
+		// authorization denial whose cause (revoked seat vs. stale token vs.
+		// org policy) is NOT verifiable from the line. Reporting "token-expired"
+		// there would assert a credential expiry the code never checked and
+		// send the operator to a re-login that cannot fix it, which is the
+		// exact false claim in this issue. Report BackendAuthForbidden — an
+		// honest "auth denied, cause undetermined" — instead.
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "not licensed") {
 			return BackendAuthUnlicensed, true
 		}
-		return BackendAuthTokenExpired, true
+		if lineIndicatesCredentialRejection(lower) {
+			return BackendAuthTokenExpired, true
+		}
+		return BackendAuthForbidden, true
 	case "quota":
 		return BackendAuthQuota, true
 	case "api_error":
