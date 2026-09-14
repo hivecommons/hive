@@ -28,6 +28,53 @@ func TestHeadroomToContributorReading_ProbeErrorIsUnknownNotHealthy(t *testing.T
 	}
 }
 
+// TestHeadroomToContributorReading_UnknownCarriesCause pins that the published
+// reading distinguishes WHY it is unknown (kubestellar/hive#6986): a dead
+// adapter (unrecognized_schema) must publish a different cause than a host with
+// no credentials (no_credentials) and than a missing CLI (not_installed), so a
+// silently-broken adapter is not invisible behind an `unknown` that also means
+// "no credentials on this host". The state stays "unknown" (a hold) in every
+// case — the cause never softens the fail-safe direction.
+func TestHeadroomToContributorReading_UnknownCarriesCause(t *testing.T) {
+	cases := []struct {
+		name  string
+		cause ProbeErrorCause
+		want  string
+	}{
+		{"dead adapter", ProbeCauseUnrecognizedSchema, "unrecognized_schema"},
+		{"no credentials", ProbeCauseNoCredentials, "no_credentials"},
+		{"not installed", ProbeCauseNotInstalled, "not_installed"},
+	}
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		h := failOpen("google", errors.New("boom"))
+		h.ProbeErrCause = tc.cause
+		r := HeadroomToContributorReading(h)
+		if r.State != "unknown" {
+			t.Errorf("%s: state = %q, want unknown (must still hold)", tc.name, r.State)
+		}
+		if r.Cause != tc.want {
+			t.Errorf("%s: cause = %q, want %q", tc.name, r.Cause, tc.want)
+		}
+		seen[r.Cause] = true
+	}
+	if len(seen) != len(cases) {
+		t.Errorf("distinct causes collapsed: %v — the #6986 states are not distinguishable", seen)
+	}
+
+	// An uncategorized failure defaults to the generic probe_failed rather than
+	// claiming a cause it does not know.
+	r := HeadroomToContributorReading(failOpen("openai", errors.New("codex app-server unreachable")))
+	if r.Cause != "probe_failed" {
+		t.Errorf("uncategorized failure cause = %q, want probe_failed", r.Cause)
+	}
+
+	// A healthy reading carries no cause.
+	if got := HeadroomToContributorReading(Headroom{Provider: "openai", Available: true}); got.Cause != "" {
+		t.Errorf("healthy reading cause = %q, want empty", got.Cause)
+	}
+}
+
 func TestHeadroomToContributorReading_HealthyCarriesWindows(t *testing.T) {
 	reset := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	h := Headroom{

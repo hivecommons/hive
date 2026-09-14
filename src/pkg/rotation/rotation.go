@@ -96,6 +96,81 @@ type Headroom struct {
 	// that need a definite answer treat it as unknown.
 	OrdinaryUsageAllowed *bool `json:"ordinary_usage_allowed,omitempty"`
 	ProbeErr             error `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
+	// ProbeErrCause categorizes ProbeErr so a dead adapter — one that parses
+	// nothing a real payload contains and would report `unknown` forever on a
+	// correctly configured host (kubestellar/hive#6986) — stays DISTINGUISHABLE
+	// from a host with no credentials and from a CLI that is not installed. All
+	// three still fail toward unknown (a hold); the cause only makes the reason
+	// visible in diagnostics and the published reading. It never turns a hold
+	// into an admit. Empty when ProbeErr is nil.
+	ProbeErrCause ProbeErrorCause `json:"-"`
+}
+
+// ProbeErrorCause categorizes why a probe produced no usable reading. The
+// motivating case (kubestellar/hive#6986): the Agy adapter reporting `unknown`
+// because it could not recognize a real, authenticated payload is — from the
+// outside — indistinguishable from a host with no agy credentials, so a dead
+// adapter "looks alive". Naming the cause makes those states tell-apart-able
+// without changing the fail-safe direction: every cause below is still a hold.
+type ProbeErrorCause string
+
+const (
+	// ProbeCauseUnspecified is the zero value: an uncategorized failure (or a
+	// healthy reading, where it is simply unused).
+	ProbeCauseUnspecified ProbeErrorCause = ""
+	// ProbeCauseNotInstalled: the probe CLI was not found on PATH.
+	ProbeCauseNotInstalled ProbeErrorCause = "not_installed"
+	// ProbeCauseNoCredentials: the CLI ran and answered, but reported it is not
+	// authenticated / carries no usage data for this host (e.g. a non-SUCCESS
+	// envelope). This is the "no credentials on this host" state the dead
+	// adapter used to be confused with.
+	ProbeCauseNoCredentials ProbeErrorCause = "no_credentials"
+	// ProbeCauseUnrecognizedSchema: the CLI answered with a usage envelope this
+	// adapter could not map to any quota bucket — the dead-adapter signal. This
+	// is the state #6986 exists to surface: on a host WITH credentials, a schema
+	// drift silently zeroes the adapter.
+	ProbeCauseUnrecognizedSchema ProbeErrorCause = "unrecognized_schema"
+	// ProbeCauseProbeFailed: any other measurement failure (transport error,
+	// timeout, non-zero exit, unparseable transport).
+	ProbeCauseProbeFailed ProbeErrorCause = "probe_failed"
+)
+
+// causedError couples a probe error with its ProbeErrorCause so failOpen can
+// categorize it structurally rather than by string-matching. Unwrap keeps
+// errors.Is/errors.As working through it.
+type causedError struct {
+	cause ProbeErrorCause
+	err   error
+}
+
+func (e *causedError) Error() string { return e.err.Error() }
+func (e *causedError) Unwrap() error { return e.err }
+
+// withCause tags err with cause so failOpen can surface it in diagnostics and
+// the published reading (kubestellar/hive#6986).
+func withCause(cause ProbeErrorCause, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &causedError{cause: cause, err: err}
+}
+
+// probeErrorCause classifies err into a ProbeErrorCause. A tagged causedError
+// wins; otherwise a not-found exec error means the CLI is absent, and anything
+// else is a generic probe failure. Returns ProbeCauseUnspecified for a nil
+// error so a healthy reading carries no cause.
+func probeErrorCause(err error) ProbeErrorCause {
+	if err == nil {
+		return ProbeCauseUnspecified
+	}
+	var ce *causedError
+	if errors.As(err, &ce) && ce.cause != ProbeCauseUnspecified {
+		return ce.cause
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return ProbeCauseNotInstalled
+	}
+	return ProbeCauseProbeFailed
 }
 
 // ProbeError surfaces ProbeErr as a string for JSON consumers.
@@ -109,20 +184,22 @@ func (h Headroom) ProbeError() string {
 // MarshalJSON includes the probe error text alongside the exported fields.
 func (h Headroom) MarshalJSON() ([]byte, error) {
 	type alias struct {
-		Provider     string        `json:"provider"`
-		Available    bool          `json:"available"`
-		PctRemaining int           `json:"pct_remaining"`
-		ResetAt      time.Time     `json:"reset_at,omitempty"`
-		Limits       []LimitWindow `json:"limits,omitempty"`
-		ProbeErr     string        `json:"probe_error,omitempty"`
+		Provider      string        `json:"provider"`
+		Available     bool          `json:"available"`
+		PctRemaining  int           `json:"pct_remaining"`
+		ResetAt       time.Time     `json:"reset_at,omitempty"`
+		Limits        []LimitWindow `json:"limits,omitempty"`
+		ProbeErr      string        `json:"probe_error,omitempty"`
+		ProbeErrCause string        `json:"probe_error_cause,omitempty"`
 	}
 	return json.Marshal(alias{
-		Provider:     h.Provider,
-		Available:    h.Available,
-		PctRemaining: h.PctRemaining,
-		ResetAt:      h.ResetAt,
-		Limits:       h.Limits,
-		ProbeErr:     h.ProbeError(),
+		Provider:      h.Provider,
+		Available:     h.Available,
+		PctRemaining:  h.PctRemaining,
+		ResetAt:       h.ResetAt,
+		Limits:        h.Limits,
+		ProbeErr:      h.ProbeError(),
+		ProbeErrCause: string(h.ProbeErrCause),
 	})
 }
 
@@ -151,7 +228,7 @@ func runCLI(ctx context.Context, name string, args ...string) (string, error) {
 // failOpen returns a Headroom marking a failed measurement: Available stays
 // true because "couldn't probe" is NOT "exhausted" (RFC #3958 invariant 7).
 func failOpen(provider string, err error) Headroom {
-	return Headroom{Provider: provider, Available: true, ProbeErr: err}
+	return Headroom{Provider: provider, Available: true, ProbeErr: err, ProbeErrCause: probeErrorCause(err)}
 }
 
 // ClaudeProber probes Anthropic subscription usage via the OAuth usage API.
@@ -798,18 +875,40 @@ func agyBucketPool(id string) string {
 // with no `remaining_fraction`. That must surface as unknown so the caller
 // enters the configured unknown-data behaviour: the original scraper's failure
 // mode was a confident wrong number, which #6833 calls worse than no guard.
+//
+// Each returned error is tagged with a ProbeErrorCause (kubestellar/hive#6986)
+// so failOpen can tell the states apart downstream. A SUCCESS envelope whose
+// quota shape this adapter cannot map is ProbeCauseUnrecognizedSchema — the
+// dead-adapter signal, which on a host WITH credentials is exactly the state
+// that used to look identical to "no credentials". An envelope the CLI returned
+// with a NON-SUCCESS status is ProbeCauseNoCredentials: the CLI ran and
+// answered but is not serving usage (most often unauthenticated), which is a
+// different operator problem than a schema drift and must not be blamed on one.
 func agyHeadroom(provider string, thresholdPct int, body []byte, model string) (Headroom, error) {
 	var parsed agyUsageResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return Headroom{}, err
+		// Output that is not even the JSON envelope (e.g. an old CLI's
+		// decorative text, or a plain error line) is unrecognized shape, not an
+		// auth problem we can name.
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, err)
+	}
+	// A non-SUCCESS envelope means the CLI reached us and answered, but not with
+	// a usable usage result — the common cause is that this host has no agy
+	// credentials. Categorize it as such BEFORE the schema checks so a dead
+	// adapter (a SUCCESS envelope we cannot map) stays distinguishable from an
+	// unconfigured host (kubestellar/hive#6986). The empty-status case falls
+	// through to the schema checks, matching payloads that predate this field.
+	if parsed.Status != "" && parsed.Status != "SUCCESS" {
+		return Headroom{}, withCause(ProbeCauseNoCredentials,
+			fmt.Errorf("agy usage: envelope status %q, not \"SUCCESS\" — CLI reachable but not serving usage (host likely has no agy credentials)", parsed.Status))
 	}
 	if parsed.Command == nil || parsed.Command.Data == nil || len(parsed.Command.Data.Groups) == 0 {
-		return Headroom{}, errors.New("agy usage: no quota groups (unrecognized schema)")
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, errors.New("agy usage: no quota groups (unrecognized schema)"))
 	}
 	if parsed.Command.Name != "usage" {
 		// The envelope came back for some other command; reading its data as a
 		// quota map would be a guess.
-		return Headroom{}, fmt.Errorf("agy usage: envelope is for command %q, not \"usage\" (unrecognized schema)", parsed.Command.Name)
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, fmt.Errorf("agy usage: envelope is for command %q, not \"usage\" (unrecognized schema)", parsed.Command.Name))
 	}
 
 	want := agyPoolForModel(model)
@@ -882,7 +981,7 @@ func agyHeadroom(provider string, thresholdPct int, body []byte, model string) (
 		}
 	}
 	if len(limits) == 0 {
-		return Headroom{}, errors.New("agy usage: no quota bucket carried remaining_fraction (unrecognized schema)")
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, errors.New("agy usage: no quota bucket carried remaining_fraction (unrecognized schema)"))
 	}
 	return Headroom{
 		Provider:     provider,

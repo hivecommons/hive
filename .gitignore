@@ -35,3 +35,4 @@ _inline.js
 # reproducible source of truth; the GIF is a build product and is not
 # committed — see #5423.
 src/docs/design/_out/
+.gomod/

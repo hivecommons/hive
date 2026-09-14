@@ -858,6 +858,40 @@ not "fix" an adapter back to a source that was deliberately rejected:
   `num_turns: 0` and `usage.total_tokens: 0`, so a reading consumes no model
   turn — verified rather than argued.
 
+  **SOURCE DECISION (kubestellar/hive#6986, amends #6833's adapter table).**
+  The agy adapter reads the **CLI** — it invokes `agy --print "/usage"
+  --output-format json` directly (`src/pkg/rotation/rotation.go`, `AgyProber.
+  Probe`) and parses the result envelope above. It does **not** read the
+  documented status-line `quota` map. This is the same treatment #6965 gave the
+  Claude row: the divergence is written down here so the next reader does not
+  "fix" the adapter back onto the status line. Reason the CLI won: `/usage`
+  needs no contributor status-line command to exist and no ephemeral status-line
+  overlay in container launch modes, and it works headless — so enabling the
+  guard neither depends on nor overwrites a contributor's own status line.
+
+  Consequently #6966's inherited criterion — *"an existing contributor status
+  line is preserved, in local and container launch modes, with a test covering
+  a contributor who already has one configured"* — is **N/A for the agy path**,
+  not an unchecked box. The adapter touches no status line on either launch
+  mode, so there is nothing to preserve or chain; there is no status-line write
+  for a test to guard. Were the source ever moved to the status-line `quota`
+  map, that preservation/chaining criterion would come back into force for both
+  local and container modes, with the test it asks for.
+
+  **Distinguishing a dead adapter from an unconfigured host
+  (kubestellar/hive#6986).** Because the accepted-shape path is now proven
+  against a real capture but agy's shape could still drift, the adapter tags
+  every failure with a cause so a silently-broken adapter is not invisible.
+  `unrecognized_schema` (a `SUCCESS` envelope whose quota shape the adapter
+  cannot map — a dead adapter on a host that *does* have credentials) is
+  reported as a different condition than `no_credentials` (a non-`SUCCESS`
+  envelope: the CLI ran but is not serving usage) and `not_installed` (no `agy`
+  on `PATH`). The cause travels on the Headroom (`probe_error_cause` in its JSON
+  diagnostics) and into the published reading (`cause` on the `unknown`
+  reading). Every cause is still an `unknown`/hold — the categorization only
+  makes the reason visible, it never turns a hold into an admit, so the
+  fail-safe direction #6833 requires is intact.
+
 
 
 When the guard holds a *pushed* assignment (rather than merely withholding

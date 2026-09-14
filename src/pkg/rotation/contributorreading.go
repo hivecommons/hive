@@ -80,7 +80,15 @@ type ContributorLimitWindow struct {
 // "unknown" makes the guard HOLD (used for a failed measurement — never a
 // fabricated healthy reading).
 type ContributorReading struct {
-	State  string                   `json:"state"`
+	State string `json:"state"`
+	// Cause categorizes an "unknown" state so an operator — and the relay, if it
+	// ever consumes it — can tell a DEAD ADAPTER (one that parsed nothing a real
+	// payload contains, kubestellar/hive#6986) from a host with no credentials
+	// and from a CLI that is not installed. Without this, all three publish an
+	// identical `unknown` and a silently-broken adapter is invisible: it looks
+	// exactly like "no credentials on this host". Empty for an available
+	// reading; a new optional field, so the relay ignores it until it opts in.
+	Cause  string                   `json:"cause,omitempty"`
 	Limits []ContributorLimitWindow `json:"limits"`
 }
 
@@ -94,7 +102,15 @@ type ContributorReading struct {
 // normalized windows carried through verbatim.
 func HeadroomToContributorReading(h Headroom) ContributorReading {
 	if h.ProbeErr != nil {
-		return ContributorReading{State: "unknown", Limits: []ContributorLimitWindow{}}
+		// Carry WHY the measurement failed so a dead adapter stays visible as a
+		// different condition than "no credentials"/"not installed"
+		// (kubestellar/hive#6986). An uncategorized failure defaults to the
+		// generic probe_failed rather than claiming a cause it does not know.
+		cause := h.ProbeErrCause
+		if cause == ProbeCauseUnspecified {
+			cause = ProbeCauseProbeFailed
+		}
+		return ContributorReading{State: "unknown", Cause: string(cause), Limits: []ContributorLimitWindow{}}
 	}
 	limits := make([]ContributorLimitWindow, 0, len(h.Limits))
 	for _, w := range h.Limits {

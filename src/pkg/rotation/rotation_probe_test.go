@@ -976,3 +976,75 @@ func TestAgyHeadroomRejectsUnrecognizedSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestAgyHeadroomErrorCauseDistinguishesDeadAdapter pins the #6986 primary
+// defect fix: a SUCCESS envelope this adapter cannot map (a DEAD ADAPTER on a
+// host that DOES have credentials) must categorize as unrecognized_schema,
+// while an envelope the CLI returned with a non-SUCCESS status (the host has no
+// credentials) must categorize as no_credentials. Before this, both produced an
+// identical `unknown` and the dead adapter was invisible — it looked exactly
+// like "no credentials on this host". The fail-safe direction is unchanged:
+// both are still errors (a hold); only the reported cause differs.
+func TestAgyHeadroomErrorCauseDistinguishesDeadAdapter(t *testing.T) {
+	// A well-formed SUCCESS envelope whose quota shape drifted from what the
+	// adapter maps: the dead-adapter signal.
+	_, deadErr := agyHeadroom("google", 80, []byte(`{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[]}}}`), "")
+	if deadErr == nil {
+		t.Fatal("schema-drift SUCCESS envelope: err = nil, want an error (must still hold)")
+	}
+	if got := probeErrorCause(deadErr); got != ProbeCauseUnrecognizedSchema {
+		t.Errorf("schema drift cause = %q, want %q (a dead adapter must be nameable)", got, ProbeCauseUnrecognizedSchema)
+	}
+
+	// A non-SUCCESS envelope: the CLI ran and answered but is not serving usage,
+	// most often because this host has no agy credentials.
+	_, noCredErr := agyHeadroom("google", 80, []byte(`{"status":"ERROR","command":{"name":"usage"}}`), "")
+	if noCredErr == nil {
+		t.Fatal("non-SUCCESS envelope: err = nil, want an error (must still hold)")
+	}
+	if got := probeErrorCause(noCredErr); got != ProbeCauseNoCredentials {
+		t.Errorf("non-SUCCESS cause = %q, want %q (unconfigured host, not a schema drift)", got, ProbeCauseNoCredentials)
+	}
+
+	if probeErrorCause(deadErr) == probeErrorCause(noCredErr) {
+		t.Error("dead adapter and no-credentials collapsed to the same cause: the #6986 defect is not fixed")
+	}
+
+	// Non-JSON output (an old CLI's decorative text or a plain error line) is
+	// unrecognized shape, not something we can pin to auth.
+	_, textErr := agyHeadroom("google", 80, []byte("Weekly Limit Remaining: 55%"), "")
+	if got := probeErrorCause(textErr); got != ProbeCauseUnrecognizedSchema {
+		t.Errorf("decorative-text cause = %q, want %q", got, ProbeCauseUnrecognizedSchema)
+	}
+}
+
+// TestAgyProberCauseNotInstalledVsDeadAdapter drives the whole Probe path and
+// pins that the three failure states are told apart on the published-facing
+// Headroom: a CLI absent from PATH is not_installed, a SUCCESS-but-unmappable
+// payload is unrecognized_schema, and every one of them keeps failOpen's
+// Available:true hold shape (kubestellar/hive#6986).
+func TestAgyProberCauseNotInstalledVsDeadAdapter(t *testing.T) {
+	// agy absent from PATH.
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir)
+	h := AgyProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Fatalf("missing CLI: want fail-open with ProbeErr set, got %+v", h)
+	}
+	if h.ProbeErrCause != ProbeCauseNotInstalled {
+		t.Errorf("missing CLI cause = %q, want %q", h.ProbeErrCause, ProbeCauseNotInstalled)
+	}
+
+	// agy present but returning a SUCCESS envelope the adapter cannot map.
+	fakeCLI(t, "agy", `{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[]}}}`, 0)
+	h = AgyProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Fatalf("dead adapter: want fail-open with ProbeErr set, got %+v", h)
+	}
+	if h.ProbeErrCause != ProbeCauseUnrecognizedSchema {
+		t.Errorf("dead adapter cause = %q, want %q", h.ProbeErrCause, ProbeCauseUnrecognizedSchema)
+	}
+	if h.ProbeErrCause == ProbeCauseNotInstalled {
+		t.Error("a dead adapter must not be reported as a missing CLI")
+	}
+}
