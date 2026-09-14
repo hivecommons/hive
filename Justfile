@@ -1464,8 +1464,8 @@ contribute-hive backend="" mode="docker": check-version
           CLI_MOUNTS="-v ${CLI_STAGE}/goose:/home/dev/.config/goose${VOLSUF}"
           ;;
         codex)
-          if [ -d "${HOME}/.codex" ]; then
-            stage_copy "${HOME}/.codex" ".codex"
+          if [ -d "${CODEX_HOME:-${HOME}/.codex}" ]; then
+            stage_copy "${CODEX_HOME:-${HOME}/.codex}" ".codex"
             CLI_MOUNTS="-v ${CLI_STAGE}/.codex:/home/dev/.codex${VOLSUF}"
           fi
           ;;

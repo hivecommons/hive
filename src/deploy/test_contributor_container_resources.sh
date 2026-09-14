@@ -70,6 +70,14 @@ case "${1:-}" in
   run)
     shift
     printf '%s\n' "$@" > "$RUNTIME_CAPTURE"
+    # Inspect the staged config before the recipe removes it on exit.
+    for arg in "$@"; do
+      case "$arg" in
+        *:/home/dev/.codex*)
+          cat "${arg%%:/home/dev/.codex*}/auth.json" > "$RUNTIME_CAPTURE.auth"
+          ;;
+      esac
+    done
     echo stub-container-id
     ;;
   inspect)
@@ -104,7 +112,7 @@ run_contributor() {
   shift
   (
     cd "$ROOT" || exit 1
-    env -u HIVE_CONTAINER_MEMORY -u HIVE_CONTAINER_CPUS \
+    env -u HIVE_CONTAINER_MEMORY -u HIVE_CONTAINER_CPUS -u CODEX_HOME \
       HOME="$FAKE_HOME" PATH="$STUB_BIN:$PATH" \
       XDG_RUNTIME_DIR="$FAKE_RUNTIME_DIR" \
       RUNTIME_CAPTURE="$CAPTURE" HIVE_CONTAINER_RUNTIME="$runtime" \
@@ -171,5 +179,24 @@ check "post-start exit keeps the recipe's existing status" "0" "$RC"
 contains "diagnostic decodes exit 137 as SIGKILL" "$OUT" "SIGKILL (exit 137)"
 contains "diagnostic points to host OOM evidence" "$OUT" "host's OOM logs"
 lacks "diagnostic does not claim an unreported OOM" "$OUT" "container was OOM-killed"
+
+echo ""
+echo "-- Codex config staging --"
+mkdir -p "$FAKE_HOME/.codex" "$WORK/custom-codex"
+printf '%s\n' 'default-auth-fixture' > "$FAKE_HOME/.codex/auth.json"
+printf '%s\n' 'custom-auth-fixture' > "$WORK/custom-codex/auth.json"
+for runtime in docker podman; do
+  rm -f "$CAPTURE.auth"
+  OUT="$(run_contributor "$runtime")"; RC=$?
+  check "$runtime default config launch succeeds" "0" "$RC"
+  check "$runtime stages ~/.codex when CODEX_HOME is unset" \
+    "default-auth-fixture" "$(cat "$CAPTURE.auth" 2>/dev/null)"
+
+  rm -f "$CAPTURE.auth"
+  OUT="$(run_contributor "$runtime" CODEX_HOME="$WORK/custom-codex")"; RC=$?
+  check "$runtime custom config launch succeeds" "0" "$RC"
+  check "$runtime stages CODEX_HOME instead of ~/.codex" \
+    "custom-auth-fixture" "$(cat "$CAPTURE.auth" 2>/dev/null)"
+done
 
 hive_test_report
