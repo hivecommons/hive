@@ -11,6 +11,7 @@ This candidate targets `dd` based on `ea23fe80d4b2ec5fb7907febca46db1e981c4474`.
 - The primary Hive App and key path are unchanged. Hive remains the only issue/PR writer. The optional App mints repository-scoped Actions/statuses/metadata execution tokens and retains the existing X25519 sealed-lease and recipient-pin formats.
 - An explicit Hub broker denial clears the spoke's execution token immediately, including an unexpired token. An error-free heartbeat requiring no renewal preserves the lease. Expiry/renewal and immutable App/repository binding checks remain in force.
 - The fork-only integrated release workflow now uses `src/` for source gates, runtime launchers, installer helpers, skill packaging and cache inputs. A checkout-existence check covers these inputs; earlier string-only tests agreed with the obsolete `v2/` paths. Fork-only publishing and versioned v2 JSON contracts are unchanged.
+- Fresh-volume initialization again normalizes ownership and group-write/setgid on `/data/home`, `/data/home/.config`, `/data/config` and `/data/config/github-copilot`. The existing deployment guard caught a regression that normalized only `/data/home`, leaving newly created shared CLI parents root-owned while the sampled permission fast path could skip repair. This preserves ordinary Hive startup across a fresh volume or container replacement.
 
 ## Verification and remaining gates
 
