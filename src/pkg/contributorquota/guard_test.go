@@ -145,3 +145,29 @@ func TestUnknownAndStaleWaitSafely(t *testing.T) {
 		})
 	}
 }
+
+// An unrecognized window kind must not fail open. "weekly_scoped" was itself a
+// late addition to Claude's reporting, so new kinds demonstrably appear, and a
+// guard that silently skips them admits work precisely when a real limit is
+// exhausted.
+func TestUnrecognizedWindowKindStillGuards(t *testing.T) {
+	cfg := Config{Mode: ModePause}
+
+	exhausted := []rotation.LimitWindow{{ID: "daily", Kind: "daily", PctRemaining: 0}}
+	got := cfg.Evaluate(Reading{State: StateAvailable, Limits: exhausted}, TierComplex)
+	if got.Admit {
+		t.Fatalf("exhausted unrecognized window admitted work: %+v", got)
+	}
+	if got.Reason != StateGuardedUnknownWindow {
+		t.Errorf("Reason = %q, want %q so operators can tell the cases apart", got.Reason, StateGuardedUnknownWindow)
+	}
+	if got.WindowID != "daily" {
+		t.Errorf("WindowID = %q, want the offending window to be named", got.WindowID)
+	}
+
+	// A healthy unrecognized window must not cause a spurious pause.
+	healthy := []rotation.LimitWindow{{ID: "daily", Kind: "daily", PctRemaining: 90}}
+	if got := cfg.Evaluate(Reading{State: StateAvailable, Limits: healthy}, TierComplex); !got.Admit {
+		t.Errorf("healthy unrecognized window should admit, got %+v", got)
+	}
+}

@@ -21,6 +21,12 @@ const (
 	StateUnknown   = "unknown"
 	StateStale     = "stale"
 
+	// StateGuardedUnknownWindow distinguishes a refusal caused by a window
+	// kind this build does not recognize, so an operator can tell "your quota
+	// is low" apart from "the provider reported a limit we have not taught the
+	// guard about yet".
+	StateGuardedUnknownWindow = "guarded_unknown_window"
+
 	TierSimple  = "simple"
 	TierMedium  = "medium"
 	TierComplex = "complex"
@@ -182,12 +188,17 @@ func (c Config) Evaluate(r Reading, tier string) Decision {
 		return Decision{Wait: true, Reason: r.State}
 	}
 	for _, w := range r.Limits {
-		if !recognizedWindow(w.Kind) {
-			continue
-		}
 		required := c.RequiredReserve(w, tier)
 		if w.PctRemaining <= required {
-			return Decision{Wait: true, Reason: StateGuarded, WindowID: w.ID, Required: required, Remaining: w.PctRemaining}
+			reason := StateGuarded
+			if !recognizedWindow(w.Kind) {
+				// An unrecognized window is still a real limit. Skipping it
+				// would fail open exactly when a provider introduces a new
+				// window kind - which is how "weekly_scoped" arrived - so it
+				// is evaluated against the base reserve instead.
+				reason = StateGuardedUnknownWindow
+			}
+			return Decision{Wait: true, Reason: reason, WindowID: w.ID, Required: required, Remaining: w.PctRemaining}
 		}
 	}
 	return Decision{Admit: true}

@@ -274,9 +274,6 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 		if l.ResetsAt != nil {
 			lw.ResetAt = *l.ResetsAt
 		}
-		if l.Kind == "weekly_scoped" {
-			lw.Kind = "weekly_scoped"
-		}
 		limits = append(limits, lw)
 		if pct > used {
 			used = pct
