@@ -1,0 +1,1 @@
+- The spoke dashboard now keeps a separate **Upgrade now** action beside the passive "Queued for auto-upgrade" badge for owners whose hive is behind with auto-upgrade enabled, matching the hub dashboard so a scheduled auto-upgrade never removes the manual upgrade path.

@@ -16660,10 +16660,11 @@ function burnAreaChart() {
         } else if (v.behind) {
           html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           if (v.autoUpgrade && !um) {
-            // Hub-managed: the hub rolls the upgrade automatically, so no manual
-            // button — a passive state badge, worded to match the hub dashboard's
-            // "Queued for auto-upgrade", with the target named in the tooltip.
+            // Hub-managed: keep the passive state badge, but do not gate the
+            // owner's manual escape hatch on the schedule. This mirrors the hub
+            // dashboard's state/action split.
             html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap;padding:1px 7px;border-radius:999px;border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Queued for auto-upgrade</span>`;
+            html += ` <button id="spoke-upgrade-btn" data-action="gh27" data-arg0="${escapeHtml(v.latestHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Upgrade to ${escapeHtml(v.latestShort || 'latest')} now instead of waiting for auto-upgrade">Upgrade now</button>`;
           } else {
             // Manual path: name the action AND the target — "Upgrade available →
             // <sha>" — with a hover state, so the button cannot be misread as a
