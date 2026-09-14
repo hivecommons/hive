@@ -312,6 +312,10 @@ func TestCodexPromptEchoExemptionRetainsFailClosedOutputScanning(t *testing.T) {
 		wantUnsafe bool
 	}{
 		{name: "one exact initial human echo", stderr: humanFrame(prompt) + "DENIED", wantUnsafe: false},
+		{name: "packaged provider exact initial echo", stderr: strings.Replace(humanFrame(prompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1) + "DENIED", wantUnsafe: false},
+		{name: "packaged provider residual secret remains", stderr: strings.Replace(humanFrame(prompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1) + unsafeResidual, wantUnsafe: true},
+		{name: "packaged provider near match remains", stderr: strings.Replace(humanFrame(nearPrompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1), wantUnsafe: true},
+		{name: "unknown provider banner remains", stderr: strings.Replace(humanFrame(prompt), "v0.144.1", "v99.0.0", 1), wantUnsafe: true},
 		{name: "bare exact prompt remains", stderr: "progress\n" + prompt + "DENIED", wantUnsafe: true},
 		{name: "model framed exact prompt remains", stderr: "codex\n" + prompt + "DENIED", wantUnsafe: true},
 		{name: "second exact echo remains", stderr: humanFrame(prompt) + prompt + "DENIED", wantUnsafe: true},

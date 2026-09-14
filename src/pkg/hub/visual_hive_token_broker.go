@@ -22,6 +22,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/pkg/config"
 	hivegithub "github.com/kubestellar/hive/pkg/github"
 )
 
@@ -115,7 +116,11 @@ func newVisualHiveTokenBrokerFromEnvironment(logger *slog.Logger) (*VisualHiveTo
 	appIDText := strings.TrimSpace(os.Getenv("HIVE_VISUAL_HIVE_GITHUB_APP_ID"))
 	keyPath := strings.TrimSpace(os.Getenv("HIVE_VISUAL_HIVE_GITHUB_APP_KEY_FILE"))
 	if appIDText == "" && keyPath == "" {
-		return nil, nil
+		broker := &VisualHiveTokenBroker{logger: logger, now: func() time.Time { return time.Now().UTC() }, pinPath: visualHiveTokenPinPath, pins: map[string]visualHiveWrapPin{}}
+		if err := broker.loadPins(); err != nil {
+			return nil, err
+		}
+		return broker, nil
 	}
 	appID, err := strconv.ParseInt(appIDText, 10, 64)
 	if err != nil || appID <= 0 {
@@ -258,6 +263,67 @@ func (broker *VisualHiveTokenBroker) Issue(ctx context.Context, hiveID, trustedR
 	if broker == nil || request == nil {
 		return nil, nil
 	}
+	mintToken := broker.mintToken
+	if mintToken == nil {
+		mintToken = broker.mint
+	}
+	return broker.issue(ctx, hiveID, trustedRepository, request, broker.appID, mintToken)
+}
+
+// IssueForHive uses the operator-owned assignment and cluster key store. A
+// heartbeat cannot choose an App, a key, or another repository. Legacy Hub key
+// configuration remains readable, but also requires an explicit assignment.
+func (broker *VisualHiveTokenBroker) IssueForHive(ctx context.Context, hive *SaaSHive, request *VisualHiveTokenRequest) (*VisualHiveTokenLease, error) {
+	if broker == nil {
+		return nil, errors.New("the optional Visual Hive GitHub App broker is not configured")
+	}
+	if hive == nil || hive.SecondaryAppID <= 0 {
+		return nil, errors.New("the hosted hive has no assigned Visual Hive App")
+	}
+	if visualHiveRepositoryForHostedHive(hive) == "" || (hive.SecondaryAppID != config.VizHivePublicAppID && hive.SecondaryAppID != broker.appID) {
+		return nil, errors.New("the hosted hive has no supported public-GitHub Visual Hive App binding")
+	}
+	keyPath, ok := secondaryAppKeyPath(strings.TrimSpace(hive.ClusterID), hive.SecondaryAppID)
+	if !ok {
+		return nil, errors.New("the hosted hive has no valid cluster binding")
+	}
+	// Bound the registry read. An invalid present key must never fall back to
+	// an older environment key and silently defeat operator rotation.
+	keyFile, err := os.Open(keyPath)
+	var keyPEM []byte
+	if os.IsNotExist(err) && hive.SecondaryAppID == broker.appID {
+		keyPEM = broker.keyPEM
+	} else if err != nil {
+		return nil, errors.New("the Hub has no readable key for the assigned Visual Hive App")
+	} else {
+		info, statErr := keyFile.Stat()
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > visualHiveAppKeyMaxBytes {
+			keyFile.Close()
+			return nil, errors.New("the assigned Visual Hive App key is not a bounded ordinary file")
+		}
+		keyPEM, err = io.ReadAll(io.LimitReader(keyFile, visualHiveAppKeyMaxBytes+1))
+		closeErr := keyFile.Close()
+		if err != nil || closeErr != nil || len(keyPEM) > visualHiveAppKeyMaxBytes {
+			return nil, errors.New("could not safely read the assigned Visual Hive App key")
+		}
+	}
+	if _, err := hivegithub.NewAppAuthFromPEM(hive.SecondaryAppID, 1, keyPEM, broker.logger, ""); err != nil {
+		return nil, errors.New("the assigned Visual Hive App key is invalid")
+	}
+	// Per-request immutable signer material shares only the broker's locked
+	// recipient pins. Rotation cannot race another hive's signing identity.
+	signer := &VisualHiveTokenBroker{appID: hive.SecondaryAppID, keyPEM: keyPEM, logger: broker.logger}
+	mintToken := signer.mint
+	if broker.mintToken != nil {
+		mintToken = broker.mintToken
+	}
+	return broker.issue(ctx, hive.ID, visualHiveRepositoryForHostedHive(hive), request, hive.SecondaryAppID, mintToken)
+}
+
+func (broker *VisualHiveTokenBroker) issue(ctx context.Context, hiveID, trustedRepository string, request *VisualHiveTokenRequest, appID int64, mintToken func(context.Context, string) (hivegithub.AppRuntimeIdentity, string, time.Time, error)) (*VisualHiveTokenLease, error) {
+	if request == nil {
+		return nil, nil
+	}
 	repository := normalizeFullRepository(trustedRepository)
 	if hiveID == "" || repository == "" || !strings.EqualFold(repository, normalizeFullRepository(request.Repository)) {
 		return nil, fmt.Errorf("Visual Hive token request does not match the Hub-owned hive repository")
@@ -267,12 +333,8 @@ func (broker *VisualHiveTokenBroker) Issue(ctx context.Context, hiveID, trustedR
 		return nil, err
 	}
 	now := broker.now()
-	if request.CurrentAppID == broker.appID && request.CurrentInstallationID > 0 && validSHA256Hex(request.CurrentBindingDigest) && request.CurrentExpiresAt.After(now.Add(visualHiveTokenRenewBefore)) {
+	if request.CurrentAppID == appID && request.CurrentInstallationID > 0 && validSHA256Hex(request.CurrentBindingDigest) && request.CurrentExpiresAt.After(now.Add(visualHiveTokenRenewBefore)) {
 		return nil, nil
-	}
-	mintToken := broker.mintToken
-	if mintToken == nil {
-		mintToken = broker.mint
 	}
 	identity, token, expiresAt, err := mintToken(ctx, repository)
 	if err != nil {

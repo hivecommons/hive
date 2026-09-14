@@ -2361,7 +2361,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		case trustedRepository == "":
 			resp.VisualHiveTokenError = "the hosted hive has no exact public-GitHub repository binding for Visual Hive"
 		default:
-			lease, leaseErr := s.visualHiveTokenBroker.Issue(r.Context(), payload.HiveID, trustedRepository, payload.VisualHiveTokenRequest)
+			lease, leaseErr := s.visualHiveTokenBroker.IssueForHive(r.Context(), hosted, payload.VisualHiveTokenRequest)
 			if leaseErr != nil {
 				resp.VisualHiveTokenError = sanitizeProseField(leaseErr.Error())
 				s.logger.Warn("Visual Hive App token lease unavailable", "hive_id", payload.HiveID, "repository", trustedRepository, "error", leaseErr)

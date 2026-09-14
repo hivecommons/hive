@@ -21,6 +21,7 @@ const (
 	codexStderrDiagnosticHardLimit = 64 << 10
 	codexHumanPromptHeaderLimit    = 16 << 10
 	codexHumanBannerPrefix         = "OpenAI Codex v0.144.1\n--------\n"
+	codexPackagedHumanBannerPrefix = "OpenAI Codex v0.146.0\n--------\n"
 	codexHumanPromptMarker         = "--------\nuser\n"
 )
 
@@ -332,7 +333,7 @@ func (process *codexRunningProcess) WaitProvider() (ProviderResult, error) {
 
 // codexOutputForSecretClassification excludes the byte-identical input prompt
 // only from the reviewed initial human-output frame emitted by pinned Codex
-// 0.144.1. That frame is transport input, not provider output. Authoritative
+// 0.144.1 and packaged 0.146.0. That frame is transport input, not provider output. Authoritative
 // stdout and every other stderr byte remain fail-closed inputs to the
 // output-secret classifier. Structured mode has no reviewed prompt echo and
 // therefore receives no exemption.
@@ -353,18 +354,22 @@ func codexOutputForSecretClassification(stdout, stderr []byte, expectedPromptEch
 }
 
 func codexHumanPromptEchoOffset(stderr, prompt []byte) (int, bool) {
-	if len(prompt) == 0 || !bytes.HasPrefix(stderr, []byte(codexHumanBannerPrefix)) {
+	banner := codexHumanBannerPrefix
+	if bytes.HasPrefix(stderr, []byte(codexPackagedHumanBannerPrefix)) {
+		banner = codexPackagedHumanBannerPrefix
+	}
+	if len(prompt) == 0 || !bytes.HasPrefix(stderr, []byte(banner)) {
 		return 0, false
 	}
 	headerEnd := len(stderr)
 	if headerEnd > codexHumanPromptHeaderLimit {
 		headerEnd = codexHumanPromptHeaderLimit
 	}
-	markerOffset := bytes.Index(stderr[len(codexHumanBannerPrefix):headerEnd], []byte(codexHumanPromptMarker))
+	markerOffset := bytes.Index(stderr[len(banner):headerEnd], []byte(codexHumanPromptMarker))
 	if markerOffset < 0 {
 		return 0, false
 	}
-	promptOffset := len(codexHumanBannerPrefix) + markerOffset + len(codexHumanPromptMarker)
+	promptOffset := len(banner) + markerOffset + len(codexHumanPromptMarker)
 	if promptOffset >= len(stderr) || len(prompt) > len(stderr)-promptOffset-1 {
 		return 0, false
 	}

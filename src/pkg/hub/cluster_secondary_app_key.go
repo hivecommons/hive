@@ -381,6 +381,13 @@ func (s *HubServer) secondaryAppKeyForHeartbeat(payload *HeartbeatPayload) *Hear
 	if h == nil || h.SecondaryAppID <= 0 {
 		return nil
 	}
+	// Visual Hive execution credentials cross only as sealed token leases.
+	// Suppress PEM delivery even for old spokes or absent token requests: a
+	// missing feature must not downgrade the reviewed credential boundary.
+	if h.SecondaryAppID == config.VizHivePublicAppID || h.SecondaryAppID == config.VizHiveEnterpriseAppID ||
+		(s.visualHiveTokenBroker != nil && h.SecondaryAppID == s.visualHiveTokenBroker.appID) {
+		return nil
+	}
 	pem, appID := secondaryAppKeyForHive(h)
 	decision := decideSecondaryAppKeySync(pem, appID, payload.GitHubAppKeysHeld)
 	if !decision.Deliver {

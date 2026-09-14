@@ -2076,10 +2076,10 @@ type HeartbeatGitHubAppConfig struct {
 	// so it deserializes to empty on both sides; a spoke that reads it (older
 	// builds) simply never receives entries. It always arrives nil now.
 	AdditionalKeys []HeartbeatAppKey `json:"additional_keys,omitempty"`
-	// SecondaryKey delivers the ONE optional second App key this hive is
-	// authorized to hold (#4815), so a cluster's second App — the optional
-	// Visual Hive App, #4030 — can receive a credential without the primary key
-	// having anywhere else to go.
+	// SecondaryKey delivers the ONE generic second App key this hive is
+	// authorized to hold (#4815), without replacing the primary key. Visual
+	// Hive Apps are excluded: their private keys remain on the Hub and their
+	// execution credentials use VisualHiveTokenLease instead.
 	//
 	// WHY THIS IS NOT AdditionalKeys REVIVED. AdditionalKeys is a LIST selected
 	// from the fleet key set with no binding to the caller, which is exactly what
