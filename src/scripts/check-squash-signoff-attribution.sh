@@ -1,56 +1,55 @@
 #!/usr/bin/env bash
 # check-squash-signoff-attribution.sh — reject a PR whose commits carry a
-# Signed-off-by that cannot survive the squash: a bot sign-off on a
-# human-authored PR, or a GitHub noreply sign-off naming a different login
-# than the PR author.
+# Signed-off-by that names someone OTHER than the commit author, because the
+# squash merge turns that into a permanent mismatched-signoff.
 #
-# WHY THIS EXISTS (#6798)
+# WHY THIS EXISTS (#6798, generalised in #6971)
 #
-# The post-merge monitor skips bot-authored commits (DCO_SKIP_BOT_AUTHORS), so
-# a branch commit authored by Copilot AND signed off by Copilot is internally
-# consistent and passes every pre-merge check.
+# GitHub's squash merge writes a NEW commit whose author is the pull request's
+# author while carrying the branch commit's message — and therefore its
+# Signed-off-by trailer. If that trailer names anyone other than the person the
+# squash will be attributed to, the commit that lands on the protected branch
+# is a mismatched-signoff on history that can no longer be rewritten.
 #
-# GitHub's squash merge then writes a NEW commit whose author is the pull
-# request's author — a human — while carrying the branch commit's message, and
-# therefore the bot's Signed-off-by trailer. The commit that actually lands on
-# the protected branch is a human-authored commit signed off by a bot: a real
-# mismatched-signoff, on history that can no longer be rewritten.
+# There are two shapes of this, and this gate must catch BOTH:
 #
-# That is what happened to d8f376e8 (the squash of #6796): branch commit
-# f222e73e was authored and signed off by Copilot, and the merge produced
-# `author=Andy Anderson <andy@clubanderson.com>
-#  signed-off-by=223556219+copilot@users.noreply.github.com`.
+#   1. Signed off as a BOT (#6798, d8f376e8). Branch commit f222e73e was
+#      authored AND signed off by Copilot — internally consistent, and skipped
+#      by the post-merge monitor's DCO_SKIP_BOT_AUTHORS — but the squash of
+#      #6796 produced `author=Andy Anderson <andy@clubanderson.com>
+#      signed-off-by=223556219+copilot@users.noreply.github.com`.
 #
-# The bot-author skip is precisely what hides this class pre-merge, so it has
-# to be checked as its own rule. The branch is still writable at PR time, which
-# is the only moment the commit can actually be fixed.
+#   2. Signed off as a DIFFERENT HUMAN (#6971, 01bd2469). The branch commit was
+#      authored by Andy Anderson <andy@clubanderson.com> but signed off as
+#      danathar@users.noreply.github.com — another person's GitHub noreply, not
+#      a bot. The old rule only looked for bot identities, so this sailed
+#      through and became a permanent mismatched-signoff on v5.
 #
-# THE HUMAN VARIANT (#6971)
-#
-# The same squash mechanics bite when the branch commit is authored and signed
-# off by a DIFFERENT HUMAN than the pull request's author. 01bd2469 (the
-# squash of #6970) is exactly this: branch commit f8cfa697 was authored and
-# signed off by @Danathar — internally consistent, so every pre-merge check
-# passed — and the squash landed it as author=Andy Anderson
-# <andy@clubanderson.com> signed-off-by=danathar@users.noreply.github.com.
-#
-# Pre-merge we cannot know which email the squash author will land under, so a
-# plain mismatched address proves nothing. A <login>@users.noreply.github.com
-# sign-off is different: it structurally names ONE GitHub account, and the
-# post-merge monitor accepts a noreply trailer only when the commits API says
-# the commit author IS that login (#6721). After a squash the commit author is
-# the PR author, so a noreply sign-off naming any OTHER login is a guaranteed
-# post-merge mismatch — flag it while the branch can still be re-signed.
+# The post-merge monitor already reasoned about shape 2 (its self-tests cover
+# "noreply for the authoring account is accepted" and "noreply for a different
+# account is rejected"); the pre-merge side was simply behind it. The rule here
+# is now the general one: at least one Signed-off-by must name the author. The
+# branch is still writable at PR time, which is the only moment it can be fixed.
 #
 # Usage: check-squash-signoff-attribution.sh <base-ref> <head-ref> [pr-author-login]
 #
 # Environment:
-#   PR_AUTHOR_LOGIN   Pull request author's login, when not passed as $3. If it
+#   PR_AUTHOR_LOGIN   Pull request author's login, when not passed as $3. It is
+#                     the login the squash will be attributed to, so a sign-off
+#                     that is this account's GitHub noreply is accepted. If it
 #                     is itself a bot, the check is skipped: a bot-authored PR
 #                     squashes to a bot-authored commit, which the monitor
 #                     skips, so no mismatch is created.
 
 set -u -o pipefail
+
+# Shared sign-off identity helpers (lower, GitHub noreply matching, author
+# login lookup), also used by the post-merge monitor check-dco-trailers.sh.
+# One copy on purpose: #6971 slipped through here because this gate's idea of
+# "an acceptable sign-off" had drifted behind the monitor's.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=src/scripts/lib-dco-identity.sh
+. "$SCRIPT_DIR/lib-dco-identity.sh"
 
 base_ref="${1:-}"
 head_ref="${2:-HEAD}"
@@ -88,19 +87,6 @@ if [ -n "$pr_author" ] && is_bot_identity "$pr_author"; then
   exit 0
 fi
 
-# Prints the GitHub login structurally named by a noreply sign-off address
-# (either <login>@users.noreply.github.com or <id>+<login>@users.noreply.
-# github.com), lowercased; prints nothing for any other address.
-noreply_login() {
-  case "$(printf '%s' "$1" | lower)" in
-    *@users.noreply.github.com)
-      login="${1%@*}"
-      login="${login##*+}"
-      printf '%s' "$login" | lower
-      ;;
-  esac
-}
-
 # Commits that already landed on a protected line are out of scope (#6919).
 #
 # This gate's whole premise is that "the branch is still writable at PR time".
@@ -131,29 +117,108 @@ while IFS= read -r sha; do
     continue
   fi
   checked=$((checked + 1))
-  while IFS= read -r signoff_email; do
-    [ -n "$signoff_email" ] || continue
-    if is_bot_identity "$signoff_email"; then
-      failures="${failures}FAIL ${sha} bot-signoff signed-off-by=${signoff_email} subject=$(git log -1 --format=%s "$sha")
-"
-    elif [ -n "$pr_author" ]; then
-      signoff_login="$(noreply_login "$signoff_email")"
-      if [ -n "$signoff_login" ] && [ "$signoff_login" != "$(printf '%s' "$pr_author" | lower)" ]; then
-        failures="${failures}FAIL ${sha} foreign-noreply-signoff signed-off-by=${signoff_email} pr-author=${pr_author} subject=$(git log -1 --format=%s "$sha")
-"
+
+  author_name=$(git log -1 --format=%an "$sha")
+  author_email=$(git log -1 --format=%ae "$sha")
+  author_lc=$(printf '%s' "$author_email" | lower)
+  subject=$(git log -1 --format=%s "$sha")
+
+  # Every Signed-off-by email on the commit, lower-cased. Co-authored-by and
+  # other trailers are intentionally NOT collected: crediting an agent (or a
+  # co-author) with Co-authored-by is correct and must never be read as a
+  # sign-off.
+  signoff_emails=$(git log -1 --format=%B "$sha" |
+    awk '
+      tolower($0) ~ /^signed-off-by:[[:space:]]*/ {
+        line=$0
+        sub(/^[^:]+:[[:space:]]*/, "", line)
+        if (match(line, /<[^<>[:space:]]+@[^<>[:space:]]+>/)) {
+          print tolower(substr(line, RSTART + 1, RLENGTH - 2))
+        }
+      }')
+
+  # No sign-off at all is the pre-merge DCO app's job, not this gate's. This
+  # gate only decides whether an EXISTING sign-off will still name the right
+  # person after GitHub rewrites the author during the squash.
+  [ -n "$signoff_emails" ] || continue
+
+  # The landing squash commit is attributed to the PULL REQUEST author, so the
+  # question this gate answers is: does a sign-off certify THAT person? We need
+  # the commit author's GitHub login to tell "the author is the PR author and
+  # signed with their own address" from "someone else's address rode in on this
+  # commit". author_login_for_commit resolves it from DCO_AUTHOR_LOGIN_MAP
+  # (tests/offline) or the GitHub commits API (CI), the same source the
+  # post-merge monitor trusts.
+  author_login=$(author_login_for_commit "$sha")
+  pr_author_lc=$(printf '%s' "$pr_author" | lower)
+
+  # A sign-off certifies the PR author when it is that account's GitHub
+  # noreply, or when the COMMIT author is the PR author and the sign-off is
+  # that author's own git email or noreply. The second clause is what accepts
+  # the ordinary "I authored and signed off on my own commit" case, including
+  # the "signed off as my own GitHub noreply" shape the monitor already allows.
+  signoff_is_pr_author() {
+    candidate="$1"
+    if [ -n "$pr_author_lc" ] && github_noreply_matches_login "$candidate" "$pr_author_lc"; then
+      return 0
+    fi
+    if [ -n "$author_login" ] && [ "$author_login" = "$pr_author_lc" ]; then
+      if [ "$candidate" = "$author_lc" ]; then
+        return 0
+      fi
+      if github_noreply_matches_login "$candidate" "$author_login"; then
+        return 0
       fi
     fi
+    return 1
+  }
+
+  author_signed=0
+  any_bot=0
+  rendered=""
+  while IFS= read -r signoff_email; do
+    [ -n "$signoff_email" ] || continue
+    rendered="${rendered:+${rendered},}${signoff_email}"
+    if signoff_is_pr_author "$signoff_email"; then
+      author_signed=1
+    elif is_bot_identity "$signoff_email"; then
+      any_bot=1
+    fi
   done <<EOF
-$(git log -1 --format=%B "$sha" |
-  awk '
-    tolower($0) ~ /^signed-off-by:[[:space:]]*/ {
-      line=$0
-      sub(/^[^:]+:[[:space:]]*/, "", line)
-      if (match(line, /<[^<>[:space:]]+@[^<>[:space:]]+>/)) {
-        print tolower(substr(line, RSTART + 1, RLENGTH - 2))
-      }
-    }')
+$signoff_emails
 EOF
+
+  # Degrade safely when the commit author's login could NOT be resolved (an API
+  # hiccup, or a run with neither token nor map). Without it we cannot tell a
+  # legitimate self-sign from a different-person sign-off, so we must not block
+  # a contributor on a guess: fall back to the original, narrower rule — fail
+  # only an unambiguous BOT sign-off. The post-merge monitor remains the
+  # backstop for the different-human case if this degradation ever hides one.
+  if [ -z "$author_login" ]; then
+    if [ "$author_signed" -ne 1 ] && [ "$any_bot" -eq 1 ]; then
+      failures="${failures}FAIL ${sha} bot-signoff signed-off-by=${rendered} subject=${subject}
+"
+    fi
+    continue
+  fi
+
+  # PASS as soon as the PR author's own sign-off is present: genuine co-signing
+  # (author + a second Signed-off-by) is fine because the certification the
+  # contributor owes is satisfied. FAIL only when NONE of the sign-offs name
+  # the person the squash will attribute this commit to — the shape that lands
+  # as a mismatched-signoff on protected history. A bot sign-off (#6798,
+  # d8f376e8) is one instance; a DIFFERENT HUMAN's sign-off (#6971, 01bd2469:
+  # danathar's noreply under Andy's commit) is the other, and until now this
+  # gate only saw the first.
+  if [ "$author_signed" -ne 1 ]; then
+    if [ "$any_bot" -eq 1 ]; then
+      failures="${failures}FAIL ${sha} bot-signoff signed-off-by=${rendered} subject=${subject}
+"
+    else
+      failures="${failures}FAIL ${sha} foreign-signoff author=${author_name} <${author_email}> signed-off-by=${rendered} subject=${subject}
+"
+    fi
+  fi
 done < <(git rev-list "${base_ref}..${head_ref}" ${landed_excludes[@]+"${landed_excludes[@]}"})
 
 if [ "${#landed_excludes[@]}" -gt 0 ]; then
@@ -173,28 +238,22 @@ if [ -n "$failures" ]; then
   printf '%s' "$failures"
   cat >&2 <<'EXPLAIN'
 
-These commits carry a Signed-off-by that cannot survive this pull request's
-squash merge. GitHub's squash writes the resulting commit with the PULL
-REQUEST's author and keeps this message, so what lands on the protected branch
-is a mismatched-signoff that cannot be repaired afterwards, because the branch
-is protected (see #6798 and #6971).
+These commits carry a Signed-off-by that names someone OTHER than the commit
+author - a bot, or a different person. GitHub's squash merge writes the
+resulting commit with the PULL REQUEST's author and keeps this message, so what
+lands on the protected branch is a commit whose author and sign-off disagree: a
+mismatched-signoff that cannot be repaired afterwards, because the branch is
+protected (see #6798 for the bot shape, #6971 for the different-human shape).
 
-  bot-signoff              the trailer certifies origin as a bot
-  foreign-noreply-signoff  the trailer's noreply address names a different
-                           GitHub login than this pull request's author, so
-                           after the squash it can never match the commit
-                           author
-
-Fix it now, while the branch is still writable: re-sign the commit as the human
-who is contributing it through this pull request, and credit everyone else with
-a Co-authored-by trailer.
+Fix it now, while the branch is still writable: re-sign the commit as the
+person who is contributing it, and credit anyone else with Co-authored-by.
 
     git commit --amend -s --no-edit     # sign off as yourself
     git push --force-with-lease
 
-Co-authored-by is the correct way to credit an agent or another contributor.
+Co-authored-by is the correct way to credit an agent or a collaborator.
 Signed-off-by is a certification of origin under the DCO and has to name the
-person whose authorship the squash will record.
+person contributing the commit.
 EXPLAIN
   exit 1
 fi
