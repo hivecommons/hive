@@ -919,7 +919,7 @@ func NewManager(cfg config.RotationConfig) *Manager {
 		headroom: make(map[string]Headroom),
 	}
 	threshold := cfg.EffectiveThreshold()
-	for name := range cfg.Providers {
+	for name, pc := range cfg.Providers {
 		switch name {
 		case "anthropic":
 			m.probers = append(m.probers, ClaudeProber{ThresholdPct: threshold})
@@ -929,6 +929,11 @@ func NewManager(cfg config.RotationConfig) *Manager {
 			m.probers = append(m.probers, AgyProber{ThresholdPct: threshold})
 		case "deepseek":
 			m.probers = append(m.probers, DeepSeekProber{})
+		case "github":
+			// Copilot premium requests (#6980). Without a stated
+			// monthly_allowance the probe reports an explicit unknown — see
+			// CopilotProber.
+			m.probers = append(m.probers, CopilotProber{ThresholdPct: threshold, MonthlyAllowance: pc.MonthlyAllowance})
 		}
 	}
 	return m

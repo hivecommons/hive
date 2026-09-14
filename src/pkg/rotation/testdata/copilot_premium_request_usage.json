@@ -1,0 +1,44 @@
+{
+  "timePeriod": {
+    "year": 2026,
+    "month": 9
+  },
+  "user": "example-contributor",
+  "usageItems": [
+    {
+      "product": "copilot",
+      "sku": "copilot_premium_request",
+      "model": "claude-sonnet-4.5",
+      "unitType": "requests",
+      "grossQuantity": 220,
+      "discountQuantity": 220,
+      "netQuantity": 0
+    },
+    {
+      "product": "copilot",
+      "sku": "copilot_premium_request",
+      "model": "gpt-5",
+      "unitType": "requests",
+      "grossQuantity": 80,
+      "discountQuantity": 60,
+      "netQuantity": 20
+    },
+    {
+      "product": "copilot",
+      "sku": "copilot_included_request",
+      "model": "gpt-5-mini",
+      "unitType": "requests",
+      "grossQuantity": 540,
+      "discountQuantity": 540,
+      "netQuantity": 0
+    },
+    {
+      "product": "actions",
+      "sku": "actions_linux",
+      "unitType": "minutes",
+      "grossQuantity": 999,
+      "discountQuantity": 0,
+      "netQuantity": 999
+    }
+  ]
+}

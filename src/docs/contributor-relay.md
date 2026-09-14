@@ -739,7 +739,7 @@ where a fail-open fix landed while the defect stayed live in the copy that
 gates work ([#6951](https://github.com/hivecommons/hive/issues/6951)). A test
 now fails if a second unwired implementation reappears.
 
-Five behaviours are worth knowing:
+Six behaviours are worth knowing:
 
 - **An unfamiliar window kind is still a limit.** The guard knows `session`,
   `short`, `five_hour`, `weekly` and `weekly_scoped`. A window of any *other*
@@ -755,6 +755,22 @@ Five behaviours are worth knowing:
   can read "your weekly quota is low" apart from "your provider reported
   something new", the second being also the signal that any short/weekly
   override did not apply to that window.
+
+- **Copilot's `monthly` window is deliberately such a kind.** GitHub Copilot
+  meters premium requests per calendar month
+  ([#6980](https://github.com/hivecommons/hive/issues/6980)) — there is no
+  rolling five-hour or weekly window to map it onto. Rather than growing the
+  documented kind set (and its reserve-override surface) for one provider, the
+  recorded decision is that the `monthly` window the Copilot adapter emits is
+  governed by the **base reserve** (`HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT`)
+  through the unrecognized-kind path above: enforced, held as
+  `guarded_unknown_window`, with the kind named in the banner. The
+  short/weekly overrides do not apply to it. Note also what the adapter can
+  and cannot read: the documented usage endpoint reports **consumption only**,
+  so the window (and its percentage) exists only when the operator states the
+  plan's included allowance in `rotation.providers.<name>.monthly_allowance`;
+  without it the adapter reports an explicit unknown carrying the consumed
+  count, never a guessed percentage.
 
 - **A hold can lift by itself.** Every other `ready` in this relay is
   event-driven — a task completing, a CLI recovering — and the guard suppresses

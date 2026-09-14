@@ -376,6 +376,13 @@ type ProviderRotationConfig struct {
 	// Backends lists which hive backend names front this provider
 	// (e.g. ["claude","pi"] for anthropic; ["litellm"] when litellm fronts deepseek).
 	Backends []string `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// MonthlyAllowance states the plan's included request count per calendar
+	// month for providers metered that way (github/Copilot premium requests,
+	// #6980). Their documented usage endpoints report only consumption, never
+	// the entitlement, so a remaining percentage exists only when the operator
+	// states the allowance here. 0 (unset) leaves the reading an explicit
+	// unknown rather than a guessed one.
+	MonthlyAllowance int `yaml:"monthly_allowance,omitempty" json:"monthly_allowance,omitempty"`
 }
 
 // defaultRotationThresholdPct is the exhaustion threshold when unset.
