@@ -563,25 +563,100 @@ jobs:
 
   # Stable aggregate context named "test", preserved from the pre-shard job so
   # anything keyed on the check name (branch protection, tide, humans' muscle
-  # memory) keeps working. Fails closed: every shard AND the partition job
-  # must succeed — a failed/skipped partition means packages may not have run.
+  # memory) keeps working. Fails closed for genuine failures, skipped shards,
+  # and unknown states. A cancelled-only result is reported distinctly as an
+  # infrastructure cancellation instead of being counted as a test failure: no
+  # tests ran in that shard, so it is not evidence of a code defect, and the
+  # summary says it is not complete green test evidence.
   test:
     if: always()
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
       - name: Check shard results
+        env:
+          LIST_PACKAGES_RESULT: ${{ needs.list-packages.result }}
+          TEST_HUB_RESULT: ${{ needs.test-hub.result }}
+          TEST_AGENT_RESULT: ${{ needs.test-agent.result }}
+          TEST_REST_RESULT: ${{ needs.test-rest.result }}
+          TEST_DASHBOARD_SHUFFLE_RESULT: ${{ needs.test-dashboard-shuffle.result }}
         run: |
-          echo "list-packages:          ${{ needs.list-packages.result }}"
-          echo "test-hub:               ${{ needs.test-hub.result }}"
-          echo "test-agent:             ${{ needs.test-agent.result }}"
-          echo "test-rest:              ${{ needs.test-rest.result }}"
-          echo "test-dashboard-shuffle: ${{ needs.test-dashboard-shuffle.result }}"
-          [ "${{ needs.list-packages.result }}" = "success" ]
-          [ "${{ needs.test-hub.result }}" = "success" ]
-          [ "${{ needs.test-agent.result }}" = "success" ]
-          [ "${{ needs.test-rest.result }}" = "success" ]
-          [ "${{ needs.test-dashboard-shuffle.result }}" = "success" ]
+          set -euo pipefail
+
+          shard_names=(
+            list-packages
+            test-hub
+            test-agent
+            test-rest
+            test-dashboard-shuffle
+          )
+          shard_results=(
+            "${LIST_PACKAGES_RESULT:-}"
+            "${TEST_HUB_RESULT:-}"
+            "${TEST_AGENT_RESULT:-}"
+            "${TEST_REST_RESULT:-}"
+            "${TEST_DASHBOARD_SHUFFLE_RESULT:-}"
+          )
+
+          failures=()
+          skipped=()
+          cancelled=()
+          unknown=()
+
+          for i in "${!shard_names[@]}"; do
+            name=${shard_names[$i]}
+            result=${shard_results[$i]}
+            printf '%-23s %s\n' "${name}:" "${result:-<missing>}"
+            case "$result" in
+              success) ;;
+              failure) failures+=("$name") ;;
+              skipped) skipped+=("$name") ;;
+              cancelled) cancelled+=("$name") ;;
+              *) unknown+=("$name=${result:-<missing>}") ;;
+            esac
+          done
+
+          join_by_comma() {
+            local IFS=', '
+            echo "$*"
+          }
+
+          append_summary() {
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "## v2 shard aggregate"
+                echo ""
+                echo "$1"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          if [ "${#failures[@]}" -gt 0 ] || [ "${#skipped[@]}" -gt 0 ] || [ "${#unknown[@]}" -gt 0 ]; then
+            if [ "${#failures[@]}" -gt 0 ]; then
+              echo "::error::Failing shard(s): $(join_by_comma "${failures[@]}")"
+            fi
+            if [ "${#skipped[@]}" -gt 0 ]; then
+              echo "::error::Skipped shard(s): $(join_by_comma "${skipped[@]}"). A skipped shard means tests may not have run."
+            fi
+            if [ "${#unknown[@]}" -gt 0 ]; then
+              echo "::error::Unknown shard result(s): $(join_by_comma "${unknown[@]}")"
+            fi
+            if [ "${#cancelled[@]}" -gt 0 ]; then
+              echo "Cancelled shard(s) were also present: $(join_by_comma "${cancelled[@]}"). They are not treated as infrastructure-only because another shard failed, skipped, or reported an unknown state."
+            fi
+            append_summary "❌ At least one shard failed, skipped, or reported an unknown state. Cancelled shards, if any, were not allowed to mask that result."
+            exit 1
+          fi
+
+          if [ "${#cancelled[@]}" -gt 0 ]; then
+            message="Infrastructure cancellation: shard(s) did not complete: $(join_by_comma "${cancelled[@]}"). No test failure was observed, but this run is not complete test evidence for those shard(s)."
+            echo "::warning title=Infrastructure cancellation::$message"
+            append_summary "⚠️ $message"
+            exit 0
+          fi
+
+          append_summary "✅ All shards succeeded."
+          echo "All shards succeeded."
 
   # Per-package coverage-floor gate (#4112): parse-only, consumes the shard
   # artifacts — it runs no tests, so PRs run the suite exactly once. PR-only:
