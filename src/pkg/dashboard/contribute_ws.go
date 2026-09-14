@@ -5075,11 +5075,33 @@ func (h *ContributeWSHub) requireExplicitAccept() bool {
 	return h.server.deps.Config.Hub.IsContributeRequireExplicitAccept()
 }
 
+// contributorSupportsQuotaPreflight reports whether the connected relay
+// advertised the quota_preflight_v1 capability (kubestellar/hive#6954). It gates
+// the auto-accept credential hold: a relay that advertises it will answer an
+// offered task with task_accepted or a local_capacity_guard task_declined BEFORE
+// the scoped credential is delivered (#6833), so the hub withholds and waits; a
+// relay that does not advertise it cannot preflight, so the hub delivers the
+// credential on the auto-accept path exactly as it did before #6833.
+//
+// This is TRUE capability negotiation, replacing the prior proxy on
+// RelayProtocolVersion. That proxy withheld the credential from every relay that
+// declared ANY protocol version — #6931 never bumped RELAY_PROTOCOL_VERSION, so
+// every already-deployed relay tripped it — and only kept working by the
+// accident that the in-tree relay has always sent task_accepted unconditionally.
+// Gating on the advertised token instead makes the contract explicit: nothing is
+// withheld unless the relay has stated it will answer.
+//
+// Fail closed on the negotiated side, backward-compatible on the legacy side: an
+// absent/empty capability list is read as "no preflight" and takes the pre-#6833
+// immediate-delivery path, which is the deliberate compatibility choice #6833's
+// "mixed-version hub/relay behaviour remains backward compatible" criterion
+// requires — an old relay must not be stranded waiting for a credential it will
+// never earn because it does not know how to accept or decline.
 func contributorSupportsQuotaPreflight(c *ContributorConnection) bool {
 	if c == nil || c.capabilities == nil {
 		return false
 	}
-	return strings.TrimSpace(c.capabilities.RelayProtocolVersion) != ""
+	return c.capabilities.DeclaresCapability(capQuotaPreflight)
 }
 
 // deliverTaskCredential ships the scoped credential the hub minted for the

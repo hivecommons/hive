@@ -154,6 +154,25 @@ type ContributorCapabilities struct {
 	// It lets the hub see, read-only, which protocol level a connected client is
 	// on (the mirror of the version the hub advertises on auth_ok).
 	RelayProtocolVersion string `json:"relay_protocol_version,omitempty"`
+	// RelayCapabilities is the relay's OUTBOUND capability set — the mirror of the
+	// hub's server_capabilities (serverCapabilities()), letting a relay name the
+	// negotiated features it actually implements rather than the hub inferring
+	// them from a version number (kubestellar/hive#6954). This is the reverse
+	// direction #6931 left unbuilt: quota_preflight_v1 existed only as a
+	// hub-outbound string, so the hub had no field in which a relay could answer
+	// and fell back to proxying on RelayProtocolVersion — which withholds the
+	// auto-accept credential from EVERY relay that declares any version, whether
+	// or not it has ever heard of the capability. Each entry is a stable token
+	// (e.g. "quota_preflight_v1"); an undeclared/empty list reads as "declares no
+	// negotiated capability" and is treated exactly as a pre-#6833 relay. Like
+	// every other field here it is an honest self-report, bounded on receipt and
+	// NEVER a trust signal — it only lets the hub gate on the ADVERTISED set
+	// instead of a version proxy. Compatibility boundary with #6825: this adds a
+	// relay→hub capability list to the assignment boundary that RFC #6825 is still
+	// designing; #6954 is the sub-issue split out to carry exactly this wire
+	// change independently, so whichever of the two lands second must not redefine
+	// the token vocabulary silently.
+	RelayCapabilities []string `json:"relay_capabilities,omitempty"`
 	// CredentialType names the kind of credential the relay authenticates GitHub
 	// with (e.g. "app", "pat", "oauth"), NOT the credential itself. Advisory.
 	CredentialType string `json:"credential_type,omitempty"`
@@ -266,7 +285,27 @@ func capabilityFieldFits(have, want string) bool {
 func (c ContributorCapabilities) IsZero() bool {
 	return c.ContainerRuntime == "" && c.OS == "" && c.Arch == "" &&
 		c.AgentCLIVersion == "" && c.RelayProtocolVersion == "" && c.CredentialType == "" &&
+		len(c.RelayCapabilities) == 0 &&
 		c.PiBinary == "" && c.PiConfiguration == "" && c.PiAuthentication == "" && c.PiInvocation == ""
+}
+
+// DeclaresCapability reports whether the relay advertised the named negotiated
+// capability token (kubestellar/hive#6954). It is the hub-side read of
+// RelayCapabilities and the reason the field exists: the hub gates on the
+// ADVERTISED set, never on a protocol-version proxy. Matching is exact against a
+// sanitized token, so trailing whitespace or control characters a client padded
+// in cannot make a capability appear or disappear.
+func (c ContributorCapabilities) DeclaresCapability(token string) bool {
+	want := sanitizeCapabilityField(token)
+	if want == "" {
+		return false
+	}
+	for _, have := range c.RelayCapabilities {
+		if sanitizeCapabilityField(have) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // capabilityFieldMaxLen bounds each declared capability field the hub is willing
@@ -299,12 +338,48 @@ func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
 		Arch:                 sanitizeCapabilityField(c.Arch),
 		AgentCLIVersion:      sanitizeCapabilityField(c.AgentCLIVersion),
 		RelayProtocolVersion: sanitizeCapabilityField(c.RelayProtocolVersion),
+		RelayCapabilities:    sanitizeCapabilityTokens(c.RelayCapabilities),
 		CredentialType:       sanitizeCapabilityField(c.CredentialType),
 		PiBinary:             sanitizeCapabilityField(c.PiBinary),
 		PiConfiguration:      sanitizeCapabilityField(c.PiConfiguration),
 		PiAuthentication:     sanitizeCapabilityField(c.PiAuthentication),
 		PiInvocation:         sanitizeCapabilityField(c.PiInvocation),
 	}
+}
+
+// capabilityListMaxLen bounds how many relay-declared capability tokens the hub
+// will store (kubestellar/hive#6954). The negotiated set is small and stable —
+// a handful of tokens — so 32 is far more than any honest relay sends while
+// still capping a client that pads the list to bloat every fleet poll.
+const capabilityListMaxLen = 32
+
+// sanitizeCapabilityTokens bounds and cleans a relay-declared capability list
+// (kubestellar/hive#6954). Each token is run through sanitizeCapabilityField so
+// the same control-character/length hygiene the other declared fields get
+// applies here, empties (a token that sanitizes to nothing) are dropped so a
+// whitespace entry cannot masquerade as a capability, and the list is capped at
+// capabilityListMaxLen. Like Sanitized() this is hygiene, not validation: no
+// token is checked against a vocabulary and a nonsense token is still stored, it
+// simply cannot match a real capability on the exact compare in DeclaresCapability.
+func sanitizeCapabilityTokens(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		tok := sanitizeCapabilityField(raw)
+		if tok == "" {
+			continue
+		}
+		out = append(out, tok)
+		if len(out) >= capabilityListMaxLen {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // sanitizeCapabilityField makes one declared value printable and bounded.

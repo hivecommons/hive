@@ -554,6 +554,23 @@ const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
 // TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
 const RELAY_PROTOCOL_VERSION = '1.2';
 
+// RELAY_CAPABILITIES is this relay's OUTBOUND capability set — the mirror of the
+// hub's server_capabilities (kubestellar/hive#6954). It is DECLARED to the hub in
+// auth_response so the hub gates on what the relay ADVERTISES, not on a
+// protocol-version proxy. quota_preflight_v1 is listed because this relay
+// genuinely implements the preflight: the task_assign handler runs
+// evaluateContributorQuota and answers an offered task with a
+// local_capacity_guard task_declined BEFORE the scoped credential is delivered
+// (#6833). The list is additive and optional — an older hub ignores the unknown
+// relay_capabilities field and treats this relay exactly as one that declared
+// nothing, and a relay that dropped a token would take the hub's legacy
+// immediate-delivery path rather than break. Adding a NEW optional field is not
+// a wire-contract change under the additive-versioning rule (see
+// contributorProtocolVersion), so RELAY_PROTOCOL_VERSION is deliberately NOT
+// bumped here and stays in step with the hub, keeping
+// TestRelayProtocolVersionMatchesHub honest.
+const RELAY_CAPABILITIES = ['quota_preflight_v1'];
+
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
 // starving that hub task slot. After MAX_TASK_CLI_RESTARTS crash-restarts for
@@ -896,6 +913,10 @@ function detectCapabilities() {
     os: process.platform,
     arch: process.arch,
     relay_protocol_version: RELAY_PROTOCOL_VERSION,
+    // Outbound negotiated capability set: names the features this relay
+    // implements so the hub gates on the advertised token, not a version proxy
+    // (kubestellar/hive#6954). Copied so a caller cannot mutate the constant.
+    relay_capabilities: RELAY_CAPABILITIES.slice(),
   };
   // Container runtime: prefer docker, then podman, else none. `command -v` is a
   // cheap presence check; failure just means the runtime is absent.
@@ -5132,6 +5153,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // relay-side half of "both sides can detect an incompatible peer" is tested
     // behaviourally here, not just asserted to exist from the Go side.
     RELAY_PROTOCOL_VERSION,
+    // Outbound negotiated capability set (kubestellar/hive#6954). Exported so a
+    // test can assert the relay advertises quota_preflight_v1 rather than the hub
+    // inferring it from the protocol version.
+    RELAY_CAPABILITIES,
     parseProtocolVersion,
     classifyPeerProtocol,
     warnOnProtocolDrift,

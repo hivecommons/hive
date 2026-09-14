@@ -744,6 +744,71 @@ Five behaviours are worth knowing:
   a healthy `available` reading, which was the actual misreporting. Once #6952
   lands an adapter, flipping `unprovisioned` to a hold is a one-line change.
 
+### The guard's decline is capability-negotiated, not version-inferred
+
+When the guard holds a *pushed* assignment (rather than merely withholding
+`ready`), the relay does not just drop the work — it tells the hub, so the hub
+can hand the task to a contributor who can run it and record **no** failure,
+trust, or cooldown penalty against this host, because a local capacity hold is
+not a task failure. That decline is a `task_declined` frame carrying
+`reason: local_capacity_guard`
+([#6833](https://github.com/hivecommons/hive/issues/6833)), delivered *after*
+the task metadata is offered but *before* the scoped credential is.
+
+Whether the hub understands that frame is **negotiated on an advertised
+capability, never inferred from a protocol version**
+([#6954](https://github.com/hivecommons/hive/issues/6954)). Two directions meet
+here:
+
+- **The hub advertises `quota_preflight_v1`** in its `server_capabilities` on
+  `auth_ok`. The relay reads it (`hubSupportsQuotaPreflight`) and only sends the
+  `task_declined` to a hub that has said it accepts one.
+- **The relay advertises `quota_preflight_v1` back**, in
+  `capabilities.relay_capabilities` on `auth_response` — the outbound mirror of
+  the hub's set. The hub gates the auto-accept credential hold on *that token*,
+  not on the relay's declared protocol version. Before #6954 the hub proxied on
+  `relay_protocol_version != ""`, which withheld the credential from **every**
+  relay that declared any version — #6931 never bumped `RELAY_PROTOCOL_VERSION`,
+  so every deployed relay tripped it, and it only kept working by the accident
+  that the in-tree relay has always sent `task_accepted` unconditionally. Gating
+  on the token makes the contract explicit: the hub withholds only when the relay
+  has *stated* it will answer with an accept or a decline.
+
+Adding `relay_capabilities` is a new **optional** field, so it is backward
+compatible by construction and `RELAY_PROTOCOL_VERSION` is deliberately not
+bumped (it stays in step with the hub's `contributorProtocolVersion`). The
+mixed-version behaviour is therefore:
+
+- **New relay ↔ new hub:** both advertise the token; the hub withholds the
+  credential and waits for `task_accepted`/`task_declined`. Full negotiation.
+- **Old relay ↔ new hub:** the old relay advertises no `relay_capabilities`, so
+  the hub reads "cannot preflight" and delivers the credential on the
+  auto-accept path exactly as it did before #6833. This is the deliberate
+  backward-compatible choice — an old relay must not be stranded waiting for a
+  credential it will never earn because it cannot accept or decline.
+- **New relay ↔ old hub:** the old hub does not advertise `quota_preflight_v1`,
+  and there is **no honest decline to send it** — a `task_failed` would slander
+  the contributor host for a hold that is nobody's fault, and accepting the work
+  would spend a provider round-trip to be refused. So when the guard must hold a
+  pushed assignment against such a hub, the relay **closes the websocket**
+  rather than lie or run work it will not complete. That is a blunt but
+  deliberate fallback, logged as such and covered by a test — not an incident.
+- **Hub advertising no capabilities:** treated identically to the old-hub case.
+
+**Compatibility boundary with [#6825](https://github.com/hivecommons/hive/issues/6825).**
+Adding a relay→hub capability list is a change to the assignment boundary that
+RFC #6825 is still designing (its status is *proposal — open for maintainer
+discussion, not accepted*). #6954 is the sub-issue split out to carry exactly
+this wire change independently of that RFC, and it does the **minimum**: one
+capability token in each direction, gating one existing decision. It does *not*
+implement #6825's broader capability-aware assignment model, and whichever of the
+two lands second must not silently redefine the `quota_preflight_v1` vocabulary.
+One thing is explicitly left alone here: the older #6541 quota-park path still
+sends `task_failed` with `failure_kind: environment` rather than a
+`local_capacity_guard` decline; migrating it onto the negotiated decline is a
+small protocol question deferred to the same #6825 discussion rather than
+pre-empted here.
+
 ### The GitHub token outlives the task, because the hub re-mints it
 
 The scoped GitHub token the relay pushes with is valid for **55 minutes**

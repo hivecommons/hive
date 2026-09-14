@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -113,13 +114,14 @@ func TestSanitizedLeavesAnHonestDeclarationAlone(t *testing.T) {
 		Arch:                 "arm64",
 		AgentCLIVersion:      "2.0.14 (Claude Code)",
 		RelayProtocolVersion: "1.2",
+		RelayCapabilities:    []string{"quota_preflight_v1"},
 		CredentialType:       "app",
 		PiBinary:             "present",
 		PiConfiguration:      "configured",
 		PiAuthentication:     "configured_unverified",
 		PiInvocation:         "untested",
 	}
-	if got := in.Sanitized(); got != in {
+	if got := in.Sanitized(); !reflect.DeepEqual(got, in) {
 		t.Fatalf("honest declaration was altered:\n got %+v\nwant %+v", got, in)
 	}
 }

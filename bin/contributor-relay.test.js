@@ -8726,6 +8726,63 @@ test('contributor quota task_assign sends task_declined before acceptance', () =
   assert.strictEqual(relay.getCurrentTask(), null, 'quota-refused work must not become in-flight');
 });
 
+// ── kubestellar/hive#6954 ────────────────────────────────────────────────────
+// The relay must NEGOTIATE quota_preflight_v1 by advertising it to the hub, so
+// the hub gates on the token rather than proxying on the protocol version. These
+// pin the relay half: the outbound advertisement, and the documented
+// mixed-version behaviour of the relay's own decline path against a hub that does
+// or does not carry the capability.
+
+test('#6954 the relay advertises the quota_preflight_v1 capability it implements', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    const caps = relay.detectCapabilities();
+    assert.ok(Array.isArray(caps.relay_capabilities),
+      `relay_capabilities must be an array, got ${JSON.stringify(caps.relay_capabilities)}`);
+    assert.ok(caps.relay_capabilities.includes('quota_preflight_v1'),
+      `the relay implements the preflight decline, so it must advertise it: ${JSON.stringify(caps.relay_capabilities)}`);
+    // The exported constant and the declared field must agree — the advertisement
+    // cannot drift from the token the hub gates on.
+    assert.ok(relay.RELAY_CAPABILITIES.includes('quota_preflight_v1'));
+  } finally { teardown(relay); }
+});
+
+test('#6954 auth_response carries relay_capabilities so the hub negotiates on the token, not the version', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    const hubs = relay.getHubs();
+    const sent = [];
+    hubs[0].ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }), hubs[0]);
+    const auth = sent.find(m => m.type === 'auth_response');
+    assert.ok(auth && auth.capabilities, 'no auth_response with capabilities');
+    assert.ok(Array.isArray(auth.capabilities.relay_capabilities)
+      && auth.capabilities.relay_capabilities.includes('quota_preflight_v1'),
+      `auth_response must advertise quota_preflight_v1 in relay_capabilities: ${JSON.stringify(auth.capabilities)}`);
+    // The version is still declared, but it is no longer the thing the hub keys
+    // the credential hold on — the capability is.
+    assert.strictEqual(auth.capabilities.relay_protocol_version, relay.RELAY_PROTOCOL_VERSION);
+  } finally { teardown(relay); }
+});
+
+test('#6954 (new relay ↔ old hub) a hub without quota_preflight_v1 gets a socket close, never a mislabelled failure', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 20 }] }) } });
+  relay.setCliReady(true);
+  // Old hub: advertises no capabilities at all.
+  relay.getHubs()[0].serverCapabilities = [];
+  const sent = [];
+  let closed = 0;
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)), close: () => { closed += 1; } });
+  relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'tq-old', task_gen: 3, kind: 'issue', repo: 'foo/bar', number: 2, title: 'quota edge', complexity: 'medium' }));
+  // Documented fallback (#6954): when the hub cannot understand a decline, the
+  // relay closes rather than lying with task_failed or accepting work it will not run.
+  assert.strictEqual(closed, 1, 'a hub lacking quota_preflight_v1 must have its socket closed, not be told task_declined');
+  assert.strictEqual(sent.some(m => m.type === 'task_declined'), false, 'never send a decline a legacy hub cannot interpret');
+  assert.strictEqual(sent.some(m => m.type === 'task_failed'), false, 'a local quota hold must never be reported as a task failure');
+  assert.strictEqual(sent.some(m => m.type === 'task_accepted'), false, 'quota-refused work must not be accepted');
+  assert.strictEqual(relay.getCurrentTask(), null, 'quota-refused work must not become in-flight');
+});
+
 // ── kubestellar/hive#6951 ────────────────────────────────────────────────────
 // #6931 shipped this guard twice — once in Go, once here — and only this copy
 // is in the admission path. The fail-open it claimed to fix was fixed in the Go
