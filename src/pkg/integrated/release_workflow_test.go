@@ -3,10 +3,30 @@ package integrated
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestIntegratedReleaseSourceInputsExist(t *testing.T) {
+	data, err := os.ReadFile("../../../.github/workflows/integrated-release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Check real checkout inputs, not just mutually agreeing workflow/test
+	// strings. The src migration left the old v2 paths green in string tests.
+	inputs := regexp.MustCompile(`\b(?:src|v2)/[A-Za-z0-9_./-]+`).FindAllString(string(data), -1)
+	if len(inputs) == 0 {
+		t.Fatal("release workflow has no checkout source inputs")
+	}
+	for _, input := range inputs {
+		if _, err := os.Stat(filepath.Join("../../..", filepath.FromSlash(input))); err != nil {
+			t.Errorf("release checkout input %q: %v", input, err)
+		}
+	}
+}
 
 func TestIntegratedReleasePublishesOnlyFromTagPush(t *testing.T) {
 	data, err := os.ReadFile("../../../.github/workflows/integrated-release.yml")
@@ -271,10 +291,10 @@ func TestIntegratedReleaseShipsCompletePackageManagerRuntime(t *testing.T) {
 	for _, invariant := range []string{
 		`--node-runtime "$GITHUB_WORKSPACE/.release/runtime-linux"`,
 		`--node-runtime "$GITHUB_WORKSPACE/.release/runtime-windows"`,
-		`v2/runtime-launchers/linux/pnpm`,
-		`v2/runtime-launchers/linux/yarn`,
-		`v2/runtime-launchers/windows/pnpm.cmd`,
-		`v2/runtime-launchers/windows/yarn.cmd`,
+		`src/runtime-launchers/linux/pnpm`,
+		`src/runtime-launchers/linux/yarn`,
+		`src/runtime-launchers/windows/pnpm.cmd`,
+		`src/runtime-launchers/windows/yarn.cmd`,
 		`foreach ($launcher in @("node.exe", "npm.cmd", "npx.cmd", "corepack.cmd", "pnpm.cmd", "pnpx.cmd", "yarn.cmd", "yarnpkg.cmd"))`,
 		`Join-Path $install "runtime/npm.cmd"`,
 		`Join-Path $install "runtime/corepack.cmd"`,
@@ -415,7 +435,7 @@ func TestIntegratedReleaseVerifiesPublishedReleaseIsImmutable(t *testing.T) {
 	}
 	workflow := string(data)
 	for _, invariant := range []string{
-		`source v2/integrated-release-immutability.sh`,
+		`source src/integrated-release-immutability.sh`,
 		`if ! verify_published_release_immutable`,
 		`trap cleanup_on_exit EXIT`,
 		`release_verified=true`,

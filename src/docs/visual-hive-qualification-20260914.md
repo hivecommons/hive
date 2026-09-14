@@ -10,6 +10,7 @@ This candidate targets `dd` based on `ea23fe80d4b2ec5fb7907febca46db1e981c4474`.
 - Public Visual Hive leases use the assigned cluster/App key. A legacy Hub environment key remains readable for the same explicitly assigned App only when the registry key is absent. A present corrupt key blocks; it never silently falls back to stale material.
 - The primary Hive App and key path are unchanged. Hive remains the only issue/PR writer. The optional App mints repository-scoped Actions/statuses/metadata execution tokens and retains the existing X25519 sealed-lease and recipient-pin formats.
 - An explicit Hub broker denial clears the spoke's execution token immediately, including an unexpired token. An error-free heartbeat requiring no renewal preserves the lease. Expiry/renewal and immutable App/repository binding checks remain in force.
+- The fork-only integrated release workflow now uses `src/` for source gates, runtime launchers, installer helpers, skill packaging and cache inputs. A checkout-existence check covers these inputs; earlier string-only tests agreed with the obsolete `v2/` paths. Fork-only publishing and versioned v2 JSON contracts are unchanged.
 
 ## Verification and remaining gates
 
@@ -34,3 +35,5 @@ Before rolling the Hub back to an older build that can send Visual Hive PEMs, cl
 - The packaged provider uses Codex 0.146.0. The patch now recognizes that exact reviewed banner when excluding the byte-identical initial prompt echo from output-secret scanning. Near matches, subsequent output secrets and unreviewed version banners remain scanned.
 - Native 0.146.0 no-model health was tested in a separate non-root, read-only diagnostic container with no network, dropped capabilities, no-new-privileges, disposable HOME and an explicit executable temporary mount. A synthetic offline auth fixture was used: this proves containment/startup only, not model access. Without executable temporary storage, sealed-binary startup fails; without auth.json, authentication health blocks before any model call.
 - Real App installation, hosted runtime and governed canary lifecycle qualification remain pending. No new paid model calls were made.
+
+Full repository Linux build/tests/vet and relevant race checks subsequently passed on source `3538c53f1c4281bdf180b1a1b29f321f9f7922bd`, using image `sha256:27caf5e2488f850615628b311bce05c90296a2807f33d5a930d68d45d8d890d1` with a named non-root account, Node, tmux and writable disposable package directories. These receipts precede the release-workflow path fix; final revision results belong in the PR handoff.
