@@ -747,18 +747,69 @@ jobs:
             # fail the release, and the query is scoped by `branch=` to the
             # ephemeral release-gate/v<VERSION> ref this workflow owns, so
             # no other run can be touched.
-            for run_status in queued in_progress; do
-              gh api --paginate \
-                "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&status=${run_status}&per_page=100" \
-                --jq '.workflow_runs[].id' 2>/dev/null \
-              | while IFS= read -r run_id; do
-                  [ -n "$run_id" ] || continue
-                  gh api --method POST \
-                    "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
-                    >/dev/null 2>&1 || true
-                done || true
+            # #6936 (recurrence of #6084, closed 2026-09-08): cancelling ONCE
+            # and deleting immediately cannot close this. On release v4.31.1
+            # five runs on this scratch branch were recorded with
+            # `created_at == updated_at == 16:26:29Z`, zero jobs, and
+            # `conclusion: failure` — one second after the merge. They were
+            # materialized directly into `completed/failure` AFTER the ref was
+            # gone, so there was never a queued/in_progress row for a
+            # single-shot sweep to find. Whatever is still queued must instead
+            # be drained to quiescence while the head ref STILL RESOLVES, and
+            # swept once more afterwards for stragglers.
+            cancel_scratch_runs() {
+              # `requested`/`waiting`/`pending` cover runs held for approval or
+              # still being dispatched. A run omitted here is exactly as
+              # stranded as a missed queued one once the ref disappears.
+              for run_status in queued in_progress requested waiting pending; do
+                gh api --paginate \
+                  "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&status=${run_status}&per_page=100" \
+                  --jq '.workflow_runs[].id' 2>/dev/null \
+                | while IFS= read -r run_id; do
+                    [ -n "$run_id" ] || continue
+                    gh api --method POST \
+                      "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
+                      >/dev/null 2>&1 || true
+                  done || true
+              done
+            }
+
+            # Fails SAFE: any API error yields 0, which breaks the drain and
+            # proceeds straight to the delete — i.e. exactly the pre-#6936
+            # behaviour. This can reduce noise; it can never wedge a release.
+            scratch_runs_pending() {
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&per_page=100" \
+                --jq '[.workflow_runs[] | select(.status != "completed")] | length' 2>/dev/null \
+                || echo 0
+            }
+
+            # Converges quickly because each pass CANCELS what it counts; the
+            # 60s bound is a backstop against an API that never reports
+            # quiescence, not an expected wait.
+            drain_deadline=$((SECONDS + 60))
+            while :; do
+              cancel_scratch_runs
+              pending="$(scratch_runs_pending)"
+              case "$pending" in ''|*[!0-9]*) pending=0 ;; esac
+              if [ "$pending" -eq 0 ]; then
+                break
+              fi
+              if [ "$SECONDS" -ge "$drain_deadline" ]; then
+                echo "Drain hit its 60s bound with ${pending} run(s) not yet completed; deleting ${scratch} anyway (#6936)."
+                break
+              fi
+              sleep 5
             done
+
             git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
+
+            # Backstop for the #6936 signature itself: a run can still surface
+            # in the moments after the delete. Its head ref is already gone so
+            # it can never start; cancelling it makes it conclude `cancelled`
+            # instead of contributing another zero-job `failure`.
+            sleep 5
+            cancel_scratch_runs
           }
           trap cleanup EXIT
 
