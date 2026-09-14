@@ -1042,21 +1042,25 @@ func runEvalCycle(
 		attribute.Int("hive.queue.prs", govState.QueuePRs),
 		attribute.Int("hive.queue.hold", govState.QueueHold),
 	)
-	logger.Info("governor eval complete",
-		"mode", govState.Mode,
-		"issues", govState.QueueIssues,
-		"prs", govState.QueuePRs,
-		"agents_due", agentsDue,
-	)
-
 	// cadence.Paused (cadence: "pause" in config) means "don't kick this agent
 	// in this mode" — it does NOT force-pause the agent. Manual pause/resume
 	// via the dashboard is always respected; the governor only controls kicks.
 
 	// Filter out on-demand agents — they are only triggered explicitly
 	// Operator-paused agents must consume NOTHING (#2573); see
-	// filterKickableAgents for the full gate.
-	agentsDue = filterKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
+	// filterKickableAgents for the full gate. This runs BEFORE the eval-cycle
+	// log so "agents_due" names the agents that are actually about to be
+	// kicked; anything gated out is reported in "agents_skipped" with its
+	// reason rather than vanishing silently.
+	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
+
+	logger.Info("governor eval complete",
+		"mode", govState.Mode,
+		"issues", govState.QueueIssues,
+		"prs", govState.QueuePRs,
+		"agents_due", agentsDue,
+		"agents_skipped", agentsSkipped,
+	)
 
 	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
 	// money limit, every kick launched this cycle is a run that cannot buy a

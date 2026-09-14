@@ -336,3 +336,55 @@ func TestClassifyAdvisoryPostError(t *testing.T) {
 		})
 	}
 }
+
+// A paused agent used to be reported in "agents_due" on every eval cycle and
+// then dropped with no log line at all, so the logs showed the governor
+// repeatedly "kicking" agents that were in fact sitting at a bare shell.
+// partitionKickableAgents must hand the skipped agents back, with a reason,
+// so the eval-cycle log can name them.
+func TestPartitionKickableAgents_ReportsSkippedWithReason(t *testing.T) {
+	agents := map[string]config.AgentConfig{
+		"scanner":    {},
+		"ondemand":   {OnDemand: true},
+		"supervisor": {},
+	}
+	paused := map[string]bool{"supervisor": true}
+
+	kickable, skipped := partitionKickableAgents(
+		[]string{"scanner", "ondemand", "supervisor", "architect"},
+		agents,
+		map[string]bool{"architect": true},
+		func(n string) bool { return paused[n] },
+	)
+
+	if len(kickable) != 1 || kickable[0] != "scanner" {
+		t.Errorf("kickable = %v, want [scanner]", kickable)
+	}
+	want := map[string]bool{
+		"ondemand (on-demand)":          true,
+		"supervisor (operator-paused)":  true,
+		"architect (on-demand-in-pack)": true,
+	}
+	if len(skipped) != len(want) {
+		t.Fatalf("skipped = %v, want %d entries", skipped, len(want))
+	}
+	for _, s := range skipped {
+		if !want[s] {
+			t.Errorf("unexpected skip entry %q (want one of %v)", s, want)
+		}
+	}
+}
+
+// filterKickableAgents keeps its historical contract: kickable only, nil when
+// nothing is due.
+func TestFilterKickableAgents_StillReturnsNilWhenNothingKickable(t *testing.T) {
+	got := filterKickableAgents(
+		[]string{"supervisor"},
+		map[string]config.AgentConfig{"supervisor": {}},
+		map[string]bool{},
+		func(string) bool { return true },
+	)
+	if got != nil {
+		t.Errorf("filterKickableAgents = %v, want nil", got)
+	}
+}

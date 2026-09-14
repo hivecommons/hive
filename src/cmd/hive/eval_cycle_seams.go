@@ -118,6 +118,49 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) bo
 	return agentsDue
 }
 
+// kickSkipReason returns a non-empty reason when the governor must never kick
+// name on cadence, or "" when it is kickable. Single source of truth for the
+// gate so the filter and the audit log cannot drift apart.
+func kickSkipReason(
+	name string,
+	agents map[string]config.AgentConfig,
+	onDemandSet map[string]bool,
+	isPaused func(string) bool,
+) string {
+	if ac, ok := agents[name]; ok && ac.OnDemand {
+		return "on-demand"
+	}
+	if onDemandSet[name] {
+		return "on-demand-in-pack"
+	}
+	if isPaused(name) {
+		return "operator-paused"
+	}
+	return ""
+}
+
+// partitionKickableAgents splits the due list into the agents that will
+// actually be kicked and the ones being skipped, each annotated with why.
+// The skipped half exists purely so the eval-cycle log can report it: a
+// paused agent was previously reported in "agents_due" every cycle and then
+// dropped with no log line at all, which reads as a governor that is kicking
+// agents that are in fact idle.
+func partitionKickableAgents(
+	agentsDue []string,
+	agents map[string]config.AgentConfig,
+	onDemandSet map[string]bool,
+	isPaused func(string) bool,
+) (kickable []string, skipped []string) {
+	for _, name := range agentsDue {
+		if reason := kickSkipReason(name, agents, onDemandSet, isPaused); reason != "" {
+			skipped = append(skipped, name+" ("+reason+")")
+			continue
+		}
+		kickable = append(kickable, name)
+	}
+	return kickable, skipped
+}
+
 // filterKickableAgents drops agents the governor must never kick on cadence:
 // on-demand agents flagged in config OR in any ACMM pack level (#808, #815 —
 // the pack scan is level-independent because the level may not be settled
@@ -131,20 +174,8 @@ func filterKickableAgents(
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
 ) []string {
-	var filteredDue []string
-	for _, name := range agentsDue {
-		if ac, ok := agents[name]; ok && ac.OnDemand {
-			continue
-		}
-		if onDemandSet[name] {
-			continue
-		}
-		if isPaused(name) {
-			continue
-		}
-		filteredDue = append(filteredDue, name)
-	}
-	return filteredDue
+	kickable, _ := partitionKickableAgents(agentsDue, agents, onDemandSet, isPaused)
+	return kickable
 }
 
 // providerBudgetKickGate is the outcome of gateKickMessagesForProviderBudget.
