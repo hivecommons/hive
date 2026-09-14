@@ -921,12 +921,15 @@ type AgentConfig struct {
 	// agent's privileges via a live definition. On fetch failure the last-known-good
 	// baked definition is kept — a live agent is never blanked or crashed.
 	DefinitionSource *DefinitionSourceConfig `yaml:"definition_source,omitempty" json:"definition_source,omitempty"`
-	IncludeRepos     *bool                   `yaml:"include_repos" json:"include_repos,omitempty"`
-	MetricsCollector string                  `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
-	BeadRole         string                  `yaml:"bead_role" json:"bead_role,omitempty"`
-	StatsDisplay     []StatsDisplayEntry     `yaml:"stats_display" json:"stats_display,omitempty"`
-	ACMMLevels       []int                   `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
-	Mode             string                  `yaml:"mode" json:"mode,omitempty"`
+	// CadenceScope opts this agent into repo-scoped governor cadence scheduling.
+	// Empty/aggregate preserves one hive-wide cadence entry; per_repo is opt-in.
+	CadenceScope     string              `yaml:"cadence_scope,omitempty" json:"cadence_scope,omitempty"`
+	IncludeRepos     *bool               `yaml:"include_repos" json:"include_repos,omitempty"`
+	MetricsCollector string              `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
+	BeadRole         string              `yaml:"bead_role" json:"bead_role,omitempty"`
+	StatsDisplay     []StatsDisplayEntry `yaml:"stats_display" json:"stats_display,omitempty"`
+	ACMMLevels       []int               `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
+	Mode             string              `yaml:"mode" json:"mode,omitempty"`
 	// Converse opts this agent into the orthogonal `converse` capability
 	// (#4492): posting comments on issues and PRs, and leaving PR reviews,
 	// independently of Mode. It does not grant issue creation, editing,
@@ -1058,6 +1061,38 @@ func (a *AgentConfig) UsesGovernorKick() bool {
 		return true
 	}
 	return a.HasChannel(ChannelTypeKick)
+}
+
+// CadenceScopeMode returns this agent's cadence scope with the aggregate default.
+func (a AgentConfig) CadenceScopeMode() string {
+	if a.CadenceScope == CadenceScopePerRepo {
+		return CadenceScopePerRepo
+	}
+	return CadenceScopeAggregate
+}
+
+// UsesRepoScopedCadence reports whether this agent opts into per-repo timer scheduling.
+func (a AgentConfig) UsesRepoScopedCadence() bool { return a.CadenceScopeMode() == CadenceScopePerRepo }
+
+const cadenceTargetSeparator = "|"
+
+// CadenceTargetKey returns the persisted governor cadence/last-kick key for an
+// agent, optionally scoped to a repo. Empty repo preserves the legacy agent key.
+func CadenceTargetKey(agent, repo string) string {
+	if repo == "" {
+		return agent
+	}
+	return agent + cadenceTargetSeparator + repo
+}
+
+// SplitCadenceTargetKey separates a governor cadence/last-kick key into agent
+// and repo. Keys without a repo are the legacy aggregate shape.
+func SplitCadenceTargetKey(key string) (agent, repo string) {
+	agent, repo, ok := strings.Cut(key, cadenceTargetSeparator)
+	if !ok {
+		return key, ""
+	}
+	return agent, repo
 }
 
 // ShouldIncludeRepos returns whether the repos section should be appended to kicks.
@@ -5304,6 +5339,9 @@ func (c *Config) validate() error {
 		}
 		if !ValidateExplainMode(agent.ExplainMode) {
 			return fmt.Errorf("agent %s: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", name, agent.ExplainMode, ExplainModeEnvVar)
+		}
+		if !ValidateCadenceScope(agent.CadenceScope) {
+			return fmt.Errorf("agent %s: invalid cadence_scope %q (must be aggregate or per_repo)", name, agent.CadenceScope)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err

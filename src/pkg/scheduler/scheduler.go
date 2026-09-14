@@ -487,6 +487,7 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 
 type KickMessage struct {
 	Agent     string
+	Repo      string
 	Message   string
 	IssueRefs []string
 }
@@ -498,8 +499,14 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	reposSection := s.buildReposSection()
 
 	var messages []KickMessage
-	for _, agentName := range agentsDue {
-		msg := s.BuildAgentMessage(agentName, classifiedIssues, actionable)
+	for _, targetKey := range agentsDue {
+		agentName, repo := config.SplitCadenceTargetKey(targetKey)
+		targetActionable := actionableForRepo(actionable, repo)
+		targetIssues := classifiedIssues
+		if repo != "" {
+			targetIssues = filterIssuesByRepo(classifiedIssues, repo)
+		}
+		msg := s.BuildAgentMessage(agentName, targetIssues, targetActionable)
 		if msg != "" {
 			includeRepos := true
 			if agentCfg, ok := s.cfg.Agents[agentName]; ok {
@@ -509,18 +516,78 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			} else if s.cfg.BaseAgentName(agentName) == "outreach" {
 				includeRepos = false
 			}
+			if repo != "" {
+				msg = fmt.Sprintf("REPO-SCOPED CADENCE TARGET: %s\n\n%s", repo, msg)
+			}
 			if includeRepos {
 				msg += "\n" + reposSection
 			}
 			msg = s.addCanaryPreamble(agentName, msg)
 			messages = append(messages, KickMessage{
 				Agent:     agentName,
+				Repo:      repo,
 				Message:   msg,
-				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(classifiedIssues)),
+				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(targetIssues)),
 			})
 		}
 	}
 	return messages
+}
+
+func actionableForRepo(actionable *github.ActionableResult, repo string) *github.ActionableResult {
+	if actionable == nil || repo == "" {
+		return actionable
+	}
+	out := *actionable
+	out.Issues = github.IssueResultFromItems(filterIssuesByRepo(actionable.Issues.Items, repo))
+	out.PRs = github.PRResult{
+		Items:       filterPRsByRepo(actionable.PRs.Items, repo),
+		StaleDrafts: filterPRsByRepo(actionable.PRs.StaleDrafts, repo),
+	}
+	out.PRs.Count = len(out.PRs.Items)
+	out.Hold = filterHoldByRepo(actionable.Hold, repo)
+	out.TotalByRepo = map[string]github.RepoCounts{repo: actionable.TotalByRepo[repo]}
+	return &out
+}
+
+func filterIssuesByRepo(issues []github.Issue, repo string) []github.Issue {
+	filtered := make([]github.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if issue.Repo == repo {
+			filtered = append(filtered, issue)
+		}
+	}
+	return filtered
+}
+
+func filterPRsByRepo(prs []github.PullRequest, repo string) []github.PullRequest {
+	filtered := make([]github.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.Repo == repo {
+			filtered = append(filtered, pr)
+		}
+	}
+	return filtered
+}
+
+func filterHoldByRepo(hold github.HoldResult, repo string) github.HoldResult {
+	filtered := make([]github.HoldItem, 0, len(hold.Items))
+	for _, item := range hold.Items {
+		if item.Repo == repo {
+			filtered = append(filtered, item)
+		}
+	}
+	out := github.HoldResult{Items: filtered}
+	for _, item := range filtered {
+		switch item.Type {
+		case "pr":
+			out.PRs++
+		default:
+			out.Issues++
+		}
+	}
+	out.Total = len(filtered)
+	return out
 }
 
 func issueRefsForAgent(agentName string, issues []github.Issue) []string {

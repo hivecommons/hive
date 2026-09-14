@@ -285,11 +285,43 @@ func heartbeatKickInterval(govState governor.State, name string, proc *agent.Age
 	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
 		return 0
 	}
-	cadence, ok := govState.Cadences[name]
-	if !ok || cadence.Paused || cadence.Interval <= 0 {
-		return 0
+	interval := governorShortestActiveInterval(govState, name)
+	return interval
+}
+
+func governorCadencesForAgent(govState governor.State, name string) []governor.AgentCadence {
+	var cadences []governor.AgentCadence
+	for key, cadence := range govState.Cadences {
+		agent, _ := config.SplitCadenceTargetKey(key)
+		if agent == name || cadence.Agent == name {
+			cadences = append(cadences, cadence)
+		}
 	}
-	return cadence.Interval
+	return cadences
+}
+
+func governorLastKickForAgent(govState governor.State, name string) time.Time {
+	var newest time.Time
+	for key, ts := range govState.LastKick {
+		agent, _ := config.SplitCadenceTargetKey(key)
+		if agent == name && !ts.IsZero() && ts.After(newest) {
+			newest = ts
+		}
+	}
+	return newest
+}
+
+func governorShortestActiveInterval(govState governor.State, name string) time.Duration {
+	var shortest time.Duration
+	for _, cadence := range governorCadencesForAgent(govState, name) {
+		if cadence.Paused || cadence.Interval <= 0 {
+			continue
+		}
+		if shortest == 0 || cadence.Interval < shortest {
+			shortest = cadence.Interval
+		}
+	}
+	return shortest
 }
 
 func quotaExhaustedAgentCount(agents []hub.AgentSummary) int {
@@ -347,7 +379,7 @@ func outputFreshnessHeartbeatFields(acmmLevel int, govState governor.State, agen
 		if !agentCanProduceJudgedOutput(acmmLevel, a) {
 			continue
 		}
-		if t := govState.LastKick[a.Name]; !t.IsZero() && t.After(newest) {
+		if t := governorLastKickForAgent(govState, a.Name); !t.IsZero() && t.After(newest) {
 			newest = t
 		}
 	}
@@ -377,8 +409,11 @@ func outputFreshnessHeartbeatFields(acmmLevel int, govState governor.State, agen
 			if !agentCanProduceJudgedOutput(acmmLevel, a) {
 				continue
 			}
-			if cad, ok := govState.Cadences[a.Name]; ok && !cad.Paused {
-				last := govState.LastKick[a.Name]
+			for _, cad := range governorCadencesForAgent(govState, a.Name) {
+				if cad.Paused {
+					continue
+				}
+				last := govState.LastKick[config.CadenceTargetKey(cad.Agent, cad.Repo)]
 				if cad.Schedule.Mode() != config.CadenceModeInterval {
 					if _, ok := cad.Schedule.DueOccurrence(last, now, config.CadenceCatchUpWindow); ok {
 						dueCapable = true
@@ -390,6 +425,9 @@ func outputFreshnessHeartbeatFields(acmmLevel int, govState governor.State, agen
 					dueCapable = true
 					break
 				}
+			}
+			if dueCapable {
+				break
 			}
 		}
 		if !dueCapable {
@@ -6626,7 +6664,7 @@ func runEvalCycle(
 				providerBudgetProbe.markReleased(time.Now())
 				releaseProviderBudgetProbe = false
 			}
-			gov.RecordKick(msg.Agent)
+			gov.RecordKickForRepo(msg.Agent, msg.Repo)
 			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
 			// Record issue-scoped kicks into the lifecycle timeline. Cheap,
@@ -8279,8 +8317,8 @@ func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.
 		}
 
 		cadenceS := 0
-		if c, ok := govState.Cadences[name]; ok && c.Interval > 0 {
-			cadenceS = int(c.Interval / time.Second)
+		if interval := governorShortestActiveInterval(govState, name); interval > 0 {
+			cadenceS = int(interval / time.Second)
 		}
 
 		if !rotMgr.Exhausted(backend) {

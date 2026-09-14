@@ -235,7 +235,8 @@ func unionAgents(base, add []string) []string {
 	}
 	present := make(map[string]struct{}, len(base))
 	for _, name := range base {
-		present[name] = struct{}{}
+		agent, _ := config.SplitCadenceTargetKey(name)
+		present[agent] = struct{}{}
 	}
 	for _, name := range add {
 		if _, ok := present[name]; ok {

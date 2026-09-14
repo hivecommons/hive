@@ -250,6 +250,11 @@ func TestUnionAgents(t *testing.T) {
 	if u := unionAgents([]string{"x"}, nil); len(u) != 1 || u[0] != "x" {
 		t.Errorf("empty add must return base unchanged, got %v", u)
 	}
+	// A repo-scoped governor target already covers the agent for this cycle;
+	// CEL must not add a second aggregate kick for the same agent.
+	if u := unionAgents([]string{config.CadenceTargetKey("scanner", "org/repo")}, []string{"scanner"}); len(u) != 1 {
+		t.Errorf("repo-scoped base target should dedupe aggregate CEL add, got %v", u)
+	}
 }
 
 // resetCELCache clears the process-wide engine cache so tests that assert on a

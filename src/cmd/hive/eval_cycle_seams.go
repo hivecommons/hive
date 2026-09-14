@@ -61,7 +61,8 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) bo
 	}
 	dueSet := make(map[string]bool, len(agentsDue))
 	for _, a := range agentsDue {
-		dueSet[a] = true
+		agent, _ := config.SplitCadenceTargetKey(a)
+		dueSet[agent] = true
 	}
 	for _, a := range restartedAgents {
 		if dueSet[a] {
@@ -86,6 +87,7 @@ func kickSkipReason(
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
 ) string {
+	name, _ = config.SplitCadenceTargetKey(name)
 	if ac, ok := agents[name]; ok && ac.OnDemand {
 		return "on-demand"
 	}

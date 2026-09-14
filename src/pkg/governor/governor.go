@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ const (
 
 type AgentCadence struct {
 	Agent          string
+	Repo           string
 	Interval       time.Duration
 	Schedule       config.Cadence
 	Paused         bool
@@ -64,6 +66,7 @@ type RepoSnapshot struct {
 type KickRecord struct {
 	Timestamp time.Time `json:"timestamp"`
 	Agent     string    `json:"agent"`
+	Repo      string    `json:"repo,omitempty"`
 }
 
 type AgentReportRecord struct {
@@ -382,7 +385,8 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 	g.updateCadences()
 
 	if modeChanged {
-		for agentName, cadence := range g.state.Cadences {
+		for _, cadence := range g.state.Cadences {
+			agentName := cadence.Agent
 			if cadence.Paused {
 				g.logger.Info("agent cadence: paused by mode",
 					"agent", agentName,
@@ -589,58 +593,148 @@ func (g *Governor) warnIfLadderInvertedLocked() {
 // configured (longer) one — burning backend tokens faster than any cadence
 // the operator could see or set.
 func (g *Governor) updateCadences() {
-	modeName := modeToConfigKey(g.state.Mode)
+	aggregateModeName := modeToConfigKey(g.state.Mode)
 	cadences := make(map[string]AgentCadence, len(g.agents))
 
 	for agentName := range g.agents {
-		cadence, ok := g.resolveCadence(modeName, agentName)
-		if !ok || strings.EqualFold(strings.TrimSpace(cadence.Interval()), cadenceValueOff) {
-			// No cadence configured for this agent in this mode (or an
-			// explicit "off"): no timer kicks. Leaving the agent out of the
-			// map — rather than keeping a stale entry — is the fix.
-			continue
+		repos := []string{""}
+		if g.agentUsesRepoScope(agentName) {
+			repos = sortedRepoModeKeys(g.state.RepoModes)
 		}
-
-		if cadence.IsPaused() {
-			cadences[agentName] = AgentCadence{
-				Agent:  agentName,
-				Paused: true,
+		for _, repo := range repos {
+			modeName := aggregateModeName
+			if repo != "" {
+				modeName = modeToConfigKey(g.state.RepoModes[repo])
 			}
-			continue
+			g.addCadenceForTarget(cadences, modeName, agentName, repo)
 		}
-
-		if err := cadence.Validate(); err != nil {
-			g.logger.Warn("invalid cadence — agent will receive no timer kicks until fixed",
-				"agent", agentName,
-				"mode", g.state.Mode,
-				"value", cadence.String(),
-				"error", err,
-			)
-			continue
-		}
-
-		entry := AgentCadence{Agent: agentName, Schedule: cadence}
-		if cadence.Mode() == config.CadenceModeInterval {
-			dur, err := time.ParseDuration(cadence.Interval())
-			if err != nil {
-				g.logger.Warn("invalid cadence duration — agent will receive no timer kicks until fixed",
-					"agent", agentName,
-					"mode", g.state.Mode,
-					"value", cadence.Interval(),
-					"error", err,
-				)
-				continue
-			}
-			entry.Interval = dur
-			if ac, ok := g.agents[agentName]; ok && ac.ReplicaIndex > 1 && ac.ReplicaCount > 1 && g.state.LastKick[agentName].IsZero() {
-				offset := time.Duration(int64(dur) * int64(ac.ReplicaIndex-1) / int64(ac.ReplicaCount))
-				g.state.LastKick[agentName] = g.now().Add(-dur + offset)
-			}
-		}
-		cadences[agentName] = entry
 	}
 
 	g.state.Cadences = cadences
+	g.normalizeLastKickKeysLocked()
+}
+
+func (g *Governor) addCadenceForTarget(cadences map[string]AgentCadence, modeName, agentName, repo string) {
+	cadence, ok := g.resolveCadence(modeName, agentName)
+	if !ok || strings.EqualFold(strings.TrimSpace(cadence.Interval()), cadenceValueOff) {
+		return
+	}
+
+	key := config.CadenceTargetKey(agentName, repo)
+	if cadence.IsPaused() {
+		cadences[key] = AgentCadence{Agent: agentName, Repo: repo, Paused: true}
+		return
+	}
+
+	if err := cadence.Validate(); err != nil {
+		g.logger.Warn("invalid cadence — agent will receive no timer kicks until fixed",
+			"agent", agentName,
+			"repo", repo,
+			"mode", modeName,
+			"value", cadence.String(),
+			"error", err,
+		)
+		return
+	}
+
+	entry := AgentCadence{Agent: agentName, Repo: repo, Schedule: cadence}
+	if cadence.Mode() == config.CadenceModeInterval {
+		dur, err := time.ParseDuration(cadence.Interval())
+		if err != nil {
+			g.logger.Warn("invalid cadence duration — agent will receive no timer kicks until fixed",
+				"agent", agentName,
+				"repo", repo,
+				"mode", modeName,
+				"value", cadence.Interval(),
+				"error", err,
+			)
+			return
+		}
+		entry.Interval = dur
+		if ac, ok := g.agents[agentName]; ok && ac.ReplicaIndex > 1 && ac.ReplicaCount > 1 && g.state.LastKick[key].IsZero() && g.state.LastKick[agentName].IsZero() {
+			offset := time.Duration(int64(dur) * int64(ac.ReplicaIndex-1) / int64(ac.ReplicaCount))
+			g.state.LastKick[key] = g.now().Add(-dur + offset)
+		}
+	}
+	cadences[key] = entry
+}
+
+func sortedRepoModeKeys(repoModes map[string]Mode) []string {
+	if len(repoModes) == 0 {
+		return nil
+	}
+	repos := make([]string, 0, len(repoModes))
+	for repo := range repoModes {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+	return repos
+}
+
+func (g *Governor) agentUsesRepoScope(agentName string) bool {
+	if g.cfg.CadenceScopeMode() != config.CadenceScopePerRepo {
+		return false
+	}
+	if ac, ok := g.agents[agentName]; ok {
+		if ac.UsesRepoScopedCadence() {
+			return true
+		}
+		if ac.ReplicaOf != "" {
+			if base, ok := g.agents[ac.ReplicaOf]; ok {
+				return base.UsesRepoScopedCadence()
+			}
+		}
+	}
+	return false
+}
+
+func (g *Governor) normalizeLastKickKeysLocked() {
+	active := make(map[string]bool, len(g.state.Cadences))
+	for key := range g.state.Cadences {
+		active[key] = true
+	}
+
+	for agentName := range g.agents {
+		if g.agentUsesRepoScope(agentName) {
+			legacy := g.state.LastKick[agentName]
+			migrated := false
+			for key := range active {
+				agent, repo := config.SplitCadenceTargetKey(key)
+				if agent != agentName || repo == "" {
+					continue
+				}
+				migrated = true
+				if g.state.LastKick[key].IsZero() && !legacy.IsZero() {
+					g.state.LastKick[key] = legacy
+				}
+			}
+			if migrated {
+				delete(g.state.LastKick, agentName)
+			}
+			continue
+		}
+
+		legacyKey := config.CadenceTargetKey(agentName, "")
+		latest := g.state.LastKick[legacyKey]
+		for key, ts := range g.state.LastKick {
+			agent, repo := config.SplitCadenceTargetKey(key)
+			if agent != agentName || repo == "" {
+				continue
+			}
+			if latest.IsZero() || ts.After(latest) {
+				latest = ts
+			}
+		}
+		if !latest.IsZero() {
+			g.state.LastKick[legacyKey] = latest
+		}
+		for key := range g.state.LastKick {
+			agent, repo := config.SplitCadenceTargetKey(key)
+			if agent == agentName && repo != "" {
+				delete(g.state.LastKick, key)
+			}
+		}
+	}
 }
 
 // resolveCadence returns the configured cadence string for one agent in one
@@ -685,8 +779,6 @@ func (g *Governor) budgetExhausted() bool {
 
 func (g *Governor) agentsDueForKick() []string {
 	now := g.now()
-	var due []string
-
 	exhausted := g.budgetExhausted()
 	// IgnoredAgents are exempt from budget suppression: they keep getting
 	// kicked even when the weekly budget is exhausted.
@@ -696,7 +788,22 @@ func (g *Governor) agentsDueForKick() []string {
 	}
 	suppressed := 0
 
-	for agentName, cadence := range g.state.Cadences {
+	keys := make([]string, 0, len(g.state.Cadences))
+	for key := range g.state.Cadences {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	type candidate struct {
+		key      string
+		last     time.Time
+		interval time.Duration
+	}
+	selected := make(map[string]candidate)
+	agentOrder := []string{}
+	for _, cadenceKey := range keys {
+		cadence := g.state.Cadences[cadenceKey]
+		agentName := cadence.Agent
 		if cadence.Paused {
 			continue
 		}
@@ -714,23 +821,44 @@ func (g *Governor) agentsDueForKick() []string {
 			continue
 		}
 
-		lastKick := g.state.LastKick[agentName]
+		lastKick := g.state.LastKick[cadenceKey]
+		due := false
 		if cadence.Schedule.Mode() != config.CadenceModeInterval {
-			// Time-of-day cadences are exact wall-clock schedules. Governor modes
-			// only decide whether this schedule is active; they never scale the
-			// schedule's times. A short catch-up window grants at most one kick
-			// after downtime, and comparing the scheduled occurrence to LastKick
-			// dedupes repeated governor ticks inside the same minute.
 			if occurrence, ok := cadence.Schedule.DueOccurrence(lastKick, now, config.CadenceCatchUpWindow); ok {
 				cadence.LastOccurrence = occurrence
-				g.state.Cadences[agentName] = cadence
-				due = append(due, agentName)
+				g.state.Cadences[cadenceKey] = cadence
+				due = true
 			}
+		} else if lastKick.IsZero() || now.Sub(lastKick) >= cadence.Interval {
+			due = true
+		}
+		if !due {
 			continue
 		}
-		if lastKick.IsZero() || now.Sub(lastKick) >= cadence.Interval {
-			due = append(due, agentName)
+		if _, ok := selected[agentName]; !ok {
+			agentOrder = append(agentOrder, agentName)
+			selected[agentName] = candidate{key: cadenceKey, last: lastKick, interval: cadence.Interval}
+			continue
 		}
+		cur := selected[agentName]
+		if cadence.Interval > 0 && (cur.interval == 0 || cadence.Interval < cur.interval) {
+			selected[agentName] = candidate{key: cadenceKey, last: lastKick, interval: cadence.Interval}
+			continue
+		}
+		if cur.interval > 0 && cadence.Interval > cur.interval {
+			continue
+		}
+		if cur.last.IsZero() && !lastKick.IsZero() {
+			continue
+		}
+		if lastKick.IsZero() || lastKick.Before(cur.last) {
+			selected[agentName] = candidate{key: cadenceKey, last: lastKick, interval: cadence.Interval}
+		}
+	}
+
+	due := make([]string, 0, len(agentOrder))
+	for _, agentName := range agentOrder {
+		due = append(due, selected[agentName].key)
 	}
 
 	if exhausted {
@@ -761,8 +889,11 @@ func (g *Governor) AgentEligibleForCELKick(agentName string) bool {
 	defer g.mu.RUnlock()
 
 	// Cadence-pause: an agent paused by the current mode is never kicked.
-	if cadence, ok := g.state.Cadences[agentName]; ok && cadence.Paused {
-		return false
+	for key, cadence := range g.state.Cadences {
+		cadenceAgent, _ := config.SplitCadenceTargetKey(key)
+		if (cadence.Agent == agentName || cadenceAgent == agentName) && cadence.Paused {
+			return false
+		}
 	}
 
 	// On-demand and non-kick-channel agents are never governor/event-kicked.
@@ -821,7 +952,7 @@ func (g *Governor) AllowResumeKick(agentName string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	cadence, ok := g.state.Cadences[agentName]
+	cadenceKey, cadence, ok := g.resumeCadenceForAgent(agentName)
 	if !ok || cadence.Paused || (cadence.Interval <= 0 && cadence.Schedule.Mode() == config.CadenceModeInterval) {
 		return false
 	}
@@ -834,21 +965,38 @@ func (g *Governor) AllowResumeKick(agentName string) bool {
 	if cadence.Schedule.Mode() != config.CadenceModeInterval {
 		return false
 	}
-	if last, ok := g.resumeKicks[agentName]; ok && g.now().Sub(last) < cadence.Interval {
+	if last, ok := g.resumeKicks[cadenceKey]; ok && g.now().Sub(last) < cadence.Interval {
 		return false
 	}
-	g.resumeKicks[agentName] = g.now()
+	g.resumeKicks[cadenceKey] = g.now()
 	return true
 }
 
+func (g *Governor) resumeCadenceForAgent(agentName string) (string, AgentCadence, bool) {
+	if cadence, ok := g.state.Cadences[agentName]; ok {
+		return agentName, cadence, true
+	}
+	for key, cadence := range g.state.Cadences {
+		if cadence.Agent == agentName {
+			return key, cadence, true
+		}
+	}
+	return "", AgentCadence{}, false
+}
+
 func (g *Governor) RecordKick(agentName string) {
+	g.RecordKickForRepo(agentName, "")
+}
+
+func (g *Governor) RecordKickForRepo(agentName, repo string) {
 	report, hasReport := g.validateAgentReportIfPresent(agentName)
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
-	g.state.LastKick[agentName] = now
-	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName})
+	key := config.CadenceTargetKey(agentName, repo)
+	g.state.LastKick[key] = now
+	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName, Repo: repo})
 	if hasReport {
 		g.agentReports[agentName] = report
 	}
