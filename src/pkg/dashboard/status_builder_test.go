@@ -265,7 +265,7 @@ func TestBuildRepos(t *testing.T) {
 		},
 	}
 
-	repos := buildRepos(cfg, actionable)
+	repos := buildRepos(cfg, actionable, governor.State{RepoModes: map[string]governor.Mode{"repo1": governor.ModeSurge}})
 	if len(repos) != 2 {
 		t.Fatalf("repos len = %d, want 2", len(repos))
 	}
@@ -278,13 +278,16 @@ func TestBuildRepos(t *testing.T) {
 	if repos[0].Issues != 1 {
 		t.Errorf("issues = %d", repos[0].Issues)
 	}
+	if repos[0].Mode != "surge" {
+		t.Errorf("mode = %q, want surge", repos[0].Mode)
+	}
 }
 
 func TestBuildRepos_NilActionable(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
 	}
-	repos := buildRepos(cfg, nil)
+	repos := buildRepos(cfg, nil, governor.State{})
 	if len(repos) != 1 {
 		t.Fatalf("repos len = %d", len(repos))
 	}
@@ -825,7 +828,7 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 			"repo1": {Issues: 5, PRs: 3},
 		},
 	}
-	repos := buildRepos(cfg, actionable)
+	repos := buildRepos(cfg, actionable, governor.State{})
 	if len(repos) != 1 {
 		t.Fatalf("len = %d", len(repos))
 	}

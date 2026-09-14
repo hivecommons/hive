@@ -205,3 +205,82 @@ func TestGovernorThresholdScalingPut_RejectsNonOwner(t *testing.T) {
 		t.Fatal("refused write still mutated threshold scaling")
 	}
 }
+
+// --- cadence scope -----------------------------------------------------------
+
+func cadenceScopeOf(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		CadenceScope string `json:"cadence_scope"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode cadence-scope response: %v: %s", err, rec.Body.String())
+	}
+	return body.CadenceScope
+}
+
+func TestGovernorCadenceScopeGet_DefaultsToAggregate(t *testing.T) {
+	s := covApiServer(t)
+	rec := doOwnerGet(s, "/api/config/governor/cadence-scope")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET cadence-scope: expected 200, got %d", rec.Code)
+	}
+	if got := cadenceScopeOf(t, rec); got != "aggregate" {
+		t.Fatalf("default cadence scope: expected aggregate, got %q", got)
+	}
+}
+
+func TestGovernorCadenceScopeGet_RejectsNonOwner(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doGetNoRole(s, "/api/config/governor/cadence-scope"); rec.Code != http.StatusForbidden {
+		t.Fatalf("un-gated GET cadence-scope: expected 403, got %d", rec.Code)
+	}
+}
+
+func TestGovernorCadenceScopePut_ValidatesAndApplies(t *testing.T) {
+	s := covApiServer(t)
+
+	if rec := doPutRaw(s, "/api/config/governor/cadence-scope", "{nope"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/cadence-scope", map[string]any{"cadenceScope": "repo"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid scope: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CadenceScope != "" {
+		t.Fatalf("rejected write still mutated cadence scope: %q", s.deps.Config.Governor.CadenceScope)
+	}
+
+	if rec := doPut(s, "/api/config/governor/cadence-scope", map[string]any{"cadenceScope": "per_repo"}); rec.Code != http.StatusOK {
+		t.Fatalf("per_repo put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Governor.CadenceScope != "per_repo" {
+		t.Fatalf("camelCase key not applied: %q", s.deps.Config.Governor.CadenceScope)
+	}
+
+	if rec := doPut(s, "/api/config/governor/cadence-scope", map[string]any{"cadence_scope": "aggregate"}); rec.Code != http.StatusOK {
+		t.Fatalf("aggregate put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Governor.CadenceScope != "aggregate" {
+		t.Fatalf("snake_case alias not applied: %q", s.deps.Config.Governor.CadenceScope)
+	}
+
+	if rec := doPut(s, "/api/config/governor/cadence-scope", map[string]any{"cadenceScope": ""}); rec.Code != http.StatusOK {
+		t.Fatalf("reset put: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CadenceScope != "" {
+		t.Fatalf("reset not applied: %q", s.deps.Config.Governor.CadenceScope)
+	}
+	if got := cadenceScopeOf(t, doOwnerGet(s, "/api/config/governor/cadence-scope")); got != "aggregate" {
+		t.Fatalf("GET after reset: expected aggregate, got %q", got)
+	}
+}
+
+func TestGovernorCadenceScopePut_RejectsNonOwner(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doPutNoRole(s, "/api/config/governor/cadence-scope", `{"cadenceScope":"per_repo"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("un-gated PUT cadence-scope: expected 403, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CadenceScope == "per_repo" {
+		t.Fatal("refused write still mutated cadence scope")
+	}
+}

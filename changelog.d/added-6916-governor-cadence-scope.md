@@ -1,0 +1,1 @@
+- Governor cadence mode resolution can now be scoped per repo, exposing each successfully scanned repo's pressure while preserving the aggregate default for existing hives ([#6916](https://github.com/hivecommons/hive/issues/6916)).

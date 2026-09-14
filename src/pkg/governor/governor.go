@@ -56,8 +56,9 @@ type EvalSnapshot struct {
 }
 
 type RepoSnapshot struct {
-	Issues int `json:"issues"`
-	PRs    int `json:"prs"`
+	Issues int  `json:"issues"`
+	PRs    int  `json:"prs"`
+	Mode   Mode `json:"mode,omitempty"`
 }
 
 type KickRecord struct {
@@ -158,6 +159,7 @@ type BudgetTransitions struct {
 
 type State struct {
 	Mode          Mode                    `json:"mode"`
+	RepoModes     map[string]Mode         `json:"repo_modes,omitempty"`
 	QueueIssues   int                     `json:"queue_issues"`
 	QueuePRs      int                     `json:"queue_prs"`
 	QueueHold     int                     `json:"queue_hold"`
@@ -309,6 +311,20 @@ func (g *Governor) SetModeChangeObserver(obs ModeChangeObserver) {
 }
 
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
+	return g.EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaViolations, nil)
+}
+
+// EvaluateWithRepoDepths is the Evaluate variant used by the hive runtime once
+// it has per-repo actionable depths from GitHub enumeration. In per_repo
+// cadence scope, RepoModes is populated from those depths with threshold
+// scaling neutralized (effective repo count 1).
+//
+// Cadence scheduling remains keyed by agent for this first per_repo slice,
+// because agents do not yet declare repo scope and the kick pipeline carries no
+// repo identity (#6921). State.Mode therefore remains the aggregate hive mode
+// and hive-wide agents continue to use aggregate cadences; RepoModes exposes
+// the per-repo pressure for consumers that can act on it.
+func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaViolations int, repoDepths map[string]RepoSnapshot) []string {
 	// pendingModeChange is captured under the lock and dispatched after it is
 	// released, so the observer never runs with g.mu held.
 	var pendingModeChange *ModeChange
@@ -333,7 +349,11 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 	// 23 open PRs, 1 actionable issue → idle cadence → merge sweeps too rare
 	// to drain the queue). Held items stay excluded — they are waiting on a
 	// human by definition and faster kicks cannot move them.
-	newMode := g.computeMode(queueIssues + queuePRs)
+	newMode := g.computeAggregateMode(queueIssues + queuePRs)
+	g.state.RepoModes = nil
+	if g.cfg.CadenceScopeMode() == config.CadenceScopePerRepo {
+		g.state.RepoModes = g.computeRepoModes(repoDepths)
+	}
 	modeChanged := newMode != g.state.Mode
 	if modeChanged {
 		g.logger.Info("governor mode change",
@@ -407,15 +427,23 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 }
 
 func (g *Governor) computeMode(queueDepth int) Mode {
+	return g.computeModeForRepoCount(queueDepth, g.thresholdRepoCount())
+}
+
+func (g *Governor) computeAggregateMode(queueDepth int) Mode {
+	return g.computeModeForRepoCount(queueDepth, g.repoCount)
+}
+
+func (g *Governor) computeModeForRepoCount(queueDepth, repoCount int) Mode {
 	type modeEntry struct {
 		name      Mode
 		threshold int
 	}
 
 	entries := []modeEntry{
-		{ModeSurge, g.thresholdFor("surge")},
-		{ModeBusy, g.thresholdFor("busy")},
-		{ModeQuiet, g.thresholdFor("quiet")},
+		{ModeSurge, g.thresholdForRepoCount("surge", repoCount)},
+		{ModeBusy, g.thresholdForRepoCount("busy", repoCount)},
+		{ModeQuiet, g.thresholdForRepoCount("quiet", repoCount)},
 	}
 
 	for _, e := range entries {
@@ -424,6 +452,17 @@ func (g *Governor) computeMode(queueDepth int) Mode {
 		}
 	}
 	return ModeIdle
+}
+
+func (g *Governor) computeRepoModes(repoDepths map[string]RepoSnapshot) map[string]Mode {
+	if len(repoDepths) == 0 {
+		return map[string]Mode{}
+	}
+	modes := make(map[string]Mode, len(repoDepths))
+	for repo, depth := range repoDepths {
+		modes[repo] = g.computeModeForRepoCount(depth.Issues+depth.PRs, 1)
+	}
+	return modes
 }
 
 // ladderSnapshot is the set of effective thresholds an inversion warning was
@@ -435,6 +474,7 @@ type ladderSnapshot struct {
 	busy      int
 	quiet     int
 	repoCount int
+	scope     string
 	warned    bool
 }
 
@@ -446,7 +486,18 @@ type ladderSnapshot struct {
 // threshold unset (zero); that still falls through to the defaults, because a
 // zero threshold would put every non-empty queue in that mode.
 func (g *Governor) thresholdFor(modeName string) int {
-	return g.cfg.EffectiveThreshold(modeName, g.repoCount)
+	return g.thresholdForRepoCount(modeName, g.thresholdRepoCount())
+}
+
+func (g *Governor) thresholdForRepoCount(modeName string, repoCount int) int {
+	return g.cfg.EffectiveThreshold(modeName, repoCount)
+}
+
+func (g *Governor) thresholdRepoCount() int {
+	if g.cfg.CadenceScopeMode() == config.CadenceScopePerRepo {
+		return 1
+	}
+	return g.repoCount
 }
 
 // SetRepoCount tells the governor how many repos this hive watches, so the
@@ -500,15 +551,17 @@ func (g *Governor) SetRepoCount(n int) {
 //
 // Caller must hold g.mu.
 func (g *Governor) warnIfLadderInvertedLocked() {
-	surge := g.cfg.EffectiveThreshold("surge", g.repoCount)
-	busy := g.cfg.EffectiveThreshold("busy", g.repoCount)
-	quiet := g.cfg.EffectiveThreshold("quiet", g.repoCount)
+	scope := g.cfg.CadenceScopeMode()
+	repoCount := g.thresholdRepoCount()
+	surge := g.cfg.EffectiveThreshold("surge", repoCount)
+	busy := g.cfg.EffectiveThreshold("busy", repoCount)
+	quiet := g.cfg.EffectiveThreshold("quiet", repoCount)
 
 	if surge > busy && busy > quiet {
 		g.lastLadderWarn = ladderSnapshot{}
 		return
 	}
-	cur := ladderSnapshot{surge: surge, busy: busy, quiet: quiet, repoCount: g.repoCount, warned: true}
+	cur := ladderSnapshot{surge: surge, busy: busy, quiet: quiet, repoCount: repoCount, scope: scope, warned: true}
 	if cur == g.lastLadderWarn {
 		return
 	}
@@ -517,7 +570,8 @@ func (g *Governor) warnIfLadderInvertedLocked() {
 		"surge", surge,
 		"busy", busy,
 		"quiet", quiet,
-		"repo_count", g.repoCount,
+		"repo_count", repoCount,
+		"cadence_scope", scope,
 		"threshold_scaling", g.cfg.ThresholdScalingMode(),
 		"hint", "an explicit governor.modes.<mode>.threshold is never scaled; set the others explicitly too, or remove it to let all three scale",
 	)
@@ -862,12 +916,17 @@ func (g *Governor) GetState() State {
 	for k, v := range g.state.Cadences {
 		cadences[k] = v
 	}
+	repoModes := make(map[string]Mode, len(g.state.RepoModes))
+	for k, v := range g.state.RepoModes {
+		repoModes[k] = v
+	}
 	lastKick := make(map[string]time.Time, len(g.state.LastKick))
 	for k, v := range g.state.LastKick {
 		lastKick[k] = v
 	}
 	return State{
 		Mode:            g.state.Mode,
+		RepoModes:       repoModes,
 		QueueIssues:     g.state.QueueIssues,
 		QueuePRs:        g.state.QueuePRs,
 		QueueHold:       g.state.QueueHold,

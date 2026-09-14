@@ -117,6 +117,23 @@ func TestThresholdScalingMode_DefaultsToLinear(t *testing.T) {
 	}
 }
 
+func TestCadenceScopeMode_DefaultsToAggregate(t *testing.T) {
+	tests := map[string]string{
+		"":          CadenceScopeAggregate,
+		"aggregate": CadenceScopeAggregate,
+		"per_repo":  CadenceScopePerRepo,
+		// Config load rejects these; reaching here means validation was
+		// bypassed, so fail-safe to the historical aggregate behavior.
+		"nonsense": CadenceScopeAggregate,
+	}
+	for in, want := range tests {
+		g := GovernorConfig{CadenceScope: in}
+		if got := g.CadenceScopeMode(); got != want {
+			t.Errorf("CadenceScopeMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // THE core guarantee of #3498: a hand-tuned threshold is returned verbatim.
 // Scaling an operator's explicit 300 by a 39-repo hive would produce 11700 and
 // silently break every hive that already worked around this bug by hand.
@@ -284,6 +301,51 @@ func TestValidate_AcceptsEveryThresholdScaling(t *testing.T) {
 		}
 		if err := c.validate(); err != nil {
 			t.Errorf("validate() rejected threshold_scaling %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidateCadenceScope(t *testing.T) {
+	for _, v := range []string{"", "aggregate", "per_repo"} {
+		if !ValidateCadenceScope(v) {
+			t.Errorf("ValidateCadenceScope(%q) = false, want true", v)
+		}
+	}
+	for _, v := range []string{"Aggregate", "PER_REPO", "repo", "true", "off", "1"} {
+		if ValidateCadenceScope(v) {
+			t.Errorf("ValidateCadenceScope(%q) = true, want false", v)
+		}
+	}
+}
+
+func TestValidate_RejectsBadCadenceScope(t *testing.T) {
+	c := &Config{
+		Project:  ProjectConfig{Org: "my-org"},
+		GitHub:   GitHubConfig{Token: "t"},
+		Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		Governor: GovernorConfig{CadenceScope: "repo"},
+	}
+	err := c.validate()
+	if err == nil {
+		t.Fatal("validate() accepted an invalid cadence_scope")
+	}
+	for _, want := range []string{"cadence_scope", "repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestValidate_AcceptsEveryCadenceScope(t *testing.T) {
+	for _, v := range []string{"", "aggregate", "per_repo"} {
+		c := &Config{
+			Project:  ProjectConfig{Org: "my-org"},
+			GitHub:   GitHubConfig{Token: "t"},
+			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Governor: GovernorConfig{CadenceScope: v},
+		}
+		if err := c.validate(); err != nil {
+			t.Errorf("validate() rejected cadence_scope %q: %v", v, err)
 		}
 	}
 }

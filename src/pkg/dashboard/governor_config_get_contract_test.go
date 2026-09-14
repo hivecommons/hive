@@ -339,7 +339,7 @@ func TestHandleGovernorConfigGet_TopLevelSectionsPresent(t *testing.T) {
 
 	wantKeys := []string{
 		"agents", "thresholds", "effectiveThresholds", "repos", "primaryRepo",
-		"notifications", "budget", "health", "sensing", "logging", "litellm",
+		"cadenceScope", "thresholdScaling", "notifications", "budget", "health", "sensing", "logging", "litellm",
 		"review", "auto_merge", "hub", "attribution",
 	}
 	for _, key := range wantKeys {

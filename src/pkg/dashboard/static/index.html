@@ -20867,27 +20867,44 @@ function burnAreaChart() {
       // a slider reading 20 with no further explanation would be a lie.
       const eff = (d && d.effectiveThresholds) || {};
       const repoCount = (d && d.repoCount) || 1;
+      const scope = ((d && d.cadenceScope) || 'aggregate');
+      const scopeDirty = (_configState.dirty['cadence-scope'] || {}).cadenceScope;
+      const activeScope = scopeDirty !== undefined ? scopeDirty : scope;
       const scaling = ((d && d.thresholdScaling) || 'linear');
       const scalingDirty = (_configState.dirty['threshold-scaling'] || {}).thresholdScaling;
       const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
-      const scaled = activeScaling !== 'none' && repoCount > 1;
+      const scaled = activeScaling !== 'none' && repoCount > 1 && activeScope !== 'per_repo';
       const effNote = scaled && eff.surge
         ? `<p style="font-size:0.75rem;color:var(--muted);margin:-12px 0 20px">
              In force for <strong>${repoCount}</strong> watched repos:
              quiet <strong>${eff.quiet}</strong> · busy <strong>${eff.busy}</strong> · surge <strong>${eff.surge}</strong>.
              Dragging a handle pins that threshold to an absolute value and opts it out of scaling.
            </p>`
+        : activeScope === 'per_repo'
+          ? `<p style="font-size:0.75rem;color:var(--muted);margin:-12px 0 20px">
+               In force per repo:
+               quiet <strong>${q}</strong> · busy <strong>${b}</strong> · surge <strong>${s}</strong>.
+               Multi-repo threshold scaling does not apply to per-repo mode resolution.
+             </p>`
         : '';
       const qPct = (q / THRESH_BAR_MAX) * 100;
       const bPct = (b / THRESH_BAR_MAX) * 100;
       const sPct = (s / THRESH_BAR_MAX) * 100;
       return `
         <div class="config-field" style="margin-bottom:20px">
+          <label title="Whether governor mode is computed from the aggregate hive queue or each repo's own actionable queue.">Cadence mode scope <span class="config-info">i<span class="config-tooltip">Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.</span></span></label>
+          <select id="cfg-cadence-scope" data-change-action="markDirty" data-arg0="cadence-scope" data-arg1="cadenceScope" data-arg-types="s,s,v">
+            ${[['aggregate', 'Aggregate (default)'], ['per_repo', 'Per repo']]
+              .map(([v, label]) => `<option value="${v}" ${activeScope === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field" style="margin-bottom:20px">
           <label title="How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.">Multi-repo threshold scaling <span class="config-info">i<span class="config-tooltip">How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.</span></span></label>
-          <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v">
+          <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v" ${activeScope === 'per_repo' ? 'disabled style="opacity:0.6"' : ''}>
             ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
+          ${activeScope === 'per_repo' ? '<p style="font-size:0.75rem;color:var(--muted);margin:6px 0 0">Scaling is ignored when cadence mode scope is per repo.</p>' : ''}
         </div>
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:20px">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}

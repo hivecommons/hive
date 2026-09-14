@@ -50,10 +50,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	// the numbers actually in force next to the ones being edited instead of
 	// falling back to its own copy of the unscaled defaults.
 	repoCount := cfg.Project.RepoCount()
+	thresholdRepoCount := repoCount
+	if cfg.Governor.CadenceScopeMode() == config.CadenceScopePerRepo {
+		thresholdRepoCount = 1
+	}
 	effectiveThresholds := map[string]int{
-		"quiet": cfg.Governor.EffectiveThreshold("quiet", repoCount),
-		"busy":  cfg.Governor.EffectiveThreshold("busy", repoCount),
-		"surge": cfg.Governor.EffectiveThreshold("surge", repoCount),
+		"quiet": cfg.Governor.EffectiveThreshold("quiet", thresholdRepoCount),
+		"busy":  cfg.Governor.EffectiveThreshold("busy", thresholdRepoCount),
+		"surge": cfg.Governor.EffectiveThreshold("surge", thresholdRepoCount),
 	}
 
 	// Build full org/repo paths
@@ -94,6 +98,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"agents":              agents,
 		"thresholds":          thresholds,
 		"effectiveThresholds": effectiveThresholds,
+		"cadenceScope":        cfg.Governor.CadenceScopeMode(),
 		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
 		"repoCount":           repoCount,
 		"labels":              cfg.Governor.Labels.Exempt,
@@ -355,6 +360,65 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 	}
 
 	s.auditFromRequest(r, "config_governor_thresholds", auditDetail("section", "thresholds"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// handleGovernorCadenceScopeGet returns whether governor mode is resolved for
+// the aggregate hive queue or per successfully scanned repo.
+func (s *Server) handleGovernorCadenceScopeGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, map[string]string{
+		"cadence_scope": s.deps.Config.Governor.CadenceScopeMode(),
+	})
+}
+
+// handleGovernorCadenceScope sets the scope used for governor mode
+// computation. In per_repo scope the governor neutralizes repo-count threshold
+// scaling for per-repo comparisons, while hive-wide agent cadences continue to
+// use the aggregate mode until agents and kicks carry repo identity.
+func (s *Server) handleGovernorCadenceScope(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	var body struct {
+		CadenceScope string `json:"cadenceScope"`
+		// Snake-case alias so callers can send the same key the GET returns
+		// and the YAML config uses.
+		CadenceScopeSnake string `json:"cadence_scope"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	raw := body.CadenceScope
+	if raw == "" {
+		raw = body.CadenceScopeSnake
+	}
+	scope := sanitizeString(raw)
+	if !config.ValidateCadenceScope(scope) {
+		jsonError(w, "cadenceScope must be one of: aggregate, per_repo (or empty for the default)", http.StatusBadRequest)
+		return
+	}
+	s.deps.Config.Governor.CadenceScope = scope
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after cadence scope update", "error", err)
+	}
+
+	if s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_cadence_scope", auditDetail("section", "cadenceScope"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }

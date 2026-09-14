@@ -675,6 +675,7 @@ type FrontendRepo struct {
 	Full             string `json:"full"`
 	Issues           int    `json:"issues"`
 	PRs              int    `json:"prs"`
+	Mode             string `json:"mode,omitempty"`
 	ActionableIssues []any  `json:"actionableIssues"`
 	OpenPrs          []any  `json:"openPrs"`
 }

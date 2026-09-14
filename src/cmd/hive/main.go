@@ -6379,11 +6379,12 @@ func runEvalCycle(
 	// round-trip; self-clears the moment a cadence is set or any kick lands.
 	applyNoCadenceAlert(gov, dashSrv)
 
-	agentsDue := gov.Evaluate(
+	agentsDue := gov.EvaluateWithRepoDepths(
 		actionable.Issues.Count,
 		actionable.PRs.Count,
 		actionable.Hold.Total,
 		actionable.Issues.SLAViolations,
+		governor.RepoDepthsFromActionable(actionable),
 	)
 
 	// Crash-restarted agents may get a "resume" kick ahead of their cadence

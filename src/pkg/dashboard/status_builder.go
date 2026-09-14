@@ -283,7 +283,7 @@ func BuildFrontendStatus(
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
 		Governor:            buildGovernor(govState, cfg),
 		Tokens:              buildTokens(tokenCollector),
-		Repos:               buildRepos(cfg, actionable),
+		Repos:               buildRepos(cfg, actionable, govState),
 		Beads:               BuildBeadsFromConfig(beadStores, cfg),
 		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:              health,
@@ -1180,6 +1180,7 @@ func CollectRepoSnapshots(payload *StatusPayload) map[string]governor.RepoSnapsh
 		result[r.Name] = governor.RepoSnapshot{
 			Issues: r.Issues,
 			PRs:    r.PRs,
+			Mode:   governor.Mode(strings.ToUpper(r.Mode)),
 		}
 	}
 	return result
@@ -1519,7 +1520,7 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 	return out
 }
 
-func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []FrontendRepo {
+func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
 
 	issuesByRepo := make(map[string][]any)
@@ -1559,6 +1560,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 			Full:             full,
 			Issues:           issueCount,
 			PRs:              prCount,
+			Mode:             repoMode(govState, repoName, full),
 			ActionableIssues: issuesByRepo[repoName],
 			OpenPrs:          prsByRepo[repoName],
 		}
@@ -1572,6 +1574,18 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 	}
 
 	return repos
+}
+
+func repoMode(govState governor.State, repoName, full string) string {
+	if len(govState.RepoModes) == 0 {
+		return ""
+	}
+	for _, key := range []string{repoName, full} {
+		if mode, ok := govState.RepoModes[key]; ok {
+			return strings.ToLower(string(mode))
+		}
+	}
+	return ""
 }
 
 func buildBeads(stores map[string]*beads.Store) FrontendBeads {

@@ -7861,6 +7861,92 @@
         }
       }
     },
+    "/api/config/governor/cadence-scope": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Cadence mode scope",
+        "description": "Returns whether governor mode is resolved from the aggregate hive queue or per successfully scanned repo. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Cadence scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cadence_scope": {
+                      "type": "string",
+                      "enum": [
+                        "aggregate",
+                        "per_repo"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Set cadence mode scope",
+        "description": "Sets whether governor mode is resolved from the aggregate hive queue or per successfully scanned repo. Triggers immediate governor re-evaluation. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cadenceScope": {
+                    "type": "string",
+                    "enum": [
+                      "aggregate",
+                      "per_repo",
+                      ""
+                    ]
+                  },
+                  "cadence_scope": {
+                    "type": "string",
+                    "description": "Snake-case alias for cadenceScope"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cadence scope"
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      }
+    },
     "/api/config/governor/threshold-scaling": {
       "get": {
         "tags": [
