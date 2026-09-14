@@ -221,7 +221,7 @@ func TestCodexProber_ExhaustedAndErrors(t *testing.T) {
 }
 
 func TestAgyProber(t *testing.T) {
-	fakeCLI(t, "agy", "Weekly Limit Remaining: 55%", 0)
+	fakeCLI(t, "agy", `{"quota":{"plan":"pro","windows":{"weekly":{"remaining_fraction":0.55,"reset_at":"2026-09-20T00:00:00Z","duration_mins":10080}}}}`, 0)
 	p := AgyProber{ThresholdPct: 80}
 	if p.Provider() != "google" {
 		t.Errorf("Provider = %q, want google", p.Provider())
@@ -236,19 +236,29 @@ func TestAgyProber(t *testing.T) {
 	if h.PctRemaining != 55 {
 		t.Errorf("PctRemaining = %d, want 55", h.PctRemaining)
 	}
+	if h.PlanType != "pro" {
+		t.Errorf("PlanType = %q, want pro", h.PlanType)
+	}
+	// #6966: the emitted window must carry reset timing, which the old scraper
+	// never did.
+	if len(h.Limits) != 1 || h.Limits[0].ResetAt.IsZero() {
+		t.Errorf("window carries no ResetAt; Limits=%+v", h.Limits)
+	}
 }
 
 func TestAgyProber_ExhaustedAndErrors(t *testing.T) {
-	fakeCLI(t, "agy", "Weekly Limit Remaining: 10%", 0)
+	fakeCLI(t, "agy", `{"quota":{"windows":{"weekly":{"remaining_fraction":0.10,"reset_at":"2026-09-20T00:00:00Z","duration_mins":10080}}}}`, 0)
 	h := AgyProber{ThresholdPct: 80}.Probe(context.Background())
 	if h.Available {
 		t.Error("Available = true, want false (90 used >= 80 threshold)")
 	}
 
-	fakeCLI(t, "agy", "nope", 0)
+	// Decorative/text output from a CLI too old for --output-format json must
+	// fail to parse and read as unknown, NOT as a confident number.
+	fakeCLI(t, "agy", "Weekly Limit Remaining: 55%", 0)
 	h = AgyProber{ThresholdPct: 80}.Probe(context.Background())
 	if h.ProbeErr == nil || !h.Available {
-		t.Error("want fail-open with parse error on unmatched output")
+		t.Error("want fail-open with parse error on non-JSON (capability-absent) output")
 	}
 
 	fakeCLI(t, "agy", "x", 3)
@@ -744,5 +754,163 @@ func TestCodexHeadroomFoldsRateLimitsByLimitIDFromFixture(t *testing.T) {
 	}
 	if h.PaidCreditsAvailable == nil || !*h.PaidCreditsAvailable {
 		t.Error("PaidCreditsAvailable should carry the provider's own credits.available")
+	}
+}
+
+// ── kubestellar/hive#6965 ───────────────────────────────────────────────────
+
+// TestClaudeHeadroomFromFixture drives ClaudeProber through the real HTTP parse
+// path with a recorded-shape /api/oauth/usage body from testdata rather than an
+// inline literal, so the fixture is what an acceptance criterion asks for and
+// the whole schema is exercised at once. It pins reset timing, per-kind
+// duration banding, and that the worst (most-used) window binds.
+func TestClaudeHeadroomFromFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "claude_oauth_usage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := claudeUsageServer(t, http.StatusOK, string(raw))
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if len(h.Limits) != 3 {
+		t.Fatalf("len(Limits) = %d, want 3 (session, weekly_all, weekly_scoped); Limits=%+v", len(h.Limits), h.Limits)
+	}
+	byID := map[string]LimitWindow{}
+	for _, w := range h.Limits {
+		byID[w.ID] = w
+	}
+	// weekly_all normalizes to "weekly"; the scoped window keeps its own kind
+	// so the relay guard's weekly/weekly_scoped reserves still match.
+	if got := byID["weekly_all"].Kind; got != "weekly" {
+		t.Errorf("weekly_all Kind = %q, want weekly", got)
+	}
+	// DurationMins completes #6833's reading shape and ties each window to the
+	// shared codexWindowKind banding.
+	if got := byID["session"].DurationMins; got != 300 {
+		t.Errorf("session DurationMins = %d, want 300", got)
+	}
+	if got := byID["weekly_all"].DurationMins; got != 10080 {
+		t.Errorf("weekly_all DurationMins = %d, want 10080", got)
+	}
+	// Emitted windows must carry reset timing so #6833's terminal message can
+	// show it.
+	if byID["weekly_all"].ResetAt.IsZero() {
+		t.Error("weekly_all window carries no ResetAt")
+	}
+	// The 88%-used weekly_all window is the binding one; without worst-binds
+	// the 37% session or 12% scoped window would over-report headroom.
+	if h.PctRemaining != 12 {
+		t.Errorf("PctRemaining = %d, want 12 (the 88%%-used weekly_all binds)", h.PctRemaining)
+	}
+	if !h.ResetAt.Equal(byID["weekly_all"].ResetAt) {
+		t.Errorf("ResetAt = %v, want the binding weekly_all reset %v", h.ResetAt, byID["weekly_all"].ResetAt)
+	}
+	if h.Available {
+		t.Error("Available should be false: the weekly_all window is past the 80% threshold")
+	}
+}
+
+// TestClaudeHeadroomRejectsUnrecognizedSchema pins that an empty or
+// percent-less limits array — or a body missing the field entirely — surfaces
+// as an error (fail-open with ProbeErr set = unknown to the guard), never a
+// confident healthy reading. Before #6965 the same input returned
+// Available=true with PctRemaining=100 and no error: the silent permissive
+// misread #6833 calls worse than no guard at all.
+func TestClaudeHeadroomRejectsUnrecognizedSchema(t *testing.T) {
+	for _, body := range []string{
+		`{"limits":[]}`,
+		`{"limits":[{"kind":"session"}]}`,
+		`{"somethingElse":true}`,
+	} {
+		srv := claudeUsageServer(t, http.StatusOK, body)
+		h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
+		if h.ProbeErr == nil {
+			t.Errorf("body %s: ProbeErr = nil, want an explicit unrecognized-schema error", body)
+		}
+		if len(h.Limits) != 0 {
+			t.Errorf("body %s: unrecognized schema must yield no windows, got %+v", body, h.Limits)
+		}
+	}
+}
+
+// ── kubestellar/hive#6966 ───────────────────────────────────────────────────
+
+// TestAgyHeadroomFromFixture drives AgyProber through the real parse path with
+// a recorded-shape structured `/usage` payload from testdata rather than an
+// inline literal, so the whole documented quota map is exercised at once. It
+// pins the remaining_fraction→percent conversion, per-window duration banding,
+// reset timing (which the old scraper never emitted), and that the worst
+// (most-used) window binds.
+func TestAgyHeadroomFromFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "agy_usage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeCLI(t, "agy", string(raw), 0)
+	h := AgyProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if len(h.Limits) != 2 {
+		t.Fatalf("len(Limits) = %d, want 2 (five_hour, weekly); Limits=%+v", len(h.Limits), h.Limits)
+	}
+	byID := map[string]LimitWindow{}
+	for _, w := range h.Limits {
+		byID[w.ID] = w
+	}
+	// remaining_fraction 0.63 -> 63% remaining, and duration bands to five_hour.
+	if got := byID["five_hour"].PctRemaining; got != 63 {
+		t.Errorf("five_hour PctRemaining = %d, want 63 (from remaining_fraction 0.63)", got)
+	}
+	if got := byID["five_hour"].Kind; got != "five_hour" {
+		t.Errorf("five_hour Kind = %q, want five_hour (banded from 300 min)", got)
+	}
+	if got := byID["weekly"].Kind; got != "weekly" {
+		t.Errorf("weekly Kind = %q, want weekly (banded from 10080 min)", got)
+	}
+	// #6966: emitted windows must carry reset timing.
+	if byID["weekly"].ResetAt.IsZero() {
+		t.Error("weekly window carries no ResetAt")
+	}
+	if got := byID["weekly"].DurationMins; got != 10080 {
+		t.Errorf("weekly DurationMins = %d, want 10080", got)
+	}
+	if h.PlanType != "pro" {
+		t.Errorf("PlanType = %q, want pro", h.PlanType)
+	}
+	// The 91%-used weekly window binds; without worst-binds the 37%-used
+	// five_hour window would over-report headroom.
+	if h.PctRemaining != 9 {
+		t.Errorf("PctRemaining = %d, want 9 (remaining_fraction 0.09 weekly binds)", h.PctRemaining)
+	}
+	if !h.ResetAt.Equal(byID["weekly"].ResetAt) {
+		t.Errorf("ResetAt = %v, want the binding weekly reset %v", h.ResetAt, byID["weekly"].ResetAt)
+	}
+	if h.Available {
+		t.Error("Available should be false: the weekly window is past the 80% threshold")
+	}
+}
+
+// TestAgyHeadroomRejectsUnrecognizedSchema pins that a payload with no quota
+// map, no windows, or windows without a remaining_fraction — as well as the
+// decorative text the old scraper matched — surfaces as an error (fail-open
+// with ProbeErr set = unknown to the guard), never a confident number. The
+// earlier scraper's failure mode was a confident WRONG number, which #6833
+// calls worse than no guard at all. This path does not depend on the
+// accepted-shape field spellings, so it holds even if the fixture's schema is
+// later corrected.
+func TestAgyHeadroomRejectsUnrecognizedSchema(t *testing.T) {
+	for _, body := range []string{
+		`{"quota":{"plan":"pro"}}`,
+		`{"quota":{"windows":{}}}`,
+		`{"quota":{"windows":{"weekly":{"reset_at":"2026-09-20T00:00:00Z"}}}}`,
+		`{"somethingElse":true}`,
+		"Weekly Limit Remaining: 55%",
+	} {
+		if _, err := agyHeadroom("google", 80, []byte(body)); err == nil {
+			t.Errorf("agyHeadroom(%s) err = nil, want an explicit unrecognized-schema error", body)
+		}
 	}
 }

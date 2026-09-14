@@ -776,7 +776,44 @@ Five behaviours are worth knowing:
   a healthy `available` reading, which was the actual misreporting. Once #6952
   lands an adapter, flipping `unprovisioned` to a hold is a one-line change.
 
-### The guard's decline is capability-negotiated, not version-inferred
+### Provider adapter sources
+
+The `src/pkg/rotation` probers normalize each provider's usage into the reading
+shape above. Two of the three read a different source than #6833's original
+adapter table named, and the divergence is recorded here so a later reader does
+not "fix" an adapter back to a source that was deliberately rejected:
+
+- **Codex** — the app-server `account/rateLimits/read` method, as #6833
+  specified. All returned windows (`primary`, `secondary`, and any
+  `rateLimitsByLimitId` scoped windows) fold in, worst window binds
+  ([#6952](https://github.com/hivecommons/hive/issues/6952),
+  [#6964](https://github.com/hivecommons/hive/issues/6964)).
+
+- **Claude Code** — the HTTP `GET /api/oauth/usage` endpoint the Claude Code
+  HUD polls, **not** the status-line JSON `rate_limits.five_hour` /
+  `rate_limits.seven_day` fields #6833's table named
+  ([#6965](https://github.com/hivecommons/hive/issues/6965)). This amends that
+  table row. Reason: the HTTP source needs no contributor status-line command
+  to exist, needs no ephemeral status-line overlay in container launch modes,
+  and works headless, so enabling the guard never overwrites or depends on a
+  contributor's own status line. The endpoint returns the same two windows the
+  status line would (`session`≈`five_hour`, `weekly_all`≈`seven_day`); each is
+  tagged with its documented duration so the shared window banding applies. The
+  request sends no model prompt, so it consumes no model turn. An unrecognized
+  payload (empty or percent-less `limits`) is reported as an explicit error and
+  enters the unknown-data behaviour rather than a permissive full-headroom
+  reading.
+
+- **Agy** — the documented status-line `quota` map (`remaining_fraction`,
+  reset fields, plan tier), read as structured output rather than by scraping
+  the decorative `/usage` text the earlier prober matched, and windows carry
+  their reset time ([#6966](https://github.com/hivecommons/hive/issues/6966)).
+  Capability is detected by requesting the structured form; a CLI lacking it,
+  or any payload that does not carry the documented `quota` map, is reported as
+  an explicit error and enters the unknown-data behaviour rather than the
+  earlier scraper's confident-wrong-number failure mode.
+
+
 
 When the guard holds a *pushed* assignment (rather than merely withholding
 `ready`), the relay does not just drop the work — it tells the hub, so the hub

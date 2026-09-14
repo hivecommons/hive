@@ -1,0 +1,19 @@
+{
+  "limits": [
+    {
+      "kind": "session",
+      "percent": 37,
+      "resets_at": "2026-09-14T21:00:00Z"
+    },
+    {
+      "kind": "weekly_all",
+      "percent": 88,
+      "resets_at": "2026-09-20T00:00:00Z"
+    },
+    {
+      "kind": "weekly_scoped",
+      "percent": 12,
+      "resets_at": "2026-09-20T00:00:00Z"
+    }
+  ]
+}

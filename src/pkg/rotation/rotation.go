@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,6 +156,21 @@ func failOpen(provider string, err error) Headroom {
 
 // ClaudeProber probes Anthropic subscription usage via the OAuth usage API.
 //
+// SOURCE DECISION (kubestellar/hive#6965): #6833's adapter table specifies the
+// documented status-line JSON `rate_limits.five_hour` / `rate_limits.seven_day`
+// fields, chaining an existing user status-line command. This adapter instead
+// reads the HTTP usage endpoint below. That is a deliberate, recorded choice,
+// not an oversight: the HTTP source needs no contributor status-line command to
+// exist, needs no ephemeral status-line overlay in container launch modes, and
+// works headless — so it cannot overwrite or depend on a contributor's own
+// status line to enable a safety feature. #6833's adapter table is amended to
+// match in src/docs/contributor-relay.md so the next reader does not "fix" this
+// back to the status line. The two windows the status line would expose
+// (`five_hour`, `seven_day`) are the same two this endpoint returns as
+// `session` and `weekly_all`; claudeWindowDurationMins ties them to the shared
+// banding. Obtaining a reading here sends no model prompt — it is a plain
+// authenticated GET — so it consumes no model turn.
+//
 // `claude /usage` no longer renders the weekly-quota block (current builds
 // show session stats only) and headless `/status` is unavailable, so the probe
 // uses the same undocumented endpoint Claude Code's own HUD polls:
@@ -272,28 +286,57 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
+	h, err := claudeHeadroom(p.Provider(), p.ThresholdPct, body)
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	return h
+}
+
+// claudeHeadroom builds a normalized reading from an `/api/oauth/usage` payload
+// (kubestellar/hive#6965).
+//
+// Like codexHeadroom, it reports an error rather than a permissive reading
+// whenever the payload carries no window it recognizes — an empty `limits`
+// array, or a schema that has moved on so nothing carries a percent. That must
+// surface as unknown so the caller enters the configured unknown-data
+// behaviour: a guard that silently reports full headroom off an unrecognized
+// schema is worse than no guard, because it manufactures confidence that Hive
+// will stop in time (#6833). Before this the same input returned a confident
+// 100%-remaining, healthy reading.
+func claudeHeadroom(provider string, thresholdPct int, body []byte) (Headroom, error) {
 	var parsed claudeUsageResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return failOpen(p.Provider(), err)
+		return Headroom{}, err
 	}
 	used := 0
 	var resetAt time.Time
 	limits := make([]LimitWindow, 0, len(parsed.Limits))
 	for _, l := range parsed.Limits {
 		if l.Percent == nil {
+			// Some kinds omit percent; they carry no usable reading and must
+			// not be counted as 0% used (the binding limit is the max percent
+			// among those that have one).
 			continue
 		}
 		pct := int(*l.Percent)
 		lw := LimitWindow{
-			ID:           l.Kind,
-			Kind:         normalizeLimitKind(l.Kind),
-			PercentUsed:  pct,
+			ID:          l.Kind,
+			Kind:        normalizeLimitKind(l.Kind),
+			PercentUsed: pct,
+			// DurationMins completes #6833's reading shape and ties each named
+			// window to the SHARED banding (codexWindowKind) rather than a
+			// second scheme; the provider-native Kind label is preserved so the
+			// relay guard's short/weekly/scoped reserves keep matching.
+			DurationMins: claudeWindowDurationMins(l.Kind),
 			PctRemaining: fullPct - pct,
 		}
 		if l.ResetsAt != nil {
 			lw.ResetAt = *l.ResetsAt
 		}
 		limits = append(limits, lw)
+		// The binding window is the most-used one; reporting a roomier window
+		// would let an exhausted one pass unnoticed.
 		if pct > used {
 			used = pct
 			if l.ResetsAt != nil {
@@ -301,13 +344,16 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 			}
 		}
 	}
+	if len(limits) == 0 {
+		return Headroom{}, errors.New("claude usage: no limit window carried a percent (unrecognized schema)")
+	}
 	return Headroom{
-		Provider:     p.Provider(),
-		Available:    used < p.ThresholdPct,
+		Provider:     provider,
+		Available:    used < thresholdPct,
 		PctRemaining: fullPct - used,
 		ResetAt:      resetAt,
 		Limits:       limits,
-	}
+	}, nil
 }
 
 func normalizeLimitKind(kind string) string {
@@ -316,6 +362,24 @@ func normalizeLimitKind(kind string) string {
 		return "weekly"
 	default:
 		return kind
+	}
+}
+
+// claudeWindowDurationMins maps a Claude usage window kind to its documented
+// duration so the reading carries #6833's duration member and the shared
+// codexWindowKind banding applies (kubestellar/hive#6965). Claude reports a
+// rolling ~5-hour window as `session` and the long window as `weekly_all` /
+// `weekly_scoped`; the documented status-line fields name the same two windows
+// `rate_limits.five_hour` and `rate_limits.seven_day`. A kind with no known
+// duration yields zero, matching "the provider did not state one".
+func claudeWindowDurationMins(kind string) int {
+	switch kind {
+	case "session", "five_hour":
+		return 300
+	case "weekly", "weekly_all", "weekly_scoped", "seven_day":
+		return 10080
+	default:
+		return 0
 	}
 }
 
@@ -587,36 +651,176 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 	return h, nil
 }
 
-// AgyProber probes Google usage via `agy --print "/usage"`.
+// AgyProber probes Google (Agy) subscription usage via the CLI's documented
+// status-line `quota` map.
+//
+// SOURCE (kubestellar/hive#6966): #6833's adapter table rules out scraping the
+// decorative `agy --print "/usage"` text — an earlier prober matched a
+// `Weekly Limit Remaining: N%` line with a regex, whose failure mode was a
+// confident WRONG number rather than an error, and whose window carried no
+// reset time. This adapter instead requests the structured status-line `quota`
+// map (`remaining_fraction`, reset fields, plan tier) and normalizes it, so
+// each window carries its reset timing and an unrecognized payload is reported
+// as an explicit error rather than silently misread. Capability is detected by
+// asking for the structured form: a CLI too old to emit it prints text or
+// errors, and either way json parsing fails and the reading becomes unknown —
+// no version-sniffing. Requesting usage sends no model prompt, so it consumes
+// no model turn.
+//
+// PROVENANCE CAVEAT: the exact JSON shape agyHeadroom parses is derived from
+// the field names #6833/#6966 document (`quota`, `remaining_fraction`, reset
+// fields, plan tier), NOT from a live agy capture — agy 1.1.22 exposed no auth
+// surface on the verifying host, so no real payload was obtainable. The
+// reject-unrecognized-schema path is fully verified; the accepted-shape details
+// (field nesting/spelling) must be validated against real agy output and the
+// fixture replaced. See testdata/README.md.
 type AgyProber struct {
 	ThresholdPct int
 }
 
-var agyWeeklyRe = regexp.MustCompile(`Weekly Limit Remaining[^\d]*(\d+)%`)
+// agyUsageResponse mirrors the subset of agy's structured `/usage` output this
+// probe consumes (kubestellar/hive#6966). The `quota` map carries the plan tier
+// and one entry per usage window; each window states its remaining fraction, a
+// reset time, and (where present) its duration.
+type agyUsageResponse struct {
+	Quota *struct {
+		Plan     string                     `json:"plan"`
+		PlanTier string                     `json:"plan_tier"`
+		Windows  map[string]*agyQuotaWindow `json:"windows"`
+	} `json:"quota"`
+}
+
+type agyQuotaWindow struct {
+	// RemainingFraction is 0..1; a pointer so "the field was absent" stays
+	// distinguishable from a real 0.0 (fully exhausted).
+	RemainingFraction *float64   `json:"remaining_fraction"`
+	ResetAt           *time.Time `json:"reset_at"`
+	ResetsAt          *time.Time `json:"resets_at"`
+	DurationMins      int        `json:"duration_mins"`
+}
 
 func (p AgyProber) Provider() string { return "google" }
 
 func (p AgyProber) Probe(ctx context.Context) Headroom {
-	out, err := runCLI(ctx, "agy", "--print", "/usage", "--output-format", "text")
+	out, err := runCLI(ctx, "agy", "--print", "/usage", "--output-format", "json")
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	m := agyWeeklyRe.FindStringSubmatch(out)
-	if m == nil {
-		return failOpen(p.Provider(), fmt.Errorf("agy usage output did not match"))
+	h, err := agyHeadroom(p.Provider(), p.ThresholdPct, []byte(out))
+	if err != nil {
+		return failOpen(p.Provider(), err)
 	}
-	remaining, _ := strconv.Atoi(m[1])
+	return h
+}
+
+// agyWindowDurationMins maps a documented agy window key to its duration so the
+// reading carries #6833's duration member and the shared codexWindowKind
+// banding applies (kubestellar/hive#6966). A key with no known duration yields
+// zero, matching "the provider did not state one".
+func agyWindowDurationMins(name string) int {
+	switch name {
+	case "session":
+		return 60
+	case "five_hour", "short":
+		return 300
+	case "daily":
+		return 1440
+	case "weekly", "seven_day":
+		return 10080
+	default:
+		return 0
+	}
+}
+
+// agyHeadroom builds a normalized reading from agy's structured `quota` map
+// (kubestellar/hive#6966).
+//
+// Like codexHeadroom and claudeHeadroom it reports an error rather than a
+// permissive reading whenever the payload carries no window it recognizes — a
+// missing `quota` map, no windows, or windows with no `remaining_fraction`.
+// That must surface as unknown so the caller enters the configured unknown-data
+// behaviour: the earlier scraper's failure mode was a confident wrong number,
+// which #6833 calls worse than no guard at all.
+func agyHeadroom(provider string, thresholdPct int, body []byte) (Headroom, error) {
+	var parsed agyUsageResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return Headroom{}, err
+	}
+	if parsed.Quota == nil || len(parsed.Quota.Windows) == 0 {
+		return Headroom{}, errors.New("agy usage: no quota windows (unrecognized schema)")
+	}
+	planType := parsed.Quota.Plan
+	if planType == "" {
+		planType = parsed.Quota.PlanTier
+	}
+	names := make([]string, 0, len(parsed.Quota.Windows))
+	for name := range parsed.Quota.Windows {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	used := 0
+	var resetAt time.Time
+	limits := make([]LimitWindow, 0, len(names))
+	for _, name := range names {
+		w := parsed.Quota.Windows[name]
+		if w == nil || w.RemainingFraction == nil {
+			// A window with no remaining_fraction carries no usable reading; it
+			// must not be counted as 0% used (fully available).
+			continue
+		}
+		remainingPct := int(*w.RemainingFraction*fullPct + 0.5)
+		if remainingPct < 0 {
+			remainingPct = 0
+		}
+		if remainingPct > fullPct {
+			remainingPct = fullPct
+		}
+		pctUsed := fullPct - remainingPct
+		duration := w.DurationMins
+		if duration == 0 {
+			duration = agyWindowDurationMins(name)
+		}
+		kind := codexWindowKind(duration)
+		if duration == 0 {
+			// No duration to band; fall back to the provider's own window key
+			// so the guard still evaluates it rather than dropping it.
+			kind = name
+		}
+		lw := LimitWindow{
+			ID:           name,
+			Kind:         kind,
+			PercentUsed:  pctUsed,
+			PctRemaining: remainingPct,
+			DurationMins: duration,
+		}
+		reset := w.ResetAt
+		if reset == nil {
+			reset = w.ResetsAt
+		}
+		if reset != nil {
+			lw.ResetAt = *reset
+		}
+		limits = append(limits, lw)
+		// The binding window is the most-used one; reporting a roomier window
+		// would let an exhausted one pass unnoticed.
+		if pctUsed > used {
+			used = pctUsed
+			if reset != nil {
+				resetAt = *reset
+			}
+		}
+	}
+	if len(limits) == 0 {
+		return Headroom{}, errors.New("agy usage: no quota window carried remaining_fraction (unrecognized schema)")
+	}
 	return Headroom{
-		Provider:     p.Provider(),
-		Available:    fullPct-remaining < p.ThresholdPct,
-		PctRemaining: remaining,
-		Limits: []LimitWindow{{
-			ID:           "weekly",
-			Kind:         "weekly",
-			PercentUsed:  fullPct - remaining,
-			PctRemaining: remaining,
-		}},
-	}
+		Provider:     provider,
+		Available:    used < thresholdPct,
+		PctRemaining: fullPct - used,
+		ResetAt:      resetAt,
+		PlanType:     planType,
+		Limits:       limits,
+	}, nil
 }
 
 // DeepSeekProber probes DeepSeek credit balance via its balance API.

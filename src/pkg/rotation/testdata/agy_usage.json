@@ -1,0 +1,17 @@
+{
+  "quota": {
+    "plan": "pro",
+    "windows": {
+      "five_hour": {
+        "remaining_fraction": 0.63,
+        "reset_at": "2026-09-14T21:30:00Z",
+        "duration_mins": 300
+      },
+      "weekly": {
+        "remaining_fraction": 0.09,
+        "reset_at": "2026-09-20T00:00:00Z",
+        "duration_mins": 10080
+      }
+    }
+  }
+}
