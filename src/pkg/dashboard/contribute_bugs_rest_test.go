@@ -17,13 +17,13 @@ import (
 func TestMyWorkDoneFilterFromCompletedActivity(t *testing.T) {
 	body := renderContributePage(t)
 
-	if !strings.Contains(body, "if(currentFilter==='done'){shown=(typeof ccCompletedWorkItems==='function')?ccCompletedWorkItems(30):[];}") {
+	if !strings.Contains(body, "if(currentFilter==='done'){shown=(typeof ccCompletedWorkItems==='function')?ccCompletedWorkItems(30,ccMeUsername):[];}") {
 		t.Error(`"Done" filter does not source from completed activity (ccCompletedWorkItems)`)
 	}
-	if !strings.Contains(body, "function ccCompletedWorkItems(cap){") {
+	if !strings.Contains(body, "function ccCompletedWorkItems(cap,username){") {
 		t.Fatal("ccCompletedWorkItems missing")
 	}
-	fn := body[strings.Index(body, "function ccCompletedWorkItems(cap){"):]
+	fn := body[strings.Index(body, "function ccCompletedWorkItems(cap,username){"):]
 	fn = fn[:strings.Index(fn, "\n}")]
 	if !strings.Contains(fn, "e.action!=='completed'") {
 		t.Error("ccCompletedWorkItems does not derive rows from completed events")

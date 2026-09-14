@@ -2625,7 +2625,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      READY-WORK QUEUE (issues waiting to be picked off, top = next up), and the live
      DEV-LOG (a running chat log of the development, now in the rail). Both panels
      are fed by REAL events — the queue from ActionableIssues (the same set
-     selectTask offers from), My work from the fleet snapshot. All read-only except
+     selectTask offers from), My work viewer-filtered from the fleet snapshot. All read-only except
      the queue's owner/read-write drag-reorder. Panel order: My work first, then
      Ready-work queue — a pure vertical swap, no id/behavior change. -->
 <!-- Your contribution (#6543): the signed-in contributor's OWN numbers — issues
@@ -3003,6 +3003,7 @@ function activateTab(t,push){
   // not leave Connected clankers / Pipeline & policy / My work stuck on "Loading…"
   // (regression #2574). Each is guarded on its own.
   if(dp==='tab-ops'&&!opsStarted){opsStarted=true;
+    try{ccLoadViewerIdentity();}catch(e){console.error('viewer identity load failed',e);}
     try{opsPoll();}catch(e){console.error('opsPoll start failed',e);}
     try{ccStart();}catch(e){console.error('ccStart failed',e);}
     // The dev-log rail collapse/persist wiring is independent too: a throw here must
@@ -3125,6 +3126,20 @@ function tierBadge(tier,extraCls){
 // /api/gh-user-auth/status, the SAME source the Me card uses). Empty when anonymous.
 // Used to SUBTLY highlight the viewer's own row in the Rankings list.
 var ccMeUsername='';
+function ccRememberMeUsername(u){
+  if(!u||ccMeUsername===u)return;
+  ccMeUsername=u;
+  if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}
+  if(typeof lastWork!=='undefined'){try{renderWork(lastWork);}catch(e){}}
+}
+var ccViewerIdentityStarted=false;
+function ccLoadViewerIdentity(){
+  if(ccViewerIdentityStarted)return;
+  ccViewerIdentityStarted=true;
+  fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
+    if(auth&&auth.logged_in&&auth.username)ccRememberMeUsername(auth.username);
+  }).catch(function(e){console.error('viewer identity status failed',e);});
+}
 function lbRow(e,rank){
   var uname=e.github_username||'';
   var name=esc(uname);
@@ -3296,7 +3311,7 @@ function loadMeStanding(){
       return;
     }
     var u=auth.username;
-    if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
+    ccRememberMeUsername(u);
     fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
       if(!p||!p.found){
         mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — ship a task to enter the standings.</span></div>';
@@ -3338,7 +3353,7 @@ function loadMeCard(){
     var viewer=(auth&&auth.logged_in&&auth.username)?auth.username:'';
     // Remember the viewer's username so the Rankings list can highlight their own
     // row. If the standings already rendered (race), re-render to apply the mark.
-    if(viewer&&ccMeUsername!==viewer){ccMeUsername=viewer;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
+    if(viewer)ccRememberMeUsername(viewer);
     // A public permalink shows THAT contributor, signed in or not.
     if(ME_VIEW_USERNAME){
       show(ME_VIEW_USERNAME,viewer.toLowerCase()===ME_VIEW_USERNAME.toLowerCase());
@@ -4960,6 +4975,13 @@ function workMatchesFilter(w){
   if(currentFilter==='done')return w.status==='done';
   return true;
 }
+function workBelongsToViewer(w){
+  var uname=w&&w.github_username;
+  return !!(ccMeUsername&&uname&&uname.toLowerCase()===ccMeUsername.toLowerCase());
+}
+function renderWorkSignInEmpty(el){
+  el.innerHTML='<div class="me-signin"><b>Sign in</b> to see your work.</div>';
+}
 function statusPill(s){
   if(s==='in-progress')return '<span class="pill pill-progress">in-progress</span>';
   if(s==='review')return '<span class="pill pill-review">review</span>';
@@ -4976,10 +4998,12 @@ function renderWork(list){
   // events (the real completion history). All/Active/Review keep filtering the
   // in-flight list as before.
   var shown;
-  if(currentFilter==='done'){shown=(typeof ccCompletedWorkItems==='function')?ccCompletedWorkItems(30):[];}
+  if(currentFilter==='done'){shown=(typeof ccCompletedWorkItems==='function')?ccCompletedWorkItems(30,ccMeUsername):[];}
   else{shown=list.filter(workMatchesFilter);}
+  shown=shown.filter(workBelongsToViewer);
   document.getElementById('work-count').textContent=shown.length+(shown.length===1?' item':' items');
   var el=document.getElementById('work-list');
+  if(!ccMeUsername){renderWorkSignInEmpty(el);return;}
   if(!shown.length){
     var msg=(currentFilter==='done')
       ?'No completed tasks yet — finished work will appear here.'
@@ -6082,11 +6106,13 @@ function ccRebuildLogFromActivity(){
 // in the shared store: the fleet work array holds ONLY in-flight tasks, so the "Done"
 // filter was always empty. Newest first, capped, deduped by task. Each row mirrors the
 // in-flight row shape so renderWork can display it.
-function ccCompletedWorkItems(cap){
+function ccCompletedWorkItems(cap,username){
+  var want=username?String(username).toLowerCase():'';
   var out=[],seen={};
   for(var i=ccActivity.length-1;i>=0&&out.length<(cap||30);i--){
     var e=ccActivity[i];
     if(!e||e.action!=='completed')continue;
+    if(want&&String(e.username||'').toLowerCase()!==want)continue;
     var task=e.task||'';
     if(task&&seen[task])continue;if(task)seen[task]=1;
     var repo=task,number='';
@@ -6392,29 +6418,68 @@ function ccQuotaHTML(variant){
 var ccMineData=null;   // last /api/contribute/me payload, null until first load
 var ccMineLast=0;      // epoch ms of the last fetch, for the throttle
 var ccMineMinGap=30000;
+function ccShowMineCard(){
+  var card=document.getElementById('cc-mine-card');
+  if(card)card.style.display='';
+}
+function ccRenderMineSignIn(status,username){
+  var body=document.getElementById('cc-mine-body');
+  var note=document.getElementById('cc-mine-note');
+  if(!body)return;
+  ccShowMineCard();
+  if(note)note.textContent='';
+  if(status===403&&!username){
+    body.innerHTML='<div class="me-signin">You don’t have a contributor profile on this hive yet. Ship a task to start your card.</div>';
+    return;
+  }
+  renderMeSignIn(body,username);
+}
+function ccRenderMineError(e){
+  var body=document.getElementById('cc-mine-body');
+  var note=document.getElementById('cc-mine-note');
+  if(!body)return;
+  ccShowMineCard();
+  if(note)note.textContent='';
+  renderMeError(body,e);
+}
+function ccRenderMineIdentityState(status){
+  if(status===403&&!ccMeUsername){
+    fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
+      var viewer=(auth&&auth.logged_in&&auth.username)?auth.username:'';
+      if(viewer)ccRememberMeUsername(viewer);
+      ccRenderMineSignIn(status,viewer);
+    }).catch(function(e){console.error('viewer identity status failed',e);ccRenderMineSignIn(status,'');});
+    return;
+  }
+  ccRenderMineSignIn(status,ccMeUsername);
+}
 function ccLoadMine(force){
   var now=Date.now();
   if(!force&&ccMineLast&&(now-ccMineLast)<ccMineMinGap)return;
   ccMineLast=now;
   fetch('/api/contribute/me').then(function(r){
     // 401 (anonymous) and 403 (no profile on this hive) are the NORMAL answers
-    // for a visitor, not failures: the card simply stays hidden. Only a real
-    // transport/parse fault reaches the catch below.
-    if(!r.ok)return null;
+    // for a visitor, not transport failures. Show the same .me-signin treatment
+    // the Profile tab uses instead of silently hiding the card.
+    if(!r.ok){
+      if(r.status===401||r.status===403)return {__ccMineStatus:r.status};
+      throw new Error('contribution stats request failed: HTTP '+r.status);
+    }
     return r.json();
   }).then(function(d){
+    if(d&&d.__ccMineStatus){ccRenderMineIdentityState(d.__ccMineStatus);return;}
     if(!d||!d.github_username)return;
     ccMineData=d;
     // Adopt the profile's STORED username when we have no viewer identity yet.
     // The metrics rings are keyed on that exact string, so this is also what lets
     // the personal sparklines find their series on a tab where the leaderboard
     // (the other setter of ccMeUsername) never ran.
-    if(!ccMeUsername)ccMeUsername=d.github_username;
+    ccRememberMeUsername(d.github_username);
     ccRenderMine();
     // Paint the sparkline immediately if metrics already landed; otherwise the
     // next ccMetricsPoll picks it up.
     try{ccRenderMineSpark();}catch(e){}
-  }).catch(function(e){console.error('contribution stats load failed',e);});
+  }).catch(function(e){console.error('contribution stats load failed',e);ccRenderMineError(e);});
 }
 // ccMineTile renders one stat tile: a number, its label, and an optional short
 // sub-line that qualifies it (never decorates it).

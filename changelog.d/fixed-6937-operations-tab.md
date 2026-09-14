@@ -1,0 +1,1 @@
+- Operations now treats personal work and contribution panels as signed-in surfaces, showing the same clear prompt profile visitors already see and limiting “My work” to the viewer’s own activity so anonymous visitors no longer mistake fleet-wide work for theirs.
