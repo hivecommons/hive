@@ -57,13 +57,27 @@ const (
 	ClassMetered      = "metered"
 )
 
+// LimitWindow is the normalized capacity window shape from RFC #5698. A
+// headroom reading may carry several windows because short-term, weekly, and
+// scoped limits reset independently and must not be collapsed by consumers that
+// need deterministic admission decisions.
+type LimitWindow struct {
+	ID           string            `json:"id,omitempty"`
+	Kind         string            `json:"kind"`
+	PercentUsed  int               `json:"percent_used"`
+	PctRemaining int               `json:"pct_remaining"`
+	ResetAt      time.Time         `json:"resets_at,omitempty"`
+	Scope        map[string]string `json:"scope,omitempty"`
+}
+
 // Headroom describes a provider's current capacity.
 type Headroom struct {
-	Provider     string    `json:"provider"`
-	Available    bool      `json:"available"`     // false = exhausted or probe failed
-	PctRemaining int       `json:"pct_remaining"` // 0–100; 0 when probe failed
-	ResetAt      time.Time `json:"reset_at,omitempty"`
-	ProbeErr     error     `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
+	Provider     string        `json:"provider"`
+	Available    bool          `json:"available"`     // false = exhausted or probe failed
+	PctRemaining int           `json:"pct_remaining"` // 0–100; 0 when probe failed
+	ResetAt      time.Time     `json:"reset_at,omitempty"`
+	Limits       []LimitWindow `json:"limits,omitempty"`
+	ProbeErr     error         `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
 }
 
 // ProbeError surfaces ProbeErr as a string for JSON consumers.
@@ -77,17 +91,19 @@ func (h Headroom) ProbeError() string {
 // MarshalJSON includes the probe error text alongside the exported fields.
 func (h Headroom) MarshalJSON() ([]byte, error) {
 	type alias struct {
-		Provider     string    `json:"provider"`
-		Available    bool      `json:"available"`
-		PctRemaining int       `json:"pct_remaining"`
-		ResetAt      time.Time `json:"reset_at,omitempty"`
-		ProbeErr     string    `json:"probe_error,omitempty"`
+		Provider     string        `json:"provider"`
+		Available    bool          `json:"available"`
+		PctRemaining int           `json:"pct_remaining"`
+		ResetAt      time.Time     `json:"reset_at,omitempty"`
+		Limits       []LimitWindow `json:"limits,omitempty"`
+		ProbeErr     string        `json:"probe_error,omitempty"`
 	}
 	return json.Marshal(alias{
 		Provider:     h.Provider,
 		Available:    h.Available,
 		PctRemaining: h.PctRemaining,
 		ResetAt:      h.ResetAt,
+		Limits:       h.Limits,
 		ProbeErr:     h.ProbeError(),
 	})
 }
@@ -243,11 +259,25 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	}
 	used := 0
 	var resetAt time.Time
+	limits := make([]LimitWindow, 0, len(parsed.Limits))
 	for _, l := range parsed.Limits {
 		if l.Percent == nil {
 			continue
 		}
 		pct := int(*l.Percent)
+		lw := LimitWindow{
+			ID:           l.Kind,
+			Kind:         normalizeLimitKind(l.Kind),
+			PercentUsed:  pct,
+			PctRemaining: fullPct - pct,
+		}
+		if l.ResetsAt != nil {
+			lw.ResetAt = *l.ResetsAt
+		}
+		if l.Kind == "weekly_scoped" {
+			lw.Kind = "weekly_scoped"
+		}
+		limits = append(limits, lw)
 		if pct > used {
 			used = pct
 			if l.ResetsAt != nil {
@@ -260,6 +290,16 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 		Available:    used < p.ThresholdPct,
 		PctRemaining: fullPct - used,
 		ResetAt:      resetAt,
+		Limits:       limits,
+	}
+}
+
+func normalizeLimitKind(kind string) string {
+	switch kind {
+	case "weekly_all":
+		return "weekly"
+	default:
+		return kind
 	}
 }
 
@@ -374,6 +414,13 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 				Available:    used < p.ThresholdPct,
 				PctRemaining: fullPct - used,
 				ResetAt:      resetAt,
+				Limits: []LimitWindow{{
+					ID:           "primary",
+					Kind:         "weekly",
+					PercentUsed:  used,
+					PctRemaining: fullPct - used,
+					ResetAt:      resetAt,
+				}},
 			}
 		}
 	}
@@ -415,6 +462,12 @@ func (p AgyProber) Probe(ctx context.Context) Headroom {
 		Provider:     p.Provider(),
 		Available:    fullPct-remaining < p.ThresholdPct,
 		PctRemaining: remaining,
+		Limits: []LimitWindow{{
+			ID:           "weekly",
+			Kind:         "weekly",
+			PercentUsed:  fullPct - remaining,
+			PctRemaining: remaining,
+		}},
 	}
 }
 

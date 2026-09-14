@@ -8574,6 +8574,45 @@ test('#6717 a placeholder still on a pane that has since produced output does no
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
+
+test('contributor quota preflight declines at exact reserve and admits one unit above', () => {
+  const guarded = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 20 }] }) } });
+  assert.strictEqual(guarded.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false);
+  const open = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 21 }] }) } });
+  assert.strictEqual(open.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true);
+});
+
+test('contributor quota task_assign sends task_declined before acceptance', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 20 }] }) } });
+  relay.setCliReady(true);
+  relay.getHubs()[0].serverCapabilities = ['quota_preflight_v1'];
+  const sent = [];
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)) });
+  relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'tq', task_gen: 7, kind: 'issue', repo: 'foo/bar', number: 1, title: 'quota edge', complexity: 'medium' }));
+  assert.ok(sent.some(m => m.type === 'task_declined' && m.reason === 'local_capacity_guard'), JSON.stringify(sent));
+  assert.strictEqual(sent.some(m => m.type === 'task_accepted'), false, 'quota-refused work must not be accepted');
+  assert.strictEqual(relay.getCurrentTask(), null, 'quota-refused work must not become in-flight');
+});
+
+test('contributor quota off fully disables task_assign guard', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'stale', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 0 }] }) } });
+  const sent = [];
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)) });
+  relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'tq2', task_gen: 8, kind: 'issue', repo: 'foo/bar', number: 2, title: 'quota off', complexity: 'complex' }));
+  assert.ok(sent.some(m => m.type === 'task_accepted'), JSON.stringify(sent));
+});
+
+
+test('contributor quota guarded relay withholds ready while idle', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 20 }] }) } });
+  relay.setCliReady(true);
+  const sent = [];
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)) });
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+  assert.strictEqual(sent.some(m => m.type === 'ready'), false, JSON.stringify(sent));
+  assert.strictEqual(relay.getContributorQuotaPaused(), true);
+});
+
 const only = process.env.RELAY_TEST_ONLY;
 for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
   try {

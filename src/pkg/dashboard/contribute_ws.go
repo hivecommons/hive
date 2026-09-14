@@ -283,6 +283,10 @@ type WSMessage struct {
 	// used by #2547 routing. Additive and advisory: older relays ignore it, and
 	// enforcement already happened server-side before assignment.
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
+	// Complexity carries the v5 task complexity tier used by contributor-local
+	// quota preflight. Additive: older relays ignore it, and unknown is the safe
+	// conservative default for clients that cannot classify the work.
+	Complexity string `json:"complexity,omitempty"`
 	// TaskKey, SourceType and ExternalID carry the assigned item's canonical,
 	// source-aware identity (kubestellar/hive#4245). All additive and omitempty:
 	// a GitHub task_assign is byte-for-byte unchanged, and Repo/Number keep
@@ -422,6 +426,7 @@ type WSTaskAssign struct {
 	// Requirements is the task-side capability requirement set used for
 	// contributor routing. Nil means this task carried no explicit requirements.
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
+	Complexity   string                       `json:"complexity,omitempty"`
 }
 
 // identityKey returns the canonical identity of the assigned item. It prefers
@@ -4063,7 +4068,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// provable: the credential leaves the hub only once acceptance is
 				// recorded, never bundled with the metadata. In EXPLICIT-accept mode the
 				// hub withholds here and waits for a task_accepted (handled below).
-				if !h.requireExplicitAccept() {
+				if !h.requireExplicitAccept() && !contributorSupportsQuotaPreflight(contributor) {
 					h.deliverTaskCredential(contributor, "auto_accept")
 				} else {
 					h.logger.Info("[contribute-ws] credential withheld pending explicit acceptance",
@@ -4084,6 +4089,49 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			// task_accepted on reconnect cannot re-deliver.
 			if contributor != nil {
 				h.acceptTaskCredential(contributor, msg.TaskID)
+			}
+
+		case "task_declined":
+			// #6833: contributor-local quota preflight may decline an offered task
+			// after metadata but before the scoped credential is delivered. This is
+			// local capacity, not a task failure: release the lease and connection
+			// state without recording failure cooldown or trust impact.
+			if contributor != nil {
+				contributor.mu.Lock()
+				if contributor.currentTask != nil &&
+					contributor.currentTask.TaskID == msg.TaskID &&
+					msg.TaskGen != 0 &&
+					msg.TaskGen == contributor.currentTaskGen &&
+					!contributor.credentialDelivered &&
+					contributor.pendingToken != "" {
+					declined := contributor.currentTask
+					contributor.currentTask = nil
+					contributor.currentTaskGen = h.nextTaskGen()
+					contributor.lastLeaseRenew = time.Time{}
+					contributor.taskAssignedAt = time.Time{}
+					contributor.currentPrompt = ""
+					contributor.currentLabels = nil
+					contributor.pendingToken = ""
+					contributor.credentialDelivered = false
+					contributor.tokenMintedAt = time.Time{}
+					contributor.mu.Unlock()
+					h.revokeLease(identityOf(contributor), msg.TaskID)
+					h.logger.Info("[contribute-ws] task declined by contributor preflight",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"reason", msg.Reason,
+					)
+					if declined != nil && declined.Number > 0 {
+						h.clearReleaseCooldown(declined.Repo, declined.Number)
+					}
+				} else {
+					h.logger.Warn("[contribute-ws] ignoring non-preflight task_declined",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", msg.TaskGen,
+					)
+					contributor.mu.Unlock()
+				}
 			}
 
 		case "task_progress":
@@ -5004,6 +5052,13 @@ func (h *ContributeWSHub) requireExplicitAccept() bool {
 	return h.server.deps.Config.Hub.IsContributeRequireExplicitAccept()
 }
 
+func contributorSupportsQuotaPreflight(c *ContributorConnection) bool {
+	if c == nil || c.capabilities == nil {
+		return false
+	}
+	return strings.TrimSpace(c.capabilities.RelayProtocolVersion) != ""
+}
+
 // deliverTaskCredential ships the scoped credential the hub minted for the
 // connection's current task but deliberately withheld from task_assign (#2537).
 // It is the single post-acceptance delivery point: both the auto-accept path (in
@@ -5654,6 +5709,23 @@ func releaseLineFromTitle(title string) string {
 		}
 	}
 	return tag
+}
+
+func taskComplexityFromLabels(labels []string) string {
+	for _, raw := range labels {
+		l := strings.ToLower(strings.TrimSpace(raw))
+		switch l {
+		case "complexity/simple", "simple":
+			return "simple"
+		case "complexity/medium", "medium":
+			return "medium"
+		case "complexity/complex", "complex":
+			return "complex"
+		case "complexity/unknown", "unknown":
+			return "unknown"
+		}
+	}
+	return "unknown"
 }
 
 // hiveOwnRepoName is the repository this hive's own source lives in, and
@@ -6621,6 +6693,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		SourceType: chosen.ref.SourceType,
 		ExternalID: chosen.ref.ExternalID,
 		URL:        chosen.url,
+		Complexity: taskComplexityFromLabels(chosen.labels),
 		Requirements: func() *ContributorTaskRequirements {
 			if chosen.requirements.IsZero() {
 				return nil
@@ -6701,6 +6774,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			req := chosen.requirements
 			return &req
 		}(),
+		Complexity: taskComplexityFromLabels(chosen.labels),
 		// #2537: NO github_token / token_expires_at here. The scoped credential is
 		// split out of task_assign and delivered only after acceptance (see
 		// pendingToken / deliverTaskCredential). task_assign now carries exactly the

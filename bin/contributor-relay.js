@@ -268,6 +268,126 @@ const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // (the old silent-nil behaviour) nor busy-loop the hub.
 const TASK_UNAVAILABLE_RETRY_MS = 30000;
 
+// ── Contributor quota guard (hivecommons/hive#6833) ────────────────────────
+//
+// This is the local, pre-acceptance safety guard for subscription headroom. It
+// intentionally evaluates normalized limit windows (`kind`, `pct_remaining`,
+// `resets_at`, optional `scope`) matching RFC #5698's provider-headroom model
+// instead of baking provider-specific quota facts into the relay admission path.
+const QUOTA_GUARD_MODE = (process.env.HIVE_CONTRIBUTOR_QUOTA_GUARD || 'ask').trim().toLowerCase();
+const QUOTA_GUARD_DEFAULT_RESERVE = parseQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT', 20);
+const QUOTA_GUARD_SHORT_RESERVE = parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_SHORT_MIN_REMAINING_PCT');
+const QUOTA_GUARD_WEEKLY_RESERVE = parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_WEEKLY_MIN_REMAINING_PCT');
+const QUOTA_GUARD_TIER_RESERVES = {
+  simple: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_SIMPLE_MIN_REMAINING_PCT'),
+  medium: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_MEDIUM_MIN_REMAINING_PCT'),
+  complex: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_COMPLEX_MIN_REMAINING_PCT'),
+  unknown: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_UNKNOWN_MIN_REMAINING_PCT'),
+};
+if (!['ask', 'pause', 'off'].includes(QUOTA_GUARD_MODE)) {
+  console.error(`FATAL: HIVE_CONTRIBUTOR_QUOTA_GUARD must be ask, pause, or off (got ${JSON.stringify(QUOTA_GUARD_MODE)})`);
+  process.exit(1);
+}
+const QUOTA_READING_FILE = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_FILE || '').trim();
+const QUOTA_READING_JSON = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_JSON || '').trim();
+let contributorQuotaPaused = false;
+let contributorQuotaStayPaused = false;
+
+function parseQuotaPctEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === '') return fallback;
+  if (!/^\d+$/.test(String(raw).trim())) {
+    console.error(`FATAL: ${name} must be a percentage from 0 to 100 (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  const n = Number(String(raw).trim());
+  if (n < 0 || n > 100) {
+    console.error(`FATAL: ${name} must be a percentage from 0 to 100 (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  return n;
+}
+
+function parseOptionalQuotaPctEnv(name) {
+  return process.env[name] === undefined || String(process.env[name]).trim() === ''
+    ? null
+    : parseQuotaPctEnv(name, 0);
+}
+
+function normalizeTaskComplexity(task) {
+  const raw = ((task && (task.complexity || task.task_complexity || task.complexity_tier)) || '').toString().trim().toLowerCase();
+  if (['simple', 'medium', 'complex'].includes(raw)) return raw;
+  const labels = Array.isArray(task && task.labels) ? task.labels.map(l => String(l).toLowerCase()) : [];
+  for (const l of labels) {
+    if (l === 'complexity/simple' || l === 'simple') return 'simple';
+    if (l === 'complexity/medium' || l === 'medium') return 'medium';
+    if (l === 'complexity/complex' || l === 'complex') return 'complex';
+  }
+  return 'unknown';
+}
+
+function quotaWindowReserve(kind) {
+  if (['session', 'short', 'five_hour'].includes(kind) && QUOTA_GUARD_SHORT_RESERVE !== null) return QUOTA_GUARD_SHORT_RESERVE;
+  if (['weekly', 'weekly_scoped'].includes(kind) && QUOTA_GUARD_WEEKLY_RESERVE !== null) return QUOTA_GUARD_WEEKLY_RESERVE;
+  return QUOTA_GUARD_DEFAULT_RESERVE;
+}
+
+function quotaRequiredReserve(window, complexity) {
+  const windowReserve = quotaWindowReserve((window && window.kind) || '');
+  const tierReserve = QUOTA_GUARD_TIER_RESERVES[complexity] === null
+    ? QUOTA_GUARD_DEFAULT_RESERVE
+    : QUOTA_GUARD_TIER_RESERVES[complexity];
+  return Math.max(windowReserve, tierReserve);
+}
+
+function recognizedQuotaWindow(kind) {
+  return ['session', 'short', 'five_hour', 'weekly', 'weekly_scoped'].includes(kind);
+}
+
+function readContributorQuotaReading() {
+  if (QUOTA_GUARD_MODE === 'off') return { state: 'available', limits: [] };
+  if (QUOTA_READING_JSON) {
+    return JSON.parse(QUOTA_READING_JSON);
+  }
+  if (QUOTA_READING_FILE) {
+    return JSON.parse(fs.readFileSync(QUOTA_READING_FILE, 'utf8'));
+  }
+  return { state: 'available', limits: [] };
+}
+
+function evaluateContributorQuota(task, reading = readContributorQuotaReading()) {
+  if (QUOTA_GUARD_MODE === 'off') return { admit: true };
+  if (contributorQuotaStayPaused) return { admit: false, wait: true, reason: 'explicit_pause' };
+  const state = (reading && reading.state) || 'unknown';
+  if (state === 'unknown' || state === 'stale') return { admit: false, wait: true, reason: state };
+  const complexity = normalizeTaskComplexity(task);
+  for (const window of (reading.limits || [])) {
+    const kind = (window.kind || '').toString();
+    if (!recognizedQuotaWindow(kind)) continue;
+    const remaining = Number(window.pct_remaining ?? window.remaining_pct);
+    if (!Number.isFinite(remaining)) return { admit: false, wait: true, reason: 'unknown' };
+    const required = quotaRequiredReserve(window, complexity);
+    if (remaining <= required) {
+      return { admit: false, wait: true, reason: 'guarded', window_id: window.id || kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
+    }
+  }
+  contributorQuotaPaused = false;
+  return { admit: true };
+}
+
+function logContributorQuotaDecision(task, decision) {
+  contributorQuotaPaused = true;
+  console.warn('');
+  console.warn('┌─ CONTRIBUTOR QUOTA GUARD ─────────────────────────────────');
+  console.warn(`│ ${BACKEND} is not accepting new work: ${decision.reason}`);
+  if (decision.window_id) console.warn(`│ Window ${decision.window_id}: ${decision.remaining_pct}% remaining; reserve is ${decision.required_reserve_pct}%.`);
+  if (task) console.warn(`│ Pending task: ${task.title || task.task_id || 'unknown'} (${normalizeTaskComplexity(task)}).`);
+  console.warn('│ No new work will start while paused. Continuing may consume paid credits if your provider has them enabled.');
+  console.warn('│ Set HIVE_CONTRIBUTOR_QUOTA_GUARD=off at launch to opt out for this session.');
+  console.warn('└────────────────────────────────────────────────────────────');
+  console.warn('');
+}
+
 // ── Provider quota hold (kubestellar/hive#6541) ──────────────────────────────
 //
 // When the provider refuses on quota, the relay used to fail the task and go
@@ -351,6 +471,7 @@ const hubs = rawHubList.map((url, i) => ({
   // #2547: set once we have reported a contributor-protocol difference with
   // this hub, so a reconnect loop does not repeat the same advisory line.
   protocolDriftReported: false,
+  serverCapabilities: [],
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -544,6 +665,13 @@ function sendTo(hub, msg) {
   // `ready` is withheld: progress, completion and failure frames for work
   // already in flight must still reach the hub.
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
+  if (msg && msg.type === 'ready') {
+    const quotaDecision = evaluateContributorQuota({ complexity: 'simple' });
+    if (!quotaDecision.admit) {
+      logContributorQuotaDecision(null, quotaDecision);
+      return;
+    }
+  }
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
     hub.ws.send(JSON.stringify(msg));
   }
@@ -570,6 +698,10 @@ function send(msg) {
 
 function currentTaskHub() {
   return (currentTask && currentTask._hub) || hubs[activeHubIndex];
+}
+
+function hubSupportsQuotaPreflight(hub) {
+  return !!(hub && Array.isArray(hub.serverCapabilities) && hub.serverCapabilities.includes('quota_preflight_v1'));
 }
 
 function advanceActiveHub(fromHub) {
@@ -4089,6 +4221,7 @@ function handleMessage(data, hub) {
       hub.authenticated = true;
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
+      hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
       // Scoped to the hub this task would have been re-asserted TO, so a
       // second, non-active hub authenticating mid-review stays as silent as it
@@ -4191,6 +4324,24 @@ function handleMessage(data, hub) {
           reason: `provider quota exhausted for ${BACKEND} — not a fault of this host; declining work for ${remaining} (${quotaHoldReason})`,
           failure_kind: 'environment',
         });
+        break;
+      }
+      const quotaDecision = evaluateContributorQuota(msg);
+      if (!quotaDecision.admit) {
+        logContributorQuotaDecision(msg, quotaDecision);
+        if (hubSupportsQuotaPreflight(hub)) {
+          sendTo(hub, {
+            type: 'task_declined',
+            seq: nextSeq(),
+            task_id: msg.task_id,
+            task_gen: msg.task_gen,
+            reason: 'local_capacity_guard',
+            message: `contributor quota guard held ${BACKEND}: ${quotaDecision.reason}`,
+          });
+        } else {
+          console.warn(`Hub ${hub.url} does not advertise quota_preflight_v1; closing instead of reporting a quota hold as task_failed.`);
+          try { if (hub.ws && typeof hub.ws.close === 'function') hub.ws.close(); } catch (_) {}
+        }
         break;
       }
       currentTask = msg;
@@ -4601,6 +4752,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     QUOTA_HOLD_FALLBACK_MS,
     QUOTA_HOLD_MAX_MS,
     QUOTA_HOLD_GRACE_MS,
+    evaluateContributorQuota,
+    normalizeTaskComplexity,
+    quotaRequiredReserve,
+    readContributorQuotaReading,
+    setContributorQuotaStayPaused: (v) => { contributorQuotaStayPaused = !!v; },
+    getContributorQuotaPaused: () => contributorQuotaPaused,
     paneShowsLoginRequiredError,
     handleTransientAPIError,
     resetTransientNudgeState,

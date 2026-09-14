@@ -93,6 +93,10 @@ const (
 	// heartbeat exactly as before, so a relay that ignores the message behaves
 	// precisely as it does today.
 	capTokenRefreshFailed = "token_refresh_failed"
+	// capQuotaPreflight: the hub accepts a contributor-local quota preflight
+	// decline after task metadata is offered but before the scoped credential is
+	// delivered. The decline is local capacity, not task failure.
+	capQuotaPreflight = "quota_preflight_v1"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -109,6 +113,7 @@ func serverCapabilities() []string {
 		capCompletionVerdict,
 		capCapabilityRouting,
 		capTokenRefreshFailed,
+		capQuotaPreflight,
 	}
 }
 
