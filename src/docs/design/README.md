@@ -21,6 +21,7 @@ that status is the thing to check before treating a page as current behaviour:
 ## Records
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
+- [Capability-aware contributor task assignment: the hub/relay decision boundary](capability-aware-assignment-boundary.md) — **proposed** (awaiting sign-off on #6825). Grounds RFC #6825 in the `v5` contributor protocol: the hub owns selection while the relay owns launch and veto, capability matching fails closed the way the quota guard's `unknown ⇒ HOLD` does, mixed-version behaviour reuses the #6954 `relay_capabilities`/`DeclaresCapability` matrix, and the #6541 in-flight quota park is resolved toward a first-class capacity verdict rather than `task_failed`/`environment`. Self-declared capability stays input, never authority. Leaves the tier vocabulary, evidence source, and lease-accounting for the park path as open questions for maintainers.
 - [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **declined** (RFC #6235 closed; #6111 on hold).
   Design for per-repo ACMM targets, gap-to-work reconciliation, explicit
   `agent-actionable` / `needs-human` / `waived` classification, and the
