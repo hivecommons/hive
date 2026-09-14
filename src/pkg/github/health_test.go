@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1615,5 +1616,108 @@ func TestGreenCIStreak_NilClient(t *testing.T) {
 	var c *Client
 	if streak, measured := c.GreenCIStreak(context.Background()); measured || streak != 0 {
 		t.Fatalf("nil client: got (%d, %v), want (0, false)", streak, measured)
+	}
+}
+
+// --------------------------------------------------------------------------
+// ciPassRate — zero-job runs are not evidence (#6936)
+// --------------------------------------------------------------------------
+
+// ciPassRateZeroJobServer serves one window of runs plus a jobs endpoint whose
+// total_count is looked up per run id, so a test can say "run 2 scheduled no
+// jobs" without hand-rolling a mux each time.
+func ciPassRateZeroJobServer(t *testing.T, runs []map[string]any, jobCounts map[string]int) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/org/repo1/actions/runs", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total_count":   len(runs),
+			"workflow_runs": runs,
+		})
+	})
+	mux.HandleFunc("/repos/org/repo1/actions/runs/", func(w http.ResponseWriter, r *http.Request) {
+		// .../actions/runs/<id>/jobs
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		id := parts[len(parts)-2]
+		n, ok := jobCounts[id]
+		if !ok {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": n, "jobs": []any{}})
+	})
+	return httptest.NewServer(mux)
+}
+
+// A zero-job failure must leave the rate untouched, not merely count less. It
+// is dropped from BOTH numerator and denominator, because it is no evidence
+// either way — this is the v4.32.1 shape that drove the real rate to 20%.
+func TestCiPassRateDropsZeroJobRunsFromTheSample(t *testing.T) {
+	runs := []map[string]any{
+		{"id": 1, "conclusion": "success", "status": "completed"},
+		{"id": 2, "conclusion": "failure", "status": "completed"},
+		{"id": 3, "conclusion": "failure", "status": "completed"},
+		{"id": 4, "conclusion": "success", "status": "completed"},
+	}
+	// Runs 2 and 3 are the release-gate zero-job shape.
+	server := ciPassRateZeroJobServer(t, runs, map[string]int{"2": 0, "3": 0})
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	if got := c.ciPassRate(context.Background(), "repo1"); got != 100 {
+		t.Errorf("ciPassRate = %d, want 100 (2 real runs, both green; the two zero-job runs are not evidence)", got)
+	}
+}
+
+// The counterpart that stops the fix from becoming "ignore all failures": a
+// failure that DID schedule jobs ran real code and must still count.
+func TestCiPassRateStillCountsFailuresThatRanJobs(t *testing.T) {
+	runs := []map[string]any{
+		{"id": 1, "conclusion": "success", "status": "completed"},
+		{"id": 2, "conclusion": "failure", "status": "completed"},
+		{"id": 3, "conclusion": "failure", "status": "completed"},
+		{"id": 4, "conclusion": "success", "status": "completed"},
+	}
+	// Run 2 executed jobs (a genuine red); run 3 is the zero-job shape.
+	server := ciPassRateZeroJobServer(t, runs, map[string]int{"2": 7, "3": 0})
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	// Sample is runs 1,2,4 -> 2 of 3 green.
+	if got := c.ciPassRate(context.Background(), "repo1"); got != 66 {
+		t.Errorf("ciPassRate = %d, want 66 (real failure still counts; only the zero-job run is dropped)", got)
+	}
+}
+
+// A jobs-API error must not be read as "scheduled no jobs", or a flaky lookup
+// would silently discard real failures and inflate the rate.
+func TestCiPassRateFailsClosedWhenJobLookupErrors(t *testing.T) {
+	runs := []map[string]any{
+		{"id": 1, "conclusion": "success", "status": "completed"},
+		{"id": 2, "conclusion": "failure", "status": "completed"},
+	}
+	// No entry for "2" => the jobs handler 500s.
+	server := ciPassRateZeroJobServer(t, runs, map[string]int{})
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	if got := c.ciPassRate(context.Background(), "repo1"); got != 50 {
+		t.Errorf("ciPassRate = %d, want 50 (unknown job count keeps the run counted, as before #6936)", got)
+	}
+}
+
+// Degenerate case: if every run in the window is dropped there is no sample
+// left, and the function must not divide by zero.
+func TestCiPassRateHandlesAnEntirelyZeroJobWindow(t *testing.T) {
+	runs := []map[string]any{
+		{"id": 1, "conclusion": "failure", "status": "completed"},
+		{"id": 2, "conclusion": "failure", "status": "completed"},
+	}
+	server := ciPassRateZeroJobServer(t, runs, map[string]int{"1": 0, "2": 0})
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	if got := c.ciPassRate(context.Background(), "repo1"); got != healthStatusFailure {
+		t.Errorf("ciPassRate = %d, want %d", got, healthStatusFailure)
 	}
 }

@@ -85,15 +85,49 @@ func (c *Client) ciPassRate(ctx context.Context, repo string) int {
 	passed := 0
 	for _, run := range runs.WorkflowRuns {
 		conclusion := run.GetConclusion()
-		if conclusion == "success" || conclusion == "skipped" {
+		if conclusion == ciConclusionSuccess || conclusion == ciConclusionSkipped {
 			passed++
+			continue
+		}
+		// #6936: a completed run that never scheduled a JOB executed none of
+		// this repository's code, so it is not evidence about CI health in
+		// either direction — it is dropped from the sample rather than counted
+		// as a failure. `tagged-release.yml` strands five of these per release
+		// (see #6084), and with ciRunsLimit at 10 that is half the window: the
+		// v4.32.1 release drove this function to 20% at 17:51:36Z and held it
+		// at 40% for over a minute while CI was in fact entirely healthy.
+		if c.runScheduledNoJobs(ctx, repo, run.GetID()) {
+			total--
 		}
 	}
 
+	// Either the API returned nothing, or every run in the window was dropped
+	// as no-evidence. Reported the same way an empty result already is.
 	if total == 0 {
 		return healthStatusFailure
 	}
 	return passed * pctMultiplier / total
+}
+
+// runScheduledNoJobs reports whether a completed run finished without ever
+// scheduling a job — GitHub's zero-job "startup failure" shape (#6936).
+//
+// It FAILS CLOSED: any API error or nil payload returns false, which keeps the
+// run counted exactly as it was before this check existed. A transient jobs-API
+// error can therefore only restore the old behaviour, never silently inflate
+// the pass rate by discarding runs that did real work.
+//
+// Cost is bounded and small: it is consulted only for runs that would otherwise
+// count against the rate, so a healthy window makes zero extra calls and the
+// worst case is ciRunsLimit. PerPage is 1 because only the total is read.
+func (c *Client) runScheduledNoJobs(ctx context.Context, repo string, runID int64) bool {
+	jobs, _, err := c.client.Actions.ListWorkflowJobs(ctx, c.org, repo, runID, &gh.ListWorkflowJobsOptions{
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil || jobs == nil {
+		return false
+	}
+	return jobs.GetTotalCount() == 0
 }
 
 // GreenCIStreak returns the number of consecutive green CI runs on the primary
