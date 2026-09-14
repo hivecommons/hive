@@ -172,6 +172,12 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
 			"snapshot_frame_ancestors":           cfg.Dashboard.SnapshotFrameAncestors,
 			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
+			// auto_upgrade_mode is the configured SCHEDULE (instant/daily/weekly)
+			// surfaced read-only so the governor Settings overlay Hub tab can
+			// show the auto-update policy the reporter went looking for (#6962).
+			// Empty means the spoke does not know its schedule; the UI renders
+			// that as an explicit "unknown", never a guess.
+			"auto_upgrade_mode":                  cfg.Hub.AutoUpgradeMode,
 			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":               cfg.Hub.ContributeSuspended,
 			"contribute_titles_mode":             cfg.Hub.ContributeTitlesMode,

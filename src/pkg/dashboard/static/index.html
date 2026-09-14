@@ -17416,7 +17416,7 @@ function burnAreaChart() {
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
         body.innerHTML = renderGovernorTab(tabId);
-        if (tabId === 'Hub') fetchQueueCount();
+        if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
         // Health tab loads it from its own endpoint.
         if (tabId === 'Health') loadEscalationConfig();
@@ -19100,6 +19100,18 @@ function burnAreaChart() {
         </div>
 
         <hr style="border-color:var(--border);margin:16px 0">
+        <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Auto-update</h4>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.auto_upgrade ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="auto_upgrade"></div>
+          <span class="config-toggle-label">Automatic Updates <span class="config-info">i<span class="config-tooltip">When on, the hub rolls this hive forward to new versions automatically on the configured schedule. When off, upgrades are applied manually from the version badge at the top of the dashboard.</span></span></span>
+        </div>
+        <div class="config-field">
+          <label>Update schedule <span class="config-info">i<span class="config-tooltip">The cadence the hub applies to this hive's auto-updates. Managed hub-side; shown here read-only. "Unknown" means this spoke has not been told its schedule.</span></span></label>
+          <div style="font-size:0.78rem;color:var(--text)">${esc(autoUpdatePeriodLabel(hub.auto_upgrade_mode))}</div>
+        </div>
+        <div id="hub-autoupdate-status" style="margin-top:6px;font-size:0.78rem;color:var(--muted)">Loading auto-update status…</div>
+
+        <hr style="border-color:var(--border);margin:16px 0">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Snapshot</h4>
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.auto_snapshot ? 'on' : ''}" data-action="toggleAutoSnapshot" data-arg-types="t" data-section="hub" data-key="auto_snapshot"></div>
@@ -19220,6 +19232,58 @@ function burnAreaChart() {
               '<span style="font-size:0.65rem;color:var(--muted)">/hr · /day · max</span></div>';
           }).join('')}</div>
         </div>`;
+    }
+
+    // Auto-update section helpers (#6962, #6963). autoUpdatePeriodLabel maps
+    // the stored auto_upgrade_mode onto a human label; an absent/unknown mode
+    // is shown as "Unknown", never guessed. fetchAutoUpdateStatus renders the
+    // live status from /api/version's autoUpdate object — the single source of
+    // truth built server-side — and NEVER paints a non-healthy state green.
+    function autoUpdatePeriodLabel(mode) {
+      switch (String(mode || '').toLowerCase()) {
+        case 'instant': return 'Instant — as soon as a new version is available';
+        case 'daily': return 'Daily';
+        case 'weekly': return 'Weekly';
+        default: return 'Unknown — managed by the hub';
+      }
+    }
+
+    function fetchAutoUpdateStatus() {
+      fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
+        var el = document.getElementById('hub-autoupdate-status');
+        if (!el) return;
+        var au = v && v.autoUpdate;
+        if (!au) {
+          // Older server without the field: be explicit rather than silent.
+          el.style.color = 'var(--muted)';
+          el.textContent = 'Auto-update status unavailable from this hive.';
+          return;
+        }
+        // state → colour. Only up_to_date and disabled are non-alarming; every
+        // other state (behind, retrying, failed, unknown) is NOT healthy and
+        // must not read green — this is the #6963 guard.
+        var color = 'var(--muted)', icon = 'ⓘ';
+        switch (au.state) {
+          case 'up_to_date': color = 'var(--green)'; icon = '✓'; break;
+          case 'disabled': color = 'var(--muted)'; icon = '⊘'; break;
+          case 'behind': color = 'var(--yellow, #d4a017)'; icon = '⬆'; break;
+          case 'retrying': color = 'var(--yellow, #d4a017)'; icon = '⟳'; break;
+          case 'failed': color = 'var(--red)'; icon = '⚠'; break;
+          case 'unknown': default: color = 'var(--yellow, #d4a017)'; icon = '❔'; break;
+        }
+        var html = '<div style="color:' + color + ';font-weight:600">' + icon + ' ' + escapeHtml(au.detail || au.state || 'unknown') + '</div>';
+        var rows = '';
+        if (au.currentCommit) rows += '<div>Current commit: <code>' + escapeHtml(au.currentCommit) + '</code></div>';
+        if (au.targetBranch) rows += '<div>Target line: <code>' + escapeHtml(au.targetBranch) + (au.targetCommit ? '</code> (tip <code>' + escapeHtml(au.targetCommit) + '</code>)' : '</code>') + '</div>';
+        if (au.commitsBehind != null) rows += '<div>Commits behind: ' + escapeHtml(String(au.commitsBehind)) + '</div>';
+        if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
+        if (au.lastError) rows += '<div style="color:var(--red)">Last error: ' + escapeHtml(au.lastError) + '</div>';
+        el.style.color = 'var(--muted)';
+        el.innerHTML = html + '<div style="margin-top:4px;line-height:1.5">' + rows + '</div>';
+      }).catch(function() {
+        var el = document.getElementById('hub-autoupdate-status');
+        if (el) { el.style.color = 'var(--muted)'; el.textContent = 'Auto-update status unavailable (could not reach /api/version).'; }
+      });
     }
 
     function fetchQueueCount() {

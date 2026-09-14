@@ -736,6 +736,40 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Auto-update status (#6962, #6963): consolidate everything the spoke knows
+	// locally — the enabled flag, the configured schedule, the target line, the
+	// current commit, how far behind it is, and the on-PVC upgrade marker — into
+	// one explicit status object with a hard "unknown/failed is never healthy"
+	// invariant. This is the findable section the reporter searched the governor
+	// Settings overlay for and could not find.
+	enabled := false
+	period := ""
+	if s.deps != nil && s.deps.Config != nil {
+		enabled = s.deps.Config.Hub.AutoUpgrade
+		period = s.deps.Config.Hub.AutoUpgradeMode
+	}
+	var behindPtr *int
+	if cb, ok := resp["commitsBehind"].(int); ok {
+		behindPtr = &cb
+	}
+	targetCommit := ""
+	if sv, ok := resp["stableV4Short"].(string); ok {
+		targetCommit = sv
+	}
+	var marker map[string]any
+	if m, ok := resp["upgradeMarker"].(map[string]any); ok {
+		marker = m
+	}
+	resp["autoUpdate"] = buildAutoUpdateStatus(autoUpdateInputs{
+		Enabled:       enabled,
+		Period:        period,
+		TargetBranch:  dashboardStableReleaseBranch,
+		TargetCommit:  targetCommit,
+		CurrentCommit: versionShort,
+		CommitsBehind: behindPtr,
+		Marker:        marker,
+	})
+
 	jsonResponse(w, resp)
 }
 

@@ -550,6 +550,13 @@ time, and the last error. The same data is available without the dashboard:
 # Through the API — the upgradeMarker field of /api/version
 curl -fsS http://127.0.0.1:3002/api/version | jq .upgradeMarker
 
+# The consolidated auto-update status (#6962/#6963) — state, whether it is
+# healthy, the configured schedule, how far behind, and any failure reason.
+# state is one of disabled/up_to_date/behind/retrying/failed/unknown, and
+# healthy is false for anything other than up_to_date/disabled, so a stuck or
+# unknown update is never mistaken for a healthy one.
+curl -fsS http://127.0.0.1:3002/api/version | jq .autoUpdate
+
 # Or read the marker itself off the PVC
 kubectl -n hive exec deploy/hive -- cat /data/upgrade-requested
 ```

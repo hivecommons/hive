@@ -3651,6 +3651,14 @@ type HubConfig struct {
 	ClusterID           string `yaml:"cluster_id"`
 	AutoSnapshot        bool   `yaml:"auto_snapshot"`
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
+	// AutoUpgradeMode is the SCHEDULE the hub applies to this hive's
+	// auto-upgrades: "instant", "daily" or "weekly" (see
+	// hub.AutoUpgradeMode*). The authoritative value lives hub-side; this field
+	// exists so the schedule can be surfaced in the spoke dashboard's
+	// auto-update section (#6962). Additive and backwards compatible: an absent
+	// value is reported as an explicit "unknown" period rather than guessed, so
+	// older spokes that never learned their schedule degrade gracefully.
+	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
