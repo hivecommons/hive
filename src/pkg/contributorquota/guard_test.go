@@ -171,3 +171,77 @@ func TestUnrecognizedWindowKindStillGuards(t *testing.T) {
 		t.Errorf("healthy unrecognized window should admit, got %+v", got)
 	}
 }
+
+// ContinueOnce is the operator escape from a guarded pause. It had no test at
+// all, and "once" is the whole contract: it must admit exactly one task and
+// then rearm, otherwise an operator who overrides a single pause silently
+// disables the guard for the rest of the session.
+func TestContinueOnceAdmitsExactlyOneTaskThenRearms(t *testing.T) {
+	cfg := Config{Mode: ModePause}
+	exhausted := Reading{State: StateAvailable, Limits: []rotation.LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 0}}}
+
+	g := NewGuard(cfg)
+	if d := g.Update(exhausted, TierComplex); d.Admit {
+		t.Fatalf("exhausted quota should pause, got %+v", d)
+	}
+	if !g.Paused() {
+		t.Fatal("guard should report paused")
+	}
+
+	g.ContinueOnce()
+	if d := g.Admit(TierComplex); !d.Admit {
+		t.Fatalf("ContinueOnce should admit the next task, got %+v", d)
+	}
+
+	// Finishing that task must rearm the guard while the quota is still spent.
+	g.StartTask()
+	g.FinishTask()
+	if d := g.Admit(TierComplex); d.Admit {
+		t.Errorf("guard must rearm after the single permitted task, got %+v", d)
+	}
+}
+
+func TestAdmitRespectsModeOffAndExplicitPause(t *testing.T) {
+	exhausted := Reading{State: StateAvailable, Limits: []rotation.LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 0}}}
+
+	off := NewGuard(Config{Mode: ModeOff})
+	off.Update(exhausted, TierComplex)
+	if d := off.Admit(TierComplex); !d.Admit {
+		t.Errorf("ModeOff must never block, got %+v", d)
+	}
+
+	healthy := Reading{State: StateAvailable, Limits: []rotation.LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 95}}}
+	stay := NewGuard(Config{Mode: ModePause})
+	stay.Update(healthy, TierComplex)
+	stay.StayPaused()
+	d := stay.Admit(TierComplex)
+	if d.Admit {
+		t.Errorf("an explicit pause must outrank a healthy reading, got %+v", d)
+	}
+	if d.Reason != "explicit_pause" {
+		t.Errorf("Reason = %q, want explicit_pause", d.Reason)
+	}
+}
+
+func TestParseConfigRejectsOutOfRangeAndUnparseablePercentages(t *testing.T) {
+	for _, tc := range []struct{ name, key, val string }{
+		{"base above 100", "HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT", "101"},
+		{"base negative", "HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT", "-1"},
+		{"base not a number", "HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT", "high"},
+		{"optional short out of range", "HIVE_CONTRIBUTOR_QUOTA_SHORT_MIN_REMAINING_PCT", "250"},
+		{"optional weekly not a number", "HIVE_CONTRIBUTOR_QUOTA_WEEKLY_MIN_REMAINING_PCT", "soon"},
+		{"optional tier out of range", "HIVE_CONTRIBUTOR_QUOTA_COMPLEX_MIN_REMAINING_PCT", "-5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := func(k string) (string, bool) {
+				if k == tc.key {
+					return tc.val, true
+				}
+				return "", false
+			}
+			if _, err := ParseConfig(env); err == nil {
+				t.Errorf("%s=%q should be rejected, not silently defaulted", tc.key, tc.val)
+			}
+		})
+	}
+}
