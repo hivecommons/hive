@@ -19,12 +19,14 @@ import (
 func fakeGitHubGHCR(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	waitForCommitOrderResolvers(t)
+	waitForCommitBehindResolvers(t)
 	srv := httptest.NewServer(handler)
 	oldGH, oldGHCR := githubAPIBase, ghcrBase
 	githubAPIBase = srv.URL
 	ghcrBase = srv.URL
 	t.Cleanup(func() {
 		waitForCommitOrderResolvers(t)
+		waitForCommitBehindResolvers(t)
 		githubAPIBase, ghcrBase = oldGH, oldGHCR
 		srv.Close()
 	})

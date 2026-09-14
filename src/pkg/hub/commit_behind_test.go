@@ -10,8 +10,30 @@ import (
 	"time"
 )
 
+// waitForCommitBehindResolvers blocks until no resolveCommitBehind goroutine
+// is in flight. Replacing the in-flight map (or the globals a resolver reads,
+// like githubAPIBase) while one is running is a data race; every reset or
+// global swap must drain first.
+func waitForCommitBehindResolvers(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		commitBehindMu.Lock()
+		inFlight := len(commitBehindInFlight)
+		commitBehindMu.Unlock()
+		if inFlight == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d commit-behind resolver(s)", inFlight)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func resetCommitBehindState(t *testing.T) {
 	t.Helper()
+	waitForCommitBehindResolvers(t)
 	commitBehindMu.Lock()
 	origFetch := fetchCommitBehindCount
 	commitBehindCache = map[commitBehindKey]commitBehindValue{}
@@ -22,6 +44,7 @@ func resetCommitBehindState(t *testing.T) {
 	latestSHAByBranch[stableReleaseBranch] = branchSHAInfo{SHA: "head999"}
 	latestSHAMu.Unlock()
 	t.Cleanup(func() {
+		waitForCommitBehindResolvers(t)
 		commitBehindMu.Lock()
 		fetchCommitBehindCount = origFetch
 		commitBehindCache = map[commitBehindKey]commitBehindValue{}
@@ -105,6 +128,12 @@ func TestCommitsBehindStableV4InFlightDedupes(t *testing.T) {
 	if _, known := commitsBehindStableV4("base111", nil); known {
 		t.Fatal("in-flight compare must report unknown, not block")
 	}
+
+	// The in-flight entry was planted by hand with no resolver goroutine
+	// behind it; remove it so the reset cleanup's drain doesn't wait on it.
+	commitBehindMu.Lock()
+	delete(commitBehindInFlight, key)
+	commitBehindMu.Unlock()
 }
 
 func TestCommitsBehindStableV4DispatchesAndCaches(t *testing.T) {
@@ -194,6 +223,14 @@ func TestHandleMyHivesIncludesCommitsBehind(t *testing.T) {
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", Org: "acme", Status: "running"})
 	commitBehindMu.Lock()
 	commitBehindCache[commitBehindKey{base: "base111", head: "head999"}] = commitBehindValue{count: 3, known: true}
+	// handleMyHives also compares against behindTargetFor's target (the "v2"
+	// default upgrade branch here, not stableReleaseBranch). If earlier tests
+	// left latestSHAByBranch["v2"] populated, that pair is uncached and would
+	// dispatch a real-network resolver whose read of githubAPIBase races with
+	// the next fakeGitHubGHCR. Stub the fetch so any dispatch stays hermetic.
+	fetchCommitBehindCount = func(base, head string, _ *slog.Logger) (int, bool, error) {
+		return 0, false, nil
+	}
 	commitBehindMu.Unlock()
 
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
