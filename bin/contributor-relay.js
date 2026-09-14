@@ -290,6 +290,18 @@ if (!['ask', 'pause', 'off'].includes(QUOTA_GUARD_MODE)) {
 }
 const QUOTA_READING_FILE = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_FILE || '').trim();
 const QUOTA_READING_JSON = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_JSON || '').trim();
+// How often a guarded relay re-reads the quota and re-advertises if it clears
+// (kubestellar/hive#6951). Default 60s: the readings this guard consumes move
+// on the order of minutes, and a held relay is doing nothing else.
+const QUOTA_GUARD_RETRY_MS = (() => {
+  const raw = (process.env.HIVE_CONTRIBUTOR_QUOTA_RETRY_MS || '').trim();
+  if (raw === '') return 60000;
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    console.error(`FATAL: HIVE_CONTRIBUTOR_QUOTA_RETRY_MS must be a positive integer of milliseconds (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  return Number(raw);
+})();
 let contributorQuotaPaused = false;
 let contributorQuotaStayPaused = false;
 
@@ -340,33 +352,84 @@ function quotaRequiredReserve(window, complexity) {
   return Math.max(windowReserve, tierReserve);
 }
 
-function recognizedQuotaWindow(kind) {
-  return ['session', 'short', 'five_hour', 'weekly', 'weekly_scoped'].includes(kind);
-}
-
+// readContributorQuotaReading never throws (kubestellar/hive#6951).
+//
+// This is called from inside the `task_assign` handler and from sendTo(), both
+// of which run under hub.ws.on('message'), which has no try/catch — and the
+// relay installs no `uncaughtException` handler. A half-written reading file
+// therefore used to raise SyntaxError straight out of the message handler and
+// terminate the relay. #6833 requires readings be stored atomically, but the
+// writer is a separate concern on a separate issue, and a reader that assumes
+// the writer got it right is one partial flush away from killing the process.
+//
+// An unreadable reading is `unknown`, which the guard holds on: refusing to
+// start work because we cannot see the quota is the safe direction.
 function readContributorQuotaReading() {
   if (QUOTA_GUARD_MODE === 'off') return { state: 'available', limits: [] };
+  const parse = (label, fn) => {
+    try {
+      const reading = fn();
+      if (!reading || typeof reading !== 'object' || Array.isArray(reading)) {
+        throw new Error('reading is not a JSON object');
+      }
+      return reading;
+    } catch (e) {
+      console.warn(`Contributor quota reading (${label}) could not be read: ${e.message}. Treating quota as unknown.`);
+      return { state: 'unknown', limits: [] };
+    }
+  };
   if (QUOTA_READING_JSON) {
-    return JSON.parse(QUOTA_READING_JSON);
+    return parse('HIVE_CONTRIBUTOR_QUOTA_READING_JSON', () => JSON.parse(QUOTA_READING_JSON));
   }
   if (QUOTA_READING_FILE) {
-    return JSON.parse(fs.readFileSync(QUOTA_READING_FILE, 'utf8'));
+    return parse('HIVE_CONTRIBUTOR_QUOTA_READING_FILE', () => JSON.parse(fs.readFileSync(QUOTA_READING_FILE, 'utf8')));
   }
-  return { state: 'available', limits: [] };
+  // "No reading source configured" is NOT the same as "a configured source we
+  // cannot read", and #6951 turns on the difference. A configured-but-broken
+  // source is `unknown` and holds. An unconfigured one means the guard was
+  // never provisioned on this host: nothing populates either env var yet (that
+  // prober is descoped to a sibling issue), so holding here would stop every
+  // default install on the fleet from ever asking for work again. It stays
+  // inert and says so, once.
+  return { state: 'unprovisioned', limits: [] };
 }
 
-function evaluateContributorQuota(task, reading = readContributorQuotaReading()) {
+let warnedQuotaGuardUnprovisioned = false;
+
+function warnQuotaGuardUnprovisionedOnce() {
+  if (warnedQuotaGuardUnprovisioned) return;
+  warnedQuotaGuardUnprovisioned = true;
+  console.warn(`Contributor quota guard is ${QUOTA_GUARD_MODE} but no reading source is configured ` +
+    '(HIVE_CONTRIBUTOR_QUOTA_READING_FILE / HIVE_CONTRIBUTOR_QUOTA_READING_JSON are unset), ' +
+    'so it cannot see quota and is not guarding anything this session.');
+}
+
+// opts.baseReserveOnly evaluates against the window reserve alone, ignoring the
+// per-complexity tier reserves. #6833 specifies the base window reserve for the
+// `ready` hold; the tier reserves exist to judge a SPECIFIC task, and `ready`
+// is not a task (kubestellar/hive#6951).
+function evaluateContributorQuota(task, reading = readContributorQuotaReading(), opts = {}) {
   if (QUOTA_GUARD_MODE === 'off') return { admit: true };
   if (contributorQuotaStayPaused) return { admit: false, wait: true, reason: 'explicit_pause' };
   const state = (reading && reading.state) || 'unknown';
+  if (state === 'unprovisioned') {
+    warnQuotaGuardUnprovisionedOnce();
+    return { admit: true, reason: 'unprovisioned' };
+  }
   if (state === 'unknown' || state === 'stale') return { admit: false, wait: true, reason: state };
   const complexity = normalizeTaskComplexity(task);
   for (const window of (reading.limits || [])) {
     const kind = (window.kind || '').toString();
-    if (!recognizedQuotaWindow(kind)) continue;
+    // Every window is evaluated, including kinds this build has never heard of
+    // (kubestellar/hive#6951). Skipping unrecognized kinds meant an EXHAUSTED
+    // window admitted work purely because the provider had renamed it or added
+    // a new one — `weekly_scoped` was itself a late addition to Claude's
+    // reporting, so new kinds demonstrably do arrive. An unknown kind falls
+    // back to the default reserve, so a HEALTHY unknown window still admits and
+    // this cannot cause spurious pauses.
     const remaining = Number(window.pct_remaining ?? window.remaining_pct);
     if (!Number.isFinite(remaining)) return { admit: false, wait: true, reason: 'unknown' };
-    const required = quotaRequiredReserve(window, complexity);
+    const required = opts.baseReserveOnly ? quotaWindowReserve(kind) : quotaRequiredReserve(window, complexity);
     if (remaining <= required) {
       return { admit: false, wait: true, reason: 'guarded', window_id: window.id || kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
     }
@@ -375,8 +438,45 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading())
   return { admit: true };
 }
 
+// ── Guard resume (kubestellar/hive#6951) ─────────────────────────────────────
+//
+// Every `ready` send in this relay is event-driven — a task completing, the CLI
+// recovering. None of those fire while the guard is holding, because the hold
+// is precisely the state of having no task and asking for none. #6541's
+// provider hold arms a timer to release itself for exactly this reason; the
+// #6833 guard armed nothing, so once it suppressed a `ready` between tasks the
+// relay never asked for work again for the life of the process.
+let contributorQuotaRetryTimer = null;
+
+function armContributorQuotaRetry() {
+  if (contributorQuotaRetryTimer) return;
+  contributorQuotaRetryTimer = setTimeout(() => {
+    contributorQuotaRetryTimer = null;
+    retryContributorQuota();
+  }, QUOTA_GUARD_RETRY_MS);
+  // Must not hold the process open on its own, same as the #6541 hold timer.
+  if (typeof contributorQuotaRetryTimer.unref === 'function') contributorQuotaRetryTimer.unref();
+}
+
+function retryContributorQuota() {
+  if (!contributorQuotaPaused) return;
+  // An explicit contributor pause outranks a fresh reading: someone asked for
+  // this host to stand down, and a quota recovery is not consent to resume.
+  if (contributorQuotaStayPaused) { armContributorQuotaRetry(); return; }
+  const decision = evaluateContributorQuota(null, readContributorQuotaReading(), { baseReserveOnly: true });
+  if (!decision.admit) { armContributorQuotaRetry(); return; }
+  contributorQuotaPaused = false;
+  console.log('Contributor quota guard released — a fresh reading clears every effective reserve. Asking for work again.');
+  if (!currentTask && !cliReadyFailed && !quotaHoldActive()) {
+    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+  }
+}
+
 function logContributorQuotaDecision(task, decision) {
   contributorQuotaPaused = true;
+  // Nothing else will restart the loop once `ready` is being suppressed
+  // (kubestellar/hive#6951).
+  armContributorQuotaRetry();
   console.warn('');
   console.warn('┌─ CONTRIBUTOR QUOTA GUARD ─────────────────────────────────');
   console.warn(`│ ${BACKEND} is not accepting new work: ${decision.reason}`);
@@ -666,7 +766,10 @@ function sendTo(hub, msg) {
   // already in flight must still reach the hub.
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   if (msg && msg.type === 'ready') {
-    const quotaDecision = evaluateContributorQuota({ complexity: 'simple' });
+    // Base window reserve, not the simple tier (kubestellar/hive#6951): #6833
+    // specifies the base reserve for the `ready` hold, and `ready` is not a
+    // task to size a tier reserve against.
+    const quotaDecision = evaluateContributorQuota(null, readContributorQuotaReading(), { baseReserveOnly: true });
     if (!quotaDecision.admit) {
       logContributorQuotaDecision(null, quotaDecision);
       return;
@@ -4755,7 +4858,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     evaluateContributorQuota,
     normalizeTaskComplexity,
     quotaRequiredReserve,
+    quotaWindowReserve,
     readContributorQuotaReading,
+    // Guard resume + provisioning (kubestellar/hive#6951).
+    retryContributorQuota,
+    armContributorQuotaRetry,
+    QUOTA_GUARD_RETRY_MS,
+    setContributorQuotaPaused: (v) => { contributorQuotaPaused = !!v; },
     setContributorQuotaStayPaused: (v) => { contributorQuotaStayPaused = !!v; },
     getContributorQuotaPaused: () => contributorQuotaPaused,
     paneShowsLoginRequiredError,

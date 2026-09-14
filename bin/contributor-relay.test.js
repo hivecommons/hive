@@ -8594,6 +8594,120 @@ test('contributor quota task_assign sends task_declined before acceptance', () =
   assert.strictEqual(relay.getCurrentTask(), null, 'quota-refused work must not become in-flight');
 });
 
+// ── kubestellar/hive#6951 ────────────────────────────────────────────────────
+// #6931 shipped this guard twice — once in Go, once here — and only this copy
+// is in the admission path. The fail-open it claimed to fix was fixed in the Go
+// copy, so it stayed live in the one that gates work. These tests pin the
+// enforcing copy.
+
+function tmp6951(contents) {
+  const p = path.join(require('os').tmpdir(), `hive-6951-${process.pid}-${Math.random().toString(36).slice(2)}.json`);
+  fs.writeFileSync(p, contents);
+  return p;
+}
+
+test('#6951 an exhausted window of an UNRECOGNIZED kind refuses work', () => {
+  // Break-it test: restoring `if (!recognizedQuotaWindow(kind)) continue;`
+  // makes this admit, which is exactly the reported defect.
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'd1', kind: 'daily', pct_remaining: 0 }] }) } });
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false, 'a window kind this build was never taught must not admit work at 0% remaining');
+  assert.strictEqual(d.reason, 'guarded');
+  assert.strictEqual(d.window_id, 'd1');
+});
+
+test('#6951 a HEALTHY window of an unrecognized kind still admits', () => {
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'd1', kind: 'daily', pct_remaining: 95 }] }) } });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'evaluating unknown kinds must not turn into spurious pauses');
+});
+
+test('#6951 a torn reading file cannot terminate the relay', () => {
+  const p = tmp6951('{"state":"available","limits":[{"kind":"weekly","pct_rem');
+  try {
+    const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+    const reading = relay.readContributorQuotaReading();
+    assert.strictEqual(reading.state, 'unknown', 'a half-written reading is unknown, not an uncaught SyntaxError');
+    assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false, 'and unknown holds');
+  } finally { fs.unlinkSync(p); }
+});
+
+test('#6951 a configured reading file that is missing holds instead of admitting', () => {
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: path.join(require('os').tmpdir(), `hive-6951-absent-${process.pid}.json`) } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false,
+    'a configured source we cannot read is the case that must hold');
+});
+
+test('#6951 no reading source configured leaves the guard inert, not holding', () => {
+  // Deliberate deviation from the issue text, called out on the issue: nothing
+  // populates either env var yet (the prober is descoped to a sibling), so
+  // holding here would stop every default install from ever asking for work.
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+    'and it is reported as its own state, never as a healthy "available" reading');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+});
+
+test('#6951 the ready hold uses the base window reserve, not the simple tier', () => {
+  // Exercised through the real `ready` path, not by calling the evaluator
+  // directly — the defect is in which reserve that path passes.
+  const relay = loadRelay({ backend: 'copilot', env: {
+    HIVE_CONTRIBUTOR_QUOTA_SIMPLE_MIN_REMAINING_PCT: '50',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 30 }] }),
+  } });
+  relay.setCliReady(true);
+  const sent = [];
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)) });
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+  assert.ok(sent.some(m => m.type === 'ready'),
+    'the base window reserve is 20 and the window sits at 30, so `ready` must go out; ' +
+    'gating it on the 50% simple-tier reserve holds a relay that #6833 says should be working');
+  assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'simple' }).admit, false,
+    'while the 50% simple-tier reserve still gates an actual simple TASK');
+});
+
+test('#6951 a guarded relay re-advertises once a fresh reading clears every reserve', () => {
+  const p = tmp6951(JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 0 }] }));
+  try {
+    const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: p } });
+    relay.setCliReady(true);
+    const sent = [];
+    relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+    relay.setContributorQuotaPaused(true);
+
+    relay.retryContributorQuota();
+    assert.strictEqual(sent.some(m => m.type === 'ready'), false,
+      'precondition: still exhausted, so the retry must not advertise');
+
+    fs.writeFileSync(p, JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+    relay.retryContributorQuota();
+    assert.ok(sent.some(m => m.type === 'ready'),
+      'nothing else re-sends `ready` from a hold, so without this the relay never asks for work again');
+  } finally { fs.unlinkSync(p); }
+});
+
+test('#6951 an explicit contributor pause outranks a cleared reading', () => {
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }) } });
+  relay.setCliReady(true);
+  const sent = [];
+  relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+  relay.setContributorQuotaPaused(true);
+  relay.setContributorQuotaStayPaused(true);
+  relay.retryContributorQuota();
+  assert.strictEqual(sent.some(m => m.type === 'ready'), false,
+    'someone asked this host to stand down; a quota recovery is not consent to resume');
+});
+
+test('#6951 there is exactly one contributor quota guard implementation', () => {
+  // The mechanism that produced this bug was a second, unwired copy. If one
+  // reappears it must fail here rather than silently drift out of step again.
+  const dup = path.join(__dirname, '..', 'src', 'pkg', 'contributorquota');
+  assert.strictEqual(fs.existsSync(dup), false,
+    'src/pkg/contributorquota was removed as an unwired duplicate of this guard (#6951). ' +
+    'If the Go side is meant to be authoritative, delete the JS copy and route the relay through the binary — do not keep both.');
+});
+
 test('contributor quota off fully disables task_assign guard', () => {
   const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'stale', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 0 }] }) } });
   const sent = [];
