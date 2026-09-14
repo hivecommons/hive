@@ -341,8 +341,15 @@ type codexRateLimitsResult struct {
 	RateLimits struct {
 		Primary   *codexRateLimitWindow `json:"primary"`
 		Secondary *codexRateLimitWindow `json:"secondary"`
-		PlanType  string                `json:"planType"`
-		Credits   *struct {
+		// RateLimitsByLimitID carries any provider-scoped limits beyond the two
+		// positional windows (kubestellar/hive#6964). The documented
+		// RateLimitSnapshot schema (codex-cli 0.154.0) reports these keyed by
+		// limitId; folding them into the reading means an exhausted scoped
+		// limit holds work rather than hiding behind roomier primary/secondary
+		// windows.
+		RateLimitsByLimitID map[string]*codexRateLimitWindow `json:"rateLimitsByLimitId"`
+		PlanType            string                           `json:"planType"`
+		Credits             *struct {
 			// Available is the provider's own statement that paid credits or
 			// extra usage COULD be spent. Reading it is not enabling it: see
 			// TestNoCodexSpendOrBillingMutation, which pins that nothing in
@@ -362,6 +369,11 @@ type codexRateLimitWindow struct {
 	UsedPercent        int   `json:"usedPercent"`
 	ResetsAt           int64 `json:"resetsAt"`
 	WindowDurationMins int   `json:"windowDurationMins"`
+	// LimitID/LimitName identify a scoped window (kubestellar/hive#6964). The
+	// ID lets rateLimitsByLimitId entries that duplicate a positional window be
+	// deduped; the name is surfaced (not acted on) for the terminal message.
+	LimitID   string `json:"limitId"`
+	LimitName string `json:"limitName"`
 }
 
 // codexWindowKind derives the window kind from the provider-stated duration
@@ -398,6 +410,9 @@ func codexLimitWindow(id string, w *codexRateLimitWindow) LimitWindow {
 		PercentUsed:  w.UsedPercent,
 		PctRemaining: fullPct - w.UsedPercent,
 		DurationMins: w.WindowDurationMins,
+	}
+	if w.LimitName != "" {
+		lw.Scope = map[string]string{"limit_name": w.LimitName}
 	}
 	if w.ResetsAt > 0 {
 		lw.ResetAt = time.Unix(w.ResetsAt, 0).UTC()
@@ -511,20 +526,40 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 	if err := json.Unmarshal(result, &res); err != nil {
 		return Headroom{}, err
 	}
-	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil {
-		return Headroom{}, errors.New("codex rateLimits: no primary or secondary window (unrecognized schema)")
+	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil && len(res.RateLimits.RateLimitsByLimitID) == 0 {
+		return Headroom{}, errors.New("codex rateLimits: no primary, secondary, or rateLimitsByLimitId window (unrecognized schema)")
 	}
 
 	h := Headroom{Provider: provider, PlanType: res.RateLimits.PlanType, OrdinaryUsageAllowed: res.OrdinaryUsageAllowed}
 	if res.RateLimits.Credits != nil {
 		h.PaidCreditsAvailable = res.RateLimits.Credits.Available
 	}
-	for id, w := range map[string]*codexRateLimitWindow{
-		"primary": res.RateLimits.Primary, "secondary": res.RateLimits.Secondary,
-	} {
-		if w != nil {
-			h.Limits = append(h.Limits, codexLimitWindow(id, w))
+	windows := map[string]*codexRateLimitWindow{}
+	if res.RateLimits.Primary != nil {
+		windows["primary"] = res.RateLimits.Primary
+	}
+	if res.RateLimits.Secondary != nil {
+		windows["secondary"] = res.RateLimits.Secondary
+	}
+	// Fold in every scoped limit from rateLimitsByLimitId (kubestellar/hive#6964)
+	// so an exhausted scoped window binds too, but skip a key that just repeats
+	// a positional window's own limitId — that is the same window reported twice,
+	// not a second one.
+	positional := map[string]bool{}
+	if w := res.RateLimits.Primary; w != nil && w.LimitID != "" {
+		positional[w.LimitID] = true
+	}
+	if w := res.RateLimits.Secondary; w != nil && w.LimitID != "" {
+		positional[w.LimitID] = true
+	}
+	for id, w := range res.RateLimits.RateLimitsByLimitID {
+		if w == nil || positional[id] {
+			continue
 		}
+		windows[id] = w
+	}
+	for id, w := range windows {
+		h.Limits = append(h.Limits, codexLimitWindow(id, w))
 	}
 	sort.Slice(h.Limits, func(i, j int) bool { return h.Limits[i].ID < h.Limits[j].ID })
 

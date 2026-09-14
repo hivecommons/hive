@@ -693,3 +693,56 @@ func TestNoCodexSpendOrBillingMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ── kubestellar/hive#6964 ───────────────────────────────────────────────────
+
+// TestCodexHeadroomFoldsRateLimitsByLimitIDFromFixture drives the adapter with
+// a recorded-shape payload from testdata (codex-cli 0.154.0's documented
+// RateLimitSnapshot) rather than an inline literal, so the fixture is what an
+// acceptance criterion asks for and the parse runs against the whole schema at
+// once. It pins that rateLimitsByLimitId is folded in, that a positional
+// window is not double-counted via its own limitId, and that an exhausted
+// scoped window binds instead of hiding behind roomier primary/secondary ones.
+func TestCodexHeadroomFoldsRateLimitsByLimitIDFromFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "codex_rate_limits_0.154.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := codexHeadroom("openai", 80, raw)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	byID := map[string]LimitWindow{}
+	for _, w := range h.Limits {
+		byID[w.ID] = w
+	}
+	// primary + secondary + exactly one scoped window: the two byLimitId
+	// entries that repeat a positional limitId must be deduped away.
+	if len(h.Limits) != 3 {
+		t.Fatalf("len(Limits) = %d, want 3 (primary, secondary, one scoped); Limits=%+v", len(h.Limits), h.Limits)
+	}
+	scoped, ok := byID["codex-scoped-daily"]
+	if !ok {
+		t.Fatalf("rateLimitsByLimitId window codex-scoped-daily was dropped; Limits=%+v", h.Limits)
+	}
+	if scoped.Kind != "daily" {
+		t.Errorf("scoped Kind = %q, want daily (derived from 1440 min)", scoped.Kind)
+	}
+	if got := scoped.Scope["limit_name"]; got != "Scoped daily usage" {
+		t.Errorf("scoped limit_name = %q, want %q", got, "Scoped daily usage")
+	}
+	// The 90%-used scoped limit is the binding one; without folding it in, the
+	// worst window is the 68%-used secondary and the guard would over-report.
+	if h.PctRemaining != 10 {
+		t.Errorf("PctRemaining = %d, want 10 (the 90%%-used scoped limit binds)", h.PctRemaining)
+	}
+	if h.Available {
+		t.Error("Available should be false: a scoped limit is past the 80%% threshold")
+	}
+	if h.PlanType != "pro" {
+		t.Errorf("PlanType = %q, want pro", h.PlanType)
+	}
+	if h.PaidCreditsAvailable == nil || !*h.PaidCreditsAvailable {
+		t.Error("PaidCreditsAvailable should carry the provider's own credits.available")
+	}
+}

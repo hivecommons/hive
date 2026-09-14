@@ -1,0 +1,47 @@
+{
+  "rateLimits": {
+    "primary": {
+      "usedPercent": 42,
+      "resetsAt": 1789400000,
+      "windowDurationMins": 300,
+      "limitId": "codex-5h",
+      "limitName": "5-hour usage"
+    },
+    "secondary": {
+      "usedPercent": 68,
+      "resetsAt": 1789900000,
+      "windowDurationMins": 10080,
+      "limitId": "codex-weekly",
+      "limitName": "Weekly usage"
+    },
+    "planType": "pro",
+    "credits": {
+      "available": true,
+      "balance": 1250
+    },
+    "rateLimitsByLimitId": {
+      "codex-5h": {
+        "usedPercent": 42,
+        "resetsAt": 1789400000,
+        "windowDurationMins": 300,
+        "limitId": "codex-5h",
+        "limitName": "5-hour usage"
+      },
+      "codex-weekly": {
+        "usedPercent": 68,
+        "resetsAt": 1789900000,
+        "windowDurationMins": 10080,
+        "limitId": "codex-weekly",
+        "limitName": "Weekly usage"
+      },
+      "codex-scoped-daily": {
+        "usedPercent": 90,
+        "resetsAt": 1789500000,
+        "windowDurationMins": 1440,
+        "limitId": "codex-scoped-daily",
+        "limitName": "Scoped daily usage"
+      }
+    }
+  },
+  "ordinaryUsageAllowed": true
+}
