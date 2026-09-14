@@ -16,7 +16,8 @@ cp src/hive.yaml.example src/hive.yaml
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
 # silently, and both paths are gitignored, so nothing warns you.
-echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env
+install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
+echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 # REQUIRED: the dashboard's auth proxy refuses to start without it.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 
@@ -38,7 +39,8 @@ cp src/hive.yaml.example src/hive.yaml
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
 # silently, and both paths are gitignored, so nothing warns you.
-echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env
+install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
+echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 # REQUIRED: the dashboard's auth proxy refuses to start without it.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 

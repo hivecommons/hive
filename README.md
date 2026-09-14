@@ -45,7 +45,8 @@ cp src/hive.yaml.example src/hive.yaml
 # `.env` at the repo root is read by nothing, and since both paths are
 # gitignored, neither git nor Compose says so: the hive starts and then 401s on
 # every GitHub call, which reads like a bad token rather than an unread file.
-echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
+install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
+echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
 
 # REQUIRED. The dashboard's auth proxy enforces this token and refuses to start
 # without one, so the gateway on :3001 would proxy to a port nothing is

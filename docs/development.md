@@ -201,7 +201,8 @@ The quickest operator path remains Docker Compose from the root README:
 cp src/hive.yaml.example src/hive.yaml
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is the `.env` Compose reads. A root `.env` is ignored.
-echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env
+install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
+echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 # REQUIRED: the dashboard's auth proxy refuses to start without it.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 docker compose -f src/docker-compose.yaml up -d

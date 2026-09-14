@@ -67,7 +67,8 @@ looks like a bad token rather than an unread file.
 
 ```bash
 # Replace with your own token. Never commit this file.
-echo "HIVE_GITHUB_TOKEN=ghp_REPLACE_ME" > src/.env
+install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
+echo "HIVE_GITHUB_TOKEN=ghp_REPLACE_ME" >> src/.env
 
 # REQUIRED. The dashboard's auth proxy enforces this token and refuses to
 # start without one, so the gateway on :3001 would proxy to a port nothing is

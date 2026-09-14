@@ -42,7 +42,8 @@ claude /login
 
 ```sh
 mkdir -p ~/.config/hive
-cp config/agent.env.example ~/.config/hive/agent.env
+# -m 600: agent.env will hold tokens — keep it unreadable to other local users
+install -m 600 config/agent.env.example ~/.config/hive/agent.env
 # Edit to match your setup:
 nano ~/.config/hive/agent.env
 ```
