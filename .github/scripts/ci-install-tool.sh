@@ -27,17 +27,18 @@
 # difference between a run that fails in seconds and one that fails in ten
 # minutes — multiplied by every queued PR.
 #
-# This script does not try to FIX egress; it cannot, and pretending otherwise
-# (forcing IPv4, swapping in a mirror) would paper over a cluster fault. It
-# makes the failure fast and legible:
+# This script does not try to FIX egress; it cannot. It does make the
+# workflow resilient to short mirror/egress drops without hiding a real loss of
+# coverage:
 #
 #   1. If the tool is already present, do nothing. On GitHub-hosted runners gcc
 #      and tmux are preinstalled, so the common path touches no network at all.
-#   2. Bound apt's budget explicitly — short per-attempt timeout, one retry, and
-#      a hard `timeout` ceiling around the whole call.
-#   3. On failure emit ONE ::error:: annotation naming runner egress and the
-#      three remediations, so the answer is on the job summary instead of
-#      buried in a wall of apt warnings.
+#   2. Bound each apt fetch and retry the update/download network phase with
+#      backoff inside a single hard deadline. A transient mirror loss can heal;
+#      a dead route still fails loudly instead of burning minutes per shard.
+#   3. On failure emit ONE ::error:: annotation naming runner egress, the mirror
+#      hosts attempted, and the remediations, so the answer is on the job
+#      summary instead of buried in a wall of apt warnings.
 #
 # The remediations are the ones from #6648, in the order the issue ranks them:
 # bake the tool into the runner image (best — removes the apt dependency), fix
@@ -67,9 +68,15 @@ purpose=${purpose:-this job}
 
 # Per-attempt network budget. Deliberately small: on a healthy runner the
 # mirror answers in well under a second, so anything near this ceiling is a
-# broken route, and waiting longer only makes the report slower — it never
-# makes it succeed.
+# broken route. Retries below handle short intermittent drops; longer individual
+# hangs only delay the signal.
 APT_TIMEOUT_SECONDS="${HIVE_CI_APT_TIMEOUT_SECONDS:-10}"
+# Retry the NETWORK phase (update + package download). #6648 made dead egress
+# fail fast; #6870 shows the failure is now intermittent, so a small number of
+# bounded retries is the repo-side resilience we can add without pretending to
+# fix the runner network.
+APT_ATTEMPTS="${HIVE_CI_APT_ATTEMPTS:-3}"
+APT_BACKOFF_SECONDS="${HIVE_CI_APT_BACKOFF_SECONDS:-5}"
 # END-TO-END ceiling for the NETWORK phase (update + download), not per
 # invocation. Deliberately so: a per-call ceiling of N gives a worst case of 2N
 # (update + download), which for any N large enough to be safe on a healthy
@@ -102,7 +109,8 @@ fail_with_remediation() {
   # summary has to carry the whole diagnosis. The detail block below is for the
   # log.
   echo "::error::${require} is required for ${purpose} and could not be installed: ${what}." \
-"On the self-hosted 'hive' runners this is normally lost egress to the Ubuntu mirrors (kubestellar/hive#6648)," \
+"Tried apt network operations ${APT_ATTEMPTS} time(s) with ${APT_TIMEOUT_SECONDS}s per fetch against: $(apt_source_hosts)." \
+"On the self-hosted 'hive' runners this is normally lost egress to the Ubuntu mirrors (kubestellar/hive#6648/#6870)," \
 "not a fault in this workflow. See the log for remediations." >&2
   {
     echo ""
@@ -115,8 +123,10 @@ fail_with_remediation() {
     echo "    3. Point the repo variable HIVE_RUNNER_LABELS at '[\"ubuntu-latest\"]' to"
     echo "       run on GitHub-hosted runners, which ship ${require} preinstalled."
     echo ""
-    echo "  Bounded at ${APT_TIMEOUT_SECONDS}s per fetch and ${APT_DEADLINE_SECONDS}s for the network phase,"
-    echo "  so a dead mirror fails in seconds instead of minutes (kubestellar/hive#6648)."
+    echo "  Apt source hosts: $(apt_source_hosts)"
+    echo "  Bounded at ${APT_TIMEOUT_SECONDS}s per fetch, ${APT_ATTEMPTS} network attempt(s),"
+    echo "  ${APT_BACKOFF_SECONDS}s backoff, and ${APT_DEADLINE_SECONDS}s for the network phase,"
+    echo "  so transient egress can heal but a dead mirror still fails loudly (kubestellar/hive#6648/#6870)."
     echo ""
   } >&2
   exit 1
@@ -161,6 +171,49 @@ run_local_bounded() {
   fi
 }
 
+
+apt_source_hosts() {
+  if [ -d /etc/apt ]; then
+    {
+      grep -RhoE 'https?://[^/ ]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true
+    } | sed -E 's#https?://##' | sort -u | awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { print "" }'
+  fi
+}
+
+retry_network_phase() {
+  local label="$1"
+  shift
+  local attempt=1
+  local status=0
+
+  while [ "$attempt" -le "$APT_ATTEMPTS" ]; do
+    echo "ci-install-tool: ${label} attempt ${attempt}/${APT_ATTEMPTS} (apt hosts: $(apt_source_hosts))" >&2
+    "$@"
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      return 0
+    fi
+
+    echo "ci-install-tool: ${label} attempt ${attempt}/${APT_ATTEMPTS} failed with exit ${status}" >&2
+    if [ "$attempt" -ge "$APT_ATTEMPTS" ]; then
+      return "$status"
+    fi
+
+    local left
+    left=$(budget_remaining)
+    if [ "$left" -le "$APT_BACKOFF_SECONDS" ]; then
+      echo "ci-install-tool: ${label} has ${left}s of network budget left; not starting another retry" >&2
+      return "$status"
+    fi
+
+    echo "ci-install-tool: waiting ${APT_BACKOFF_SECONDS}s before retrying ${label}" >&2
+    sleep "$APT_BACKOFF_SECONDS"
+    attempt=$(( attempt + 1 ))
+  done
+
+  return "$status"
+}
+
 apt_opts=(
   -o "Acquire::http::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Acquire::https::Timeout=${APT_TIMEOUT_SECONDS}"
@@ -170,18 +223,25 @@ apt_opts=(
   -o "Acquire::Retries=1"
 )
 
-apt_install() {
+apt_network_fetch_once() {
   local sudo_prefix=("$@")
   # `apt-get update` EXITS 0 when every mirror fails — it downgrades unreachable
-  # sources to `W:` warnings. So its status cannot be the gate; the download
-  # below is what actually proves an index was fetched. Its failure is reported,
-  # not swallowed, but it is the download that decides.
+  # sources to `W:` warnings. So its status cannot be the only gate; the
+  # download below is what actually proves a usable index/package path exists.
+  # Still run update on every retry so an initially-empty or stale index can
+  # recover when egress returns.
   run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" update -qq \
-    || echo "ci-install-tool: apt-get update did not complete cleanly; attempting the install anyway" >&2
-  # NETWORK phase: fetch the .debs under the fail-fast budget. This is the part
-  # a dead mirror can stall, so it is the only part the #6648 deadline covers.
+    || echo "ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway" >&2
   # shellcheck disable=SC2086 # apt_pkgs is a deliberate space-separated list
-  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install --download-only -y -qq $apt_pkgs \
+  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install --download-only -y -qq $apt_pkgs
+}
+
+apt_install() {
+  local sudo_prefix=("$@")
+  # NETWORK phase: refresh package indexes and fetch the .debs under one
+  # bounded retry loop. This is the part a dead mirror can stall, so it is the
+  # only part the #6648/#6870 deadline covers.
+  retry_network_phase "apt network fetch" apt_network_fetch_once "${sudo_prefix[@]}" \
     || return 1
   # LOCAL phase: unpack/configure from the cache just fetched. No network here —
   # configuring gcc's ~100-package closure legitimately takes >60s on the hive

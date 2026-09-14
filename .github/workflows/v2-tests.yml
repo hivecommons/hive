@@ -173,10 +173,9 @@ jobs:
         with:
           node-version: '22'
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648): on a
-      # runner that has lost egress to the distro mirrors this fails in seconds
-      # with a ::error:: naming the cause, instead of 2+ minutes of apt retries
-      # per shard.
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
+      # skip apt when the tool already exists, retry short egress flakes with
+      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
       - name: Prepare cgo toolchain for race tests
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
@@ -259,10 +258,9 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648): on a
-      # runner that has lost egress to the distro mirrors this fails in seconds
-      # with a ::error:: naming the cause, instead of 2+ minutes of apt retries
-      # per shard.
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
+      # skip apt when the tool already exists, retry short egress flakes with
+      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
       - name: Prepare cgo toolchain for race tests
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
@@ -349,10 +347,9 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648): on a
-      # runner that has lost egress to the distro mirrors this fails in seconds
-      # with a ::error:: naming the cause, instead of 2+ minutes of apt retries
-      # per shard.
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
+      # skip apt when the tool already exists, retry short egress flakes with
+      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
       - name: Prepare cgo toolchain for race tests
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
@@ -436,10 +433,9 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648): on a
-      # runner that has lost egress to the distro mirrors this fails in seconds
-      # with a ::error:: naming the cause, instead of 2+ minutes of apt retries
-      # per shard.
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
+      # skip apt when the tool already exists, retry short egress flakes with
+      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
       - name: Prepare cgo toolchain for race tests
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
@@ -521,10 +517,9 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648): on a
-      # runner that has lost egress to the distro mirrors this fails in seconds
-      # with a ::error:: naming the cause, instead of 2+ minutes of apt retries
-      # per shard.
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
+      # skip apt when the tool already exists, retry short egress flakes with
+      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
       - name: Prepare cgo toolchain for race tests
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \

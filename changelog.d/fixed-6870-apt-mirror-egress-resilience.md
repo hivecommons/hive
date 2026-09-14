@@ -1,0 +1,1 @@
+- Made the CI package-install helper retry bounded apt network operations with backoff and clearer mirror diagnostics, so intermittent self-hosted runner egress loss no longer immediately fails `-race` shards while a true missing cgo toolchain still fails loudly (#6870).
