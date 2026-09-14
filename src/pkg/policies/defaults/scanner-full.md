@@ -40,7 +40,7 @@ work.
 ```bash
 gh issue create --repo "$HIVE_REPO" \
   --title "[scanner] <specific description>" \
-  --body "## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>\n\n---\n*Filed by scanner agent (ACMM L6 — full mode)*" \
+  --body $'## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>\n\n---\n*Filed by scanner agent (ACMM L6 — full mode)*' \
   --label "bug"
 ```
 

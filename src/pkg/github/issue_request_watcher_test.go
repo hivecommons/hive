@@ -249,6 +249,114 @@ func TestIssueRequestWatcher_QuarantinesMalformed(t *testing.T) {
 	}
 }
 
+func TestIssueRequestWatcher_RejectsMalformedIssueContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		title       string
+		body        string
+		wantBad     bool
+		errorSubstr string
+	}{
+		{
+			name:        "unsubstituted title placeholder",
+			title:       "[scanner] <specific description>",
+			body:        "## Finding\n\nThe scanner found a concrete defect.\n\n## Recommendation\n\nFix it.",
+			wantBad:     true,
+			errorSubstr: "unsubstituted template placeholder",
+		},
+		{
+			name:        "unsubstituted body placeholder",
+			title:       "[scanner] concrete defect",
+			body:        "## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>",
+			wantBad:     true,
+			errorSubstr: "unsubstituted template placeholder",
+		},
+		{
+			name:        "mis-escaped markdown newlines",
+			title:       "[scanner] concrete defect",
+			body:        `## Finding\n\nDetails of the defect.\n\n## Recommendation\n\nFix it.`,
+			wantBad:     true,
+			errorSubstr: "literal newline escape sequences",
+		},
+		{
+			name:    "generic type parameter is legitimate",
+			title:   "[scanner] generic type docs",
+			body:    "## Finding\n\nThe API documents Foo<T> but not Foo<U>.\n\n## Recommendation\n\nClarify the type parameter.",
+			wantBad: false,
+		},
+		{
+			name:    "autolinked URL is legitimate",
+			title:   "[scanner] reference link",
+			body:    "## Finding\n\nSee <https://example.com/path?q=1> for the upstream behavior.\n\n## Recommendation\n\nMatch it.",
+			wantBad: false,
+		},
+		{
+			name:    "html tag with attribute is legitimate",
+			title:   "[scanner] collapsible details",
+			body:    "## Finding\n\n<details open>\n<summary>Logs</summary>\nConcrete diagnostic output.\n</details>\n\n## Recommendation\n\nRead the logs.",
+			wantBad: false,
+		},
+		{
+			name:  "literal newline escape in fenced code is legitimate",
+			title: "[scanner] parser docs",
+			body:  "## Finding\n\nThe docs should show the escaped newline in code:\n\n```go\nfmt.Println(\"\\\\n\")\n```\n\n## Recommendation\n\nKeep the code sample.",
+		},
+		{
+			name:    "ordinary multiline body is legitimate",
+			title:   "[scanner] concrete multiline report",
+			body:    "## Finding\n\nA concrete finding spans multiple paragraphs.\n\n## Recommendation\n\nApply the described fix.",
+			wantBad: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created := 0
+			srv := newIssueMockServer(t, "", &created, nil, nil)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Repo: "o/r", Title: tt.title, Body: tt.body, Agent: "scanner",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if tt.wantBad {
+				if created != 0 {
+					t.Fatalf("malformed request created %d issues", created)
+				}
+				if _, err := os.Stat(reqPath + ".bad"); err != nil {
+					t.Fatalf("malformed request should be quarantined as .bad: %v", err)
+				}
+				b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+				if err != nil {
+					t.Fatalf("result file missing: %v", err)
+				}
+				var res IssueResponse
+				if err := json.Unmarshal(b, &res); err != nil {
+					t.Fatal(err)
+				}
+				if res.OK || !strings.Contains(res.Error, tt.errorSubstr) {
+					t.Fatalf("unexpected result: %+v, want error containing %q", res, tt.errorSubstr)
+				}
+				return
+			}
+
+			if created != 1 {
+				t.Fatalf("legitimate request should create exactly one issue, got %d", created)
+			}
+			if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+				t.Fatalf("legitimate request should be consumed, stat err=%v", err)
+			}
+		})
+	}
+}
+
 // Policy: a nil authorizer fails closed; a denying authorizer quarantines
 // as .denied. Neither creates anything.
 func TestIssueRequestWatcher_AuthzFailsClosed(t *testing.T) {

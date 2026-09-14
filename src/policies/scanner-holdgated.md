@@ -41,7 +41,7 @@ work.
 ```bash
 gh issue create --repo "$HIVE_REPO" \
   --title "[scanner] <specific description>" \
-  --body "## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode)*" \
+  --body $'## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode)*' \
   --label "bug"
 ```
 

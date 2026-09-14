@@ -1,0 +1,1 @@
+- The issue-request watcher now quarantines agent issue/comment requests that still contain Hive template placeholders or scanner-style mis-escaped markdown newlines, and the scanner issue examples pass real newlines to `gh issue create` so contentless placeholder reports cannot reach GitHub again ([#6839](https://github.com/hivecommons/hive/issues/6839)).
