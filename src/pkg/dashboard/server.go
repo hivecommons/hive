@@ -407,6 +407,34 @@ type StatusPayload struct {
 	// populated (all-zero) block, so existing status output is unchanged.
 	Platform *FrontendPlatform `json:"platform,omitempty"`
 	Security *FrontendSecurity `json:"security,omitempty"`
+	// ReleaseLineLag surfaces how far the hosted edge line (v5) is behind the
+	// stable default branch (v4) so v4→v5 sync drift can never go unnoticed
+	// (#6960). Always present: an unknown lag renders as "unknown", never a
+	// healthy zero.
+	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+// Release-line branch names for the drift surface (#6960), duplicated here so
+// the dashboard's nil-provider fallback can name the lines without importing
+// the hub package's unexported branch constants.
+const (
+	releaseLineEdgeBranch   = "v5"
+	releaseLineStableBranch = "v4"
+)
+
+// FrontendReleaseLineLag reports how far the edge release line (v5) sits behind
+// the stable default branch (v4) for the dashboard drift surface (#6960).
+// Known=false means the lag could not be measured (tips unresolved or the
+// compare failed) and MUST render as "unknown" — never a healthy zero.
+type FrontendReleaseLineLag struct {
+	EdgeBranch   string `json:"edgeBranch"`
+	StableBranch string `json:"stableBranch"`
+	EdgeSHA      string `json:"edgeSHA,omitempty"`
+	StableSHA    string `json:"stableSHA,omitempty"`
+	BehindBy     int    `json:"behindBy"`
+	Known        bool   `json:"known"`
+	Threshold    int    `json:"threshold"`
+	Exceeded     bool   `json:"exceeded"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.

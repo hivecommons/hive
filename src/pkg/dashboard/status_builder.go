@@ -138,7 +138,48 @@ var (
 	// distinct from the auth signal above and from the hive's own token budget.
 	inferenceBudgetMu sync.RWMutex
 	inferenceBudgetFn func() (errMsg string, since, lastRebuff time.Time, rebuffs int)
+
+	// releaseLineLag* carry the v5-behind-v4 drift signal (#6960): how far the
+	// hosted edge line has fallen behind the stable default branch, and whether
+	// that lag has crossed the alarm threshold. Wired to hub.ReleaseLineLagStatus
+	// where the SHA poller runs; nil elsewhere, which buildReleaseLineLag treats
+	// as "unknown" (NOT healthy).
+	releaseLineLagMu sync.RWMutex
+	releaseLineLagFn func() *FrontendReleaseLineLag
 )
+
+// SetReleaseLineLagProvider registers a function reporting how far the edge
+// release line (v5) sits behind the stable default branch (v4), for the
+// dashboard's release-line drift surface (#6960). Wired to hub.ReleaseLineLagStatus
+// at boot; nil in tests and on processes without the SHA poller, where the
+// surface renders "unknown".
+func SetReleaseLineLagProvider(fn func() *FrontendReleaseLineLag) {
+	releaseLineLagMu.Lock()
+	defer releaseLineLagMu.Unlock()
+	releaseLineLagFn = fn
+}
+
+func getReleaseLineLagFn() func() *FrontendReleaseLineLag {
+	releaseLineLagMu.RLock()
+	defer releaseLineLagMu.RUnlock()
+	return releaseLineLagFn
+}
+
+// buildReleaseLineLag renders the release-line drift surface from the wired
+// provider. With no provider registered the lag is UNKNOWN — never a healthy
+// zero — so a process that cannot measure the drift says so rather than
+// silently claiming the lines are in sync (the #6960 failure mode).
+func buildReleaseLineLag() *FrontendReleaseLineLag {
+	fn := getReleaseLineLagFn()
+	if fn == nil {
+		return &FrontendReleaseLineLag{
+			EdgeBranch:   releaseLineEdgeBranch,
+			StableBranch: releaseLineStableBranch,
+			Known:        false,
+		}
+	}
+	return fn()
+}
 
 // SetEntitledModelsProvider registers a function that reports the per-key
 // entitled model set the proxy has learned for a LiteLLM endpoint (from a
@@ -299,6 +340,7 @@ func BuildFrontendStatus(
 		SystemResources:     collectSystemResources(),
 		Platform:            buildPlatform(cfg),
 		Security:            buildSecurity(cfg),
+		ReleaseLineLag:      buildReleaseLineLag(),
 	}
 	return payload
 }

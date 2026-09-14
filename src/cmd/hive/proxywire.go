@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -22,6 +23,24 @@ func (w *spokeWire) wireSpokeProxyReadyAndLaunch() {
 	// layout each agent has its own HOME, so the shared credential path is empty
 	// even for authenticated agents (see pkg/agent/authprobe.go).
 	dashboard.SetAgentAuthProvider(w.agentMgr.AgentAuthAvailable)
+
+	// Release-line drift surface (#6960): report how far the hosted edge line
+	// (v5) has fallen behind the stable default branch (v4). Reuses the hub's
+	// commit-behind compare/cache path; renders "unknown" (never a healthy
+	// zero) until the SHA poller resolves both tips.
+	dashboard.SetReleaseLineLagProvider(func() *dashboard.FrontendReleaseLineLag {
+		lag := hub.ReleaseLineLagStatus(w.logger)
+		return &dashboard.FrontendReleaseLineLag{
+			EdgeBranch:   lag.EdgeBranch,
+			StableBranch: lag.StableBranch,
+			EdgeSHA:      lag.EdgeSHA,
+			StableSHA:    lag.StableSHA,
+			BehindBy:     lag.BehindBy,
+			Known:        lag.Known,
+			Threshold:    lag.Threshold,
+			Exceeded:     lag.Exceeded,
+		}
+	})
 
 	canaryLeakHandler := func(leak ioscan.CanaryLeak) {
 		detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
