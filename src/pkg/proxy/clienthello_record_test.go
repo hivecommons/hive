@@ -17,69 +17,81 @@ import (
 // error, so extractSNI can degrade gracefully).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestReadClientHelloRecord_ImmediateCloseNoBytes: nothing peeked and the
-// connection closes before a single byte — the error must propagate (there is
-// nothing for extractSNI to degrade onto).
-func TestReadClientHelloRecord_ImmediateCloseNoBytes(t *testing.T) {
-	client, server := net.Pipe()
-	client.Close()
-	server.SetReadDeadline(time.Now().Add(2 * time.Second))
-
-	got, err := readClientHelloRecord(server, nil)
-	if err == nil {
-		t.Fatalf("want error for connection closed with zero bytes, got %d bytes", len(got))
+func TestReadClientHelloRecordErrorAndCapPaths(t *testing.T) {
+	cases := []struct {
+		name     string
+		peeked   []byte
+		write    func(*testing.T, net.Conn)
+		wantLen  int
+		wantErr  bool
+		wantNil  bool
+		contract string
+	}{
+		{
+			name:    "immediate close before any bytes returns error",
+			wantErr: true,
+			wantNil: true,
+			write: func(t *testing.T, client net.Conn) {
+				t.Helper()
+				if err := client.Close(); err != nil {
+					t.Fatalf("close client: %v", err)
+				}
+			},
+			contract: "a zero-byte close leaves no ClientHello prefix to replay or inspect, so the read error must not be hidden",
+		},
+		{
+			name:    "oversized record is capped at inspection buffer",
+			peeked:  []byte{0x16, 0x03, 0x01, 0xFF, 0xFF},
+			wantLen: tlsClientHelloMaxSize,
+			write: func(t *testing.T, client net.Conn) {
+				t.Helper()
+				go func() {
+					_, _ = client.Write(make([]byte, tlsClientHelloMaxSize))
+					_ = client.Close()
+				}()
+			},
+			contract: "a hostile length field must not make the proxy buffer past tlsClientHelloMaxSize",
+		},
+		{
+			name:    "truncated body returns partial buffer without error",
+			peeked:  []byte{0x16, 0x03, 0x01, 0x00, 0x64},
+			wantLen: tlsRecordHeaderLen + 10,
+			write: func(t *testing.T, client net.Conn) {
+				t.Helper()
+				go func() {
+					_, _ = client.Write(make([]byte, 10))
+					_ = client.Close()
+				}()
+			},
+			contract: "a short ClientHello still has to be replayed so extractSNI/tls.Server can fail gracefully instead of dropping buffered bytes",
+		},
 	}
-	if got != nil {
-		t.Fatalf("want nil buffer with error, got %d bytes", len(got))
-	}
-}
 
-// TestReadClientHelloRecord_OversizedRecordCappedAtBuffer: a record header
-// declaring a length beyond tlsClientHelloMaxSize must cap the read at the
-// buffer size instead of overrunning it — the remainder is tls.Server's
-// problem via prefixConn; this function only needs enough for SNI.
-func TestReadClientHelloRecord_OversizedRecordCappedAtBuffer(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer server.Close()
+			defer client.Close()
 
-	// Header declares a 0xFFFF-byte record: header+body far exceeds the cap.
-	header := []byte{0x16, 0x03, 0x01, 0xFF, 0xFF}
-	go func() {
-		filler := make([]byte, tlsClientHelloMaxSize) // more than the cap needs
-		client.Write(filler)
-	}()
-
-	server.SetReadDeadline(time.Now().Add(2 * time.Second))
-	got, err := readClientHelloRecord(server, header)
-	if err != nil {
-		t.Fatalf("readClientHelloRecord: %v", err)
-	}
-	if len(got) != tlsClientHelloMaxSize {
-		t.Fatalf("oversized record read %d bytes, want buffer cap %d", len(got), tlsClientHelloMaxSize)
-	}
-}
-
-// TestReadClientHelloRecord_TruncatedBodyReturnsPartial: the peer closes
-// mid-record. The partial buffer must come back with a nil error so extractSNI
-// can degrade gracefully on the short read.
-func TestReadClientHelloRecord_TruncatedBodyReturnsPartial(t *testing.T) {
-	client, server := net.Pipe()
-	defer server.Close()
-
-	// Header declares 100 body bytes; only 10 ever arrive.
-	header := []byte{0x16, 0x03, 0x01, 0x00, 0x64}
-	go func() {
-		client.Write(make([]byte, 10))
-		client.Close()
-	}()
-
-	server.SetReadDeadline(time.Now().Add(2 * time.Second))
-	got, err := readClientHelloRecord(server, header)
-	if err != nil {
-		t.Fatalf("want nil error on truncated body (graceful degrade), got %v", err)
-	}
-	if want := len(header) + 10; len(got) != want {
-		t.Fatalf("truncated read = %d bytes, want %d", len(got), want)
+			tc.write(t, client)
+			server.SetReadDeadline(time.Now().Add(2 * time.Second))
+			got, err := readClientHelloRecord(server, tc.peeked)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("%s: want error, got %d bytes", tc.contract, len(got))
+				}
+			} else if err != nil {
+				t.Fatalf("%s: readClientHelloRecord returned error: %v", tc.contract, err)
+			}
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("%s: want nil buffer, got %d bytes", tc.contract, len(got))
+				}
+				return
+			}
+			if len(got) != tc.wantLen {
+				t.Fatalf("%s: got %d bytes, want %d", tc.contract, len(got), tc.wantLen)
+			}
+		})
 	}
 }

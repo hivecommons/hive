@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/agent"
@@ -23,54 +24,63 @@ import (
 // the merge tier.
 func TestLinearParserMalformedDocumentsFailClosed(t *testing.T) {
 	cases := []struct {
-		name  string
-		query string
+		name       string
+		query      string
+		wantReason string
 	}{
 		{
 			// linearFields runs off the end without ever finding the
 			// operation's opening brace.
-			name:  "keyword with no selection set",
-			query: `mutation `,
+			name:       "keyword with no selection set",
+			query:      `mutation `,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// No operation keyword and not anonymous shorthand: there is no
 			// operation to classify.
-			name:  "bare token document",
-			query: `broken`,
+			name:       "bare token document",
+			query:      `broken`,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// An unterminated string at depth zero aborts keyword scanning.
-			name:  "unterminated top-level string",
-			query: `"never closed`,
+			name:       "unterminated top-level string",
+			query:      `"never closed`,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// An unterminated string inside the selection set aborts field
 			// collection.
-			name:  "unterminated string in selection set",
-			query: `mutation { "broken`,
+			name:       "unterminated string in selection set",
+			query:      `mutation { "broken`,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// An alias colon with nothing after it: the "real" field name is
 			// empty, which must refuse rather than record an empty field.
-			name:  "alias with missing real field",
-			query: `mutation { ack: }`,
+			name:       "alias with missing real field",
+			query:      `mutation { ack: }`,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// Arguments that never close leave the selection set unbalanced.
-			name:  "unterminated argument list",
-			query: `mutation { issueUpdate(input: {} `,
+			name:       "unterminated argument list",
+			query:      `mutation { issueUpdate(input: {} `,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// Selection set never closes.
-			name:  "unclosed selection set",
-			query: `mutation { issueUpdate(input: {}) { success }`,
+			name:       "unclosed selection set",
+			query:      `mutation { issueUpdate(input: {}) { success }`,
+			wantReason: "unreadable GraphQL document",
 		},
 		{
 			// Fragments can move selections out of the operation body, so the
 			// classifier refuses them by design rather than classify on an
 			// incomplete view (see linearOperationFields).
-			name:  "fragment in document",
-			query: `fragment F on Issue { id } mutation { issueUpdate(input: {}) { success } }`,
+			name:       "fragment in document",
+			query:      `fragment F on Issue { id } mutation { issueUpdate(input: {}) { success } }`,
+			wantReason: "unreadable GraphQL document",
 		},
 	}
 
@@ -79,6 +89,52 @@ func TestLinearParserMalformedDocumentsFailClosed(t *testing.T) {
 			d := decide(agent.ModeIssuesPRsMerge, tc.query)
 			if d.Allowed {
 				t.Fatalf("malformed document was ALLOWED at merge tier: %q", tc.query)
+			}
+			if d.Reason != tc.wantReason {
+				t.Fatalf("malformed document reason = %q, want %q", d.Reason, tc.wantReason)
+			}
+			if len(d.Operations) != 0 {
+				t.Fatalf("malformed document reported operations %v; unreadable input must not be partially trusted", d.Operations)
+			}
+		})
+	}
+}
+
+func TestLinearSelectionFieldsRefusesMalformedSyntax(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "unterminated string",
+			query: `mutation { "broken`,
+		},
+		{
+			name:  "alias without real field",
+			query: `mutation { ack: }`,
+		},
+		{
+			name:  "unterminated arguments",
+			query: `mutation { issueUpdate(input: {} `,
+		},
+		{
+			name:  "unclosed selection set",
+			query: `mutation { issueUpdate(input: {}) { success }`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start := strings.IndexByte(tc.query, '{')
+			if start < 0 {
+				t.Fatal("test query must contain selection set")
+			}
+			fields, ok := linearSelectionFields(tc.query, start+1)
+			if ok {
+				t.Fatalf("linearSelectionFields accepted malformed syntax with fields %v", fields)
+			}
+			if fields != nil {
+				t.Fatalf("linearSelectionFields returned partial fields %v; malformed selections must fail closed", fields)
 			}
 		})
 	}
