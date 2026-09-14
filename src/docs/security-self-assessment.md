@@ -469,7 +469,7 @@ project-level compliance signals:
 
 ### Development pipeline
 
-- **Language and structure**: Go (`src/`, `go 1.25.6` per `src/go.mod:3`) for
+- **Language and structure**: Go (`src/`, `go 1.26.6` per `src/go.mod:3`) for
   the core dashboard/hub/proxy/scheduler/agent-orchestration code; a JS
   dashboard UI served inline (no separate SPA build step); Python/Shell for
   the deterministic pre-kick pipeline (45 scripts, indexed in

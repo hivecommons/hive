@@ -5,7 +5,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 ## Prerequisites
 
 - Git and GitHub CLI (`gh`) for normal issue and PR workflows.
-- Go `1.25.6`, as declared by [`src/go.mod`](../src/go.mod).
+- Go `1.26.6`, as declared by [`src/go.mod`](../src/go.mod) — when the two disagree, go.mod wins.
 - Docker or Podman if you are exercising containerized contributor relay or deployment paths.
 - `tmux` for local agent/contributor workflows that attach CLIs to terminal sessions.
 - `just` if you use the repository's helper recipes (`brew install just` on macOS, or install from the `just` project for your platform).

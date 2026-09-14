@@ -118,7 +118,7 @@ age-style sealed box:
 
 | Component | Choice | Justification |
 |---|---|---|
-| KEM | X25519 (`crypto/ecdh`, `X25519()`) | Stdlib since Go 1.20; module is on Go 1.25.6 (`src/go.mod`). No new dependency. 32-byte keys, hex-encodable like every existing env value. |
+| KEM | X25519 (`crypto/ecdh`, `X25519()`) | Stdlib since Go 1.20; the module's `go` directive (`src/go.mod`) is well past that. No new dependency. 32-byte keys, hex-encodable like every existing env value. |
 | Ephemeral | Fresh sender keypair per wrap | Gives forward secrecy against later compromise of the hub's state and makes each ciphertext independently sealed. |
 | KDF | HKDF-SHA256 over the shared secret, both public keys, and a context label | Binds the ciphertext to both parties. |
 | AEAD | AES-256-GCM, 96-bit nonce | Stdlib, constant-time on the relevant hardware, and the repo already uses AES-256-GCM for `hubbackup` (`src/pkg/hubbackup/backup.go`). Precedent, not novelty. |
