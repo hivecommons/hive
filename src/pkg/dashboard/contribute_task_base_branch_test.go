@@ -138,6 +138,18 @@ func TestTaskBaseBranch(t *testing.T) {
 		{"multi-digit release lines", "[v12] something", "v12"},
 		{"leading whitespace is tolerated", "  [v5] something", "v5"},
 		{"lane prefixes are not branches", "[quality] tighten the gate", "v4"},
+		// hivecommons/hive#6969: a release-line tag AFTER a leading lane or
+		// emoji prefix must still be honoured. Both tokens are structured
+		// prefixes and the release-line one is an unambiguous routing directive.
+		{"lane prefix then release line", "[Tracker] [v5] Feature: protect contributor quota headroom", "v5"},
+		{"rfc prefix then release line", "[RFC] [v5] Capability-aware contributor task assignment", "v5"},
+		{"classifier lane then release line", "[quality] [v5] tighten the gate", "v5"},
+		{"emoji prefix then release line", "🔌 [v5] escalation reviewer lane is unreachable", "v5"},
+		{"emoji then lane then release line", "🐛 [Tracker] [v5] something", "v5"},
+		{"lane then emoji then release line", "[strategist] 🌱 [v5] something", "v5"},
+		{"multi-rune emoji then release line", "👍🏽 [v5] something", "v5"},
+		{"lane prefix without a release line still falls back", "[quality] [architect] tighten the gate", "v4"},
+		{"emoji prefix without a release line falls back", "🐛 bug: something broke", "v4"},
 		{"a tag that is not a release line", "[vNext] something", "v4"},
 		{"a bare v is not a release line", "[v] something", "v4"},
 		{"a tag with trailing words", "[v5 reviewer] something", "v4"},
