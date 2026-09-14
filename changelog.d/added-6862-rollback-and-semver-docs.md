@@ -1,0 +1,1 @@
+- Documented digest-verifiable rollback, channel switching, and the multi-release-line semver policy for the v5 GA release-train documentation gap.

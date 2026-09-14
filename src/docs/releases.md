@@ -1,11 +1,65 @@
 # Tagged releases
 
-Hive ships continuously — every merge to `v4` publishes moving image tags
-(`v4-latest`, the three channels, an immutable short-SHA tag; see
-[release channels](release-channels.md)) with no human step. This page covers
+Hive ships continuously — every merge to a publishing release line writes
+continuous image tags (for example `v4-latest`, `v5-latest`, the line's
+channels, and immutable short-SHA tags; see [release channels](release-channels.md))
+with no human step. This page covers
 the second, **additive** layer on top of that: immutable, semver-tagged
 releases (`v1.2.3`) with a git tag and a GitHub Release, cut automatically —
 no human ever pushes a tag or clicks "Draft a release" in the normal path.
+
+## Release lines and the v5 semver policy
+
+Hive's release train is multi-line. `.github/release-lines.yml` is the source
+of truth for release-line CI coverage: `v4` lists `v2` and `v4` today, while
+the `v5` branch adds `v5` to that list and to `docker.yml`'s `LONG_LIVED`
+push policy. The important operator rule is that a release line can publish
+continuous images before it has its own semver release automation.
+
+- **`v4` is the only line that cuts semver tags today.**
+  `.github/workflows/tagged-release.yml` reacts to successful `docker.yml`
+  runs on branch `v4`, reads `v4` when it performs its scheduled backstop,
+  and uses the `tagged-release-v4` concurrency group. Its version tags are
+  immutable image tags on all three images (`hive`, `hive-contributor`,
+  `hive-hub`) plus a git tag and GitHub Release.
+- **`v5` publishes continuous images, not semver tags, until GA policy changes.**
+  On the `v5` branch, `.github/workflows/docker.yml` publishes `v5-latest`,
+  an immutable short-SHA tag, and the `edge` channel for the three images; it
+  does not create a `v5.x.y` tag. A v5 GA candidate is therefore identified
+  by the immutable short SHA and the manifest digests resolved from it, not
+  by a semver tag.
+- **`v2` remains in release-line CI allow-lists only as recorded legacy state.**
+  The release-line guard file explicitly leaves the support decision to
+  maintainers; do not infer a new tagged-release promise from its presence in
+  `.github/release-lines.yml`.
+
+The compatibility signal from a tag is scoped to the line that cut it. A
+`v4.x.y` tag means "the v4 release line at this changelog boundary", not "all
+future major lines are compatible with this build." When a future `v5` semver
+path is enabled, its first version number must be a maintainer decision: the
+existing release workflow deliberately never invents a major version by itself.
+
+Patch, minor, and major communicate the usual compatibility expectations
+within a line:
+
+- **Patch** (`x.y.Z`) is for fixes and documentation/operator-visible
+  clarifications that should not require config, API, storage, deployment, or
+  workflow changes.
+- **Minor** (`x.Y.0`) is for additive behavior: new endpoints, fields, docs,
+  images, or supported deployment paths that keep existing operators working.
+- **Major** (`X.0.0`) is the boundary for intentional incompatibility: removed
+  behavior, required migration steps, storage/config changes that cannot be
+  consumed transparently, or release-line transitions such as v4 to v5.
+
+Semver tags and channels are deliberately decoupled. A version tag is an
+immutable address for one released build. A channel (`stable`, `candidate`,
+`edge`) is a moving pointer managed by the image publication and promotion
+workflows. Cutting a version tag never moves a channel, and moving a channel
+does not imply a new semver tag. For incident response, use the
+[digest-verifiable rollback and channel-switch runbook](release-rollback.md)
+to resolve a channel or short-SHA tag to a manifest digest before pinning.
+
+The rest of this page describes the `v4` tagged-release path as it runs today.
 
 ## What triggers a release
 
@@ -46,9 +100,9 @@ no commit-message parsing:
   out.
 - **Non-empty** → a release is cut, with the bump taken from which
   `###` subsection headers are present:
-  - `### Security` present → **major**
-  - else `### Added` present → **minor**
-  - else (`### Changed` / `### Fixed` / `### Deprecated` only) → **patch**
+  - `### Added` present → **minor**
+  - else (`### Security` / `### Changed` / `### Fixed` / `### Deprecated`
+    only) → **patch**
 
 ### Why CHANGELOG.md and not the emoji commit-prefix convention
 
@@ -89,7 +143,10 @@ is nothing new — it is the existing changelog convention, now load-bearing:
 
 You do not choose a version number. You choose a changelog section, and the
 version follows from semver rules applied to whatever is sitting in
-`Unreleased` when the next merge to `v4` completes its build.
+`Unreleased` when the next merge to `v4` completes its build. A major bump is
+not inferred on a release-line branch; in this repository the major version is
+the release line, so crossing that boundary is a maintainer-controlled line
+cut, not an automatic changelog consequence.
 
 ## The escape hatch
 
@@ -103,8 +160,7 @@ decision:
 ```
 
 suppresses a release for this merge even if `Unreleased` has content (the
-entries stay queued for the next release that does fire). Or force a specific
-bump regardless of which headers are present:
+entries stay queued for the next release that does fire). Or force a specific bump regardless of which headers are present:
 
 ```markdown
 <!-- release: major -->
@@ -113,13 +169,19 @@ bump regardless of which headers are present:
 ```
 
 Two conflicting markers in the same section is a hard failure (the workflow
-errors loudly) rather than a silent pick — remove all but one.
+errors loudly) rather than a silent pick — remove all but one. Treat
+`<!-- release: major -->` as an out-of-band maintainer action, not a normal
+PR escape hatch: a major version names a release line in this repository, so
+using that marker on `v4` can mint the next major from the current line.
 
 ## What is immutable vs. moving
 
 | Tag | Written by | Moves? |
 |---|---|---|
-| `v4-latest`, `stable`, `candidate`, `edge` | `docker.yml`, every merge to `v4` | Yes — moving pointers |
+| `<branch>-latest` (`v4-latest`, `v5-latest`, plus long-lived experimental branches) | `docker.yml`, successful publishing-branch builds | Yes — moving pointers |
+| `candidate` | `docker.yml`, every publishing `v4` build | Yes — moving pointer |
+| `edge` | `docker.yml` on the `v5` branch | Yes — moving pointer |
+| `stable` | `promote-stable.yml`, by digest from `candidate` after the v4 soak gate | Yes — moving pointer |
 | `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
 | `v1.2.3` | `tagged-release.yml`, only when a release is cut | No — immutable, and **is** the release |
 
