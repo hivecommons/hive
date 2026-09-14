@@ -547,8 +547,9 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 		c.logger.Warn("CreateIssue: dedupe lookup failed, proceeding to create",
 			slog.String("repo", repoName), slog.String("error", err.Error()))
 	} else if existing != nil {
-		c.logger.Info("CreateIssue: open issue with identical title exists, reusing",
-			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()))
+		c.logger.Info("CreateIssue: open issue with the same subject exists, reusing",
+			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()),
+			slog.String("existing_title", existing.GetTitle()))
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
 	}
 
@@ -601,10 +602,16 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 }
 
 // findOpenIssueByTitle scans up to the 3 most recent pages of open issues for
-// an exact (whitespace-trimmed) title match. Bounded: agent-filed issues are
-// recent by construction, and an unbounded scan of a busy repo would burn API
-// budget on every create.
+// an exact (whitespace-trimmed) title match, falling back to a canonical
+// subject match (see canonicalIssueSubject) so a finding re-filed with a
+// different model-authored qualifier is recognised as the same finding.
+// Exact matches win; otherwise the OLDEST canonical match is returned so
+// repeats consolidate onto the original issue rather than the newest copy.
+// Bounded: agent-filed issues are recent by construction, and an unbounded
+// scan of a busy repo would burn API budget on every create.
 func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title string) (*gh.Issue, error) {
+	wantCanonical := canonicalIssueSubject(title)
+	var canonicalMatch *gh.Issue
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
 		Sort:        "created",
@@ -621,13 +628,19 @@ func (c *Client) findOpenIssueByTitle(ctx context.Context, owner, repo, title st
 			if is.IsPullRequest() {
 				continue
 			}
-			if strings.TrimSpace(is.GetTitle()) == title {
+			candidate := strings.TrimSpace(is.GetTitle())
+			if candidate == title {
 				return is, nil
+			}
+			// Pages arrive newest-first, so overwriting leaves the oldest
+			// canonical match in hand once the scan finishes.
+			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
+				canonicalMatch = is
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 	}
-	return nil, nil
+	return canonicalMatch, nil
 }
