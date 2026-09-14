@@ -23,6 +23,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/advisory"
@@ -5730,30 +5732,70 @@ func sourceLabel(sourceType string) string {
 //
 // The shape is deliberately narrow: `v` followed by digits and nothing else,
 // the same `^v(\d+)$` release-line shape pkg/hub's image_pulls.go matches and
-// .github/release-lines.yml's `release_lines` list uses. The lane prefixes the
-// classifier already routes on ("[quality]", "[architect]", …) cannot collide
-// with it, and a tag naming no real branch fails loudly at `gh pr create`
-// rather than silently redirecting the PR — which is the failure mode this
-// whole change exists to remove.
+// .github/release-lines.yml's `release_lines` list uses.
+//
+// hivecommons/hive#6969: the tag does not have to be the very first token, only
+// the first PIECE OF REAL CONTENT. Titles this repo actually files carry the
+// tag behind a structured prefix — a classifier lane ("[Tracker] [v5] …") or a
+// template emoji ("🔌 [v5] …", "🐛 [Tracker] [v5] …") — and the tag is still an
+// unambiguous routing directive there. So the scan skips a bounded run of
+// leading bracketed lane tokens and leading decorative (emoji/symbol) runes,
+// returning the first bracketed token that is a release line and STOPPING at
+// the first ordinary word. A `[v5]` loose in prose ("reviewer lane [v5] …")
+// is still rejected, because prose begins with a letter, which ends the scan
+// before the tag — that false positive is the one the narrow rule exists to
+// prevent and it stays prevented. A tag naming no real branch fails loudly at
+// `gh pr create` rather than silently redirecting the PR.
 func releaseLineFromTitle(title string) string {
-	t := strings.TrimSpace(title)
-	if !strings.HasPrefix(t, "[") {
-		return ""
+	rest := strings.TrimSpace(title)
+	// A title is at most a handful of structured prefixes before real content;
+	// the cap keeps the scan bounded regardless of input and never trips on a
+	// real title.
+	const maxPrefixTokens = 8
+	for i := 0; rest != "" && i < maxPrefixTokens; i++ {
+		r, size := utf8.DecodeRuneInString(rest)
+		switch {
+		case r == '[':
+			end := strings.Index(rest, "]")
+			if end < 0 {
+				// An unterminated bracket is not a structured prefix; stop
+				// rather than scan into the rest of the title.
+				return ""
+			}
+			tag := strings.ToLower(strings.TrimSpace(rest[1:end]))
+			if isReleaseLine(tag) {
+				return tag
+			}
+			// A non-release bracket (a classifier lane like "[quality]"): skip
+			// it and keep scanning the following tokens.
+			rest = strings.TrimSpace(rest[end+1:])
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			// The first ordinary word or number ends the prefix run. A tag
+			// after this point is prose, not a directive.
+			return ""
+		default:
+			// A decorative leading rune — an emoji, variation selector, ZWJ,
+			// skin-tone modifier, or punctuation the templates prepend. Skip
+			// exactly one rune (multi-rune emoji are skipped a rune at a time)
+			// and keep scanning.
+			rest = strings.TrimSpace(rest[size:])
+		}
 	}
-	end := strings.Index(t, "]")
-	if end < 0 {
-		return ""
-	}
-	tag := strings.ToLower(strings.TrimSpace(t[1:end]))
+	return ""
+}
+
+// isReleaseLine reports whether tag is a release-line token: a lowercase `v`
+// followed by one or more digits and nothing else (`^v\d+$`).
+func isReleaseLine(tag string) bool {
 	if len(tag) < 2 || tag[0] != 'v' {
-		return ""
+		return false
 	}
 	for _, r := range tag[1:] {
 		if r < '0' || r > '9' {
-			return ""
+			return false
 		}
 	}
-	return tag
+	return true
 }
 
 func taskComplexityFromLabels(labels []string) string {
