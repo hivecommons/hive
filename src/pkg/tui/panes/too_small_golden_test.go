@@ -31,7 +31,9 @@ import (
 func TestTooSmallGolden(t *testing.T) {
 	t.Setenv(client.BaseURLEnv, "http://127.0.0.1:1")
 
-	tm := teatest.NewTestModel(t, tui.New(), teatest.WithInitialTermSize(50, 12))
+	m := tui.New()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(50, 12))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(5*time.Second))
@@ -40,8 +42,5 @@ func TestTooSmallGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final output: %v", err)
 	}
-	// Same splash-frame normalization as the grid golden: the pre-size frame
-	// can be flushed as its own frame depending on how bubbletea's renderer
-	// ticker interleaves with its event loop. See stripSplashRace.
-	requireGolden(t, stripSplashRace(out), filepath.Join("testdata", "too_small.golden"))
+	requireGolden(t, out, filepath.Join("testdata", "too_small.golden"))
 }

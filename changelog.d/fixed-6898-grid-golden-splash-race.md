@@ -1,0 +1,1 @@
+- The TUI grid golden test now starts from a pre-sized model, removing a transient splash-frame race that could fail otherwise unchanged CI runs ([#6898](https://github.com/hivecommons/hive/issues/6898)).
