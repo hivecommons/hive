@@ -22,17 +22,17 @@ import (
 
 func TestGenerationAccepted_FencesStaleWorker(t *testing.T) {
 	// Current owner's generation is 5.
-	if !generationAccepted(5, 5) {
+	if !generationAccepted(5, 5, true) {
 		t.Fatalf("the current generation must be accepted")
 	}
 	// A stale worker still echoing 3 (its task was revoked and reassigned, bumping
 	// the connection past it) must be rejected — this is the fence.
-	if generationAccepted(3, 5) {
+	if generationAccepted(3, 5, true) {
 		t.Fatalf("a stale generation must be rejected (the Gate)")
 	}
 	// An unversioned relay that never learned a generation echoes 0 and is accepted,
 	// falling back to the pre-existing TaskID identity match (backward compatibility).
-	if !generationAccepted(0, 5) {
+	if !generationAccepted(0, 5, false) {
 		t.Fatalf("an unversioned relay (gen 0) must be accepted for backward compatibility")
 	}
 }

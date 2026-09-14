@@ -108,6 +108,12 @@ type ContributorConnection struct {
 	// unversioned relay — reports 0, which is treated as "unstamped" and falls back to
 	// the pre-existing TaskID match, preserving backward compatibility).
 	currentTaskGen uint64
+	// sawTaskGen records that this connection has echoed a NON-ZERO task_gen at
+	// least once, i.e. proven it speaks the fenced protocol (kubestellar/hive#6909).
+	// Once set, the clientGen==0 legacy escape in generationAccepted is withdrawn
+	// for this connection so a fenced client cannot downgrade itself to unstamped
+	// mid-session and slip past the #2568 Gate.
+	sawTaskGen bool
 	// lastLeaseRenew is when currentTask's hub-owned lease was last renewed
 	// (kubestellar/hive#2568): set on assignment and refreshed on every task_progress.
 	// cleanupLoop auto-releases a task whose lease has not been renewed within
@@ -2972,9 +2978,17 @@ func (h *ContributeWSHub) nextTaskGen() uint64 {
 //     progress cannot overwrite the new owner's state.
 //
 // The caller MUST hold c.mu (currentTaskGen is read under it).
-func generationAccepted(clientGen, currentGen uint64) bool {
+// everFenced ratchets the legacy escape (kubestellar/hive#6909). The clientGen==0
+// fallback exists for unversioned relays that never learned a generation, but it
+// made the Gate opt-in: ANY client could bypass fencing on every call site just by
+// omitting task_gen (an absent JSON field decodes to 0, the value that disables the
+// check). Once a connection has echoed a real generation it has proven it speaks the
+// fenced protocol, so it may not silently downgrade itself back to unstamped for the
+// rest of the session — which is the actual bug/attack shape. A true legacy client
+// never sets the flag and is unaffected.
+func generationAccepted(clientGen, currentGen uint64, everFenced bool) bool {
 	if clientGen == 0 {
-		return true
+		return !everFenced
 	}
 	return clientGen == currentGen
 }
@@ -4101,7 +4115,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// whose task was revoked/reassigned (currentTaskGen bumped past what it
 				// echoes) must not renew a lease it no longer owns. An unversioned relay
 				// echoes 0 and is accepted (generationAccepted falls back to TaskID).
-				if !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+				if msg.TaskGen != 0 {
+					contributor.sawTaskGen = true
+				}
+				if !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
 					staleGen := msg.TaskGen
 					contributor.mu.Unlock()
 					h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
@@ -4171,7 +4188,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// WITHOUT clearing currentTask (which may now hold the NEW owner's task).
 				// An unversioned relay echoes 0 and is accepted, falling back to the
 				// TaskID identity match below. Checked before any mutation.
-				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+				if msg.TaskGen != 0 {
+					contributor.sawTaskGen = true
+				}
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
 					staleGen := msg.TaskGen
 					contributor.mu.Unlock()
 					h.logger.Warn("[contribute-ws] stale-generation task_complete rejected",
@@ -4398,7 +4418,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// a spurious failure cooldown against the NEW owner's issue. Do not clear
 				// currentTask (it may now be the new owner's task). Unversioned relays
 				// echo 0 and fall back to the TaskID match below.
-				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+				if msg.TaskGen != 0 {
+					contributor.sawTaskGen = true
+				}
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
 					staleGen := msg.TaskGen
 					contributor.mu.Unlock()
 					h.logger.Warn("[contribute-ws] stale-generation task_failed rejected",
