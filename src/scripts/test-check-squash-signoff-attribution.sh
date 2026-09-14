@@ -56,6 +56,25 @@ GIT_AUTHOR_NAME=Copilot GIT_AUTHOR_EMAIL=223556219+Copilot@users.noreply.github.
   git commit -q -m "agent authored change" \
   -m "Signed-off-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
+# The #6971 shape: a noreply sign-off naming a different human login than the
+# PR author. Internally consistent on the branch, guaranteed mismatch after
+# the squash rewrites the author as the PR author.
+git checkout -q -b foreignnoreply "$base_sha"
+echo g > g.txt
+git add g.txt
+GIT_AUTHOR_NAME=Danathar GIT_AUTHOR_EMAIL=danathar@users.noreply.github.com \
+  git commit -q -m "other human change" \
+  -m "Signed-off-by: Danathar <danathar@users.noreply.github.com>"
+
+# The PR author signing off under their own noreply address, id-prefixed and
+# case-varied. The post-merge monitor accepts this (#6721), so this gate must
+# not reject it.
+git checkout -q -b ownnoreply "$base_sha"
+echo h > h.txt
+git add h.txt
+git commit -q -m "own noreply change" \
+  -m "Signed-off-by: Alice <12345+ALICE@users.noreply.github.com>"
+
 run() { # run <head> <pr-author>
   set +e
   output=$(bash "$CHECKER" "$base_sha" "$1" "$2" 2>&1)
@@ -84,6 +103,40 @@ if [ "$rc" -eq 1 ]; then
   pass "a bot-authored, bot-signed commit is still rejected on a human PR"
 else
   bad "the d8f376e8 shape was not caught (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+run foreignnoreply alice
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q 'foreign-noreply-signoff'; then
+  pass "a noreply sign-off for a different login than the PR author is rejected"
+else
+  bad "the 01bd2469 shape was not caught (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+run foreignnoreply Danathar
+if [ "$rc" -eq 0 ]; then
+  pass "the same commit passes when the signer IS the PR author"
+else
+  bad "a self-signed noreply commit must pass on its own author's PR (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+run ownnoreply alice
+if [ "$rc" -eq 0 ]; then
+  pass "an id-prefixed, case-varied own-noreply sign-off passes"
+else
+  bad "the PR author's own noreply sign-off must not be rejected (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# Without a PR author login there is nothing to compare a noreply sign-off
+# against, so the foreign-noreply rule must stand down rather than guess.
+run foreignnoreply ""
+if [ "$rc" -eq 0 ]; then
+  pass "the foreign-noreply rule is skipped when no PR author is supplied"
+else
+  bad "an unknown PR author must not fail noreply sign-offs (rc=${rc})"
   echo "$output" | sed 's/^/      | /'
 fi
 
