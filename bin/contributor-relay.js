@@ -3106,11 +3106,36 @@ let reposShippedSinceReview = [];
 // it is still in scope.
 const authorizedRepos = new Set();
 
+// isSafeRepoName reports whether `name` has the GitHub `owner/name` shape.
+// The names in authorizedRepos end up interpolated verbatim into shell command
+// lines the review prompt pre-authorizes ("Run these, and only these"), so a
+// hub-supplied value must be proven to be an identifier — not a command
+// fragment — before it can cross from data into an executable line (#6938).
+const SAFE_REPO_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
+function isSafeRepoName(name) {
+  return typeof name === 'string' && SAFE_REPO_NAME_RE.test(name);
+}
+
+// isSafeAuthorLogin reports whether `login` is a plausible GitHub login (or
+// `@me`), for the same reason: it is rendered into the `--author` position of
+// the pre-authorized command lines (#6938).
+const SAFE_AUTHOR_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(\[bot\])?$/;
+function isSafeAuthorLogin(login) {
+  return login === '@me' || (typeof login === 'string' && SAFE_AUTHOR_LOGIN_RE.test(login));
+}
+
 // recordAuthorizedRepo notes that a hub dispatched work for `repo`. Ignores
-// blanks so a malformed assignment cannot widen the boundary to "".
+// blanks so a malformed assignment cannot widen the boundary to "", and
+// rejects anything that is not shaped like `owner/name` so a hostile hub
+// cannot smuggle shell syntax into the review cycle's command list (#6938).
 function recordAuthorizedRepo(repo) {
   const name = typeof repo === 'string' ? repo.trim() : '';
-  if (name) authorizedRepos.add(name);
+  if (!name) return;
+  if (!isSafeRepoName(name)) {
+    console.error(`Ignoring authorized-repo candidate that is not shaped like owner/name: ${JSON.stringify(name)}`);
+    return;
+  }
+  authorizedRepos.add(name);
 }
 
 // buildReviewPrompt renders the PR review cycle's prompt (#6664, rescoped by
@@ -3171,8 +3196,12 @@ function recordAuthorizedRepo(repo) {
 // run a review". An empty scope must mean review NOTHING; falling back to the
 // account is the bug.
 function buildReviewPrompt(shippedRepos, authorized, login) {
-  const hinted = Array.isArray(shippedRepos) ? shippedRepos.filter(Boolean) : [];
-  const scope = Array.from(authorized || []).filter(Boolean);
+  // Defense in depth (#6938): recordAuthorizedRepo already refuses malformed
+  // names, but this function renders whatever set it is HANDED into command
+  // lines the prompt tells the agent to run verbatim — so re-prove the shape
+  // here rather than trust every caller forever.
+  const hinted = Array.isArray(shippedRepos) ? shippedRepos.filter(isSafeRepoName) : [];
+  const scope = Array.from(authorized || []).filter(isSafeRepoName);
   if (!scope.length) return '';
 
   // Hinted repos first so the agent starts where comments are likeliest, then
@@ -3185,7 +3214,14 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
   // token, which on a PAT-backed session is the operator (#6908). Falling back
   // to `@me` keeps the cycle working where the variable is unset, and the
   // per-repo scope still bounds what that can reach.
-  const author = (login || '').trim() || '@me';
+  let author = (login || '').trim() || '@me';
+  if (!isSafeAuthorLogin(author)) {
+    // A login that is not shaped like a GitHub login must not reach the
+    // command line either; @me keeps the cycle working, and the per-repo
+    // scope still bounds what it can touch (#6938).
+    console.error(`Review prompt ignoring malformed author login ${JSON.stringify(author)}; using @me`);
+    author = '@me';
+  }
 
   const commands = ordered
     .map(repo => `GH_TOKEN=$GH_TOKEN gh pr list --repo ${repo} --author ${author} --state open`)
@@ -4614,6 +4650,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     setPRsShippedSinceReview: (v) => { prsShippedSinceReview = v; },
     getAuthorizedRepos: () => Array.from(authorizedRepos),
     recordAuthorizedRepo,
+    isSafeRepoName,
+    isSafeAuthorLogin,
     clearAuthorizedRepos: () => authorizedRepos.clear(),
     getReposShippedSinceReview: () => reposShippedSinceReview.slice(),
     setReposShippedSinceReview: (v) => { reposShippedSinceReview = Array.isArray(v) ? v.slice() : []; },
