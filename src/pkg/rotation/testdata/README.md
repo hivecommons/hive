@@ -17,6 +17,26 @@ recorded payload becomes available it should replace this file. The adapter's
 behaviour on an unrecognized schema is pinned separately by
 `TestCodexHeadroomRejectsUnrecognizedSchema`.
 
+# Copilot premium-request usage fixture
+
+`copilot_premium_request_usage.json` is a response to the documented enhanced
+billing platform endpoint
+`GET /users/{username}/settings/billing/premium_request/usage`
+(kubestellar/hive#6980). It exercises the surface the adapter consumes:
+`timePeriod`, and `usageItems` with `product`/`sku`/`model`/`unitType` and the
+`grossQuantity`/`discountQuantity`/`netQuantity` triple — including an item
+with `netQuantity > 0` (billed overage, which sets the paid-usage signal) and a
+non-`copilot` product (`actions`) that the adapter must not count.
+
+Provenance note: the field values are schema-derived, not captured from a live
+Copilot account (this working tree has no live billing credentials). It is a
+faithful instance of the documented schema, not a redacted real capture; when a
+real recorded payload becomes available it should replace this file. The
+adapter's behaviour on an unrecognized schema is pinned separately by
+`TestCopilotHeadroomRejectsUnrecognizedSchema` — and note the adapter already
+ships reporting an explicit unknown unless the operator states the plan's
+monthly allowance, per #6980's fixture criterion.
+
 # Claude usage fixture
 
 `claude_oauth_usage.json` is a response body of the `GET /api/oauth/usage`
