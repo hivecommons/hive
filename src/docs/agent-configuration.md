@@ -123,6 +123,11 @@ The dashboard API can update this field through [`POST /api/effort/{agent}/{effo
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
     lane_keywords: [bug, triage, fix]   # routes matching issues into this agent's lane
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
+    cadence_scope: per_repo      # aggregate (default) | per_repo — opt this agent into
+                                 #   one governor timer PER WATCHED REPO instead of one
+                                 #   hive-wide timer. Only effective when the hive-level
+                                 #   governor.cadence_scope is also per_repo; see
+                                 #   "Repo-scoped cadences" below.
 ```
 
 #### Conversation is not a tier
@@ -390,6 +395,40 @@ config key declares CEL rules that kick a named agent directly off a
 source-control event (issue opened, PR opened, a label applied, a comment
 posted), independent of the governor's queue-depth cadence. See
 [CEL-based agent triggers](cel-triggers.md).
+
+### Repo-scoped cadences (`cadence_scope`)
+
+By default the governor runs ONE mode for the whole hive: total queue pressure
+picks idle/quiet/busy/surge, and every agent gets one timer. On a many-repo
+hive that aggregate can mislead in both directions — one hot repo drags every
+repo's agents into surge cadences, or a hot repo's backlog is diluted below
+the (repo-count-scaled) thresholds by dozens of quiet repos. `cadence_scope`
+(#6932) lets the governor resolve a mode **per repo** instead:
+
+```yaml
+governor:
+  cadence_scope: per_repo   # aggregate (default) | per_repo
+
+agents:
+  scanner:
+    cadence_scope: per_repo # per-agent opt-in — only agents that ask get split timers
+```
+
+- **Two switches, both required.** `governor.cadence_scope: per_repo` turns on
+  per-repo mode resolution; each agent still keeps its single aggregate timer
+  unless it *also* sets `cadence_scope: per_repo`. Replicas inherit the base
+  agent's setting. Either value may be `aggregate` (or omitted) to keep the
+  historical one-timer behavior.
+- **Base thresholds, unscaled.** In per-repo scope each repo's own actionable
+  queue depth (issues + PRs) is compared against the **base** thresholds —
+  repo-count [threshold scaling](governor-thresholds.md) does not apply,
+  because the comparison is already per-repo.
+- **One timer per repo.** An opted-in agent gets a cadence entry — and
+  last-kick bookkeeping — per successfully scanned repo, keyed `agent|repo`.
+  Repos in different modes kick the same agent at different intervals.
+- **Live control.** The owner-only `GET`/`PUT`
+  `/api/config/governor/cadence-scope` routes read and set the hive-level
+  scope at runtime; see the [API reference](api-reference.md).
 
 ## ACMM levels: agent rosters as packs
 
