@@ -60,6 +60,64 @@ func TestHeadroomToContributorReading_HealthyCarriesWindows(t *testing.T) {
 	}
 }
 
+// DefaultContributorPoolDir makes publishing default-on (kubestellar/hive#6987):
+// no explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR, yet a supported backend still gets
+// a reading. XDG_CONFIG_HOME is honoured first (matching the hivectl session
+// cache), so this vector is the shared parity point with defaultContributorPool
+// Dir() in bin/contributor-relay.js — both MUST produce the identical path or
+// the publisher writes where the relay never reads. Keep this in step with the
+// JS test '#6987 defaultContributorPoolDir matches Go under XDG_CONFIG_HOME'.
+func TestDefaultContributorPoolDir_XDGParity(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/shared/base")
+	got := DefaultContributorPoolDir()
+	want := filepath.Join("/shared/base", "hive", "contributor-quota")
+	if got != want {
+		t.Errorf("DefaultContributorPoolDir() = %q, want %q (drifted from contributor-relay.js)", got, want)
+	}
+}
+
+// With XDG_CONFIG_HOME unset the path still resolves under the platform user
+// config dir's hive tree, so a default install has a route. The exact prefix is
+// platform-specific; the invariant we pin is the trailing hive/contributor-quota
+// segment and a non-empty result on a host with a resolvable config dir.
+func TestDefaultContributorPoolDir_FallsBackToUserConfigDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	ucd, err := os.UserConfigDir()
+	if err != nil {
+		t.Skipf("no user config dir on this host: %v", err)
+	}
+	got := DefaultContributorPoolDir()
+	want := filepath.Join(ucd, "hive", "contributor-quota")
+	if got != want {
+		t.Errorf("DefaultContributorPoolDir() = %q, want %q", got, want)
+	}
+}
+
+// A default install (no explicit pool dir) still publishes and the reading lands
+// exactly where the relay's derived path looks for it — the end-to-end proof of
+// #6987 on the producer side. We drive the Manager publish path with the derived
+// dir and assert the pool-keyed file the relay would read is present and healthy.
+func TestManager_PublishesToDefaultPoolDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	poolDir := DefaultContributorPoolDir()
+
+	m := NewManager(rotationTestConfig())
+	m.EnableContributorReadingPublish(poolDir, "")
+	m.SetHeadroom(Headroom{
+		Provider:  "anthropic",
+		Available: true,
+		Limits:    []LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 42}},
+	})
+
+	path := ContributorReadingPath(poolDir, "claude", "")
+	var r ContributorReading
+	readJSONFile(t, path, &r)
+	if r.State != "available" || len(r.Limits) != 1 || r.Limits[0].PctRemaining != 42 {
+		t.Errorf("published reading = %+v, want available/weekly/42 at derived default path %q", r, path)
+	}
+}
+
 // The Go pool key must match derivePoolKey() in bin/lib/quota-pool-store.js
 // exactly, or the publisher writes to a path the relay never reads. These
 // vectors were produced by the JS implementation; keep both sides in step.

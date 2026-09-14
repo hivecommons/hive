@@ -61,6 +61,42 @@ var contributorGuardProviders = map[string]bool{
 // status and reservation files but uses its own suffix so they never collide.
 const contributorReadingFileSuffix = ".reading.json"
 
+// contributorPoolDirName is the per-install subdirectory, under the user config
+// dir's "hive" tree, where the reading is published when no explicit
+// HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set (kubestellar/hive#6987). It lives
+// beside the hivectl session cache (src/pkg/hivectl/session.go) so all
+// per-install hive state shares one predictable root.
+const contributorPoolDirName = "contributor-quota"
+
+// DefaultContributorPoolDir is the pool directory the publisher writes into, and
+// the relay reads from, when the operator has NOT set
+// HIVE_CONTRIBUTOR_QUOTA_POOL_DIR. It makes publishing default-on for supported
+// backends (kubestellar/hive#6987 / #6967 criterion 1): a default install gets a
+// reading with no hand-set env var.
+//
+// The location follows the existing per-install precedent in this repo
+// (DefaultSessionStore in src/pkg/hivectl/session.go): $XDG_CONFIG_HOME is
+// honoured EXPLICITLY first — Go's os.UserConfigDir ignores it on darwin, and a
+// variable that redirects the path on Linux but silently not on a Mac would make
+// the location impossible to reason about and every test that redirects it flaky
+// by platform — then the platform user config dir, joined with "hive" and the
+// pool subdirectory. bin/contributor-relay.js derives the identical path in
+// defaultContributorPoolDir(); the two MUST agree or the publisher writes where
+// the relay never reads. An unresolvable config dir returns "", which leaves
+// publishing off and the relay on its unprovisioned/admit default — never a hold
+// with no route, the fleet-wide stop #6951's ruling guards against.
+func DefaultContributorPoolDir() string {
+	dir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if dir == "" {
+		d, err := os.UserConfigDir()
+		if err != nil {
+			return ""
+		}
+		dir = d
+	}
+	return filepath.Join(dir, "hive", contributorPoolDirName)
+}
+
 // ContributorLimitWindow is one normalized window in the reading the relay
 // consumes. Field names match exactly what readContributorQuotaReading() /
 // evaluateContributorQuota() parse in bin/contributor-relay.js: pct_remaining,

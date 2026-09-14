@@ -100,7 +100,7 @@ Important environment variables:
 | `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` | unset | Path to a JSON quota reading the guard evaluates: `{"state": …, "limits": [{"id": …, "kind": …, "pct_remaining": …, "resets_at": …}]}`. Re-read on each decision, so a writer refreshing the file is what lifts a hold. A missing, torn or malformed file is treated as `unknown` and **holds** work rather than crashing the relay or admitting blind — so the writer should rename atomically, since a hold is still a hold. |
 | `HIVE_CONTRIBUTOR_QUOTA_READING_JSON` | unset | The same reading supplied inline, taking precedence over `HIVE_CONTRIBUTOR_QUOTA_READING_FILE`. Intended for tests and for supervisors that already hold the reading in memory. Being a fixed launch-time value it never changes, so a hold against it cannot lift by itself — prefer the file for long-running relays. |
 | `HIVE_CONTRIBUTOR_QUOTA_RETRY_MS` | `60000` | How often a guarded relay re-reads the quota and re-advertises `ready` once every effective reserve is clear. Must be a positive integer of milliseconds. An explicit contributor pause outranks a recovered reading. |
-| `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` | unset | Directory for the cross-process quota-pool store (kubestellar/hive#6953) **and** the automatically-published quota reading (kubestellar/hive#6967). When set, relays that resolve to the same pool key share one guard state through atomically-written files: a peer relay holding an in-flight task reserves the pool so a second relay on the same account cannot independently oversubscribe the reserve, and this is the directory the out-of-band `just contribute-quota …` controls write overrides into. It is also where the Go rotation probers publish a normalized reading (`<poolKey>.reading.json`, written temp-file-plus-rename so a reader never sees a torn file): a **supported** subscription backend with no explicit reading env var then reads its guard reading from here without any hand-configuration. While that reading has not landed yet — or is torn — a supported backend **holds** rather than admitting blind (see below). Unset (the default) keeps the guard purely in-process and, with no reading source, `unprovisioned`/admit exactly as before. |
+| `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` | derived per-install | Directory for the cross-process quota-pool store (kubestellar/hive#6953) **and** the automatically-published quota reading (kubestellar/hive#6967). When set, relays that resolve to the same pool key share one guard state through atomically-written files: a peer relay holding an in-flight task reserves the pool so a second relay on the same account cannot independently oversubscribe the reserve, and this is the directory the out-of-band `just contribute-quota …` controls write overrides into. It is also where the Go rotation probers publish a normalized reading (`<poolKey>.reading.json`, written temp-file-plus-rename so a reader never sees a torn file): a **supported** subscription backend then reads its guard reading from here without any hand-configuration. **Publishing is default-on (kubestellar/hive#6987):** when this is unset, the publisher and relay derive the same per-install directory (`$XDG_CONFIG_HOME` or the platform user-config dir, joined with `hive/contributor-quota`), so a default install of a supported backend gets a reading with no env var — setting this only overrides the location, or points a shared pool at a common path. With an **explicit** dir, a not-yet-landed or torn reading **holds** (the operator declared a publisher for the pool); with the **derived default** dir, a *present* reading is evaluated (a torn/`unknown` one still holds — fail-closed) but a genuinely *missing* one falls through to `unprovisioned`/admit, so a supported host with no publisher running is never stranded holding forever. The cross-process store proper stays opt-in on an explicit dir. |
 | `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT` | unset | Account component of the pool key. It is **hashed** into an opaque 16-hex key and never logged raw (privacy). Two relays with the same value share one pool; unset keys the pool off the backend name alone (same-backend relays on one host share, which can only under-subscribe the true account pool, never over-subscribe). |
 | `HIVE_CONTRIBUTOR_QUOTA_SESSION_ID` | `HIVE_SESSION` then `pid-<pid>` | Stable id for this relay session. A `disable-session` override targets it, and a session opt-out expires when the process exits (a new process gets a new id, so a stale opt-out never authorizes a later run). Never an account identifier. |
 | `HIVE_CODEX_SANDBOX_MODE` | probed (see note) | Codex `--sandbox` value. Left unset, hive resolves it at launch instead of hard-coding one: `workspace-write` everywhere it can work, and `danger-full-access` **only** inside the contributor container when that container blocks the unprivileged user namespace `workspace-write`'s bubblewrap needs (#6653). Setting this pins one value and skips the probe. |
@@ -288,12 +288,17 @@ Relays that resolve to the same opaque pool key then share one guard state throu
 
 ### How the reading reaches the guard (kubestellar/hive#6967)
 
-The guard evaluates a reading; something has to produce it. The Go rotation probers already normalize each provider's usage into windows (`kind`, `pct_remaining`, `resets_at`). When `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` is set, the hive process publishes that normalized reading into the pool directory as `<poolKey>.reading.json`, written atomically (temp file + rename). A **supported** subscription backend (`claude`, `pi`, `codex`, `agy`, `gemini`) with no explicit `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` / `_JSON` then reads its guard reading from that pool-keyed path automatically — the same pool key on both sides, so a relay always finds the file written for its own pool.
+The guard evaluates a reading; something has to produce it. The Go rotation probers already normalize each provider's usage into windows (`kind`, `pct_remaining`, `resets_at`). The hive process publishes that normalized reading into the pool directory as `<poolKey>.reading.json`, written atomically (temp file + rename). A **supported** subscription backend (`claude`, `pi`, `codex`, `agy`, `gemini`) with no explicit `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` / `_JSON` then reads its guard reading from that pool-keyed path automatically — the same pool key on both sides, so a relay always finds the file written for its own pool.
+
+**Publishing is default-on for supported backends (kubestellar/hive#6987, satisfying #6967 criterion 1).** The pool directory no longer has to be hand-configured. When `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` is unset, both the Go publisher (`rotation.DefaultContributorPoolDir`) and the JS relay (`defaultContributorPoolDir`) derive the same per-install directory: `$XDG_CONFIG_HOME` (honoured explicitly first, exactly as the hivectl session cache does, because Go's `os.UserConfigDir` ignores it on darwin) or the platform user-config dir, joined with `hive/contributor-quota`. The two derivations must stay byte-for-byte identical or the publisher writes where the relay never reads — the same parity the shared pool-key vectors pin (`TestDefaultContributorPoolDir_XDGParity` on the Go side, `#6987 defaultContributorPoolDir matches Go under XDG_CONFIG_HOME` on the JS side). An explicit `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` still overrides the location.
 
 Two safety properties are deliberate:
 
 - **A failed probe never publishes a healthy reading.** A probe error is published as `state: unknown`, which the guard *holds* on — it is never turned into "plenty of headroom". Publishing an admit off a measurement that failed would be exactly the fail-open this guard exists to prevent.
-- **The `unprovisioned` admit flips to a hold, but only where a reading has a route.** For a supported backend with the pool directory configured, "no reading yet" (or a torn file) is `unknown` and **holds** while the publisher catches up, rather than admitting blind. An **unsupported** backend — one with no adapter — keeps reporting the guard unavailable and admits as before, so the flip never strands a backend that can never obtain a reading. With no pool directory at all, the default is unchanged: `unprovisioned`/admit.
+- **The `unprovisioned` admit is NOT flipped to a hold here (kubestellar/hive#6987), and the divergence is recorded on purpose.** #6987's title paired "make publishing default-on" with "flip `unprovisioned` to a hold"; only the first ships in this change, and the second is deliberately left out. The reason is the one #6951's ruling turned on: making publishing default-on is the prerequisite that gives a default install a *route* to a reading, but the flip must not ride ahead of a guarantee that every supported host actually has a publisher running — rotation is itself opt-in, and #6986 showed an adapter can silently report permanent `unknown`. So the two dirs behave differently, on purpose:
+  - With an **explicit** `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR`, the operator has declared a publisher feeds this pool, so "no reading yet" (or a torn file) is `unknown` and **holds** while the publisher catches up — the opt-in flip #6967 already shipped for the configured case.
+  - With the **derived default** dir (no env var), a *present* reading is evaluated normally (a torn or `state: unknown` file still **holds** — fail-closed), but a **missing** reading falls through to `unprovisioned`/admit. A default install with no publisher running must never be stranded holding forever; that is the exact fleet-wide stop #6951's `unprovisioned` admit was created to avoid. Flipping the default `unprovisioned` to a hold stays a one-line policy change for the maintainer to take deliberately once every supported install is guaranteed a live publisher.
+- **An unsupported backend — one with no adapter — keeps reporting the guard unavailable and admits as before**, so making publishing default-on never strands a backend that can never obtain a reading (#6833 criterion 8).
 
 
 ### Scoped controls when the guard holds (`ask` mode)
@@ -773,18 +778,23 @@ Five behaviours are worth knowing:
   wedged relay.
 
 - **With no reading source at all, the guard is inert and says so.** The guard
-  defaults to `ask`, but the provider adapters that would supply a reading are
-  not built yet ([#6952](https://github.com/hivecommons/hive/issues/6952)), so
-  a default install has nothing to enforce against. That is a distinct state —
-  `unprovisioned`, not `unknown` — and it **admits** work, logging once that
-  the guard is enabled but not guarding anything and naming the two variables
-  that would give it something to read. Holding instead would stop every
-  default install on the fleet from ever asking for work again, which is why
-  this deviates from #6833's "unknown reading holds"; #6833 criterion 8 covers
-  it directly ("unsupported backends should report that the guard is
+  defaults to `ask`. On a supported backend with the reading publisher running,
+  a reading now reaches the guard by default (kubestellar/hive#6987 — see "How
+  the reading reaches the guard"), but where no reading has a route — an
+  unsupported backend, or a supported backend whose derived default reading file
+  has not been written — the guard has nothing to enforce against. That is a
+  distinct state — `unprovisioned`, not `unknown` — and it **admits** work,
+  logging once that the guard is enabled but not guarding anything and naming the
+  two variables that would give it something to read. Holding instead would stop
+  every such default install on the fleet from ever asking for work again, which
+  is why this deviates from #6833's "unknown reading holds"; #6833 criterion 8
+  covers it directly ("unsupported backends should report that the guard is
   unavailable and retain their existing behavior"). It is no longer reported as
-  a healthy `available` reading, which was the actual misreporting. Once #6952
-  lands an adapter, flipping `unprovisioned` to a hold is a one-line change.
+  a healthy `available` reading, which was the actual misreporting. Flipping the
+  default `unprovisioned` to a hold remains a one-line policy change, left to the
+  maintainer to take deliberately once every supported install is guaranteed a
+  live publisher (kubestellar/hive#6987 landed the default-on publishing that
+  makes that flip safe to consider; it does not take the flip itself).
 
 ### Provider adapter sources
 

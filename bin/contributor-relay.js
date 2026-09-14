@@ -365,6 +365,48 @@ function quotaPublishedReadingFile() {
   return quotaPool ? path.join(quotaPool.dir, `${quotaPool.poolKey}.reading.json`) : '';
 }
 
+// defaultContributorPoolDir derives the per-install pool directory used when the
+// operator has NOT set HIVE_CONTRIBUTOR_QUOTA_POOL_DIR (kubestellar/hive#6987).
+// It makes publishing default-on for supported backends (#6967 criterion 1): a
+// default install reads the reading the Go publisher writes here with no hand-set
+// env var. The path MUST equal rotation.DefaultContributorPoolDir() in Go, or
+// the relay reads where the publisher never wrote — the same parity #6983 pinned
+// for the pool key. Both honour XDG_CONFIG_HOME first (Go's os.UserConfigDir
+// ignores it on darwin), then the platform user config dir, matching the
+// hivectl session-cache precedent in src/pkg/hivectl/session.go. An
+// unresolvable base returns '' so the relay stays on its unprovisioned/admit
+// default rather than holding with no route.
+function defaultContributorPoolDir() {
+  let base = (process.env.XDG_CONFIG_HOME || '').trim();
+  if (!base) {
+    const home = (process.env.HOME || require('os').homedir() || '').trim();
+    if (process.platform === 'win32') {
+      base = (process.env.AppData || '').trim();
+    } else if (process.platform === 'darwin') {
+      base = home ? path.join(home, 'Library', 'Application Support') : '';
+    } else {
+      base = home ? path.join(home, '.config') : '';
+    }
+  }
+  if (!base) return '';
+  return path.join(base, 'hive', 'contributor-quota');
+}
+
+// The default-derived pool directory, captured once at load so it is stable for
+// the life of the relay (process.env is read at module load, mirroring
+// QUOTA_POOL_DIR). Empty when no base directory can be resolved.
+const QUOTA_DEFAULT_POOL_DIR = defaultContributorPoolDir();
+
+// The published reading file inside the DEFAULT (non-env) pool directory, for a
+// supported backend when no explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set.
+// Same pool key as the explicit store, so the publisher and relay agree on the
+// path.
+function quotaDefaultPublishedReadingFile() {
+  return QUOTA_DEFAULT_POOL_DIR
+    ? path.join(QUOTA_DEFAULT_POOL_DIR, `${quotaPoolStore.derivePoolKey({ backend: BACKEND, account: QUOTA_POOL_ACCOUNT })}.reading.json`)
+    : '';
+}
+
 
 // The reset epoch of a normalized window, however the adapter spells it. This
 // is what makes an until-reset override expire MECHANICALLY: the override pins
@@ -548,17 +590,33 @@ function readContributorQuotaReading() {
   if (QUOTA_READING_FILE) {
     return parse('HIVE_CONTRIBUTOR_QUOTA_READING_FILE', () => JSON.parse(fs.readFileSync(QUOTA_READING_FILE, 'utf8')));
   }
-  // With no reading env var set, a supported subscription backend whose pool
-  // directory is configured reads the reading the Go rotation publisher writes
-  // there (kubestellar/hive#6967). This is the link that turns the guard on: a
-  // missing or torn published file is `unknown` and HOLDS — the safe direction
-  // while the publisher catches up — instead of the `unprovisioned` admit. The
-  // flip is deliberately scoped to (supported backend AND pool dir), so a host
-  // that has no route to a reading is not stranded holding forever, the exact
-  // fleet-wide stop #6951's `unprovisioned` admit was created to avoid.
-  const publishedFile = quotaPublishedReadingFile();
-  if (publishedFile && quotaBackendSupported) {
-    return parse('published quota reading', () => JSON.parse(fs.readFileSync(publishedFile, 'utf8')));
+  // With no reading env var set, a supported subscription backend reads the
+  // reading the Go rotation publisher writes (kubestellar/hive#6967). The pool
+  // directory is EXPLICIT when HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set, otherwise
+  // per-install DERIVED so publishing is default-on (kubestellar/hive#6987).
+  //
+  // The two dirs differ in one deliberate way, and it is the whole point of
+  // #6987. An EXPLICIT pool dir is the operator declaring "a publisher feeds
+  // this pool", so "no reading yet" (or a torn file) is a transient `unknown`
+  // that HOLDS while the publisher catches up — the opt-in flip #6967 shipped.
+  // The DERIVED default dir cannot assume a publisher is running (rotation is
+  // itself opt-in), so a MISSING default file means "no reading route on this
+  // host" and must fall through to the `unprovisioned` admit — NOT a hold. This
+  // is exactly the fleet-wide stop #6951's ruling guards against: a default
+  // install with no route must never hold forever. A default file that DOES
+  // exist is read like any other: a torn or state:"unknown" reading still HOLDS
+  // (fail-closed), so the publisher writing a failed-probe `unknown` still
+  // guards, and only a genuinely absent route admits.
+  if (QUOTA_POOL_DIR) {
+    const publishedFile = quotaPublishedReadingFile();
+    if (publishedFile && quotaBackendSupported) {
+      return parse('published quota reading', () => JSON.parse(fs.readFileSync(publishedFile, 'utf8')));
+    }
+  } else if (quotaBackendSupported) {
+    const defaultFile = quotaDefaultPublishedReadingFile();
+    if (defaultFile && fs.existsSync(defaultFile)) {
+      return parse('published quota reading', () => JSON.parse(fs.readFileSync(defaultFile, 'utf8')));
+    }
   }
   // "No reading source configured" is NOT the same as "a configured source we
   // cannot read", and #6951 turns on the difference. A configured-but-broken
@@ -5277,6 +5335,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     quotaRequiredReserve,
     quotaWindowReserve,
     readContributorQuotaReading,
+    // Default-on publishing derivation (kubestellar/hive#6987).
+    defaultContributorPoolDir,
+    QUOTA_DEFAULT_POOL_DIR,
+    quotaDefaultPublishedReadingFile,
     // Guard resume + provisioning (kubestellar/hive#6951).
     retryContributorQuota,
     armContributorQuotaRetry,

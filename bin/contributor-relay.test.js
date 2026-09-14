@@ -9286,14 +9286,140 @@ test('#6967 an unsupported backend keeps unprovisioned/admit even with a pool di
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('#6967 with no pool dir the default is unchanged (unprovisioned admit)', () => {
-  // The flip is scoped to opt-in (pool dir) so a default install with no route
-  // to a reading is not stranded holding forever — the #6951 fleet-stop the
-  // `unprovisioned` admit was created to avoid.
-  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+test('#6967 with no pool dir and no published reading, the default is unchanged (unprovisioned admit)', () => {
+  // #6987 makes the pool dir DERIVED per-install (publishing default-on), but a
+  // default install with no published file yet must still NOT be stranded
+  // holding forever — the #6951 fleet-stop the `unprovisioned` admit was created
+  // to avoid. Point the derived base at an empty dir so no reading exists there:
+  // the relay falls through to `unprovisioned`/admit, exactly as before.
+  const emptyBase = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6967-'));
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: emptyBase, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
   assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned');
   assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
   teardown(relay);
+  fs.rmSync(emptyBase, { recursive: true, force: true });
+});
+
+// ── kubestellar/hive#6987 — publishing default-on for supported backends ─────
+// #6967 criterion 1: "a normalized reading reaches the relay without the
+// contributor hand-configuring an env var." The pool directory is now DERIVED
+// per-install when HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is unset, so a default install
+// of a supported backend reads the Go publisher's reading with no env var. The
+// derived path MUST equal rotation.DefaultContributorPoolDir() in Go; the parity
+// is pinned on the Go side in TestDefaultContributorPoolDir_XDGParity.
+//
+// This does NOT flip `unprovisioned` to a hold: a MISSING default reading still
+// admits (non-stranding), and only a PRESENT-but-unhealthy reading holds.
+
+// The reading file inside the DERIVED default dir for a backend, given the base
+// the relay resolves from XDG_CONFIG_HOME. Mirrors quotaDefaultPublishedReading
+// File() / rotation.ContributorReadingPath.
+function publishDefaultReading6987(base, backend, contents) {
+  const dir = path.join(base, 'hive', 'contributor-quota');
+  fs.mkdirSync(dir, { recursive: true });
+  const key = poolStore.derivePoolKey({ backend, account: '' });
+  fs.writeFileSync(path.join(dir, `${key}.reading.json`), contents);
+  return dir;
+}
+
+test('#6987 defaultContributorPoolDir matches Go under XDG_CONFIG_HOME (parity)', () => {
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: '/shared/base', HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '' } });
+  assert.strictEqual(relay.QUOTA_DEFAULT_POOL_DIR, path.join('/shared/base', 'hive', 'contributor-quota'),
+    'the JS derived pool dir must equal rotation.DefaultContributorPoolDir() in Go, or the publisher writes where the relay never reads');
+  teardown(relay);
+});
+
+test('#6987 a default install of a supported backend reads the published reading with NO env var', () => {
+  // Criterion 1: no HIVE_CONTRIBUTOR_QUOTA_POOL_DIR, no reading env var — the
+  // publisher wrote into the per-install derived dir, and the relay reads it.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  publishDefaultReading6987(base, 'claude', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 55 }] }));
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  const reading = relay.readContributorQuotaReading();
+  assert.strictEqual(reading.state, 'available', 'a default install with no env var gets the published reading, not the unprovisioned fallback');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true, 'and a healthy 55% window admits');
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 a default-install published reading below reserve HOLDS (fail-closed)', () => {
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  publishDefaultReading6987(base, 'codex', JSON.stringify({ state: 'available', limits: [{ id: 'five_hour', kind: 'five_hour', pct_remaining: 5 }] }));
+  const relay = loadRelay({ backend: 'codex', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false,
+    '5% is under the 20% reserve; a default install now guards without any hand-configuration');
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 a default-install probe-error reading (state unknown) HOLDS, never admits', () => {
+  // A present-but-unhealthy default reading must hold — the fail-closed
+  // direction is non-negotiable. Only a genuinely ABSENT reading admits.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  publishDefaultReading6987(base, 'agy', JSON.stringify({ state: 'unknown', limits: [] }));
+  const relay = loadRelay({ backend: 'agy', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false,
+    'a failed probe published to the default dir holds the guard — publishing an admit off a failed measurement is the fail-open this guard prevents');
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 a default install with NO published reading admits (unprovisioned, non-stranding)', () => {
+  // The heart of the scope decision: publishing is default-on, but the
+  // `unprovisioned`→hold flip is deliberately NOT shipped. A supported backend
+  // whose derived dir has no file must ADMIT, never hold — else default installs
+  // with no publisher running would strand forever, the exact #6951 fleet-stop.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+    'a missing DEFAULT reading is unprovisioned/admit — the flip is not shipped here');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 an unsupported backend is unchanged under the default derivation (AC#7)', () => {
+  // copilot has no adapter. Even with a reading sitting in the derived dir, an
+  // unsupported backend never adopts it: it stays unprovisioned/admit, so the
+  // default-on change never strands a backend with no adapter (#6833 criterion 8).
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  publishDefaultReading6987(base, 'copilot', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 3 }] }));
+  const relay = loadRelay({ backend: 'copilot', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+    'an unsupported backend ignores the published reading and stays guard-unavailable');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 an explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR overrides the derived default', () => {
+  // The override still works: an explicit pool dir wins over the derived one,
+  // and (per #6967) a missing file in an EXPLICIT dir HOLDS — the operator
+  // declared a publisher for that pool. Put a healthy reading only in the derived
+  // dir and point the explicit dir at an empty location: the relay must hold on
+  // the explicit dir, proving it read the override, not the default.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987-'));
+  publishDefaultReading6987(base, 'claude', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+  const explicit = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'explicit6987-'));
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: explicit, HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown',
+    'the explicit empty pool dir HOLDS (unknown), proving the override was read instead of the healthy derived reading');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+  fs.rmSync(explicit, { recursive: true, force: true });
+});
+
+test('#6987 an explicit pool dir with a healthy reading admits (override reads the file)', () => {
+  const explicit = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'explicit6987-'));
+  const key = poolStore.derivePoolKey({ backend: 'claude', account: '' });
+  fs.writeFileSync(path.join(explicit, `${key}.reading.json`), JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 77 }] }));
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: explicit, HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'available');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(explicit, { recursive: true, force: true });
 });
 
 for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
