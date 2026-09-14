@@ -305,6 +305,7 @@ func TestCodexPromptEchoExemptionRetainsFailClosedOutputScanning(t *testing.T) {
 	humanFrame := func(value string) string {
 		return codexHumanBannerPrefix + "workdir: /tmp/hive-provider-test\nmodel: reviewed-test-model\n" + codexHumanPromptMarker + value + "\n"
 	}
+	pathWarning := codexTemporaryHomeWarning + `/tmp" (codex_home: AbsolutePathBuf("/tmp/codex"))` + "\n"
 	cases := []struct {
 		name       string
 		stderr     string
@@ -313,6 +314,9 @@ func TestCodexPromptEchoExemptionRetainsFailClosedOutputScanning(t *testing.T) {
 	}{
 		{name: "one exact initial human echo", stderr: humanFrame(prompt) + "DENIED", wantUnsafe: false},
 		{name: "packaged provider exact initial echo", stderr: strings.Replace(humanFrame(prompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1) + "DENIED", wantUnsafe: false},
+		{name: "packaged temporary home warning before echo", stderr: pathWarning + strings.Replace(humanFrame(prompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1) + "DENIED", wantUnsafe: false},
+		{name: "temporary home warning remains scanned", stderr: strings.Replace(pathWarning, "/tmp/codex", unsafeResidual, 1) + humanFrame(prompt), wantUnsafe: true},
+		{name: "arbitrary warning does not exempt prompt", stderr: "WARNING: arbitrary provider output\n" + humanFrame(prompt), wantUnsafe: true},
 		{name: "packaged provider residual secret remains", stderr: strings.Replace(humanFrame(prompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1) + unsafeResidual, wantUnsafe: true},
 		{name: "packaged provider near match remains", stderr: strings.Replace(humanFrame(nearPrompt), codexHumanBannerPrefix, codexPackagedHumanBannerPrefix, 1), wantUnsafe: true},
 		{name: "unknown provider banner remains", stderr: strings.Replace(humanFrame(prompt), "v0.144.1", "v99.0.0", 1), wantUnsafe: true},

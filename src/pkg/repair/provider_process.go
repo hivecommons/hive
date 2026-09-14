@@ -22,6 +22,7 @@ const (
 	codexHumanPromptHeaderLimit    = 16 << 10
 	codexHumanBannerPrefix         = "OpenAI Codex v0.144.1\n--------\n"
 	codexPackagedHumanBannerPrefix = "OpenAI Codex v0.146.0\n--------\n"
+	codexTemporaryHomeWarning      = "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \""
 	codexHumanPromptMarker         = "--------\nuser\n"
 )
 
@@ -354,22 +355,33 @@ func codexOutputForSecretClassification(stdout, stderr []byte, expectedPromptEch
 }
 
 func codexHumanPromptEchoOffset(stderr, prompt []byte) (int, bool) {
+	// Native 0.146.0 emits this one renderer warning before its banner when
+	// Hive supplies a private temporary CODEX_HOME. Keep the warning itself in
+	// secret scanning; only the subsequent byte-identical prompt is exempt.
+	bannerOffset := 0
+	if bytes.HasPrefix(stderr, []byte(codexTemporaryHomeWarning)) {
+		lineEnd := bytes.IndexByte(stderr, '\n')
+		if lineEnd > 0 && lineEnd < codexHumanPromptHeaderLimit && bytes.Contains(stderr[:lineEnd], []byte(`(codex_home: AbsolutePathBuf("`)) && bytes.HasSuffix(stderr[:lineEnd], []byte(`"))`)) {
+			bannerOffset = lineEnd + 1
+		}
+	}
+	frame := stderr[bannerOffset:]
 	banner := codexHumanBannerPrefix
-	if bytes.HasPrefix(stderr, []byte(codexPackagedHumanBannerPrefix)) {
+	if bytes.HasPrefix(frame, []byte(codexPackagedHumanBannerPrefix)) {
 		banner = codexPackagedHumanBannerPrefix
 	}
-	if len(prompt) == 0 || !bytes.HasPrefix(stderr, []byte(banner)) {
+	if len(prompt) == 0 || !bytes.HasPrefix(frame, []byte(banner)) {
 		return 0, false
 	}
-	headerEnd := len(stderr)
+	headerEnd := len(frame)
 	if headerEnd > codexHumanPromptHeaderLimit {
 		headerEnd = codexHumanPromptHeaderLimit
 	}
-	markerOffset := bytes.Index(stderr[len(banner):headerEnd], []byte(codexHumanPromptMarker))
+	markerOffset := bytes.Index(frame[len(banner):headerEnd], []byte(codexHumanPromptMarker))
 	if markerOffset < 0 {
 		return 0, false
 	}
-	promptOffset := len(banner) + markerOffset + len(codexHumanPromptMarker)
+	promptOffset := bannerOffset + len(banner) + markerOffset + len(codexHumanPromptMarker)
 	if promptOffset >= len(stderr) || len(prompt) > len(stderr)-promptOffset-1 {
 		return 0, false
 	}
