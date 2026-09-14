@@ -69,8 +69,28 @@ if [ -n "$pr_author" ] && is_bot_identity "$pr_author"; then
   exit 0
 fi
 
+# Commits that already landed on a protected line are out of scope (#6919).
+#
+# This gate's whole premise is that "the branch is still writable at PR time".
+# That is true for a commit original to the PR, and false for one that already
+# merged. A sync pull request (v4 -> v5) carries every v4 commit that v5 has not
+# seen yet: those are reachable from the default branch but not from this PR's
+# base, so base..head enumerates them and re-flags bot sign-offs that already
+# passed this same gate on their own pull request. The advice it then prints -
+# amend and force-push - is impossible on protected history.
+#
+# Excluding them is not a bypass: to be reachable from the default branch a
+# commit must already have merged through this check.
+landed_excludes=()
+for landed_ref in ${LANDED_REFS:-origin/v4 v4}; do
+  if git rev-parse --verify --quiet "${landed_ref}^{commit}" >/dev/null; then
+    landed_excludes+=("^${landed_ref}")
+  fi
+done
+
 failures=''
 checked=0
+skipped_landed=0
 
 while IFS= read -r sha; do
   [ -n "$sha" ] || continue
@@ -96,7 +116,17 @@ $(git log -1 --format=%B "$sha" |
       }
     }')
 EOF
-done < <(git rev-list "${base_ref}..${head_ref}")
+done < <(git rev-list "${base_ref}..${head_ref}" ${landed_excludes[@]+"${landed_excludes[@]}"})
+
+if [ "${#landed_excludes[@]}" -gt 0 ]; then
+  all_count="$(git rev-list --no-merges --count "${base_ref}..${head_ref}")"
+  skipped_landed=$((all_count - checked))
+fi
+
+if [ "$skipped_landed" -gt 0 ]; then
+  printf 'Skipped %s commit(s) already reachable from %s: they have landed on protected history and were checked on their own pull request.\n' \
+    "$skipped_landed" "$(printf '%s ' "${landed_excludes[@]#^}" | sed 's/ $//')"
+fi
 
 printf 'Squash sign-off attribution check inspected %s non-merge commits in %s..%s.\n' \
   "$checked" "$base_ref" "$head_ref"

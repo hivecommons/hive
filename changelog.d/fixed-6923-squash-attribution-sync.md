@@ -1,0 +1,1 @@
+- Fixed the DCO squash-attribution gate re-flagging bot sign-offs on commits that had already landed on the default branch, which blocked every v4 to v5 sync pull request (#6923).

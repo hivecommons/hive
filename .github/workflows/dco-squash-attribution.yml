@@ -36,11 +36,24 @@ jobs:
       - name: Self-test the attribution checker
         run: bash src/scripts/test-check-squash-signoff-attribution.sh
 
+      - name: Make the default branch resolvable
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # Commits already on the default branch are excluded from the check
+          # (see the script). Without this ref a sync PR re-flags every commit
+          # it carries forward, so fetch it explicitly rather than relying on
+          # checkout having populated remote-tracking refs.
+          git fetch --no-tags --depth=0 origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" || true
+
       - name: Check sign-off attribution across the PR's commits
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          LANDED_REFS: origin/${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           bash src/scripts/check-squash-signoff-attribution.sh \

@@ -126,6 +126,86 @@ else
   bad "missing args should exit 2, got ${rc}"
 fi
 
+# The sync-pull-request shape (#6919). A release line (v5line) is topped up
+# from the default branch (landed), which already carries a bot-signed commit.
+# That commit is permanent history and passed this gate on its own PR, so the
+# sync must not demand an amend that is no longer possible.
+git checkout -q -b landed "$base_sha"
+echo d > d.txt
+git add d.txt
+GIT_AUTHOR_NAME=Copilot GIT_AUTHOR_EMAIL=223556219+Copilot@users.noreply.github.com \
+  git commit -q -m "agent change that already merged to the default branch" \
+  -m "Signed-off-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+landed_sha=$(git rev-parse HEAD)
+
+git checkout -q -b v5line "$base_sha"
+echo e > e.txt
+git add e.txt
+git commit -q -m "release line change" \
+  -m "Signed-off-by: Real Human <human@example.com>"
+v5_sha=$(git rev-parse HEAD)
+
+git checkout -q -b syncbranch "$v5_sha"
+git merge -q --no-ff -m "sync: merge landed into v5line" "$landed_sha"
+
+# Without the exclusion this is exactly the false positive: the carried commit
+# is not reachable from the base, so it gets re-flagged.
+set +e
+output=$(bash "$CHECKER" "$v5_sha" syncbranch alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  pass "a carried commit is still flagged when no landed ref is configured"
+else
+  bad "expected the uncontrolled case to fail, so the fix is load-bearing"
+fi
+
+set +e
+output=$(LANDED_REFS=landed bash "$CHECKER" "$v5_sha" syncbranch alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  pass "a sync pull request does not re-flag commits already on the default branch"
+else
+  bad "sync PR should pass once landed commits are excluded (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+if printf '%s\n' "$output" | grep -q 'Skipped 1 commit'; then
+  pass "the skip is reported rather than silent"
+else
+  bad "excluded commits must be reported for auditability"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# The exclusion must not become a bypass: a commit original to the PR is still
+# checked even when a landed ref is configured.
+git checkout -q -b syncplusnew syncbranch
+echo f > f.txt
+git add f.txt
+git commit -q -m "new bot-signed commit original to the PR" \
+  -m "Signed-off-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+set +e
+output=$(LANDED_REFS=landed bash "$CHECKER" "$v5_sha" syncplusnew alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s\n' "$output" | grep -q 'original to the PR'; then
+  pass "excluding landed commits does not hide a new bot-signed commit"
+else
+  bad "a commit original to the PR must still fail (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# An unresolvable landed ref must not silently disable the check.
+set +e
+output=$(LANDED_REFS=nosuchbranch bash "$CHECKER" "$base_sha" botsignoff alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  pass "an unresolvable landed ref leaves the check enforcing"
+else
+  bad "a bad LANDED_REFS value must not turn the gate off"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-squash-signoff-attribution FAILED"
   exit 1
