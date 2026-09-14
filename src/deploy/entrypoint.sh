@@ -558,8 +558,8 @@ if [ "$(id -u)" = "0" ]; then
   # mkdirSync('$HOME/.bob') on first run, which needs write on /data/home — a
   # 0755 root-owned $HOME makes that EACCES even though every child dir below
   # is perfectly writable. 2775 = rwxrwxr-x + setgid (new entries inherit node).
-  chmod 2775 /data/home 2>/dev/null || true
-  chown dev:node /data/home 2>/dev/null || true
+  chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
+  chown dev:node /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
   # Per-agent interactive HOMEs live here (#4596): the manager provisions
   # /data/home/agents/<name> per agent at launch, bridged by symlinks back to
   # the shared dot-dirs below. 0755: every agent UID traverses it, none write

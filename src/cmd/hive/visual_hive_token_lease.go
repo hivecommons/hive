@@ -89,15 +89,20 @@ func (runtime *visualHiveTokenLeaseRuntime) Apply(lease *hub.VisualHiveTokenLeas
 	if lease == nil {
 		runtime.mu.Lock()
 		runtime.lastError = strings.TrimSpace(brokerError)
-		expired := !runtime.expiresAt.After(runtime.now().Add(time.Minute))
-		if expired {
+		// An explicit Hub denial includes assignment removal and invalid key
+		// rotation. Stop execution immediately instead of retaining authority
+		// until the old token expires. An ordinary no-renewal heartbeat has no
+		// error and preserves the valid lease.
+		blocked := runtime.lastError != "" || !runtime.expiresAt.After(runtime.now().Add(time.Minute))
+		if blocked {
 			runtime.token = ""
+			runtime.expiresAt = time.Time{}
 		}
 		runtime.mu.Unlock()
-		if expired && runtime.store != nil {
+		if blocked && runtime.store != nil {
 			runtime.store.Clear()
 		}
-		if brokerError != "" && expired {
+		if brokerError != "" {
 			return fmt.Errorf("Visual Hive GitHub App broker: %s", brokerError)
 		}
 		return nil

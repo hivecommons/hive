@@ -83,7 +83,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.25.12
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
       - name: Validate production workflows
         shell: bash
         run: |
@@ -94,7 +94,7 @@ jobs:
           printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" | sha256sum --check --strict -
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" .github/workflows/integrated-release.yml .github/workflows/v2-ci.yml
-          (cd v2 && HIVE_ACTIONLINT="$RUNNER_TEMP/actionlint" go test ./pkg/integrated -run '^TestGeneratedHostedControllerWorkflowActionlint$' -count=1 -timeout 2m)
+          (cd src && HIVE_ACTIONLINT="$RUNNER_TEMP/actionlint" go test ./pkg/integrated -run '^TestGeneratedHostedControllerWorkflowActionlint$' -count=1 -timeout 2m)
       - name: Build immutable Visual Hive bundle
         working-directory: .release/visual-hive-source
         env:
@@ -111,7 +111,7 @@ jobs:
           GITHUB_ACTIONS=false GITHUB_EVENT_NAME=local GITHUB_RUN_ID='' GITHUB_RUN_ATTEMPT='' VISUAL_HIVE_WORKFLOW_ARTIFACT_ID='' npm run demo:all
 
       - name: Verify Hive source gates
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -160,8 +160,8 @@ jobs:
           cp "$linux_source/LICENSE" "$linux_runtime/LICENSE.node.txt"
           cp -RL "$linux_source/lib/node_modules/npm" "$linux_runtime/node_modules/npm"
           cp -RL "$linux_source/lib/node_modules/corepack" "$linux_runtime/node_modules/corepack"
-          cp v2/runtime-launchers/linux/npm v2/runtime-launchers/linux/npx v2/runtime-launchers/linux/corepack \
-            v2/runtime-launchers/linux/pnpm v2/runtime-launchers/linux/pnpx v2/runtime-launchers/linux/yarn v2/runtime-launchers/linux/yarnpkg "$linux_runtime/"
+          cp src/runtime-launchers/linux/npm src/runtime-launchers/linux/npx src/runtime-launchers/linux/corepack \
+            src/runtime-launchers/linux/pnpm src/runtime-launchers/linux/pnpx src/runtime-launchers/linux/yarn src/runtime-launchers/linux/yarnpkg "$linux_runtime/"
           chmod 0755 "$linux_runtime/node" "$linux_runtime/npm" "$linux_runtime/npx" "$linux_runtime/corepack" \
             "$linux_runtime/pnpm" "$linux_runtime/pnpx" "$linux_runtime/yarn" "$linux_runtime/yarnpkg"
 
@@ -170,8 +170,8 @@ jobs:
           cp "$windows_source/npm.cmd" "$windows_source/npx.cmd" "$windows_source/corepack.cmd" "$windows_runtime/"
           cp -RL "$windows_source/node_modules/npm" "$windows_runtime/node_modules/npm"
           cp -RL "$windows_source/node_modules/corepack" "$windows_runtime/node_modules/corepack"
-          cp v2/runtime-launchers/windows/pnpm.cmd v2/runtime-launchers/windows/pnpx.cmd \
-            v2/runtime-launchers/windows/yarn.cmd v2/runtime-launchers/windows/yarnpkg.cmd "$windows_runtime/"
+          cp src/runtime-launchers/windows/pnpm.cmd src/runtime-launchers/windows/pnpx.cmd \
+            src/runtime-launchers/windows/yarn.cmd src/runtime-launchers/windows/yarnpkg.cmd "$windows_runtime/"
           if find "$linux_runtime" "$windows_runtime" -type l -print -quit | grep -q .; then
             echo "Complete Node runtime contains a symbolic link" >&2
             exit 1
@@ -195,7 +195,7 @@ jobs:
           runtime_digest_after="$(find "$linux_runtime" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
           test "$runtime_digest_after" = "$runtime_digest_before"
       - name: Build Hive fork binaries
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -207,7 +207,7 @@ jobs:
           grep -Fx "Hive $RELEASE_VERSION" "$GITHUB_WORKSPACE/.release/hive-version.txt"
           grep -Fx "commit: $GITHUB_SHA" "$GITHUB_WORKSPACE/.release/hive-version.txt"
       - name: Assemble clean-install distributions
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -219,7 +219,7 @@ jobs:
             --node "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-linux-x64/bin/node" \
             --node-runtime "$GITHUB_WORKSPACE/.release/runtime-linux" \
             --node-license "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-linux-x64/LICENSE" \
-            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/v2/skills/hive" \
+            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/src/skills/hive" \
             --target-os linux --target-arch amd64 --output "$linux_root"
           go run ./cmd/hive-dist \
             --hive "$GITHUB_WORKSPACE/.release/bin/hive-windows-amd64.exe" --hive-commit "$GITHUB_SHA" --hive-version "$RELEASE_VERSION" \
@@ -227,7 +227,7 @@ jobs:
             --node "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-win-x64/node.exe" \
             --node-runtime "$GITHUB_WORKSPACE/.release/runtime-windows" \
             --node-license "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-win-x64/LICENSE" \
-            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/v2/skills/hive" \
+            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/src/skills/hive" \
             --target-os windows --target-arch amd64 --output "$windows_root"
           launcher_path="$RUNNER_TEMP/hive-visual-launcher-path"
           mkdir -p "$launcher_path"
@@ -244,7 +244,7 @@ jobs:
           zip -qr "${windows_dir}.zip" "$windows_dir"
           sha256sum "${linux_dir}.tar.gz" > "${linux_dir}.tar.gz.sha256"
           sha256sum "${windows_dir}.zip" > "${windows_dir}.zip.sha256"
-          cp "$GITHUB_WORKSPACE/v2/install-integrated.sh" "$GITHUB_WORKSPACE/v2/install-integrated.ps1" .
+          cp "$GITHUB_WORKSPACE/src/install-integrated.sh" "$GITHUB_WORKSPACE/src/install-integrated.ps1" .
           sha256sum install-integrated.sh > install-integrated.sh.sha256
           sha256sum install-integrated.ps1 > install-integrated.ps1.sha256
       - name: Smoke the actual Linux release archive
@@ -253,9 +253,9 @@ jobs:
           set -euo pipefail
           proof="$RUNNER_TEMP/hive-linux-release-smoke"
           HIVE_RELEASE_DIR="$GITHUB_WORKSPACE/.release/dist" HIVE_SOURCE_ROOT="$GITHUB_WORKSPACE/v2" HIVE_SKIP_ATTESTATION=1 \
-            sh v2/test/integrated-installer-linux-release-smoke.sh .release/dist/install-integrated.sh "$RELEASE_VERSION" "$proof"
+            sh src/test/integrated-installer-linux-release-smoke.sh .release/dist/install-integrated.sh "$RELEASE_VERSION" "$proof"
       - name: Prove Linux persistent scheduler and installer transition harness
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -287,16 +287,16 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.25.12
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
       - name: Prove persistent Windows scheduler recovery
-        working-directory: v2
+        working-directory: src
         shell: pwsh
         env:
           HIVE_TEST_WINDOWS_TASK_SCHEDULER: "1"
           HIVE_TEST_WINDOWS_TASK_RESTART: "1"
         run: go test ./cmd/hive -run '^TestWindowsPersistentDaemonStartsAndStopsThroughTaskScheduler$' -count=1 -timeout 4m
       - name: Prove Windows hosted and JSON controller surfaces
-        working-directory: v2
+        working-directory: src
         shell: pwsh
         run: |
           go test ./pkg/hostedbootstrap ./pkg/hostedstate ./pkg/hostedcontrol ./pkg/hostedstatus -count=1 -timeout 8m
@@ -380,13 +380,13 @@ jobs:
               if ($plan.plan.execution_mode -ne "hosted" -or -not $plan.plan.hosted_state_branch -or $plan.plan.hive_release_version -ne $env:RELEASE_VERSION -or $plan.plan.hive_commit -ne $env:GITHUB_SHA -or -not $plan.plan.distribution_manifest_sha256) { throw "Published tag smoke did not bind the complete hosted release identity." }
             } elseif ($plan.plan.execution_mode -ne "local") { throw "Commit-SHA rehearsal must use explicit local compatibility mode." }
             if ($plan.plan.state_dir -match 'daviddiaz0317--hive-visual-hive-install-proof') { throw "Release Hive repeated the long repository slug in its default state path: $($plan.plan.state_dir)" }
-            & ./v2/test/integrated-json-contract-smoke.ps1 -Hive (Join-Path $install "hive.exe") -WorkRoot (Join-Path $work "json-contract")
+            & ./src/test/integrated-json-contract-smoke.ps1 -Hive (Join-Path $install "hive.exe") -WorkRoot (Join-Path $work "json-contract")
           } finally {
             $env:PATH = $originalPath
             [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
             $env:CODEX_HOME = $originalCodexHome
           }
-          & ./v2/test/integrated-installer-windows-failure-smoke.ps1 -Installer ./.release/dist/install-integrated.ps1 -ReleaseDir .release/dist -Version $env:RELEASE_VERSION -WorkRoot (Join-Path $work "failure-smoke")
+          & ./src/test/integrated-installer-windows-failure-smoke.ps1 -Installer ./.release/dist/install-integrated.ps1 -ReleaseDir .release/dist -Version $env:RELEASE_VERSION -WorkRoot (Join-Path $work "failure-smoke")
 
   provider-containment:
     permissions:
@@ -405,7 +405,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.25.12
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.23.1
@@ -458,7 +458,7 @@ jobs:
           Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "hive-real-codex-path") -Value $codex.FullName -NoNewline
       - name: Prove credential-free native Health and no-model containment (Linux)
         if: runner.os == 'Linux'
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -470,7 +470,7 @@ jobs:
           go test ./pkg/repair -run '^TestCodexProviderRealNoModelHealthPreflightWithoutAuthorization$' -count=1 -timeout 2m
       - name: Prove credential-free native Health and no-model containment (Windows)
         if: runner.os == 'Windows'
-        working-directory: v2
+        working-directory: src
         shell: pwsh
         run: |
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "hive-release-codex-empty-home"
@@ -514,7 +514,7 @@ jobs:
         if: steps.auth-config.outputs.configured == 'true'
         with:
           go-version: 1.25.12
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: steps.auth-config.outputs.configured == 'true'
         with:
@@ -588,7 +588,7 @@ jobs:
           [IO.File]::WriteAllBytes((Join-Path $home "auth.json"), [Convert]::FromBase64String($env:HIVE_RELEASE_CODEX_AUTH_JSON_B64))
       - name: Prove authenticated structured containment (Linux supplemental)
         if: runner.os == 'Linux' && steps.auth-config.outputs.configured == 'true'
-        working-directory: v2
+        working-directory: src
         shell: bash
         run: |
           set -euo pipefail
@@ -598,7 +598,7 @@ jobs:
           go test ./pkg/repair -run '^(TestCodexProviderRealWorktreeInstructionsAndToolsAreIsolated|TestCodexProviderRealStructuredContainmentDeniesReadWriteAndNetwork)$' -count=1 -timeout 8m
       - name: Prove authenticated structured containment (Windows supplemental)
         if: runner.os == 'Windows' && steps.auth-config.outputs.configured == 'true'
-        working-directory: v2
+        working-directory: src
         shell: pwsh
         run: |
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "hive-release-codex-home"
@@ -657,7 +657,7 @@ jobs:
           }
           # This exact helper is failure-smoked under transient query, deletion,
           # and still-present release conditions before publication.
-          source v2/integrated-release-immutability.sh
+          source src/integrated-release-immutability.sh
           # cleanup_on_exit reads this global from the sourced helper.
           export release_verified=false
 

@@ -593,7 +593,7 @@ func TestHeartbeatUnchangedForHiveWithoutSecondApp(t *testing.T) {
 
 	// A hive with NO second App, on a cluster that nonetheless holds a
 	// secondary key for another App — the state that would tempt a broadcast.
-	if err := storeSecondaryAppKey("vllm-d", 4729416, 5686, testAppKeyPEM(t)); err != nil {
+	if err := storeSecondaryAppKey("vllm-d", 777, 5686, testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
 	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d"})
@@ -605,11 +605,11 @@ func TestHeartbeatUnchangedForHiveWithoutSecondApp(t *testing.T) {
 
 	// POSITIVE CONTROL: assigning the App makes the SAME call deliver, so the
 	// nil above is the authorization check and not a dead code path.
-	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d", SecondaryAppID: 4729416})
+	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d", SecondaryAppID: 777})
 	if got := s.secondaryAppKeyForHeartbeat(&HeartbeatPayload{HiveID: "hive-a"}); got == nil {
 		t.Fatal("positive control: an assigned hive received nothing")
-	} else if got.AppID != 4729416 {
-		t.Fatalf("positive control: delivered app %d, want 4729416", got.AppID)
+	} else if got.AppID != 777 {
+		t.Fatalf("positive control: delivered app %d, want 777", got.AppID)
 	}
 }
 
@@ -622,17 +622,17 @@ func TestSecondaryKeyIsNotDeliveredToAnUnauthorizedHive(t *testing.T) {
 	withTempHivesDir(t)
 	s := newSecondaryAppTestServer(t)
 
-	if err := storeSecondaryAppKey("vllm-d", 4729416, 5686, testAppKeyPEM(t)); err != nil {
+	if err := storeSecondaryAppKey("vllm-d", 777, 5686, testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
-	mustSaveHive(t, &SaaSHive{ID: "authorized", ClusterID: "vllm-d", SecondaryAppID: 4729416})
+	mustSaveHive(t, &SaaSHive{ID: "authorized", ClusterID: "vllm-d", SecondaryAppID: 777})
 	mustSaveHive(t, &SaaSHive{ID: "tenant-b", ClusterID: "vllm-d"})
 
 	// tenant-b asserts every input it controls: its own hive_id, and a held-key
 	// report claiming a STALE fingerprint for the App it wants.
 	hostile := &HeartbeatPayload{
 		HiveID:            "tenant-b",
-		GitHubAppKeysHeld: map[string]string{"4729416": "sha256:stale"},
+		GitHubAppKeysHeld: map[string]string{"777": "sha256:stale"},
 	}
 	if got := s.secondaryAppKeyForHeartbeat(hostile); got != nil {
 		t.Fatalf("an unauthorized hive obtained app %d's private key by asking for it", got.AppID)
@@ -642,7 +642,7 @@ func TestSecondaryKeyIsNotDeliveredToAnUnauthorizedHive(t *testing.T) {
 	// held report, DOES receive it.
 	authorized := &HeartbeatPayload{
 		HiveID:            "authorized",
-		GitHubAppKeysHeld: map[string]string{"4729416": "sha256:stale"},
+		GitHubAppKeysHeld: map[string]string{"777": "sha256:stale"},
 	}
 	if got := s.secondaryAppKeyForHeartbeat(authorized); got == nil {
 		t.Fatal("positive control: the authorized hive received nothing")
@@ -656,10 +656,10 @@ func TestSecondaryDeliveryNeverPopulatesAdditionalKeys(t *testing.T) {
 	withTempHivesDir(t)
 	s := newSecondaryAppTestServer(t)
 
-	if err := storeSecondaryAppKey("vllm-d", 4729416, 5686, testAppKeyPEM(t)); err != nil {
+	if err := storeSecondaryAppKey("vllm-d", 777, 5686, testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
-	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d", SecondaryAppID: 4729416})
+	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d", SecondaryAppID: 777})
 
 	key := s.secondaryAppKeyForHeartbeat(&HeartbeatPayload{HiveID: "hive-a"})
 	if key == nil {
@@ -674,8 +674,8 @@ func TestSecondaryDeliveryNeverPopulatesAdditionalKeys(t *testing.T) {
 	}
 	// And the field is singular by TYPE, so there is no shape in which it can
 	// carry a second tenant's key.
-	if cfg.SecondaryKey.AppID != 4729416 {
-		t.Fatalf("delivered app %d, want 4729416", cfg.SecondaryKey.AppID)
+	if cfg.SecondaryKey.AppID != 777 {
+		t.Fatalf("delivered app %d, want 777", cfg.SecondaryKey.AppID)
 	}
 }
 
@@ -688,7 +688,7 @@ func TestDecideSecondaryAppKeySyncIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const appID = int64(4729416)
+	const appID = int64(777)
 	appKey := fmt.Sprintf("%d", appID)
 
 	cases := []struct {
@@ -736,7 +736,7 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 
 	// This field IS the authorization decision for key delivery, so anything
 	// that can write it can direct key material at a hive. Non-admins may not.
-	if rec := putSecondaryApp(t, s, "bob", "hive-a", 4729416); rec.Code != http.StatusForbidden {
+	if rec := putSecondaryApp(t, s, "bob", "hive-a", 777); rec.Code != http.StatusForbidden {
 		t.Fatalf("non-admin: status = %d, want %d (%s)", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 0 {
@@ -753,11 +753,11 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 	}
 
 	// POSITIVE CONTROL: a genuine second App is recorded.
-	if rec := putSecondaryApp(t, s, hubAdminUsername, "hive-a", 4729416); rec.Code != http.StatusOK {
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "hive-a", 777); rec.Code != http.StatusOK {
 		t.Fatalf("positive control: status = %d (%s)", rec.Code, rec.Body.String())
 	}
-	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 4729416 {
-		t.Fatalf("secondary_app_id = %d, want 4729416", h.SecondaryAppID)
+	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 777 {
+		t.Fatalf("secondary_app_id = %d, want 777", h.SecondaryAppID)
 	}
 
 	// Clearing is explicit and reversible.
@@ -769,7 +769,7 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 	}
 
 	// Unknown hive.
-	if rec := putSecondaryApp(t, s, hubAdminUsername, "nope", 4729416); rec.Code != http.StatusNotFound {
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "nope", 777); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown hive: status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
@@ -786,14 +786,14 @@ func TestSecondaryAppKeysForClusterIgnoresForeignFiles(t *testing.T) {
 	if err := storeClusterAppKey("vllm-d-app-999", testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeSecondaryAppKey("vllm-d", 4729416, 5686, testAppKeyPEM(t)); err != nil {
+	if err := storeSecondaryAppKey("vllm-d", 777, 5686, testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := storeSecondaryAppKey("other", 5945, 5686, testAppKeyPEM(t)); err != nil {
 		t.Fatal(err)
 	}
 	// Non-canonical names that parse as integers but are not ours.
-	for _, name := range []string{"vllm-d-app-0004729416.pem", "vllm-d-app-.pem", "vllm-d-app-x.pem"} {
+	for _, name := range []string{"vllm-d-app-000777.pem", "vllm-d-app-.pem", "vllm-d-app-x.pem"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(testAppKeyPEM(t)), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -810,7 +810,7 @@ func TestSecondaryAppKeysForClusterIgnoresForeignFiles(t *testing.T) {
 		if id == 5945 {
 			t.Fatal("another cluster's secondary key was attributed to vllm-d")
 		}
-		if id == 4729416 {
+		if id == 777 {
 			continue
 		}
 		if id != 999 {
@@ -819,7 +819,7 @@ func TestSecondaryAppKeysForClusterIgnoresForeignFiles(t *testing.T) {
 	}
 	found := false
 	for _, id := range got {
-		if id == 4729416 {
+		if id == 777 {
 			found = true
 		}
 	}
