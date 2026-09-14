@@ -9194,6 +9194,108 @@ test('#6953 a torn override file holds instead of admitting (fail closed)', () =
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ── kubestellar/hive#6967 ────────────────────────────────────────────────────
+// The missing link: the Go rotation probers publish a normalized reading into
+// the pool directory (rotation.ContributorReadingPath / publishContributor
+// ReadingAtomic), and a supported subscription backend with no reading env var
+// reads it from there. These tests drive the CONSUMER end of that contract with
+// the exact schema and pool-keyed path the Go publisher writes; the producer
+// end and the byte-for-byte pool-key parity are pinned in
+// src/pkg/rotation/contributorreading_test.go.
+
+function poolDir6967() {
+  const root = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, 'pool6967-'));
+}
+
+// The file the Go publisher writes for this pool: <dir>/<poolKey>.reading.json.
+function publishReading6967(dir, backend, contents) {
+  const key = poolStore.derivePoolKey({ backend, account: '' });
+  fs.writeFileSync(path.join(dir, `${key}.reading.json`), contents);
+}
+
+test('#6967 a supported backend reads the published pool-keyed reading (healthy admits)', () => {
+  const dir = poolDir6967();
+  // Exactly what HeadroomToContributorReading emits for a healthy probe.
+  publishReading6967(dir, 'claude', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 55, reset_epoch: 1000, resets_at: '2026-01-02T03:04:05Z' }] }));
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  const reading = relay.readContributorQuotaReading();
+  assert.strictEqual(reading.state, 'available', 'the published reading is read, not the unprovisioned fallback');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true, '55% clears the 20% reserve');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 a supported backend holds on a below-reserve published reading', () => {
+  const dir = poolDir6967();
+  publishReading6967(dir, 'codex', JSON.stringify({ state: 'available', limits: [{ id: 'five_hour', kind: 'five_hour', pct_remaining: 5 }] }));
+  const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false,
+    '5% is under the 20% reserve, so the published reading must HOLD; without reading the file it would wrongly admit as unprovisioned');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 the flip: a supported backend with no published reading yet HOLDS, not admits', () => {
+  // The keystone flip. Pool dir configured, supported backend, publisher has
+  // not written yet: this used to be `unprovisioned` (admit+warn); it is now
+  // `unknown` and HOLDS while the publisher catches up.
+  const dir = poolDir6967();
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown',
+    'a missing published reading for a supported backend is unknown, never a healthy admit');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false, 'and unknown holds');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 a torn published reading holds, never admits (atomic-write safety net)', () => {
+  const dir = poolDir6967();
+  publishReading6967(dir, 'claude', '{"state":"available","limits":[{"kind":"weekly","pct_rem');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown', 'a half-written published file is unknown, not a crash');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false, 'and unknown holds — a torn read must never admit blind');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 a probe-error reading (state unknown) published by Go holds, never admits', () => {
+  // What HeadroomToContributorReading emits when a probe FAILS: state unknown,
+  // no windows — never a fabricated healthy reading off the fail-open Available
+  // flag. The consumer must hold on it.
+  const dir = poolDir6967();
+  publishReading6967(dir, 'agy', JSON.stringify({ state: 'unknown', limits: [] }));
+  const relay = loadRelay({ backend: 'agy', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, false,
+    'a failed probe must hold the guard, not admit — publishing a healthy reading off a failed measurement is the fail-open this guard exists to prevent');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 an unsupported backend keeps unprovisioned/admit even with a pool dir (AC#7)', () => {
+  // copilot has no quota adapter; the flip must not strand it holding. With a
+  // pool dir set but no reading, it stays `unprovisioned` and admits, exactly
+  // as before — the guard is unavailable, not on.
+  const dir = poolDir6967();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+    'an unsupported backend never adopts the published-reading hold');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6967 with no pool dir the default is unchanged (unprovisioned admit)', () => {
+  // The flip is scoped to opt-in (pool dir) so a default install with no route
+  // to a reading is not stranded holding forever — the #6951 fleet-stop the
+  // `unprovisioned` admit was created to avoid.
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+});
+
 for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
   try {
     fn();

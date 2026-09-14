@@ -350,6 +350,22 @@ const quotaPool = QUOTA_POOL_DIR
 
 function quotaPoolActive() { return quotaPool !== null; }
 
+// The subscription backends the guard has an adapter for (kubestellar/hive#6967
+// / #6833). On these, the Go rotation probers publish a normalized reading into
+// the pool directory, so "no reading yet" is a transient startup/torn state to
+// HOLD on, not the permanent `unprovisioned` admit an unsupported backend gets.
+// `pi` fronts anthropic and `gemini` fronts google in the default rotation set.
+const QUOTA_GUARD_SUPPORTED_BACKENDS = new Set(['claude', 'pi', 'codex', 'agy', 'gemini']);
+const quotaBackendSupported = QUOTA_GUARD_SUPPORTED_BACKENDS.has(BACKEND);
+
+// The pool-keyed reading file the Go publisher writes and this relay reads when
+// no reading env var is set. Same directory and key as the #6953 store, its own
+// `.reading.json` suffix. Matches rotation.ContributorReadingPath in Go.
+function quotaPublishedReadingFile() {
+  return quotaPool ? path.join(quotaPool.dir, `${quotaPool.poolKey}.reading.json`) : '';
+}
+
+
 // The reset epoch of a normalized window, however the adapter spells it. This
 // is what makes an until-reset override expire MECHANICALLY: the override pins
 // the epoch it was created against, and the moment the window reports a
@@ -532,13 +548,24 @@ function readContributorQuotaReading() {
   if (QUOTA_READING_FILE) {
     return parse('HIVE_CONTRIBUTOR_QUOTA_READING_FILE', () => JSON.parse(fs.readFileSync(QUOTA_READING_FILE, 'utf8')));
   }
+  // With no reading env var set, a supported subscription backend whose pool
+  // directory is configured reads the reading the Go rotation publisher writes
+  // there (kubestellar/hive#6967). This is the link that turns the guard on: a
+  // missing or torn published file is `unknown` and HOLDS — the safe direction
+  // while the publisher catches up — instead of the `unprovisioned` admit. The
+  // flip is deliberately scoped to (supported backend AND pool dir), so a host
+  // that has no route to a reading is not stranded holding forever, the exact
+  // fleet-wide stop #6951's `unprovisioned` admit was created to avoid.
+  const publishedFile = quotaPublishedReadingFile();
+  if (publishedFile && quotaBackendSupported) {
+    return parse('published quota reading', () => JSON.parse(fs.readFileSync(publishedFile, 'utf8')));
+  }
   // "No reading source configured" is NOT the same as "a configured source we
   // cannot read", and #6951 turns on the difference. A configured-but-broken
   // source is `unknown` and holds. An unconfigured one means the guard was
-  // never provisioned on this host: nothing populates either env var yet (that
-  // prober is descoped to a sibling issue), so holding here would stop every
-  // default install on the fleet from ever asking for work again. It stays
-  // inert and says so, once.
+  // never provisioned on this host: nothing populates a reading here (no pool
+  // directory, or a backend with no adapter), so holding would stop the relay
+  // from ever asking for work again. It stays inert and says so, once.
   return { state: 'unprovisioned', limits: [] };
 }
 

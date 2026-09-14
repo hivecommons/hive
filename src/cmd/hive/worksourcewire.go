@@ -55,6 +55,14 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 	// provider's subscription/credit is exhausted. Nil when disabled.
 	if w.cfg.Governor.Rotation.Enabled {
 		w.rotationMgr = rotation.NewManager(w.cfg.Governor.Rotation)
+		// Publish normalized readings to where the contributor quota guard reads
+		// them (kubestellar/hive#6967). Opt-in via the same pool directory the
+		// #6953 cross-process store uses: when set, the guard for a supported
+		// subscription backend gets a real reading instead of running inert.
+		if dir := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_DIR")); dir != "" {
+			w.rotationMgr.EnableContributorReadingPublish(dir, strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT")))
+			w.logger.Info("contributor quota reading publisher enabled", "pool_dir", dir)
+		}
 		w.rotationMgr.Start(w.ctx)
 		w.logger.Info("provider rotation enabled",
 			"threshold_pct", w.cfg.Governor.Rotation.EffectiveThreshold(),

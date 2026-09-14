@@ -697,6 +697,13 @@ type Manager struct {
 
 	mu       sync.RWMutex
 	headroom map[string]Headroom
+
+	// Contributor quota reading publisher (kubestellar/hive#6967). When
+	// contributorPublishDir is set, every stored headroom for a guard-supported
+	// provider is also published, keyed by pool, to where the JS relay guard
+	// reads it. Empty dir = disabled, and the relay behaves exactly as before.
+	contributorPublishDir     string
+	contributorPublishAccount string
 }
 
 // NewManager builds a Manager with the default prober set for every provider
@@ -752,6 +759,7 @@ func (m *Manager) probeAll(ctx context.Context) {
 		m.mu.Lock()
 		m.headroom[p.Provider()] = h
 		m.mu.Unlock()
+		m.publishContributorReading(h)
 	}
 }
 
@@ -760,6 +768,7 @@ func (m *Manager) SetHeadroom(h Headroom) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.headroom[h.Provider] = h
+	m.publishContributorReading(h)
 }
 
 // HeadroomFor returns the last known headroom for a provider. An unknown
