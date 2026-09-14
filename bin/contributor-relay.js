@@ -65,6 +65,9 @@ const {
   classifyPane,
 } = require('./lib/pane-classifier.js');
 
+// Cross-process quota-pool store + scoped override channel (hivecommons/hive#6953).
+const quotaPoolStore = require('./lib/quota-pool-store.js');
+
 const rawHub = process.env.HIVE_HUB || 'wss://hive.kubestellar.io:3001/contribute';
 // Multi-hub (hivecommons/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
 // may each be a comma-separated list, one token per hub in the same order, so
@@ -305,6 +308,140 @@ const QUOTA_GUARD_RETRY_MS = (() => {
 let contributorQuotaPaused = false;
 let contributorQuotaStayPaused = false;
 
+// ── Cross-process quota-pool store + override channel (hivecommons/hive#6953) ─
+//
+// #6833 wants guard state keyed by the local quota POOL, not by relay process,
+// so two relays on one provider account share one reserve, and it wants scoped
+// overrides that reach a DETACHED relay through a reliable command path. Both
+// live in one on-disk pool directory (see lib/quota-pool-store.js for why they
+// are one mechanism).
+//
+// SAFE-SUBSET / DEVIATION (documented on #6953): the pool store is OPT-IN,
+// active only when HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set. Nothing derives the
+// provider account identity yet (that prober is descoped to the adapter
+// sibling), so keying every default install by a guessed pool identity — or
+// serializing two relays that may not even share an account — would change
+// default behaviour with no reading to justify it, the same reason #6951's
+// "unknown ⇒ hold" was scoped to a distinct `unprovisioned` admit. When the
+// dir is unset the guard behaves exactly as before: purely in-process.
+const QUOTA_POOL_DIR = (process.env.HIVE_CONTRIBUTOR_QUOTA_POOL_DIR || '').trim();
+// The account component of the pool identity. It is HASHED into an opaque key
+// and never logged raw (#6833 privacy). Unset keys the pool off the backend
+// alone — same-backend relays on one host share, which can only UNDER-, never
+// over-subscribe the true account pool.
+const QUOTA_POOL_ACCOUNT = (process.env.HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT || '').trim();
+// A stable id for THIS relay session, so a disable-session override targets one
+// process and a session opt-out expires when this process exits. Falls back to
+// the HIVE_SESSION label, then the pid — never an account identifier.
+const QUOTA_SESSION_ID = (process.env.HIVE_CONTRIBUTOR_QUOTA_SESSION_ID || '').trim()
+  || (process.env.HIVE_SESSION || '').trim()
+  || `pid-${process.pid}`;
+// Per-process reservation identity. A reservation is this relay's claim on the
+// shared pool while it runs a task; peers must account for it before admitting.
+const QUOTA_RELAY_ID = `${QUOTA_SESSION_ID}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+// A reservation is a lease, not a lock: if a relay crashes mid-task its file is
+// swept once this TTL lapses so a dead peer cannot wedge the pool forever. It
+// is refreshed on every progress tick, so a long, healthy task keeps its claim.
+const QUOTA_RESERVATION_TTL_MS = RELAY_TEST_TIMING ? 200 : 15 * 60 * 1000;
+
+const quotaPool = QUOTA_POOL_DIR
+  ? { dir: QUOTA_POOL_DIR, poolKey: quotaPoolStore.derivePoolKey({ backend: BACKEND, account: QUOTA_POOL_ACCOUNT }) }
+  : null;
+
+function quotaPoolActive() { return quotaPool !== null; }
+
+// The reset epoch of a normalized window, however the adapter spells it. This
+// is what makes an until-reset override expire MECHANICALLY: the override pins
+// the epoch it was created against, and the moment the window reports a
+// different one the override no longer matches and is inert.
+function quotaWindowResetEpoch(window) {
+  const raw = window && (window.reset_epoch ?? window.resets_at ?? window.reset_at);
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+// A continue-* override is consent to spend BELOW the configured reserve. It is
+// deliberately NOT honoured for unknown/stale/unprovisioned readings: those are
+// "we cannot see the quota", and consenting to fly blind is the fail-open this
+// guard exists to prevent. So overrides only ever convert a `guarded` (reserve)
+// hold into an admit, and only when the override genuinely still applies.
+function quotaOverrideApplies(override, guardWindow, reading) {
+  if (!override) return false;
+  switch (override.directive) {
+    case 'disable_session':
+      // Session opt-out: expires when this process exits (a new process gets a
+      // new QUOTA_SESSION_ID, so a stale file never authorizes a later run).
+      return override.session_id === QUOTA_SESSION_ID;
+    case 'continue_once':
+      // Expires after one admitted assignment; consumption happens at the
+      // task-admission site, not here (evaluate also runs for `ready`).
+      return true;
+    case 'continue_until_reset': {
+      // Bound to the EXACT guarded window and the reset epoch it was created
+      // against. A different window, or the same window after its reset epoch
+      // rolls, no longer matches.
+      if (!guardWindow) return false;
+      const id = guardWindow.id || guardWindow.kind;
+      if (override.window_id !== id) return false;
+      const epoch = quotaWindowResetEpoch(guardWindow);
+      return epoch !== null && override.reset_epoch === epoch;
+    }
+    default:
+      return false;
+  }
+}
+
+// A pause-until-reset override forces a hold even when a reading has cleared,
+// until the window it names resets — an explicit pause outranking an automatic
+// resume (#6833). Absent that window from the reading (or a rolled epoch) it has
+// expired and no longer holds.
+function quotaPauseOverrideActive(override, reading) {
+  if (!override || override.directive !== 'pause_until_reset') return false;
+  const windows = (reading && reading.limits) || [];
+  for (const w of windows) {
+    const id = w.id || w.kind;
+    if (override.window_id !== id) continue;
+    const epoch = quotaWindowResetEpoch(w);
+    if (epoch !== null && override.reset_epoch === epoch) return true;
+  }
+  return false;
+}
+
+function readQuotaOverride() {
+  return quotaPoolActive() ? quotaPoolStore.readOverride(quotaPool) : null;
+}
+
+// consumeQuotaOverrideOnce clears a continue-once override the instant the one
+// assignment it authorized is admitted, so it can never silently become a
+// standing authorization to keep spending.
+function consumeQuotaOverrideOnce() {
+  if (!quotaPoolActive()) return;
+  const ov = quotaPoolStore.readOverride(quotaPool);
+  if (ov && ov.directive === 'continue_once') quotaPoolStore.clearOverride(quotaPool);
+}
+
+// Claim this relay's share of the shared pool while a task is in flight.
+function reserveQuotaPool() {
+  if (!quotaPoolActive()) return;
+  try { quotaPoolStore.writeReservation(quotaPool, QUOTA_RELAY_ID, Date.now() + QUOTA_RESERVATION_TTL_MS); } catch (_) {}
+}
+
+function refreshQuotaPoolReservation() {
+  if (!quotaPoolActive() || !currentTask) return;
+  reserveQuotaPool();
+}
+
+function releaseQuotaPoolReservation() {
+  if (!quotaPoolActive()) return;
+  try { quotaPoolStore.releaseReservation(quotaPool, QUOTA_RELAY_ID); } catch (_) {}
+}
+
+function quotaPoolHasPeerReservation() {
+  if (!quotaPoolActive()) return false;
+  return quotaPoolStore.activePeerReservations(quotaPool, QUOTA_RELAY_ID).length > 0;
+}
+
+
 function parseQuotaPctEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || String(raw).trim() === '') return fallback;
@@ -422,6 +559,15 @@ function warnQuotaGuardUnprovisionedOnce() {
 function evaluateContributorQuota(task, reading = readContributorQuotaReading(), opts = {}) {
   if (QUOTA_GUARD_MODE === 'off') return { admit: true };
   if (contributorQuotaStayPaused) return { admit: false, wait: true, reason: 'explicit_pause' };
+  // Overrides and pool state come from the shared on-disk store when one is
+  // configured (kubestellar/hive#6953). An explicit pause-until-reset override
+  // outranks a fresh reading, exactly like the in-process stay-paused above:
+  // someone told this pool to stand down and a recovered reading is not consent
+  // to resume.
+  const override = readQuotaOverride();
+  if (quotaPauseOverrideActive(override, reading)) {
+    return { admit: false, wait: true, reason: 'override_pause' };
+  }
   const state = (reading && reading.state) || 'unknown';
   if (state === 'unprovisioned') {
     warnQuotaGuardUnprovisionedOnce();
@@ -442,15 +588,32 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     if (!Number.isFinite(remaining)) return { admit: false, wait: true, reason: 'unknown' };
     const required = opts.baseReserveOnly ? quotaWindowReserve(kind) : quotaRequiredReserve(window, complexity);
     if (remaining <= required) {
-      // Same refusal either way — only the label differs, so an operator can
+      // A scoped continue-* override is a human's explicit consent to spend
+      // below the reserve on THIS window. It admits, but records the scope it
+      // relied on so the caller can expire a continue-once after exactly one
+      // assignment -- it must never silently become a standing spend authority.
+      if (quotaOverrideApplies(override, window, reading)) {
+        contributorQuotaPaused = false;
+        return { admit: true, reason: `override_${override.directive}`, override: override.directive, window_id: window.id || kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
+      }
+      // Same refusal either way -- only the label differs, so an operator can
       // read "your quota is low" apart from "the provider showed us a window
       // kind this build has never seen" (kubestellar/hive#6951). The second
       // is the case worth noticing: it means the reserve overrides for that
       // window fell back to the base percentage, and it is how a kind like
       // `weekly_scoped` announces itself the first time.
       const reason = quotaWindowKindIsKnown(kind) ? 'guarded' : 'guarded_unknown_window';
-      return { admit: false, wait: true, reason, window_id: window.id || kind, window_kind: kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
+      return { admit: false, wait: true, reason, window_id: window.id || kind, window_kind: kind, remaining_pct: remaining, required_reserve_pct: required, complexity, reset_epoch: quotaWindowResetEpoch(window) };
     }
+  }
+  // Reading is healthy, but a peer relay on the SAME pool may already hold a
+  // reservation against it (kubestellar/hive#6953). Admitting anyway is the
+  // per-process oversubscription #6833 forbids: two relays each keeping their
+  // own reserve against one account. Hold until the peer releases; the retry
+  // timer re-checks. A continue-* override does NOT bypass this — it is consent
+  // to spend the contributor's OWN reserve, not to double-book a peer's.
+  if (!opts.ignorePoolReservation && quotaPoolHasPeerReservation()) {
+    return { admit: false, wait: true, reason: 'pool_reserved' };
   }
   contributorQuotaPaused = false;
   return { admit: true };
@@ -495,6 +658,24 @@ function logContributorQuotaDecision(task, decision) {
   // Nothing else will restart the loop once `ready` is being suppressed
   // (kubestellar/hive#6951).
   armContributorQuotaRetry();
+  // Publish what's holding to the shared pool so a detached control command
+  // (`just contribute-quota …`) can pin an until-reset override to the EXACT
+  // window/epoch, and target this session for a disable-session opt-out
+  // (kubestellar/hive#6953). Carries no account id, credential, or billing
+  // figure — only window id, reset epoch, and the two percentages.
+  if (quotaPoolActive()) {
+    try {
+      quotaPoolStore.writeStatus(quotaPool, {
+        backend: BACKEND,
+        session_id: QUOTA_SESSION_ID,
+        reason: decision.reason,
+        window_id: decision.window_id || null,
+        reset_epoch: decision.reset_epoch ?? null,
+        remaining_pct: decision.remaining_pct ?? null,
+        required_reserve_pct: decision.required_reserve_pct ?? null,
+      });
+    } catch (_) {}
+  }
   console.warn('');
   console.warn('┌─ CONTRIBUTOR QUOTA GUARD ─────────────────────────────────');
   console.warn(`│ ${BACKEND} is not accepting new work: ${decision.reason}`);
@@ -503,8 +684,30 @@ function logContributorQuotaDecision(task, decision) {
     console.warn(`│ Kind ${JSON.stringify(decision.window_kind)} is not one this build recognizes, so the base`);
     console.warn('│ reserve applied and any short/weekly override did not. It is still a real limit.');
   }
+  // Reset time is shown when a normalized window supplied one. #6833 wants it in
+  // the banner; the adapter that populates it is a sibling issue, so this is
+  // conditional rather than a hard-coded placeholder that would lie.
+  if (Number.isFinite(Number(decision.reset_epoch))) {
+    console.warn(`│ Window resets at ${new Date(Number(decision.reset_epoch)).toISOString()}.`);
+  }
   if (task) console.warn(`│ Pending task: ${task.title || task.task_id || 'unknown'} (${normalizeTaskComplexity(task)}).`);
   console.warn('│ No new work will start while paused. Continuing may consume paid credits if your provider has them enabled.');
+  // `ask` advertises the four scoped controls #6833 asks for and the reliable
+  // command path that reaches this relay even detached. `pause` is the same
+  // safe hold WITHOUT offering an override, which is what makes the two modes
+  // distinguishable at last (kubestellar/hive#6953). No TTY and no response is
+  // already the safe default: the relay simply stays held.
+  if (QUOTA_GUARD_MODE === 'ask') {
+    console.warn('│ Scoped controls (safe default is to stay paused until this window resets):');
+    console.warn('│   just contribute-quota continue-once          — admit one task, then re-check');
+    console.warn('│   just contribute-quota continue-until-reset   — admit until this window resets');
+    console.warn('│   just contribute-quota disable-session        — turn the guard off for this session');
+    console.warn('│   just contribute-quota pause-until-reset      — stay paused even if quota recovers');
+    console.warn('│   just contribute-quota resume                 — clear an override');
+    if (!quotaPoolActive()) {
+      console.warn('│   (set HIVE_CONTRIBUTOR_QUOTA_POOL_DIR to enable the command path for a detached relay)');
+    }
+  }
   console.warn('│ Set HIVE_CONTRIBUTOR_QUOTA_GUARD=off at launch to opt out for this session.');
   console.warn('└────────────────────────────────────────────────────────────');
   console.warn('');
@@ -1639,6 +1842,7 @@ function runHeadlessTask(task) {
       stopAgentForTaskExit();
       send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined, ...effectiveSelectionFields() });
       currentTask = null;
+      releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       tasksCompletedCount++;
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
@@ -3639,6 +3843,7 @@ function failCurrentTask(reason, opts) {
     ...effectiveSelectionFields(),
   });
   currentTask = null;
+  releaseQuotaPoolReservation();
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
@@ -3907,6 +4112,12 @@ function maybeSendAutonomyNudge(tmuxLines) {
 function progressTick() {
   lastProgressTick = Date.now();
   if (!currentTask) return;
+
+  // Keep this relay's claim on the shared quota pool alive while a task really
+  // is in flight (kubestellar/hive#6953): the reservation is a lease so a
+  // crashed relay's claim expires, but a long, healthy task must not let its
+  // own lease lapse and let a peer double-book the reserve underneath it.
+  refreshQuotaPoolReservation();
 
   // Surface the credential's remaining lifetime BEFORE the grace-period return
   // and before any of the pane judging below, so a token that is about to lapse
@@ -4236,6 +4447,7 @@ function progressTick() {
     // the next off its own output — a review loop with no new work behind it.
     const completedWasReviewCycle = isLocalOnlyTask(currentTask);
     currentTask = null;
+    releaseQuotaPoolReservation();
     taskAssignedAt = 0;
     clearInterval(progressInterval);
     progressInterval = null;
@@ -4591,6 +4803,13 @@ function handleMessage(data, hub) {
       // below can fail, and never cleared, so a PR opened during this task
       // stays reviewable for the rest of the session.
       recordAuthorizedRepo(msg.repo);
+      // A continue-once override authorized exactly this one admission; consume
+      // it now so it can never become a standing authorization to keep spending
+      // (kubestellar/hive#6953). And claim this relay's share of the shared pool
+      // so a peer relay on the same account holds instead of double-booking the
+      // same reserve.
+      if (quotaDecision.override === 'continue_once') consumeQuotaOverrideOnce();
+      reserveQuotaPool();
       // Non-enumerable: currentTask IS msg, and msg gets JSON.stringify'd
       // wholesale to TASK_FILE a few lines down. hub carries live
       // setInterval/setTimeout handles (heartbeatInterval, reconnectTimer),
@@ -4697,6 +4916,7 @@ function handleMessage(data, hub) {
       }
       console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
       currentTask = null;
+      releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // The max-duration lease dies with the task it bounds. Previously leaked
@@ -4925,6 +5145,7 @@ function cleanup() {
   if (currentTask) {
     stopAgentForTaskExit({ reason: 'relay shutdown', noRelaunch: true });
     currentTask = null;
+    releaseQuotaPoolReservation();
   }
 }
 
@@ -5012,6 +5233,20 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     retryContributorQuota,
     armContributorQuotaRetry,
     QUOTA_GUARD_RETRY_MS,
+    // Cross-process pool store + scoped overrides (kubestellar/hive#6953).
+    quotaPoolActive,
+    reserveQuotaPool,
+    releaseQuotaPoolReservation,
+    refreshQuotaPoolReservation,
+    quotaPoolHasPeerReservation,
+    readQuotaOverride,
+    consumeQuotaOverrideOnce,
+    quotaOverrideApplies,
+    quotaPauseOverrideActive,
+    QUOTA_SESSION_ID,
+    QUOTA_RELAY_ID,
+    QUOTA_POOL_KEY: quotaPool ? quotaPool.poolKey : null,
+    quotaPoolStore,
     setContributorQuotaPaused: (v) => { contributorQuotaPaused = !!v; },
     setContributorQuotaStayPaused: (v) => { contributorQuotaStayPaused = !!v; },
     getContributorQuotaPaused: () => contributorQuotaPaused,

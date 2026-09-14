@@ -100,6 +100,9 @@ Important environment variables:
 | `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` | unset | Path to a JSON quota reading the guard evaluates: `{"state": …, "limits": [{"id": …, "kind": …, "pct_remaining": …, "resets_at": …}]}`. Re-read on each decision, so a writer refreshing the file is what lifts a hold. A missing, torn or malformed file is treated as `unknown` and **holds** work rather than crashing the relay or admitting blind — so the writer should rename atomically, since a hold is still a hold. |
 | `HIVE_CONTRIBUTOR_QUOTA_READING_JSON` | unset | The same reading supplied inline, taking precedence over `HIVE_CONTRIBUTOR_QUOTA_READING_FILE`. Intended for tests and for supervisors that already hold the reading in memory. Being a fixed launch-time value it never changes, so a hold against it cannot lift by itself — prefer the file for long-running relays. |
 | `HIVE_CONTRIBUTOR_QUOTA_RETRY_MS` | `60000` | How often a guarded relay re-reads the quota and re-advertises `ready` once every effective reserve is clear. Must be a positive integer of milliseconds. An explicit contributor pause outranks a recovered reading. |
+| `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` | unset | Directory for the cross-process quota-pool store (kubestellar/hive#6953). When set, relays that resolve to the same pool key share one guard state through atomically-written files: a peer relay holding an in-flight task reserves the pool so a second relay on the same account cannot independently oversubscribe the reserve, and this is the directory the out-of-band `just contribute-quota …` controls write overrides into. Unset (the default) keeps the guard purely in-process, unchanged from before. |
+| `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT` | unset | Account component of the pool key. It is **hashed** into an opaque 16-hex key and never logged raw (privacy). Two relays with the same value share one pool; unset keys the pool off the backend name alone (same-backend relays on one host share, which can only under-subscribe the true account pool, never over-subscribe). |
+| `HIVE_CONTRIBUTOR_QUOTA_SESSION_ID` | `HIVE_SESSION` then `pid-<pid>` | Stable id for this relay session. A `disable-session` override targets it, and a session opt-out expires when the process exits (a new process gets a new id, so a stale opt-out never authorizes a later run). Never an account identifier. |
 | `HIVE_CODEX_SANDBOX_MODE` | probed (see note) | Codex `--sandbox` value. Left unset, hive resolves it at launch instead of hard-coding one: `workspace-write` everywhere it can work, and `danger-full-access` **only** inside the contributor container when that container blocks the unprivileged user namespace `workspace-write`'s bubblewrap needs (#6653). Setting this pins one value and skips the probe. |
 | `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | unset | Drops the defense-in-depth Claude command denylist. In local mode the native filesystem sandbox still applies, so this does not grant host writes. |
@@ -268,6 +271,35 @@ Notes:
 - The hub sanitizes the label before use: only `[A-Za-z0-9._-]` survive, capped at 32 bytes. `HIVE_SESSION="my session!"` becomes `mysession` — you will not get the label you typed. A label that sanitizes to empty counts as unset.
 - `HIVE_SESSION=""` (explicit empty string) opts out entirely: the relay declares no session and the hub uses the bare per-account identity — byte-for-byte the pre-session single-relay behavior.
 - The feature is additive and backward-compatible: an older hub ignores the unknown field and treats the relay as a single session, and an existing single relay that never sets `HIVE_SESSION` still defaults to its backend name, which only matters once a second relay connects.
+
+### Sharing one quota reserve across those relays
+
+Extra sessions share your provider account's quota, so two relays under one account can each hold their own reserve against the *same* pool and, between them, spend past it. The cross-process quota-pool store closes that gap. Set `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` (and, when two relays authenticate to the same account, an identical `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT`) on every relay that shares a provider account:
+
+```bash
+HIVE_CONTRIBUTOR_QUOTA_POOL_DIR=~/.config/hive/quota-pool \
+HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT=my-anthropic-account \
+  just contribute-hive claude
+```
+
+Relays that resolve to the same opaque pool key then share one guard state through atomically-written files. While one relay runs a task it reserves the pool; a second relay on the same pool holds rather than admitting alongside it, so the two cannot independently oversubscribe the reserve. The reservation is a lease refreshed while the task runs and swept if a relay dies, so a crash cannot wedge the pool. The account value is hashed into the key and never logged raw. The store is opt-in — with `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` unset the guard is purely in-process, exactly as before.
+
+> Note (safe subset, kubestellar/hive#6953): nothing derives the provider account identity automatically yet — that prober is a separate issue — so the pool is opt-in and keyed by what you configure. A default install with no reading source still admits (it has nothing to guard), unchanged.
+
+### Scoped controls when the guard holds (`ask` mode)
+
+In the default `ask` mode, when the guard holds it prints the four scoped controls #6833 specifies. Because the relay usually runs detached, these reach it through the pool directory rather than its stdin, so they work against a container or a background process. Run them from the repo (they honour the same `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` / account as the relay):
+
+```bash
+just contribute-quota continue-once          # admit one task, then re-evaluate the guard
+just contribute-quota continue-until-reset   # admit until the guarded window's reset epoch changes
+just contribute-quota disable-session        # turn the guard off for the running relay session
+just contribute-quota pause-until-reset      # stay paused even if quota recovers, until the window resets
+just contribute-quota resume                 # clear any active override
+just contribute-quota status                 # show the relay's current hold and any override
+```
+
+Every override is narrowly scoped and expires mechanically, so none silently becomes a standing authorization to spend: `continue-once` is consumed after exactly one admitted assignment; `continue-until-reset` and `pause-until-reset` expire the moment that exact window reports a new reset epoch; `disable-session` expires when the session process exits. An override only ever authorizes spending below *your own* configured reserve — it never bypasses an unknown/unreadable quota (that still holds), and it never enables paid credits or changes any provider billing setting. `pause` mode holds the same way but offers no override path; `off` disables the guard for the session.
 
 ## Choosing a model
 

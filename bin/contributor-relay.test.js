@@ -8900,6 +8900,243 @@ test('contributor quota guarded relay withholds ready while idle', () => {
 });
 
 const only = process.env.RELAY_TEST_ONLY;
+
+// ── kubestellar/hive#6953 ────────────────────────────────────────────────────
+// Scoped override controls + a cross-process quota-pool store. Both live in one
+// per-pool directory the relay reads on every guard evaluation, so a detached
+// relay is reachable without a stdin. The store is opt-in (a pool dir must be
+// configured); when it is unset the guard is purely in-process, which is why
+// every test here sets HIVE_CONTRIBUTOR_QUOTA_POOL_DIR explicitly.
+
+const poolStore = require('./lib/quota-pool-store.js');
+
+function poolDir6953() {
+  const root = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, 'pool6953-'));
+}
+
+// A guarded (below-reserve) reading: default reserve is 20, so a 10% window
+// holds unless a scoped override consents.
+const GUARDED_6953 = JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 10, reset_epoch: 1000 }] });
+// A healthy reading, used for the pause-until-reset and oversubscription cases.
+const HEALTHY_6953 = JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90, reset_epoch: 1000 }] });
+
+function poolFor(relay, dir) { return { dir, poolKey: relay.QUOTA_POOL_KEY }; }
+
+test('#6953 pool identity is opaque: no account identifier survives into the key', () => {
+  const key = poolStore.derivePoolKey({ backend: 'claude', account: 'user@example.com:acct-9931' });
+  assert.match(key, /^[0-9a-f]{16}$/, 'the pool key is a short hex digest, safe to put in a filename or log');
+  assert.strictEqual(key.includes('acct-9931'), false, 'the raw account identifier must never appear in the key (#6833 privacy)');
+  assert.strictEqual(key.includes('example.com'), false);
+  assert.notStrictEqual(key, poolStore.derivePoolKey({ backend: 'claude', account: 'other-acct' }),
+    'two different accounts must not collide onto one shared reserve');
+});
+
+test('#6953 continue-once expires after exactly one assignment', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  const pool = poolFor(relay, dir);
+  poolStore.writeOverride(pool, { directive: 'continue_once' });
+  relay.setCliReady(true);
+  relay.getHubs()[0].serverCapabilities = ['quota_preflight_v1'];
+  const sent = [];
+  relay.setWs({ readyState: 1, send: p => sent.push(JSON.parse(p)) });
+  relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'one', complexity: 'medium' }));
+  assert.ok(sent.some(m => m.type === 'task_accepted'), 'the one authorized assignment is admitted');
+  assert.strictEqual(relay.readQuotaOverride(), null, 'and the override is consumed, never a standing authorization to spend');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'two', complexity: 'medium' }).admit, false,
+    'the very next task is guarded again — continue-once means once');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 continue-until-reset expires when the exact window reset epoch changes', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  const pool = poolFor(relay, dir);
+  poolStore.writeOverride(pool, { directive: 'continue_until_reset', window_id: 'weekly', reset_epoch: 1000 });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'the override pins this window at this reset epoch, so it admits while the epoch holds');
+  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 10, reset_epoch: 2000 }] };
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, rolled).admit, false,
+    'once the window resets to a new epoch the override no longer matches and the guard holds again');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 disable-session expires when the session id no longer matches', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_SESSION_ID: 's-abc', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  const pool = poolFor(relay, dir);
+  assert.strictEqual(relay.QUOTA_SESSION_ID, 's-abc');
+  poolStore.writeOverride(pool, { directive: 'disable_session', session_id: 's-abc' });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'a session opt-out admits for THIS session');
+  poolStore.writeOverride(pool, { directive: 'disable_session', session_id: 's-different' });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false,
+    'an opt-out written by/for another session must not authorize this one (it expires when the session exits)');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 pause-until-reset outranks a fully recovered reading', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: HEALTHY_6953 } });
+  const pool = poolFor(relay, dir);
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'precondition: the reading is healthy, so absent an override the guard admits');
+  poolStore.writeOverride(pool, { directive: 'pause_until_reset', window_id: 'weekly', reset_epoch: 1000 });
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false, 'an explicit pause must outrank an automatic resume');
+  assert.strictEqual(d.reason, 'override_pause');
+  const rolled = { state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90, reset_epoch: 2000 }] };
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }, rolled).admit, true,
+    'and the pause expires the moment that exact window resets');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 an override never bypasses an unknown/blind reading (fail closed)', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'unknown', limits: [] }) } });
+  poolStore.writeOverride(poolFor(relay, dir), { directive: 'continue_once' });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false,
+    'a continue override is consent to spend below the reserve, not consent to fly blind on an unreadable quota');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 two relays on one pool cannot independently oversubscribe the reserve', () => {
+  const dir = poolDir6953();
+  // Relay A takes a task and claims its share of the shared pool.
+  const relayA = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: HEALTHY_6953 } });
+  relayA.reserveQuotaPool();
+  // Relay B, same account/pool, sees the SAME healthy reading. Per-process it
+  // would admit too and both would draw down one reserve; sharing the pool it
+  // must hold until A releases.
+  const relayB = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: HEALTHY_6953 } });
+  assert.strictEqual(relayA.QUOTA_POOL_KEY, relayB.QUOTA_POOL_KEY, 'same account keys onto one pool');
+  const d = relayB.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false, 'per-process behaviour (each admitting) is exactly the oversubscription #6833 forbids');
+  assert.strictEqual(d.reason, 'pool_reserved');
+  // Once A releases, B is free to admit.
+  relayA.releaseQuotaPoolReservation();
+  assert.strictEqual(relayB.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'and the hold lifts the instant the peer releases its reservation');
+  teardown(relayA);
+  teardown(relayB);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 a relay does not hold against its own reservation', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: HEALTHY_6953 } });
+  relay.reserveQuotaPool();
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true,
+    'the anti-oversubscription hold is about PEER reservations; a relay must not deadlock on itself');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 the documented command path reaches a detached relay', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false,
+    'precondition: the relay is holding on the reserve');
+  // Drive the real `just contribute-quota continue-once` code path (its Node
+  // implementation), pointed at the same pool the relay reads.
+  const control = require('./contributor-quota-control.js');
+  const savedEnv = { ...process.env };
+  process.env.HIVE_CONTRIBUTOR_QUOTA_POOL_DIR = dir;
+  process.env.AGENT_BACKEND = 'copilot';
+  delete process.env.HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT;
+  const savedLog = console.log;
+  console.log = () => {};
+  try {
+    control.main(['continue-once']);
+  } finally {
+    console.log = savedLog;
+    process.env = savedEnv;
+    process.env.HIVE_RELAY_TEST_MODE = '1';
+  }
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, true, 'an override dropped by the out-of-band command reaches the running relay through the pool file');
+  assert.strictEqual(d.override, 'continue_once');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 ask advertises the four scoped controls; pause holds without them', () => {
+  function bannerLines(mode) {
+    const dir = poolDir6953();
+    const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_GUARD: mode, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+    relay.setCliReady(true);
+    relay.setWs({ readyState: 1, send: () => {} });
+    const lines = [];
+    const savedWarn = console.warn;
+    console.warn = (...a) => lines.push(a.join(' '));
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    } finally { console.warn = savedWarn; }
+    teardown(relay);
+    fs.rmSync(dir, { recursive: true, force: true });
+    return lines.join('\n');
+  }
+  const ask = bannerLines('ask');
+  assert.ok(/continue-once/.test(ask) && /continue-until-reset/.test(ask) && /disable-session/.test(ask) && /pause-until-reset/.test(ask),
+    'ask must present all four scoped controls, which is what finally distinguishes it from pause');
+  const pause = bannerLines('pause');
+  assert.strictEqual(/continue-once/.test(pause), false,
+    'pause is the same safe hold WITHOUT offering an override path');
+});
+
+test('#6953 the hold banner shows the window reset time when the reading supplies one', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  relay.setCliReady(true);
+  relay.setWs({ readyState: 1, send: () => {} });
+  const lines = [];
+  const savedWarn = console.warn;
+  console.warn = (...a) => lines.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+  } finally { console.warn = savedWarn; }
+  const text = lines.join('\n');
+  assert.ok(/resets at/.test(text) && new RegExp(new Date(1000).toISOString()).test(text),
+    'the reset epoch on the guarded window must reach the banner (#6833 required message content)');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 the published hold status carries no account identifier or credential', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT: 'secret-acct-777', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  relay.setCliReady(true);
+  relay.setWs({ readyState: 1, send: () => {} });
+  const savedWarn = console.warn;
+  console.warn = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+  } finally { console.warn = savedWarn; }
+  const status = poolStore.readStatus(poolFor(relay, dir));
+  assert.ok(status, 'a hold publishes a status file for the control command to scope against');
+  assert.strictEqual(JSON.stringify(status).includes('secret-acct-777'), false,
+    'the published status must expose no raw account identifier (#6833 privacy)');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#6953 a torn override file holds instead of admitting (fail closed)', () => {
+  const dir = poolDir6953();
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: GUARDED_6953 } });
+  fs.writeFileSync(poolStore.overrideFile(poolFor(relay, dir)), '{"directive":"continue_once');
+  assert.strictEqual(relay.readQuotaOverride(), null, 'a half-written override reads as no override, never a partial admit');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, false, 'so the guard still holds');
+  teardown(relay);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
   try {
     fn();

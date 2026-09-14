@@ -1813,6 +1813,33 @@ contribute-stop:
     done
     $STOPPED && echo "Stopped." || echo "Not running."
 
+# Scoped contributor quota-guard controls (hivecommons/hive#6953).
+#
+# When the quota guard holds new work, these reach the RUNNING relay even when it
+# is detached (a container, a K8s pod, a background process) by dropping a scoped
+# override into the shared pool directory the relay reads on every guard check.
+# The relay must be launched with HIVE_CONTRIBUTOR_QUOTA_POOL_DIR set for the
+# command path to reach it; this recipe honours the same variable.
+#
+# Usage: just contribute-quota continue-once
+#        just contribute-quota continue-until-reset
+#        just contribute-quota disable-session
+#        just contribute-quota pause-until-reset
+#        just contribute-quota resume
+#        just contribute-quota status
+contribute-quota action="status":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Inherit the relay's own pool/account/backend config from contributor.env so
+    # the derived pool key matches the running relay, not a parse-time default.
+    if [[ -f "{{config_dir}}/contributor.env" ]]; then
+      # shellcheck source=/dev/null
+      source "{{config_dir}}/contributor.env"
+    fi
+    SCRIPT_DIR="{{justfile_directory()}}"
+    node "${SCRIPT_DIR}/bin/contributor-quota-control.js" "{{action}}"
+
+
 # Generate a runnable K8s contributor workload (Namespace + ConfigMap + Secret + Deployment)
 # Usage: just contribute-k8s                          (default namespace: hive-contributor)
 #        just contribute-k8s my-namespace              (custom namespace)
