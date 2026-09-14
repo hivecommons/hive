@@ -68,6 +68,13 @@ type LimitWindow struct {
 	PctRemaining int               `json:"pct_remaining"`
 	ResetAt      time.Time         `json:"resets_at,omitempty"`
 	Scope        map[string]string `json:"scope,omitempty"`
+	// DurationMins is the provider-stated length of the window
+	// (kubestellar/hive#6952). #6833's normalized reading is (ID, duration,
+	// used/remaining, reset) and the duration was the missing member: without
+	// it a consumer cannot tell a 5-hour window from a weekly one except by
+	// trusting Kind, and Kind used to be hard-coded at the probe site. Zero
+	// means the provider did not state one.
+	DurationMins int `json:"duration_mins,omitempty"`
 }
 
 // Headroom describes a provider's current capacity.
@@ -77,7 +84,19 @@ type Headroom struct {
 	PctRemaining int           `json:"pct_remaining"` // 0–100; 0 when probe failed
 	ResetAt      time.Time     `json:"reset_at,omitempty"`
 	Limits       []LimitWindow `json:"limits,omitempty"`
-	ProbeErr     error         `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
+	// PlanType and PaidCreditsAvailable carry #6833's "whether the provider
+	// reports that paid credits or extra usage are available, without enabling
+	// them" (kubestellar/hive#6952). PaidCreditsAvailable is a pointer because
+	// "the provider did not say" must stay distinguishable from "no" — the
+	// terminal warning about spending real money should not be driven by a
+	// zero value.
+	PlanType             string `json:"plan_type,omitempty"`
+	PaidCreditsAvailable *bool  `json:"paid_credits_available,omitempty"`
+	// OrdinaryUsageAllowed is tri-state: true, false, and nil for "the provider
+	// did not say". nil must never be read as recovery (#6833), so consumers
+	// that need a definite answer treat it as unknown.
+	OrdinaryUsageAllowed *bool `json:"ordinary_usage_allowed,omitempty"`
+	ProbeErr             error `json:"-"` // non-nil = measurement failed (NOT treated as exhausted)
 }
 
 // ProbeError surfaces ProbeErr as a string for JSON consumers.
@@ -313,13 +332,77 @@ type CodexProber struct {
 	ThresholdPct int
 }
 
+// codexRateLimitsResult mirrors the subset of `account/rateLimits/read` this
+// probe consumes. The shape is from `codex app-server generate-json-schema`
+// on codex-cli 0.154.0 (kubestellar/hive#6952) — previously only `primary`
+// was declared, so the second window was invisible and its exhaustion could
+// not hold work.
 type codexRateLimitsResult struct {
 	RateLimits struct {
-		Primary struct {
-			UsedPercent int   `json:"usedPercent"`
-			ResetsAt    int64 `json:"resetsAt"`
-		} `json:"primary"`
+		Primary   *codexRateLimitWindow `json:"primary"`
+		Secondary *codexRateLimitWindow `json:"secondary"`
+		PlanType  string                `json:"planType"`
+		Credits   *struct {
+			// Available is the provider's own statement that paid credits or
+			// extra usage COULD be spent. Reading it is not enabling it: see
+			// TestNoCodexSpendOrBillingMutation, which pins that nothing in
+			// this tree calls the consume endpoint.
+			Available *bool `json:"available"`
+			Balance   *int  `json:"balance"`
+		} `json:"credits"`
 	} `json:"rateLimits"`
+	// OrdinaryUsageAllowed is a THREE-state field: true, false, and absent.
+	// Absent means the provider could not say, and #6833 requires that be
+	// carried as unknown rather than read as recovery — a nil deref into
+	// `false` here would silently hand back headroom nobody confirmed.
+	OrdinaryUsageAllowed *bool `json:"ordinaryUsageAllowed"`
+}
+
+type codexRateLimitWindow struct {
+	UsedPercent        int   `json:"usedPercent"`
+	ResetsAt           int64 `json:"resetsAt"`
+	WindowDurationMins int   `json:"windowDurationMins"`
+}
+
+// codexWindowKind derives the window kind from the provider-stated duration
+// (kubestellar/hive#6952). The duration is the only authoritative
+// discriminator; the probe used to hard-code "weekly" onto whichever window
+// happened to be `primary`, which made the label unverifiable by construction
+// and could apply the weekly reserve to a five-hour window.
+//
+// A duration outside the known bands deliberately yields an unrecognized kind
+// rather than a guessed one. The contributor guard evaluates unknown kinds
+// against the default reserve (kubestellar/hive#6951), so an unfamiliar window
+// is still enforced — inventing a familiar-looking label would not be.
+func codexWindowKind(durationMins int) string {
+	switch {
+	case durationMins <= 0:
+		return "unknown"
+	case durationMins <= 60:
+		return "session"
+	case durationMins <= 360:
+		return "five_hour"
+	case durationMins <= 2880:
+		return "daily"
+	case durationMins <= 20160:
+		return "weekly"
+	default:
+		return fmt.Sprintf("window_%dm", durationMins)
+	}
+}
+
+func codexLimitWindow(id string, w *codexRateLimitWindow) LimitWindow {
+	lw := LimitWindow{
+		ID:           id,
+		Kind:         codexWindowKind(w.WindowDurationMins),
+		PercentUsed:  w.UsedPercent,
+		PctRemaining: fullPct - w.UsedPercent,
+		DurationMins: w.WindowDurationMins,
+	}
+	if w.ResetsAt > 0 {
+		lw.ResetAt = time.Unix(w.ResetsAt, 0).UTC()
+	}
+	return lw
 }
 
 func (p CodexProber) Provider() string { return "openai" }
@@ -402,23 +485,11 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 			continue
 		}
 		if m.ID == 1 {
-			used, resetAt, err := parseCodexRateLimits(m.Result)
+			h, err := codexHeadroom(p.Provider(), p.ThresholdPct, m.Result)
 			if err != nil {
 				return failOpen(p.Provider(), err)
 			}
-			return Headroom{
-				Provider:     p.Provider(),
-				Available:    used < p.ThresholdPct,
-				PctRemaining: fullPct - used,
-				ResetAt:      resetAt,
-				Limits: []LimitWindow{{
-					ID:           "primary",
-					Kind:         "weekly",
-					PercentUsed:  used,
-					PctRemaining: fullPct - used,
-					ResetAt:      resetAt,
-				}},
-			}
+			return h
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -427,13 +498,58 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	return failOpen(p.Provider(), errors.New("codex app-server: no rateLimits response"))
 }
 
-func parseCodexRateLimits(result json.RawMessage) (usedPct int, resetAt time.Time, err error) {
+// codexHeadroom builds a normalized reading from a rateLimits payload
+// (kubestellar/hive#6952).
+//
+// It reports an error rather than a permissive reading whenever the payload is
+// not one it recognizes. A CLI too old to carry `rateLimits`, or a schema that
+// has moved on, must surface as unknown: a guard that silently misreads is
+// worse than no guard, because it manufactures confidence that Hive will stop
+// in time.
+func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (Headroom, error) {
 	var res codexRateLimitsResult
 	if err := json.Unmarshal(result, &res); err != nil {
-		return 0, time.Time{}, err
+		return Headroom{}, err
 	}
-	return res.RateLimits.Primary.UsedPercent,
-		time.Unix(res.RateLimits.Primary.ResetsAt, 0).UTC(), nil
+	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil {
+		return Headroom{}, errors.New("codex rateLimits: no primary or secondary window (unrecognized schema)")
+	}
+
+	h := Headroom{Provider: provider, PlanType: res.RateLimits.PlanType, OrdinaryUsageAllowed: res.OrdinaryUsageAllowed}
+	if res.RateLimits.Credits != nil {
+		h.PaidCreditsAvailable = res.RateLimits.Credits.Available
+	}
+	for id, w := range map[string]*codexRateLimitWindow{
+		"primary": res.RateLimits.Primary, "secondary": res.RateLimits.Secondary,
+	} {
+		if w != nil {
+			h.Limits = append(h.Limits, codexLimitWindow(id, w))
+		}
+	}
+	sort.Slice(h.Limits, func(i, j int) bool { return h.Limits[i].ID < h.Limits[j].ID })
+
+	// The binding window is the most-used one. Reporting the headroom of the
+	// roomier window would let an exhausted second window pass unnoticed, which
+	// is the gap that made parsing `secondary` worth doing at all.
+	worst := h.Limits[0]
+	for _, w := range h.Limits[1:] {
+		if w.PercentUsed > worst.PercentUsed {
+			worst = w
+		}
+	}
+	h.PctRemaining = worst.PctRemaining
+	h.ResetAt = worst.ResetAt
+	// ordinaryUsageAllowed is tri-state and only ever REMOVES headroom here
+	// (kubestellar/hive#6952). An explicit false is the provider saying
+	// ordinary usage is refused, and it overrides healthy-looking percentages.
+	// Absent means the provider could not say, and #6833 requires that never be
+	// read as recovery — so it grants nothing, and availability falls back to
+	// the windows alone rather than being manufactured from a nil.
+	h.Available = worst.PercentUsed < thresholdPct
+	if res.OrdinaryUsageAllowed != nil && !*res.OrdinaryUsageAllowed {
+		h.Available = false
+	}
+	return h, nil
 }
 
 // AgyProber probes Google usage via `agy --print "/usage"`.

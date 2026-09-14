@@ -556,7 +556,140 @@ func TestCodexProber_AppServerError(t *testing.T) {
 }
 
 func TestParseCodexRateLimits_Invalid(t *testing.T) {
-	if _, _, err := parseCodexRateLimits([]byte("not-json")); err == nil {
+	if _, err := codexHeadroom("openai", 80, []byte("not-json")); err == nil {
 		t.Error("err = nil, want parse error")
+	}
+}
+
+// ── kubestellar/hive#6952 ───────────────────────────────────────────────────
+
+func codexPayload(t *testing.T, body string) json.RawMessage {
+	t.Helper()
+	return json.RawMessage(body)
+}
+
+func TestCodexHeadroomReadsBothWindowsAndDerivesKindFromDuration(t *testing.T) {
+	// Durations are the authoritative discriminator: 300 min is the five-hour
+	// window, 10080 min is the weekly one. The probe used to hard-code
+	// "weekly" onto whichever window arrived as `primary`.
+	h, err := codexHeadroom("openai", 80, codexPayload(t, `{
+      "rateLimits": {
+        "primary":   {"usedPercent": 10, "resetsAt": 1789400000, "windowDurationMins": 300},
+        "secondary": {"usedPercent": 70, "resetsAt": 1789500000, "windowDurationMins": 10080},
+        "planType": "pro"
+      },
+      "ordinaryUsageAllowed": true}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(h.Limits) != 2 {
+		t.Fatalf("len(Limits) = %d, want 2 — the secondary window was invisible before #6952", len(h.Limits))
+	}
+	byID := map[string]LimitWindow{}
+	for _, w := range h.Limits {
+		byID[w.ID] = w
+	}
+	if got := byID["primary"].Kind; got != "five_hour" {
+		t.Errorf("primary Kind = %q, want five_hour (derived from 300 min)", got)
+	}
+	if got := byID["secondary"].Kind; got != "weekly" {
+		t.Errorf("secondary Kind = %q, want weekly (derived from 10080 min)", got)
+	}
+	if got := byID["primary"].DurationMins; got != 300 {
+		t.Errorf("primary DurationMins = %d, want 300 — #6833's reading shape requires the duration", got)
+	}
+	// The binding window is the most-used one, else an exhausted secondary
+	// passes unnoticed behind a roomy primary.
+	if h.PctRemaining != 30 {
+		t.Errorf("PctRemaining = %d, want 30 (the worse, secondary window)", h.PctRemaining)
+	}
+	if h.PlanType != "pro" {
+		t.Errorf("PlanType = %q, want pro", h.PlanType)
+	}
+}
+
+func TestCodexHeadroomSurfacesPaidCreditsWithoutEnablingThem(t *testing.T) {
+	yes := `{"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":300},
+	         "credits":{"available":true,"balance":42}},"ordinaryUsageAllowed":true}`
+	h, err := codexHeadroom("openai", 80, codexPayload(t, yes))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if h.PaidCreditsAvailable == nil || !*h.PaidCreditsAvailable {
+		t.Error("PaidCreditsAvailable should report the provider's own statement that credits exist")
+	}
+	// Absent credits must stay unknown, not collapse to "no".
+	h2, err := codexHeadroom("openai", 80, codexPayload(t,
+		`{"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":300}},"ordinaryUsageAllowed":true}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if h2.PaidCreditsAvailable != nil {
+		t.Error("an absent credits block must stay nil (unknown), not read as false")
+	}
+}
+
+func TestCodexHeadroomOrdinaryUsageAllowedIsNeverRecovery(t *testing.T) {
+	// Explicitly false overrides healthy percentages.
+	h, err := codexHeadroom("openai", 80, codexPayload(t,
+		`{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":300}},"ordinaryUsageAllowed":false}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if h.Available {
+		t.Error("ordinaryUsageAllowed=false must remove headroom even at 1% used")
+	}
+	// Absent grants nothing it did not already have, and is carried as unknown.
+	h2, err := codexHeadroom("openai", 80, codexPayload(t,
+		`{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":300}}}`))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if h2.OrdinaryUsageAllowed != nil {
+		t.Error("absent ordinaryUsageAllowed must remain nil (unknown), never coerced to a bool")
+	}
+}
+
+func TestCodexHeadroomRejectsUnrecognizedSchema(t *testing.T) {
+	// A CLI too old to carry rateLimits, or a schema that moved on, must
+	// surface as an error so the caller enters unknown-data behaviour. A
+	// silent permissive reading is the failure mode #6833 calls worse than no
+	// guard at all.
+	for _, body := range []string{
+		`{"rateLimits":{"planType":"pro"}}`,
+		`{"somethingElse":{}}`,
+	} {
+		if _, err := codexHeadroom("openai", 80, codexPayload(t, body)); err == nil {
+			t.Errorf("codexHeadroom(%s) err = nil, want an explicit unrecognized-schema error", body)
+		}
+	}
+}
+
+func TestNoCodexSpendOrBillingMutation(t *testing.T) {
+	// #6833 criterion: no code path purchases credits. The consume endpoint
+	// sits on the same app-server surface the probe already talks to, so its
+	// absence deserves to be pinned rather than assumed.
+	root := filepath.Join("..", "..")
+	banned := []string{"rateLimitResetCredit", "/consume", "purchaseCredits"}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		if strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, s := range banned {
+			if strings.Contains(string(b), s) {
+				t.Errorf("%s references %q — no code path may spend credits or mutate billing", path, s)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
