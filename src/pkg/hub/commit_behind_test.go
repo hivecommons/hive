@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // waitForCommitBehindResolvers blocks until no resolveCommitBehind goroutine
@@ -16,19 +18,11 @@ import (
 // global swap must drain first.
 func waitForCommitBehindResolvers(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		commitBehindMu.Lock()
-		inFlight := len(commitBehindInFlight)
-		commitBehindMu.Unlock()
-		if inFlight == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %d commit-behind resolver(s)", inFlight)
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer commitBehindMu.Unlock()
+		return len(commitBehindInFlight) == 0
+	}, "timed out waiting for in-flight commit-behind resolver(s)")
 }
 
 func resetCommitBehindState(t *testing.T) {
