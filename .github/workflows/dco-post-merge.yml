@@ -13,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'src/scripts/check-dco-trailers.sh'
+      - 'src/scripts/lib-dco-identity.sh'
       - 'src/scripts/test-check-dco-trailers.sh'
       - '.github/workflows/dco-post-merge.yml'
   schedule:
@@ -108,6 +109,21 @@ env:
   # dco-squash-attribution.yml now fails a human-authored pull request whose
   # commits sign off as a bot, at PR time, while the branch is still writable.
   # If this list ever gains a second d8f376e8-shaped entry, that gate regressed.
+  #
+  # 01bd2469e7a4022fff3fc04c42226c4d90c2f410 — reported by the monitor in #6971,
+  # on v5 only. This is NOT d8f376e8-shaped, and the pre-merge bot gate did NOT
+  # regress. d8f376e8 signed off as a BOT; 01bd2469 signed off as a DIFFERENT
+  # HUMAN's GitHub noreply — author=Andy Anderson <andy@clubanderson.com>
+  # signed-off-by=danathar@users.noreply.github.com. `is_bot_identity` never
+  # matched danathar's address (it is not a bot), so the old bot-only pre-merge
+  # rule had nothing to catch: this was a genuinely different shape, a gap in
+  # coverage rather than a gate that stopped working. That gap is now closed —
+  # check-squash-signoff-attribution.sh fails ANY sign-off that does not name
+  # the PR author, human or bot (this is what #6971 fixed) — so like d8f376e8
+  # this waiver should be the LAST of ITS kind. A second different-human entry
+  # here would mean the generalised pre-merge gate regressed, exactly as a
+  # second bot-signoff entry would mean the original gate did. v5 is protected,
+  # so the already-landed 01bd2469 can only be dispositioned, not repaired.
 
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
@@ -120,7 +136,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 01bd2469e7a4022fff3fc04c42226c4d90c2f410'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that

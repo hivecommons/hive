@@ -206,6 +206,132 @@ else
   bad "a bad LANDED_REFS value must not turn the gate off"
 fi
 
+# --- #6971: a Signed-off-by that names a DIFFERENT PERSON than the PR author -
+#
+# 01bd2469 landed on v5 as a human-authored commit (Andy Anderson
+# <andy@clubanderson.com>) signed off as ANOTHER human's GitHub noreply
+# (danathar@users.noreply.github.com). It is NOT a bot, so the old bot-only
+# rule let it through; the squash then produced a permanent mismatched-signoff.
+# Resolving the commit author's login (map here, GitHub API in CI) is what lets
+# this gate reason about noreply addresses the way the post-merge monitor does.
+
+run_map() { # run_map <head> <pr-author> <SHA=login map>
+  set +e
+  output=$(DCO_AUTHOR_LOGIN_MAP="$3" bash "$CHECKER" "$base_sha" "$1" "$2" 2>&1)
+  rc=$?
+  set -e
+}
+
+# The exact 01bd2469 shape: a different human's GitHub noreply.
+git checkout -q -b foreignnoreply "$base_sha"
+echo fn > fn.txt
+git add fn.txt
+GIT_AUTHOR_NAME='Andy Anderson' GIT_AUTHOR_EMAIL='andy@clubanderson.com' \
+  git commit -q -m "human change signed off as a different human" \
+  -m "Signed-off-by: Danathar <danathar@users.noreply.github.com>"
+foreignnoreply_sha=$(git rev-parse HEAD)
+
+run_map foreignnoreply clubanderson "${foreignnoreply_sha}=clubanderson"
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q "^FAIL ${foreignnoreply_sha} foreign-signoff"; then
+  pass "a different human's GitHub noreply sign-off is rejected (the 01bd2469 case)"
+else
+  bad "different-human noreply sign-off was not rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# The same generalisation for a plain address, not just a noreply.
+git checkout -q -b foreignplain "$base_sha"
+echo fp > fp.txt
+git add fp.txt
+GIT_AUTHOR_NAME='Andy Anderson' GIT_AUTHOR_EMAIL='andy@clubanderson.com' \
+  git commit -q -m "human change signed off as a different plain address" \
+  -m "Signed-off-by: Someone Else <someone@example.com>"
+foreignplain_sha=$(git rev-parse HEAD)
+
+run_map foreignplain clubanderson "${foreignplain_sha}=clubanderson"
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q "^FAIL ${foreignplain_sha} foreign-signoff"; then
+  pass "a different human's plain-email sign-off is rejected too"
+else
+  bad "different-human plain-email sign-off was not rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# The authoring account's OWN GitHub noreply must still pass — the case the
+# post-merge monitor calls "noreply for the authoring account is accepted".
+git checkout -q -b ownnoreply "$base_sha"
+echo on > on.txt
+git add on.txt
+GIT_AUTHOR_NAME='Alice' GIT_AUTHOR_EMAIL='personal@example.com' \
+  git commit -q -m "human change signed off as their own noreply" \
+  -m "Signed-off-by: Alice <12345+alice@users.noreply.github.com>"
+ownnoreply_sha=$(git rev-parse HEAD)
+
+run_map ownnoreply alice "${ownnoreply_sha}=alice"
+if [ "$rc" -eq 0 ]; then
+  pass "the authoring account's own GitHub noreply sign-off is accepted"
+else
+  bad "the author's own noreply sign-off was wrongly rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# A Co-authored-by trailer must NEVER be read as a sign-off: the author's own
+# Signed-off-by is present, and crediting an agent alongside it is correct.
+git checkout -q -b coauthored-ok "$base_sha"
+echo co > co.txt
+git add co.txt
+GIT_AUTHOR_NAME='Alice' GIT_AUTHOR_EMAIL='alice@example.com' \
+  git commit -q -m "human change crediting an agent as co-author" \
+  -m "Signed-off-by: Alice <alice@example.com>" \
+  -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+coauthored_ok_sha=$(git rev-parse HEAD)
+
+run_map coauthored-ok alice "${coauthored_ok_sha}=alice"
+if [ "$rc" -eq 0 ]; then
+  pass "a Co-authored-by agent trailer is not misread as a bot sign-off"
+else
+  bad "self-signed commit with a Co-authored-by agent was rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# A commit whose ONLY agent trailer is Co-authored-by, with no Signed-off-by at
+# all, must pass this gate (missing sign-off is the DCO app's job). If the
+# scanner ever misread Co-authored-by as a sign-off, the bot would be treated
+# as the signer and this would fail — so this is the load-bearing guard.
+git checkout -q -b coauthor-only "$base_sha"
+echo cono > cono.txt
+git add cono.txt
+GIT_AUTHOR_NAME='Alice' GIT_AUTHOR_EMAIL='alice@example.com' \
+  git commit -q -m "human change with only a Co-authored-by agent trailer" \
+  -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+coauthor_only_sha=$(git rev-parse HEAD)
+
+run_map coauthor-only alice "${coauthor_only_sha}=alice"
+if [ "$rc" -eq 0 ]; then
+  pass "a lone Co-authored-by trailer is never read as a sign-off"
+else
+  bad "a Co-authored-by-only commit was flagged as a bot sign-off (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# Genuine co-signing: the author's own sign-off plus a second person's. The
+# author's certification is present, so the commit passes.
+git checkout -q -b cosigned "$base_sha"
+echo cs > cs.txt
+git add cs.txt
+GIT_AUTHOR_NAME='Alice' GIT_AUTHOR_EMAIL='alice@example.com' \
+  git commit -q -m "human change co-signed by a collaborator" \
+  -m "Signed-off-by: Alice <alice@example.com>" \
+  -m "Signed-off-by: Bob <bob@example.com>"
+cosigned_sha=$(git rev-parse HEAD)
+
+run_map cosigned alice "${cosigned_sha}=alice"
+if [ "$rc" -eq 0 ]; then
+  pass "a second co-signer does not break a commit that carries the author's own sign-off"
+else
+  bad "co-signed commit with the author's own sign-off was rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-squash-signoff-attribution FAILED"
   exit 1
