@@ -27,10 +27,29 @@
 name: Cache Prune
 
 on:
+  # Reclaim a branch's caches the moment the branch goes away (#7124).
+  #
+  # A daily sweep is slower than the thing it is racing. The apt entry was
+  # measured gone 11 hours after being written, so a once-a-day prune leaves a
+  # window in which dead-branch blobs are still holding quota and still
+  # evicting the entry whose absence forces race shards back onto the Ubuntu
+  # mirrors. Deleting a branch is the exact moment its buildkit blobs become
+  # permanently unrestorable, so it is also the cheapest moment to reclaim
+  # them.
+  #
+  # This needs no change to the prune step: that step already decides purely on
+  # whether a cache's branch still resolves, so a `delete` run simply finds the
+  # just-deleted ref among the dead ones. Runs are serialized by the
+  # `cache-prune` concurrency group below, so a burst of branch deletions
+  # queues rather than racing, and a run with nothing to reclaim exits early.
+  delete:
   schedule:
-    # Daily, offset well away from the top of the hour to avoid competing with
-    # the scheduled build/test fleet for API budget.
-    - cron: '37 4 * * *'
+    # Every 6 hours. Bounds worst-case reclaim latency below the ~11h eviction
+    # window above for branches that are merged but not deleted (and for the
+    # buildkit exports of branches nobody ever deletes), which the `delete`
+    # trigger alone cannot cover. Kept off the top of the hour to avoid
+    # competing with the scheduled build/test fleet for API budget.
+    - cron: '37 */6 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -48,6 +67,11 @@ concurrency:
 
 jobs:
   prune:
+    # `delete` also fires for tags, and this repo cuts them frequently
+    # (v4.35.0/v4.36.0/v4.36.1 inside a single day). A tag has no cache entries
+    # of its own, so a tag deletion would spend a full sweep to reclaim
+    # nothing. Schedule and manual runs are unaffected.
+    if: github.event_name != 'delete' || github.event.ref_type == 'branch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
