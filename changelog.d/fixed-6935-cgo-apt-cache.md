@@ -1,0 +1,1 @@
+- Race-test CI can now install the cgo toolchain from an actions/cache-restored `.deb` archive when Ubuntu mirrors are unreachable, so transient self-hosted runner egress outages no longer fail every shard before tests start ([#6935](https://github.com/hivecommons/hive/issues/6935)).

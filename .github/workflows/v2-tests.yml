@@ -38,6 +38,7 @@ on:
       - '.github/workflows/v2-tests.yml'
       - '.github/scripts/slowest-tests.sh'
       - '.github/scripts/ci-install-tool.sh'
+      - '.github/scripts/test-ci-install-tool-apt-cache.sh'
   pull_request:
     branches: [v2, v4, v5]
     # Several package tests police shipped files outside src/: contributor
@@ -62,6 +63,7 @@ on:
       # before it can build, so an edit to it must run the shards it gates
       # (#6648).
       - '.github/scripts/ci-install-tool.sh'
+      - '.github/scripts/test-ci-install-tool-apt-cache.sh'
 
 permissions:
   contents: read
@@ -173,14 +175,32 @@ jobs:
         with:
           node-version: '22'
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
-      # skip apt when the tool already exists, retry short egress flakes with
-      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       - name: Test slice of pkg/hub
         env:
@@ -258,14 +278,32 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
-      # skip apt when the tool already exists, retry short egress flakes with
-      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       # tmux is what makes HIVE_TEST_REQUIRE_BEHAVIOURAL legitimate below.
       # ubuntu-latest happens to ship it, but "happens to" is not a guarantee —
@@ -347,14 +385,32 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
-      # skip apt when the tool already exists, retry short egress flakes with
-      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       - name: Partition packages into balanced buckets
         id: partition
@@ -435,14 +491,32 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
-      # skip apt when the tool already exists, retry short egress flakes with
-      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       # ./cmd/... is included in the partition deliberately. It used to be
       # ./pkg/... only, so no workflow anywhere ran the cmd tests — four cmd/bd
@@ -467,9 +541,9 @@ jobs:
             echo "::error::empty package bucket — failing closed"
             exit 1
           fi
-          # shellcheck disable=SC2086 # PKGS is a deliberate word-split list
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
+          # shellcheck disable=SC2086 # PKGS and SHUFFLE are deliberate word-split lists
           go test $PKGS -short -race -count=1 -v $SHUFFLE -coverprofile=coverage-rest-${{ matrix.idx }}.out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-rest-${{ matrix.idx }}.log
 
@@ -519,14 +593,32 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870):
-      # skip apt when the tool already exists, retry short egress flakes with
-      # backoff, and fail loudly with a ::error:: if the mirrors remain unreachable.
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       - name: Test pkg/dashboard in shuffled order
         run: |

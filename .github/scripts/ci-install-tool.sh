@@ -36,7 +36,11 @@
 #   2. Bound each apt fetch and retry the update/download network phase with
 #      backoff inside a single hard deadline. A transient mirror loss can heal;
 #      a dead route still fails loudly instead of burning minutes per shard.
-#   3. On failure emit ONE ::error:: annotation naming runner egress, the mirror
+#   3. When HIVE_CI_APT_CACHE_DIR points at an actions/cache-restored directory,
+#      try cached .debs before touching the network and refresh that directory
+#      after a successful download. A stale or corrupt cache is only a hint: if
+#      it cannot install cleanly, fall back to the bounded apt network path.
+#   4. On failure emit ONE ::error:: annotation naming runner egress, the mirror
 #      hosts attempted, and the remediations, so the answer is on the job
 #      summary instead of buried in a wall of apt warnings.
 #
@@ -95,6 +99,15 @@ APT_DEADLINE_SECONDS="${HIVE_CI_APT_DEADLINE_SECONDS:-60}"
 # already-downloaded .debs). No network involved: this only guards against a
 # wedged dpkg, so it can be long without weakening the fail-fast promise above.
 APT_LOCAL_DEADLINE_SECONDS="${HIVE_CI_APT_LOCAL_DEADLINE_SECONDS:-300}"
+APT_CACHE_DIR="${HIVE_CI_APT_CACHE_DIR:-}"
+APT_CACHE_MANIFEST=".hive-ci-apt-cache.manifest"
+APT_ARCHIVES_DIR="${HIVE_CI_APT_ARCHIVES_DIR:-/var/cache/apt/archives}"
+if [ -n "$APT_CACHE_DIR" ]; then
+  # Keep downloads in the cache tree when requested, so a successful network
+  # phase has a user-readable directory for actions/cache to save. The default
+  # remains apt's normal archive location for callers that do not opt in.
+  APT_ARCHIVES_DIR="${HIVE_CI_APT_ARCHIVES_DIR:-${APT_CACHE_DIR}/archives}"
+fi
 deadline_at=$(( $(date +%s) + APT_DEADLINE_SECONDS ))
 budget_remaining() {
   local left=$(( deadline_at - $(date +%s) ))
@@ -171,6 +184,86 @@ run_local_bounded() {
   fi
 }
 
+apt_cache_enabled() {
+  [ -n "$APT_CACHE_DIR" ] && [ -n "$apt_pkgs" ]
+}
+
+apt_cache_manifest_content() {
+  {
+    echo "version=1"
+    echo "require=${require}"
+    echo "apt_pkgs=${apt_pkgs}"
+    echo "system=$(uname -s 2>/dev/null || echo unknown)"
+    echo "machine=$(uname -m 2>/dev/null || echo unknown)"
+  }
+}
+
+apt_cache_manifest_matches() {
+  local manifest="${APT_CACHE_DIR}/${APT_CACHE_MANIFEST}"
+  [ -f "$manifest" ] || return 1
+  cmp -s "$manifest" <(apt_cache_manifest_content)
+}
+
+apt_cache_debs() {
+  find "$APT_CACHE_DIR" -maxdepth 1 -type f -name '*.deb' -print 2>/dev/null | LC_ALL=C sort
+}
+
+apt_cache_install_offline() {
+  apt_cache_enabled || return 1
+  [ -d "$APT_CACHE_DIR" ] || return 1
+  if ! apt_cache_manifest_matches; then
+    echo "ci-install-tool: apt package cache is absent or for a different package set; using apt network path" >&2
+    return 1
+  fi
+
+  local debs=()
+  mapfile -t debs < <(apt_cache_debs)
+  if [ "${#debs[@]}" -eq 0 ]; then
+    echo "ci-install-tool: apt package cache contains no .debs; using apt network path" >&2
+    return 1
+  fi
+
+  echo "ci-install-tool: attempting offline apt package cache install from ${APT_CACHE_DIR} (${#debs[@]} .deb file(s))" >&2
+  local sudo_prefix=("$@")
+  if ! run_local_bounded "${sudo_prefix[@]}" dpkg -i "${debs[@]}"; then
+    echo "ci-install-tool: cached .debs did not install cleanly; falling back to apt network path" >&2
+    return 1
+  fi
+
+  if ! command -v "$require" >/dev/null 2>&1; then
+    echo "ci-install-tool: cached .debs installed but '${require}' is still missing; falling back to apt network path" >&2
+    return 1
+  fi
+
+  echo "ci-install-tool: installed ${require} from cached .debs without apt networking" >&2
+  return 0
+}
+
+populate_apt_cache() {
+  apt_cache_enabled || return 0
+  mkdir -p "$APT_CACHE_DIR" || {
+    echo "ci-install-tool: could not create apt package cache dir ${APT_CACHE_DIR}; continuing without saving cache" >&2
+    return 0
+  }
+
+  local debs=()
+  mapfile -t debs < <(find "$APT_ARCHIVES_DIR" -maxdepth 1 -type f -name '*.deb' -print 2>/dev/null | LC_ALL=C sort)
+  if [ "${#debs[@]}" -eq 0 ]; then
+    echo "ci-install-tool: apt download completed but no .debs were found in ${APT_ARCHIVES_DIR}; continuing without saving cache" >&2
+    return 0
+  fi
+
+  cp -f "${debs[@]}" "$APT_CACHE_DIR"/ || {
+    echo "ci-install-tool: could not copy downloaded .debs into ${APT_CACHE_DIR}; continuing without saving cache" >&2
+    return 0
+  }
+  apt_cache_manifest_content > "${APT_CACHE_DIR}/${APT_CACHE_MANIFEST}" || {
+    echo "ci-install-tool: could not write apt package cache manifest; continuing without saving cache" >&2
+    return 0
+  }
+  echo "ci-install-tool: saved ${#debs[@]} downloaded .deb file(s) into ${APT_CACHE_DIR}" >&2
+}
+
 
 apt_source_hosts() {
   if [ -d /etc/apt ]; then
@@ -218,6 +311,7 @@ apt_opts=(
   -o "Acquire::http::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Acquire::https::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Acquire::ftp::Timeout=${APT_TIMEOUT_SECONDS}"
+  -o "Dir::Cache::archives=${APT_ARCHIVES_DIR}"
   # One retry, not apt's default three: a route that is down does not come back
   # within a single job step, and each extra attempt costs another full timeout.
   -o "Acquire::Retries=1"
@@ -225,6 +319,7 @@ apt_opts=(
 
 apt_network_fetch_once() {
   local sudo_prefix=("$@")
+  mkdir -p "${APT_ARCHIVES_DIR}/partial" 2>/dev/null || true
   # `apt-get update` EXITS 0 when every mirror fails — it downgrades unreachable
   # sources to `W:` warnings. So its status cannot be the only gate; the
   # download below is what actually proves a usable index/package path exists.
@@ -238,11 +333,15 @@ apt_network_fetch_once() {
 
 apt_install() {
   local sudo_prefix=("$@")
+  if apt_cache_install_offline "${sudo_prefix[@]}"; then
+    return 0
+  fi
   # NETWORK phase: refresh package indexes and fetch the .debs under one
   # bounded retry loop. This is the part a dead mirror can stall, so it is the
   # only part the #6648/#6870 deadline covers.
   retry_network_phase "apt network fetch" apt_network_fetch_once "${sudo_prefix[@]}" \
     || return 1
+  populate_apt_cache
   # LOCAL phase: unpack/configure from the cache just fetched. No network here —
   # configuring gcc's ~100-package closure legitimately takes >60s on the hive
   # runners, so this runs under its own generous ceiling instead of whatever
