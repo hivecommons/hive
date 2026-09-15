@@ -110,6 +110,23 @@ env:
   # dco-squash-attribution.yml now fails a human-authored pull request whose
   # commits sign off as a bot, at PR time, while the branch is still writable.
   # If this list ever gains a second d8f376e8-shaped entry, that gate regressed.
+  #
+  # 4b9261183378a1a02a921cd0cc9df31e6f37993b — the squash of #7069, reported by
+  # the monitor in #7070. Structurally the same failure as d8f376e8 but a new
+  # SUB-CLASS, and not a regression of the gate above. Branch commit 9dcaa17a
+  # was authored as clubanderson@gmail.com and was internally consistent; the
+  # squash then wrote the landing commit with the pull request author's
+  # profile-primary identity, Andy Anderson <andy@clubanderson.com>, while
+  # keeping the branch's Signed-off-by: clubanderson <clubanderson@gmail.com>.
+  # Both identities belong to the same maintainer, so nothing about the
+  # certification is in doubt — only the two addresses differ.
+  #
+  # The d8f376e8 note says that entry should be the last of its kind because
+  # dco-squash-attribution.yml fails a human-authored PR signing off as a BOT.
+  # That gate did not regress: this sign-off is not a bot, it is the same
+  # human's second address, which the gate never claimed to cover. Like
+  # d8f376e8 the mismatch was created BY the merge, so no branch-time check
+  # could have caught it, and v4 is protected so it cannot be repaired.
 
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
@@ -122,7 +139,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
