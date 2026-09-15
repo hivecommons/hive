@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hooks"
+	hub "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +409,11 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 
 	s.persistOnly()
 	go s.refreshAsync()
+	// The pod's compute is sized by level too. Run after the config/state
+	// persist above so, if the patch rolls the pod, the new pod boots into
+	// the level it was resized for. Non-fatal: the roster is already
+	// reconciled; an under-sized pod is slow, not broken.
+	go s.ensureCPUTier(level)
 	if !governorChanges.empty() {
 		logArgs := []any{"hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name}
 		if interval := governorChanges.EvalIntervalS; interval != nil {
@@ -810,4 +816,18 @@ func detectACMMLevel(cfg *config.Config) int {
 		return *cfg.ACMMLevel
 	}
 	return 1
+}
+
+// ensureCPUTier grows the spoke's own Deployment to the CPU tier for level
+// (L5+ only; see hub.EnsureCPUTierSelf). A successful patch rolls the pod, so
+// this is logged loudly: the operator will see agents restart once.
+func (s *Server) ensureCPUTier(level int) {
+	patched, err := hub.EnsureCPUTierSelf(s.logger, level)
+	if err != nil {
+		s.logger.Warn("could not size pod CPU for ACMM level", "level", level, "error", err)
+		return
+	}
+	if patched {
+		s.AuditLog("system", "cpu_tier_grow", auditDetail("level", strconv.Itoa(level)), "")
+	}
 }

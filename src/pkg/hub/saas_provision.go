@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 var saasHivesDir = "/data/saas/hives"
@@ -44,8 +45,13 @@ const (
 	// above 2Gi ride the 16Gi limit, with node overcommit bounded by the p90.
 	// Applies to NEW provisions; existing deployments keep their requests
 	// until their manifest is next re-applied.
-	cpuRequest = "250m"
-	cpuLimit   = "2000m"
+	//
+	// These are the BASE tier. L5+ hives get spoke.CPUTierForLevel's high
+	// tier (four active CLIs at ~0.5 core each saturate 2 cores and throttle
+	// the hive process); a level raised after provisioning is grown in place
+	// by spoke.EnsureCPUTierSelf, since upgrades never re-render this manifest.
+	cpuRequest = spoke.CPURequestBase
+	cpuLimit   = spoke.CPULimitBase
 	// memRequest/memLimit size the spoke pod for the WHOLE agent fleet, not just
 	// the Go hive process. Each active coding agent (Copilot/Claude CLI) grows to
 	// ~2GB RSS, and an L6 hive runs 5-6 concurrently plus the hive process, so an
@@ -2334,6 +2340,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return hex.EncodeToString(b)
 	}()
 
+	cpuRequestForLevel, cpuLimitForLevel := spoke.CPUTierForLevel(h.ACMMLevel)
 	data := map[string]any{
 		"ID":              h.ID,
 		"Namespace":       "hive-hosted-" + h.ID,
@@ -2382,8 +2389,8 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// spoke rolling on an older manifest sees the field disappear cleanly
 		// instead of failing to render.
 		"AdditionalAppKeys":     []provisionAppKey{},
-		"CPURequest":            cpuRequest,
-		"CPULimit":              cpuLimit,
+		"CPURequest":            cpuRequestForLevel,
+		"CPULimit":              cpuLimitForLevel,
 		"MemRequest":            memRequest,
 		"MemLimit":              memLimit,
 		"RolloutMaxSurge":       rolloutMaxSurge,
