@@ -128,6 +128,24 @@ env:
   # d8f376e8 the mismatch was created BY the merge, so no branch-time check
   # could have caught it, and v4 is protected so it cannot be repaired.
 
+  # 01bd2469e7a4022fff3fc04c42226c4d90c2f410 — the squash of #6970, on v5 only,
+  # reported by the monitor in #7089. A DIFFERENT CLASS from the three above and
+  # it should be read as such: this is not one person's two addresses and not a
+  # bot, it is TWO PEOPLE. The landing commit is authored Andy Anderson
+  # <andy@clubanderson.com> while the trailer carried through from the branch is
+  # Danathar <Danathar@users.noreply.github.com>. GitHub's squash wrote the
+  # pull request author's identity over a branch signed off by its committer.
+  #
+  # What is not in doubt: both are hive maintainers and the change went through
+  # the normal review and merge gate. What IS strictly true is that the author
+  # of record did not themselves sign off, which is the condition the checker
+  # exists to surface, so it is reported here rather than quietly normalised.
+  # The commit sits on protected v5 and cannot be repaired in place.
+  #
+  # Maintainers: if you would rather this be re-signed or handled some other
+  # way than a waiver, remove this entry — it is a disposition, not a
+  # precedent, and it deliberately does not widen to "any two maintainers".
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -139,7 +157,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
