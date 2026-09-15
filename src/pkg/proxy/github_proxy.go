@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -1052,6 +1054,27 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			blocked = true
 			blockReason = "repo not in hive config"
 		}
+		// Shape-gate agent-authored issue/comment REST writes. The issue-request
+		// watcher validates the file-drop creation path, but an agent's
+		// `gh issue create` becomes a raw POST /repos/{o}/{r}/issues that never
+		// touches the watcher (issue #7014: a template placeholder title and a
+		// body of literal \n escapes both reached GitHub this way). Enforce the
+		// same shape rules here so both creation paths are covered. Skip the
+		// control plane — its issue writes are already validated upstream.
+		if !blocked && agentName != internalCallerName {
+			if reason, deny, shapeErr := p.enforceIssueShape(req); shapeErr != nil {
+				// Fail closed: a body we could not read is a body we could not
+				// shape-check.
+				p.logTimeout("proxy issue-shape body read timed out", shapeErr, "agent", agentName, "path", req.URL.Path)
+				_ = client.SetReadDeadline(time.Time{})
+				return
+			} else if deny {
+				blocked = true
+				if blockReason == "" {
+					blockReason = reason
+				}
+			}
+		}
 		if reason, deny, ok := p.inspectCanaryEgress(agentName, req); ok {
 			if deny {
 				blocked = true
@@ -1282,6 +1305,107 @@ func githubWriteBodyMayLeak(method, path string) bool {
 
 func isGitReceivePack(path string) bool {
 	return strings.HasSuffix(path, "/git-receive-pack")
+}
+
+// issueShapeBodyLimit bounds how much of an issue/comment REST body the proxy
+// buffers to shape-check it. It comfortably exceeds GitHub's issue-body maximum
+// (65536 chars) plus JSON overhead; an oversized body is forwarded unbuffered
+// and unchecked rather than truncated (see enforceIssueShape).
+const issueShapeBodyLimit = 256 * 1024
+
+var (
+	issueCreateRESTPathRE      = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`)
+	issueEditRESTPathRE        = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+$`)
+	issueCommentCreateRESTPath = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/\d+/comments$`)
+	issueCommentEditRESTPath   = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues/comments/\d+$`)
+)
+
+// isIssueShapeRESTWrite reports whether a (method, path) is a REST issue or
+// issue-comment create/edit whose JSON body carries agent-authored title/body
+// text the shape validators must vet. It is deliberately precise — matching
+// only the title/body-bearing routes — so label, assignee, and reaction sub
+// routes under /issues are not needlessly buffered.
+func isIssueShapeRESTWrite(method, path string) bool {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	switch method {
+	case http.MethodPost:
+		return issueCreateRESTPathRE.MatchString(path) ||
+			issueCommentCreateRESTPath.MatchString(path)
+	case http.MethodPatch:
+		return issueEditRESTPathRE.MatchString(path) ||
+			issueCommentEditRESTPath.MatchString(path)
+	default:
+		return false
+	}
+}
+
+// githubIssueShapeViolation returns a non-empty, agent-actionable reason when a
+// buffered issue/comment REST body carries an unsubstituted template
+// placeholder or literal newline escape sequences. A body that is not the JSON
+// we expect is left to the upstream to reject — auth was already enforced.
+func githubIssueShapeViolation(method, path string, body []byte) string {
+	if !isIssueShapeRESTWrite(method, path) {
+		return ""
+	}
+	var payload struct {
+		Title *string `json:"title"`
+		Body  *string `json:"body"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	if payload.Title != nil {
+		if ph, ok := issueshape.UnsubstitutedTemplatePlaceholder(*payload.Title); ok {
+			return "issue title contains unsubstituted template placeholder " + strconv.Quote(ph) + "; fill in the template before creating the issue"
+		}
+	}
+	if payload.Body != nil {
+		if ph, ok := issueshape.UnsubstitutedTemplatePlaceholder(*payload.Body); ok {
+			return "issue body contains unsubstituted template placeholder " + strconv.Quote(ph) + "; fill in the template before creating the issue"
+		}
+		if issueshape.BodyHasMisEscapedNewlines(*payload.Body) {
+			return "issue body contains literal newline escape sequences; use real newlines or --body-file"
+		}
+	}
+	return ""
+}
+
+// bodyReadCloser rejoins an already-read prefix with the unread remainder of a
+// request body so an oversized issue write can be forwarded intact.
+type bodyReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// enforceIssueShape buffers an agent's issue/comment REST body, validates its
+// shape, and reconstructs req.Body so the request can still be forwarded when
+// it passes. It returns deny=true with an actionable reason for a malformed
+// body, and a non-nil error only when the body could not be read (fail closed).
+func (p *GitHubProxy) enforceIssueShape(req *http.Request) (reason string, deny bool, readErr error) {
+	if req.Body == nil || !isIssueShapeRESTWrite(req.Method, req.URL.Path) {
+		return "", false, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(req.Body, issueShapeBodyLimit+1))
+	if err != nil {
+		_ = req.Body.Close()
+		return "", false, err
+	}
+	if int64(len(body)) > issueShapeBodyLimit {
+		// Oversized: forward the original body unbuffered and unchecked rather
+		// than corrupt it by truncation. Stitch the prefix we already consumed
+		// back in front of the unread remainder; ContentLength is unchanged.
+		req.Body = bodyReadCloser{Reader: io.MultiReader(bytes.NewReader(body), req.Body), Closer: req.Body}
+		return "", false, nil
+	}
+	_ = req.Body.Close()
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	if v := githubIssueShapeViolation(req.Method, req.URL.Path, body); v != "" {
+		return v, true, nil
+	}
+	return "", false, nil
 }
 
 // internalCallerName attributes a connection that originated from the hive's

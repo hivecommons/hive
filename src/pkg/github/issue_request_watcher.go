@@ -7,12 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -50,21 +50,6 @@ var issueRequestPollInterval = 10 * time.Second
 const (
 	issueRetryBase = 30 * time.Second
 	issueRetryMax  = 15 * time.Minute
-)
-
-var (
-	issueAngleBracketTokenRE            = regexp.MustCompile(`<([^>\n]+)>`)
-	issueTemplatePlaceholderContentRE   = regexp.MustCompile(`^(?:[a-z][a-z0-9]*(?:[ -][a-z0-9]+)+|analysis|fix)$`)
-	issueMarkdownHTMLTagsWithAttributes = map[string]bool{
-		"a": true, "br": true, "code": true, "dd": true, "del": true, "details": true,
-		"div": true, "dl": true, "dt": true, "em": true, "h1": true, "h2": true,
-		"h3": true, "h4": true, "h5": true, "h6": true, "hr": true, "img": true,
-		"ins": true, "kbd": true, "li": true, "ol": true, "p": true, "pre": true,
-		"rp": true, "rt": true, "ruby": true, "s": true, "samp": true, "source": true,
-		"span": true, "strong": true, "sub": true, "summary": true, "sup": true,
-		"table": true, "tbody": true, "td": true, "tfoot": true, "th": true,
-		"thead": true, "tr": true, "ul": true, "var": true,
-	}
 )
 
 // issueRequestMaxAge is the give-up horizon: a request that still has not
@@ -422,43 +407,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 }
 
 func issueUnsubstitutedTemplatePlaceholder(text string) (string, bool) {
-	// Hive policy templates use human-fill placeholders like <analysis>,
-	// <fix>, and <specific description>: lowercase words, with multi-word
-	// placeholders separated by spaces or hyphens. Keep the matcher narrow:
-	// skip URLs, generic type parameters, and recognized GitHub Markdown HTML
-	// tags (including attribute forms such as <details open>) so those are not
-	// mistaken for an unfilled template.
-	for _, match := range issueAngleBracketTokenRE.FindAllStringSubmatch(text, -1) {
-		if len(match) != 2 {
-			continue
-		}
-		content := strings.TrimSpace(match[1])
-		if content == "" || strings.Contains(content, "://") || strings.ContainsAny(content, "/=,") {
-			continue
-		}
-		firstField := content
-		if fields := strings.Fields(content); len(fields) > 0 {
-			firstField = fields[0]
-		}
-		if issueMarkdownHTMLTagsWithAttributes[strings.ToLower(firstField)] {
-			continue
-		}
-		if issueTemplatePlaceholderContentRE.MatchString(content) {
-			return match[0], true
-		}
-	}
-	return "", false
+	return issueshape.UnsubstitutedTemplatePlaceholder(text)
 }
 
 func issueBodyHasMisEscapedNewlines(body string) bool {
-	// A body with real line breaks may legitimately discuss "\n" in prose or a
-	// fenced code block. The malformed scanner specimen had no real newlines,
-	// multiple literal \n tokens, and markdown structure encoded as \n\n / \n##;
-	// require that combination before quarantining to avoid blocking ordinary
-	// one-line text that mentions the escape sequence.
-	return !strings.Contains(body, "\n") &&
-		strings.Count(body, `\n`) >= 2 &&
-		(strings.Contains(body, `\n\n`) || strings.Contains(body, `\n## `))
+	return issueshape.BodyHasMisEscapedNewlines(body)
 }
 
 func (c *Client) denyIssueRequest(path string, req IssueRequest, reason string, nowFn func() time.Time) {
