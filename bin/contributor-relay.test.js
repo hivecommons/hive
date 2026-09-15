@@ -9379,6 +9379,85 @@ test('#6987 a default install with NO published reading admits (unprovisioned, n
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+
+test('#7002 captured_at wire format matches Go RFC3339 field (parity)', () => {
+  const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', captured_at: '2026-01-02T03:04:05Z', limits: [] }) } });
+  assert.strictEqual(relay.contributorReadingCapturedAtMs({ captured_at: '2026-01-02T03:04:05Z' }), Date.UTC(2026, 0, 2, 3, 4, 5),
+    'JS must parse the exact captured_at field and RFC3339 value emitted by rotation.ContributorReading');
+  teardown(relay);
+});
+
+test('#7002 a fresh available published reading still admits', () => {
+  const relay = loadRelay({ env: {
+    HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', captured_at: new Date().toISOString(), limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }),
+  } });
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, true, 'fresh available readings must keep the existing admit behaviour');
+  teardown(relay);
+});
+
+test('#7002 an available reading older than the TTL holds as stale', () => {
+  const relay = loadRelay({ env: {
+    HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', captured_at: new Date(Date.now() - 5000).toISOString(), limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }),
+  } });
+  const reading = relay.readContributorQuotaReading();
+  assert.strictEqual(reading.state, 'stale', 'a present reading past the TTL must activate the stale hold state');
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'stale');
+  teardown(relay);
+});
+
+test('#7002 a legacy reading with no captured_at does not become stale', () => {
+  const relay = loadRelay({ env: {
+    HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }),
+  } });
+  const reading = relay.readContributorQuotaReading();
+  assert.strictEqual(reading.state, 'available', 'missing captured_at means unknown age, not stale evidence during version skew');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' }).admit, true);
+  teardown(relay);
+});
+
+test('#7002 a missing default reading still admits as unprovisioned', () => {
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg7002-'));
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '', HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000' } });
+  try {
+    assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+      'staleness must only apply to a reading that exists; the missing default route remains the #6951 admit path');
+    const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+    assert.strictEqual(d.admit, true);
+    assert.strictEqual(d.reason, 'unprovisioned');
+  } finally {
+    teardown(relay);
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('#7002 below-reserve readings still hold as guarded', () => {
+  const relay = loadRelay({ env: {
+    HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', captured_at: new Date().toISOString(), limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 0 }] }),
+  } });
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'guarded');
+  teardown(relay);
+});
+
+test('#7002 unknown readings still hold', () => {
+  const relay = loadRelay({ env: {
+    HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000',
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'unknown', captured_at: new Date().toISOString(), limits: [] }),
+  } });
+  const d = relay.evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'unknown');
+  teardown(relay);
+});
+
 test('#6987 an unsupported backend is unchanged under the default derivation (AC#7)', () => {
   // copilot has no adapter. Even with a reading sitting in the derived dir, an
   // unsupported backend never adopts it: it stays unprovisioned/admit, so the

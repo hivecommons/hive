@@ -107,6 +107,44 @@ func TestHeadroomToContributorReading_HealthyCarriesWindows(t *testing.T) {
 	}
 }
 
+func TestHeadroomToContributorReading_CarriesCapturedAt(t *testing.T) {
+	before := time.Now().UTC().Add(-time.Second)
+	r := HeadroomToContributorReading(Headroom{Provider: "openai", Available: true})
+	after := time.Now().UTC().Add(time.Second)
+	if r.CapturedAt == "" {
+		t.Fatal("CapturedAt is empty; relay cannot judge freshness without captured_at")
+	}
+	captured, err := time.Parse(time.RFC3339, r.CapturedAt)
+	if err != nil {
+		t.Fatalf("CapturedAt = %q, want RFC3339: %v", r.CapturedAt, err)
+	}
+	if captured.Before(before) || captured.After(after) {
+		t.Errorf("CapturedAt = %s, want between %s and %s", captured, before, after)
+	}
+}
+
+func TestContributorReadingCapturedAt_WireFormatMatchesRelay(t *testing.T) {
+	r := ContributorReading{State: "available", CapturedAt: "2026-01-02T03:04:05Z", Limits: []ContributorLimitWindow{}}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["captured_at"] != "2026-01-02T03:04:05Z" {
+		t.Errorf("captured_at = %#v, want relay RFC3339 field/value", got["captured_at"])
+	}
+	legacy, err := json.Marshal(ContributorReading{State: "available", Limits: []ContributorLimitWindow{}})
+	if err != nil {
+		t.Fatalf("marshal legacy: %v", err)
+	}
+	if strings.Contains(string(legacy), "captured_at") {
+		t.Errorf("empty CapturedAt should omit captured_at for version-skew safety, got %s", legacy)
+	}
+}
+
 // DefaultContributorPoolDir makes publishing default-on (kubestellar/hive#6987):
 // no explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR, yet a supported backend still gets
 // a reading. XDG_CONFIG_HOME is honoured first (matching the hivectl session

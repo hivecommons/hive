@@ -293,6 +293,20 @@ if (!['ask', 'pause', 'off'].includes(QUOTA_GUARD_MODE)) {
 }
 const QUOTA_READING_FILE = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_FILE || '').trim();
 const QUOTA_READING_JSON = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_JSON || '').trim();
+// The Go rotation publisher probes every 5 minutes (rotation.pollInterval). A
+// reading older than three missed publish cycles is treated as stale: generous
+// enough for transient probe/write delays and short enough to avoid admitting
+// indefinitely against frozen quota after the publisher dies.
+const QUOTA_READING_PUBLISH_INTERVAL_MS = 5 * 60 * 1000;
+const QUOTA_READING_STALE_AFTER_MS = (() => {
+  const raw = (process.env.HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS || '').trim();
+  if (raw === '') return 3 * QUOTA_READING_PUBLISH_INTERVAL_MS;
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    console.error(`FATAL: HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS must be a positive integer of milliseconds (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  return Number(raw);
+})();
 // How often a guarded relay re-reads the quota and re-advertises if it clears
 // (kubestellar/hive#6951). Default 60s: the readings this guard consumes move
 // on the order of minutes, and a held relay is doing nothing else.
@@ -558,6 +572,24 @@ function quotaRequiredReserve(window, complexity) {
   return Math.max(windowReserve, tierReserve);
 }
 
+
+function contributorReadingCapturedAtMs(reading) {
+  if (!reading || !Object.prototype.hasOwnProperty.call(reading, 'captured_at')) return null;
+  const raw = reading.captured_at;
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function contributorQuotaReadingWithFreshness(reading, nowMs = Date.now()) {
+  const capturedAtMs = contributorReadingCapturedAtMs(reading);
+  if (capturedAtMs === null) return reading;
+  if (nowMs - capturedAtMs > QUOTA_READING_STALE_AFTER_MS) {
+    return { ...reading, state: 'stale' };
+  }
+  return reading;
+}
+
 // readContributorQuotaReading never throws (kubestellar/hive#6951).
 //
 // This is called from inside the `task_assign` handler and from sendTo(), both
@@ -578,7 +610,7 @@ function readContributorQuotaReading() {
       if (!reading || typeof reading !== 'object' || Array.isArray(reading)) {
         throw new Error('reading is not a JSON object');
       }
-      return reading;
+      return contributorQuotaReadingWithFreshness(reading);
     } catch (e) {
       console.warn(`Contributor quota reading (${label}) could not be read: ${e.message}. Treating quota as unknown.`);
       return { state: 'unknown', limits: [] };
@@ -5334,6 +5366,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     normalizeTaskComplexity,
     quotaRequiredReserve,
     quotaWindowReserve,
+    contributorReadingCapturedAtMs,
+    contributorQuotaReadingWithFreshness,
+    QUOTA_READING_PUBLISH_INTERVAL_MS,
+    QUOTA_READING_STALE_AFTER_MS,
     readContributorQuotaReading,
     // Default-on publishing derivation (kubestellar/hive#6987).
     defaultContributorPoolDir,

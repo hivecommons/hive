@@ -1,0 +1,1 @@
+- The contributor quota relay now timestamps published readings and holds on genuinely stale files while preserving the unprovisioned admit path for hosts with no reading route ([#7002](https://github.com/hivecommons/hive/issues/7002)).

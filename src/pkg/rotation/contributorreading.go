@@ -117,6 +117,10 @@ type ContributorLimitWindow struct {
 // fabricated healthy reading).
 type ContributorReading struct {
 	State string `json:"state"`
+	// CapturedAt records when the probe result was observed, in the same RFC3339
+	// UTC format used by per-window resets_at. Older publishers omitted it, so it
+	// stays optional on the wire and consumers must tolerate it missing.
+	CapturedAt string `json:"captured_at,omitempty"`
 	// Cause categorizes an "unknown" state so an operator — and the relay, if it
 	// ever consumes it — can tell a DEAD ADAPTER (one that parsed nothing a real
 	// payload contains, kubestellar/hive#6986) from a host with no credentials
@@ -137,6 +141,7 @@ type ContributorReading struct {
 // exists to prevent. A successful probe becomes state "available" with its
 // normalized windows carried through verbatim.
 func HeadroomToContributorReading(h Headroom) ContributorReading {
+	capturedAt := time.Now().UTC().Format(time.RFC3339)
 	if h.ProbeErr != nil {
 		// Carry WHY the measurement failed so a dead adapter stays visible as a
 		// different condition than "no credentials"/"not installed"
@@ -146,7 +151,7 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 		if cause == ProbeCauseUnspecified {
 			cause = ProbeCauseProbeFailed
 		}
-		return ContributorReading{State: "unknown", Cause: string(cause), Limits: []ContributorLimitWindow{}}
+		return ContributorReading{State: "unknown", CapturedAt: capturedAt, Cause: string(cause), Limits: []ContributorLimitWindow{}}
 	}
 	limits := make([]ContributorLimitWindow, 0, len(h.Limits))
 	for _, w := range h.Limits {
@@ -161,7 +166,7 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 		}
 		limits = append(limits, lw)
 	}
-	return ContributorReading{State: "available", Limits: limits}
+	return ContributorReading{State: "available", CapturedAt: capturedAt, Limits: limits}
 }
 
 // deriveContributorPoolKey turns backend + account identity into the same
