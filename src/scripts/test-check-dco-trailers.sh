@@ -15,6 +15,13 @@ fail=0
 pass() { echo "  ok: $*"; }
 bad()  { echo "  FAIL: $*"; fail=1; }
 
+# Search $output without a pipe. `out_grep -q PAT` is a
+# race under `set -o pipefail`: grep -q exits at the first match, and when that
+# match is on an early line (the summary line is the checker's FIRST line) the
+# still-writing printf takes EPIPE, so the pipeline reports failure even though
+# the match succeeded (#7080). A herestring has no pipe for pipefail to see.
+out_grep() { grep "$@" <<<"$output"; }
+
 repo="$TMP/repo"
 mkdir -p "$repo"
 cd "$repo" || exit 1
@@ -84,7 +91,7 @@ else
   pass "checker exits 1 when bad commits are present"
 fi
 
-fail_lines=$(printf '%s\n' "$output" | grep -c '^FAIL ' || true)
+fail_lines=$(out_grep -c '^FAIL ' || true)
 if [ "$fail_lines" -eq 4 ]; then
   pass "exactly four failing commits are reported"
 else
@@ -92,43 +99,43 @@ else
   echo "$output" | sed 's/^/      | /'
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${missing_sha} missing-signoff"; then
+if out_grep -q "^FAIL ${missing_sha} missing-signoff"; then
   pass "missing sign-off commit is reported"
 else
   bad "missing sign-off commit ${missing_sha} was not reported"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha} mismatched-signoff"; then
+if out_grep -q "^FAIL ${mismatch_sha} mismatched-signoff"; then
   pass "mismatched sign-off commit is reported"
 else
   bad "mismatched sign-off commit ${mismatch_sha} was not reported"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${noreply_good_sha}"; then
+if out_grep -q "^FAIL ${noreply_good_sha}"; then
   bad "GitHub noreply sign-off for the authoring account should not be reported"
 else
   pass "GitHub noreply sign-off for the authoring account is accepted"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${noreply_bad_sha} mismatched-signoff"; then
+if out_grep -q "^FAIL ${noreply_bad_sha} mismatched-signoff"; then
   pass "GitHub noreply sign-off for a different account is rejected"
 else
   bad "GitHub noreply sign-off for a different account ${noreply_bad_sha} was not reported"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${second_address_sha} mismatched-signoff"; then
+if out_grep -q "^FAIL ${second_address_sha} mismatched-signoff"; then
   pass "an arbitrary second personal address is rejected"
 else
   bad "arbitrary second personal address ${second_address_sha} was not reported"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${good_sha}"; then
+if out_grep -q "^FAIL ${good_sha}"; then
   bad "good commit ${good_sha} should not be reported"
 else
   pass "good commit is not reported"
 fi
 
-if printf '%s\n' "$output" | grep -q "^FAIL ${multi_block_sha}"; then
+if out_grep -q "^FAIL ${multi_block_sha}"; then
   bad "sign-off in an earlier trailer block ${multi_block_sha} should not be reported"
 else
   pass "sign-off separated from a trailing Co-authored-by block is accepted"
@@ -161,16 +168,16 @@ if [ "$rc" -ne 1 ]; then
 else
   pass "a waiver does not mask an unrelated failure"
 fi
-if printf '%s\n' "$output" | grep -q "^WAIVED ${missing_sha} missing-signoff"; then
+if out_grep -q "^WAIVED ${missing_sha} missing-signoff"; then
   pass "a waived missing-signoff is reported as WAIVED, not hidden"
 else
   bad "waived commit ${missing_sha} was not reported on the WAIVED line"
   echo "$output" | sed 's/^/      | /'
 fi
-if printf '%s\n' "$output" | grep -q "^FAIL ${missing_sha}"; then
+if out_grep -q "^FAIL ${missing_sha}"; then
   bad "waived commit ${missing_sha} still reported as FAIL"
 fi
-if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha} mismatched-signoff"; then
+if out_grep -q "^FAIL ${mismatch_sha} mismatched-signoff"; then
   pass "the unwaived commit still fails"
 else
   bad "unwaived commit ${mismatch_sha} stopped failing"
@@ -184,7 +191,7 @@ if [ "$rc" -ne 0 ]; then
 else
   pass "waiving every failure returns green"
 fi
-if printf '%s\n' "$output" | grep -q '4 waived'; then
+if out_grep -q '4 waived'; then
   pass "the summary line counts waived commits"
 else
   bad "summary line did not report 4 waived"
@@ -193,7 +200,7 @@ fi
 # Green-with-waivers must not read the same as clean history: a maintainer
 # scanning runs has to be able to tell "nothing wrong" from "we are accepting
 # known-bad history".
-if printf '%s\n' "$output" | grep -q 'passed (with recorded waivers)'; then
+if out_grep -q 'passed (with recorded waivers)'; then
   pass "a waived-green run is distinguishable from a clean one"
 else
   bad "waived-green run did not say it was carrying waivers"
@@ -220,7 +227,7 @@ else
   bad "abbreviated SHA should exit 2, got ${rc}"
   echo "$output" | sed 's/^/      | /'
 fi
-if printf '%s\n' "$output" | grep -qi 'full 40-character'; then
+if out_grep -qi 'full 40-character'; then
   pass "the abbreviated-SHA error explains the requirement"
 else
   bad "abbreviated-SHA error did not explain the requirement"
@@ -245,7 +252,7 @@ else
   bad "stale-waiver run should still exit 1 for the real failures, got ${rc}"
   echo "$output" | sed 's/^/      | /'
 fi
-if printf '%s\n' "$output" | grep -q "^STALE-WAIVER ${good_sha}"; then
+if out_grep -q "^STALE-WAIVER ${good_sha}"; then
   pass "a waiver on a now-passing commit is reported as stale"
 else
   bad "stale waiver on ${good_sha} was not reported"
@@ -255,7 +262,7 @@ fi
 # The default (no waivers set) is unchanged: everything still fails, and the
 # summary reports zero waived rather than omitting the field.
 run_checker "DCO_WAIVED_COMMITS="
-if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q '0 waived'; then
+if [ "$rc" -eq 1 ] && out_grep -q '0 waived'; then
   pass "an empty waiver list is not a config error and reports 0 waived"
 else
   bad "empty waiver list changed behaviour (rc=${rc})"
@@ -282,8 +289,8 @@ run_checker_ref() { # run_checker_ref <ref-or-range> <env-assignments...>
 # failure just outside it. If the range were being ignored and the tip scanned
 # instead, missing_sha would appear too.
 run_checker_ref "${missing_sha}..${mismatch_sha}" "DCO_WAIVED_COMMITS="
-if printf '%s\n' "$output" | grep -q "^FAIL ${mismatch_sha}" &&
-   ! printf '%s\n' "$output" | grep -qE "^(FAIL|WAIVED|STALE-WAIVER) ${missing_sha}"; then
+if out_grep -q "^FAIL ${mismatch_sha}" &&
+   ! out_grep -qE "^(FAIL|WAIVED|STALE-WAIVER) ${missing_sha}"; then
   pass "a range inspects only the commits it contains"
 else
   bad "range scan leaked commits from outside the range (rc=${rc})"
@@ -292,7 +299,7 @@ fi
 
 # The summary must not call a range scan "recent commits on <tip>" — that
 # wording is what made the tip-plus-count bug look correct in review.
-if printf '%s\n' "$output" | grep -q "commits in ${missing_sha}..${mismatch_sha}"; then
+if out_grep -q "commits in ${missing_sha}..${mismatch_sha}"; then
   pass "a range scan is described as a range in the summary"
 else
   bad "range summary still uses rolling-window wording"
