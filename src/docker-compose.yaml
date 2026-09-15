@@ -86,6 +86,9 @@ services:
       - LINEAR_CLIENT_ID=${LINEAR_CLIENT_ID:-}
       - LINEAR_CLIENT_SECRET=${LINEAR_CLIENT_SECRET:-}
       - LINEAR_WEBHOOK_SECRET=${LINEAR_WEBHOOK_SECRET:-}
+      - HIVE_DEPLOYMENT_RUNTIME=docker-compose
+      - HIVE_DEPLOYMENT_PODMAN_MODE=
+      - HIVE_DASHBOARD_UPGRADE_HELPER=${HIVE_DASHBOARD_UPGRADE_HELPER:-}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     # BOTH LISTENERS, not just the Go API (#4476). 3002 is the Go API; 3001 is

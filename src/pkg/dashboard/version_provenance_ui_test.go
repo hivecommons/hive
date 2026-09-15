@@ -85,14 +85,17 @@ async function render(overrides = {}) {
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('&lt;script&gt;'));
   assert.ok(html.includes('&quot;'));
-  html = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', commitsBehind: 2, tracking: 'pinned' });
+  html = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', commitsBehind: 2, tracking: 'pinned', deployment: { runtime: 'docker-compose', upgradeSupported: true } });
   assert.ok(html.includes('2 behind</span>'));
   assert.ok(html.includes('Upgrade available'));
-  html = await render({ behind: true, autoUpgrade: true, tracking: 'floating' });
+  html = await render({ behind: true, autoUpgrade: true, tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
   assert.ok(html.includes('Queued for auto-upgrade'));
   // #6904: the passive badge no longer hides the owner's manual escape hatch.
   assert.ok(html.includes('spoke-upgrade-btn'));
   assert.ok(html.includes('Upgrade now'));
+  html = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
+  assert.ok(html.includes('manual update required'));
+  assert.ok(!html.includes('spoke-upgrade-btn'));
   html = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
   assert.ok(html.includes('Up to date with remote'));
 })().catch(err => { console.error(err); process.exitCode = 1; });

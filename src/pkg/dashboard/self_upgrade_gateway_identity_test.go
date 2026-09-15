@@ -45,10 +45,11 @@ func TestSelfUpgradeGatewayOwnerNoUserIdentityRelaysProof(t *testing.T) {
 	srv := NewServerWithAuth(0, token, slog.Default())
 	srv.deps = &Dependencies{
 		Config: &config.Config{
-			Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-			Agents:  map[string]config.AgentConfig{},
-			Hub:     config.HubConfig{URL: hub.URL},
-			HiveID:  "hosted-test-hive",
+			Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+			Agents:     map[string]config.AgentConfig{},
+			Hub:        config.HubConfig{URL: hub.URL},
+			HiveID:     "hosted-test-hive",
+			Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
 		},
 		Logger: slog.Default(),
 	}
@@ -90,10 +91,11 @@ func TestSelfUpgradeWithoutProofOrHubCookieFailsHonestly(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
 		Config: &config.Config{
-			Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-			Agents:  map[string]config.AgentConfig{},
-			Hub:     config.HubConfig{URL: hub.URL},
-			HiveID:  "hosted-test-hive",
+			Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+			Agents:     map[string]config.AgentConfig{},
+			Hub:        config.HubConfig{URL: hub.URL},
+			HiveID:     "hosted-test-hive",
+			Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
 		},
 		Logger: slog.Default(),
 	}
@@ -135,10 +137,11 @@ func TestSelfUpgradeNoProofButHubCookieStillRelays(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
 		Config: &config.Config{
-			Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-			Agents:  map[string]config.AgentConfig{},
-			Hub:     config.HubConfig{URL: hub.URL},
-			HiveID:  "hosted-test-hive",
+			Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+			Agents:     map[string]config.AgentConfig{},
+			Hub:        config.HubConfig{URL: hub.URL},
+			HiveID:     "hosted-test-hive",
+			Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
 		},
 		Logger: slog.Default(),
 	}

@@ -16983,17 +16983,23 @@ function burnAreaChart() {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         } else if (v.behind) {
           html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
-          if (v.autoUpgrade && !um) {
+          const dep = v.deployment || {};
+          const upgradeSupported = dep.upgradeSupported === true;
+          const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
+          if (!upgradeSupported) {
+            const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
+            html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap;padding:1px 7px;border-radius:999px;border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
+          } else if (v.autoUpgrade && !um) {
             // Hub-managed: keep the passive state badge, but do not gate the
             // owner's manual escape hatch on the schedule. This mirrors the hub
             // dashboard's state/action split.
             html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap;padding:1px 7px;border-radius:999px;border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Queued for auto-upgrade</span>`;
-            html += ` <button id="spoke-upgrade-btn" data-action="gh27" data-arg0="${escapeHtml(v.latestHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Upgrade to ${escapeHtml(v.latestShort || 'latest')} now instead of waiting for auto-upgrade">Upgrade now</button>`;
+            html += ` <button id="spoke-upgrade-btn" data-action="gh27" data-arg0="${escapeHtml(v.latestHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Upgrade ${escapeHtml(runtimeLabel)} deployment to ${escapeHtml(v.latestShort || 'latest')} now instead of waiting for auto-upgrade">Upgrade now</button>`;
           } else {
             // Manual path: name the action AND the target — "Upgrade available →
             // <sha>" — with a hover state, so the button cannot be misread as a
             // status label (real feedback: owners could not find how to upgrade).
-            html += ` <button id="spoke-upgrade-btn" data-action="gh27" data-arg0="${escapeHtml(v.latestHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">↑ Upgrade available → ${escapeHtml(v.latestShort || 'latest')}</button>`;
+            html += ` <button id="spoke-upgrade-btn" data-action="gh27" data-arg0="${escapeHtml(v.latestHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → latest ${escapeHtml(v.latestShort || '?')}">↑ Upgrade available → ${escapeHtml(v.latestShort || 'latest')}</button>`;
           }
         } else if (v.latestHash) {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
@@ -17013,7 +17019,11 @@ function burnAreaChart() {
       if (btn) { btn.disabled = true; btn.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Upgrading'; btn.style.opacity = '0.6'; }
       try {
         showToast('Upgrading to latest...', 'info');
-        var resp = await fetch('/api/self-upgrade', { method: 'POST' });
+        var resp = await fetch('/api/self-upgrade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: targetHash || '' })
+        });
         if (!resp.ok) {
           var err = await resp.json().catch(function() { return {}; });
           showToast('Upgrade failed: ' + (err.error || resp.statusText), 'error');

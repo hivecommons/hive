@@ -260,6 +260,7 @@ func TestHandleSelfUpgradeNonOwner(t *testing.T) {
 
 func TestHandleSelfUpgradeNoHubURL(t *testing.T) {
 	srv := newMinimalServer(t)
+	srv.deps.Config.Deployment = config.DeploymentConfig{Runtime: "kubernetes"}
 	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
 	w := httptest.NewRecorder()
 	markOwnerRequest(req)

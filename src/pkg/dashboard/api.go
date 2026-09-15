@@ -670,12 +670,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	tracking := hub.ImageTrackingMode(imageRef)
 	resp := map[string]interface{}{
-		"version":  "2.0.0",
-		"go":       "1.25",
-		"hash":     versionHash,
-		"short":    versionShort,
-		"branch":   upstreamBranch(),
-		"tracking": tracking,
+		"version":    "2.0.0",
+		"go":         "1.25",
+		"hash":       versionHash,
+		"short":      versionShort,
+		"branch":     upstreamBranch(),
+		"tracking":   tracking,
+		"deployment": s.detectDeployment(),
 	}
 	if channel != "" {
 		resp["channel"] = channel
@@ -1070,6 +1071,24 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	deployment := s.detectDeployment()
+	switch deployment.Runtime {
+	case deploymentRuntimeUnknown:
+		jsonError(w, deployment.Reason, http.StatusConflict)
+		return
+	case deploymentRuntimePodmanQuadlet, deploymentRuntimeDockerCompose:
+		if !deployment.UpgradeSupported {
+			jsonError(w, deployment.Reason, http.StatusConflict)
+			return
+		}
+		if err := s.runStandaloneUpgrade(r, deployment); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
+		jsonResponse(w, map[string]any{"status": "upgrading", "runtime": deployment.Runtime})
 		return
 	}
 	hubURL := s.deps.Config.Hub.URL

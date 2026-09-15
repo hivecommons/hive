@@ -23,6 +23,7 @@ type Config struct {
 	Notifications NotificationsConfig    `yaml:"notifications"`
 	Dashboard     DashboardConfig        `yaml:"dashboard"`
 	Data          DataConfig             `yaml:"data"`
+	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
 	Hub           HubConfig              `yaml:"hub"`
 	HiveID        string                 `yaml:"hive_id"`

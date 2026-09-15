@@ -4,7 +4,7 @@
 # waits for the healthcheck to pass, then swaps by renaming containers.
 # Nginx resolves "hive" via Docker DNS — no config file changes needed.
 #
-# Usage: ./blue-green-deploy.sh [--skip-build]
+# Usage: ./blue-green-deploy.sh [--skip-build] [--image-ref ghcr.io/hivecommons/hive:<tag-or-digest>]
 
 set -euo pipefail
 
@@ -16,8 +16,27 @@ HEALTH_INTERVAL_S=5
 HEALTH_TIMEOUT_S=180
 
 SKIP_BUILD=false
-if [ "${1:-}" = "--skip-build" ]; then
-    SKIP_BUILD=true
+IMAGE_REF=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-build)
+            SKIP_BUILD=true
+            shift
+            ;;
+        --image-ref)
+            IMAGE_REF="${2:-}"
+            shift 2
+            ;;
+        *)
+            echo "Usage: $0 [--skip-build] [--image-ref ghcr.io/hivecommons/hive:<tag-or-digest>]" >&2
+            exit 64
+            ;;
+    esac
+done
+
+if [ -n "$IMAGE_REF" ] && ! [[ "$IMAGE_REF" =~ ^ghcr\.io/hivecommons/hive(:[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})$ ]]; then
+    echo "ERROR: --image-ref must name ghcr.io/hivecommons/hive by tag or sha256 digest" >&2
+    exit 64
 fi
 
 log() { echo "[deploy] $(date '+%H:%M:%S') $*"; }
@@ -39,11 +58,17 @@ if [ "$avail_mb" -lt "$MIN_DISK_MB" ]; then
 fi
 
 # ── 1. Build new image ──────────────────────────────────────────────
-if [ "$SKIP_BUILD" = false ]; then
+if [ -n "$IMAGE_REF" ]; then
+    log "Pulling requested Hive image $IMAGE_REF..."
+    docker pull "$IMAGE_REF"
+elif [ "$SKIP_BUILD" = false ]; then
     log "Pruning build cache to ensure fresh Go compilation..."
     docker builder prune -f >/dev/null 2>&1 || true
     log "Building new image (no cache)..."
     docker compose build --no-cache hive
+else
+    log "Pulling Compose images..."
+    docker compose pull hive gateway
 fi
 
 # ── 2. Determine active slot ────────────────────────────────────────
@@ -70,7 +95,11 @@ fi
 # ── 3. Start new container alongside old one ────────────────────────
 log "Starting new container as hive-next..."
 
-IMAGE=$(docker compose config --images | grep hive | head -1)
+if [ -n "$IMAGE_REF" ]; then
+    IMAGE="$IMAGE_REF"
+else
+    IMAGE=$(docker compose config --images | grep hive | head -1)
+fi
 
 ENV_ARGS=""
 for var in HIVE_GITHUB_TOKEN HIVE_DASHBOARD_TOKEN NTFY_SERVER NTFY_TOPIC; do

@@ -477,6 +477,22 @@ else
 fi
 info "HIVE_GITHUB_TOKEN is yours to add: see src/docs/github-app-setup.md for the PAT scopes."
 
+if grep -qE '^[[:space:]]*HIVE_DEPLOYMENT_RUNTIME=' "${CONF_DIR}/hive.env" 2>/dev/null; then
+  ok "keep    deployment runtime: HIVE_DEPLOYMENT_RUNTIME already set in hive.env"
+else
+  printf 'HIVE_DEPLOYMENT_RUNTIME=podman-quadlet\n' | as_owner tee -a "${CONF_DIR}/hive.env" >/dev/null \
+    || die "$EX_CONFIG" "could not append HIVE_DEPLOYMENT_RUNTIME to ${CONF_DIR}/hive.env"
+  ok "wrote   deployment runtime: podman-quadlet appended to hive.env"
+fi
+if grep -qE '^[[:space:]]*HIVE_DEPLOYMENT_PODMAN_MODE=' "${CONF_DIR}/hive.env" 2>/dev/null; then
+  ok "keep    deployment mode: HIVE_DEPLOYMENT_PODMAN_MODE already set in hive.env"
+else
+  if [ "$ROOTFUL" -eq 1 ]; then deploy_mode="rootful"; else deploy_mode="rootless"; fi
+  printf 'HIVE_DEPLOYMENT_PODMAN_MODE=%s\n' "$deploy_mode" | as_owner tee -a "${CONF_DIR}/hive.env" >/dev/null \
+    || die "$EX_CONFIG" "could not append HIVE_DEPLOYMENT_PODMAN_MODE to ${CONF_DIR}/hive.env"
+  ok "wrote   deployment mode: ${deploy_mode} appended to hive.env"
+fi
+
 # --- step 4: the #4367 coupling, enforced -----------------------------------
 step "4/9  dashboard.port must equal the unit's HealthCmd port (#4367)"
 

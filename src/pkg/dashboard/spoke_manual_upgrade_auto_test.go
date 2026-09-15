@@ -34,10 +34,11 @@ func TestSpokeAutoUpgradeStillExposesManualUpgradeAction(t *testing.T) {
 		`data-arg0="${escapeHtml(v.latestHash || '')}"`,
 		"Upgrade now</button>",
 		"gh27: function (event, A) { selfUpgrade(A[0]); }",
-		"fetch('/api/self-upgrade', { method: 'POST' })",
+		"fetch('/api/self-upgrade', {",
+		"body: JSON.stringify({ target: targetHash || '' })",
 	} {
 		haystack := branch
-		if strings.HasPrefix(want, "gh27:") || strings.HasPrefix(want, "fetch(") {
+		if strings.HasPrefix(want, "gh27:") || strings.HasPrefix(want, "fetch(") || strings.HasPrefix(want, "body:") {
 			haystack = html
 		}
 		if !strings.Contains(haystack, want) {
@@ -66,11 +67,12 @@ func TestSelfUpgradeWithAutoUpgradeEnabledRelaysToHubUpgradePath(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
 		Config: &config.Config{
-			Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-			Agents:    map[string]config.AgentConfig{},
-			Hub:       config.HubConfig{URL: hub.URL, AutoUpgrade: true},
-			HiveID:    hiveID,
-			Dashboard: config.DashboardConfig{AuthToken: "spoke-token"},
+			Project:    config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+			Agents:     map[string]config.AgentConfig{},
+			Hub:        config.HubConfig{URL: hub.URL, AutoUpgrade: true},
+			HiveID:     hiveID,
+			Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},
+			Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
 		},
 		Logger: slog.Default(),
 	}
