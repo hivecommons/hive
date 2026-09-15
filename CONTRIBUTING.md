@@ -193,15 +193,20 @@ rewritten; their failures are resolved by maintainer disposition, not by you.
   `git rebase --signoff`.
 - **DCO squash attribution** (`.github/workflows/dco-squash-attribution.yml`,
   the "Sign-off survives the squash" check) — runs on every pull request.
-  Rejects a human-authored PR whose commits are signed off only by a bot
-  identity. GitHub's squash merge writes the landing commit with the *PR
-  author* as author while keeping the branch commit's message — and therefore
-  its bot `Signed-off-by:` — producing a human-authored commit signed off by a
-  bot on history that can no longer be fixed
-  ([#6798](https://github.com/hivecommons/hive/issues/6798)). So a sign-off
-  that is valid on each branch commit can still fail here. Fix: re-sign the
-  branch commits with your own identity (`git rebase --signoff` after setting
-  your `user.email`). The check is skipped when the PR author is itself a bot.
+  Requires at least one `Signed-off-by:` on each branch commit to name **you,
+  the PR author** — your commit email or your own GitHub noreply address. A
+  sign-off naming anyone else fails, whether that identity is a bot
+  ([#6798](https://github.com/hivecommons/hive/issues/6798)) or a *different
+  human's* noreply address
+  ([#6971](https://github.com/hivecommons/hive/issues/6971)). GitHub's squash
+  merge writes the landing commit with the *PR author* as author while keeping
+  the branch commit's message — and therefore its `Signed-off-by:` — so a
+  trailer naming someone other than you lands as a permanently mismatched
+  sign-off on history that can no longer be fixed. A sign-off that is valid on
+  each branch commit can still fail here. Fix: re-sign the branch commits with
+  your own identity (`git rebase --signoff` after setting your `user.email`).
+  The check is skipped when the PR author is itself a bot, because a
+  bot-authored squash commit creates no mismatch.
 - **DCO push-delta gate** (`.github/workflows/dco-push-delta.yml`) — runs on
   direct pushes to `v4`/`v5` and checks exactly the commits that push
   introduced ([#6756](https://github.com/hivecommons/hive/issues/6756)). This
@@ -217,8 +222,14 @@ rewritten; their failures are resolved by maintainer disposition, not by you.
   [`src/docs/v5-sync-policy.md`](src/docs/v5-sync-policy.md#inherited-dco-failures-from-v4).
 
 All four reuse the same trailer validation (`src/scripts/check-dco-trailers.sh`
-for the range-scanning gates), so they cannot disagree about what a valid
-sign-off looks like.
+for the range-scanning gates), and the sign-off *identity* rules — noreply
+matching and author-login lookup — live in one shared library,
+`src/scripts/lib-dco-identity.sh`, sourced by both the pre-merge squash gate
+and the post-merge monitor. One copy on purpose: the two checkers once carried
+separate copies of that logic, the pre-merge copy fell behind, and a
+different-human sign-off sailed through to protected history
+([#6971](https://github.com/hivecommons/hive/issues/6971)). With a single
+source of truth they cannot disagree about what a valid sign-off looks like.
 
 ## Crediting issue authors
 
