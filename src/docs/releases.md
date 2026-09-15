@@ -426,39 +426,50 @@ three SBOM files, using the same `gh release create` asset-upload call.
 `cmd/hive/main.go` carries one `var version = "0.0.0-dev"`, overridable at
 build time via `-ldflags -X main.version=...`, exactly like the existing
 `gitHash`/`gitShort`/`gitBranch` build-time vars. `src/Dockerfile` and
-`src/Dockerfile.hub` both accept an optional `VERSION` build-arg; when unset
-(every ordinary branch build, including plain `docker.yml` runs) the Go
-linker default `0.0.0-dev` ships instead — never an empty string.
+`src/Dockerfile.hub` both accept an optional `VERSION` build-arg — but they no
+longer leave it empty on an ordinary build. When no `VERSION` is passed, each
+Dockerfile derives one from `git describe --tags --always --dirty` against the
+`/repo/.git` it copies in, so an ordinary `docker.yml` build self-stamps a real
+value: `4.34.0` when built exactly at tag `v4.34.0`, or `4.34.0-7-g43a51078` a
+few commits ahead (nearest tag + commits-ahead + short commit). A leading `v`
+is stripped by `main.go`'s `reportedVersion()` so the three consumers
+(`--version`, hub heartbeats, dashboard registration) always see digit-leading
+semver. `docker.yml`'s image-build jobs check out with `fetch-depth: 0` so the
+tag history `git describe` needs is present; a build with no ldflag at all (a
+bare local `go build`) still falls back to `0.0.0-dev`, never an empty string.
 
-`tagged-release.yml` does not need to pass `VERSION` to a rebuild, because it never
-rebuilds (see above) — the retagged image was already built by `docker.yml`
-carrying whatever `version` that ordinary build embedded. This is deliberate:
-today, a tagged-release image and its `<sha>`/`v4-latest` sibling report the
-same non-version-specific string (`0.0.0-dev`) even though only one of them
-carries a `vX.Y.Z` GHCR tag. **This is a known gap**, not an oversight — see
-below.
+`tagged-release.yml` does not need to pass `VERSION` to a rebuild, because it
+never rebuilds (see above) — the retagged image was already built by
+`docker.yml` carrying the `git describe` version that ordinary build embedded.
+This is deliberate, and it is exactly *why* the version is stamped at the
+original build rather than at tag time: retagging preserves the tested digest
+byte-for-byte, so there is no rebuild at which to inject a version later. A
+tagged-release image and its `<sha>`/`v4-latest` sibling now report the same
+real `git describe` string, because they are the same digest — the version
+rides along with the image, it is not re-derived from the tag.
 
 ## What still blocks cutting a real release
 
-This PR wires the machinery; it does not itself cut a release, and one
-concrete gap remains before the first automated `v0.x.y` should be trusted
-end-to-end:
+The `--version` self-report gap is now closed (see "The version constant"
+above): ordinary `docker.yml` builds stamp the binary from `git describe`, so a
+release image built at tag `v4.34.0` self-reports `4.34.0` and a branch build
+reports `4.34.0-7-gSHA` instead of the old static `0.0.0-dev`. What remains is a
+maintainer product decision, not a wiring gap:
 
-- **The running binary's `--version` output does not yet say `v1.2.3` for a
-  release build.** Because `tagged-release.yml` retags rather than rebuilds (by
-  design — see "How a release is actually built"), the image GHCR now calls
-  `ghcr.io/hivecommons/hive:v1.2.3` still reports whatever `main.version`
-  the original `docker.yml` build embedded, which today is always the
-  `0.0.0-dev` fallback since `docker.yml` never passes `VERSION`. Closing
-  this cleanly means either (a) teaching `docker.yml` to pass a
-  provisional/dev-style `VERSION` on every `v4` build so the embedded string
-  at least varies per commit, or (b) accepting that `--version` reports the
-  git commit faithfully (`gitShort`/`gitBranch` are always correct) while the
-  semver field is aspirational until a release is cut and only the *image
-  tag*, not the binary's self-report, is authoritative for a specific
-  release. This PR does not resolve that tension — it is a maintainer product
-  decision about what `--version` should mean on a non-release build, not a
-  wiring gap this automation can silently paper over.
+- **The running binary's `--version` now varies per build, but the value on a
+  release image is the `git describe` string, not a hand-chosen marketing
+  version.** Because `tagged-release.yml` retags rather than rebuilds (by
+  design — see "How a release is actually built"), the image GHCR calls
+  `ghcr.io/hivecommons/hive:v1.2.3` reports whatever `git describe` produced at
+  the original `docker.yml` build of that digest. When the tagged commit is the
+  exact `git describe` anchor, those agree (`--version` says `1.2.3`); a commit
+  a few beats ahead of the nearest tag legitimately reports the
+  `X.Y.Z-N-gSHA` describe form. That is faithful, not a lie: `gitShort`/
+  `gitBranch` remain exact, and the *image tag* is still authoritative for a
+  named release. Whether a release should additionally rebuild to pin a bare
+  `X.Y.Z` into the binary is deliberately NOT done — it would trade the tested
+  digest for an untested one, the exact supply-chain regression the retag model
+  exists to prevent.
 - **No starting version has been chosen.** With zero existing tags, the first
   automated release computes its base as `0.0.0` and bumps from there (so the
   first `## Added` entry ships as `v0.1.0`, not `v1.0.0`). If the project
