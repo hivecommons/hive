@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -221,34 +222,85 @@ func TestFixEntryWarnRefiresAfterOwnershipChanges(t *testing.T) {
 func TestWarnDeduperErrorChangeRewarns(t *testing.T) {
 	d := &warnDeduper{}
 	key := dedupeKey("chown", "/data/agents/reviewer")
-	if !d.shouldWarn(key, "operation not permitted") {
+	class := dedupeClass("chown", syscall.EPERM)
+	if warn, _ := d.shouldWarn(key, "operation not permitted", class); !warn {
 		t.Error("first failure should warn")
 	}
-	if d.shouldWarn(key, "operation not permitted") {
+	if warn, _ := d.shouldWarn(key, "operation not permitted", class); warn {
 		t.Error("identical repeat should be suppressed")
 	}
-	if !d.shouldWarn(key, "read-only file system") {
+	if warn, _ := d.shouldWarn(key, "read-only file system", class); !warn {
 		t.Error("changed error text should warn again")
 	}
 	d.clear(key)
-	if !d.shouldWarn(key, "read-only file system") {
+	if warn, _ := d.shouldWarn(key, "read-only file system", class); !warn {
 		t.Error("failure after clear should warn again")
 	}
 }
 
-// TestWarnDeduperBoundsMemory pins the map cap: exceeding it resets state
-// rather than growing without bound on a long-lived pod.
+// TestWarnDeduperBoundsMemory pins the map cap: exceeding it must NOT reset
+// state.
+//
+// This expectation is the inverse of what it was before #7087. The old deduper
+// cleared the whole map on reaching the cap, and that defeated it completely on
+// the tree it mattered most for: one agent repo checkout is ~27k paths against a
+// 4096 cap, so the map was wiped on every tick and every path re-logged at WARN
+// every 10s (~1,300 lines/s measured). Past the cap the deduper must degrade to
+// per-(op, errno) class suppression, never forgetting what it already knows.
 func TestWarnDeduperBoundsMemory(t *testing.T) {
 	d := &warnDeduper{}
+	class := dedupeClass("chown", syscall.EPERM)
 	for i := 0; i < maxDedupedWarnKeys; i++ {
-		d.shouldWarn(dedupeKey("chown", string(rune(i))+"/p"), "e")
+		d.shouldWarn(dedupeKey("chown", strconv.Itoa(i)+"/p"), "e", class)
 	}
-	// The next insert crosses the cap and must reset, so a previously seen
-	// key warns again instead of the map growing forever.
-	if !d.shouldWarn(dedupeKey("chown", "overflow"), "e") {
-		t.Error("insert at cap should warn")
+	if len(d.seen) != maxDedupedWarnKeys {
+		t.Fatalf("per-path map holds %d keys, want %d", len(d.seen), maxDedupedWarnKeys)
 	}
-	if !d.shouldWarn(dedupeKey("chown", string(rune(0))+"/p"), "e") {
-		t.Error("after cap reset, an old key should warn again")
+
+	// First overflow path of this class warns once, flagged saturated.
+	warn, saturated := d.shouldWarn(dedupeKey("chown", "overflow-1"), "e", class)
+	if !warn || !saturated {
+		t.Errorf("first overflow of a class: warn=%v saturated=%v, want true/true", warn, saturated)
+	}
+	// Every subsequent overflow path of the SAME class is suppressed. This is
+	// the property that stops the storm.
+	for i := 2; i < 500; i++ {
+		if warn, _ := d.shouldWarn(dedupeKey("chown", "overflow-"+strconv.Itoa(i)), "e", class); warn {
+			t.Fatalf("overflow path %d warned; class suppression is not holding", i)
+		}
+	}
+	// A key recorded BEFORE the cap must still be remembered, not forgotten by
+	// a reset, so it stays suppressed.
+	if warn, _ := d.shouldWarn(dedupeKey("chown", "0/p"), "e", class); warn {
+		t.Error("a pre-cap key was forgotten: the map reset instead of degrading")
+	}
+	// A genuinely different errno is new information and still warns once.
+	other := dedupeClass("chown", syscall.EROFS)
+	if warn, _ := d.shouldWarn(dedupeKey("chown", "overflow-rofs"), "e2", other); !warn {
+		t.Error("a new errno class should warn once even while saturated")
+	}
+	// Memory stays bounded.
+	if len(d.seen) > maxDedupedWarnKeys {
+		t.Errorf("per-path map grew to %d, want <= %d", len(d.seen), maxDedupedWarnKeys)
+	}
+	if len(d.classes) > maxDedupedWarnClasses {
+		t.Errorf("class map grew to %d, want <= %d", len(d.classes), maxDedupedWarnClasses)
+	}
+}
+
+// TestDedupeClassIgnoresPathInErrorText pins the reason the class key is built
+// from the errno and not the error text: the text embeds the offending path, so
+// classing on it would mint one class per path and suppress nothing.
+func TestDedupeClassIgnoresPathInErrorText(t *testing.T) {
+	a := dedupeClass("chown", &os.PathError{Op: "chown", Path: "/data/agents/q/a", Err: syscall.EPERM})
+	b := dedupeClass("chown", &os.PathError{Op: "chown", Path: "/data/agents/q/b", Err: syscall.EPERM})
+	if a != b {
+		t.Errorf("same errno on different paths produced different classes: %q vs %q", a, b)
+	}
+	if c := dedupeClass("chown", &os.PathError{Op: "chown", Path: "/x", Err: syscall.EROFS}); c == a {
+		t.Error("different errno should produce a different class")
+	}
+	if dedupeClass("chmod", &os.PathError{Op: "chmod", Path: "/x", Err: syscall.EPERM}) == a {
+		t.Error("different op should produce a different class")
 	}
 }

@@ -33,6 +33,22 @@ spec:
       # same reasoning the C6 su-exec fix used for `chmod 4750 root:hive-launch`.
       securityContext:
         fsGroup: 1002
+        # fsGroupChangePolicy caps the blast radius of the fsGroup above.
+        #
+        # The default, `Always`, makes kubelet recursively re-group the WHOLE
+        # /data PVC to 1002 on EVERY mount. The permissions watcher wants those
+        # trees in `node` (GID 1000, agent.NodeGID) and runs as uid 1001 with no
+        # CAP_CHOWN after the entrypoint's privilege drop, so it cannot chgrp
+        # anything an agent UID owns. It then retries every PermissionFixInterval
+        # (10s) and warns per path — on a pod with one ~27k-path agent checkout
+        # that measured ~1,300 WARN lines/s, ~58 GB/day of log volume (#7087).
+        #
+        # `OnRootMismatch` re-groups only when the volume ROOT's ownership is
+        # already wrong, which is exactly the "first mount / freshly provisioned
+        # PVC" case the fsGroup is there for. The secrets projection still gets
+        # its group via `defaultMode: 0440` + fsGroup on that volume, so the
+        # CWE-732/522 property above is unchanged.
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: hive
           # Tracks the "stable" release channel rather than the mutable

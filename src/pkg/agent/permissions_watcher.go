@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -195,11 +197,24 @@ var SharedRepoParent = "/data/home"
 // fixPermissions / fixEntry. Production value is unchanged.
 var GooseLogsDir = "/data/home/.local/state/goose/logs/cli"
 
-// maxDedupedWarnKeys bounds the failure-dedupe map. The watcher walks agent
-// workspaces whose contents churn, so without a cap a long-lived pod with many
-// transient unfixable entries would grow the map forever. Hitting the cap
-// resets it, which at worst re-logs each still-failing path once at WARN.
+// maxDedupedWarnKeys bounds the per-path failure-dedupe map. The watcher walks
+// agent workspaces whose contents churn, so without a cap a long-lived pod with
+// many transient unfixable entries would grow the map forever.
+//
+// Reaching the cap does NOT reset the map. It used to, and that defeated the
+// deduper entirely on exactly the tree it mattered most for: one agent repo
+// checkout is ~27k paths, so a map capped at 4096 was cleared on every tick and
+// every path was re-logged at WARN every PermissionFixInterval (#7087). Past the
+// cap the deduper falls back to suppressing by ERROR CLASS instead — see
+// maxDedupedWarnClasses.
 const maxDedupedWarnKeys = 4096
+
+// maxDedupedWarnClasses bounds the fallback map used once the per-path map is
+// saturated. A "class" is (operation, errno) — deliberately NOT the error text,
+// because the text embeds the path ("chown /data/…/x: operation not permitted")
+// and would therefore be as unbounded as the paths themselves. The distinct
+// (op, errno) combinations a watcher can produce is tiny, so this stays small.
+const maxDedupedWarnClasses = 64
 
 // warnDeduper suppresses repeats of an identical per-path repair failure.
 //
@@ -212,24 +227,51 @@ const maxDedupedWarnKeys = 4096
 // to DEBUG. The entry is cleared when the repair succeeds or the path stops
 // needing one, so a NEW failure on the same path warns again; a failure whose
 // error text changes also warns again, because it is new information.
+//
+// Once more than maxDedupedWarnKeys distinct paths are failing, per-path
+// tracking is saturated and the deduper degrades to one WARN per (op, errno)
+// class rather than discarding its memory. That keeps an unfixable tree of any
+// size bounded to a handful of WARN lines total instead of one per path per
+// tick.
 type warnDeduper struct {
-	mu   sync.Mutex
-	seen map[string]string // (op + "\x00" + path) -> last error text
+	mu      sync.Mutex
+	seen    map[string]string   // (op + "\x00" + path) -> last error text
+	classes map[string]struct{} // (op + "\x00" + errno) -> already warned
 }
 
-// shouldWarn records the failure and reports whether it is new (first time
-// this key failed, or the error text changed since last time).
-func (d *warnDeduper) shouldWarn(key, errText string) bool {
+// shouldWarn records the failure and reports whether it is new. It also reports
+// whether per-path tracking is saturated, so the caller can tell the operator
+// that further detail is being suppressed by class rather than by path.
+func (d *warnDeduper) shouldWarn(key, errText, class string) (warn, saturated bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.seen == nil || len(d.seen) >= maxDedupedWarnKeys {
+	if d.seen == nil {
 		d.seen = make(map[string]string)
 	}
-	if prev, ok := d.seen[key]; ok && prev == errText {
-		return false
+	if prev, ok := d.seen[key]; ok {
+		// Known path: warn only if this is genuinely new information.
+		if prev == errText {
+			return false, false
+		}
+		d.seen[key] = errText
+		return true, false
 	}
-	d.seen[key] = errText
-	return true
+	if len(d.seen) < maxDedupedWarnKeys {
+		d.seen[key] = errText
+		return true, false
+	}
+	// Saturated: we cannot afford to remember this path individually, and we
+	// must not forget the ones we already know. Suppress by class instead.
+	if d.classes == nil {
+		d.classes = make(map[string]struct{})
+	}
+	if _, ok := d.classes[class]; ok {
+		return false, true
+	}
+	if len(d.classes) < maxDedupedWarnClasses {
+		d.classes[class] = struct{}{}
+	}
+	return true, true
 }
 
 // clear forgets a key so the next failure on it warns at WARN again. Called
@@ -245,6 +287,19 @@ func (d *warnDeduper) clear(key string) {
 // path failing both chown and chmod gets one WARN for each distinct problem.
 func dedupeKey(op, path string) string { return op + "\x00" + path }
 
+// dedupeClass builds the (operation, errno) key used once per-path tracking is
+// saturated. It unwraps to the syscall errno deliberately: err.Error() embeds
+// the offending path, so classing on the text would create one "class" per path
+// and suppress nothing. Errors that carry no errno collapse to a single
+// "unclassified" bucket, which is still bounded.
+func dedupeClass(op string, err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return op + "\x00" + errno.Error()
+	}
+	return op + "\x00" + "unclassified"
+}
+
 // permWarnDedupe is the watcher's shared dedupe state. Package-level because
 // fixEntry keeps its (path, fi, logger) signature; reset by tests via
 // resetPermWarnDedupe.
@@ -257,11 +312,17 @@ func resetPermWarnDedupe() { permWarnDedupe = &warnDeduper{} }
 // this path with this error, DEBUG on identical repeats. The message text is
 // unchanged from the pre-dedupe watcher so operator greps keep working.
 func warnDeduped(logger *slog.Logger, op, msg, path string, err error) {
-	if permWarnDedupe.shouldWarn(dedupeKey(op, path), err.Error()) {
+	warn, saturated := permWarnDedupe.shouldWarn(dedupeKey(op, path), err.Error(), dedupeClass(op, err))
+	if warn {
+		note := "identical repeats logged at debug until this changes"
+		if saturated {
+			note = "more than " + strconv.Itoa(maxDedupedWarnKeys) +
+				" paths are failing this repair; further failures of this kind are logged at debug"
+		}
 		logger.Warn(msg,
 			"path", path,
 			"error", err,
-			"note", "identical repeats logged at debug until this changes",
+			"note", note,
 		)
 		return
 	}
@@ -464,7 +525,7 @@ func fixModeFile(path string, logger *slog.Logger) {
 	}
 	newPerm := perm | modeFileReadBits
 	if err := f.Chmod(newPerm); err != nil {
-		if permWarnDedupe.shouldWarn(dedupeKey("chmod mode file", path), err.Error()) {
+		if warn, _ := permWarnDedupe.shouldWarn(dedupeKey("chmod mode file", path), err.Error(), dedupeClass("chmod mode file", err)); warn {
 			logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and gh/pushes will be blocked",
 				"path", path,
 				"old_mode", perm.String(),
@@ -633,7 +694,7 @@ func fixBobStateDirGroupWrite(path string, mode os.FileMode, logger *slog.Logger
 	}
 	newPerm := perm | bobStateDirGroupRWX
 	if err := os.Chmod(path, newPerm); err != nil {
-		if permWarnDedupe.shouldWarn(dedupeKey("chmod bob state dir", path), err.Error()) {
+		if warn, _ := permWarnDedupe.shouldWarn(dedupeKey("chmod bob state dir", path), err.Error(), dedupeClass("chmod bob state dir", err)); warn {
 			logger.Error("permissions watcher: chmod bob state dir failed; bob will keep reporting 'error saving your latest settings changes' and run degraded",
 				"path", path,
 				"old_mode", perm.String(),
@@ -688,7 +749,7 @@ func fixSharedCredentialGroupRead(path string, mode os.FileMode, ownerUID uint32
 	}
 	newPerm := perm | sharedCredentialGroupRead
 	if err := os.Chmod(path, newPerm); err != nil {
-		if permWarnDedupe.shouldWarn(dedupeKey("chmod shared credential", path), err.Error()) {
+		if warn, _ := permWarnDedupe.shouldWarn(dedupeKey("chmod shared credential", path), err.Error(), dedupeClass("chmod shared credential", err)); warn {
 			logger.Error("permissions watcher: shared CLI credential is not group-readable and could not be repaired; agents on this backend will drop to a login prompt even though the credential itself is fine",
 				"path", path,
 				"old_mode", perm.String(),
