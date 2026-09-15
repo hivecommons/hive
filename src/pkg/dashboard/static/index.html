@@ -17370,17 +17370,22 @@ function burnAreaChart() {
           if (section === 'nous-section' && level < ACMM_NOUS_MIN_LEVEL) hide(item);
         });
 
-        if (Array.isArray(packAgents)) {
-          const packSet = new Set(packAgents);
-          document.querySelectorAll('[data-agent-nav]').forEach(navItem => {
-            const name = navItem.getAttribute('data-agent-nav');
-            if (name && !packSet.has(name)) hide(navItem);
-          });
-          document.querySelectorAll('.agent-card[data-agent]').forEach(card => {
-            const name = card.getAttribute('data-agent');
-            if (name && !packSet.has(name)) hide(card);
-          });
-        }
+        // #7099: the pack-roster gate is NOT re-applied here. The server already
+        // filters agents through it in buildAgentsWithHidden (status_builder.go),
+        // but WITH the documented "active outside pack" exception
+        // (activeOutsidePack): a running or enabled-and-unpaused agent outside the
+        // level's roster — a custom agent, or one explicitly enabled in YAML — is
+        // deliberately published in status.agents and correctly absent from
+        // hiddenAgents. The nav items and cards this function toggles are built
+        // ONLY from status.agents (renderAgents / ocUpdateSidebarAgents), so
+        // status.agents is already authoritative. Re-deriving the pack filter here
+        // with no escape hatch could only ever DISAGREE with the server, hiding
+        // the exact agent (and its card — terminal link, Login button, restart,
+        // config gear) the server chose to surface, including one the watchdog is
+        // actively raising a re-auth alert about. It also hid the card without
+        // recording anything in hiddenAgents, reopening the diagnostic gap
+        // #6581/#6652 closed. The server decision is the only pack gate; the
+        // client no longer second-guesses it.
     }
 
     function switchConfigTab(tabId) {
