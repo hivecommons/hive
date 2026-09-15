@@ -16,11 +16,14 @@ than re-derived.
 A maintainer designates the GA candidate on
 [#6016](https://github.com/hivecommons/hive/issues/6016): the newest `v5` SHA
 that is **dual-green** — a green required `gate` run (docker.yml) *and* a green
-v2 Tests run *and* a green post-merge DCO monitor run. As of 2026-09-14 that
-SHA is `bab972ac` (v2 Tests
-[run 34905587101](https://github.com/hivecommons/hive/actions/runs/34905587101),
+v2 Tests run *and* a green post-merge DCO monitor run. As of 2026-09-15 that
+SHA is `973425c6` (v2 Tests
+[run 34924306954](https://github.com/hivecommons/hive/actions/runs/34924306954),
 DCO monitor
-[run 34905587102](https://github.com/hivecommons/hive/actions/runs/34905587102));
+[run 34924306975](https://github.com/hivecommons/hive/actions/runs/34924306975),
+gate
+[run 34924306933](https://github.com/hivecommons/hive/actions/runs/34924306933),
+all 2026-09-15T03:15Z; prior dual-green SHAs: `a7c1cf6b`, `bab972ac`);
 use whatever the newest dual-green SHA is at decision time.
 
 Designation is the single highest-leverage action on the board: four GA-bar
@@ -70,10 +73,16 @@ Both are read-only checks against the candidate SHA, recordable the same day:
 
 ## Known risk going in
 
-Current `v5` HEAD `d4c3660f` is red on v2 Tests with a **new** failure shape —
-`pkg/dashboard` shuffled-order tests
+*(Resolved 2026-09-15.)* The `d4c3660f` v2 Tests red with the `pkg/dashboard`
+shuffled-order shape
 ([run 34915061785](https://github.com/hivecommons/hive/actions/runs/34915061785))
-— distinct from the [#6935](https://github.com/hivecommons/hive/issues/6935)
-apt-mirror egress class. Until triaged, later SHAs may not be dual-green;
-this strengthens, not weakens, the case for designating the candidate from the
-existing dual-green SHA now.
+was fixed by [#7018](https://github.com/hivecommons/hive/pull/7018) (flaky SSE
+gap test racing the heartbeat ping), and the
+[#6935](https://github.com/hivecommons/hive/issues/6935) apt-mirror egress
+class was mitigated by [#7009](https://github.com/hivecommons/hive/pull/7009):
+the offline cgo apt cache is now seeded under `v5` (68 `.deb` files, recorded
+in [#7023](https://github.com/hivecommons/hive/pull/7023)). Since then `v5`
+has produced four consecutive green v2 Tests runs (`4ecd8be0` → `973425c6`,
+2026-09-15T01:44Z–03:15Z). The evidence window is the healthiest it has been
+during the entire GA measurement period — which strengthens the case for
+designating the candidate now, while it holds.
