@@ -150,6 +150,8 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 | **L6** | PRs auto-merge when CI goes green. No hold labels. Full automation. |
 
 > **The hold label is your safety net.** At every level below L6, every PR an agent opens is blocked from merging until you remove the `hold` label. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
+>
+> One exception, so it doesn't surprise you: when you **raise the level**, the hive releases the level holds *it* placed on its own open PRs that the new level no longer requires. It never removes a hold you applied yourself, and never one you re-applied after the hive removed it — those stay put until you lift them.
 
 > **L6 is earned, not chased.** Auto-merge is not the goal you're optimizing for on day one — it's the outcome you earn after months of watching agents work and building confidence in their judgment. Most teams spend months at L4 and L5. That's not failure — that's the system working as designed.
 

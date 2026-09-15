@@ -13,7 +13,7 @@ Each agent runs in one of four modes, controlling what actions it can take on Gi
 
 - **Advisory**: Agent observes and records findings as beads on the dashboard. No GitHub interaction.
 - **Measured**: Agent can file GitHub issues to make findings visible to the team. No code changes.
-- **Holdgated**: Agent can write code and open PRs, but every PR gets a `hold` label. A human must review and remove `hold` before merge. Agent never merges.
+- **Holdgated**: Agent can write code and open PRs, but every PR gets a `hold` label. A human must review and remove `hold` before merge. Agent never merges. One exception: a hold the hive applied *for level reasons* is released automatically once the current level no longer calls for it — see the promotion note below. A hold **you** applied is never removed automatically.
 - **Full**: Agent operates autonomously — opens PRs and merges on green CI. Highest trust level.
 
 ## ACMM Levels
@@ -185,6 +185,13 @@ Notes:
 - **Promotion adds agents and capability; demotion narrows it.** Moving up to L6
   makes agents auto-merge on green CI; moving down returns them to holdgated or
   advisory. The per-level capability grid is the table at the top of this page.
+  Promotion also **releases the level holds the hive itself applied** to open App
+  PRs that the new level no longer requires, so you do not have to clean them up
+  by hand after a level bump. Release is fail-closed: it applies only to
+  App-authored PRs carrying the hive's own attributable level-hold notice, only
+  when the most recent `hold` label event was applied by the App, and never while
+  a self-authorization hold applies. A hold a human applied — or re-applied after
+  the hive removed one — is never touched.
 - **Operator-created agents are preserved.** `ApplyPack` reconciles pack agents;
   agents you created yourself are not removed by a level change (deletion is
   tombstoned separately — see agent configuration).
