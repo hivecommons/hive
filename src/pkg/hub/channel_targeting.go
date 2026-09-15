@@ -266,13 +266,37 @@ func channelRevisionSHA(channel string, logger *slog.Logger) string {
 // mistake, one step removed. tracked_channel remains the fallback for spokes
 // too old to report an image ref at all.
 func spokeReleaseChannel(imageRef, trackedChannel string) string {
-	if tag := imageTagOf(sanitizeImageRef(imageRef)); isReleaseChannel(tag) {
-		return tag
+	channel, _, _ := ResolveSpokeReleaseChannel(imageRef, trackedChannel)
+	return channel
+}
+
+// ResolveSpokeReleaseChannel is the exported, read-only companion to
+// spokeReleaseChannel used by the spoke's own dashboard (#7092). It resolves the
+// release channel a spoke's Deployment actually follows AND reports HOW it
+// resolved, so the dashboard can be honest when it does not:
+//
+//   - channel  — the resolved release-channel name ("stable"/"candidate"/"edge"),
+//     "" when the spoke tracks a branch tag or a pin.
+//   - resolved — true only when channel names a real release channel. false is
+//     the signal the dashboard must render as "unknown / not a release channel"
+//     rather than inventing a default: an operator debugging a stuck upgrade
+//     needs the truth here more than a tidy value.
+//   - tag      — the image tag actually observed on the ref (before the channel
+//     test), so the dashboard can show "unknown (image tag: v4-ab12cd)" even
+//     when it is not a channel. "" when imageRef carries no tag at all.
+//
+// The resolution order matches spokeReleaseChannel exactly: the reported image
+// tag leads (it is what the kubelet pulls); trackedChannel is the fallback for
+// spokes too old to report an image ref.
+func ResolveSpokeReleaseChannel(imageRef, trackedChannel string) (channel string, resolved bool, tag string) {
+	tag = imageTagOf(sanitizeImageRef(imageRef))
+	if isReleaseChannel(tag) {
+		return tag, true, tag
 	}
 	if imageRef == "" && isReleaseChannel(trackedChannel) {
-		return trackedChannel
+		return trackedChannel, true, tag
 	}
-	return ""
+	return "", false, tag
 }
 
 // upgradeReachability answers "what is the newest build this spoke can actually

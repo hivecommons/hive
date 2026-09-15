@@ -91,6 +91,43 @@ func TestSpokeReleaseChannel(t *testing.T) {
 	}
 }
 
+// TestResolveSpokeReleaseChannel pins the exported, read-only companion the
+// spoke dashboard uses (#7092): it must agree with spokeReleaseChannel on the
+// resolved name, AND additionally report the resolved flag and the observed
+// image tag so the dashboard can render an honest "unknown (tag: …)" instead of
+// a fabricated default.
+func TestResolveSpokeReleaseChannel(t *testing.T) {
+	cases := []struct {
+		name         string
+		imageRef     string
+		tracked      string
+		wantChannel  string
+		wantResolved bool
+		wantTag      string
+	}{
+		{"channel tag", "ghcr.io/hivecommons/hive:stable", "", "stable", true, "stable"},
+		{"branch tag resolves unknown, tag preserved", "ghcr.io/hivecommons/hive:v4-latest", "", "", false, "v4-latest"},
+		{"sha pin resolves unknown, tag preserved", "ghcr.io/hivecommons/hive:526ef71", "", "", false, "526ef71"},
+		{"no image ref falls back to tracked channel", "", "candidate", "candidate", true, ""},
+		{"no image ref, no channel resolves unknown", "", "", "", false, ""},
+		{"reported tag wins over intent, unknown with tag", "ghcr.io/hivecommons/hive:v4-latest", "stable", "", false, "v4-latest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch, resolved, tag := ResolveSpokeReleaseChannel(tc.imageRef, tc.tracked)
+			if ch != tc.wantChannel || resolved != tc.wantResolved || tag != tc.wantTag {
+				t.Errorf("ResolveSpokeReleaseChannel(%q, %q) = (%q, %v, %q), want (%q, %v, %q)",
+					tc.imageRef, tc.tracked, ch, resolved, tag, tc.wantChannel, tc.wantResolved, tc.wantTag)
+			}
+			// The exported wrapper and the internal helper must never disagree
+			// on the resolved name.
+			if got := spokeReleaseChannel(tc.imageRef, tc.tracked); got != ch {
+				t.Errorf("ResolveSpokeReleaseChannel channel %q disagrees with spokeReleaseChannel %q", ch, got)
+			}
+		})
+	}
+}
+
 // TestReachableUpgradeTargetPrefersChannelOverBranchHead is the regression test
 // for #5994: a spoke tracking :stable must be targeted at the commit :stable
 // carries, never at the newer branch head the soak policy is withholding.

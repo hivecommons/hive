@@ -1277,6 +1277,14 @@ func main() {
 	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
 
+	// Auto-update visibility (#7092): before anything reads the upgrade marker,
+	// reconcile it against the commit we actually booted on. A marker whose
+	// target IS the running commit means the last instructed upgrade LANDED —
+	// record that success durably and clear the marker, so the dashboard can
+	// show "attempted and succeeded" instead of silently losing the success the
+	// moment the new image boots.
+	reconcileUpgradeOutcomeAtBoot(upgradeMarkerPath, lastUpgradeOutcomePath, gitShort, logger)
+
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
 	// alternate registry state every beat, and are invisible to both the
@@ -4407,8 +4415,6 @@ func main() {
 					"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)")
 			}
 		}), hub.UpgradeCallback(func(targetSHA string) {
-			const upgradeMarkerPath = "/data/upgrade-requested"
-
 			// attemptCount carries the number of PREVIOUS failed attempts for this
 			// (current_sha → target_sha) pair, read from the marker below.
 			attemptCount := 0
@@ -7565,6 +7571,73 @@ func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
 // recordUpgradeError annotates the existing marker with the cause of the failed
 // attempt so the NEXT boot can log why the previous one did not land — without
 // it the reason dies with the process and the failure is invisible.
+//
+// upgradeMarkerPath and lastUpgradeOutcomePath are the two on-PVC records the
+// spoke keeps for auto-upgrade visibility (#7092). The marker at
+// upgradeMarkerPath is present ONLY while an instructed upgrade has not landed
+// (in flight or terminally failed) and is cleared the moment the new image
+// boots — so it can NEVER represent a success. lastUpgradeOutcomePath is the
+// durable companion that records the last upgrade that actually LANDED, so the
+// dashboard can tell "attempted and succeeded" apart from "never attempted"
+// instead of letting a blank panel masquerade as success.
+const (
+	upgradeMarkerPath      = "/data/upgrade-requested"
+	lastUpgradeOutcomePath = "/data/last-upgrade-outcome"
+)
+
+// upgradeOutcome is the durable "last upgrade LANDED" record. Written on the
+// boot that completes an upgrade (reconcileUpgradeOutcomeAtBoot), it survives —
+// unlike upgradeMarker, which is removed the moment the target image boots.
+type upgradeOutcome struct {
+	TargetSHA   string    `json:"target_sha"`
+	CurrentSHA  string    `json:"current_sha"`
+	RequestedAt time.Time `json:"requested_at"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+
+func writeUpgradeOutcome(path string, o upgradeOutcome, logger *slog.Logger) {
+	data, err := json.Marshal(o)
+	if err != nil {
+		logger.Warn("failed to encode upgrade outcome", "error", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		logger.Warn("failed to write upgrade outcome", "path", path, "error", err)
+	}
+}
+
+// reconcileUpgradeOutcomeAtBoot records a SUCCESSFUL self-upgrade. An in-flight
+// marker whose target equals the now-running commit means the instructed
+// upgrade LANDED: the pod booted on the target image. That success would
+// otherwise vanish — the next upgrade instruction silently discards the stale
+// marker, so a hive that updated cleanly looks identical to one that never
+// tried. This persists the success durably and clears the in-flight marker so
+// it stops reading as "not landed". A marker whose target does NOT match the
+// running commit is still in flight or failed and is left untouched for that
+// surface. Called once at startup, before the heartbeat loop and dashboard come
+// up, so the dashboard always sees the reconciled state.
+func reconcileUpgradeOutcomeAtBoot(markerPath, outcomePath, runningSHA string, logger *slog.Logger) {
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		return
+	}
+	m := parseUpgradeMarker(data)
+	if m.TargetSHA == "" || runningSHA == "" || !sameUpgradeTarget(m.TargetSHA, runningSHA) {
+		return
+	}
+	writeUpgradeOutcome(outcomePath, upgradeOutcome{
+		TargetSHA:   m.TargetSHA,
+		CurrentSHA:  m.CurrentSHA,
+		RequestedAt: m.RequestedAt,
+		CompletedAt: time.Now().UTC(),
+	}, logger)
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		logger.Warn("failed to clear landed upgrade marker", "path", markerPath, "error", err)
+	}
+	logger.Info("self-upgrade landed: recorded successful upgrade outcome",
+		"target", m.TargetSHA, "current", runningSHA)
+}
+
 // upgradeFailureSummary renders what the hub shows an operator. An empty
 // LastError must never render as a dangling "attempts: " - a colon promising a
 // reason and delivering none is worse than saying the reason was not captured,

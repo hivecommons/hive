@@ -770,8 +770,27 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		Marker:        marker,
 	})
 
+	// Spoke release visibility (#7092): the channel this spoke follows and what
+	// happened on the last upgrade attempt — including EXPLICIT success and an
+	// explicit "never attempted", which the auto-update object above cannot
+	// express (its "up to date" is a commit-count reading, not an attempt
+	// outcome, so it cannot tell a hive that succeeded apart from one that never
+	// tried). Read-only display; channel SELECTION remains out of scope.
+	lastBeat, beatOK := hub.LastHeartbeatAttempt()
+	resp["releaseStatus"] = buildSpokeReleaseStatus(
+		hub.SelfDeploymentImage(), "",
+		readUpgradeOutcome(), marker,
+		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
+	)
+
 	jsonResponse(w, resp)
 }
+
+// dashboardHeartbeatStaleAfter bounds how old the most recent heartbeat attempt
+// may be before the release-status view warns it may be stale. Three missed
+// beats at the fixed 2-minute cadence — long enough to ride a single blip,
+// short enough that a partitioned spoke stops presenting stale data as current.
+const dashboardHeartbeatStaleAfter = 6 * time.Minute
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
 const dashboardStableReleaseBranch = "v4"
