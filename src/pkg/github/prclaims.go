@@ -77,11 +77,10 @@ const (
 	// to contributors (and re-dispatched to agents) whose only possible
 	// verdict was "already resolved on main", a full task cycle each
 	// (measured downstream at ~34% of contributor sessions). Scanning
-	// recently-merged PRs keeps those claims alive for this window after
-	// merge, long enough for the post-merge refs sweep and a human to close
-	// the issue, but bounded so a deliberately-open remainder (an epic's
-	// `Refs #N`) is never stranded forever. Matches claimLedgerTTL so every
-	// bound on a claim's influence agrees.
+	// recently-merged PRs keeps those claims visible for this window after
+	// merge: strong merged claims still suppress, while weak merged claims are
+	// attached to the actionable issue as verification context. Matches
+	// claimLedgerTTL so every bound on a claim's influence agrees.
 	mergedClaimScanWindow = claimLedgerTTL
 
 	// ClaimLedgerPath is the on-PVC location of the persisted claim ledger.
@@ -164,8 +163,9 @@ type IssueClaim struct {
 	// closing keyword (or GitHub could not act on one). Such an issue must
 	// not be offered to a contributor or dispatched to an agent — the only
 	// possible outcome is a wasted "already resolved" cycle — so a merged
-	// claim suppresses exactly like its open counterpart, bounded by
-	// mergedClaimScanWindow after merge instead of by the PR staying open.
+	// strong merged claim suppresses like its open counterpart; weak merged
+	// claims are final, ambiguous evidence and are released with context rather
+	// than parked on a timer.
 	// Omitempty-false, so pre-#6867 ledgers unmarshal as open-PR claims and
 	// keep their existing semantics across the upgrade.
 	MergedPR bool `json:"merged_pr,omitempty"`
@@ -495,8 +495,8 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 // the claim vanished the moment the PR left the open set — so the still-open
 // issue went straight back into the offer pool and every taker could only
 // rediscover "already resolved on main" at full task cost. Those claims are
-// marked MergedPR and suppress like their open counterparts, bounded by the
-// scan window after merge.
+// marked MergedPR; strong claims suppress, while weak claims are surfaced as
+// context for a resolved/not-resolved decision (#7061).
 //
 // A per-repo API failure is reported via err but the successfully-scanned repos
 // are still returned, so the caller can merge partial results into the ledger
@@ -910,6 +910,20 @@ func (l *ClaimLedger) Save() error {
 // GENERIC: the predicate keys only off check state + commit staleness.
 type RedStaleFunc func(prRepo string, prNumber int) bool
 
+func claimContext(c IssueClaim, decision string) *IssueClaimContext {
+	return &IssueClaimContext{
+		PRNumber:       c.PRNumber,
+		PRRepo:         c.PRRepo,
+		PRURL:          c.PRURL,
+		PRAuthor:       c.PRAuthor,
+		ExternalAuthor: c.ExternalAuthor,
+		Reference:      c.Reference,
+		MergedPR:       c.MergedPR,
+		MergedAt:       c.MergedAt,
+		Decision:       decision,
+	}
+}
+
 // FilterClaimedIssues removes from result every issue an open PR already claims,
 // logging each suppression with the claiming PR's URL.
 //
@@ -933,6 +947,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	}
 	kept := make([]Issue, 0, len(result.Issues.Items))
 	suppressed := 0
+	annotated := false
 	for _, issue := range result.Issues.Items {
 		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
 		if !ok {
@@ -958,11 +973,37 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// seen claiming the issue, then release even while it stays open. Both
 		// original rules survive in bounded form.
 		if claim.ExternalAuthor || claim.Reference {
+			// A merged weak claim is final evidence, not live work-in-progress:
+			// the PR can no longer gain a closing keyword or new commits, so a
+			// timer cannot turn the weak reference into a resolved/not-resolved
+			// decision. Be conservative: do NOT auto-close the issue from a bare
+			// reference or external-author heuristic. Instead, release it with
+			// the merged PR attached so the next agent/human verifies whether the
+			// merged diff resolved the issue before implementing anything.
+			if claim.MergedPR {
+				issue.ClaimContext = claimContext(claim, "merged_weak_claim_needs_verification")
+				annotated = true
+				kept = append(kept, issue)
+				if logger != nil {
+					logger.Info("releasing issue: merged weak claim needs verification",
+						"repo", issue.Repo,
+						"issue", issue.Number,
+						"claimed_by_pr", claim.PRNumber,
+						"pr_repo", claim.PRRepo,
+						"pr_url", claim.PRURL,
+						"external", claim.ExternalAuthor,
+						"reference", claim.Reference,
+						"merged", claim.MergedPR,
+						"merged_at", claim.MergedAt,
+					)
+				}
+				continue
+			}
 			// The red+stale valve applies BEFORE the window: a dead PR defers
 			// nothing, which keeps an abandoned weak claim from costing the
 			// issue three days. A MERGED claim (#6867) never takes the valve —
 			// its work already landed, so check state is meaningless for it.
-			if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+			if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
 				kept = append(kept, issue)
 				continue
 			}
@@ -1035,7 +1076,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			)
 		}
 	}
-	if suppressed == 0 {
+	if suppressed == 0 && !annotated {
 		return 0
 	}
 

@@ -275,3 +275,40 @@ func TestStrongClaimUnaffectedByWindow(t *testing.T) {
 		t.Fatalf("suppressed = %d, want 1 — a closing claim never expires into a re-offer", suppressed)
 	}
 }
+
+// TestOpenReferenceOnlyClaimStillUsesWeakTimer pins the #7061 asymmetry: only
+// merged weak claims bypass the timer. An open reference-only PR still defers
+// inside the window and releases after it, unchanged from #4929.
+func TestOpenReferenceOnlyClaimStillUsesWeakTimer(t *testing.T) {
+	now := time.Now()
+	base := IssueClaim{
+		Repo: "projectbluefin/dakota", Issue: 362,
+		PRNumber: 1402, PRRepo: "projectbluefin/dakota",
+		PRAuthor: "kubestellar-hive[bot]", Reference: true,
+		ObservedAt: now,
+	}
+
+	t.Run("inside window defers", func(t *testing.T) {
+		ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+		claim := base
+		claim.FirstObservedAt = now.Add(-time.Hour)
+		ledger.Reconcile([]IssueClaim{claim}, true)
+		if suppressed := FilterClaimedIssues(scannerActionable("projectbluefin/dakota"), ledger, nil, testLogger()); suppressed != 1 {
+			t.Fatalf("suppressed = %d, want 1 for open reference-only claim inside window", suppressed)
+		}
+	})
+
+	t.Run("past window releases without merged context", func(t *testing.T) {
+		ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+		claim := base
+		claim.FirstObservedAt = now.Add(-weakClaimDeferWindow - time.Hour)
+		ledger.Reconcile([]IssueClaim{claim}, true)
+		result := scannerActionable("projectbluefin/dakota")
+		if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 0 {
+			t.Fatalf("suppressed = %d, want 0 for open reference-only claim past window", suppressed)
+		}
+		if result.Issues.Items[0].ClaimContext != nil {
+			t.Fatalf("open weak claim should release unchanged, got context %+v", result.Issues.Items[0].ClaimContext)
+		}
+	})
+}

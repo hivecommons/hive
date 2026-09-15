@@ -1,0 +1,1 @@
+- Merged weak PR claims now re-enter the issue queue with explicit merged-PR context instead of disappearing behind a 72-hour timer and returning unchanged, so agents and operators can verify whether the landed `Refs #N` work resolved the issue before implementing duplicate work ([#7061](https://github.com/hivecommons/hive/issues/7061)).

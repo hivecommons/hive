@@ -424,6 +424,20 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		b.WriteString(fmt.Sprintf("  %dm %s [%s] %s\n",
 			issue.AgeMinutes, issueDisplayRef(issue),
 			strings.Join(labels, ","), title))
+		if issue.ClaimContext != nil && issue.ClaimContext.MergedPR {
+			reason := "weakly claimed"
+			if issue.ClaimContext.Reference {
+				reason = "referenced without a closing keyword"
+			} else if issue.ClaimContext.ExternalAuthor {
+				reason = "was claimed by an external author"
+			}
+			prRef := fmt.Sprintf("%s#%d", issue.ClaimContext.PRRepo, issue.ClaimContext.PRNumber)
+			b.WriteString(fmt.Sprintf("    ↳ merged PR context: %s %s; verify whether the merged work resolved this issue before implementing", prRef, reason))
+			if issue.ClaimContext.PRURL != "" {
+				b.WriteString(fmt.Sprintf(" (%s)", issue.ClaimContext.PRURL))
+			}
+			b.WriteString("\n")
+		}
 		shown++
 	}
 	return b.String(), failClosed

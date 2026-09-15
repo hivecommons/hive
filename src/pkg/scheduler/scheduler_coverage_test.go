@@ -51,6 +51,29 @@ func TestFormatIssueList_TruncatesTitle(t *testing.T) {
 	}
 }
 
+func TestFormatIssueList_IncludesMergedClaimContext(t *testing.T) {
+	s := newScheduler()
+	issues := []github.Issue{
+		{
+			Repo: "repo1", Number: 42, Title: "fix bug", AgeMinutes: 15,
+			ClaimContext: &github.IssueClaimContext{
+				PRRepo: "repo1", PRNumber: 99, PRURL: "https://github.com/org/repo1/pull/99",
+				Reference: true, MergedPR: true, Decision: "merged_weak_claim_needs_verification",
+			},
+		},
+	}
+	result := s.formatIssueList(issues)
+	if !strings.Contains(result, "merged PR context: repo1#99 referenced without a closing keyword") {
+		t.Fatalf("missing merged PR context in issue list: %s", result)
+	}
+	if !strings.Contains(result, "verify whether the merged work resolved this issue before implementing") {
+		t.Fatalf("missing verification instruction in issue list: %s", result)
+	}
+	if !strings.Contains(result, "https://github.com/org/repo1/pull/99") {
+		t.Fatalf("missing PR URL in issue list: %s", result)
+	}
+}
+
 func TestFormatIssueList_MaxIssues(t *testing.T) {
 	s := newScheduler()
 	issueCount := maxIssuesPerKick + 10

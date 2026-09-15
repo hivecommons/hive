@@ -280,6 +280,11 @@ type Issue struct {
 	ComplexityTier string            `json:"complexity_tier,omitempty"`
 	ModelRec       string            `json:"model_recommendation,omitempty"`
 	Lane           string            `json:"lane,omitempty"`
+	// ClaimContext carries non-suppressing PR-claim context alongside an
+	// actionable issue. It is set when the duplicate-PR guard decides that an
+	// issue should be worked or triaged despite a related PR claim, but the
+	// downstream agent must know about that PR before deciding what remains.
+	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -288,6 +293,20 @@ type Issue struct {
 type IssueDependency struct {
 	Key      string `json:"key"`
 	Resolved bool   `json:"resolved"`
+}
+
+// IssueClaimContext is prompt/API evidence that an actionable issue is related
+// to a PR claim that no longer suppresses the issue.
+type IssueClaimContext struct {
+	PRNumber       int       `json:"pr_number"`
+	PRRepo         string    `json:"pr_repo"`
+	PRURL          string    `json:"pr_url,omitempty"`
+	PRAuthor       string    `json:"pr_author,omitempty"`
+	ExternalAuthor bool      `json:"external_author,omitempty"`
+	Reference      bool      `json:"reference,omitempty"`
+	MergedPR       bool      `json:"merged_pr,omitempty"`
+	MergedAt       time.Time `json:"merged_at,omitempty"`
+	Decision       string    `json:"decision"`
 }
 
 type PullRequest struct {

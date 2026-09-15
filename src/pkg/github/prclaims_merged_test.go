@@ -182,10 +182,10 @@ func TestClaimRankOpenBeatsMergedWithinTier(t *testing.T) {
 }
 
 // TestFilterClaimedIssuesMergedClaims pins the agent-side consumption of
-// merged claims (#6867): a merged strong claim suppresses and never takes the
-// red+stale release valve (the PR is merged — check state is meaningless), and
-// a merged weak claim defers until weakClaimDeferWindow past the merge, then
-// releases the remainder.
+// merged claims (#6867/#7061): a merged strong claim suppresses and never takes
+// the red+stale release valve (the PR is merged — check state is meaningless),
+// while a merged weak claim is released with merged-PR context instead of being
+// parked on the 72h timer and later re-offered unchanged.
 func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 	mkResult := func() *ActionableResult {
 		r := &ActionableResult{}
@@ -211,33 +211,88 @@ func TestFilterClaimedIssuesMergedClaims(t *testing.T) {
 		}
 	})
 
-	t.Run("merged weak claim defers within the window", func(t *testing.T) {
+	t.Run("merged reference-only claim releases immediately with context", func(t *testing.T) {
+		mergedAt := time.Now().Add(-time.Hour)
 		ledger := NewClaimLedger("", testLogger())
 		ledger.Reconcile([]IssueClaim{{
 			Repo: "spyre-inference", Issue: 300, PRNumber: 501, Reference: true,
-			MergedPR: true, MergedAt: time.Now().Add(-time.Hour),
-			ObservedAt: time.Now(), FirstObservedAt: time.Now().Add(-time.Hour),
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/501",
+			MergedPR: true, MergedAt: mergedAt,
+			ObservedAt: time.Now(), FirstObservedAt: mergedAt,
 		}}, true)
 		result := mkResult()
-		if got := FilterClaimedIssues(result, ledger, alwaysRedStale, testLogger()); got != 1 {
-			t.Fatalf("suppressed = %d, want 1 — the red+stale valve must not release a merged claim", got)
+		if got := FilterClaimedIssues(result, ledger, alwaysRedStale, testLogger()); got != 0 {
+			t.Fatalf("suppressed = %d, want 0 — a merged Refs claim must not stay on the weak timer", got)
+		}
+		if len(result.Issues.Items) != 1 {
+			t.Fatalf("issue should be actionable with context, got %+v", result.Issues.Items)
+		}
+		ctx := result.Issues.Items[0].ClaimContext
+		if ctx == nil {
+			t.Fatal("merged weak claim was released without merged-PR context")
+		}
+		if ctx.PRNumber != 501 || ctx.PRRepo != "spyre-inference" || !ctx.Reference || !ctx.MergedPR {
+			t.Fatalf("claim context = %+v, want merged reference PR #501", ctx)
+		}
+		if ctx.Decision != "merged_weak_claim_needs_verification" {
+			t.Fatalf("decision = %q, want merged_weak_claim_needs_verification", ctx.Decision)
 		}
 	})
 
-	t.Run("merged weak claim releases past the window", func(t *testing.T) {
+	t.Run("merged weak claim past the old window still carries context", func(t *testing.T) {
 		mergedAt := time.Now().Add(-weakClaimDeferWindow - time.Hour)
 		ledger := NewClaimLedger("", testLogger())
 		ledger.Reconcile([]IssueClaim{{
 			Repo: "spyre-inference", Issue: 300, PRNumber: 501, Reference: true,
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/501",
 			MergedPR: true, MergedAt: mergedAt,
 			ObservedAt: time.Now(), FirstObservedAt: mergedAt,
 		}}, true)
 		result := mkResult()
 		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 0 {
-			t.Fatalf("suppressed = %d, want 0 — a merged Refs must release the remainder past the window", got)
+			t.Fatalf("suppressed = %d, want 0 — a merged Refs must not re-enter unchanged past the old window", got)
 		}
-		if len(result.Issues.Items) != 1 {
-			t.Errorf("issue wrongly suppressed")
+		if len(result.Issues.Items) != 1 || result.Issues.Items[0].ClaimContext == nil {
+			t.Fatalf("issue should be actionable with merged context, got %+v", result.Issues.Items)
+		}
+	})
+
+	t.Run("merged external-author claim releases with context", func(t *testing.T) {
+		mergedAt := time.Now().Add(-time.Hour)
+		ledger := NewClaimLedger("", testLogger())
+		ledger.Reconcile([]IssueClaim{{
+			Repo: "spyre-inference", Issue: 300, PRNumber: 777,
+			PRRepo: "spyre-inference", PRAuthor: "outside-dev",
+			ExternalAuthor: true, MergedPR: true, MergedAt: mergedAt,
+			ObservedAt: time.Now(), FirstObservedAt: mergedAt,
+		}}, true)
+		result := mkResult()
+		if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 0 {
+			t.Fatalf("suppressed = %d, want 0 for merged external weak claim", got)
+		}
+		ctx := result.Issues.Items[0].ClaimContext
+		if ctx == nil || !ctx.ExternalAuthor || ctx.PRNumber != 777 {
+			t.Fatalf("claim context = %+v, want external merged PR #777", ctx)
+		}
+	})
+
+	t.Run("repeated evaluation is idempotent", func(t *testing.T) {
+		mergedAt := time.Now().Add(-time.Hour)
+		ledger := NewClaimLedger("", testLogger())
+		ledger.Reconcile([]IssueClaim{{
+			Repo: "spyre-inference", Issue: 300, PRNumber: 501, Reference: true,
+			PRRepo: "spyre-inference", PRURL: "https://github.com/torch-spyre/spyre-inference/pull/501",
+			MergedPR: true, MergedAt: mergedAt,
+			ObservedAt: time.Now(), FirstObservedAt: mergedAt,
+		}}, true)
+		for i := 0; i < 2; i++ {
+			result := mkResult()
+			if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 0 {
+				t.Fatalf("pass %d suppressed = %d, want 0", i+1, got)
+			}
+			if len(result.Issues.Items) != 1 || result.Issues.Items[0].ClaimContext == nil {
+				t.Fatalf("pass %d released without exactly one contextual issue: %+v", i+1, result.Issues.Items)
+			}
 		}
 	})
 }
