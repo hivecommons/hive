@@ -1207,6 +1207,33 @@ if [ "$(id -u)" = "0" ]; then
     return 0
   }
 
+  # hive_fix_tree_recent DIR MINUTES — the same repair as hive_fix_tree, but
+  # only for entries modified in the last MINUTES.
+  #
+  # hive_fix_tree is O(everything ever created), and the shared CLI dot-dirs are
+  # not bounded: .copilot/session-state gains a directory per CLI invocation for
+  # every agent on the spoke. Measured on a live spoke, the full sweep of
+  # /data/home/.copilot took 75s at 970 session directories -- and that spoke had
+  # reached 9,449, where the same sweep runs ~12 minutes against a 5-minute
+  # cycle. A repair pass that cannot finish within its own period is not a
+  # repair pass: newly created files stay group-unwritable for as long as the
+  # backlog takes, and because agent UIDs differ (hive-scanner, hive-sec-check,
+  # ...) while the CLI creates files under a 022 umask, peers get EACCES on each
+  # other's session files the whole time. That is the failure this bounds.
+  #
+  # Only new entries can be wrong, so scoping the repair to recent mtimes costs
+  # nothing in coverage: same spoke, same moment, the bounded pass took 6s and
+  # found 2 entries to fix. hive_fix_full_cycle still runs the unbounded sweep
+  # hourly as a backstop for anything a missed window left behind.
+  hive_fix_tree_recent() {
+    [ -d "$1" ] || return 0
+    _mins="${2:-10}"
+    find "$1" -mmin -"$_mins" -exec chmod g+rwX {} + 2>/dev/null || true
+    find "$1" -mmin -"$_mins" -type d -exec chmod g+s {} + 2>/dev/null || true
+    find "$1" -mmin -"$_mins" -exec chown dev:node {} + 2>/dev/null || true
+    return 0
+  }
+
   # hive_fix_claude_instant — the INSTANT path for .claude. Deliberately does
   # not touch the wider tree: that walk was 8413 entries per write event on the
   # hive that produced #5730, and it is what killed this guard. The recursive
@@ -1247,6 +1274,19 @@ if [ "$(id -u)" = "0" ]; then
 
   hive_fix_slow_cycle() {
     hive_fix_credentials_fast
+    for _t in /data/home/.cache /data/home/.copilot /data/home/.claude /data/home/.codex /data/home/.gemini /data/home/.bob; do
+      hive_fix_tree_recent "$_t" 10
+    done
+    return 0
+  }
+
+  # hive_fix_full_cycle — the unbounded sweep, as an hourly backstop.
+  #
+  # The 5-minute cycle only repairs recent mtimes, so anything written during a
+  # window the poller missed (a restart, a watcher that died, a clock jump)
+  # would otherwise stay broken until its session is pruned. Running the full
+  # sweep hourly bounds that exposure without paying its cost every 5 minutes.
+  hive_fix_full_cycle() {
     for _t in /data/home/.cache /data/home/.copilot /data/home/.claude /data/home/.codex /data/home/.gemini /data/home/.bob; do
       hive_fix_tree "$_t"
     done
@@ -1315,6 +1355,7 @@ if [ "$(id -u)" = "0" ]; then
   fi
   (
     CYCLE=0
+    SWEEP=0
     while true; do
       # Fast cycle every 5s: the credential files a CLI rewrites owner-only on a
       # token refresh. Cheap and bounded — no tree walk on this path.
@@ -1324,6 +1365,12 @@ if [ "$(id -u)" = "0" ]; then
       if [ "$CYCLE" -ge 60 ]; then
         hive_fix_slow_cycle
         CYCLE=0
+        # Full unbounded sweep every 12th slow cycle (hourly) as a backstop.
+        SWEEP=$((SWEEP + 1))
+        if [ "$SWEEP" -ge 12 ]; then
+          hive_fix_full_cycle
+          SWEEP=0
+        fi
       fi
       sleep 5 || true
     done
