@@ -88,12 +88,14 @@ func TestDeduplicateBlocksReturnsInputWhenUnchanged(t *testing.T) {
 }
 
 // A full-size agent buffer must dedupe in well under the status rebuild
-// budget; the old implementation took seconds here.
+// budget. The bound is generous because CI runs with -race on shared
+// runners (~0.4s observed); the old implementation took 3.7s unraced on an
+// idle M2 Pro and tens of seconds under -race.
 func TestDeduplicateBlocksFullBufferIsFast(t *testing.T) {
 	lines := nearRepeatPane(outputBufferCapacity)
 	start := time.Now()
 	DeduplicateBlocks(lines)
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("DeduplicateBlocks on %d lines took %s", len(lines), d)
 	}
 }

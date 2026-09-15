@@ -481,10 +481,10 @@ type Manager struct {
 	// a successful recovery (or dashboard re-login) rearms authoritative
 	// precedence for whatever fresh token the operator supplied.
 	copilotAuthTokenRejected bool
-	claudeAuthToken               string
-	uidMap                        *UIDMap
-	appAuth                       AppTokenMinter
-	agentMint                     AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	claudeAuthToken          string
+	uidMap                   *UIDMap
+	appAuth                  AppTokenMinter
+	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not
 	// boot), so a key an operator adds via a Secret/PVC file or the config UI
