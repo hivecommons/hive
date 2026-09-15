@@ -16729,10 +16729,25 @@ function burnAreaChart() {
       if (ch.resolved && ch.channel) {
         chColor = 'var(--accent)'; chIcon = '📡';
         chLabel = 'Channel: <strong>' + escapeHtml(ch.channel) + '</strong>';
+        if (ch.pendingChannel && ch.pendingChannel !== ch.channel) {
+          chLabel += ' <span style="color:var(--yellow, #d4a017);font-weight:600">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested; waiting for rollout/heartbeat)</span>';
+        }
       } else {
         chColor = 'var(--yellow, #d4a017)'; chIcon = '❔';
         chLabel = 'Channel: <strong>unknown</strong>' +
           (ch.imageTag ? ' <span style="opacity:0.8">(image tag <code>' + escapeHtml(ch.imageTag) + '</code> is not a release channel)</span>' : ' <span style="opacity:0.8">(image reference unavailable)</span>');
+      }
+      var selectorHtml = '';
+      if (ch.selectorEnabled) {
+        selectorHtml = '<div class="release-status-row" style="margin-top:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+          '<label for="release-channel-select" style="color:var(--muted)">Follow channel</label>' +
+          '<select id="release-channel-select" data-current="' + escapeHtml(ch.channel || '') + '" data-change-action="switchReleaseChannel" data-arg-types="t" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px">' +
+          ['stable','candidate','edge'].map(function(c) { return '<option value="' + c + '"' + (c === ch.channel ? ' selected' : '') + '>' + c + '</option>'; }).join('') +
+          '</select>' +
+          '<span id="release-channel-switch-msg" style="color:var(--muted)">' + escapeHtml(ch.selectorDetail || '') + '</span>' +
+          '</div>';
+      } else if (ch.selectorDetail) {
+        selectorHtml = '<div class="release-status-row" style="margin-top:4px;color:var(--muted)">Selection unavailable: ' + escapeHtml(ch.selectorDetail) + '</div>';
       }
 
       // --- Last upgrade attempt (three distinct states) ---
@@ -16776,8 +16791,35 @@ function burnAreaChart() {
 
       el.innerHTML =
         '<div class="release-status-row" style="color:' + chColor + '">' + chIcon + ' ' + chLabel + '</div>' +
+        selectorHtml +
         '<div class="release-status-row" style="color:' + aColor + ';font-weight:600">' + aIcon + ' ' + aLabel + whenHtml + '</div>' +
         detailHtml + staleHtml;
+    }
+
+    async function switchReleaseChannel(sel) {
+      var channel = sel && sel.value;
+      var msg = document.getElementById('release-channel-switch-msg');
+      if (!channel) return;
+      var previous = sel.getAttribute('data-current') || '';
+      sel.disabled = true;
+      if (msg) { msg.style.color = 'var(--muted)'; msg.textContent = 'Requesting switch to ' + channel + '…'; }
+      try {
+        var r = await fetch('/api/release-channel', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({channel: channel})
+        });
+        var d = await r.json().catch(function() { return {}; });
+        if (!r.ok) throw new Error(d.error || 'release-channel switch failed');
+        if (d.releaseStatus) renderReleaseStatus(d.releaseStatus);
+        showToast('Release-channel switch to ' + channel + ' requested', 'success');
+      } catch (e) {
+        if (previous) sel.value = previous;
+        if (msg) { msg.style.color = 'var(--red)'; msg.textContent = e && e.message ? e.message : 'Release-channel switch failed'; }
+        showToast(e && e.message ? e.message : 'Release-channel switch failed', 'error');
+      } finally {
+        sel.disabled = false;
+      }
     }
 
     // relativeAge renders a coarse "3h ago" style age from an RFC3339 stamp,

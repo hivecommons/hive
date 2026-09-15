@@ -17073,6 +17073,76 @@
         }
       }
     },
+    "/api/release-channel": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Request a release channel switch",
+        "description": "Owner-only spoke self-service endpoint that relays a stable/candidate/edge selection to the hub switch-branch endpoint using the spoke dashboard-token proof. The response keeps the observed channel separate from the pending requested channel until the Deployment image lands.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "channel"
+                ],
+                "properties": {
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "stable",
+                      "candidate",
+                      "edge"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Switch request accepted by hub",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "releaseStatus": {
+                      "type": "object"
+                    },
+                    "hub": {
+                      "description": "Hub switch-branch response"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid channel or selector unavailable"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "502": {
+            "description": "Hub unreachable"
+          }
+        }
+      }
+    },
     "/api/repo-activity": {
       "get": {
         "tags": [

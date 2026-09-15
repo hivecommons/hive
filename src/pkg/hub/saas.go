@@ -578,8 +578,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	// handleOpenHive does its own auth check + login redirect.
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.handleOpenHive)
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
-	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive))
-	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuthOrSpokeSelfService(s.handleUpgradeHive))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuthOrSpokeSelfService(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
 	// Rename a hive's display name (its ProjectName). requireAuth plus an inner
@@ -803,10 +803,12 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// requireAuthOrSpokeUpgrade accepts the normal hub session for hub-dashboard
+// requireAuthOrSpokeSelfService accepts the normal hub session for hub-dashboard
 // clicks and, for a hosted spoke dashboard, the spoke's server-to-server proof
-// plus the already-authenticated operator identity injected by that spoke.
-func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.HandlerFunc {
+// plus the already-authenticated owner role injected by that spoke. The proof
+// is verified against the hive ID in the path, so a spoke can only operate on
+// its own hub record.
+func (s *HubServer) requireAuthOrSpokeSelfService(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isCSRFSafe(r) {
 			w.Header().Set("Content-Type", "application/json")
@@ -819,7 +821,7 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 		}
 		username := s.getAuthUser(r)
 		if username == "" {
-			spokeUser, reason := s.trustedSpokeUpgradeUser(r, r.PathValue("id"))
+			spokeUser, reason := s.trustedSpokeSelfServiceUser(r, r.PathValue("id"))
 			if spokeUser != "" {
 				next(w, r)
 				return
@@ -854,6 +856,12 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 	}
 }
 
+// requireAuthOrSpokeUpgrade is retained for tests and old call sites; new
+// self-service spoke actions should use requireAuthOrSpokeSelfService.
+func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireAuthOrSpokeSelfService(next)
+}
+
 // trustedSpokeUpgradeUser authenticates the spoke-relayed upgrade lane. It
 // returns the user to attribute the upgrade to and an empty reason on success,
 // or ("", reason) on failure, where reason is an operator-facing explanation of
@@ -870,30 +878,34 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 // a proof-verified request with no user identity is now attributed to the
 // hive's registered owner instead of being turned away.
 func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, string) {
+	return s.trustedSpokeSelfServiceUser(r, hiveID)
+}
+
+func (s *HubServer) trustedSpokeSelfServiceUser(r *http.Request, hiveID string) (string, string) {
 	username := r.Header.Get("X-Hive-User")
 	proof := r.Header.Get(proxyAuthHeader)
 	if hiveID == "" {
-		return "", "not authenticated — upgrade request named no hive"
+		return "", "not authenticated — spoke self-service request named no hive"
 	}
 	if username == "" && proof == "" {
 		// Nothing to verify at all. Old spoke builds (pre proof-forwarding)
 		// relay the upgrade click with no credentials whatsoever; tell the
 		// operator how to upgrade past that build instead of a dead end.
-		return "", "not authenticated — this upgrade request reached the hub with no hub session and no spoke credentials; if it came from a spoke dashboard, that spoke build is too old to relay its upgrade credentials — trigger this hive's upgrade from the hub dashboard (or enable auto-upgrade), after which the spoke button will work"
+		return "", "not authenticated — this spoke self-service request reached the hub with no hub session and no spoke credentials; if it came from a spoke dashboard, that spoke build is too old to relay its credentials — use the hub dashboard once, then retry from the spoke"
 	}
 	if r.Header.Get("X-Hive-Role") != saasRoleOwner {
-		return "", "not authenticated — spoke upgrade requests must carry the owner role"
+		return "", "not authenticated — spoke self-service requests must carry the owner role"
 	}
 	if proof == "" {
-		return "", "not authenticated — spoke upgrade proof missing: the spoke sent no dashboard-token proof (X-Hive-Proxy-Auth); set DASHBOARD_AUTH_TOKEN on the spoke to its hive-secrets/dashboard-token value"
+		return "", "not authenticated — spoke self-service proof missing: the spoke sent no dashboard-token proof (X-Hive-Proxy-Auth); set DASHBOARD_AUTH_TOKEN on the spoke to its hive-secrets/dashboard-token value"
 	}
 	switch s.verifySpokeUpgradeProof(hiveID, proof) {
 	case spokeProofOK:
 		// verified — fall through to attribution below
 	case spokeProofUnverifiable:
-		return "", "not authenticated — the hub has no stored dashboard-token record for this hive and could not read its hive-secrets/dashboard-token secret (the hive's cluster is unreachable from the hub, e.g. pull-only); a spoke on a current build reports its token over the authenticated heartbeat — trigger this hive's upgrade from the hub dashboard once, and the spoke's Upgrade button will verify against the stored record from then on"
+		return "", "not authenticated — the hub has no stored dashboard-token record for this hive and could not read its hive-secrets/dashboard-token secret (the hive's cluster is unreachable from the hub, e.g. pull-only); a spoke on a current build reports its token over the authenticated heartbeat — trigger this hive from the hub dashboard once, and the spoke's self-service controls will verify against the stored record from then on"
 	default: // spokeProofMismatch
-		return "", "not authenticated — spoke upgrade proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
+		return "", "not authenticated — spoke self-service proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
 	}
 	if username == "" {
 		// Proof verified but no per-user identity (shared-token gateway
@@ -5030,6 +5042,9 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	username := s.getAuthUser(r)
+	if username == "" {
+		username, _ = s.trustedSpokeSelfServiceUser(r, id)
+	}
 	h := loadSaaSHive(id)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)

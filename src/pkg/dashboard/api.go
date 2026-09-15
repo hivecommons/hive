@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/subtle"
@@ -52,6 +53,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
+	s.mux.HandleFunc("POST /api/release-channel", s.handleReleaseChannelSwitch)
 	// Self-service, owner-only spoke backup (encrypted; includes the bead
 	// ledger the fleet-wide hub backup excludes — see issue #2318).
 	s.mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
@@ -365,7 +367,10 @@ var (
 	versionBranch = "unknown"
 	// versionChannel is the release channel the Deployment image tracks, ""
 	// when not channel-delivered (see SetReleaseChannel).
-	versionChannel = ""
+	versionChannel                  = ""
+	versionPendingChannelMu         sync.Mutex
+	versionPendingChannel           = ""
+	selfDeploymentImageForDashboard = hub.SelfDeploymentImage
 )
 
 // defaultUpstreamBranch is the fallback branch for the self-version check
@@ -397,6 +402,21 @@ func SetGitBranch(branch string) {
 // binary is still a build of versionBranch.
 func SetReleaseChannel(channel string) {
 	versionChannel = channel
+}
+
+func setPendingReleaseChannel(channel string) {
+	versionPendingChannelMu.Lock()
+	versionPendingChannel = channel
+	versionPendingChannelMu.Unlock()
+}
+
+func pendingReleaseChannel(observed string) string {
+	versionPendingChannelMu.Lock()
+	defer versionPendingChannelMu.Unlock()
+	if versionPendingChannel != "" && versionPendingChannel == observed {
+		versionPendingChannel = ""
+	}
+	return versionPendingChannel
 }
 
 // upstreamBranch returns the branch to compare against for the self-version
@@ -775,13 +795,25 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	// explicit "never attempted", which the auto-update object above cannot
 	// express (its "up to date" is a commit-count reading, not an attempt
 	// outcome, so it cannot tell a hive that succeeded apart from one that never
-	// tried). Read-only display; channel SELECTION remains out of scope.
+	// tried). Channel selection is enabled below only when the observed image
+	// proves this is a hub-managed release-channel spoke.
 	lastBeat, beatOK := hub.LastHeartbeatAttempt()
-	resp["releaseStatus"] = buildSpokeReleaseStatus(
-		hub.SelfDeploymentImage(), "",
+	releaseStatus := buildSpokeReleaseStatus(
+		selfDeploymentImageForDashboard(), "",
 		readUpgradeOutcome(), marker,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
+	if s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
+		releaseStatus.Channel.SelectorEnabled = true
+		releaseStatus.Channel.SelectorDetail = "Choose stable, candidate, or edge. The hub records your intent and the current channel changes only after the Deployment image lands."
+		if pending := pendingReleaseChannel(releaseStatus.Channel.Channel); pending != "" && pending != releaseStatus.Channel.Channel {
+			releaseStatus.Channel.PendingChannel = pending
+		}
+	} else {
+		releaseStatus.Channel.SelectorEnabled = false
+		releaseStatus.Channel.SelectorDetail = "Release-channel selection is available only for hub-managed spokes already following a release channel; this deployment appears self-hosted, branch-tracking, pinned, or missing hub credentials."
+	}
+	resp["releaseStatus"] = releaseStatus
 
 	jsonResponse(w, resp)
 }
@@ -1156,6 +1188,123 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	current := buildReleaseChannelStatus(selfDeploymentImageForDashboard(), "")
+	if !s.releaseChannelSelectorAvailable(current) {
+		jsonError(w, "release-channel selection is unavailable because this deployment is not currently hub-managed on a release channel", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Channel string `json:"channel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	channel := strings.ToLower(strings.TrimSpace(body.Channel))
+	if !dashboardReleaseChannelSelectable(channel) {
+		jsonError(w, "channel must be stable, candidate, or edge", http.StatusBadRequest)
+		return
+	}
+	hubURL := strings.TrimRight(s.deps.Config.Hub.URL, "/")
+	hiveID := s.deps.Config.HiveID
+	if hubURL == "" || hiveID == "" {
+		jsonError(w, "hub URL or hive ID not configured", http.StatusBadRequest)
+		return
+	}
+	proof := s.authToken
+	if proof == "" && s.deps.Config.Dashboard.AuthToken != "" {
+		proof = s.deps.Config.Dashboard.AuthToken
+	}
+	cookie, _ := r.Cookie("hive_hub_user")
+	if proof == "" && cookie == nil {
+		jsonError(w, "release-channel selection needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke", http.StatusBadRequest)
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{"branch": channel})
+	req, err := http.NewRequest(http.MethodPost, hubURL+"/api/saas/hives/"+url.PathEscape(hiveID)+"/switch-branch", bytes.NewReader(payload))
+	if err != nil {
+		jsonError(w, "failed to create release-channel request", http.StatusInternalServerError)
+		return
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	if user := r.Header.Get("X-Hive-User"); user != "" {
+		req.Header.Set("X-Hive-User", user)
+	}
+	req.Header.Set("X-Hive-Role", "owner")
+	if proof != "" {
+		req.Header.Set(proxyAuthHeader, proof)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://hive.hivecommons.dev")
+
+	const releaseChannelTimeout = 30 * time.Second
+	resp, err := (&http.Client{Timeout: releaseChannelTimeout}).Do(req)
+	if err != nil {
+		s.logger.Warn("release-channel switch: hub request failed", "error", err)
+		jsonError(w, "hub unreachable", http.StatusBadGateway)
+		return
+	}
+	defer closeHTTPBody(resp.Body)
+	const maxReleaseChannelResponseBytes = 1 << 16
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxReleaseChannelResponseBytes))
+	if resp.StatusCode >= 300 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(respBody)
+		return
+	}
+
+	setPendingReleaseChannel(channel)
+	s.auditFromRequest(r, "release_channel_switch", channel, current.Channel)
+	rs := buildSpokeReleaseStatus(selfDeploymentImageForDashboard(), "", readUpgradeOutcome(), readUpgradeMarker(), time.Time{}, false, dashboardHeartbeatStaleAfter)
+	rs.Channel.SelectorEnabled = true
+	rs.Channel.SelectorDetail = "Switch requested. The hub has recorded intent; the current channel remains the observed Deployment image until the next heartbeat/rollout lands."
+	if rs.Channel.Channel != channel {
+		rs.Channel.PendingChannel = channel
+	}
+	var hubBody any
+	if len(respBody) > 0 && json.Unmarshal(respBody, &hubBody) != nil {
+		hubBody = string(respBody)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":        "switching",
+		"channel":       channel,
+		"releaseStatus": rs,
+		"hub":           hubBody,
+	})
+}
+
+func dashboardReleaseChannelSelectable(channel string) bool {
+	switch channel {
+	case "stable", "candidate", "edge":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) releaseChannelSelectorAvailable(st ReleaseChannelStatus) bool {
+	if !st.Resolved || !dashboardReleaseChannelSelectable(st.Channel) {
+		return false
+	}
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	return strings.TrimSpace(s.deps.Config.Hub.URL) != "" && strings.TrimSpace(s.deps.Config.HiveID) != ""
 }
 
 func (s *Server) handleSnapshotAPI(w http.ResponseWriter, r *http.Request) {

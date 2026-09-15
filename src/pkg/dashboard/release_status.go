@@ -43,7 +43,12 @@ type ReleaseChannelStatus struct {
 	// even when it is not a channel so an operator can see what the resolution
 	// saw. "" when the image ref carried no tag or could not be read.
 	ImageTag string `json:"imageTag,omitempty"`
-	Detail   string `json:"detail"`
+	// PendingChannel is a just-requested hub intent that has not landed in the
+	// Deployment image yet. Channel remains the observed truth while this is set.
+	PendingChannel  string `json:"pendingChannel,omitempty"`
+	SelectorEnabled bool   `json:"selectorEnabled"`
+	SelectorDetail  string `json:"selectorDetail,omitempty"`
+	Detail          string `json:"detail"`
 }
 
 // buildReleaseChannelStatus resolves the channel a spoke follows from its own
