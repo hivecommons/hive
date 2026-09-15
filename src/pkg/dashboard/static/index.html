@@ -7577,11 +7577,19 @@
     function renderCadenceMatrix(matrix, currentMode, modes) {
       if (!matrix || !matrix.length) return '';
       const agents = window._lastAgents || [];
-      const packAgentNames = (window._lastStatus && window._lastStatus.acmmPackAgents) || null;
-      const packSet = packAgentNames ? new Set(packAgentNames) : null;
+      // #7112: follow status.agents — the set the server already gated with the
+      // ACMM pack rule AND its "active outside pack" escape hatch
+      // (buildAgentsWithHidden) — instead of re-deriving the raw pack roster
+      // from acmmPackAgents. The raw roster omits a running/enabled agent
+      // outside the level's pack (e.g. a custom "review" agent), so filtering on
+      // it dropped that agent's cadence row even though #7110 makes its nav item
+      // and card render. Genuinely pack-inactive "ghost" agents never appear in
+      // status.agents, so they stay suppressed. acmmPackAgents keeps its raw
+      // roster meaning for its other consumer (_packAgentNote).
+      const statusAgentSet = new Set(agents.map(a => a.name));
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       const sidebarOrder = sortedAgents.map(a => a.name);
-      const matrixNames = matrix.map(r => r.agent).filter(n => !packSet || packSet.has(n));
+      const matrixNames = matrix.map(r => r.agent).filter(n => statusAgentSet.has(n));
       const agentOrder = sidebarOrder.filter(n => matrixNames.includes(n));
       for (const n of matrixNames) { if (!agentOrder.includes(n)) agentOrder.push(n); }
       const rows = agentOrder.map(aname => {
