@@ -490,3 +490,98 @@ func TestPublishContributorReadingAtomic_ConcurrentReaderNeverSeesPartial(t *tes
 	}
 	<-done
 }
+
+// ── kubestellar/hive#6987 — condition (b): the publisher presence marker ──────
+
+// Publishing a reading also refreshes the pool's presence marker, so its mtime
+// stays fresh for as long as the publisher is alive. The relay treats a fresh
+// marker with a missing reading as "publisher expected" and HOLDS; a marker
+// nothing refreshes goes stale and the relay falls back to the non-stranding
+// unprovisioned admit.
+func TestPublishContributorReading_RefreshesPresenceMarker(t *testing.T) {
+	dir := t.TempDir()
+	m := NewContributorReadingPublisher(dir, "")
+	m.SetHeadroom(Headroom{Provider: "openai", Available: true, Limits: []LimitWindow{{Kind: "weekly", PctRemaining: 50}}})
+
+	var marker contributorPublisherMarker
+	readJSONFile(t, ContributorPublisherMarkerPath(dir, "codex", ""), &marker)
+	if marker.PID != os.Getpid() || marker.IntervalMS != pollInterval.Milliseconds() {
+		t.Errorf("marker = %+v, want pid %d and interval %d", marker, os.Getpid(), pollInterval.Milliseconds())
+	}
+}
+
+// announceContributorPublisher declares presence for every guard-supported pool
+// BEFORE the first probe completes, so the relay holds through the startup
+// "publisher expected, no reading yet" window instead of admitting blind.
+func TestAnnounceContributorPublisher_WritesMarkersForAllGuardPools(t *testing.T) {
+	dir := t.TempDir()
+	m := NewContributorReadingPublisher(dir, "")
+	m.announceContributorPublisher()
+
+	for _, backend := range []string{"claude", "pi", "codex", "agy", "gemini"} {
+		if _, err := os.Stat(ContributorPublisherMarkerPath(dir, backend, "")); err != nil {
+			t.Errorf("no presence marker for %s after announce: %v", backend, err)
+		}
+		if _, err := os.Stat(ContributorReadingPath(dir, backend, "")); !os.IsNotExist(err) {
+			t.Errorf("announce must declare presence only, never fabricate a reading for %s", backend)
+		}
+	}
+}
+
+// An empty dir announces nothing — the same "no route ⇒ no write" contract as
+// publishing.
+func TestAnnounceContributorPublisher_EmptyDirWritesNothing(t *testing.T) {
+	m := NewContributorReadingPublisher("", "")
+	m.announceContributorPublisher() // must not panic or create anything
+}
+
+// A not_installed probe REMOVES the announce-time marker in publish-only mode:
+// the probe has established no reading will ever come, and a marker left behind
+// would hold the pool until it went stale instead of restoring the
+// unprovisioned admit an absent CLI must keep.
+func TestContributorReadingPublisher_NotInstalledRemovesMarker(t *testing.T) {
+	dir := t.TempDir()
+	m := NewContributorReadingPublisher(dir, "")
+	m.announceContributorPublisher()
+	if _, err := os.Stat(ContributorPublisherMarkerPath(dir, "codex", "")); err != nil {
+		t.Fatalf("precondition: announce marker missing: %v", err)
+	}
+
+	h := failOpen("openai", errors.New("codex: command not found"))
+	h.ProbeErrCause = ProbeCauseNotInstalled
+	m.SetHeadroom(h)
+
+	for _, backend := range []string{"codex"} {
+		if _, err := os.Stat(ContributorPublisherMarkerPath(dir, backend, "")); !os.IsNotExist(err) {
+			t.Errorf("marker for %s survived a not_installed probe; it would hold a pool no reading will ever reach", backend)
+		}
+	}
+	// Other providers' markers are untouched.
+	if _, err := os.Stat(ContributorPublisherMarkerPath(dir, "claude", "")); err != nil {
+		t.Errorf("not_installed for openai must not remove anthropic's marker: %v", err)
+	}
+}
+
+// Under operator-configured rotation not_installed keeps publishing `unknown`
+// (deliberate signal), so the marker is refreshed, not removed.
+func TestManager_RotationModeNotInstalledKeepsMarker(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(rotationTestConfig())
+	m.EnableContributorReadingPublish(dir, "")
+
+	h := failOpen("anthropic", errors.New("claude: command not found"))
+	h.ProbeErrCause = ProbeCauseNotInstalled
+	m.SetHeadroom(h)
+	if _, err := os.Stat(ContributorPublisherMarkerPath(dir, "claude", "")); err != nil {
+		t.Errorf("rotation-mode not_installed must keep declaring presence (it published a holding reading): %v", err)
+	}
+}
+
+// The marker path must match quotaDefaultPublisherMarkerFile() in
+// bin/contributor-relay.js: same pool key, same `.publisher.json` suffix.
+func TestContributorPublisherMarkerPath_MatchesJS(t *testing.T) {
+	got := ContributorPublisherMarkerPath("/base", "claude", "")
+	if want := "/base/1f49f53cdfcecfbc.publisher.json"; got != want {
+		t.Errorf("marker path = %q, want %q (drifted from quotaDefaultPublisherMarkerFile in contributor-relay.js)", got, want)
+	}
+}

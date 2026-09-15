@@ -8872,6 +8872,10 @@ test('#6951 no reading source configured leaves the guard inert, not holding', (
   // Deliberate deviation from the issue text, called out on the issue: nothing
   // populates either env var yet (the prober is descoped to a sibling), so
   // holding here would stop every default install from ever asking for work.
+  // #6987 later scoped this admit: a FRESH publisher presence marker in the
+  // derived default dir now flips a missing reading to a hold (see the #6987
+  // marker tests below) — but with no marker and no source, this non-stranding
+  // admit is still the ruling and this test still pins it.
   const relay = loadRelay({ env: { HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
   assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
     'and it is reported as its own state, never as a healthy "available" reading');
@@ -9499,6 +9503,112 @@ test('#6987 an explicit pool dir with a healthy reading admits (override reads t
   assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
   teardown(relay);
   fs.rmSync(explicit, { recursive: true, force: true });
+});
+
+// ── kubestellar/hive#6987 — condition (b): the publisher presence marker ──────
+// The Go publisher writes `<poolKey>.publisher.json` when its probe loop starts
+// and refreshes it with every published reading. A FRESH marker is positive
+// evidence a publisher feeds this pool, which is exactly the distinguisher the
+// `unprovisioned`→hold flip was gated on: "publisher expected, reading not
+// written yet" now HOLDS, while a pool with no fresh marker (relay-only host,
+// dead publisher, uninstalled CLI) keeps the non-stranding unprovisioned admit.
+
+// Writes a marker into the DERIVED default dir for a backend. Mirrors
+// rotation.ContributorPublisherMarkerPath; mtimeMs (optional) backdates it.
+function publishDefaultMarker6987(base, backend, mtimeMs) {
+  const dir = path.join(base, 'hive', 'contributor-quota');
+  fs.mkdirSync(dir, { recursive: true });
+  const key = poolStore.derivePoolKey({ backend, account: '' });
+  const p = path.join(dir, `${key}.publisher.json`);
+  fs.writeFileSync(p, JSON.stringify({ pid: 1, refreshed_at: new Date().toISOString(), interval_ms: 300000 }));
+  if (mtimeMs !== undefined) fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+  return p;
+}
+
+test('#6987 a fresh publisher marker with no reading HOLDS (publisher expected)', () => {
+  // Condition (b): the marker is a live publisher's declaration that a reading
+  // is coming, so the missing reading is a startup transient, not an absent
+  // route — the same hold the explicit pool dir already gets.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987b-'));
+  publishDefaultMarker6987(base, 'claude');
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unknown',
+    'a fresh marker flips the missing-reading default from unprovisioned/admit to unknown/hold');
+  const d = relay.evaluateContributorQuota({ title: 'x' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'unknown');
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 a STALE publisher marker falls back to the unprovisioned admit (non-stranding)', () => {
+  // A dead publisher must not hold the host forever: the marker's mtime goes
+  // stale one reading-TTL after the last publish and the guard returns to the
+  // #6951 non-stranding default.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987b-'));
+  publishDefaultMarker6987(base, 'claude', Date.now() - 5000);
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '', HIVE_CONTRIBUTOR_QUOTA_READING_TTL_MS: '1000' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned',
+    'a marker nothing refreshes goes stale and the guard falls back to unprovisioned/admit');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 a present reading wins over the marker (marker only covers the missing-reading gap)', () => {
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987b-'));
+  publishDefaultMarker6987(base, 'codex');
+  publishDefaultReading6987(base, 'codex', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 60 }] }));
+  const relay = loadRelay({ backend: 'codex', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'available');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 the marker never affects an unsupported backend', () => {
+  // copilot has no adapter, so no publisher will ever feed its pool; even a
+  // fresh marker (e.g. leftover from a mis-keyed write) must not hold it
+  // (#6833 criterion 8 — unchanged behaviour for backends with no adapter).
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987b-'));
+  publishDefaultMarker6987(base, 'copilot');
+  const relay = loadRelay({ backend: 'copilot', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned');
+  assert.strictEqual(relay.evaluateContributorQuota({ title: 'x' }).admit, true);
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('#6987 marker path parity: quotaDefaultPublisherMarkerFile matches the Go suffix and key', () => {
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: '/shared/base', HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '' } });
+  const key = poolStore.derivePoolKey({ backend: 'claude', account: '' });
+  assert.strictEqual(relay.quotaDefaultPublisherMarkerFile(),
+    path.join('/shared/base', 'hive', 'contributor-quota', `${key}.publisher.json`),
+    'the JS marker path must equal rotation.ContributorPublisherMarkerPath in Go, or the relay never sees the declaration');
+  teardown(relay);
+});
+
+test('#6987 a guarded relay re-advertises once the awaited reading lands over a fresh marker', () => {
+  // The hold the marker creates must clear itself the moment the publisher's
+  // first reading arrives — the same #6951 resume path a stale reading uses.
+  const base = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'xdg6987b-'));
+  publishDefaultMarker6987(base, 'claude');
+  const relay = loadRelay({ backend: 'claude', env: { XDG_CONFIG_HOME: base, HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '', HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '' } });
+  relay.setCliReady(true);
+  const sent = [];
+  relay.setWs({ readyState: 1, send: s => sent.push(JSON.parse(s)) });
+  relay.setContributorQuotaPaused(true);
+
+  relay.retryContributorQuota();
+  assert.strictEqual(sent.some(m => m.type === 'ready'), false,
+    'precondition: marker fresh, reading missing — the retry must keep holding');
+
+  publishDefaultReading6987(base, 'claude', JSON.stringify({ state: 'available', limits: [{ id: 'weekly', kind: 'weekly', pct_remaining: 90 }] }));
+  relay.retryContributorQuota();
+  assert.ok(sent.some(m => m.type === 'ready'),
+    'once the publisher\'s reading lands the guard must clear and re-advertise');
+  teardown(relay);
+  fs.rmSync(base, { recursive: true, force: true });
 });
 
 for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {

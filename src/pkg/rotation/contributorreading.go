@@ -79,6 +79,26 @@ var contributorGuardDefaultBackends = map[string][]string{
 // status and reservation files but uses its own suffix so they never collide.
 const contributorReadingFileSuffix = ".reading.json"
 
+// contributorPublisherMarkerSuffix names the per-pool publisher PRESENCE
+// marker (kubestellar/hive#6987, condition (b) in src/docs/contributor-relay.md).
+// A fresh marker is a publisher's positive declaration "I feed this pool", which
+// is what lets the relay distinguish "a publisher is expected here but has not
+// written a reading yet" (HOLD) from "nothing will ever write here" (the
+// non-stranding unprovisioned admit) — before this, both presented identically
+// as a missing reading file. The relay judges freshness by the file's mtime
+// (refreshed on every publish cycle), so a torn or unparsable marker can never
+// strand a host: the JSON body is operator-facing detail only.
+const contributorPublisherMarkerSuffix = ".publisher.json"
+
+// contributorPublisherMarker is the marker's informational body. The relay
+// deliberately does not parse it (mtime is the freshness signal); it exists so
+// an operator inspecting the pool directory can see who declared the pool.
+type contributorPublisherMarker struct {
+	PID         int    `json:"pid"`
+	RefreshedAt string `json:"refreshed_at"`
+	IntervalMS  int64  `json:"interval_ms"`
+}
+
 // contributorPoolDirName is the per-install subdirectory, under the user config
 // dir's "hive" tree, where the reading is published when no explicit
 // HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set (kubestellar/hive#6987). It lives
@@ -205,16 +225,72 @@ func ContributorReadingPath(dir, backend, account string) string {
 	return filepath.Join(dir, deriveContributorPoolKey(backend, account)+contributorReadingFileSuffix)
 }
 
+// ContributorPublisherMarkerPath is the absolute path of the presence marker
+// for a pool, inside dir. quotaDefaultPublisherMarkerFile() in
+// bin/contributor-relay.js computes the identical path from the same inputs.
+func ContributorPublisherMarkerPath(dir, backend, account string) string {
+	return filepath.Join(dir, deriveContributorPoolKey(backend, account)+contributorPublisherMarkerSuffix)
+}
+
+// writeContributorPublisherMarker refreshes the presence marker at path. The
+// atomic write updates the mtime, which is the relay's freshness signal.
+func writeContributorPublisherMarker(path string) error {
+	data, err := json.Marshal(contributorPublisherMarker{
+		PID:         os.Getpid(),
+		RefreshedAt: time.Now().UTC().Format(time.RFC3339),
+		IntervalMS:  pollInterval.Milliseconds(),
+	})
+	if err != nil {
+		return err
+	}
+	return publishContributorFileAtomic(path, data)
+}
+
+// announceContributorPublisher writes a presence marker for every pool this
+// manager's guard-supported providers feed. Called once when the probe loop
+// starts, BEFORE the first probe completes, so the relay holds through the
+// startup "publisher expected, reading not written yet" window instead of
+// admitting blind (kubestellar/hive#6987, condition (b)). A provider whose CLI
+// turns out to be not installed has its markers removed by the first publish
+// cycle (see publishContributorReading), so the announce-time marker can hold
+// a never-provisioned pool for at most one probe.
+func (m *Manager) announceContributorPublisher() {
+	m.mu.RLock()
+	dir := m.contributorPublishDir
+	account := m.contributorPublishAccount
+	m.mu.RUnlock()
+	if dir == "" {
+		return
+	}
+	for provider, pc := range m.cfg.Providers {
+		if !contributorGuardProviders[provider] {
+			continue
+		}
+		for _, backend := range pc.Backends {
+			if strings.TrimSpace(backend) == "" {
+				continue
+			}
+			_ = writeContributorPublisherMarker(ContributorPublisherMarkerPath(dir, backend, account))
+		}
+	}
+}
+
 // publishContributorReadingAtomic writes r to path via a unique temp sibling
 // then rename, so a concurrent relay read never observes a partial file. The
 // temp file is same-directory to keep the rename on one filesystem.
 func publishContributorReadingAtomic(path string, r ContributorReading) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(r)
 	if err != nil {
+		return err
+	}
+	return publishContributorFileAtomic(path, data)
+}
+
+// publishContributorFileAtomic writes data to path via a unique temp sibling
+// then rename (shared by the reading and the presence marker).
+func publishContributorFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	var nonce [6]byte
@@ -296,7 +372,19 @@ func (m *Manager) publishContributorReading(h Headroom) {
 	// evaluates exactly what it would have before this publisher existed.
 	// Under operator-configured rotation this skip is NOT applied — there the
 	// provider was named explicitly and unknown/not_installed is real signal.
+	//
+	// The announce-time presence marker (condition (b)) is REMOVED here for
+	// the same reason: it declared "a reading is coming", the probe has now
+	// established none ever will, and leaving it would hold the pool until the
+	// marker went stale instead of restoring the unprovisioned admit.
 	if m.contributorPublishSkipNotInstalled && h.ProbeErr != nil && h.ProbeErrCause == ProbeCauseNotInstalled {
+		account := m.contributorPublishAccount
+		for _, backend := range m.cfg.Providers[h.Provider].Backends {
+			if strings.TrimSpace(backend) == "" {
+				continue
+			}
+			_ = os.Remove(ContributorPublisherMarkerPath(dir, backend, account))
+		}
 		return
 	}
 	account := m.contributorPublishAccount
@@ -308,5 +396,10 @@ func (m *Manager) publishContributorReading(h Headroom) {
 		}
 		path := ContributorReadingPath(dir, backend, account)
 		_ = publishContributorReadingAtomic(path, reading)
+		// Refresh the presence marker with every reading so its mtime stays
+		// fresh for as long as the publisher is alive (kubestellar/hive#6987,
+		// condition (b)); a dead publisher's marker goes stale and the relay
+		// falls back to the non-stranding unprovisioned admit.
+		_ = writeContributorPublisherMarker(ContributorPublisherMarkerPath(dir, backend, account))
 	}
 }

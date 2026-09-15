@@ -1124,6 +1124,11 @@ func (m *Manager) SetProbers(probers []Prober) {
 // then every pollInterval until ctx is cancelled.
 func (m *Manager) Start(ctx context.Context) {
 	go func() {
+		// Declare publisher presence for every guard-supported pool BEFORE the
+		// first probe (kubestellar/hive#6987, condition (b)): the relay holds
+		// through the "publisher expected, no reading yet" startup window
+		// instead of admitting blind.
+		m.announceContributorPublisher()
 		m.probeAll(ctx)
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()

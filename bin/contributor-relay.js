@@ -421,6 +421,38 @@ function quotaDefaultPublishedReadingFile() {
     : '';
 }
 
+// The publisher PRESENCE marker inside the DEFAULT pool directory
+// (kubestellar/hive#6987, condition (b) in src/docs/contributor-relay.md). The
+// Go publisher writes `<poolKey>.publisher.json` when its probe loop starts and
+// refreshes it with every reading it publishes, so a FRESH marker is a positive
+// declaration that a publisher on this host feeds this pool. That is the
+// distinguisher the flip was gated on: with it, "reading missing but publisher
+// expected" can HOLD while "nothing will ever write here" (relay-only host,
+// dead publisher, uninstalled CLI — the publisher removes the marker on
+// not_installed) keeps the non-stranding unprovisioned admit. Matches
+// rotation.ContributorPublisherMarkerPath in Go.
+function quotaDefaultPublisherMarkerFile() {
+  return QUOTA_DEFAULT_POOL_DIR
+    ? path.join(QUOTA_DEFAULT_POOL_DIR, `${quotaPoolStore.derivePoolKey({ backend: BACKEND, account: QUOTA_POOL_ACCOUNT })}.publisher.json`)
+    : '';
+}
+
+// Freshness is judged on the marker file's MTIME, never its contents: the
+// publisher rewrites it atomically each publish cycle, and an unparsable or
+// torn marker therefore cannot strand a host — a file nothing refreshes simply
+// goes stale and the guard falls back to the unprovisioned admit. Reuses the
+// reading TTL: both are "how long without a publisher write before we stop
+// believing one is alive".
+function quotaPublisherMarkerFresh(markerFile, nowMs = Date.now()) {
+  if (!markerFile) return false;
+  try {
+    const st = fs.statSync(markerFile);
+    return nowMs - st.mtimeMs <= QUOTA_READING_STALE_AFTER_MS;
+  } catch (e) {
+    return false;
+  }
+}
+
 
 // The reset epoch of a normalized window, however the adapter spells it. This
 // is what makes an until-reset override expire MECHANICALLY: the override pins
@@ -627,18 +659,20 @@ function readContributorQuotaReading() {
   // directory is EXPLICIT when HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is set, otherwise
   // per-install DERIVED so publishing is default-on (kubestellar/hive#6987).
   //
-  // The two dirs differ in one deliberate way, and it is the whole point of
-  // #6987. An EXPLICIT pool dir is the operator declaring "a publisher feeds
-  // this pool", so "no reading yet" (or a torn file) is a transient `unknown`
-  // that HOLDS while the publisher catches up — the opt-in flip #6967 shipped.
-  // The DERIVED default dir cannot assume a publisher is running (rotation is
-  // itself opt-in), so a MISSING default file means "no reading route on this
-  // host" and must fall through to the `unprovisioned` admit — NOT a hold. This
-  // is exactly the fleet-wide stop #6951's ruling guards against: a default
-  // install with no route must never hold forever. A default file that DOES
-  // exist is read like any other: a torn or state:"unknown" reading still HOLDS
-  // (fail-closed), so the publisher writing a failed-probe `unknown` still
-  // guards, and only a genuinely absent route admits.
+  // The two dirs differ in one deliberate way. An EXPLICIT pool dir is the
+  // operator declaring "a publisher feeds this pool", so "no reading yet" (or a
+  // torn file) is a transient `unknown` that HOLDS while the publisher catches
+  // up — the opt-in flip #6967 shipped. The DERIVED default dir gets the same
+  // hold only on POSITIVE evidence of a publisher: a fresh `.publisher.json`
+  // presence marker (condition (b), kubestellar/hive#6987). A missing reading
+  // with NO fresh marker means "no reading route on this host" — a relay-only
+  // host, a dead publisher, or an uninstalled CLI — and must fall through to
+  // the `unprovisioned` admit, NOT a hold. This is exactly the fleet-wide stop
+  // #6951's ruling guards against: a default install with no route must never
+  // hold forever. A default file that DOES exist is read like any other: a torn
+  // or state:"unknown" reading still HOLDS (fail-closed), so the publisher
+  // writing a failed-probe `unknown` still guards, and only a genuinely absent
+  // route admits.
   if (QUOTA_POOL_DIR) {
     const publishedFile = quotaPublishedReadingFile();
     if (publishedFile && quotaBackendSupported) {
@@ -648,6 +682,17 @@ function readContributorQuotaReading() {
     const defaultFile = quotaDefaultPublishedReadingFile();
     if (defaultFile && fs.existsSync(defaultFile)) {
       return parse('published quota reading', () => JSON.parse(fs.readFileSync(defaultFile, 'utf8')));
+    }
+    // Condition (b) distinguisher (kubestellar/hive#6987): a FRESH publisher
+    // marker is a live publisher's positive declaration that it feeds this
+    // pool, so a missing reading here is "expected but not written yet" — a
+    // transient to HOLD on, exactly like the explicit-dir case above. Without
+    // a fresh marker (relay-only host, dead publisher, CLI not installed —
+    // the publisher removes the marker on not_installed) nothing will ever
+    // write here, and the non-stranding `unprovisioned` admit below stands.
+    if (defaultFile && quotaPublisherMarkerFresh(quotaDefaultPublisherMarkerFile())) {
+      warnQuotaGuardAwaitingPublisherOnce();
+      return { state: 'unknown', limits: [] };
     }
   }
   // "No reading source configured" is NOT the same as "a configured source we
@@ -667,6 +712,15 @@ function warnQuotaGuardUnprovisionedOnce() {
   console.warn(`Contributor quota guard is ${QUOTA_GUARD_MODE} but no reading source is configured ` +
     '(HIVE_CONTRIBUTOR_QUOTA_READING_FILE / HIVE_CONTRIBUTOR_QUOTA_READING_JSON are unset), ' +
     'so it cannot see quota and is not guarding anything this session.');
+}
+
+let warnedQuotaGuardAwaitingPublisher = false;
+
+function warnQuotaGuardAwaitingPublisherOnce() {
+  if (warnedQuotaGuardAwaitingPublisher) return;
+  warnedQuotaGuardAwaitingPublisher = true;
+  console.warn('Contributor quota guard: a publisher presence marker is fresh but no reading has been ' +
+    'published for this pool yet — holding until the reading lands or the marker goes stale (kubestellar/hive#6987).');
 }
 
 // opts.baseReserveOnly evaluates against the window reserve alone, ignoring the
@@ -5375,6 +5429,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     defaultContributorPoolDir,
     QUOTA_DEFAULT_POOL_DIR,
     quotaDefaultPublishedReadingFile,
+    // Publisher presence marker — condition (b) (kubestellar/hive#6987).
+    quotaDefaultPublisherMarkerFile,
+    quotaPublisherMarkerFresh,
     // Guard resume + provisioning (kubestellar/hive#6951).
     retryContributorQuota,
     armContributorQuotaRetry,
