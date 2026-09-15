@@ -61,6 +61,11 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 					_ = json.NewDecoder(r.Body).Decode(&payload)
 					comments = append(comments, payload.Body)
 					_ = json.NewEncoder(w).Encode(map[string]any{"id": len(comments)})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+					// No prior confirmation request on the issue, so the gate
+					// posts one. The dedup path is covered separately by
+					// TestCloseIssueAsksForConfirmationOnlyOnce.
+					_ = json.NewEncoder(w).Encode([]any{})
 				case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
 					var payload struct {
 						State string `json:"state"`
@@ -166,4 +171,112 @@ func closeGateIssue(login, userType, title, body string, labels []string) *gh.Is
 		issue.Labels = append(issue.Labels, &gh.Label{Name: gh.Ptr(label)})
 	}
 	return issue
+}
+
+// A blocked close is not a one-shot event: an agent may retry, and several
+// agents may converge on the same issue. Re-notifying the reporter on every
+// attempt is the same discourtesy the gate exists to prevent, so the request is
+// posted once and the gate error is returned unchanged thereafter.
+func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
+	existing := []struct {
+		name    string
+		prior   []any
+		wantNew int
+	}{
+		{
+			name:    "first attempt posts the request",
+			prior:   []any{map[string]any{"id": 1, "body": "unrelated chatter"}},
+			wantNew: 1,
+		},
+		{
+			name:    "second attempt reuses the existing request",
+			prior:   []any{map[string]any{"id": 1, "body": reporterConfirmationRequestMarker + " please confirm"}},
+			wantNew: 0,
+		},
+	}
+
+	for _, tt := range existing {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"})
+			var posted []string
+			var closed bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+					_ = json.NewEncoder(w).Encode(issue)
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+					_ = json.NewEncoder(w).Encode(tt.prior)
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
+					var payload struct {
+						Body string `json:"body"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&payload)
+					posted = append(posted, payload.Body)
+					_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+				case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
+					closed = true
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := testClient(t, srv.URL)
+			err := c.CloseIssue(context.Background(), "r", 7, IssueCloseOptions{})
+
+			// The verdict must not soften just because the reporter was already asked.
+			if !errors.Is(err, ErrReporterConfirmationRequired) {
+				t.Fatalf("CloseIssue error = %v, want ErrReporterConfirmationRequired", err)
+			}
+			if closed {
+				t.Fatal("issue was closed despite the reporter-confirmation gate")
+			}
+			if len(posted) != tt.wantNew {
+				t.Fatalf("new comments = %d (%q), want %d", len(posted), posted, tt.wantNew)
+			}
+		})
+	}
+}
+
+// An unreadable comment list must not turn a gated close into a silent one.
+func TestCloseIssueConfirmationDedupFailsOpen(t *testing.T) {
+	issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"})
+	var posted []string
+	var closed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			_ = json.NewEncoder(w).Encode(issue)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			posted = append(posted, payload.Body)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
+			closed = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv.URL)
+	err := c.CloseIssue(context.Background(), "r", 7, IssueCloseOptions{})
+	if !errors.Is(err, ErrReporterConfirmationRequired) {
+		t.Fatalf("CloseIssue error = %v, want ErrReporterConfirmationRequired", err)
+	}
+	if closed {
+		t.Fatal("issue was closed despite the reporter-confirmation gate")
+	}
+	if len(posted) != 1 {
+		t.Fatalf("new comments = %d, want 1 (dedup must fail open)", len(posted))
+	}
 }
