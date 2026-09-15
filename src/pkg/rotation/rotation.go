@@ -992,7 +992,6 @@ func agyHeadroom(provider string, thresholdPct int, body []byte, model string) (
 	}, nil
 }
 
-
 // DeepSeekProber probes DeepSeek credit balance via its balance API.
 type DeepSeekProber struct {
 	APIKey string
@@ -1078,6 +1077,13 @@ type Manager struct {
 	// reads it. Empty dir = disabled, and the relay behaves exactly as before.
 	contributorPublishDir     string
 	contributorPublishAccount string
+	// contributorPublishSkipNotInstalled is set by the publish-only
+	// constructor (NewContributorReadingPublisher, kubestellar/hive#6987): a
+	// not_installed probe failure publishes nothing instead of an `unknown`
+	// the relay would hold on, so a default install without a given CLI keeps
+	// its unprovisioned admit for that pool. Never set under operator-
+	// configured rotation, where unknown/not_installed is deliberate signal.
+	contributorPublishSkipNotInstalled bool
 }
 
 // NewManager builds a Manager with the default prober set for every provider

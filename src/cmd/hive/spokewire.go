@@ -113,6 +113,7 @@ type spokeWire struct {
 	nousState                  *dashboard.NousState
 	inceptionEngine            *knowledge.InceptionEngine
 	rotationMgr                *rotation.Manager
+	quotaReadingPublisher      *rotation.Manager
 	wd                         *watchdog.Reconciler
 	configWatcher              *config.Watcher
 	onDemandFromPack           map[string]bool

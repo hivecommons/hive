@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Contributor quota reading publisher (kubestellar/hive#6967).
@@ -54,6 +56,22 @@ var contributorGuardProviders = map[string]bool{
 	"anthropic": true,
 	"openai":    true,
 	"google":    true,
+}
+
+// contributorGuardDefaultBackends maps each guard-supported provider to the
+// hive backend names that front it in the default rotation set. It exists for
+// the PUBLISH-ONLY manager (kubestellar/hive#6987): when provider rotation is
+// disabled there is no operator-authored Providers map to read Backends from,
+// yet the publisher still needs to know which pool-keyed files to write. The
+// flattened backend set MUST equal QUOTA_GUARD_SUPPORTED_BACKENDS in
+// bin/contributor-relay.js ({claude, pi, codex, agy, gemini}) — a backend
+// listed there but absent here gets no reading and stays on the unprovisioned
+// admit; a backend here but not there writes files nothing reads. A parity
+// test pins the set.
+var contributorGuardDefaultBackends = map[string][]string{
+	"anthropic": {"claude", "pi"},
+	"openai":    {"codex"},
+	"google":    {"agy", "gemini"},
 }
 
 // contributorReadingFileSuffix names the per-pool reading file inside the pool
@@ -225,6 +243,40 @@ func (m *Manager) EnableContributorReadingPublish(dir, account string) {
 	m.contributorPublishAccount = account
 }
 
+// NewContributorReadingPublisher builds a PUBLISH-ONLY Manager
+// (kubestellar/hive#6987, condition (a) in src/docs/contributor-relay.md): it
+// probes the guard-supported subscription providers and publishes normalized
+// readings into dir, but is never handed to the rotation decision paths — the
+// caller keeps it off the rotation wiring, so enabling the publisher does not
+// enable provider failover. This removes the publisher's dependency on
+// `governor.rotation.enabled` (default false, opt-in per RFC #3958), which was
+// the concrete reason a supported backend did not imply a live publisher.
+//
+// It differs from a rotation Manager in one deliberate way: a probe that fails
+// because the CLI is NOT INSTALLED publishes nothing (see
+// publishContributorReading). Under rotation the operator explicitly named the
+// provider, so an unknown/not_installed reading is signal; on a default
+// install it would flip a host that never had the backend from the
+// unprovisioned admit to a permanent hold — the fleet-wide stop #6951's ruling
+// exists to prevent.
+//
+// Empty dir returns a manager that publishes nothing (same contract as
+// EnableContributorReadingPublish).
+func NewContributorReadingPublisher(dir, account string) *Manager {
+	providers := make(map[string]config.ProviderRotationConfig, len(contributorGuardDefaultBackends))
+	for provider, backends := range contributorGuardDefaultBackends {
+		providers[provider] = config.ProviderRotationConfig{
+			Class:    ClassSubscription,
+			Backends: append([]string(nil), backends...),
+		}
+	}
+	m := NewManager(config.RotationConfig{Providers: providers})
+	m.contributorPublishDir = dir
+	m.contributorPublishAccount = account
+	m.contributorPublishSkipNotInstalled = true
+	return m
+}
+
 // publishContributorReading writes h as a normalized reading to every
 // guard-supported backend that this provider fronts, so the relay for each such
 // pool finds its file. No-op when publishing is disabled or the provider is not
@@ -234,6 +286,17 @@ func (m *Manager) EnableContributorReadingPublish(dir, account string) {
 func (m *Manager) publishContributorReading(h Headroom) {
 	dir := m.contributorPublishDir
 	if dir == "" || !contributorGuardProviders[h.Provider] {
+		return
+	}
+	// Publish-only mode (kubestellar/hive#6987): a CLI that is not on PATH
+	// cannot run — or spend quota — on this host, so its pool must keep
+	// presenting as unprovisioned (no file ⇒ the relay's existing default
+	// handling) rather than acquire a published `unknown`, which the relay
+	// HOLDS on. Skipping is not a fail-open: nothing is written, so the relay
+	// evaluates exactly what it would have before this publisher existed.
+	// Under operator-configured rotation this skip is NOT applied — there the
+	// provider was named explicitly and unknown/not_installed is real signal.
+	if m.contributorPublishSkipNotInstalled && h.ProbeErr != nil && h.ProbeErrCause == ProbeCauseNotInstalled {
 		return
 	}
 	account := m.contributorPublishAccount

@@ -53,28 +53,45 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 
 	// Provider rotation (RFC #3958): opt-in automatic failover when a
 	// provider's subscription/credit is exhausted. Nil when disabled.
+	//
+	// The contributor quota reading publisher is deliberately NOT gated on
+	// rotation being enabled (kubestellar/hive#6987, condition (a) in
+	// src/docs/contributor-relay.md): the pool directory is derived per-install
+	// when HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is not set, so a default install
+	// gets a real reading with no hand-configured env var (#6967 criterion 1)
+	// and no rotation opt-in. An explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR
+	// still overrides the location in both modes.
+	quotaAccount := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT"))
+	quotaPoolDir := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_DIR"))
+	explicitQuotaPoolDir := quotaPoolDir != ""
+	if quotaPoolDir == "" {
+		quotaPoolDir = rotation.DefaultContributorPoolDir()
+	}
 	if w.cfg.Governor.Rotation.Enabled {
 		w.rotationMgr = rotation.NewManager(w.cfg.Governor.Rotation)
 		// Publish normalized readings to where the contributor quota guard reads
-		// them (kubestellar/hive#6967). Default-on for supported backends
-		// (kubestellar/hive#6987): the pool directory is derived per-install when
-		// HIVE_CONTRIBUTOR_QUOTA_POOL_DIR is not set, so a default install gets a
-		// real reading with no hand-configured env var (#6967 criterion 1). An
-		// explicit HIVE_CONTRIBUTOR_QUOTA_POOL_DIR still overrides the location.
-		account := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT"))
-		dir := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_QUOTA_POOL_DIR"))
-		explicit := dir != ""
-		if dir == "" {
-			dir = rotation.DefaultContributorPoolDir()
-		}
-		if dir != "" {
-			w.rotationMgr.EnableContributorReadingPublish(dir, account)
-			w.logger.Info("contributor quota reading publisher enabled", "pool_dir", dir, "explicit_pool_dir", explicit)
+		// them (kubestellar/hive#6967), off the rotation manager's own probe
+		// loop and the operator's configured provider→backends map.
+		if quotaPoolDir != "" {
+			w.rotationMgr.EnableContributorReadingPublish(quotaPoolDir, quotaAccount)
+			w.logger.Info("contributor quota reading publisher enabled", "pool_dir", quotaPoolDir, "explicit_pool_dir", explicitQuotaPoolDir)
 		}
 		w.rotationMgr.Start(w.ctx)
 		w.logger.Info("provider rotation enabled",
 			"threshold_pct", w.cfg.Governor.Rotation.EffectiveThreshold(),
 			"providers", len(w.cfg.Governor.Rotation.Providers))
+	} else if quotaPoolDir != "" {
+		// Rotation disabled (the default): run a PUBLISH-ONLY manager so a
+		// supported backend still gets a reading (kubestellar/hive#6987). It is
+		// kept off w.rotationMgr on purpose — rotation decision paths
+		// (runRotationCheck, dashboard RotationMgr) stay nil/disabled, so this
+		// publishes data and rotates nothing. A probe that fails because the
+		// CLI is not installed publishes nothing rather than an `unknown` the
+		// relay would hold on (see rotation.NewContributorReadingPublisher).
+		w.quotaReadingPublisher = rotation.NewContributorReadingPublisher(quotaPoolDir, quotaAccount)
+		w.quotaReadingPublisher.Start(w.ctx)
+		w.logger.Info("contributor quota reading publisher enabled (publish-only; provider rotation disabled)",
+			"pool_dir", quotaPoolDir, "explicit_pool_dir", explicitQuotaPoolDir)
 	}
 
 	// Agent self-healing watchdog (RFC #4665): liveness/readiness

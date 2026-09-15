@@ -329,6 +329,115 @@ func TestContributorGuardProviders(t *testing.T) {
 	}
 }
 
+// The publish-only default backend map (kubestellar/hive#6987) must flatten to
+// exactly QUOTA_GUARD_SUPPORTED_BACKENDS in bin/contributor-relay.js
+// ({claude, pi, codex, agy, gemini}): a backend the relay guards but this map
+// omits gets no reading and silently stays on the unprovisioned admit; a
+// backend here the relay does not guard writes files nothing reads. Every
+// provider in the map must itself be guard-supported.
+func TestContributorGuardDefaultBackends_MatchesRelaySupportedSet(t *testing.T) {
+	want := map[string]bool{"claude": true, "pi": true, "codex": true, "agy": true, "gemini": true}
+	got := map[string]bool{}
+	for provider, backends := range contributorGuardDefaultBackends {
+		if !contributorGuardProviders[provider] {
+			t.Errorf("default backends name provider %q that is not guard-supported", provider)
+		}
+		for _, b := range backends {
+			if got[b] {
+				t.Errorf("backend %q listed under more than one provider", b)
+			}
+			got[b] = true
+		}
+	}
+	for b := range want {
+		if !got[b] {
+			t.Errorf("backend %q is in the relay's QUOTA_GUARD_SUPPORTED_BACKENDS but has no default provider mapping", b)
+		}
+	}
+	for b := range got {
+		if !want[b] {
+			t.Errorf("backend %q mapped here but not in the relay's QUOTA_GUARD_SUPPORTED_BACKENDS (drifted from contributor-relay.js)", b)
+		}
+	}
+}
+
+// A publish-only manager (rotation disabled, kubestellar/hive#6987 condition
+// (a)) publishes a healthy reading to every default backend fronting the
+// provider — with no operator-authored rotation config at all.
+func TestContributorReadingPublisher_PublishesForDefaultBackends(t *testing.T) {
+	dir := t.TempDir()
+	m := NewContributorReadingPublisher(dir, "")
+	m.SetHeadroom(Headroom{
+		Provider:  "google",
+		Available: true,
+		Limits:    []LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 63}},
+	})
+	for _, backend := range []string{"agy", "gemini"} {
+		var r ContributorReading
+		readJSONFile(t, ContributorReadingPath(dir, backend, ""), &r)
+		if r.State != "available" || len(r.Limits) != 1 || r.Limits[0].PctRemaining != 63 {
+			t.Errorf("%s reading = %+v, want available/weekly/63", backend, r)
+		}
+	}
+}
+
+// In publish-only mode a not_installed probe failure publishes NOTHING: an
+// absent CLI cannot spend quota on this host, and a published `unknown` would
+// flip a co-located relay for a backend the host never had from the
+// unprovisioned admit to a permanent hold — the #6951 fleet-wide stop. Any
+// OTHER failure still publishes `unknown` (a hold): skipping those would be a
+// fail-open.
+func TestContributorReadingPublisher_SkipsNotInstalledButPublishesOtherFailures(t *testing.T) {
+	dir := t.TempDir()
+	m := NewContributorReadingPublisher(dir, "")
+
+	h := failOpen("openai", errors.New("codex: command not found"))
+	h.ProbeErrCause = ProbeCauseNotInstalled
+	m.SetHeadroom(h)
+	if _, err := os.Stat(ContributorReadingPath(dir, "codex", "")); !os.IsNotExist(err) {
+		t.Errorf("not_installed probe published a reading; an absent CLI must stay unprovisioned, not become a hold")
+	}
+
+	m.SetHeadroom(failOpen("openai", errors.New("usage API 500")))
+	var r ContributorReading
+	readJSONFile(t, ContributorReadingPath(dir, "codex", ""), &r)
+	if r.State != "unknown" || r.Cause != "probe_failed" {
+		t.Errorf("generic probe failure reading = %+v, want unknown/probe_failed (must still hold)", r)
+	}
+}
+
+// The not_installed skip is exclusive to the publish-only constructor: under
+// operator-configured rotation the provider was named explicitly, so
+// unknown/not_installed is deliberate signal and keeps publishing (the #6983
+// behaviour, unchanged).
+func TestManager_RotationModeStillPublishesNotInstalled(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(rotationTestConfig())
+	m.EnableContributorReadingPublish(dir, "")
+
+	h := failOpen("anthropic", errors.New("claude: command not found"))
+	h.ProbeErrCause = ProbeCauseNotInstalled
+	m.SetHeadroom(h)
+	var r ContributorReading
+	readJSONFile(t, ContributorReadingPath(dir, "claude", ""), &r)
+	if r.State != "unknown" || r.Cause != "not_installed" {
+		t.Errorf("rotation-mode not_installed reading = %+v, want unknown/not_installed published", r)
+	}
+}
+
+// An empty dir leaves the publish-only manager publishing nothing — the same
+// "no route ⇒ no hold" contract as EnableContributorReadingPublish, so an
+// unresolvable config dir can never strand a relay.
+func TestContributorReadingPublisher_EmptyDirPublishesNothing(t *testing.T) {
+	m := NewContributorReadingPublisher("", "")
+	m.SetHeadroom(Headroom{Provider: "anthropic", Available: true, Limits: []LimitWindow{{Kind: "weekly", PctRemaining: 10}}})
+	// No panic and no dir to inspect: the contract is simply that publishing is
+	// off. Assert via the manager's own state.
+	if m.contributorPublishDir != "" {
+		t.Errorf("empty dir should leave publishing disabled")
+	}
+}
+
 // Atomicity under a concurrent reader: a relay reading the file while the
 // publisher rewrites it must never observe a partial document. rename() makes
 // this hold; a naive direct write would let the reader catch a half-written
