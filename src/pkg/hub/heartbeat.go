@@ -24,6 +24,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -1452,8 +1453,34 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	// record it even if the response body below fails to decode.
 	recordHeartbeatSuccess()
 
+	// Read the raw body so the hub->spoke signature (issue #7082) is verified
+	// over the EXACT bytes received, before this response's config/credentials
+	// are trusted. Streaming-decoding straight into the struct would re-encode
+	// JSON and lose the ability to check the detached signature over the wire
+	// bytes.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPayloadBytes))
+	if err != nil {
+		logger.Warn("hub heartbeat response read failed", "error", err)
+		return nil
+	}
+	result := spokeHeartbeatVerifier(logger).Verify(
+		SpokeSSOPublicKeys(),
+		payload.HiveID,
+		raw,
+		resp.Header.Get(spoke.SigHeader),
+		time.Now(),
+	)
+	if !result.Accepted {
+		// Only reachable in enforce mode once trust has been established
+		// (pkg/spoke). Log-only and pre-trust states always accept, so an
+		// un-upgraded hub can never brick a spoke here.
+		logger.Warn("hub heartbeat response REJECTED by signature verification — not applying its config/credentials",
+			"reason", result.Reason, "hive_id", payload.HiveID)
+		return nil
+	}
+
 	var hbResp HeartbeatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil {
+	if err := json.Unmarshal(raw, &hbResp); err == nil {
 		if hbResp.HubGitHash != "" {
 			logger.Debug("hub version info", "hub_git_hash", hbResp.HubGitHash, "latest_sha", hbResp.LatestSHA)
 		}
@@ -2370,6 +2397,29 @@ type HeartbeatResponse struct {
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
+
+	// SigHiveID / SigSeq / SigSignedAt are the AUTHENTICATED binding for the
+	// hub->spoke signing scheme (issue #7082, cncf/toc#2286). They live inside
+	// the response body so the detached Ed25519 signature the hub places in the
+	// X-Hive-Heartbeat-Signature header — computed over these exact body bytes —
+	// authenticates them along with the rest of the config/credentials payload:
+	//
+	//   - SigHiveID binds the response to ONE hive, defeating cross-hive replay
+	//     (a response signed for hive A names A, so a spoke serving hive B
+	//     rejects it even though the signature is a genuine hub signature).
+	//   - SigSeq is a per-hive monotonic counter and SigSignedAt a unix
+	//     timestamp; a spoke rejects a seq at or below the highest it already
+	//     accepted, defeating rollback replay of an old captured response.
+	//
+	// The json tags MUST stay in lockstep with pkg/spoke's sigEnvelope, which
+	// re-declares them to read the binding back without importing pkg/hub;
+	// TestHeartbeatSigTagsMatch pins the two. omitempty so an UNSIGNED response
+	// (keyless hub) carries none of them and stays byte-identical to the legacy
+	// wire format that already-deployed spokes expect.
+	SigHiveID   string `json:"sig_hive_id,omitempty"`
+	SigSeq      int64  `json:"sig_seq,omitempty"`
+	SigSignedAt int64  `json:"sig_ts,omitempty"`
+	SigVersion  int    `json:"sig_v,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

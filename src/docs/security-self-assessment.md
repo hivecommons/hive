@@ -34,7 +34,7 @@ application ([cncf/sandbox#516](https://github.com/cncf/sandbox/issues/516)).
 > |---|---|
 > | "Where are GitHub tokens and inference keys stored? What is compromised if an operator is? What threatens install/update?" | New [Credentials: where they live and what falls with them](#credentials-where-they-live-and-what-falls-with-them) — a storage table, a blast-radius table per actor, and the supply-chain facts for install/upgrade. |
 > | "How does hive authenticate a contributor/relay?" | New [Contributor relay authentication](#contributor-relay-authentication). |
-> | "Were threats identified on the hub↔spoke interface?" | New [Hub ↔ spoke interface](#hub--spoke-interface) with a threat table. One finding: hub→spoke config pushes rely on TLS alone and are not independently signed — filed as [#7082](https://github.com/hivecommons/hive/issues/7082). |
+> | "Were threats identified on the hub↔spoke interface?" | New [Hub ↔ spoke interface](#hub--spoke-interface) with a threat table. The finding that hub→spoke config pushes relied on TLS alone ([#7082](https://github.com/hivecommons/hive/issues/7082)) is now **mitigated**: responses are Ed25519-signed with the hub's existing key and bound to `hive_id` plus a monotonic `seq`, rolled out log-only before enforcing. |
 > | "What would `fail_mode: closed` and canaries-on by default cost? Are they partial mitigations? Plans?" | The document's own framing was wrong: `open` **redacts** and continues, it does not pass injection through. Corrected in three places. Defaults plan tracked in [#7083](https://github.com/hivecommons/hive/issues/7083). |
 > | "The red-team section duplicates `ioscan-red-team.md`." | Cut to a summary that links out. |
 > | "The image bundles every CLI backend — by design?" | Yes; stated as a tradeoff with its cost and the roadmap under [Security relevant components](#security-relevant-components). |
@@ -201,12 +201,16 @@ updating are supply-chain threats, and the current facts are:
 ### Hub ↔ spoke interface
 
 Registered spokes heartbeat to a hub; the hub answers with configuration and,
-for hosted spokes, credentials. The two directions are not equally protected.
+for hosted spokes, credentials. Both directions are now cryptographically
+authenticated (spoke→hub by a per-hive bearer, hub→spoke by an Ed25519
+signature — [#7082](https://github.com/hivecommons/hive/issues/7082)), but the
+**trust** is still asymmetric: the hub is the root of trust that provisions and
+signs, and a compromised hub can sign a genuine malicious push.
 
 | Direction | What is sent | How it is authenticated |
 |---|---|---|
 | **Spoke → hub** (heartbeat) | Operational telemetry: agent states, queue depth, version, health. **Never credentials.** | A **per-hive derived bearer** (`keyderive.PerHiveKey`, bound to trust domain and hive ID), verified against every live master generation so the master can rotate without a flag day (`src/pkg/hub/hub_keys.go`, `verifyHeartbeatBearerAcrossGenerations`). The fleet-wide shared bearer lane of earlier releases is **deleted**. |
-| **Hub → spoke** (heartbeat response) | Configuration deltas; for hosted spokes, the spoke's GitHub App credentials and authorized-user list. | **TLS to the spoke's configured hub URL — and nothing else.** The response body is not signed and is not bound to a hive ID or sequence number. |
+| **Hub → spoke** (heartbeat response) | Configuration deltas; for hosted spokes, the spoke's GitHub App credentials and authorized-user list. | **TLS plus an independent Ed25519 signature** over the response body ([#7082](https://github.com/hivecommons/hive/issues/7082)). The hub signs each response with the **same** master-derived Ed25519 key it already uses for SSO/session tokens (`infoSSOEd25519Seed`); the spoke verifies with the public key it already holds (`HIVE_SSO_PUBLIC_KEY`) — no new key or distribution. The signed body is bound to `hive_id` (defeats cross-hive replay) and a per-hive monotonic `seq`/timestamp (defeats rollback replay). Rollout is **staged**: spokes default to **log-only** (verify, log failures, still accept) and reject only under opt-in enforcement, and only after they have accepted one valid signed response (**trust-on-first-signed**), so a spoke never hard-fails against a hub that has not yet shipped signing. See `src/pkg/spoke` and `src/pkg/hub/heartbeat_signing.go`. |
 | **Hub-minted tokens** (SSO, delegation, session cookies) | Identity assertions the spoke must verify. | **Ed25519**; the spoke holds only the public key (`HIVE_SSO_PUBLIC_KEY`, `src/pkg/delegation/token.go`). A spoke without a key fails closed (503). |
 
 Threats identified on this interface:
@@ -215,7 +219,7 @@ Threats identified on this interface:
 |---|---|
 | **Hub compromise → fleet-wide credential and config push** | Real and unmitigated by design of the lane; bounded only by hub hardening and by each spoke holding its own App key alone. Stated as the system's highest-value target. |
 | **Spoke impersonation** to the hub | Bounded. One leaked bearer authenticates one hive; the hub will not accept it for another hive ID, and rotation retires it within the dual-generation window. |
-| **Replay, rollback, or mis-delivery of a pushed configuration** (a TLS-terminating middlebox, a misconfigured `HIVE_HUB_URL`, a captured response replayed to a different hive) | **Open.** Filed as [#7082](https://github.com/hivecommons/hive/issues/7082): sign the response with the hub's existing Ed25519 key and bind it to `hive_id` plus a monotonic sequence, rolling out log-only before enforcing. |
+| **Replay, rollback, or mis-delivery of a pushed configuration** (a TLS-terminating middlebox, a misconfigured `HIVE_HUB_URL`, a captured response replayed to a different hive) | **Mitigated ([#7082](https://github.com/hivecommons/hive/issues/7082)).** The heartbeat response is now signed with the hub's existing Ed25519 key and bound to `hive_id` plus a monotonic `seq`/timestamp, so a middlebox or mis-pointed hub URL cannot forge config/credentials, a response captured for hive A cannot be replayed to hive B (`hive_id` binding), and an old response cannot roll config back (`seq` floor). Enforcement is opt-in and staged log-only → enforce with trust-on-first-signed, so deployed spokes are never bricked against an un-upgraded hub. The residual **hub-compromise** row above is unchanged: a genuine hub can still sign a genuine (malicious) push. |
 | **Telemetry disclosure** | Low. Heartbeats carry no secrets; the hub-side view is admin-gated. |
 
 ### Contributor relay authentication
