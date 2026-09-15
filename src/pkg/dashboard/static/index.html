@@ -13771,7 +13771,7 @@ function burnAreaChart() {
     // entry carries no desc of its own. The health payload holds only ints,
     // so no last-run timestamp is available to show.
     const HEALTH_DESC_DEFAULTS = {
-      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo, excluding runs that scheduled no jobs (success or skipped count as passing)',
+      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)',
       brew: 'Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)',
       helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
       nightly: "Most recent 'Nightly Test Suite' workflow run did not fail",

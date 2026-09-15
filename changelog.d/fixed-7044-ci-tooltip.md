@@ -1,0 +1,1 @@
+- The dashboard CI health tooltip now states that failed workflow runs which scheduled no jobs are dropped from the pass-rate sample, matching the CI health calculation introduced for zero-job GitHub Actions startup failures ([#7044](https://github.com/hivecommons/hive/issues/7044)).

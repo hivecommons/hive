@@ -1138,7 +1138,7 @@ func defaultStatsConfig(name string) []any {
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
 			map[string]any{"key": "brew", "label": "Brew", "source": "health", "field": "brew", "style": "dot", "desc": "Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)"},
 			map[string]any{"key": "helm", "label": "Helm", "source": "health", "field": "helm", "style": "dot", "desc": "Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo"},
-			map[string]any{"key": "ci", "label": "CI", "source": "health", "field": "ci", "style": "pct", "desc": "Pass rate over the last 10 completed workflow runs on the primary repo, excluding runs that scheduled no jobs (success or skipped count as passing)"},
+			map[string]any{"key": "ci", "label": "CI", "source": "health", "field": "ci", "style": "pct", "desc": "Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)"},
 			map[string]any{"key": "weekly", "label": "Weekly", "source": "health", "field": "weekly", "style": "dot", "desc": "Most recent 'Weekly Coverage Review' workflow run did not fail"},
 			map[string]any{"key": "nightly", "label": "Nightly Tests", "source": "health", "field": "nightly", "style": "dot", "desc": "Most recent 'Nightly Test Suite' workflow run did not fail"},
 			map[string]any{"key": "nightlyCompliance", "label": "Compliance", "source": "health", "field": "nightlyCompliance", "style": "dot", "desc": "Most recent 'Nightly Compliance & Perf' workflow run did not fail"},
