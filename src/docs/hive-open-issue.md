@@ -104,6 +104,47 @@ denial (forge-resistance failure or `CanCreateIssues` gate failure) is
 quarantined `.denied` immediately, also without retry — policy won't change
 on the next tick.
 
+### Content shape validation
+
+Structural completeness is not the only terminal check. The same pre-flight
+validates the **content** of issue and comment requests, using the shared
+validators in `pkg/issueshape` (see
+`src/pkg/github/issue_request_watcher.go`):
+
+- **Unsubstituted template placeholders.** A title or body still carrying an
+  unfilled policy-template token — `<analysis>`, `<fix>`, or a multi-word
+  lowercase phrase like `<specific description of the documentation gap>` —
+  is rejected: an agent that copied a template line without substituting it
+  has nothing worth filing. The matcher is deliberately narrow so legitimate
+  angle-bracket constructs still pass: URLs, generic type parameters
+  (`Result<T, E>`), tokens containing `/`, `=`, or `,`, and recognized
+  GitHub-flavored-Markdown HTML tags including attribute forms
+  (`<details open>`, `<img src=…>`).
+- **Mis-escaped newlines.** A body that is a single physical line whose
+  markdown structure was encoded as literal `\n` escape sequences (the
+  classic `## X\n\n…\n\n## Y` specimen, typically from shell-quoting a
+  multiline `--body`) is rejected with the hint *use real newlines or
+  `--body-file`*. A body with real line breaks may freely discuss `\n` in
+  prose or code blocks; the check requires the combination — no real
+  newline, several literal `\n` tokens, `\n\n` or `\n## ` structure —
+  before flagging.
+
+Both rejections are terminal like any other shape failure: the request is
+quarantined `.bad`, never retried, and the `.result.json` carries the exact
+reason including the offending placeholder token.
+
+**The direct path is covered too.** An agent's raw `gh issue create` /
+`gh issue comment` never touches this watcher — it becomes a REST
+`POST`/`PATCH` through the hive's egress proxy. Since
+[#7020](https://github.com/hivecommons/hive/pull/7020) (fixing
+[#7014](https://github.com/hivecommons/hive/issues/7014)) the proxy enforces
+the same two validators on issue and comment create/edit routes, denying the
+request with the same actionable reason before it leaves the sandbox.
+`pkg/issueshape` is the single source of truth for both enforcement points,
+so the rules cannot drift apart. One asymmetry to know about: a body larger
+than the proxy's buffering limit is forwarded unchecked rather than
+truncated — the watcher path has no such bypass.
+
 ### Idempotency
 
 Issue creation is deduplicated by exact (whitespace-trimmed) title against
