@@ -325,6 +325,79 @@ else
   ok "the 5s polling path does no tree walk"
 fi
 
+# ── 9. The 5-minute sweep is bounded by mtime (#7105 follow-up) ─────────────
+# hive_fix_tree is O(everything ever created). On a live spoke the full sweep
+# of /data/home/.copilot took 75s at 970 session directories, and that spoke had
+# reached 9,449 — where the same sweep runs ~12 minutes against a 5-minute
+# cycle. A repair pass that cannot finish within its own period stops being a
+# repair pass, and because agent UIDs differ while the CLI creates files under a
+# 022 umask, peers get EACCES on each other's session files for the whole
+# backlog. The 5-minute path must therefore repair only recent entries.
+SLOW_BODY="$(awk '/^  hive_fix_slow_cycle\(\) \{/{f=1} f{print} /^  \}$/{if(f)exit}' "$GUARDS")"
+if printf '%s' "$SLOW_BODY" | grep -qE 'hive_fix_tree "'; then
+  bad "the 5-minute sweep is bounded by mtime" \
+      "hive_fix_slow_cycle calls the unbounded hive_fix_tree:
+$SLOW_BODY"
+else
+  ok "the 5-minute sweep is bounded by mtime"
+fi
+
+# The unbounded sweep must still exist as a backstop, or anything written during
+# a window the poller missed stays broken until its session is pruned.
+FULL_BODY="$(awk '/^  hive_fix_full_cycle\(\) \{/{f=1} f{print} /^  \}$/{if(f)exit}' "$GUARDS")"
+if printf '%s' "$FULL_BODY" | grep -qE 'hive_fix_tree "'; then
+  ok "the hourly backstop still runs the unbounded sweep"
+else
+  bad "the hourly backstop still runs the unbounded sweep" \
+      "hive_fix_full_cycle must call hive_fix_tree:
+$FULL_BODY"
+fi
+
+# ── 10. Functional: the bounded repair fixes new files and skips old ones ────
+# Executes the shipped function, like the rest of this suite. chown to dev:node
+# fails as an unprivileged test user and is expected to — it carries '|| true',
+# and the mode repair is what peers actually need.
+RECENT_TREE="$WORK/recent-tree"
+mkdir -p "$RECENT_TREE/session-new" "$RECENT_TREE/session-old"
+NEWFILE="$RECENT_TREE/session-new/events.jsonl"
+OLDFILE="$RECENT_TREE/session-old/events.jsonl"
+printf 'x\n' > "$NEWFILE"
+printf 'x\n' > "$OLDFILE"
+chmod 0644 "$NEWFILE"
+chmod 0644 "$OLDFILE"
+# Age the old session well beyond the window. touch -t takes [[CC]YY]MMDDhhmm.
+touch -t 202001010000 "$OLDFILE" "$RECENT_TREE/session-old"
+
+hive_fix_tree_recent_rc=0
+sh -c 'set -e; . "$1"; hive_fix_tree_recent "$2" 10' sh "$WORK/guards.local.sh" "$RECENT_TREE" \
+  >/dev/null 2>&1 || hive_fix_tree_recent_rc=$?
+
+new_mode="$(stat -c '%a' "$NEWFILE" 2>/dev/null || stat -f '%Lp' "$NEWFILE")"
+old_mode="$(stat -c '%a' "$OLDFILE" 2>/dev/null || stat -f '%Lp' "$OLDFILE")"
+
+# Check the GROUP digit specifically. A glob like *6* would match 644 and pass
+# while the file is still group-read-only, which is the bug being tested for.
+new_group_digit="$(printf '%s' "$new_mode" | tail -c 2 | head -c 1)"
+case "$new_group_digit" in
+  2|3|6|7) ok "the bounded repair makes a recent file group-writable (mode $new_mode)" ;;
+  *) bad "the bounded repair makes a recent file group-writable" "mode is $new_mode, wanted group write" ;;
+esac
+
+if [ "$old_mode" = "644" ]; then
+  ok "the bounded repair leaves files outside the window alone (mode $old_mode)"
+else
+  bad "the bounded repair leaves files outside the window alone" \
+      "mode changed to $old_mode; the whole point is not to walk the backlog"
+fi
+
+# Absent paths must stay non-fatal under set -e, like every other repair here.
+if sh -c 'set -e; . "$1"; hive_fix_tree_recent "$2" 10' sh "$WORK/guards.local.sh" \
+     "$WORK/definitely-not-there" >/dev/null 2>&1; then
+  ok "the bounded repair returns 0 on an absent path"
+else
+  bad "the bounded repair returns 0 on an absent path" "it must not end the guard"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
