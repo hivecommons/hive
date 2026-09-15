@@ -89,6 +89,10 @@ func (w *spokeWire) wireSpokeMetricsAndKnowledgeAPI() {
 	go w.tokenCollector.Start(tokenStop)
 	w.addCleanup(func() { close(tokenStop) })
 
+	// Bound the session-state directories the collectors above read. Nothing
+	// else deletes them, so without this the shared PVC grows forever.
+	w.wireSessionPrune()
+
 	// The coverage figure on the ci-maintainer card must describe THIS hive's
 	// repo. The built-in gist is the flagship project's own badge, so it is
 	// the default only for that project — the same gate collectOutreach uses
