@@ -44,12 +44,12 @@ var prRequestPollInterval = 10 * time.Second
 // set it only to target a non-default branch on purpose
 // (kubestellar/hive#4928).
 type PRRequest struct {
-	Repo   string `json:"repo"`
-	Head   string `json:"head"`
-	Base   string `json:"base,omitempty"`
-	Title  string `json:"title"`
-	Body   string `json:"body,omitempty"`
-	Agent  string `json:"agent,omitempty"`
+	Repo  string `json:"repo"`
+	Head  string `json:"head"`
+	Base  string `json:"base,omitempty"`
+	Title string `json:"title"`
+	Body  string `json:"body,omitempty"`
+	Agent string `json:"agent,omitempty"`
 	// IssueN declares the originating issue(s) this PR is for (hive-open-pr
 	// --issues). When set, the watcher verifies the body actually references
 	// each one (Closes #N / Refs #N) and rejects the request otherwise — a
@@ -388,16 +388,25 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 				slog.String("reason", selfAuth.Reason), slog.String("agent", req.Agent))
 		} else {
 			c.logger.Info("pr-request watcher: applied hold label (hold-gated ACMM level)",
-				slog.String("repo", req.Repo), slog.Int("number", res.Number))
+				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("agent", req.Agent))
 		}
 	}
 
 	// Explain the hold on the PR itself, once, when we opened it. A "hold" with
 	// no stated cause reads as a malfunction, and the person who has to clear it
-	// needs to know what clears it. Best-effort: the label is the enforcement,
-	// the comment is the courtesy, and a failed courtesy must not fail the
-	// request and send it round the retry loop.
-	if selfAuth.Held && !res.AlreadyExisted {
+	// needs to know what clears it. For level holds, the marked comment is also
+	// the release provenance, so it must land before the request is settled.
+	// Self-authorization notices remain best-effort courtesy: the label is the
+	// enforcement, and a failed courtesy must not fail the request and send it
+	// round the retry loop.
+	if holdByLevel && !res.DuplicateTree {
+		if cerr := c.ensureLevelHoldNotice(ctx, req.Repo, res.Number, req.Agent); cerr != nil {
+			c.logger.Warn("pr-request watcher: level-held PR but could not post the release marker",
+				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("agent", req.Agent), slog.String("error", cerr.Error()))
+			c.failPRRequest(path, req, fmt.Errorf("PR #%d opened but required level-hold marker could not be posted: %w", res.Number, cerr), nowFn)
+			return
+		}
+	} else if selfAuth.Held && !res.AlreadyExisted {
 		if cerr := c.CreateIssueComment(ctx, req.Repo, res.Number, selfAuthorizationNotice(selfAuth)); cerr != nil {
 			c.logger.Warn("pr-request watcher: held PR but could not post the explanation",
 				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", cerr.Error()))

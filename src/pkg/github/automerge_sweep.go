@@ -510,6 +510,9 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		// listing and evaluating it here.
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
+	if _, reason, err := c.releaseLevelHoldIfEligible(ctx, owner, repo, pr); err != nil || reason != "" {
+		return AutoMergeSweepEvent{}, reason, err
+	}
 
 	evaluatedHeadSHA := ""
 	if pr.GetHead() != nil {

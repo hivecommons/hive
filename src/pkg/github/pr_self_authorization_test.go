@@ -50,12 +50,23 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
 
 		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/comments"):
+			num := issueNumFromPath(p, "/comments")
+			issue := s.issues[num]
+			if issue == nil {
+				s.mu.Lock()
+				out := make([]map[string]any, 0, len(s.comments))
+				for _, body := range s.comments {
+					out = append(out, map[string]any{"body": body, "user": userJSON("kubestellar-hive[bot]", "Bot")})
+				}
+				s.mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(out)
+				return
+			}
 			s.mu.Lock()
 			s.listCalls++
 			s.mu.Unlock()
-			num := issueNumFromPath(p, "/comments")
-			issue := s.issues[num]
-			if issue == nil || issue.FailList {
+			if issue.FailList {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -429,5 +440,33 @@ func TestPRRequestWatcher_HoldGatedLevelSkipsTheLookup(t *testing.T) {
 	srv.mu.Unlock()
 	if listCalls != 0 {
 		t.Errorf("gate made %d comment lookups at a hold-gated level, want 0", listCalls)
+	}
+}
+
+func TestPRRequestWatcher_HoldGatedLevelPostsAttributableNotice(t *testing.T) {
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{}}
+	c := testClient(t, srv.start(t).URL)
+	c.SetAppBotLogin("kubestellar-hive[bot]")
+	c.prHoldLabel = func(agent string) bool { return true }
+
+	dir := t.TempDir()
+	prRequestDirForTest = dir
+	t.Cleanup(func() { prRequestDirForTest = "" })
+
+	if _, err := WritePRRequest(dir, PRRequest{
+		Repo: "o/r", Head: "fix", Base: "main", Title: "fix", Body: "safe change", Agent: "quality",
+	}); err != nil {
+		t.Fatalf("WritePRRequest: %v", err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+
+	comments := srv.postedComments()
+	if len(comments) != 1 {
+		t.Fatalf("posted %d comments, want one level-hold notice", len(comments))
+	}
+	for _, want := range []string{levelHoldNoticePrefix, `"agent":"quality"`, "quality", "ACMM L3"} {
+		if !strings.Contains(comments[0], want) {
+			t.Errorf("level-hold notice missing %q:\n%s", want, comments[0])
+		}
 	}
 }

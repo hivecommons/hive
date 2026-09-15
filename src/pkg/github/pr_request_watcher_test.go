@@ -69,6 +69,12 @@ func newPRMockServerLabels(t *testing.T, existingHead string, created *int, adde
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -306,6 +312,10 @@ func TestPRRequestWatcher_RetriesRequiredHoldLabelFailure(t *testing.T) {
 				return
 			}
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `{"id":1}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

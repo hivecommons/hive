@@ -1,0 +1,1 @@
+- Level-gated PR holds now leave an attributable notice and are released automatically once the hive is promoted out of the hold-gated ACMM band, while self-authorization and human holds remain fail-closed ([#7060](https://github.com/hivecommons/hive/issues/7060)).
