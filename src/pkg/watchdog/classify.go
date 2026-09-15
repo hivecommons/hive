@@ -180,7 +180,9 @@ type Classification struct {
 //  6. anything else              → unknown (grace window / unclassifiable)
 //
 // Auth outranks overlay deliberately: a login picker is both, and a restart
-// cannot mint a credential.
+// cannot mint a credential. Boot grace, however, outranks auth: the login
+// chrome a CLI paints while completing its own startup handshake is not
+// evidence that a human is needed (see the guard in the body).
 func Classify(obs Observation, now time.Time, s Settings) Classification {
 	// Boot grace outranks every dead verdict. A launching agent legitimately
 	// has no tmux session, no pane, and no CLI marker for the first seconds of
@@ -196,6 +198,29 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 		return Classification{ClassNoSession, "tmux session missing"}
 	}
 	if obs.ShowsLoginPrompt || paneMatchesAny(obs.Pane, authScreenPatterns) {
+		// Boot grace covers login chrome too. Interactive CLIs paint a login
+		// screen DURING their startup auth handshake even when the seeded
+		// credential is about to be accepted -- the pane poller already
+		// documents this flash and guards its own restart path with a
+		// multi-poll loginStreak for exactly this reason. This classifier had
+		// no equivalent guard, so a single sighting seconds after launch
+		// became ConditionFalse/PaneShowsLogin and paged an operator about a
+		// fleet that was finishing logging itself in.
+		//
+		// The reconciler's "healable" downgrade cannot rescue those agents
+		// either: it requires obs.CredentialProven, which the fleet only ever
+		// sets for the claude backend, so every copilot agent takes the paging
+		// branch. Observed on a hosted spoke: rolling the pod paged quality,
+		// scanner and ci-maintainer 3 minutes in, one event each, never
+		// repeated -- all three were authenticated and working the whole time.
+		//
+		// Unknown rather than Ready: a login screen is not health, and this
+		// says only that it is too early to conclude anything. An agent that
+		// genuinely needs a human still shows the same chrome once grace
+		// elapses and pages on the very next tick.
+		if booting {
+			return Classification{ClassUnknown, "pane shows login chrome inside boot grace"}
+		}
 		return Classification{ClassAuthRequired, "pane shows a login/credential screen"}
 	}
 	stale := func(after time.Duration) bool {
