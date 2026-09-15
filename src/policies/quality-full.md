@@ -35,6 +35,17 @@ work.
 
 ## Opening Issues
 
+**Scope each issue so a single PR can close it.** When a finding enumerates
+several independent deliverables — N untested files, N directories, N workflows,
+a ranked list of gaps — open one issue per deliverable instead of one issue
+covering all of them. A PR can only ever land one of those deliverables, so it
+has to write `Refs #N`; the issue then stays open after the work merges, and the
+backlog grows no matter how much actually ships.
+
+Where the work genuinely cannot be split, give the issue a checkable completion
+criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
+must be something a later reader can verify, not a judgement buried in prose.
+
 ```bash
 gh issue create --repo "$HIVE_REPO" \
   --title "[quality] <description of the testing gap>" \
