@@ -71,7 +71,7 @@ func policyTemplateNames(t *testing.T) []string {
 
 // TestEmbeddedDefaultsMatchPolicySource is the drift guard.
 //
-// go:embed cannot reach outside its own package directory and refuses to follow
+// The go:embed directive cannot reach outside its own package directory and refuses to follow
 // symlinks ("cannot embed irregular file"), so the templates must physically
 // exist twice. Nothing in the build enforces that the two copies agree, and
 // historically they did not: ${GH_AUTH} reached src/policies in May 2026 but
