@@ -49,8 +49,14 @@ func newTaskListSweepAPI(t *testing.T, issuesJSON string, issuesStatus int, requ
 	})
 	mux.HandleFunc("/repos/testorg/widget/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		comments.Add(1)
 		w.Header().Set("Content-Type", "application/json")
+		// The sweep LISTS existing comments (marker scan) before it creates
+		// one; only the POST is the audit comment the tests count.
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		comments.Add(1)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id": 1}`))
 	})
@@ -59,6 +65,22 @@ func newTaskListSweepAPI(t *testing.T, issuesJSON string, issuesStatus int, requ
 		closes.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"number": 7, "state": "closed"}`))
+	})
+	mux.HandleFunc("/repos/testorg/widget/pulls", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		// One recently merged PR whose body references issue #7 — the
+		// merged-PR gate (#7071) requires at least one such PR before the
+		// sweep may close a fully ticked issue.
+		now := time.Now().UTC().Format(time.RFC3339)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{
+			"number": 8,
+			"state": "closed",
+			"title": "land the widget work",
+			"body": "Fixes #7",
+			"merged_at": "` + now + `",
+			"updated_at": "` + now + `"
+		}]`))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
