@@ -101,6 +101,54 @@ When no token or App credentials are usable, Hive starts the dashboard but disab
 
 Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App. GitLab, Gitea, and Forgejo are **not supported for running a hive** today; see [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md).
 
+## Workflow-file pushes are rejected by GitHub App tokens
+
+This rejection means the GitHub App installation has not accepted the
+repository **Workflows** permission:
+
+```text
+! [remote rejected] <branch> -> <branch> (refusing to allow a GitHub App to create or update workflow `.github/workflows/<file>.yml` without `workflows` permission)
+```
+
+The branch and filename vary, but the trigger is any push authenticated with a
+GitHub App installation token that creates or updates a file under
+`.github/workflows/`. The failure happens during `git push`, before
+[`hive-open-pr`](hive-open-pr.md) can request a PR, so an otherwise healthy
+agent may finish with local commits but no remote branch or PR.
+
+The in-repo token tiers are deliberately asymmetric:
+
+- `contributor` tokens request issues, contents, and pull-requests write, but
+  do **not** request Workflows. This keeps ordinary PR-capable agents from
+  modifying GitHub Actions workflows.
+- `trusted` and `merger` tokens request `workflows:write` so trusted-tier
+  agents can publish workflow fixes. If the App installation has not granted
+  Workflows yet, GitHub refuses that token mint; Hive logs the missing grant,
+  retries without Workflows, and the later workflow-file push is rejected by
+  GitHub.
+
+Only an organization owner or App owner can fix the grant. A PR cannot change
+GitHub App permissions. Remediation:
+
+1. Open the Hive GitHub App settings in GitHub:
+   **Settings → Developer settings → GitHub Apps → `<hive app>`** (or the
+   owning organization's GitHub App settings).
+2. Open **Permissions & events**.
+3. Under **Repository permissions**, set **Workflows** to **Read and write**,
+   then save the App permission change.
+4. Re-authorize every affected installation. Existing installations keep their
+   old grants until an owner accepts the updated permission request, typically
+   from the installation's GitHub prompt or **Settings → Integrations/GitHub
+   Apps → `<hive app>` → Review request**.
+5. Re-run the agent or re-push the branch after the installation has accepted
+   the new grant.
+
+Until the installation grants Workflows read/write, workflow changes from
+agents must be delivered as a patch on the tracking issue for a maintainer to
+apply with their own credentials. Include the target branch, every changed
+workflow path, a complete unified diff, and the verification command/output a
+human should run after applying it.
+
 ## Hosted hive disappeared or its URL times out
 
 Hosted hives that never complete setup or go inactive are **reaped on a timer**: the hive vanishes from the hub's Usage view and the old `https://<id>.hive.hivecommons.dev` URL times out permanently. This is expected reclamation, not an outage. Recovery:

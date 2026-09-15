@@ -230,7 +230,9 @@ their own credentials. A useful patch comment contains:
    workflow dry run.
 
 Until the App installation grants Workflows read/write, App-authored
-workflow-file PRs cannot be delivered directly.
+workflow-file PRs cannot be delivered directly. See the
+[troubleshooting runbook](troubleshooting.md#workflow-file-pushes-are-rejected-by-github-app-tokens)
+for the owner-side permission update steps.
 
 ### The 404 that means "your push failed"
 
