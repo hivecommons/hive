@@ -13,7 +13,7 @@ Each agent runs in one of four modes, controlling what actions it can take on Gi
 
 - **Advisory**: Agent observes and records findings as beads on the dashboard. No GitHub interaction.
 - **Measured**: Agent can file GitHub issues to make findings visible to the team. No code changes.
-- **Holdgated**: Agent can write code and open PRs, but every PR gets a `hold` label. A human must review and remove `hold` before merge. Agent never merges.
+- **Holdgated**: Agent can write code and open PRs, but every PR gets a `hold` label. A human must review and remove `hold` before merge. Agent never merges. When the hive itself applies a level hold it also posts a marked notice comment on the PR (`<!-- hive:level-hold … -->`) naming the agent; that marker is the release provenance — see [level-hold release](#level-hold-release) below.
 - **Full**: Agent operates autonomously — opens PRs and merges on green CI. Highest trust level.
 
 ## ACMM Levels
@@ -185,6 +185,16 @@ Notes:
 - **Promotion adds agents and capability; demotion narrows it.** Moving up to L6
   makes agents auto-merge on green CI; moving down returns them to holdgated or
   advisory. The per-level capability grid is the table at the top of this page.
+- <a id="level-hold-release"></a>**Level-applied holds are released automatically after a
+  promotion.** When the hive holds a PR because the ACMM level required it, it posts a
+  marked notice comment (`<!-- hive:level-hold {"agent":…} -->`) as the App bot. Once
+  current policy no longer requires a hold for that agent — typically because you raised
+  the level — the automerge sweep removes the `hold` label itself
+  (`pkg/github/pr_level_hold.go`). Release is fail-closed: it applies only to App-authored
+  PRs whose trusted marker identifies the agent, only when the **most recent** `hold`
+  label event was applied by the App itself, and never while a self-authorization hold
+  applies. A hold that a human applied — or re-applied after the App's — is never removed
+  by the hive; holds without a recognizable marker stay held.
 - **Operator-created agents are preserved.** `ApplyPack` reconciles pack agents;
   agents you created yourself are not removed by a level change (deletion is
   tombstoned separately — see agent configuration).
