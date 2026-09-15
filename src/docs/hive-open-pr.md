@@ -196,6 +196,42 @@ is quarantined as `.failed` only after **24 hours** without success. So a
 freshly failing request is normal-looking for a while: read `.result.json`
 rather than waiting for a rename.
 
+### Workflow-file pushes rejected by App tokens
+
+A branch push that changes any file under `.github/workflows/` needs the
+GitHub App installation to have the **Workflows** permission. Without that
+permission, GitHub rejects the push before `hive-open-pr` can request a PR:
+
+```text
+! [remote rejected] ci/dco-waive-01bd2469 -> ci/dco-waive-01bd2469
+  (refusing to allow a GitHub App to create or update workflow
+   `.github/workflows/dco-post-merge.yml` without `workflows` permission)
+```
+
+The branch and filename vary; the trigger is any pushed change under
+`.github/workflows/`.
+
+This is specific to pushes authenticated with the GitHub App installation
+token. A maintainer's own `gh`/git credentials are unaffected: a maintainer
+probe against this repository pushed a branch touching
+`.github/workflows/dco-post-merge.yml` successfully, then deleted the branch.
+Treat that as current operational evidence, not a permanent guarantee; an org
+admin can grant or change the App permission at any time. The outstanding App
+permission change is tracked in [#6985](https://github.com/hivecommons/hive/issues/6985).
+
+When an agent hits this rejection, do not claim that nobody can change the
+workflow. Post a patch on the tracking issue for a maintainer to apply with
+their own credentials. A useful patch comment contains:
+
+1. the full path of every changed workflow file;
+2. a complete unified diff that applies from the target branch; and
+3. the verification command/output the maintainer should run after applying
+   the patch, such as the docs checker, focused script test, or affected
+   workflow dry run.
+
+Until the App installation grants Workflows read/write, App-authored
+workflow-file PRs cannot be delivered directly.
+
 ### The 404 that means "your push failed"
 
 Every gate on the PR-open path begins by comparing `base...head`. If the

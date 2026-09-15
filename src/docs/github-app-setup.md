@@ -78,7 +78,7 @@ Repository permissions used by the dashboard setup UI are:
 | Pull requests | Read/write | Create, update, approve/merge, and inspect PRs. |
 | Checks | Read-only | Monitor CI status. |
 | Actions | Read-only | Inspect workflow runs. |
-| Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`. Without it GitHub rejects any such push server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Hive degrades gracefully — trusted-tier token minting retries without this permission and logs a warning — but CI-fix PRs from agents stay impossible until it is granted **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). |
+| Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`. Without it GitHub rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |
 
 Organization permission:
 
