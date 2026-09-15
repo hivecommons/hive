@@ -2788,6 +2788,43 @@ const (
 	cliWorkingMarker = "esc to interrupt"
 )
 
+// agentWorkingMarkers are fragments that modern TUI backends (Claude Code /
+// Claude Fable) render while the agent is actively processing a request. Unlike
+// the older "esc to interrupt" footer captured by cliWorkingMarker, these are
+// the shapes those backends emit today: "esc interrupt" is the abort hint on
+// the streaming footer and "◉ Working" is the live activity spinner — both
+// present in the mid-task Claude Fable 5 capture in #7085, alongside a fully
+// rendered "❯" input box.
+var agentWorkingMarkers = []string{
+	"esc interrupt",
+	"◉ Working",
+}
+
+// paneShowsAgentWorking reports whether the pane is showing an actively-working
+// agent rather than a ready CLI input prompt. Modern TUI backends keep the "❯"
+// input box rendered for the whole time a response streams, so a busy pane
+// satisfies paneShowsInputPrompt's "❯" check and the readiness gate would pass
+// — then deliverKickLocked sends Ctrl+C + /clear and destroys the in-flight
+// work and every background sub-agent that session dispatched (#7085).
+//
+// This is the same class of false positive paneShowsConsentScreen guards
+// against, and it takes the same precaution: callers must pass the VISIBLE pane
+// only (no scrollback). A completed task's working marker lingers in history,
+// and treating that as "still working" would wedge the agent — it would never
+// be kicked again and the hive would stall silently. Backends that render no
+// working marker (goose, codex) never match here and are unaffected.
+func paneShowsAgentWorking(pane string) bool {
+	if pane == "" {
+		return false
+	}
+	for _, marker := range agentWorkingMarkers {
+		if strings.Contains(pane, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // paneShowsConsentScreen reports whether the pane is showing an interactive
 // consent/selection screen rather than a ready CLI input prompt. Such screens
 // contain a "❯"-selected menu option (e.g. "❯ 1. No, exit"), so they satisfy
@@ -4538,7 +4575,16 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 			// ready input prompt — sending a kick there feeds the menu.
 			// Check the visible pane only: a dismissed consent screen
 			// lingers in the scrollback that captureTmuxPaneForAgent sees.
-			if paneShowsConsentScreen(m.captureVisiblePaneForAgent(agent)) {
+			visible := m.captureVisiblePaneForAgent(agent)
+			if paneShowsConsentScreen(visible) {
+				continue
+			}
+			// An actively-working agent also keeps its "❯" input box
+			// rendered but is NOT ready — kicking it would Ctrl+C + /clear
+			// its in-flight work and every sub-agent it dispatched (#7085).
+			// Use the visible pane only for the same reason as above: a
+			// finished task's working marker lingers in scrollback.
+			if paneShowsAgentWorking(visible) {
 				continue
 			}
 			output := m.captureTmuxPaneForAgent(agent)
