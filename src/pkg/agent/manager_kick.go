@@ -688,11 +688,54 @@ func paneShowsActiveWork(pane string) bool {
 		strings.Contains(pane, "Running…")
 }
 
+// cliChromeFooterMarkers are hint-bar fragments that the Copilot CLI renders
+// on a line BELOW the input box (e.g. "/ commands · ? help · tab next tab" and
+// "@ files · # issues", each right-padded with the backend name). Claude Code
+// puts nothing under its prompt, so paneShowsEmptyInputPrompt originally
+// assumed "❯" was the last non-empty line — which is never true on a copilot
+// pane. That made the idle check permanently false for every copilot agent and
+// silently disabled the transient-API-error watchdog for them, since its call
+// site requires this function to return true.
+var cliChromeFooterMarkers = []string{
+	"/ commands",
+	"? help",
+	"tab next tab",
+	"@ files",
+	"# issues",
+}
+
+// lineIsCLIChrome reports whether a trailing line is decoration rather than
+// content: the box rules that bracket the input area, or a hint footer.
+//
+// Only ever applied to lines BELOW the prompt while scanning upward, so it
+// cannot mask real output: scanning stops at the first non-chrome line.
+func lineIsCLIChrome(line string) bool {
+	if line == "" {
+		return true
+	}
+	if strings.TrimLeft(line, "─━—-") == "" {
+		return true
+	}
+	for _, marker := range cliChromeFooterMarkers {
+		if strings.Contains(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneShowsEmptyInputPrompt reports whether the CLI is sitting at an idle,
+// empty input prompt.
+//
+// Trailing chrome is skipped before the test so that both CLI shapes are
+// handled: Claude Code ends at "❯", while the Copilot CLI draws a rule and a
+// hint footer underneath it. A prompt with typed text ("❯ do the thing") still
+// fails the equality check, which is the point — that is not an idle prompt.
 func paneShowsEmptyInputPrompt(pane string) bool {
 	lines := strings.Split(pane, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line == "" {
+		if lineIsCLIChrome(line) {
 			continue
 		}
 		return line == cliInputPromptMarker
