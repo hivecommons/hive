@@ -54,6 +54,39 @@ func TestRenderCadenceMatrixKeepsOutOfPackRunningRow7112(t *testing.T) {
 	}
 }
 
+// TestRenderCadenceMatrixFailsOpenWhenAgentsUnpopulated7112 pins the fail-open
+// guard. window._lastAgents can be empty independently of the cadence matrix:
+// the SSE agent-status handler assigns window._lastAgents = payload.agents from
+// a DELTA (index.html) without touching _lastStatus.cadenceMatrix, and several
+// user-action handlers (togglePin/switchModel/switchBackend/_saveSidebarLayout)
+// then re-render the governor from window._lastAgents + _lastStatus.cadenceMatrix.
+// If a delta carried an empty roster, a naive status.agents filter would blank
+// the ENTIRE matrix — a worse, more visible regression than #7112.
+//
+// The old code failed open via `!packSet ||`; the fix restores the equivalent
+// via `statusAgentSet.size > 0`. This test drives renderCadenceMatrix with an
+// EMPTY window._lastAgents and a non-empty matrix and asserts every row still
+// renders. Reinstating an unconditional filter blanks the matrix and fails it.
+func TestRenderCadenceMatrixFailsOpenWhenAgentsUnpopulated7112(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the cadence-matrix fail-open rule was NOT executed by this run")
+	}
+
+	html := indexHTML(t)
+	script := jsFunc(t, html, "renderCadenceMatrix") + "\n" + cadenceMatrixFailOpenAssertions
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cadence_matrix_fail_open.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cadence-matrix fail-open behaviour check failed:\n%s", strings.TrimSpace(string(out)))
+	}
+}
+
 // cadenceMatrixPackAssertions stubs renderCadenceMatrix's render-only helpers
 // (esc/cliChip/modelChip/_sortAgentsBySidebar) so the extracted function runs in
 // isolation, then drives it with the #7112 scenario:
@@ -101,6 +134,44 @@ function check(name, cond) {
 check('in-pack agent keeps its cadence row', out.indexOf('data-agent="supervisor"') !== -1);
 check('out-of-pack running agent keeps its cadence row', out.indexOf('data-agent="review"') !== -1);
 check('pack-inactive ghost agent row stays suppressed', out.indexOf('data-agent="linter"') === -1);
+
+process.exit(fails ? 1 : 0);
+`
+
+// cadenceMatrixFailOpenAssertions drives renderCadenceMatrix with an EMPTY
+// window._lastAgents (the SSE-delta / pre-first-status case) and a non-empty
+// matrix. With the fail-open guard, no authoritative set exists, so every row
+// must render — the pre-#7112 `!packSet ||` behaviour. Without it, the filter
+// blanks the whole matrix.
+const cadenceMatrixFailOpenAssertions = `
+function esc(s) { return String(s == null ? '' : s); }
+function cliChip() { return ''; }
+function modelChip() { return ''; }
+function _sortAgentsBySidebar(agents) { return { sorted: agents.slice() }; }
+
+global.window = {
+  _lastAgents: [],
+  _lastStatus: { acmmPackAgents: ['supervisor'] },
+};
+
+const modes = ['idle', 'quiet', 'busy', 'surge'];
+const cell = { idle: 'off', quiet: 'off', busy: 'off', surge: 'off' };
+const matrix = [
+  Object.assign({ agent: 'supervisor' }, cell),
+  Object.assign({ agent: 'review' }, cell),
+  Object.assign({ agent: 'linter' }, cell),
+];
+
+const out = renderCadenceMatrix(matrix, 'idle', modes);
+
+let fails = 0;
+function check(name, cond) {
+  if (!cond) { fails++; console.log('FAIL ' + name); }
+}
+
+check('fail-open renders supervisor row when _lastAgents empty', out.indexOf('data-agent="supervisor"') !== -1);
+check('fail-open renders review row when _lastAgents empty', out.indexOf('data-agent="review"') !== -1);
+check('fail-open renders linter row when _lastAgents empty', out.indexOf('data-agent="linter"') !== -1);
 
 process.exit(fails ? 1 : 0);
 `

@@ -7587,9 +7587,19 @@
       // status.agents, so they stay suppressed. acmmPackAgents keeps its raw
       // roster meaning for its other consumer (_packAgentNote).
       const statusAgentSet = new Set(agents.map(a => a.name));
+      // Fail open when the agent list is unpopulated — mirroring the old
+      // `!packSet ||` bypass. window._lastAgents can be empty independently of
+      // _lastStatus.cadenceMatrix: an SSE agent-status delta may carry an empty
+      // roster (it overwrites _lastAgents but not cadenceMatrix), or the first
+      // governor paint may beat the first full status. With no authoritative
+      // set to filter against, show every cadence row rather than blanking the
+      // whole matrix. When the set IS populated (the normal case, including the
+      // #7112 out-of-pack "review" agent), filtering proceeds and pack-inactive
+      // ghosts stay suppressed.
+      const filterByStatus = statusAgentSet.size > 0;
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       const sidebarOrder = sortedAgents.map(a => a.name);
-      const matrixNames = matrix.map(r => r.agent).filter(n => statusAgentSet.has(n));
+      const matrixNames = matrix.map(r => r.agent).filter(n => !filterByStatus || statusAgentSet.has(n));
       const agentOrder = sidebarOrder.filter(n => matrixNames.includes(n));
       for (const n of matrixNames) { if (!agentOrder.includes(n)) agentOrder.push(n); }
       const rows = agentOrder.map(aname => {
