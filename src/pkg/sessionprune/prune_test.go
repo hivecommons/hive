@@ -181,7 +181,7 @@ func TestIsSessionDirName(t *testing.T) {
 	}{
 		{"db82f47d-82d2-43fd-a9c8-e3b9484c9cc4", true},
 		{"DB82F47D-82D2-43FD-A9C8-E3B9484C9CC4", true},
-		{"db82f47d-82d2-43fd-a9c8-e3b9484c9cc", false},  // too short
+		{"db82f47d-82d2-43fd-a9c8-e3b9484c9cc", false},   // too short
 		{"db82f47d-82d2-43fd-a9c8-e3b9484c9cc44", false}, // too long
 		{"db82f47d_82d2_43fd_a9c8_e3b9484c9cc4", false},  // wrong separators
 		{"zb82f47d-82d2-43fd-a9c8-e3b9484c9cc4", false},  // non-hex
@@ -192,5 +192,93 @@ func TestIsSessionDirName(t *testing.T) {
 		if got := IsSessionDirName(tc.name); got != tc.want {
 			t.Errorf("IsSessionDirName(%q) = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestPruneReturnsReadDirErrors covers the non-ENOENT failure path: a missing
+// session root is benign (see TestPruneMissingDirIsNotAnError), but any other
+// failure to read it must surface rather than be reported as "nothing to do".
+// Silently returning a zero Result there would let a misconfigured path look
+// like a healthy no-op prune forever.
+func TestPruneReturnsReadDirErrors(t *testing.T) {
+	root := t.TempDir()
+	notADir := filepath.Join(root, "regular-file")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	res, err := Prune(notADir, 7*24*time.Hour, time.Now(), quietLogger())
+	if err == nil {
+		t.Fatal("Prune on a non-directory returned nil error; want the ReadDir failure surfaced")
+	}
+	if res.Removed != 0 || res.Scanned != 0 {
+		t.Errorf("Prune on error = %+v, want zero-valued Result", res)
+	}
+}
+
+// TestPruneKeepsSessionWhenStatFails is the safety contract for an unreadable
+// session: if the age of a directory cannot be determined, it must be KEPT.
+// Deleting on a stat error would turn a transient NFS hiccup into data loss on
+// a live session, which is the opposite of what a retention sweep should do.
+func TestPruneKeepsSessionWhenStatFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny access")
+	}
+	root := t.TempDir()
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	dir := mkSession(t, root, "11111111-2222-3333-4444-555555555555", old, old)
+
+	// Make the session directory untraversable so WalkDir fails inside it.
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	res, err := Prune(root, 7*24*time.Hour, time.Now(), quietLogger())
+	if err != nil {
+		t.Fatalf("Prune returned error: %v", err)
+	}
+	if res.Scanned != 1 {
+		t.Errorf("Scanned = %d, want 1", res.Scanned)
+	}
+	if res.Removed != 0 {
+		t.Errorf("Removed = %d, want 0 — an unstattable session must be kept", res.Removed)
+	}
+	if _, err := os.Lstat(dir); err != nil {
+		t.Errorf("session directory was removed despite the stat failure: %v", err)
+	}
+}
+
+// TestPruneCountsFailedRemovals covers the RemoveAll failure path: a session
+// that is old enough to delete but cannot be deleted must be counted in Failed
+// and must not inflate Removed. Removed is what the wire logs as work done, so
+// counting an un-deleted directory there would report phantom progress while
+// the directory keeps consuming the PVC.
+func TestPruneCountsFailedRemovals(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny removal")
+	}
+	root := t.TempDir()
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	dir := mkSession(t, root, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", old, old)
+
+	// A read-only parent permits reading the entry but forbids unlinking it.
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	res, err := Prune(root, 7*24*time.Hour, time.Now(), quietLogger())
+	if err != nil {
+		t.Fatalf("Prune returned error: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", res.Failed)
+	}
+	if res.Removed != 0 {
+		t.Errorf("Removed = %d, want 0 — a failed removal must not count as removed", res.Removed)
+	}
+	if _, err := os.Lstat(dir); err != nil {
+		t.Errorf("session directory reported as present but is gone: %v", err)
 	}
 }
