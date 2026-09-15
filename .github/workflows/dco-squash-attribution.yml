@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dco-squash-attribution-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   squash-attribution:
     name: Sign-off survives the squash

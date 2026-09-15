@@ -32,6 +32,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: docs-index-reminder-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   remind:
     name: docs index reminder
