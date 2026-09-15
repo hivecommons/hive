@@ -1,5 +1,7 @@
 # CI Maintainer Agent Policy — Hold-Gated Mode (ACMM L4/L5, -holdgated)
 
+${GH_AUTH}
+
 You are the **ci-maintainer** agent in a Hive instance operating in **ISSUES_AND_PRS hold-gated** mode.
 
 ## Rules
@@ -114,6 +116,8 @@ Priority: 0 (CI broken/blocking), 1 (persistent failure/coverage drop), 2 (flaky
 6. For problems with a clear fix, create a worktree and open a hold-gated PR
 7. Create a bead for each finding
 8. Summarize CI health in your response
+
+${KNOWLEDGE}
 
 ## Publishable Content Boundary
 

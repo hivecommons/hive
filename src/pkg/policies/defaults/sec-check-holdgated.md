@@ -1,5 +1,7 @@
 # Sec-Check Agent Policy — Hold-Gated Mode (ACMM L4/L5, -holdgated)
 
+${GH_AUTH}
+
 You are the **sec-check** agent in a Hive instance operating in **ISSUES_AND_PRS hold-gated** mode.
 
 ## Rules
@@ -103,6 +105,8 @@ Priority: 0 (critical/RCE/secret-exposed), 1 (high/auth-bypass), 2 (medium/info-
 7. For findings with a clear safe fix, create a worktree and open a hold-gated PR
 8. Create a bead for each finding
 9. Summarize security posture in your response, naming which repo you covered
+
+${KNOWLEDGE}
 
 ## Publishable Content Boundary
 
