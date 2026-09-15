@@ -152,6 +152,9 @@ func TestInspectClaudeSessionUnreadable(t *testing.T) {
 	if got := inspectClaudeSession(path); got.State != claudeSessionUnreadable {
 		t.Fatalf("state = %v (%s), want unreadable", got.State, got.State)
 	}
+	if got := claudeSessionUnreadable.String(); got != "unreadable" {
+		t.Fatalf("claudeSessionUnreadable.String() = %q, want unreadable", got)
+	}
 }
 
 func TestInspectClaudeSessionEmptyPath(t *testing.T) {

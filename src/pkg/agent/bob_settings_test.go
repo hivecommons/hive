@@ -304,6 +304,7 @@ func TestVerifyBobKeyReadable(t *testing.T) {
 	}{
 		{"the production bug: 0700 dir, 0600 file", 0o700, 0o600, 2004, false},
 		{"file readable but dir not traversable", 0o700, 0o640, 2004, false},
+		{"dir traversable but file unreadable", 0o710, 0o600, 2004, false},
 		{"the fix: 0710 dir, 0640 file", 0o710, 0o640, 2004, true},
 		{"world-readable still works", 0o711, 0o644, 2004, true},
 		{"root agent bypasses the check", 0o700, 0o600, 0, true},
@@ -542,5 +543,27 @@ func TestVerifyBobStateDirsWritableFlagsWorkspaceDir(t *testing.T) {
 	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
 	if len(got) != 1 || got[0] != stateDir {
 		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, stateDir)
+	}
+}
+
+func TestVerifyBobStateDirsWritableIgnoresNonDirectoryStatePath(t *testing.T) {
+	home := t.TempDir()
+	homeBob := filepath.Dir(bobSettingsPath(home))
+	if err := os.MkdirAll(homeBob, 0o770); err != nil {
+		t.Fatalf("mkdir home .bob: %v", err)
+	}
+	if err := os.Chmod(homeBob, 0o770); err != nil {
+		t.Fatalf("chmod home .bob: %v", err)
+	}
+	workDir := t.TempDir()
+	statePath := filepath.Join(workDir, config.BobStateDirName)
+	if err := os.WriteFile(statePath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write workspace .bob file: %v", err)
+	}
+
+	m := &Manager{logger: discardLogger()}
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
+	if len(got) != 0 {
+		t.Errorf("verifyBobStateDirsWritable() = %v for non-directory state path, want advisory warning only", got)
 	}
 }

@@ -149,6 +149,17 @@ func TestArchiveKickLogLocked_RetentionZeroDisables(t *testing.T) {
 	}
 }
 
+func TestArchiveKickLogLocked_SkipsAgentWithoutTmuxSession(t *testing.T) {
+	m, agent, dir := kickLogTestManager(t, "content")
+	agent.tmuxSession = ""
+	if m.archiveKickLogLocked(agent, "restart") {
+		t.Fatal("archived an agent with no tmux session")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "scanner")); !os.IsNotExist(err) {
+		t.Errorf("agent archive dir exists, want none")
+	}
+}
+
 // A capture failure is logged and swallowed — the kick/restart it decorates
 // must proceed.
 func TestArchiveKickLogLocked_CaptureErrorIsNonFatal(t *testing.T) {
@@ -350,6 +361,42 @@ func TestListKickLogs_NoHistoryYet(t *testing.T) {
 	}
 }
 
+func TestListKickLogs_IgnoresNonArchivesAndFallsBackToMtime(t *testing.T) {
+	m, _, dir := kickLogTestManager(t, "x")
+	agentDir := filepath.Join(dir, "scanner")
+	if err := os.MkdirAll(filepath.Join(agentDir, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "notes.txt"), []byte("not an archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fallback := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
+	archivePath := filepath.Join(agentDir, "manual-restart.log")
+	if err := os.WriteFile(archivePath, []byte("manual archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(archivePath, fallback, fallback); err != nil {
+		t.Fatal(err)
+	}
+
+	infos, err := m.ListKickLogs("scanner")
+	if err != nil {
+		t.Fatalf("ListKickLogs: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("archives = %+v, want only the .log file", infos)
+	}
+	if infos[0].ID != "manual-restart.log" {
+		t.Fatalf("archive id = %q, want manual-restart.log", infos[0].ID)
+	}
+	if !infos[0].Timestamp.Equal(fallback) {
+		t.Errorf("timestamp = %s, want mtime fallback %s", infos[0].Timestamp, fallback)
+	}
+	if infos[0].Reason != "" {
+		t.Errorf("reason = %q, want empty for non-standard archive name", infos[0].Reason)
+	}
+}
+
 func TestReadKickLog_RejectsTraversalAndBadIDs(t *testing.T) {
 	m, agent, _ := kickLogTestManager(t, "content")
 	agent.kickLogPending = true
@@ -388,6 +435,13 @@ func TestReadKickLog_RoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(body, "the run output") || !strings.Contains(body, "==== hive kick log ====") {
 		t.Errorf("unexpected archive body:\n%s", body)
+	}
+}
+
+func TestReadKickLog_UnknownAgent(t *testing.T) {
+	m, _, _ := kickLogTestManager(t, "content")
+	if _, err := m.ReadKickLog("missing", "20260820-070000.000-kick.log"); err == nil {
+		t.Fatal("ReadKickLog accepted an unknown agent")
 	}
 }
 

@@ -112,7 +112,6 @@ jobs:
           declare -A PKG_THRESHOLD=(
             [dashboard]=82   # ~17% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
-            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
             #
