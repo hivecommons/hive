@@ -288,7 +288,7 @@ func BuildFrontendStatus(
 		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:              health,
 		Budget:              buildBudget(gov, tokenCollector),
-		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses),
+		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
 		GHRateLimits:        buildGHRateLimits(ghClient, ctx, cfg),
 		AgentMetrics:        agentMetrics,
 		Hold:                buildHold(actionable),
@@ -1828,7 +1828,7 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	return fb
 }
 
-func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess) []FrontendCadence {
+func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode string) []FrontendCadence {
 	if cfg == nil {
 		return nil
 	}
@@ -1850,8 +1850,12 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 		entry := FrontendCadence{Agent: name}
 
 		paused := false
-		if proc, ok := agentStatuses[name]; ok && proc.Paused {
-			paused = true
+		var lastKick *time.Time
+		if proc, ok := agentStatuses[name]; ok {
+			if proc.Paused {
+				paused = true
+			}
+			lastKick = proc.LastKick
 		}
 
 		onDemand := false
@@ -1862,7 +1866,7 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 		for modeName, mode := range cfg.Governor.Modes {
 			rawCadence := mode.Cadences[name]
 			cadence := cadenceDisplay(rawCadence)
-			title := cadenceTooltip(rawCadence)
+			title := cadenceTooltip(rawCadence, lastKick, modeName == currentMode)
 			if cadence == "" || cadence == "pause" {
 				cadence = "off"
 			}
@@ -1892,15 +1896,28 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 	return matrix
 }
 
-func cadenceTooltip(c config.Cadence) string {
+// cadenceTooltip renders the Governor-matrix cell tooltip. It shares the card's
+// "next kick" computation (computeNextKickFromCadence) by construction so the two
+// surfaces cannot disagree on when an interval agent next fires (#7109).
+//
+// active reports whether this cell is the governor's CURRENTLY active mode. Only
+// the active cell has a meaningful "next": for the other modes lastKick+interval
+// is hypothetical (that kick never happens while the mode is inactive), so we
+// show only the human summary and omit "next:" rather than render three future
+// times that will never occur.
+func cadenceTooltip(c config.Cadence, lastKick *time.Time, active bool) string {
 	if c == "" || c.IsPaused() {
 		return ""
 	}
-	next, ok := c.NextAfter(time.Now())
-	if !ok {
-		return c.HumanSummary()
+	summary := c.HumanSummary()
+	if !active {
+		return summary
 	}
-	return c.HumanSummary() + " — next: " + formatHumanTime(next)
+	next := computeNextKickFromCadence(lastKick, c)
+	if next == "" {
+		return summary
+	}
+	return summary + " — next: " + next
 }
 
 func buildHold(actionable *github.ActionableResult) FrontendHold {

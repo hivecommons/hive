@@ -76,7 +76,7 @@ func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
 	if got := agentNamesFromFrontend(buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})); containsAny(got, "telemetry", "operations") {
 		t.Fatalf("frontend agents below L5 = %v, want no telemetry/operations", got)
 	}
-	if got := agentNamesFromCadence(buildCadenceMatrix(cfg, statuses)); containsAny(got, "telemetry", "operations") {
+	if got := agentNamesFromCadence(buildCadenceMatrix(cfg, statuses, "surge")); containsAny(got, "telemetry", "operations") {
 		t.Fatalf("cadence matrix below L5 = %v, want no telemetry/operations", got)
 	}
 }
@@ -348,7 +348,7 @@ func TestBuildCadenceMatrix(t *testing.T) {
 		"scanner":    {Paused: false},
 		"supervisor": {Paused: true},
 	}
-	matrix := buildCadenceMatrix(cfg, statuses)
+	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 2 {
 		t.Fatalf("matrix len = %d", len(matrix))
 	}
@@ -800,7 +800,7 @@ func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 	statuses := map[string]*agent.AgentProcess{
 		"scanner": {Paused: true},
 	}
-	matrix := buildCadenceMatrix(cfg, statuses)
+	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 1 {
 		t.Fatalf("len = %d", len(matrix))
 	}
@@ -1006,7 +1006,7 @@ func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{}
-	matrix := buildCadenceMatrix(cfg, statuses)
+	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 1 {
 		t.Fatalf("len = %d", len(matrix))
 	}
@@ -1125,7 +1125,7 @@ func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 	statuses := map[string]*agent.AgentProcess{
 		"scanner": {Paused: true},
 	}
-	matrix := buildCadenceMatrix(cfg, statuses)
+	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 1 {
 		t.Fatalf("len = %d", len(matrix))
 	}
