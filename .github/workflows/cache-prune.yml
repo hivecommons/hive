@@ -1,0 +1,173 @@
+# Reclaim Actions cache quota from branches that no longer exist.
+#
+# Why this exists (kubestellar/hive#7031): the repo sits AT its 10 GB Actions
+# cache ceiling (measured 2026-09-15: 10.44 GB across 549 entries). GitHub
+# enforces that ceiling by evicting least-recently-used entries, and the entry
+# that loses is always the smallest useful one — the offline apt package cache
+# `.github/scripts/ci-install-tool.sh` uses to install gcc/libc6-dev without
+# touching the Ubuntu mirrors (added in #7009, ported to v5 in #7019).
+#
+# That is why the #6648/#6870/#6935 "apt egress" failure class keeps coming
+# back after being declared fixed: the offline fallback is real, but it is
+# deleted within hours of being written, so every race shard is forced back
+# onto the network. Verified directly — the seeded `hive-cgo-race-apt-*` entry
+# was gone 11 hours later, and the v5 run that followed logged
+# `Cache not found for input keys: hive-cgo-race-apt-Linux-X64-gcc-libc6-dev-v1`.
+#
+# The quota is consumed overwhelmingly by per-branch buildkit blobs from
+# docker.yml's scoped `cache-to: type=gha,mode=max` exports. Those are worth
+# keeping WHILE a branch is alive. Once the branch is deleted they can never be
+# restored by anything, yet they keep occupying quota and evicting live entries.
+# Measured at the time of writing: ~2.7 GB held by five already-merged branches.
+#
+# Deliberately NOT changing docker.yml's cache strategy. Those exports are
+# already tuned with measurements recorded in comments there (whole-image
+# mode=max was removed for costing 130-225s per job at ~0 reuse). Reclaiming
+# dead-branch entries gets the quota back without touching a tuned hot path.
+name: Cache Prune
+
+on:
+  schedule:
+    # Daily, offset well away from the top of the hour to avoid competing with
+    # the scheduled build/test fleet for API budget.
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be deleted without deleting it'
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cache-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Delete caches for branches that no longer exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          # Refs that must NEVER be pruned even if a branch lookup hiccups.
+          # v4 is the default branch and v5 is the active next-gen line; their
+          # caches are the ones we are trying to PROTECT, not reclaim.
+          protected_branches="v4 v5 ${{ github.event.repository.default_branch }}"
+
+          echo "::group::Collecting cache entries"
+          # Paginate explicitly rather than with --paginate: the caches API
+          # returns an object (not a bare array), so each page needs its own jq.
+          : > /tmp/caches.tsv
+          page=1
+          while :; do
+            count=$(gh api "repos/${REPO}/actions/caches?per_page=100&page=${page}" \
+              --jq '.actions_caches | length')
+            [ "$count" -gt 0 ] || break
+            gh api "repos/${REPO}/actions/caches?per_page=100&page=${page}" \
+              --jq '.actions_caches[] | [.id, .ref, .size_in_bytes, .key] | @tsv' >> /tmp/caches.tsv
+            page=$(( page + 1 ))
+            # Hard stop so a pagination bug can never spin forever.
+            [ "$page" -le 50 ] || { echo "::warning::stopping at page 50"; break; }
+          done
+          total=$(wc -l < /tmp/caches.tsv | tr -d ' ')
+          echo "collected ${total} cache entries"
+          echo "::endgroup::"
+
+          # Resolve branch existence ONCE per distinct ref. A cache ref is either
+          # refs/heads/<branch> or refs/pull/<n>/merge. Only refs/heads/* are
+          # considered here: pull refs are reaped by GitHub with the PR and are
+          # small (single-digit MB), so they are not worth the API calls or the
+          # risk of racing an open PR.
+          echo "::group::Resolving branches"
+          : > /tmp/dead_refs.txt
+          cut -f2 /tmp/caches.tsv | sort -u | while read -r ref; do
+            case "$ref" in
+              refs/heads/*) ;;
+              *) continue ;;
+            esac
+            branch=${ref#refs/heads/}
+
+            skip=0
+            for p in $protected_branches; do
+              if [ "$branch" = "$p" ]; then skip=1; fi
+            done
+            if [ "$skip" -eq 1 ]; then
+              echo "keep (protected): ${branch}"
+              continue
+            fi
+
+            # Fail CLOSED: only a definitive 404 marks a branch dead. Any other
+            # error (rate limit, 5xx, network) keeps the cache. Deleting a live
+            # branch's cache only costs a rebuild, but doing it on a transient
+            # API blip would churn quota for no reason and make this job's
+            # behaviour non-deterministic.
+            if gh api "repos/${REPO}/branches/${branch}" --silent >/dev/null 2>&1; then
+              echo "keep (branch alive): ${branch}"
+            else
+              status=$(gh api "repos/${REPO}/branches/${branch}" --include 2>&1 | head -1 || true)
+              case "$status" in
+                *404*)
+                  echo "PRUNE (branch gone): ${branch}"
+                  echo "$ref" >> /tmp/dead_refs.txt
+                  ;;
+                *)
+                  echo "::warning::keeping ${branch} — branch lookup was inconclusive: ${status}"
+                  ;;
+              esac
+            fi
+          done
+          echo "::endgroup::"
+
+          if [ ! -s /tmp/dead_refs.txt ]; then
+            echo "No caches on deleted branches. Nothing to reclaim."
+            exit 0
+          fi
+
+          echo "::group::Deleting"
+          reclaimed=0
+          deleted=0
+          while IFS=$'\t' read -r id ref size key; do
+            if grep -qxF "$ref" /tmp/dead_refs.txt; then
+              mb=$(( size / 1048576 ))
+              if [ "${DRY_RUN:-false}" = "true" ]; then
+                echo "would delete ${mb}MB  ${ref}  ${key}"
+              else
+                if gh api -X DELETE "repos/${REPO}/actions/caches/${id}" --silent >/dev/null 2>&1; then
+                  echo "deleted ${mb}MB  ${ref}  ${key}"
+                  deleted=$(( deleted + 1 ))
+                  reclaimed=$(( reclaimed + size ))
+                else
+                  # A concurrent prune or GitHub's own eviction can remove an
+                  # entry between listing and deleting. That is success, not
+                  # failure — the quota is free either way.
+                  echo "::notice::could not delete cache ${id} (already gone?)"
+                fi
+              fi
+            fi
+          done < /tmp/caches.tsv
+          echo "::endgroup::"
+
+          {
+            echo "### Cache prune"
+            echo ""
+            echo "- Entries examined: **${total}**"
+            echo "- Dead branch refs: **$(wc -l < /tmp/dead_refs.txt | tr -d ' ')**"
+            if [ "${DRY_RUN:-false}" = "true" ]; then
+              echo "- Mode: **dry run** (nothing deleted)"
+            else
+              echo "- Caches deleted: **${deleted}**"
+              echo "- Reclaimed: **$(( reclaimed / 1048576 )) MB**"
+            fi
+            echo ""
+            echo "Protects the \`hive-cgo-race-apt-*\` offline package cache from LRU eviction (kubestellar/hive#7031)."
+          } >> "$GITHUB_STEP_SUMMARY"
