@@ -108,7 +108,7 @@ func (s *Scheduler) ioscanEnabled() bool {
 }
 
 func (s *Scheduler) ioscanFailClosed() bool {
-	return s.cfg != nil && s.cfg.Ioscan.FailClosed()
+	return s.cfg != nil && s.cfg.Ioscan.FailClosedAtLevel(s.cfg.ACMMLevelOrZero())
 }
 
 // enforceIssueText runs ioscan over one piece of untrusted external text (an

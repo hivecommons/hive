@@ -325,7 +325,13 @@ control removes it; the controls bound the consequences.
    mitigations (see below); a security-sensitive deployment should enable
    both. The project's plan is to make canaries the default everywhere and
    `closed` the default at ACMM ≥ L5, where agents can merge
-   ([#7083](https://github.com/hivecommons/hive/issues/7083)).
+   ([#7083](https://github.com/hivecommons/hive/issues/7083)). **Update — this
+   shipped in [#7095](https://github.com/hivecommons/hive/pull/7095):**
+   `ioscan.canaries` now defaults on everywhere (set `canaries: false` to opt
+   out), and `fail_mode` now defaults to `closed` at ACMM L5/L6 via the L5/L6
+   packs while staying `open` at L1–L4, with an explicit per-hive `fail_mode`
+   overriding the level default either way. The stalled-queue-item cost above
+   is therefore now a default at L5/L6, not an opt-in.
 
 **What we would tell a new operator.** Start at L1–L3 on a repository you
 would not mind an agent filing a bad issue on. Read the attribution trailers

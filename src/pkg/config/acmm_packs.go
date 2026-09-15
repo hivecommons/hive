@@ -59,6 +59,14 @@ type PackGovernor struct {
 	// plan_status=approved immediately, releasing the children without a manual
 	// review step.
 	PlanAutoApprove bool `json:"planAutoApprove,omitempty" yaml:"plan_auto_approve,omitempty"`
+	// IoscanFailMode is the ACMM-level default for ioscan.fail_mode when a hive
+	// does not set one explicitly. It is "closed" at the high-trust levels
+	// (L5/L6) where agents can merge — a Critical injection finding blocks the
+	// kick rather than being redacted — and empty (fail-open) below them. An
+	// explicit ioscan.fail_mode in the hive config always overrides this. Read
+	// via IoscanFailModeForLevel; the tradeoff of the closed default is that a
+	// Critical false-positive stalls the queue item until an operator clears it.
+	IoscanFailMode string `json:"ioscanFailMode,omitempty" yaml:"ioscan_fail_mode,omitempty"`
 }
 
 // PlanAutoApproveForLevel reports whether the ACMM pack at the given level
@@ -72,6 +80,18 @@ func PlanAutoApproveForLevel(level int) bool {
 		return false
 	}
 	return p.Governor.PlanAutoApprove
+}
+
+// IoscanFailModeForLevel returns the ACMM pack's default ioscan.fail_mode for
+// the given level ("closed" at L5/L6, empty below). It is the single lookup
+// IoscanConfig.FailClosedAtLevel consults when a hive has not set fail_mode
+// explicitly. Unknown levels return "" so the safe default (fail-open) wins.
+func IoscanFailModeForLevel(level int) string {
+	p, err := ACMMPackByLevel(level)
+	if err != nil {
+		return ""
+	}
+	return p.Governor.IoscanFailMode
 }
 
 // ACMMPacks returns the built-in ACMM level pack definitions loaded from

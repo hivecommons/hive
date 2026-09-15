@@ -274,7 +274,8 @@ func TestBuildKickMessages_FailModeClosedBlocksCriticalUnicode(t *testing.T) {
 
 func TestBuildKickMessages_CanariesOptIn(t *testing.T) {
 	s := newSchedulerWithIoscanFailMode(true, "open")
-	s.cfg.Ioscan.Canaries = true
+	canariesOn := true
+	s.cfg.Ioscan.Canaries = &canariesOn
 	msgs := s.BuildKickMessages(&github.ActionableResult{}, []string{"scanner"})
 	if len(msgs) != 1 {
 		t.Fatalf("got %d messages, want 1", len(msgs))

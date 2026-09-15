@@ -117,6 +117,32 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
 7. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
 
+## ioscan hardening defaults per level
+
+Two `ioscan` hardening modes take their default from the pack governor rather
+than being fixed globally. Both are overridable per hive in either direction —
+the pack only supplies the default when the hive leaves the key unset.
+
+| Setting | L1–L4 default | L5–L6 default | What the default does | Override |
+|---|---|---|---|---|
+| `ioscan.canaries` | **on** | **on** | Plants a per-kick `HIVE-CANARY-*` marker and scans agent egress for it. Default flipped on ([#7083](https://github.com/hivecommons/hive/issues/7083)) now that the egress scan is encoding-aware ([#6701](https://github.com/hivecommons/hive/issues/6701), [#6720](https://github.com/hivecommons/hive/issues/6720)). | `ioscan.canaries: false` |
+| `ioscan.fail_mode` | `open` | **`closed`** (set by the L5/L6 packs' `governor.ioscan_fail_mode`) | `open` redacts a Critical injection finding and continues the kick; `closed` blocks the kick and records an `ioscan_fail_closed` audit entry. | `ioscan.fail_mode: open` (or `closed` to opt in below L5) |
+
+`fail_mode: closed` is the default only at L5–L6 because those are the levels
+where agents can merge, so a Critical finding that slips through has the highest
+blast radius. **The tradeoff is real and worth stating plainly: under `closed`,
+every Critical false-positive becomes a stalled queue item that an operator must
+clear by hand.** A hive that cannot absorb that operational load should set
+`ioscan.fail_mode: open` explicitly; an L1–L4 hive that wants the stricter
+posture sets `ioscan.fail_mode: closed`. An explicit value always wins over the
+pack default. The knob lives on the pack governor:
+
+```yaml
+# packs/level-5.yaml (and level-6.yaml)
+governor:
+  ioscan_fail_mode: closed   # "" (open) below L5; closed at L5/L6
+```
+
 ## Where ACMM gap issues are filed
 
 The dashboard's ACMM evaluation lists each criterion a repo is missing, and

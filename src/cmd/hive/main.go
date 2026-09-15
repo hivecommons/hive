@@ -3586,14 +3586,14 @@ func main() {
 		}
 	}
 	if ghClient != nil {
-		ghClient.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries, cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
+		ghClient.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled(), cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
 	}
 
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
-		githubProxy.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries, cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
+		githubProxy.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled(), cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
@@ -6743,7 +6743,7 @@ func runEvalCycle(
 					"line", f.Line,
 				)
 				blockFinding := false
-				if cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries {
+				if cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled() {
 					reportText := strings.Join([]string{f.Title, f.Detail, f.File, f.Type, f.Severity}, "\n")
 					if leak, ok := ioscan.DefaultCanaries.Scan(f.Agent, reportText, "advisory-finding"); ok {
 						detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)

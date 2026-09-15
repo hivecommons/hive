@@ -11,6 +11,11 @@ governor:
   # High-trust level: decomposed epic plans are approved automatically, so their
   # child sub-tasks become claimable without a human plan-review step.
   plan_auto_approve: true
+  # Agents can merge at this level, so ioscan fails CLOSED by default: a Critical
+  # injection finding blocks the kick instead of being redacted. Tradeoff — a
+  # Critical false-positive stalls that queue item until an operator clears it.
+  # Override per hive with ioscan.fail_mode: open.
+  ioscan_fail_mode: closed
   merge_policy: 'Hold-gated — all agent PRs get ''hold'' label. Human batch-approves.
 
     '

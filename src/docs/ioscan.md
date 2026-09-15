@@ -7,8 +7,8 @@
 ```yaml
 ioscan:
   enabled: true                 # default: true; scans untrusted text before agent kicks
-  fail_mode: open               # open (default) redacts; closed blocks Critical injection kicks and canary leaks
-  canaries: false               # default: false; plant per-kick exfiltration canaries and scan agent egress
+  fail_mode: open               # default: open at L1–L4, closed at ACMM L5–L6 (set by the packs); open redacts, closed blocks Critical injection kicks and canary leaks
+  canaries: true                # default: true (nil == on); set false to opt out. Plants per-kick exfiltration canaries and scans agent egress
   classifier:
     enabled: false              # default: false; optional LLM judge for semantic plain-English injections
     model: ""                   # empty uses governor.litellm default_model, then gpt-4o-mini
@@ -16,7 +16,7 @@ ioscan:
     block_threshold: 0.85       # open=redact, closed=block kick
 ```
 
-Scanning is on by default. `fail_mode` and the classifier are owner-only settings; the dashboard exposes them under Governor Config → Security.
+Scanning is on by default. **Canaries are on by default** (`canaries: false` opts out) now that the egress scan is encoding-aware ([#6701](https://github.com/hivecommons/hive/issues/6701), [#6720](https://github.com/hivecommons/hive/issues/6720), [#7083](https://github.com/hivecommons/hive/issues/7083)). **`fail_mode` has no fixed global default: it resolves to `closed` at ACMM L5–L6** (the levels where agents can merge) via the L5/L6 packs' `governor.ioscan_fail_mode`, and to `open` at L1–L4. An explicit `fail_mode` in the hive config always wins. The tradeoff of the `closed` default is that, at L5–L6, every Critical false-positive stalls the affected queue item until an operator clears it — set `fail_mode: open` if that operational load is unacceptable. `fail_mode` and the classifier are owner-only settings; the dashboard exposes them under Governor Config → Security.
 
 ## What it does
 

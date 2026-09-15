@@ -417,10 +417,10 @@ func buildSecurity(cfg *config.Config) *FrontendSecurity {
 	sec.IntentEnforced = cfg.Intent.Enforce
 	sec.IoscanEnabled = cfg.Ioscan.IsEnabled()
 	sec.IoscanFailMode = "open"
-	if cfg.Ioscan.FailClosed() {
+	if cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()) {
 		sec.IoscanFailMode = "closed"
 	}
-	sec.IoscanCanaries = cfg.Ioscan.Canaries
+	sec.IoscanCanaries = cfg.Ioscan.CanariesEnabled()
 	sec.ReviewRequireApproval = cfg.Review.RequireApproval
 	sec.ReviewFanOut = cfg.Review.FanOut
 	sec.RetroEnabled = cfg.Retro.Enabled

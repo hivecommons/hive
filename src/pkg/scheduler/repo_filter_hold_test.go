@@ -120,7 +120,7 @@ func newSchedulerWithCanaries(ioscanEnabled, canaries bool) *Scheduler {
 	e := ioscanEnabled
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Ioscan:  config.IoscanConfig{Enabled: &e, Canaries: canaries},
+		Ioscan:  config.IoscanConfig{Enabled: &e, Canaries: &canaries},
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	return New(cfg, logger)

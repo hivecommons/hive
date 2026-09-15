@@ -3,7 +3,7 @@ package scheduler
 import "github.com/hivecommons/hive/pkg/ioscan"
 
 func (s *Scheduler) canariesEnabled() bool {
-	return s.cfg != nil && s.cfg.Ioscan.IsEnabled() && s.cfg.Ioscan.Canaries
+	return s.cfg != nil && s.cfg.Ioscan.IsEnabled() && s.cfg.Ioscan.CanariesEnabled()
 }
 
 func (s *Scheduler) addCanaryPreamble(agentName, msg string) string {

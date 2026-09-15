@@ -60,7 +60,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		cfg.Ioscan.FailMode = mode
 	}
 	if body.IoscanCanaries != nil {
-		cfg.Ioscan.Canaries = *body.IoscanCanaries
+		cfg.Ioscan.Canaries = body.IoscanCanaries
 	}
 	if body.IntentEnforce != nil {
 		cfg.Intent.Enforce = *body.IntentEnforce
@@ -97,7 +97,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 
 func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	failMode := "open"
-	if cfg.Ioscan.FailClosed() {
+	if cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()) {
 		failMode = "closed"
 	}
 	sandboxed := 0
@@ -129,7 +129,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	return map[string]interface{}{
 		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                   failMode,
-		"ioscanCanaries":                   cfg.Ioscan.Canaries,
+		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
 		"intentEnforce":                    cfg.Intent.Enforce,
 		"intentAlignmentModel":             cfg.Intent.AlignmentModel,
 		"reviewRequireApproval":            cfg.Review.RequireApproval,

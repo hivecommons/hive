@@ -267,14 +267,23 @@ type IoscanConfig struct {
 	// explicit `enabled: false`. Read via IsEnabled(), never dereferenced raw.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// FailMode controls what the kick path does with Critical injection
-	// findings. Empty/"open" preserves the historical behavior: redact the
-	// offending text and continue the kick. "closed" blocks the kick and records
-	// an ioscan_fail_closed audit entry. Read via FailClosed().
+	// findings. "open" redacts the offending text and continues the kick;
+	// "closed" blocks the kick and records an ioscan_fail_closed audit entry.
+	// Empty (nil) is not a fixed default: it resolves per ACMM level via the
+	// packs — closed at L5/L6 (where agents can merge), open at L1-L4 — while an
+	// explicit "open"/"closed" overrides that in either direction. Read via
+	// FailClosedAtLevel(), never compared raw. The tradeoff of closed-by-default
+	// at L5+ is that every Critical false-positive stalls the queue item until
+	// an operator intervenes.
 	FailMode string `yaml:"fail_mode,omitempty" json:"fail_mode,omitempty"`
 	// Canaries plants per-kick exfiltration markers in agent prompts and scans
-	// agent-visible egress for leaks. Default false: existing hives see no
-	// canary behavior until explicitly enabled.
-	Canaries bool `yaml:"canaries,omitempty" json:"canaries,omitempty"`
+	// agent-visible egress for leaks. Pointer so an omitted `canaries:` key
+	// (nil) is distinguishable from an explicit false: nil DEFAULTS ON now that
+	// CanaryRegistry.Scan is encoding-aware (#6701, #6720) and no longer misses
+	// encoded egress (#6686), while an operator can still opt out with an
+	// explicit `canaries: false`. Read via CanariesEnabled(), never dereferenced
+	// raw.
+	Canaries *bool `yaml:"canaries,omitempty" json:"canaries,omitempty"`
 	// Classifier enables the optional LLM-judge semantic prompt-injection
 	// classifier. It defaults off so hives that only use deterministic rules
 	// make no model calls and see zero behavior change.
@@ -298,12 +307,43 @@ func (c IoscanConfig) IsEnabled() bool {
 }
 
 const ioscanFailModeClosed = "closed"
+const ioscanFailModeOpen = "open"
 
-// FailClosed reports whether Critical injection findings should block the
-// whole kick instead of only redacting the offending untrusted text. The default
-// is fail-open for backward compatibility.
+// FailClosed reports whether an explicit fail_mode setting selects closed. It
+// ignores the ACMM-level default entirely (an empty FailMode is never closed
+// here), so callers that need the effective, level-aware behavior must use
+// FailClosedAtLevel instead. It is retained for the config-serialization and
+// explicit-override paths that only care about what the operator literally set.
 func (c IoscanConfig) FailClosed() bool {
 	return strings.EqualFold(c.FailMode, ioscanFailModeClosed)
+}
+
+// FailClosedAtLevel reports whether Critical injection findings should block the
+// whole kick (fail-closed) instead of only redacting the offending untrusted
+// text (fail-open), for a hive at the given ACMM level. An explicit
+// fail_mode ("open" or "closed") always wins. When unset, the default is
+// resolved from the ACMM pack for the level: closed at L5/L6 (the levels where
+// agents can merge), open at L1-L4. The cost of the L5+ closed default is that
+// a Critical false-positive stalls the kick until an operator clears it.
+func (c IoscanConfig) FailClosedAtLevel(level int) bool {
+	if strings.EqualFold(c.FailMode, ioscanFailModeClosed) {
+		return true
+	}
+	if strings.EqualFold(c.FailMode, ioscanFailModeOpen) {
+		return false
+	}
+	if c.FailMode != "" {
+		// Any other explicit value is not "closed"; preserve fail-open.
+		return false
+	}
+	return strings.EqualFold(IoscanFailModeForLevel(level), ioscanFailModeClosed)
+}
+
+// CanariesEnabled reports whether per-kick exfiltration canaries are active.
+// Absent (nil) defaults to true now that the egress scan is encoding-aware
+// (#6701, #6720); an operator opts out with an explicit `canaries: false`.
+func (c IoscanConfig) CanariesEnabled() bool {
+	return c.Canaries == nil || *c.Canaries
 }
 
 // PlanningConfig gates the Phase 4 planning entry points that fire automatically
@@ -6292,6 +6332,16 @@ func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
 // hive. Default ON (nil == enabled): see AutoMergeConfig.SelfAuthored.
 func (a AutoMergeConfig) SelfAuthoredEnabled() bool {
 	return a.SelfAuthored == nil || *a.SelfAuthored
+}
+
+// ACMMLevelOrZero returns the configured ACMM level, or 0 when unset. It is the
+// convenience the effective-fail-mode and other level-gated lookups use so they
+// need not repeat the nil-pointer dance on cfg.ACMMLevel.
+func (c *Config) ACMMLevelOrZero() int {
+	if c == nil || c.ACMMLevel == nil {
+		return 0
+	}
+	return *c.ACMMLevel
 }
 
 // SelfMergeMinACMMLevel is the lowest ACMM level at which the App is allowed

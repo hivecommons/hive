@@ -31,7 +31,7 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 	if deps.Config.Ioscan.IsEnabled() {
 		t.Fatal("ioscan enabled was not persisted as explicit false")
 	}
-	if !deps.Config.Ioscan.FailClosed() || !deps.Config.Ioscan.Canaries {
+	if !deps.Config.Ioscan.FailClosed() || !deps.Config.Ioscan.CanariesEnabled() {
 		t.Fatalf("ioscan settings not updated: %+v", deps.Config.Ioscan)
 	}
 	if !deps.Config.Intent.Enforce || !deps.Config.Review.RequireApproval || !deps.Config.Review.FanOut || !deps.Config.AgentSandbox.Enabled {
