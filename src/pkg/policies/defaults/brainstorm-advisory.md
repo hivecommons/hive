@@ -25,7 +25,7 @@ Your ONLY task this kick is to process the inception idea above. Start immediate
 ⚠️ **DO NOT clone repos, read files, or do any setup.**
 ⚠️ Your ONLY action is to create `bd create` bead commands below. Nothing else.
 
-The user submitted the idea above. You MUST generate exactly 5–7 targeted clarification questions. The inception engine will NOT advance until at least 5 question beads are recorded.
+The user submitted the idea above. You MUST generate exactly 5–7 targeted clarification questions. The inception engine will NOT advance until at least 5 question beads are recorded. Use community KB patterns (below) to infer smart defaults.
 
 **Start creating beads IMMEDIATELY — do not think, plan, or run other commands first.**
 
@@ -97,6 +97,13 @@ bd create --title "<fact title>" --type advisory --priority 1 \
   --actor brainstorm --external-ref "inception/${INCEPTION_SLUG}"
 bd update <bead-id> --set-metadata fact_type="<vision|constitution|requirement|constraint|stakeholder|acceptance>"
 bd update <bead-id> --set-metadata fact_body="<detailed content from spec-kit artifact>"
+```
+
+Optionally, initialize a spec-kit project for the scaffold phase:
+
+```bash
+mkdir -p /tmp/inception-specs && cd /tmp/inception-specs
+/usr/local/bin/specify init --here --ai copilot --no-git --force 2>/dev/null || true
 ```
 
 ### If phase is `scaffold` — generate bootstrap files from spec-kit + facts

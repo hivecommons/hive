@@ -56,6 +56,12 @@ gh issue create --repo "$HIVE_REPO" \
   --label "bug"
 ```
 
+If the request's `.result.json` reports `"rejected_duplicate": true`, a
+maintainer recently closed an agent-filed issue covering the same files as
+not-planned or duplicate — the finding was reviewed and REJECTED. Do not
+re-file or reword it: read the closed issue the result points at, record the
+rejection in a bead citing it, and move on.
+
 ## Opening Hold-Gated PRs
 
 If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.

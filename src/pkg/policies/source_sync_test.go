@@ -18,6 +18,12 @@ const policySourceDir = "../../policies"
 // knownDivergentPolicies lists the templates whose two copies are NOT yet
 // byte-identical, with the reason each is still outstanding.
 //
+// The exceptions are now none: all seven previously-divergent templates were
+// reconciled by semantic union (every distinct guardrail from both copies was
+// preserved), so the map is intentionally empty. The mechanism is kept in place
+// — an empty allowlist still enforces that any NEW divergence must be a
+// deliberate, reviewed exception rather than silent drift.
+//
 // Every entry is a deliberate, reviewed exception — not a licence to drift. The
 // two copies hold COMPLEMENTARY guardrails that a directional copy would
 // silently delete (see TestPolicyGuardrailsPresent for the specific rules being
@@ -27,15 +33,7 @@ const policySourceDir = "../../policies"
 // This map may only ever shrink. Adding a name to it re-opens the exact hole
 // this test exists to close, so a new entry needs the same scrutiny as deleting
 // the test.
-var knownDivergentPolicies = map[string]string{
-	"brainstorm-advisory.md":    "two generations of the capture prompt: embed has the hard DO-NOT-clone/init guards, source has the structured question categories",
-	"ci-maintainer-advisory.md": "source replaced the literal bd-create example with a NEVER-execute-an-example rule; embed still carries the example",
-	"guide-advisory.md":         "same bd-create example replacement as ci-maintainer-advisory",
-	"scanner-automerge.md":      "embed holds baseline-triage, finish-existing-PRs and the hive-open-pr requirement; source holds the enhancement/feature framing",
-	"scanner-full.md":           "source supersedes the triage wording; embed retains the older analyze-root-cause phrasing",
-	"scanner-holdgated.md":      "embed holds the rejected_duplicate guard; source holds the work-list-is-an-implementation-queue rule",
-	"scanner-issues.md":         "embed holds the rejected_duplicate guard; source holds the do-not-re-file-human-enhancements rule",
-}
+var knownDivergentPolicies = map[string]string{}
 
 func readPolicyPair(t *testing.T, name string) (source, embedded string, ok bool) {
 	t.Helper()

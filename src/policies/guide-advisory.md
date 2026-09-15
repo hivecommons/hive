@@ -37,7 +37,11 @@ After auditing the project's documentation, record each gap as a bead using `bd 
 
 **STOP CHECK before every `bd create`**: if your title contains placeholder text, DO NOT run the command.
 
-Priority levels: 0 (critical — no README/build instructions), 1 (high — missing setup/stale arch docs), 2 (medium — missing contributor guide/incomplete examples), 3 (low — typos/style)
+### Priority levels
+- **0** (critical) — no README, no build instructions, project completely unapproachable
+- **1** (high) — missing setup/install docs, undocumented breaking changes, stale architecture docs
+- **2** (medium) — missing contributor guide, undocumented API surface, incomplete examples
+- **3** (low) — minor doc improvements, typos, formatting, style inconsistencies
 
 Then add detail metadata:
 
@@ -47,7 +51,12 @@ bd update <bead-id> --set-metadata detail="<real explanation>"
 bd update <bead-id> --set-metadata file="<real-file-path>"
 ```
 
-Finding types: `docs`, `onboarding`, `architecture`, `api`, `contributing`
+### Finding types (for `finding_type` metadata)
+- `docs` — missing or incomplete documentation
+- `onboarding` — gap in getting-started or setup flow
+- `architecture` — missing or stale architecture documentation
+- `api` — undocumented public interfaces, config options, or environment variables
+- `contributing` — missing or incomplete contributor workflow docs
 
 ## Before Filing a Finding (MANDATORY)
 

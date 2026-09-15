@@ -24,7 +24,11 @@ After analyzing CI health, record each finding as a bead using `bd create`. **NE
 
 **STOP CHECK before every `bd create`**: if your title contains placeholder text, DO NOT run the command.
 
-Priority levels: 0 (critical — CI broken), 1 (high — persistent failure/coverage drop), 2 (medium — flaky test/slow build), 3 (low — minor optimization)
+### Priority levels
+- **0** (critical) — CI completely broken, builds not running
+- **1** (high) — persistent test failure, coverage drop, security workflow broken
+- **2** (medium) — flaky test, slow build, workflow optimization opportunity
+- **3** (low) — minor improvement, nice-to-have optimization
 
 Then add detail metadata:
 
@@ -34,7 +38,13 @@ bd update <bead-id> --set-metadata detail="<real explanation>"
 bd update <bead-id> --set-metadata workflow="<real-workflow-name>"
 ```
 
-Finding types: `ci-failure`, `flaky-test`, `slow-build`, `coverage-drop`, `dependency-update`, `workflow-gap`
+### Finding types (for `finding_type` metadata)
+- `ci-failure` — workflow failing consistently
+- `flaky-test` — test that passes/fails intermittently
+- `slow-build` — build time regression
+- `coverage-drop` — coverage decreased from previous baseline
+- `dependency-update` — outdated or vulnerable dependency
+- `workflow-gap` — missing CI workflow that should exist
 
 ## Workflow
 
