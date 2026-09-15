@@ -6,7 +6,9 @@ claims an issue. Agents call it **instead of `gh issue create` /
 
 It does not perform the GitHub write itself. It writes a request file that the
 hive's issue-request watcher executes with the App installation token —
-server-side, retried with backoff, and deduplicated by exact open-issue title.
+server-side, retried with backoff, and deduplicated against open issues by
+title — exact match first, canonical subject as the fallback (see
+[Idempotency](#idempotency)).
 
 ## Why it exists
 
@@ -147,18 +149,39 @@ truncated — the watcher path has no such bypass.
 
 ### Idempotency
 
-Issue creation is deduplicated by exact (whitespace-trimmed) title against
-open issues in the target repo (scanning up to the 3 most recent pages). If a
-matching open issue already exists, the watcher reuses it instead of creating
-a duplicate — this is what makes the retry loop safe: a create that actually
-succeeded server-side but crashed before the request file was consumed (or an
-agent-side "timed out but maybe it worked" ambiguity) never produces a second
-issue. The result file's `already_existed` field reports which case
-happened.
+Issue creation is deduplicated by title against open issues in the target
+repo (scanning up to the 3 most recent pages), in two tiers
+([#6927](https://github.com/hivecommons/hive/issues/6927)):
+
+1. **Exact match** — an open issue whose whitespace-trimmed title is
+   identical is always preferred and reused.
+2. **Canonical-subject match** — otherwise, titles are compared after
+   stripping any trailing free-text qualifier (everything from a ` — `,
+   ` – `, or ` -- ` separator to the end) and normalising case and
+   whitespace. Agents append a model-authored qualifier to an otherwise
+   stable subject and reword it on every scan (`…(1237 lines) — extract
+   cache helpers module`, `…(1237 lines) — extract snapshot/report
+   helpers`), so before #6927 the same finding was re-filed every cycle —
+   one file accumulated six simultaneously-open issues. When several open
+   issues share the canonical subject, the **oldest** is reused, so repeats
+   consolidate onto the original rather than the newest copy.
+
+A canonical subject is only trusted as a dedupe key when enough of the title
+survives stripping (at least 20 characters and 3 words —
+`src/pkg/github/issue_dedupe.go`); short or generic stems such as
+`[operations] CI failure` fall back to exact-match-only, so they cannot
+collapse unrelated findings.
+
+If a matching open issue already exists, the watcher reuses it instead of
+creating a duplicate — this is what makes the retry loop safe: a create that
+actually succeeded server-side but crashed before the request file was
+consumed (or an agent-side "timed out but maybe it worked" ambiguity) never
+produces a second issue. The result file's `already_existed` field reports
+which case happened.
 
 ### Rejected findings are not re-filed
 
-Exact-title dedupe cannot stop the second failure mode observed live
+Open-issue title dedupe cannot stop the second failure mode observed live
 ([#6463](https://github.com/hivecommons/hive/issues/6463)): a maintainer
 closes an agent-filed finding as **not planned**, the closed issue leaves the
 agent's field of view (agents may not list issues), and on the next kick the
