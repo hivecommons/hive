@@ -7547,7 +7547,7 @@ func curatorConfigFromHive(c config.KnowledgeCurator) knowledge.CuratorConfig {
 }
 
 // hiveIDFilePath is the persistent file where the Hive ID is stored across restarts.
-const hiveIDFilePath = "/data/hive-id"
+var hiveIDFilePath = "/data/hive-id"
 
 // loadOrGenerateHiveID reads the Hive ID from disk, or generates and persists a new one.
 const (

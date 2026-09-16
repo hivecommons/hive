@@ -95,11 +95,6 @@ const (
 
 	// --- Copilot ---
 
-	// copilotUserEndpointURL returns per-account Copilot metadata, including
-	// endpoints.api (which differs for enterprise vs public plans) — so the
-	// models host is discovered, never hardcoded.
-	copilotUserEndpointURL = "https://api.github.com/copilot_internal/user"
-
 	// copilotDefaultAPIHost is the public Copilot API host, used only if the
 	// per-account endpoint lookup fails to return one.
 	copilotDefaultAPIHost = "https://api.githubcopilot.com"
@@ -265,6 +260,12 @@ const (
 	// seconds of clock skew or transit time would turn into a 401.
 	claudeTokenExpirySkew = 2 * time.Minute
 )
+
+// copilotUserEndpointURL returns per-account Copilot metadata, including
+// endpoints.api (which differs for enterprise vs public plans) — so the
+// models host is discovered, never hardcoded. It is a var so tests can repoint
+// it at hermetic servers and exercise fallback branches without network.
+var copilotUserEndpointURL = "https://api.github.com/copilot_internal/user"
 
 // --- Static fallback lists (kept CURRENT — July 2026) ---
 

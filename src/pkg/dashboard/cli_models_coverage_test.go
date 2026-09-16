@@ -114,11 +114,13 @@ func TestCovD_DiscoverGooseModels(t *testing.T) {
 	}
 }
 
-// TestCovD_CopilotAPIHost covers copilotAPIHost against a live test server (200
-// with an endpoints.api, and a non-200 fallback), plus parseCopilotAPIHost.
+// TestCovD_CopilotAPIHost covers copilotAPIHost against hermetic test servers
+// for success plus every fallback branch, plus parseCopilotAPIHost.
 func TestCovD_CopilotAPIHost(t *testing.T) {
 	logger := testLoggerCovD()
 	s := NewServer(0, logger)
+	originalEndpoint := copilotUserEndpointURL
+	t.Cleanup(func() { copilotUserEndpointURL = originalEndpoint })
 
 	// parseCopilotAPIHost: good, empty, malformed.
 	host, ok := parseCopilotAPIHost(strings.NewReader(`{"endpoints":{"api":"https://api.example.com"}}`))
@@ -132,17 +134,50 @@ func TestCovD_CopilotAPIHost(t *testing.T) {
 		t.Error("malformed should be !ok")
 	}
 
-	// Live server returns endpoints.api → copilotAPIHost uses it.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	copilotUserEndpointURL = "://bad-url"
+	if got := s.copilotAPIHost("faketoken"); got != copilotDefaultAPIHost {
+		t.Errorf("invalid endpoint URL = %q, want default", got)
+	}
+
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	refusedURL := refused.URL
+	refused.Close()
+	copilotUserEndpointURL = refusedURL
+	if got := s.copilotAPIHost("faketoken"); got != copilotDefaultAPIHost {
+		t.Errorf("transport error = %q, want default", got)
+	}
+
+	ts500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts500.Close()
+	copilotUserEndpointURL = ts500.URL
+	if got := s.copilotAPIHost("faketoken"); got != copilotDefaultAPIHost {
+		t.Errorf("non-200 endpoint = %q, want default", got)
+	}
+
+	tsBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{bad`))
+	}))
+	defer tsBadJSON.Close()
+	copilotUserEndpointURL = tsBadJSON.URL
+	if got := s.copilotAPIHost("faketoken"); got != copilotDefaultAPIHost {
+		t.Errorf("malformed endpoint body = %q, want default", got)
+	}
+
+	tsOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "token faketoken" {
+			t.Errorf("Authorization header = %q", got)
+		}
+		if got := r.Header.Get("Editor-Version"); got != copilotEditorVersion {
+			t.Errorf("Editor-Version header = %q", got)
+		}
 		w.Write([]byte(`{"endpoints":{"api":"https://api.custom.example/"}}`))
 	}))
-	defer ts.Close()
-	// copilotAPIHost hits a fixed URL; we can't redirect it, but calling it
-	// exercises the request-build + client.Do + fallback path (the real
-	// github URL will fail or return non-200 in CI → default host).
-	got := s.copilotAPIHost("faketoken")
-	if got == "" {
-		t.Error("copilotAPIHost returned empty")
+	defer tsOK.Close()
+	copilotUserEndpointURL = tsOK.URL
+	if got := s.copilotAPIHost("faketoken"); got != "https://api.custom.example" {
+		t.Errorf("successful endpoint = %q, want trimmed custom host", got)
 	}
 }
 
