@@ -1692,7 +1692,7 @@
           <div class="gov-metric"><span class="gm-label">actionable</span><span class="gm-val">${govActionable}</span></div>
           <div class="gov-metric"><span class="gm-label">PRs</span><span class="gm-val">${govPrs}</span></div>
           <div class="gov-metric"><span class="gm-label">MTTR</span><span class="gm-val" style="color:${MTTR_COLOR}">${formatFixTime(itmMedian)}</span></div>
-          <div class="gov-metric" title="${(window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + ': ' + h.title).join('\n') || 'No items on hold'}"><span class="gm-label">on hold</span><span class="gm-val" style="color:#d29922">${window._lastStatus?.hold?.total || 0}</span></div>
+          <div class="gov-metric" title="${(window._lastStatus?.hold?.items || []).map(h => esc((h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + ': ' + h.title)).join('\n') || 'No items on hold'}"><span class="gm-label">on hold</span><span class="gm-val" style="color:#d29922">${window._lastStatus?.hold?.total || 0}</span></div>
           <div class="oc-gov-gauge">
             <div class="temp-gauge-track" style="background:linear-gradient(to right, #238636 0%, #238636 ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, #1f6feb ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, #1f6feb ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, #d29922 ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, #d29922 ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, #f85149 ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, #f85149 100%)">
               <div class="temp-gauge-glow" style="width:100%"></div>
@@ -2616,7 +2616,7 @@
       const holdTotal = holdData.total || 0;
       const holdItems = holdData.items || [];
       const HOLD_COLOR = '#d29922';
-      const holdTooltip = holdItems.length > 0 ? holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}: ${h.title}`).join('\n') : 'No items on hold';
+      const holdTooltip = holdItems.length > 0 ? holdItems.map(h => esc(`${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}: ${h.title}`)).join('\n') : 'No items on hold';
       const holdSpark = sparkSvg(getHistorySeries('govHold'), HOLD_COLOR);
 
       el.innerHTML = `
