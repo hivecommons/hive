@@ -12,13 +12,17 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
-// installAttachFakeTmux puts a fake tmux first on PATH whose display-message
-// prints $HIVE_FAKE_TMUX_ATTACHED and exits $HIVE_FAKE_TMUX_DISPLAY_EXIT,
-// and which appends every invocation to the returned log file.
+// installAttachFakeTmux puts a fake tmux first on PATH whose list-clients
+// prints $HIVE_FAKE_TMUX_CLIENTS and exits $HIVE_FAKE_TMUX_CLIENTS_EXIT, whose
+// display-message prints $HIVE_FAKE_TMUX_ATTACHED and exits
+// $HIVE_FAKE_TMUX_DISPLAY_EXIT, and which appends every invocation to the
+// returned log file.
 func installAttachFakeTmux(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -26,6 +30,10 @@ func installAttachFakeTmux(t *testing.T) string {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_ATTACH_LOG"
 case "$*" in
+  *list-clients*)
+    printf '%s' "$HIVE_FAKE_TMUX_CLIENTS"
+    exit "${HIVE_FAKE_TMUX_CLIENTS_EXIT:-0}"
+    ;;
   *display-message*)
     printf '%s' "$HIVE_FAKE_TMUX_ATTACHED"
     exit "${HIVE_FAKE_TMUX_DISPLAY_EXIT:-0}"
@@ -53,10 +61,23 @@ func TestTmuxTerminalSessionAttachedFailsOpenWithoutSession(t *testing.T) {
 	}
 }
 
-func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
+// TestTmuxTerminalSessionAttachedIgnoresStaleClients covers the guard's whole
+// contract, including the live failure it was changed for: two tmux clients
+// abandoned on a hosted spoke's scanner session (client_activity frozen at
+// client_created, no process owning either pty) kept every keyboard-based heal
+// switched off for 13.5 hours.
+//
+// tmux reports client_activity as a unix timestamp, one line per client, and
+// prints nothing at all when no client is attached.
+func TestTmuxTerminalSessionAttachedIgnoresStaleClients(t *testing.T) {
 	installAttachFakeTmux(t)
 	term := tmuxTerminal{manager: NewManager(nil, discardLogger(), ProjectContext{})}
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-attach-test"}
+
+	now := time.Now()
+	recent := strconv.FormatInt(now.Add(-time.Minute).Unix(), 10)
+	stale := strconv.FormatInt(now.Add(-attachedClientIdleGrace-time.Minute).Unix(), 10)
+	justInside := strconv.FormatInt(now.Add(-attachedClientIdleGrace+time.Minute).Unix(), 10)
 
 	cases := []struct {
 		name   string
@@ -64,17 +85,19 @@ func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
 		exit   string
 		want   bool
 	}{
-		{"no clients", "0\n", "0", false},
-		{"one client", "1\n", "0", true},
-		{"many clients with padding", "  2 \n", "0", true},
+		{"no clients at all", "", "0", false},
+		{"one active client", recent + "\n", "0", true},
+		{"client just inside the grace still counts", justInside + "\n", "0", true},
+		{"single abandoned client is ignored", stale + "\n", "0", false},
+		{"two abandoned clients are ignored (the spoke incident)", stale + "\n" + stale + "\n", "0", false},
+		{"one active among abandoned still blocks", stale + "\n" + recent + "\n", "0", true},
 		{"tmux error fails open", "", "1", true},
-		{"non-numeric output fails open", "not-a-number\n", "0", true},
-		{"empty output fails open", "", "0", true},
+		{"unparseable timestamp fails open", "not-a-number\n", "0", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HIVE_FAKE_TMUX_ATTACHED", tc.output)
-			t.Setenv("HIVE_FAKE_TMUX_DISPLAY_EXIT", tc.exit)
+			t.Setenv("HIVE_FAKE_TMUX_CLIENTS", tc.output)
+			t.Setenv("HIVE_FAKE_TMUX_CLIENTS_EXIT", tc.exit)
 			if got := term.SessionAttached(agent); got != tc.want {
 				t.Fatalf("SessionAttached with output %q exit %s = %v, want %v",
 					tc.output, tc.exit, got, tc.want)
@@ -83,10 +106,30 @@ func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
 	}
 }
 
+// TestTmuxTerminalSessionAttachedQueriesClientActivity pins the tmux call
+// itself: asking for a client COUNT is what made abandoned clients
+// indistinguishable from a live operator, so the format string is the fix.
+func TestTmuxTerminalSessionAttachedQueriesClientActivity(t *testing.T) {
+	logPath := installAttachFakeTmux(t)
+	t.Setenv("HIVE_FAKE_TMUX_CLIENTS", "")
+	term := tmuxTerminal{manager: NewManager(nil, discardLogger(), ProjectContext{})}
+
+	_ = term.SessionAttached(&AgentProcess{Name: "quality", tmuxSession: "hive-activity-probe"})
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("fake tmux was never invoked: %v", err)
+	}
+	logged := string(raw)
+	if !strings.Contains(logged, "list-clients -t hive-activity-probe -F #{client_activity}") {
+		t.Fatalf("SessionAttached sent %q, want list-clients with -F #{client_activity}", logged)
+	}
+}
+
 func TestTmuxTerminalSessionAttachedReachesManagerSeam(t *testing.T) {
 	// The Manager-level wrapper must consult the installed TerminalSession.
 	installAttachFakeTmux(t)
-	t.Setenv("HIVE_FAKE_TMUX_ATTACHED", "0\n")
+	t.Setenv("HIVE_FAKE_TMUX_CLIENTS", "")
 	m := NewManager(nil, discardLogger(), ProjectContext{})
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-attach-seam"}
 	if m.tmuxSessionHasAttachedClientForAgent(agent) {

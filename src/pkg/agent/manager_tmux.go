@@ -586,19 +586,58 @@ func (t tmuxTerminal) CaptureVisiblePane(agent *AgentProcess) string {
 	return string(out)
 }
 
+// attachedClientIdleGrace is how long a tmux client may sit with no activity
+// at all before SessionAttached stops counting it as a human at the keyboard.
+//
+// SessionAttached exists so hive never types into a session someone is using.
+// It asked tmux only HOW MANY clients were attached, and a client that dies
+// without detaching -- an SSH drop, a closed `kubectl exec`, a browser tab shut
+// on a terminal view -- stays attached forever. On a hosted spoke two such
+// clients sat on the scanner session with client_activity equal to
+// client_created for 13.5 hours, and no process owning either pty. Every heal
+// that routes through this guard was disabled for that agent the entire time:
+// scanner hit a transient model error, dropped to an idle prompt, and sat
+// there because the retry nudge kept vetoing itself on a terminal nobody was
+// looking at.
+//
+// The grace is deliberately generous. A human reading output without typing
+// still trips it eventually, and the cost of being wrong in that direction is
+// one "try again" typed into a pane they are watching -- against an agent
+// stalled indefinitely if we are wrong in the other.
+const attachedClientIdleGrace = 30 * time.Minute
+
+// SessionAttached reports whether a human may currently be interacting with
+// the agent's tmux session.
+//
+// Fails OPEN on every uncertainty (no session, tmux error, unparseable
+// output): callers use this to decide whether to type, and the safe answer
+// when we cannot tell is "assume someone is there".
 func (t tmuxTerminal) SessionAttached(agent *AgentProcess) bool {
 	if agent == nil || agent.tmuxSession == "" {
 		return true
 	}
-	out, err := t.manager.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{session_attached}").Output()
+	out, err := t.manager.tmuxCmd(agent, "list-clients", "-t", agent.tmuxSession, "-F", "#{client_activity}").Output()
 	if err != nil {
 		return true
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return true
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		// No clients at all — the unambiguous detached case.
+		return false
 	}
-	return n > 0
+	cutoff := time.Now().Add(-attachedClientIdleGrace)
+	for _, field := range fields {
+		secs, err := strconv.ParseInt(field, 10, 64)
+		if err != nil {
+			return true
+		}
+		if time.Unix(secs, 0).After(cutoff) {
+			return true
+		}
+	}
+	// Clients exist but every one of them has been silent past the grace, so
+	// they are abandoned terminals rather than an operator mid-keystroke.
+	return false
 }
 
 // SendLiteral types text into the pane verbatim.
