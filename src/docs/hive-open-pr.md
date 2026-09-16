@@ -123,6 +123,50 @@ comment on it will fail.
 To confirm, poll the `.result.json` written next to the request file, or simply
 look for the PR.
 
+## The opened PR carries an attribution trailer
+
+Because the PR is authored by the App bot, the bot identity alone cannot answer
+"which agent/backend/model produced this?". So when the watcher opens the PR,
+it appends a visible one-line trailer to the body you wrote
+(`pkg/github.AppendTrailer`): the `— hive:` prefix followed by
+space-separated `key=value` pairs, e.g. `agent=quality backend=bob model=auto
+bobshell=1.0.6 requested_by=@octocat`. (A verbatim trailer line is not
+reproduced here on purpose: the watcher's content check rejects a request whose
+*committed files* contain one — run metadata belongs in the PR body or commit
+trailer, not in the tree.)
+
+Fields the hive does not know at launch are omitted rather than guessed; the
+possible fields are `agent`, `backend`, `model`, `effort`, `<tool>=<version>`,
+`session`, and `requested_by`. The trailer is gated by
+`governor.attribution_trailer` (default ON), but the matching audit entry
+(`agent_pr_created` in `audit.jsonl`, same key=value pairs — see
+[audit-log.md](audit-log.md)) is written regardless of the toggle. The `— hive:`
+prefix doubles as the stacking guard: a request the watcher retries after a
+partial failure will not gain a second trailer. Do not write a `— hive:` line
+into your own body — the watcher will treat it as an existing trailer and skip
+its own.
+
+### `requested_by` credits the human who asked
+
+Since [#7208](https://github.com/hivecommons/hive/issues/7208), the trailer
+credits — and, being an `@login` mention, notifies — the human who opened the
+issue the PR answers:
+
+- The watcher resolves it from the **same rationale issues the
+  self-authorization gate reads**: the `Closes`/`Fixes`/`Refs` claims in your
+  title and body plus the declared `--issues` list, in the same order. Citing
+  your issue correctly is therefore also what routes credit to its opener.
+- Only a **human** opener is credited. When every cited issue was filed by the
+  hive itself or another bot, the field is omitted — there is nobody to thank.
+- Lookups are capped at the first five cited issues, and a failed lookup is
+  skipped, never fatal: attribution is a courtesy on top of the PR, and a PR
+  opened without `requested_by` is still correct. Its absence is not an error
+  to chase.
+
+This is body-trailer credit for the *requester*; it is independent of the
+`Co-authored-by:` **commit** trailer for a closing issue's author described
+above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
+
 ## Policy gates that change or reject your request
 
 Beyond the empty-body and `--issues` checks above, the watcher applies three
