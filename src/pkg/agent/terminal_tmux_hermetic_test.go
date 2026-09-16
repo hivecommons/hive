@@ -10,35 +10,60 @@ package agent
 // tmux_lifecycle_hermetic_test.go).
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+type attachFakeTmux struct {
+	logPath    string
+	outputPath string
+	exitPath   string
+}
+
 // installAttachFakeTmux puts a fake tmux first on PATH whose display-message
-// prints $HIVE_FAKE_TMUX_ATTACHED and exits $HIVE_FAKE_TMUX_DISPLAY_EXIT,
-// and which appends every invocation to the returned log file.
-func installAttachFakeTmux(t *testing.T) string {
+// reads its output and exit code from per-test state files, and which appends
+// every invocation to logPath. The display state deliberately avoids
+// process-global env vars: package-level background tmux probes can inherit
+// PATH while this fake is installed, and env-driven display output makes the
+// fake depend on whichever subtest configuration is live at process start.
+func installAttachFakeTmux(t *testing.T) attachFakeTmux {
 	t.Helper()
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "tmux.log")
-	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_ATTACH_LOG"
+	fake := attachFakeTmux{
+		logPath:    filepath.Join(dir, "tmux.log"),
+		outputPath: filepath.Join(dir, "attached.out"),
+		exitPath:   filepath.Join(dir, "display.exit"),
+	}
+	fake.setDisplay(t, "", "0")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %s || :
 case "$*" in
   *display-message*)
-    printf '%s' "$HIVE_FAKE_TMUX_ATTACHED"
-    exit "${HIVE_FAKE_TMUX_DISPLAY_EXIT:-0}"
+    cat %s
+    code=$(cat %s)
+    exit "${code:-0}"
     ;;
 esac
 exit 0
-`
+`, shellQuote(fake.logPath), shellQuote(fake.outputPath), shellQuote(fake.exitPath))
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HIVE_FAKE_TMUX_ATTACH_LOG", logPath)
-	return logPath
+	return fake
+}
+
+func (f attachFakeTmux) setDisplay(t *testing.T, output, exit string) {
+	t.Helper()
+	if err := os.WriteFile(f.outputPath, []byte(output), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.exitPath, []byte(exit), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestTmuxTerminalSessionAttachedFailsOpenWithoutSession(t *testing.T) {
@@ -54,7 +79,7 @@ func TestTmuxTerminalSessionAttachedFailsOpenWithoutSession(t *testing.T) {
 }
 
 func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
-	installAttachFakeTmux(t)
+	fake := installAttachFakeTmux(t)
 	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-attach-test"}
 
@@ -73,8 +98,7 @@ func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HIVE_FAKE_TMUX_ATTACHED", tc.output)
-			t.Setenv("HIVE_FAKE_TMUX_DISPLAY_EXIT", tc.exit)
+			fake.setDisplay(t, tc.output, tc.exit)
 			if got := term.SessionAttached(agent); got != tc.want {
 				t.Fatalf("SessionAttached with output %q exit %s = %v, want %v",
 					tc.output, tc.exit, got, tc.want)
@@ -85,8 +109,8 @@ func TestTmuxTerminalSessionAttachedParsesClientCount(t *testing.T) {
 
 func TestTmuxTerminalSessionAttachedReachesManagerSeam(t *testing.T) {
 	// The Manager-level wrapper must consult the installed TerminalSession.
-	installAttachFakeTmux(t)
-	t.Setenv("HIVE_FAKE_TMUX_ATTACHED", "0\n")
+	fake := installAttachFakeTmux(t)
+	fake.setDisplay(t, "0\n", "0")
 	m := NewManager(nil, discardLogger(), ProjectContext{})
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-attach-seam"}
 	if m.tmuxSessionHasAttachedClientForAgent(agent) {
@@ -94,14 +118,32 @@ func TestTmuxTerminalSessionAttachedReachesManagerSeam(t *testing.T) {
 	}
 }
 
+func TestTmuxTerminalSessionAttachedIgnoresStaleEnvConfiguration(t *testing.T) {
+	// This pins the issue #7145 root cause: the fake tmux used to read its
+	// display-message result from HIVE_FAKE_TMUX_* env vars, so unrelated
+	// package goroutines that exec tmux while PATH points at this fake could
+	// observe whichever subtest env happened to be live. A clean file-backed
+	// "0\n" with exit 0 must stay detached even if stale env asks to fail open.
+	fake := installAttachFakeTmux(t)
+	fake.setDisplay(t, "0\n", "0")
+	t.Setenv("HIVE_FAKE_TMUX_ATTACHED", "not-a-number\n")
+	t.Setenv("HIVE_FAKE_TMUX_DISPLAY_EXIT", "1")
+
+	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
+	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-attach-env-stale"}
+	if term.SessionAttached(agent) {
+		t.Fatal("SessionAttached should ignore stale env when fake state says 0 attached clients")
+	}
+}
+
 func TestTmuxTerminalCapturePaneJoinsWrappedLinesCommand(t *testing.T) {
-	logPath := installAttachFakeTmux(t)
+	fake := installAttachFakeTmux(t)
 	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-capture-join-test"}
 
 	_ = term.CapturePane(agent)
 
-	raw, err := os.ReadFile(logPath)
+	raw, err := os.ReadFile(fake.logPath)
 	if err != nil {
 		t.Fatalf("fake tmux was never invoked: %v", err)
 	}
@@ -112,13 +154,13 @@ func TestTmuxTerminalCapturePaneJoinsWrappedLinesCommand(t *testing.T) {
 }
 
 func TestTmuxTerminalClearHistorySendsClearHistoryCommand(t *testing.T) {
-	logPath := installAttachFakeTmux(t)
+	fake := installAttachFakeTmux(t)
 	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
 	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-clear-test"}
 
 	term.ClearHistory(agent)
 
-	raw, err := os.ReadFile(logPath)
+	raw, err := os.ReadFile(fake.logPath)
 	if err != nil {
 		t.Fatalf("fake tmux was never invoked: %v", err)
 	}
