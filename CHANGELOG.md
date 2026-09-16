@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-16 (v4.38.3)
+
+### Fixed
+
+- The release panel no longer claims "Last upgrade: never attempted" on hives that have been upgraded many times. The upgrade marker only records upgrades driven *through the hub*, so any hive moved by other means — a direct image bump, a redeploy, a spoke roll — reported "never attempted" no matter how many times it had actually been rolled, and the accompanying "No upgrade has been attempted on this hive yet" detail line stated it outright. Both lines are now omitted for that state; "succeeded", "failed" and "in progress" still render as distinct states, and the channel selector is unchanged.
+
 ## 2026-09-16 (v4.38.2)
 
 ### Fixed
