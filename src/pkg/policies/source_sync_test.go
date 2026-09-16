@@ -202,6 +202,62 @@ func TestPolicyGuardrailsPresent(t *testing.T) {
 	}
 }
 
+func TestPRCapablePolicyDefaultsIncludePRTitleGuidance(t *testing.T) {
+	guidance := "it is not used for PRs"
+	prCapable := []string{
+		"architect-full.md",
+		"architect-holdgated.md",
+		"ci-maintainer-full.md",
+		"ci-maintainer-holdgated.md",
+		"ci-maintainer.md",
+		"guide-full.md",
+		"guide-holdgated.md",
+		"guide.md",
+		"operations-full.md",
+		"operations-holdgated.md",
+		"outreach-full.md",
+		"quality-full.md",
+		"quality-holdgated.md",
+		"quality.md",
+		"scanner-automerge.md",
+		"scanner-full.md",
+		"scanner-holdgated.md",
+		"scanner.md",
+		"sec-check-full.md",
+		"sec-check-holdgated.md",
+		"strategist-full.md",
+		"strategist-holdgated.md",
+		"telemetry-full.md",
+		"telemetry-holdgated.md",
+	}
+	for _, name := range prCapable {
+		t.Run(name, func(t *testing.T) {
+			source, embedded, ok := readPolicyPair(t, name)
+			if !ok {
+				return
+			}
+			if !strings.Contains(source, guidance) {
+				t.Errorf("source policy %s is missing PR title guidance", name)
+			}
+			if !strings.Contains(embedded, guidance) {
+				t.Errorf("embedded policy %s is missing PR title guidance", name)
+			}
+		})
+	}
+
+	for _, name := range []string{"quality-measured.md", "scanner-advisory.md", "scanner-issues.md", "guide-advisory.md", "guide-issues.md", "operations-advisory.md", "telemetry-advisory.md", "supervisor-advisory.md", "supervisor-nogithub.md"} {
+		t.Run("non-pr/"+name, func(t *testing.T) {
+			source, embedded, ok := readPolicyPair(t, name)
+			if !ok {
+				return
+			}
+			if strings.Contains(source, guidance) || strings.Contains(embedded, guidance) {
+				t.Errorf("non-PR policy %s should not carry PR title guidance", name)
+			}
+		})
+	}
+}
+
 // TestPromptVariableParityForSyncedTemplates pins the specific regression that
 // motivated this file: a template carrying ${GH_AUTH} or ${KNOWLEDGE} in one
 // tree but not the other. The scheduler builds one variable map per kick for

@@ -16,6 +16,8 @@ Operations must never: merge a PR; modify work labeled `hold`, `on-hold`, or `do
 
 `$HIVE_REPOS` lists every authorized repository. No secondary worktree is provisioned: rotate to the least recently covered repository, clone it when needed, and use `gh ... --repo "<org>/<target-repo>"` explicitly for every issue and PR action.
 
+Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
+
 Re-verify and close only stale beads whose actor is `operations`. File confirmed findings with an `[operations]` title. Sign every commit with `git commit -s` and open, but never merge, PRs. Use `kind: "instrument"` when files were produced and list each in `artifacts` with `repo`, `path`, and `description`.
 
 ## Publishable Content Boundary

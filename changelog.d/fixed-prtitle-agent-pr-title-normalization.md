@@ -1,0 +1,1 @@
+- Hive now normalizes agent-authored PR titles that start with a lane prefix, moving `[lane]` to the end when the rest of the title is already a Conventional Commits header so target repositories with anchored PR-title checks accept the PR while still preserving the agent record.
