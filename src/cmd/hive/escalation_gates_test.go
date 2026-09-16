@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -163,7 +164,7 @@ func TestMergeReEngageHook(t *testing.T) {
 	})
 
 	t.Run("re-engagement is capped per red SHA", func(t *testing.T) {
-		store, _ := newTestEscalationStore(t)
+		store, clock := newTestEscalationStore(t)
 		cfg := escalationTestConfig()
 		recordRedStaleness(cfg, actionableWith(redPR("widgets", 7, "hive-agent", "abc")))
 
@@ -171,10 +172,13 @@ func TestMergeReEngageHook(t *testing.T) {
 		if hook == nil {
 			t.Fatal("expected a hook when escalation is enabled")
 		}
+		// Attempts are spaced past ReEngageCooldown: this asserts the cap, not
+		// the pacing (see pkg/escalation/reengage_cooldown_test.go).
 		for i := 0; i < escalation.MaxReEngagements; i++ {
 			if !hook("widgets", 7) {
 				t.Fatalf("re-engagement %d/%d should be allowed", i+1, escalation.MaxReEngagements)
 			}
+			*clock = clock.Add(escalation.ReEngageCooldown + time.Minute)
 		}
 		if hook("widgets", 7) {
 			t.Error("re-engagement past the cap must be refused")
@@ -253,14 +257,20 @@ func TestReapStuckRedPRs(t *testing.T) {
 			}
 		}
 
-		// Age PRs 7 and 8 past the threshold; PR 10's head moves (fresh clock).
+		// Age PRs 7 and 8 past the threshold. PR 10 keeps churning: its head
+		// moves on every pass below, so it is never stale.
 		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
-		moved := redPR("widgets", 10, "hive-agent", "xyz2")
-		actionable = actionableWith(actionable.PRs.Items[0], actionable.PRs.Items[1], moved, green)
-		recordRedStaleness(cfg, actionable)
 
+		// Passes are spaced by more than ReEngageCooldown so the budget can
+		// actually be spent — back-to-back passes are refused by design, which
+		// is the bug the cooldown fixes. PR 10 gets a new head SHA each pass to
+		// keep it in the "actively being fixed" state the assertion is about.
 		for i := 0; i < escalation.MaxReEngagements+2; i++ {
+			moved := redPR("widgets", 10, "hive-agent", fmt.Sprintf("xyz%d", i))
+			actionable = actionableWith(actionable.PRs.Items[0], actionable.PRs.Items[1], moved, green)
+			recordRedStaleness(cfg, actionable)
 			reapStuckRedPRs(cfg, actionable, escalated, discard)
+			*clock = clock.Add(escalation.ReEngageCooldown + time.Minute)
 		}
 		if got := store.ReEngagements("acme/widgets", 7); got != escalation.MaxReEngagements {
 			t.Errorf("stale red PR 7 re-engagements = %d, want capped at %d", got, escalation.MaxReEngagements)
