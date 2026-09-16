@@ -149,6 +149,11 @@ type InvocationMeta struct {
 	// so recording it would add no information. The field exists so a real
 	// per-run id can flow through without a format change.
 	Session string
+	// RequestedBy is the GitHub login of the human who opened the issue this
+	// artifact answers (#7208), rendered as "@login" so the opener is credited
+	// and notified. Empty when the rationale issues were all hive-filed or
+	// could not be read: the trail records who ASKED, never guesses.
+	RequestedBy string
 }
 
 // pairs returns the known metadata as ordered key/value pairs, omitting
@@ -172,6 +177,9 @@ func (m InvocationMeta) pairs() []string {
 		kv = append(kv, tool, ver)
 	}
 	add("session", m.Session)
+	if login := strings.TrimPrefix(strings.TrimSpace(m.RequestedBy), "@"); login != "" {
+		kv = append(kv, "requested_by", "@"+login)
+	}
 	return kv
 }
 

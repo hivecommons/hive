@@ -323,6 +323,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// unconditionally. This choke point covers every agent regardless of CLI,
 	// because the proxy hard-denies direct POST /pulls.
 	meta := c.attributionMeta(req.Agent)
+	meta.RequestedBy = c.resolveRequestedBy(ctx, req.Repo, title, body, req.IssueN)
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

@@ -37,7 +37,15 @@ type selfAuthServer struct {
 	mu            sync.Mutex
 	labelsApplied []string
 	comments      []string
+	prBodies      []string
 	listCalls     int
+}
+
+// postedPRBodies returns the body of every PR created through the fake.
+func (s *selfAuthServer) postedPRBodies() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.prBodies...)
 }
 
 func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
@@ -136,6 +144,13 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(w, `[]`)
 
 		case r.Method == "POST" && strings.HasSuffix(p, "/pulls"):
+			var pr struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&pr)
+			s.mu.Lock()
+			s.prBodies = append(s.prBodies, pr.Body)
+			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"number":583,"html_url":"https://github.com/o/r/pull/583"}`)
 
