@@ -100,10 +100,13 @@ func TestTryReEngage_MachineryAmnestyGrantsFreshBudget(t *testing.T) {
 // control — a current-generation entry at the cap stays capped.
 func TestTryReEngage_AmnestyDoesNotFireForCurrentGeneration(t *testing.T) {
 	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	clock, cur := mkClock(time.Unix(5_000_000, 0).UTC())
+	s.SetClock(clock)
 	for i := 0; i < MaxReEngagements; i++ {
 		if !s.TryReEngage("org/repo", 7, "sha1") {
 			t.Fatalf("engagement %d within the cap must be allowed", i+1)
 		}
+		*cur = cur.Add(ReEngageCooldown + time.Minute)
 	}
 	if s.TryReEngage("org/repo", 7, "sha1") {
 		t.Fatal("engagement past MaxReEngagements on an unchanged SHA must be refused")
