@@ -14,7 +14,7 @@ const (
 	issue7153Body  = `## Documentation Gap\n\n<what is missing or incorrect>\n\n## Recommendation\n\n<what should be added>\n\n---\n*Filed by guide agent (ACMM L5 — hold-gated mode)*`
 )
 
-func TestLooksLikeUnfilledPlaceholder(t *testing.T) {
+func TestBodyPlaceholder(t *testing.T) {
 	tests := []struct {
 		name     string
 		in       string
@@ -43,18 +43,18 @@ func TestLooksLikeUnfilledPlaceholder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := looksLikeUnfilledPlaceholder(tt.in)
+			got, ok := bodyPlaceholder(tt.in)
 			if tt.wantSpan == "" {
 				if ok {
-					t.Fatalf("looksLikeUnfilledPlaceholder(%q) = %q, true; want no match", tt.in, got)
+					t.Fatalf("bodyPlaceholder(%q) = %q, true; want no match", tt.in, got)
 				}
 				return
 			}
 			if !ok {
-				t.Fatalf("looksLikeUnfilledPlaceholder(%q) = _, false; want %q", tt.in, tt.wantSpan)
+				t.Fatalf("bodyPlaceholder(%q) = _, false; want %q", tt.in, tt.wantSpan)
 			}
 			if got != tt.wantSpan {
-				t.Errorf("looksLikeUnfilledPlaceholder(%q) = %q, want %q", tt.in, got, tt.wantSpan)
+				t.Errorf("bodyPlaceholder(%q) = %q, want %q", tt.in, got, tt.wantSpan)
 			}
 		})
 	}
@@ -190,5 +190,86 @@ func TestCreateIssueAcceptsAFilledTemplate(t *testing.T) {
 		"## Documentation Gap\n\nHTTPS_PROXY is never mentioned.", nil)
 	if err != nil && strings.Contains(err.Error(), "placeholder") {
 		t.Fatalf("a filled-in issue must not be refused by the template guard, got: %v", err)
+	}
+}
+
+// The second instance of the same failure, hivecommons/hive#7141 — filed by the
+// scanner agent, not the guide, which is what established that this is a
+// cross-agent bug rather than one agent's quirk. Its body placeholders are
+// single words, so the conservative body rule alone does not catch it; the
+// title rule and the escape rule both do.
+const (
+	issue7141Title = "[scanner] <specific description>"
+	issue7141Body  = `## Finding\n\n<analysis>\n\n## Recommendation\n\n<fix>\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode)*`
+)
+
+func TestTitlePlaceholderAlsoCatchesSingleWordSpans(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		wantSpan string
+	}{
+		// --- single words, caught in a title but deliberately not in a body --
+		{"issue 7141 title", issue7141Title, "<specific description>"},
+		{"bare analysis", "[scanner] <analysis>", "<analysis>"},
+		{"bare fix", "[scanner] <fix>", "<fix>"},
+
+		// --- still not caught: markup and too-short spans -------------------
+		{"known html element", "why <details> breaks the layout", ""},
+		{"self closing break", "why <br> breaks the layout", ""},
+		{"two character span", "handle List<ab> correctly", ""},
+		{"single character generic", "handle List<t> correctly", ""},
+		{"uppercase generic", "handle List<T> correctly", ""},
+		{"real title", "🐛 bug: the chat bubble covers dashboard data", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := titlePlaceholder(tt.in)
+			if tt.wantSpan == "" {
+				if ok {
+					t.Fatalf("titlePlaceholder(%q) = %q, true; want no match", tt.in, got)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("titlePlaceholder(%q) = _, false; want %q", tt.in, tt.wantSpan)
+			}
+			if got != tt.wantSpan {
+				t.Errorf("titlePlaceholder(%q) = %q, want %q", tt.in, got, tt.wantSpan)
+			}
+		})
+	}
+}
+
+// The body rule stays conservative on purpose: a single-word span in a markdown
+// body is far more likely to be markup than a placeholder. This pins that
+// asymmetry so a later "tighten the body rule too" change has to argue with a
+// failing test rather than silently widening the false-positive surface.
+func TestBodyRuleStaysConservativeAboutSingleWords(t *testing.T) {
+	for _, in := range []string{"<analysis>", "<fix>", "<details>", "<https://example.com>"} {
+		if got, ok := bodyPlaceholder(in); ok {
+			t.Errorf("bodyPlaceholder(%q) = %q, true; the body rule must require two or more words", in, got)
+		}
+	}
+}
+
+func TestValidateIssueTemplateRejectsIssue7141AsFiled(t *testing.T) {
+	err := validateIssueTemplateFilled(issue7141Title, issue7141Body)
+	if err == nil {
+		t.Fatal("validateIssueTemplateFilled() = nil, want an error for the issue 7141 filing")
+	}
+	if !strings.Contains(err.Error(), "specific description") {
+		t.Errorf("error %q should name the offending title placeholder", err)
+	}
+
+	// Even with the title fixed, the literal-escape body must still be refused,
+	// so a partial correction cannot sneak an empty skeleton through.
+	err = validateIssueTemplateFilled("[scanner] the spoke scanner misreports idle sessions", issue7141Body)
+	if err == nil {
+		t.Fatal("validateIssueTemplateFilled() = nil, want an error for the literal-escape body")
+	}
+	if !strings.Contains(err.Error(), "--body-file") {
+		t.Errorf("error %q should point at --body-file", err)
 	}
 }
