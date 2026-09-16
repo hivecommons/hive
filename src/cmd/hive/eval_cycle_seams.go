@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -233,4 +235,48 @@ func classifyAdvisoryPostError(err error) advisoryPostFailure {
 		return advisoryPostRateLimited
 	}
 	return advisoryPostAuthProbe
+}
+
+// providerBudgetAlert is what the eval cycle should do about the provider
+// spend latch this cycle (#4294). Extracted from runEvalCycle so the wording
+// and the dedup decisions are testable without a dashboard server, an agent
+// manager or the package-level latch (#7232).
+//
+// The operator only ever learns about a clipped provider through this banner,
+// so the exact text is load-bearing: it has to say whether kicks are suspended
+// or probing, and it has to distinguish "one refused call" from "refused all
+// day" — which is the field failure #4294 was filed for.
+type providerBudgetAlert struct {
+	// Message is the banner to raise; empty means raise nothing.
+	Message string
+	// Clear means remove any existing banner.
+	Clear bool
+	// Cause replaces the caller's providerBudgetCause when non-empty. The
+	// latched banner text is reused downstream as the cause string.
+	Cause string
+}
+
+// decideProviderBudgetAlert chooses the provider-spend banner for this cycle.
+//
+// quotaReason is a func, not a string, on purpose: the original code only
+// consulted the agent manager on the NOT-latched branch, and collecting agent
+// statuses every cycle while the provider is clipped would be work the old
+// code never did. Passing a thunk keeps that laziness exactly.
+func decideProviderBudgetAlert(latched, suppress bool, cause string, since time.Time, rebuffs int, quotaReason func() string) providerBudgetAlert {
+	if latched {
+		state := "agent kicks suspended"
+		if !suppress {
+			state = "probing with a single agent kick to test whether the provider window has reset"
+		}
+		msg := fmt.Sprintf("provider spending limit reached — %s: %s", state, cause)
+		if rebuffs > 1 {
+			msg = fmt.Sprintf("provider spending limit reached (%d refused calls since %s) — %s: %s",
+				rebuffs, since.Format(time.RFC1123), state, cause)
+		}
+		return providerBudgetAlert{Message: msg, Cause: msg}
+	}
+	if reason := quotaReason(); reason != "" {
+		return providerBudgetAlert{Message: "provider quota exhausted — " + reason}
+	}
+	return providerBudgetAlert{Clear: true}
 }

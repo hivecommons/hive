@@ -6526,24 +6526,17 @@ func runEvalCycle(
 	providerBudgetLatched := providerBudgetCause != ""
 	suppressKicks := providerBudgetSuppresses(providerBudgetLatched,
 		providerBudgetProbe.freshest(providerBudgetLastRebuff), time.Now(), providerBudgetProbeInterval)
-	if providerBudgetLatched {
-		state := "agent kicks suspended"
-		if !suppressKicks {
-			state = "probing with a single agent kick to test whether the provider window has reset"
-		}
-		msg := fmt.Sprintf("provider spending limit reached — %s: %s", state, providerBudgetCause)
-		if providerBudgetRebuffs > 1 {
-			msg = fmt.Sprintf("provider spending limit reached (%d refused calls since %s) — %s: %s",
-				providerBudgetRebuffs, providerBudgetSince.Format(time.RFC1123), state, providerBudgetCause)
-		}
-		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", msg)
-		providerBudgetCause = msg
-	} else {
-		if reason := quotaExhaustedAgentReason(quotaExhaustedProcessCount(agentMgr.AllStatuses())); reason != "" {
-			dashSrv.AddSystemAlert(providerBudgetAlertID, "error", "provider quota exhausted — "+reason)
-		} else {
-			dashSrv.ClearSystemAlert(providerBudgetAlertID)
-		}
+	budgetAlert := decideProviderBudgetAlert(providerBudgetLatched, suppressKicks,
+		providerBudgetCause, providerBudgetSince, providerBudgetRebuffs,
+		func() string { return quotaExhaustedAgentReason(quotaExhaustedProcessCount(agentMgr.AllStatuses())) })
+	if budgetAlert.Message != "" {
+		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", budgetAlert.Message)
+	}
+	if budgetAlert.Clear {
+		dashSrv.ClearSystemAlert(providerBudgetAlertID)
+	}
+	if budgetAlert.Cause != "" {
+		providerBudgetCause = budgetAlert.Cause
 	}
 	// Notify ONCE per latch, not once per cycle. The deduped banner above
 	// already carries the ongoing state; a high-priority notification repeated
