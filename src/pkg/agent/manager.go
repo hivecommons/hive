@@ -272,9 +272,27 @@ type AgentProcess struct {
 	// across the launch, a second Start would otherwise race the first one's
 	// tmux launch and its guarded-field writes. Guarded by m.mu.
 	launching         bool
-	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
-	LastError         string    // captured from bare copilot diagnostic launch
-	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
+	BootstrapOverride string // when set, replaces buildBootstrapPrompt output
+	LastError         string // captured from bare copilot diagnostic launch
+	// kickDelivering is true for exactly as long as deliverKickLocked is
+	// typing a kick into this agent's pane. Delivery is NOT instantaneous: a
+	// kick is typed as 400-rune chunks with a pause between them, so a 37KB
+	// governor kick occupies the pane for ~100s. For that whole window the
+	// CLI's idle chrome is scrolled out of the captured pane, which makes the
+	// pane poller's health predicates read a perfectly healthy agent as dead
+	// (#7169: "copilot hung with no CLI prompt" fired 68s into a scanner kick,
+	// recreated the tmux session, and the remaining chunks landed nowhere —
+	// eleven consecutive "send-keys failed" lines followed by a restart that
+	// threw the kick away; it happened five times before it was caught).
+	//
+	// Nothing that destroys or replaces the pane may run while this is set.
+	//
+	// An atomic, not an m.mu-guarded field, on purpose: deliverKickLocked runs
+	// with m.mu HELD for the entire delivery, so a poller that had to take
+	// m.mu to read this would serialize behind the very delivery it is trying
+	// to observe.
+	kickDelivering   atomic.Bool
+	lastTokenRestart time.Time // cooldown for auto-restart after token detection
 	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
 	// not clear the login prompt. The restart is a falsifiable theory — "a valid
 	// token exists, the agent just has not picked it up yet" — and this is what
@@ -3593,7 +3611,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// its TLS had died, and the governor kick delivered seconds
 			// earlier died with the session. It looped every ~60s, so no kick
 			// ever survived long enough to run.
-			if effectiveBackend(agent) == "copilot" && paneShowsFatalNetworkError(filtered) {
+			if effectiveBackend(agent) == "copilot" && !agent.kickDelivering.Load() && paneShowsFatalNetworkError(filtered) {
 				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
 				if sinceLastRestart >= float64(tlsErrorRestartCooldownSec) {
 					m.logger.Warn("fatal network/TLS error detected, restarting agent",
@@ -3622,7 +3640,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// no match means no tmux exec. The decision itself is made on the
 			// VISIBLE pane, because a matched line in scrollback is usually an
 			// error the agent already recovered from.
-			if paneShowsTransientAPIError(filtered) {
+			// kickDelivering: the nudge TYPES into the pane ("try again" +
+			// Enter). Firing it mid-delivery would splice those keystrokes
+			// into the middle of a kick and submit the truncated result.
+			if !agent.kickDelivering.Load() && paneShowsTransientAPIError(filtered) {
 				m.nudgeIfTransientAPIError(agent, m.captureVisiblePaneForAgent(agent))
 			}
 
@@ -3645,7 +3666,17 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// backend override was already being judged by the wrong CLI's
 			// readiness signature here, which is the same class of bug as #5921's
 			// root cause 1 — launched as one thing, health-checked as another.
+			//
+			// kickDelivering gates this for the same reason it gates the TLS
+			// restart above, but this detector is the one that was actually
+			// observed destroying kicks: it does not look at pane CONTENT for
+			// an error, only for the ABSENCE of idle chrome, and a kick being
+			// typed is precisely a pane with no idle chrome. Delivery pushes
+			// the prompt out of the capture window for ~100s on a large kick,
+			// far longer than expiredTokenHangTimeoutSec has any reason to
+			// tolerate.
 			if effectiveBackend(agent) == "copilot" && !IsInferenceBackend(agent.BackendOverride) && agent.StartedAt != nil &&
+				!agent.kickDelivering.Load() &&
 				time.Since(*agent.StartedAt).Seconds() >= expiredTokenHangTimeoutSec &&
 				!paneShowsCLIReady(filtered) {
 				// #5921 root cause 1: launch_cmd runs a DIFFERENT CLI than the
@@ -5331,6 +5362,12 @@ func (m *Manager) SendKick(name string, message string) error {
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
+	// Claim the pane for the whole of delivery so the pane poller does not
+	// mistake a kick-in-progress for a hung CLI and restart the session out
+	// from under the typist. See AgentProcess.kickDelivering.
+	agent.kickDelivering.Store(true)
+	defer agent.kickDelivering.Store(false)
+
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
 	// input touches the pane, so each archived kick log is cleanly delimited
 	// (#4296). Must be the first thing this function does.
