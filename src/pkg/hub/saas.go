@@ -4718,14 +4718,38 @@ const hubRolloutPollInterval = 15 * time.Second
 // Detect and report is the safe half of the loop: the operator sees the stuck
 // upgrade in the UI and in the logs, and decides.
 func (s *HubServer) watchHubRollout(sha, image string) {
-	deadline := time.Now().Add(hubRolloutWatchTimeout)
+	s.watchHubRolloutWithInterval(sha, image, hubRolloutWatchTimeout, hubRolloutPollInterval, s.hubRolloutReady)
+}
+
+// hubRolloutReady reports whether the rollout we triggered has fully succeeded.
+//
+// `rollout status --timeout=0s` returns non-zero while a rollout is still
+// progressing and zero once it has fully succeeded.
+func (s *HubServer) hubRolloutReady() bool {
+	cmd := kubectlForCluster(s.hubCluster(), "rollout", "status",
+		"deployment/"+hubDeploymentName, "-n", hubNamespace, "--timeout=0s")
+	return cmd.Run() == nil
+}
+
+// watchHubRolloutWithInterval is watchHubRollout with its clock and its kubectl
+// dependency passed in (#7220).
+//
+// The production wrapper above supplies the real constants and runner. The
+// parameters exist so the SUCCESS path is testable: with the interval hardcoded
+// at 15s and readiness hardcoded to a kubectl exec, confirming that a completed
+// rollout actually clears hubUpgradeFault took a live cluster and five minutes,
+// so in practice it was never confirmed at all. That is the silent half of an
+// upgrade-safety check — a regression here leaves a stale fault on the
+// dashboard, or exits the loop early, and nothing notices until a real hub
+// upgrade.
+//
+// Mirrors the seam runPermissionsWatcher already uses in pkg/agent: interval as
+// a parameter, thin production wrapper.
+func (s *HubServer) watchHubRolloutWithInterval(sha, image string, timeout, poll time.Duration, rolloutReady func() bool) {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(hubRolloutPollInterval)
-		// `rollout status --timeout=0s` returns non-zero while a rollout is
-		// still progressing and zero once it has fully succeeded.
-		cmd := kubectlForCluster(s.hubCluster(), "rollout", "status",
-			"deployment/"+hubDeploymentName, "-n", hubNamespace, "--timeout=0s")
-		if err := cmd.Run(); err == nil {
+		time.Sleep(poll)
+		if rolloutReady() {
 			s.hubUpgradeMu.Lock()
 			s.hubUpgradeFault = ""
 			s.hubUpgradeMu.Unlock()
@@ -4742,10 +4766,10 @@ func (s *HubServer) watchHubRollout(sha, image string) {
 		"image", image,
 		"deployment", hubDeploymentName,
 		"namespace", hubNamespace,
-		"waited", hubRolloutWatchTimeout.String(),
+		"waited", timeout.String(),
 		"reason", reason)
 	s.setHubUpgradeFault(fmt.Sprintf("upgrade to %s stuck after %s: %s (still serving the previous image)",
-		image, hubRolloutWatchTimeout, reason))
+		image, timeout, reason))
 }
 
 // hubRolloutFailureReason best-effort extracts why the hub's pods are not
