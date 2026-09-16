@@ -1,0 +1,1 @@
+- Repository AGENTS.md instructions now explicitly outrank hive's generic prompt defaults for repo-local conventions such as PR base branches, title formats and commit style, while hive's safety and authorization rules remain non-overridable ([#7159](https://github.com/hivecommons/hive/issues/7159)).

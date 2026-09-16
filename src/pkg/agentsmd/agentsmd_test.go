@@ -250,29 +250,6 @@ func TestInjectionText(t *testing.T) {
 		t.Errorf("body should still be present: %q", bodyOnly)
 	}
 
-	// #7159: the block must declare that the repository wins a conflict, and
-	// declare it BEFORE the rules it governs. Without this the repo's rules
-	// arrived as undifferentiated prose while hive's own prompt stated the same
-	// subjects as imperatives with a self-check attached, and the model
-	// followed the imperative every time — four dead-on-arrival PRs on
-	// projectbluefin repos in one night.
-	if !strings.Contains(out, injectionPrecedence) {
-		t.Errorf("injection does not state precedence: %q", out)
-	}
-	if hdr, prec := strings.Index(out, injectionHeader), strings.Index(out, injectionPrecedence); prec < hdr {
-		t.Errorf("precedence should follow the header, got header at %d and precedence at %d", hdr, prec)
-	}
-	if prec, body := strings.Index(out, injectionPrecedence), strings.Index(out, "Do the thing carefully."); prec > body {
-		t.Errorf("precedence must precede the repo's own rules, got precedence at %d and body at %d", prec, body)
-	}
-	// The carve-outs are the reason this is safe to state so forcefully: an
-	// AGENTS.md cannot license merging your own PR, and cannot override an
-	// instruction written for this specific task.
-	for _, want := range []string{"take precedence", "never merge your own PR", "explicit instruction in this assignment"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("precedence text is missing %q: %q", want, out)
-		}
-	}
 	// Body-only injections carry it too — most AGENTS.md files request no skills.
 	if !strings.Contains(bodyOnly, injectionPrecedence) {
 		t.Errorf("body-only injection does not state precedence: %q", bodyOnly)
@@ -287,5 +264,95 @@ func TestInjectionText(t *testing.T) {
 	var nilCfg *AgentsConfig
 	if got := nilCfg.InjectionText(nil); got != "" {
 		t.Errorf("nil config should inject nothing, got %q", got)
+	}
+}
+
+func TestInjectionTextPrecedenceFraming(t *testing.T) {
+	cfg := &AgentsConfig{
+		Body: "All pull requests target testing. Never open a content PR against main.",
+	}
+	out := cfg.InjectionText(nil)
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{
+			name: "states repository precedence over hive defaults",
+			want: "take precedence over hive's built-in defaults for this repository's local conventions",
+		},
+		{
+			name: "names base branch as repository-local convention",
+			want: "the branch a PR targets",
+		},
+		{
+			name: "names title format as repository-local convention",
+			want: "the title format",
+		},
+		{
+			name: "names commit conventions as repository-local convention",
+			want: "commit conventions",
+		},
+		{
+			name: "preserves hive safety and authorization rules",
+			want: "do NOT override hive's safety and authorization rules",
+		},
+		{
+			name: "forbids overriding self-merge safety invariant",
+			want: "never merge your own PR",
+		},
+		{
+			name: "forbids overriding write-gate path",
+			want: "never bypass a write gate or the `hive-open-pr` path",
+		},
+		{
+			name: "preserves assignment-specific instructions",
+			want: "do not override an explicit instruction in this assignment",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("precedence text is missing %q: %q", tc.want, out)
+			}
+		})
+	}
+}
+
+func TestInjectionTextPrecedenceLeadsRepositoryRules(t *testing.T) {
+	cfg := &AgentsConfig{
+		Body: "Use Conventional Commits for PR titles.",
+	}
+	out := cfg.InjectionText(nil)
+
+	tests := []struct {
+		name       string
+		beforeText string
+		afterText  string
+	}{
+		{
+			name:       "header precedes precedence",
+			beforeText: injectionHeader,
+			afterText:  injectionPrecedence,
+		},
+		{
+			name:       "precedence precedes repository body",
+			beforeText: injectionPrecedence,
+			afterText:  "Use Conventional Commits for PR titles.",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			before := strings.Index(out, tc.beforeText)
+			after := strings.Index(out, tc.afterText)
+			if before == -1 || after == -1 {
+				t.Fatalf("missing ordered text: before %q at %d, after %q at %d in %q", tc.beforeText, before, tc.afterText, after, out)
+			}
+			if before > after {
+				t.Errorf("want %q before %q, got indexes %d and %d in %q", tc.beforeText, tc.afterText, before, after, out)
+			}
+		})
 	}
 }
