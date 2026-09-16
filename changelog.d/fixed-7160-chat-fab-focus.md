@@ -1,0 +1,1 @@
+- The dashboard chat bubble keeps its see-through resting state while gaining an explicit keyboard focus ring and accessible label, so operators can still read covered values without losing a clear way to open Hive Chat.

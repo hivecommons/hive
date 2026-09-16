@@ -2023,6 +2023,7 @@
     }
     .hive-chat-fab:hover, .hive-chat-fab:focus-visible,
     .hive-chat-fab.open, .hive-chat-fab.has-unread { opacity: 1; }
+    .hive-chat-fab:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
     .hive-chat-fab:hover { transform: scale(1.1); background: color-mix(in srgb, var(--purple) 85%, #000); }
     .hive-chat-fab.has-unread::after {
       content: ''; position: absolute; top: 2px; right: 2px;
@@ -2973,7 +2974,7 @@
 <div id="toast-container"></div>
 
 <!-- Hive Chat FAB + Panel -->
-<button class="hive-chat-fab" id="hiveChatFab" title="Ask Hive">💬</button>
+<button type="button" class="hive-chat-fab" id="hiveChatFab" title="Ask Hive" aria-label="Ask Hive chat assistant">💬</button>
 <div class="hive-chat-panel" id="hiveChatPanel">
   <div class="hive-chat-resize" id="hiveChatResize"></div>
   <div class="hive-chat-header">
