@@ -154,6 +154,18 @@ jobs:
             [sandbox]=98
             [pushbroker]=99
 
+            # ── Ratchet turned for #7146 ─────────────────────────────────────
+            # spoke had NO entry, so it sat on the 90 default and flapped across
+            # it (run 35026215085 failed at 89.6% with green runs either side and
+            # no spoke change between them) — the classic signature of timing
+            # dependent paths drifting in and out of the profile. #7146 proposed
+            # dropping spoke to 89 to quiet the noise; that would turn the
+            # ratchet the wrong way. #7130 covered those paths instead, and spoke
+            # now measures a flat 96.3% over five consecutive runs with the gate's
+            # own command (`-short -count=1`, no -race) — zero variance, so the
+            # flap is gone at the source. Floored at what it holds with headroom.
+            [spoke]=95       # 96.3% on 2026-09-16 after #7130; was unfloored/flapping
+
             # ── ./cmd/... floors (#4701) ─────────────────────────────────────
             # CI never ran ./cmd/... at all before #4701 — four cmd/bd tests
             # were merged already-failing and stayed red undetected. cmd keys

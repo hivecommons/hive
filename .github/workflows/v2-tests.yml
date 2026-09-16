@@ -818,6 +818,14 @@ jobs:
             [sandbox]=98
             [pushbroker]=99
 
+            # ── Ratchet turned for #7146 ─────────────────────────────────────
+            # spoke was unfloored and flapped across the 90 default (run
+            # 35026215085 at 89.6%, green runs either side, no spoke change
+            # between). #7130 covered the timing-dependent paths rather than
+            # lowering the floor; spoke now holds a flat 96.3% with zero variance
+            # over five runs. See coverage-hourly.yml for the full rationale.
+            [spoke]=95       # 96.3% on 2026-09-16 after #7130; was unfloored/flapping
+
             # ── ./cmd/... floors (#4701) ─────────────────────────────────────
             # See coverage-hourly.yml for the rationale. cmd keys are prefixed
             # ("cmd/<name>") so cmd/hivectl can never collide with
