@@ -83,6 +83,10 @@ const (
 	// rather than an assignee). It is a countable "this agent took work" signal
 	// on the activity trail.
 	AuditActionIssueClaimed = "agent_issue_claimed"
+	// AuditActionIssueClosed is recorded when the issue-request watcher closes
+	// an issue on an agent's behalf after the reporter-confirmation gate passes
+	// or an explicit override reason has been posted.
+	AuditActionIssueClosed = "agent_issue_closed"
 	// AuditActionPRReviewed is recorded when the hive submits a PR review as the
 	// App bot: the review-request watcher on an agent's behalf, or the governor's
 	// own auto-merge APPROVE (QueuePRAutoMerge). Detail carries state=

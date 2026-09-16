@@ -66,17 +66,20 @@ const issueRequestMaxAge = 24 * time.Hour
 // an existing issue or PR (Number required); "claim" marks an issue as taken by
 // the agent (Number required) — it applies a `hive/claimed-by-<agent>` LABEL
 // rather than a GitHub assignee, because the hive authors as an App bot and App
-// bots are not valid GitHub assignees (Issues.AddAssignees silently drops them).
-// The claim is filed by the agent when it starts work on an issue, giving a
-// visible, auditable ownership signal the hive can observe.
+// bots are not valid GitHub assignees (Issues.AddAssignees silently drops them);
+// "close" closes an issue only after the reporter-confirmation gate passes or
+// OverrideReason records an explicit maintainer override.
 type IssueRequest struct {
-	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim"
+	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim" | "close"
 	Repo   string   `json:"repo"`
 	Title  string   `json:"title,omitempty"` // issue only
 	Body   string   `json:"body,omitempty"`
 	Labels []string `json:"labels,omitempty"` // issue only
-	Number int      `json:"number,omitempty"` // comment/claim: issue/PR number
+	Number int      `json:"number,omitempty"` // comment/claim/close: issue/PR number
 	Agent  string   `json:"agent,omitempty"`
+	// OverrideReason is required to deliberately close a human-filed bug-family
+	// issue before reporter confirmation (duplicate, not-a-bug, reporter asked).
+	OverrideReason string `json:"override_reason,omitempty"` // close only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -290,9 +293,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		} else if issueBodyHasMisEscapedNewlines(req.Body) {
 			shapeErr = "comment request body contains literal newline escape sequences; use real newlines or --body-file"
 		}
-	case "claim":
+	case "claim", "close":
 		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || strings.TrimSpace(req.Agent) == "" {
-			shapeErr = "claim request requires repo, number, and agent"
+			shapeErr = kind + " request requires repo, number, and agent"
 		}
 	default:
 		shapeErr = "unknown kind " + strconv.Quote(kind)
@@ -360,6 +363,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.OK = true
 			resp.Number = req.Number
 		}
+	case "close":
+		err = c.CloseIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
+		if err == nil {
+			resp.OK = true
+			resp.Number = req.Number
+		}
 	default: // "issue"
 		var res CreateIssueResult
 		res, err = c.CreateIssue(ctx, req.Repo, req.Title, body, req.Labels)
@@ -416,12 +425,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		action = AuditActionAgentCommentCreated
 	case "claim":
 		action = AuditActionIssueClaimed
+	case "close":
+		action = AuditActionIssueClosed
 	}
 	c.recordCreationAudit(action, meta,
 		"repo", req.Repo,
 		"number", strconv.Itoa(resp.Number),
 		"url", resp.URL,
-		"reused", strconv.FormatBool(resp.AlreadyExisted))
+		"reused", strconv.FormatBool(resp.AlreadyExisted),
+		"override_reason", req.OverrideReason)
 	c.writeIssueResult(path, resp)
 	_ = os.Remove(path)
 	c.issueClearRetry(path)

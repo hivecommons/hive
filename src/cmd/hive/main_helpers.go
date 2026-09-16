@@ -1904,14 +1904,30 @@ func loginScanVerdict(matched, credentialValid bool, sightings int) loginScanAct
 	return loginScanPause
 }
 
+type loginScanAgentManager interface {
+	AllStatuses() map[string]*agent.AgentProcess
+	GetOutput(name string, lines int) ([]string, error)
+	AgentHasValidCredential(agentName string) bool
+	RefreshAgentTokenFor(ctx context.Context, name string) error
+	Pause(name, trigger, reason string) error
+}
+
+type loginScanNotifier interface {
+	Send(title, message string, priority notify.Priority)
+}
+
+type loginScanAuditor interface {
+	AuditLog(user, action, detail, agent string)
+}
+
 // scanForLoginRequired checks each running agent's tmux pane output for login-required
 // patterns. When a match is found, the agent is paused and a notification is sent.
 func scanForLoginRequired(
 	ctx context.Context,
 	cfg *config.Config,
-	agentMgr *agent.Manager,
-	notifier *notify.Notifier,
-	dashSrv *dashboard.Server,
+	agentMgr loginScanAgentManager,
+	notifier loginScanNotifier,
+	dashSrv loginScanAuditor,
 	logger *slog.Logger,
 	sightings *loginSightingTracker,
 ) {

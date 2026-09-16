@@ -1,5 +1,5 @@
 #!/bin/bash
-# hive-open-issue.sh — create an issue (or post a comment) via the HIVE, not gh.
+# hive-open-issue.sh — create/comment/close an issue via the HIVE, not gh.
 #
 # Agents call this INSTEAD of `gh issue create` / `gh issue comment`. It writes
 # a request file that the hive's issue-request watcher executes with the App
@@ -19,14 +19,20 @@
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
+#   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #
 # "claim" records that this agent is starting work on an issue: the watcher
 # applies a `hive/claimed-by-<agent>` LABEL (App bots cannot be GitHub
 # assignees, so a label is the visible, auditable ownership signal) and audits
 # it as agent_issue_claimed. No body/title needed.
 #
-# On success it prints the request path and returns 0. The issue/comment is
-# created asynchronously (within one ~10s watcher tick); poll the .result.json
+# "close" routes manual issue closes through the same reporter-confirmation gate
+# as PR-request closing keywords. Human-filed bug-family issues stay open unless
+# they carry the reporter-confirmed marker or the request includes an explicit
+# --override-reason for legitimate duplicate/not-a-bug/reporter-requested closes.
+#
+# On success it prints the request path and returns 0. The issue/comment/close is
+# fulfilled asynchronously (within one ~10s watcher tick); poll the .result.json
 # next to the request for the number/URL.
 
 set -euo pipefail
@@ -37,9 +43,11 @@ KIND="issue"
 case "${1:-}" in
   comment) KIND="comment"; shift;;
   claim) KIND="claim"; shift;;
+  close) KIND="close"; shift;;
 esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
+OVERRIDE_REASON=""
 LABELS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,19 +57,21 @@ while [ $# -gt 0 ]; do
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --label|-l) LABELS+=("$2"); shift 2;;
     --number) NUMBER="$2"; shift 2;;
+    --override-reason) OVERRIDE_REASON="$2"; shift 2;;
     --repo=*) REPO="${1#*=}"; shift;;
     --title=*) TITLE="${1#*=}"; shift;;
     --body=*) BODY="${1#*=}"; shift;;
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --label=*) LABELS+=("${1#*=}"); shift;;
     --number=*) NUMBER="${1#*=}"; shift;;
+    --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
     --assignee|-a|--milestone|-m|--project|-p|--template|-T) shift 2;;
     --web|-w|--editor|-e) shift;;
     *)
       # A bare positional for a comment/claim is the issue/PR number or URL.
-      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ]; } && [ -z "$NUMBER" ]; then
+      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ]; } && [ -z "$NUMBER" ]; then
         case "$1" in
           http://*|https://*) NUMBER="$(printf '%s' "$1" | sed -n 's#.*/\(issues\|pull\)/\([0-9][0-9]*\).*#\2#p')";;
           [0-9]*) NUMBER="$1";;
@@ -90,10 +100,10 @@ if [ "$KIND" = "issue" ]; then
     echo "hive-open-issue: --repo, --title, and --body are required" >&2
     exit 2
   fi
-elif [ "$KIND" = "claim" ]; then
-  # A claim just needs the issue to point at — no body/title.
+elif [ "$KIND" = "claim" ] || [ "$KIND" = "close" ]; then
+  # A claim/close just needs the issue to point at — no body/title.
   if [ -z "$REPO" ] || [ -z "$NUMBER" ]; then
-    echo "hive-open-issue: claim requires --repo and a number (or URL)" >&2
+    echo "hive-open-issue: $KIND requires --repo and a number (or URL)" >&2
     exit 2
   fi
 else
@@ -128,7 +138,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 LABELS_JSON="$(printf '%s\n' "${LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "$BODY" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" <<'PY'
 import json, os, sys
 temporary, path, kind, repo, title, body, agent, labels, number = sys.argv[1:10]
 labels = [part.strip() for value in json.loads(labels)
@@ -141,6 +151,10 @@ elif kind == "claim":
     # The watcher applies the hive/claimed-by-<agent> label; number is all it
     # needs. No body/title/labels.
     req["number"] = int(number)
+elif kind == "close":
+    req["number"] = int(number)
+    if body:
+        req["override_reason"] = body
 else:
     req["title"] = title
     req["body"] = body
@@ -156,6 +170,8 @@ if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
 elif [ "$KIND" = "claim" ]; then
   echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"
+elif [ "$KIND" = "close" ]; then
+  echo "hive-open-issue: requested close of $REPO#$NUMBER as the App bot"
 else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
 fi

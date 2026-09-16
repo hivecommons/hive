@@ -1149,6 +1149,17 @@ if [[ -n "$AGENT_NAME" ]]; then
       fi
       exit $exit_code
       ;;
+    issue/close)
+      # Route direct/manual closes through the hive so the same
+      # reporter-confirmation gate that downgrades unsafe PR `Closes #N`
+      # references also covers `gh issue close`. Legitimate early closes use the
+      # deliberate hive-open-issue close --override-reason path, which posts the
+      # reason before closing.
+      if ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        exec hive-open-issue close "${args[@]}"
+      fi
+      exec "$REAL_GH" "$@"
+      ;;
   esac
 fi
 

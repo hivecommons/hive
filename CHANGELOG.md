@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-15 (v4.37.2)
+
+### Fixed
+
+- The reporter-confirmation close gate now asks a human reporter to confirm a fix once rather than on every blocked close attempt ([#7125](https://github.com/hivecommons/hive/issues/7125)): a retrying agent, or several agents converging on the same issue, no longer pile up duplicate confirmation requests and re-notify the reporter each time, while the gate's verdict is unchanged — the close is still refused and the issue still stays open — and an unreadable comment list still posts the request rather than closing with no visible explanation.
+
+## 2026-09-15 (v4.37.1)
+
+### Changed
+
+- Changed the login-required detector to scan through a narrow test seam, preserving production tmux behavior while making the per-agent pause, defer, credential, and error paths directly provable.
+
+### Fixed
+
+- Human-filed bug reports are now protected from premature manual closure as well as merge-driven auto-closure ([#7125](https://github.com/hivecommons/hive/issues/7125)): App-bot issue closes go through the same reporter-confirmation detector that rewrites unsafe `Closes #N` references, leave the issue open with a confirmation request when the reporter has not signed off, and require an explicit timeline-recorded override for duplicate, not-a-bug, or reporter-requested closures.
+
 ## 2026-09-15 (v4.37.0)
 
 ### Added

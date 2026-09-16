@@ -245,10 +245,10 @@ const humanFiledBugConfirmationMarker = "hive: reporter-confirmed"
 // Scope. This gate ONLY applies to bugs filed by HUMANS. An agent's own
 // bug-labeled finding — always stamped with AttributionTrailerPrefix, and
 // often authored by an App/Bot account — is not affected: the App bot may
-// still Closes # those, since the reporter is itself. See isHumanFiledBugReport
+// still Closes # those, since the reporter is itself. See IsHumanFiledBugReport
 // for the exact detector.
 func humanFiledBugReason(issue *gh.Issue) string {
-	if !isHumanFiledBugReport(issue) {
+	if !IsHumanFiledBugReport(issue) {
 		return ""
 	}
 	if hasReporterConfirmation(issue) {
@@ -277,7 +277,7 @@ func normalizeBugLabelName(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "")
 }
 
-// isHumanFiledBugReport reports whether issue is a bug filed by a human. Three
+// IsHumanFiledBugReport reports whether issue is a bug filed by a human. Three
 // conservative signals combine — a missing signal returns false so we never
 // gate agent-filed findings (which are safe to auto-close, since the reporter
 // is the hive itself):
@@ -295,7 +295,7 @@ func normalizeBugLabelName(name string) string {
 // All three must hold. Missing any one keeps current auto-close behaviour, so
 // the gate is fail-open on ambiguity by design: an agent's bug finding stays
 // closeable, and a maintainer's bug is protected.
-func isHumanFiledBugReport(issue *gh.Issue) bool {
+func IsHumanFiledBugReport(issue *gh.Issue) bool {
 	if issue == nil {
 		return false
 	}
