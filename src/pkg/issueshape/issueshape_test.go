@@ -48,3 +48,33 @@ func TestBodyHasMisEscapedNewlines(t *testing.T) {
 		})
 	}
 }
+
+// TestComparisonProseIsNotAPlaceholder pins the fix for the false positive
+// found while wiring pkg/github's CreateIssue guard onto this validator
+// (#7184). A sentence containing two comparison operators yields an
+// angle-bracket span whose contents are a multi-word lowercase phrase once
+// the surrounding spaces are removed -- "a < b and c > d" gives "< b and c >".
+// Trimming that span made ordinary prose look exactly like an unfilled
+// template and refused the filing on both the watcher and the proxy paths.
+func TestComparisonProseIsNotAPlaceholder(t *testing.T) {
+	for _, in := range []string{
+		"holds when a < b and c > d in practice",
+		"the value a < b and c > d holds",
+		"assert that x < y and y > z before the sweep runs",
+	} {
+		if got, ok := UnsubstitutedTemplatePlaceholder(in); ok {
+			t.Errorf("UnsubstitutedTemplatePlaceholder(%q) = %q, true; comparison prose is not a placeholder", in, got)
+		}
+	}
+
+	// The tight form is still a placeholder, so the fix cannot be a blanket
+	// escape hatch for anything containing a space.
+	for _, in := range []string{
+		"## Gap\n\n<what is missing or incorrect>\n",
+		"<specific description of the documentation gap>",
+	} {
+		if _, ok := UnsubstitutedTemplatePlaceholder(in); !ok {
+			t.Errorf("UnsubstitutedTemplatePlaceholder(%q) = false; a tight multi-word span is still a placeholder", in)
+		}
+	}
+}

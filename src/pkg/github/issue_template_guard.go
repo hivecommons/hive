@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/issueshape"
 )
 
 // Unfilled-template gate (#7153).
@@ -120,7 +122,18 @@ func titlePlaceholder(s string) (string, bool) {
 
 // bodyPlaceholder applies the conservative multi-word rule appropriate to a
 // markdown body.
+//
+// It consults pkg/issueshape FIRST, so the body rule on this path is a
+// superset of the one the watcher and the proxy enforce and can never be
+// laxer than they are. That matters concretely: issueshape special-cases the
+// bare tokens <analysis> and <fix>, which the multi-word rule below cannot
+// match, and those are exactly the body #7141 was filed with. Before this
+// delegation, an issue created through CreateIssue was stopped by its title
+// alone and its body went unchecked.
 func bodyPlaceholder(s string) (string, bool) {
+	if span, ok := issueshape.UnsubstitutedTemplatePlaceholder(s); ok {
+		return span, true
+	}
 	return findPlaceholder(s, placeholderSpanMultiWord)
 }
 

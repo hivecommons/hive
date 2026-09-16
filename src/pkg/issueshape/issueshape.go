@@ -40,7 +40,16 @@ func UnsubstitutedTemplatePlaceholder(text string) (string, bool) {
 		if len(match) != 2 {
 			continue
 		}
-		content := strings.TrimSpace(match[1])
+		// A real placeholder is written tight: <like this>. Requiring no
+		// surrounding whitespace is what separates it from a sentence that
+		// merely contains two comparison operators -- "holds when a < b and
+		// c > d in practice" yields the span "< b and c >", which trimming
+		// would turn into the multi-word phrase "b and c" and refuse. That
+		// sentence is ordinary prose and must be allowed through.
+		if strings.TrimSpace(match[1]) != match[1] {
+			continue
+		}
+		content := match[1]
 		if content == "" || strings.Contains(content, "://") || strings.ContainsAny(content, "/=,") {
 			continue
 		}

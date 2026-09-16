@@ -247,9 +247,22 @@ func TestTitlePlaceholderAlsoCatchesSingleWordSpans(t *testing.T) {
 // asymmetry so a later "tighten the body rule too" change has to argue with a
 // failing test rather than silently widening the false-positive surface.
 func TestBodyRuleStaysConservativeAboutSingleWords(t *testing.T) {
-	for _, in := range []string{"<analysis>", "<fix>", "<details>", "<https://example.com>"} {
+	// The local multi-word rule must not fire on a lone token: a body is
+	// markdown, where a single angle-bracket word is routinely legitimate.
+	for _, in := range []string{"<foobar>", "<details>", "<https://example.com>"} {
 		if got, ok := bodyPlaceholder(in); ok {
 			t.Errorf("bodyPlaceholder(%q) = %q, true; the body rule must require two or more words", in, got)
+		}
+	}
+
+	// <analysis> and <fix> are the exception, and they are refused by the
+	// SHARED validator in pkg/issueshape rather than by the rule above. They
+	// are named policy-template tokens, not ordinary prose, and #7141 was
+	// filed with exactly that body. Consulting issueshape first keeps this
+	// path from being laxer than the watcher and the proxy.
+	for _, in := range []string{"<analysis>", "<fix>"} {
+		if _, ok := bodyPlaceholder(in); !ok {
+			t.Errorf("bodyPlaceholder(%q) = false; the shared issueshape rule must still refuse the named template tokens", in)
 		}
 	}
 }
@@ -263,9 +276,22 @@ func TestValidateIssueTemplateRejectsIssue7141AsFiled(t *testing.T) {
 		t.Errorf("error %q should name the offending title placeholder", err)
 	}
 
-	// Even with the title fixed, the literal-escape body must still be refused,
-	// so a partial correction cannot sneak an empty skeleton through.
+	// Even with the title fixed, the skeleton body must still be refused, so a
+	// partial correction cannot sneak an empty issue through. It now trips the
+	// placeholder rule first -- via the shared pkg/issueshape validator, which
+	// names <analysis>/<fix> -- where before only the literal-escape check
+	// stood in the way.
 	err = validateIssueTemplateFilled("[scanner] the spoke scanner misreports idle sessions", issue7141Body)
+	if err == nil {
+		t.Fatal("validateIssueTemplateFilled() = nil, want an error for the skeleton body")
+	}
+
+	// And the literal-escape check must still stand on its own, for a body
+	// carrying no placeholder at all.
+	err = validateIssueTemplateFilled(
+		"[scanner] the spoke scanner misreports idle sessions",
+		`## Finding\n\nThe scanner counts detached clients.\n\n## Recommendation\n\nParse the client count.`,
+	)
 	if err == nil {
 		t.Fatal("validateIssueTemplateFilled() = nil, want an error for the literal-escape body")
 	}

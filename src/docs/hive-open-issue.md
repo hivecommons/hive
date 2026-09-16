@@ -119,22 +119,12 @@ validators in `pkg/issueshape` (see
   is rejected: an agent that copied a template line without substituting it
   has nothing worth filing. The matcher is deliberately narrow so legitimate
   angle-bracket constructs still pass: URLs, generic type parameters
-  (`Result<T, E>`), tokens containing `/`, `=`, or `,`, and recognized
+  (`Result<T, E>`), tokens containing `/`, `=`, or `,`, recognized
   GitHub-flavored-Markdown HTML tags including attribute forms
-  (`<details open>`, `<img src=…>`).
-
-  **Titles are held to a stricter rule than bodies**
-  ([#7141](https://github.com/hivecommons/hive/issues/7141)). At the
-  `CreateIssue` step, `validateIssueTemplateFilled`
-  (`src/pkg/github/issue_template_guard.go`) refuses a title carrying **any**
-  single lowercase word of three or more characters inside `<…>` — not just
-  the named tokens above — subject to the same HTML-element skip list, so
-  `List<t>` and `<br>` pass. The rationale is the medium: a title is plain
-  text that renders no markup, carries no autolinks, and holds no code, so
-  `<somename>` in a title is a placeholder in a way it is not in a body. The
-  body rule stays conservative (two or more words, or the named tokens),
-  because a lone `<word>` in a markdown body is far likelier to be markup
-  than a placeholder, and this guard fails closed.
+  (`<details open>`, `<img src=…>`), and ordinary prose containing comparison
+  operators — *"holds when a < b and c > d"* spans `< b and c >`, which is not
+  a placeholder because a real one is written tight, with no space inside the
+  brackets.
 - **Mis-escaped newlines.** A body that is a single physical line whose
   markdown structure was encoded as literal `\n` escape sequences (the
   classic `## X\n\n…\n\n## Y` specimen, typically from shell-quoting a
@@ -156,13 +146,67 @@ reason including the offending placeholder token.
 the same two validators on issue and comment create/edit routes, denying the
 request with the same actionable reason before it leaves the sandbox.
 `pkg/issueshape` is the single source of truth for those two enforcement
-points, so their rules cannot drift apart. The stricter title rule, however,
-lives separately in `pkg/github/issue_template_guard.go` and runs only at
-`CreateIssue` — the watcher path. Two asymmetries follow: a single-word title
-placeholder other than `<analysis>`/`<fix>` is caught on the watcher path but
-**not** on the raw `gh issue create` proxy path, and a body larger than the
-proxy's buffering limit is forwarded unchecked rather than truncated — the
-watcher path has no such bypass.
+points, so their rules cannot drift apart. One asymmetry to know about: a body
+larger than the proxy's buffering limit is forwarded unchecked rather than
+truncated — the watcher path has no such bypass.
+
+### A third enforcement point, with a stricter title rule
+
+`CreateIssue` — the hive's own programmatic creation path in
+`src/pkg/github/issue_request_watcher.go` — applies a **separate** guard,
+`validateIssueTemplateFilled` in `src/pkg/github/issue_template_guard.go`,
+added for [#7153](https://github.com/hivecommons/hive/issues/7153) and
+tightened for [#7141](https://github.com/hivecommons/hive/issues/7141). It runs
+alongside `validateRepoRef`, before the dedupe and rejected-twin gates, and
+like them it **fails closed**.
+
+It enforces the same two ideas as `pkg/issueshape` but is implemented
+independently, with its own regexes and its own HTML-element skip list. The
+behavioural difference worth knowing is that it **holds a title to a stricter
+standard than a body**:
+
+| span | in a **title** | in a **body** |
+| --- | --- | --- |
+| `<specific description of the gap>` | refused | refused |
+| `<analysis>`, `<fix>` | refused | refused (via the shared `pkg/issueshape` rule) |
+| `<foobar>` (any single lowercase word, 3+ chars) | **refused** | **allowed** |
+| `<br>`, `<td>`, `<details>` (known HTML elements) | allowed | allowed |
+| `<t>` (under 3 chars) | allowed | allowed |
+
+The asymmetry is deliberate. A GitHub issue **title is plain text** — it
+renders no markup, carries no autolinks and holds no code — so a bare
+`<foobar>` there is almost certainly an unsubstituted placeholder. A **body**
+is Markdown, where a lone angle-bracket token is routinely legitimate, so the
+body rule stays conservative and requires two or more lowercase words. The
+residual risk on the title side is a title that genuinely names a tag
+(*"support `<html>` tags"*); the refusal names the exact span it objected to
+and rewording is cheap.
+
+> [!IMPORTANT]
+> Because this third point is implemented separately rather than wholly on
+> `pkg/issueshape`, the claim above that "the rules cannot drift apart" covers
+> the watcher and proxy in full, and `CreateIssue` only in part.
+>
+> The body rule here now **delegates to `pkg/issueshape` first** and falls back
+> to its own multi-word rule, so it can never be laxer than the other two
+> points. That closed a real gap: `pkg/issueshape` refuses the bare tokens
+> `<analysis>` and `<fix>` anywhere, the local multi-word rule cannot match a
+> single word, and so before the delegation a body of exactly the
+> [#7141](https://github.com/hivecommons/hive/issues/7141) shape went unchecked
+> on this path — only its title stopped it.
+>
+> Two differences remain, both narrow:
+>
+> 1. The title rule has no counterpart in `pkg/issueshape`; it lives only
+>    here.
+> 2. The mis-escaped-newline check here requires only *no real newline plus
+>    two or more literal `\n`*, without `pkg/issueshape`'s additional
+>    `\n\n` / `\n## ` structure requirement — so this path is the stricter of
+>    the two.
+>
+> Moving the title rule onto `pkg/issueshape` as a second exported validator
+> would finish the job. Until then, **a change to the title rule or to the
+> escape check must be considered against both implementations.**
 
 ### Idempotency
 
