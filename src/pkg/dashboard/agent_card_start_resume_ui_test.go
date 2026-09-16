@@ -77,7 +77,7 @@ func TestCombinedActionPreservesResumeLeads(t *testing.T) {
 	for _, snippet := range []string{
 		// Grid: paused leads (same structural pin as TestAgentCardResumeLeads),
 		// now delegating to the shared helper.
-		"const toggleBtn = canToggle ? (isPaused && canPauseToggle\n          ? pausedAgentActionHtml(a)",
+		"const toggleBtn = (canToggle && !agentIsDisabled(a)) ? (isPaused && canPauseToggle\n          ? pausedAgentActionHtml(a)",
 		// Detail panel: paused checked before the off/start branch.
 		": isPaused\n            ? pausedAgentActionHtml(a)",
 		// Detail fast path: paused rebuilds via the helper so data-action

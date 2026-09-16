@@ -131,10 +131,14 @@ func TestAgentCardRendersAllBlockersAtOnce(t *testing.T) {
 
 func TestAgentCardResumeLeads(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, "const toggleBtn = canToggle ? (isPaused && canPauseToggle") {
+	// The disabled gate ("is this agent switched on at all?") sits OUTSIDE the
+	// ordering this test guards: it suppresses the whole scheduling toggle,
+	// rather than competing with paused for the slot. Resume must still lead
+	// among the states that remain.
+	if !strings.Contains(html, "const toggleBtn = (canToggle && !agentIsDisabled(a)) ? (isPaused && canPauseToggle") {
 		t.Error("a paused agent's card must offer resume FIRST — the cadence gear must not take the slot")
 	}
-	if strings.Contains(html, "const toggleBtn = canToggle ? (isOff") {
+	if strings.Contains(html, "const toggleBtn = (canToggle && !agentIsDisabled(a)) ? (isOff") {
 		t.Error("isOff still leads the card toggle, so a pause can hide behind it")
 	}
 	if !strings.Contains(html, "return `${base}. Resuming alone is NOT enough: ${rest.join('; ')}.`;") {
