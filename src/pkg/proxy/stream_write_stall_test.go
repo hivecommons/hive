@@ -22,7 +22,9 @@ func (s *slowBody) Read(p []byte) (int, error) {
 	if s.left == 0 {
 		return 0, io.EOF
 	}
-	time.Sleep(s.tick)
+	// Deliberate pacing, not a condition wait: this models a generation that
+	// produces one token-chunk per tick, which is the very thing under test.
+	<-time.After(s.tick)
 	s.left--
 	return copy(p, s.chunk), nil
 }
@@ -153,7 +155,8 @@ func TestStallBoundedWriter_ReArmsEveryWrite(t *testing.T) {
 			t.Fatalf("write %d failed after %v of steady progress: %v", writes, time.Since(deadline), err)
 		}
 		writes++
-		time.Sleep(40 * time.Millisecond)
+		// Deliberate pacing under the idle bound — the spacing IS the test.
+		<-time.After(40 * time.Millisecond)
 	}
 	if writes < 5 {
 		t.Fatalf("expected sustained writes past the idle bound, got %d", writes)
