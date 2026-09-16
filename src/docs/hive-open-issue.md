@@ -122,6 +122,19 @@ validators in `pkg/issueshape` (see
   (`Result<T, E>`), tokens containing `/`, `=`, or `,`, and recognized
   GitHub-flavored-Markdown HTML tags including attribute forms
   (`<details open>`, `<img src=…>`).
+
+  **Titles are held to a stricter rule than bodies**
+  ([#7141](https://github.com/hivecommons/hive/issues/7141)). At the
+  `CreateIssue` step, `validateIssueTemplateFilled`
+  (`src/pkg/github/issue_template_guard.go`) refuses a title carrying **any**
+  single lowercase word of three or more characters inside `<…>` — not just
+  the named tokens above — subject to the same HTML-element skip list, so
+  `List<t>` and `<br>` pass. The rationale is the medium: a title is plain
+  text that renders no markup, carries no autolinks, and holds no code, so
+  `<somename>` in a title is a placeholder in a way it is not in a body. The
+  body rule stays conservative (two or more words, or the named tokens),
+  because a lone `<word>` in a markdown body is far likelier to be markup
+  than a placeholder, and this guard fails closed.
 - **Mis-escaped newlines.** A body that is a single physical line whose
   markdown structure was encoded as literal `\n` escape sequences (the
   classic `## X\n\n…\n\n## Y` specimen, typically from shell-quoting a
@@ -142,10 +155,14 @@ reason including the offending placeholder token.
 [#7014](https://github.com/hivecommons/hive/issues/7014)) the proxy enforces
 the same two validators on issue and comment create/edit routes, denying the
 request with the same actionable reason before it leaves the sandbox.
-`pkg/issueshape` is the single source of truth for both enforcement points,
-so the rules cannot drift apart. One asymmetry to know about: a body larger
-than the proxy's buffering limit is forwarded unchecked rather than
-truncated — the watcher path has no such bypass.
+`pkg/issueshape` is the single source of truth for those two enforcement
+points, so their rules cannot drift apart. The stricter title rule, however,
+lives separately in `pkg/github/issue_template_guard.go` and runs only at
+`CreateIssue` — the watcher path. Two asymmetries follow: a single-word title
+placeholder other than `<analysis>`/`<fix>` is caught on the watcher path but
+**not** on the raw `gh issue create` proxy path, and a body larger than the
+proxy's buffering limit is forwarded unchecked rather than truncated — the
+watcher path has no such bypass.
 
 ### Idempotency
 
