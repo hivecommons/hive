@@ -1,0 +1,40 @@
+# hivecommons/hive#7206 — point the runners at the image that carries the CI
+# toolchain.
+#
+# Strategic-merge patch against the live RunnerDeployment/hivecommons-hive-runners
+# in namespace `arc-systems`. Kept as a patch, not a full manifest, for the same
+# reason as runnerdeployment-patch.yaml: the RunnerDeployment is not otherwise
+# managed from this repository, and committing the whole object would invite a
+# `kubectl apply` that clobbers replica counts and the GitHub credentials wiring.
+#
+# Build and push the image first (see README.md § "Baking the CI toolchain"),
+# then:
+#
+#   kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
+#     --type merge --patch-file src/deploy/ci-runners/runner-image-patch.yaml
+#
+# Applying this rolls all runner pods, so do it while runners are idle.
+#
+# ── Set the tag before applying ─────────────────────────────────────────────
+#
+# `image` below is a PLACEHOLDER. Replace it with the registry path and
+# immutable tag you actually pushed. Prefer a digest (`@sha256:...`) or a
+# unique tag over `:latest`: ARC does not re-pull on a tag that has not
+# changed, so a mutable tag makes "which toolchain is on the runners?"
+# unanswerable from the cluster.
+#
+# ── Rollback ────────────────────────────────────────────────────────────────
+#
+# Remove the image override to fall back to the stock image:
+#
+#   kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
+#     --type json -p '[{"op":"remove","path":"/spec/template/spec/image"}]'
+#
+# CI keeps working after a rollback — ci-install-tool.sh simply goes back to
+# installing gcc over the network, with the #6648/#6870 failure mode it has
+# always had. Nothing in .github/ depends on this image existing.
+spec:
+  template:
+    spec:
+      # REPLACE before applying — see note above.
+      image: ghcr.io/hivecommons/hive-ci-runner:REPLACE_ME
