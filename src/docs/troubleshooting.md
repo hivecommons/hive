@@ -165,7 +165,7 @@ On GitHub Enterprise, a 404 from the install link usually means the hive is poin
 
 Since v4.1.0 ([#5594](https://github.com/hivecommons/hive/issues/5594)) the dashboard agent card states **every** reason an agent will not run at once, so read it before reaching for `tmux`. Under the card state (and on the ops-center detail panel) is a blockers line with three segments:
 
-- **`session`** — `up` (live tmux session), `down` (no live session; `↻ restart` asks the supervisor to respawn it), or `disabled` (disabled in config; the governor never starts it — enable it with ⚙️).
+- **`session`** — `up` (live tmux session), `down` (no live session; `↻ restart` asks the supervisor to respawn it), or `disabled` (disabled in config; the governor never starts it). Since [#7223](https://github.com/hivecommons/hive/issues/7223) re-enabling is one click: flip the **0/1 master-power switch** shown on the agent card, the ops-center detail panel, and the config dialog — it writes the agent's `enabled` flag (`PUT /api/config/agent/{name}/general`). Enablement is a separate axis from pause: disabling removes the agent from scheduling in every mode, so a disabled agent deliberately offers no pause/resume toggle — the power switch is its only control.
 - **`scheduling`** — the governor cadence for the current mode when the agent is kickable, or **every** live reason it is not, joined together (for example `paused + off in surge mode`). All of the listed reasons must be cleared; fixing one is not enough. On-demand agents show `on demand`.
 - **`next kick`** — an ETA (`in 12m`, `due now`) rather than a wall-clock time, or `never` while any scheduling blocker exists.
 
