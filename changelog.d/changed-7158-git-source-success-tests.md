@@ -1,0 +1,1 @@
+- Git-source connect and disconnect dashboard success paths now have a hermetic test seam for their knowledge storage root, so the config persistence logic that decides which repositories are re-cloned after restart is exercised without touching the production `/data/knowledge` directory or depending on a live remote.

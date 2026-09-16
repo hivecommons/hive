@@ -19,6 +19,17 @@ const localKnowledgeDir = "/data/knowledge"
 // temp-dir-backed ingestion.
 var knowledgeBaseDir = localKnowledgeDir
 
+// SetBaseDirForTest redirects package storage to dir for the lifetime of t.
+func SetBaseDirForTest(t interface {
+	Helper()
+	Cleanup(func())
+}, dir string) {
+	t.Helper()
+	old := knowledgeBaseDir
+	knowledgeBaseDir = dir
+	t.Cleanup(func() { knowledgeBaseDir = old })
+}
+
 // vaultsBaseDir is where user-created knowledge channels (vaults) are stored on
 // the spoke's data volume, one directory per channel. It mirrors the location the
 // bead synthesizer uses for its own vault. A var (not const) only so purge/create
