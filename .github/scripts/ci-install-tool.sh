@@ -109,10 +109,42 @@ if [ -n "$APT_CACHE_DIR" ]; then
   APT_ARCHIVES_DIR="${HIVE_CI_APT_ARCHIVES_DIR:-${APT_CACHE_DIR}/archives}"
 fi
 deadline_at=$(( $(date +%s) + APT_DEADLINE_SECONDS ))
+# Per-ATTEMPT sub-deadline, set by retry_network_phase before each attempt and
+# 0 when no attempt is in flight.
+#
+# The end-to-end ceiling above is what makes "the network cannot stall this step
+# for longer than this" true, and it stays true. On its own, though, it made
+# APT_ATTEMPTS a fiction in the one case retries exist for. An attempt that
+# fails FAST (connection refused) leaves most of the budget, so attempt 2 runs.
+# An attempt that fails by TIMING OUT consumes the entire budget by definition,
+# so the "is there budget left?" check below always answered no and the loop
+# returned after a single try — while the remediation still reported
+# APT_ATTEMPTS. Observed on run 35104548159:
+#
+#   ci-install-tool: apt network fetch attempt 1/3 failed with exit 124
+#   ci-install-tool: apt network fetch has 0s of network budget left; not starting another retry
+#   ##[error]... Tried apt network operations 3 time(s) ...
+#
+# A dead mirror and a momentarily slow one are indistinguishable at the first
+# timeout, and only the second is worth retrying — which is precisely the case
+# that could not happen. Giving each attempt an equal slice of what remains
+# (less the backoff gaps still owed) makes all APT_ATTEMPTS fit INSIDE the same
+# ceiling, so the promise is unchanged and the retries are real.
+attempt_deadline_at=0
 budget_remaining() {
-  local left=$(( deadline_at - $(date +%s) ))
+  local now left attempt_left
+  now=$(date +%s)
+  left=$(( deadline_at - now ))
+  if [ "$attempt_deadline_at" -gt 0 ]; then
+    attempt_left=$(( attempt_deadline_at - now ))
+    [ "$attempt_left" -lt "$left" ] && left="$attempt_left"
+  fi
   [ "$left" -gt 0 ] && echo "$left" || echo 0
 }
+
+# Number of network attempts actually STARTED, so the remediation reports what
+# happened rather than what was configured.
+apt_attempts_made=0
 
 # Emit the remediation block once, as a single ::error:: annotation (so it lands
 # on the job summary) followed by plain lines for the log.
@@ -122,7 +154,7 @@ fail_with_remediation() {
   # summary has to carry the whole diagnosis. The detail block below is for the
   # log.
   echo "::error::${require} is required for ${purpose} and could not be installed: ${what}." \
-"Tried apt network operations ${APT_ATTEMPTS} time(s) with ${APT_TIMEOUT_SECONDS}s per fetch against: $(apt_source_hosts)." \
+"Tried apt network operations ${apt_attempts_made} time(s) with ${APT_TIMEOUT_SECONDS}s per fetch against: $(apt_source_hosts)." \
 "On the self-hosted 'hive' runners this is normally lost egress to the Ubuntu mirrors (kubestellar/hive#6648/#6870)," \
 "not a fault in this workflow. See the log for remediations." >&2
   {
@@ -280,9 +312,25 @@ retry_network_phase() {
   local status=0
 
   while [ "$attempt" -le "$APT_ATTEMPTS" ]; do
-    echo "ci-install-tool: ${label} attempt ${attempt}/${APT_ATTEMPTS} (apt hosts: $(apt_source_hosts))" >&2
+    # Hand this attempt an equal share of what is left, minus the backoff gaps
+    # still owed to the attempts after it, so every remaining attempt fits
+    # inside the end-to-end ceiling instead of the first one eating all of it.
+    local overall_left remaining_attempts slice
+    overall_left=$(( deadline_at - $(date +%s) ))
+    remaining_attempts=$(( APT_ATTEMPTS - attempt + 1 ))
+    slice=$(( (overall_left - (remaining_attempts - 1) * APT_BACKOFF_SECONDS) / remaining_attempts ))
+    # A slice can compute to <=0 when the budget is nearly spent or when
+    # backoff dominates a small ceiling. Floor it at one second: a doomed
+    # one-second attempt still costs less than skipping straight to a hard
+    # failure the caller cannot distinguish from a dead mirror.
+    [ "$slice" -lt 1 ] && slice=1
+    attempt_deadline_at=$(( $(date +%s) + slice ))
+
+    echo "ci-install-tool: ${label} attempt ${attempt}/${APT_ATTEMPTS} (${slice}s of ${overall_left}s budget; apt hosts: $(apt_source_hosts))" >&2
+    apt_attempts_made=$(( apt_attempts_made + 1 ))
     "$@"
     status=$?
+    attempt_deadline_at=0
     if [ "$status" -eq 0 ]; then
       return 0
     fi
