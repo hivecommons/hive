@@ -547,7 +547,11 @@ func (w *InceptionWatcher) handlePlukEvent(event plukEvent) {
 			if phase == knowledge.PhaseStructure {
 				w.plukIdleInStructure = true
 				if len(w.plukFactLines) > 0 {
-					w.tryExtractFactsFromPluk(w.ctx, state)
+					// plukMu is held for this whole function, so the core is
+					// called directly: the lock-acquiring wrapper would
+					// re-enter a non-reentrant mutex and wedge this goroutine
+					// permanently (#7151).
+					w.tryExtractFactsFromPlukLocked(w.ctx, state)
 				} else {
 					// No fact lines from Pluk — auto-generate immediately
 					w.autoGenerateFacts(w.ctx, state)
@@ -1163,10 +1167,26 @@ func (w *InceptionWatcher) autoGenerateQuestions(state *knowledge.InceptionState
 // structure phase — the agent produced text about facts but didn't create
 // beads. This is a Pluk-driven alternative to the 60s auto-fact fallback:
 // it fires immediately on idle detection instead of waiting for a timeout.
+//
+// This is the variant for callers that do NOT already hold plukMu. Callers that
+// do — handlePlukEvent is the only one — must use tryExtractFactsFromPlukLocked
+// instead: plukMu is a sync.Mutex and is not reentrant, so acquiring it here
+// while the caller holds it self-deadlocks the Pluk subscriber goroutine for
+// the remaining life of the process (#7151).
 func (w *InceptionWatcher) tryExtractFactsFromPluk(ctx context.Context, state *knowledge.InceptionState) {
 	w.plukMu.Lock()
+	defer w.plukMu.Unlock()
+	w.tryExtractFactsFromPlukLocked(ctx, state)
+}
+
+// tryExtractFactsFromPlukLocked is the body of tryExtractFactsFromPluk.
+//
+// The caller MUST already hold w.plukMu; it is neither acquired nor released
+// here. Both plukFactLines accesses below — the snapshot at the top and the
+// clear at the bottom — are therefore unguarded reads/writes that are safe only
+// under that precondition.
+func (w *InceptionWatcher) tryExtractFactsFromPlukLocked(ctx context.Context, state *knowledge.InceptionState) {
 	factLines := append([]string{}, w.plukFactLines...)
-	w.plukMu.Unlock()
 
 	if len(factLines) == 0 || len(state.Answers) == 0 {
 		return
@@ -1226,9 +1246,7 @@ func (w *InceptionWatcher) tryExtractFactsFromPluk(ctx context.Context, state *k
 		"count", len(facts),
 		"source", "pluk-raw-output",
 	)
-	w.plukMu.Lock()
 	w.plukFactLines = nil
-	w.plukMu.Unlock()
 }
 
 // interceptFactsFromBuffer reads the tmux buffer and buffers fact-like

@@ -22,6 +22,10 @@ import (
 // tryExtractFactsFromPluk, which re-locks the same non-reentrant plukMu —
 // a test driving that branch self-deadlocks. That defect is tracked in its
 // own issue; a test pinning the fixed behaviour belongs with the fix.
+//
+// UPDATE (#7151): that deadlock is fixed — handlePlukEvent now calls
+// tryExtractFactsFromPlukLocked — and the branch IS covered below, by
+// TestPlukIdleInStructureExtractsBufferedFactLines.
 
 // plukIdleEvent is the state_change/idle event every retry-path test sends.
 func plukIdleEvent() plukEvent {
@@ -183,9 +187,107 @@ func TestPlukIdleInStructureFallsBackToAutoFacts(t *testing.T) {
 	}
 }
 
-// TestPlukIdleKickRetriesAfterGracePeriod pins the re-kick path: an idle event
-// in capture phase past the grace period must bump kickRetryCount, stamp
-// lastKickRetry, and send exactly one kick to the brainstorm agent.
+// TestPlukIdleInStructureExtractsBufferedFactLines pins the branch that used to
+// self-deadlock (#7151): idle during structure phase WITH buffered fact lines.
+//
+// handlePlukEvent holds plukMu for its whole body and used to call
+// tryExtractFactsFromPluk, which re-locked the same non-reentrant plukMu. The
+// Pluk subscriber goroutine wedged permanently, taking idle detection,
+// rate-limit tracking and bd-create interception down with it for the rest of
+// the process.
+//
+// The call is made on its own goroutine and joined with a timeout so a
+// regression fails this test in seconds with a clear message, rather than
+// hanging the package until the go test binary's global timeout fires and
+// dumps every goroutine in the process.
+func TestPlukIdleInStructureExtractsBufferedFactLines(t *testing.T) {
+	w, eng := structurePhaseWatcher(t, 3)
+
+	// Six distinct fact-type keywords, each over the 20-character minimum, so
+	// extraction clears minFactsForAdvance and takes the RecordFacts path
+	// rather than the insufficient-facts fallback to autoGenerateFacts.
+	w.plukMu.Lock()
+	w.plukFactLines = []string{
+		"Vision: deliver a coherent knowledge base for the team",
+		"Constitution: every decision is written down and reviewable",
+		"Requirement: the watcher must survive an agent going idle",
+		"Constraint: no external services beyond the existing forge",
+		"Stakeholder: the on-call engineer who reads these facts first",
+		"Acceptance: the inception advances without manual intervention",
+	}
+	w.plukMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.handlePlukEvent(plukIdleEvent())
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handlePlukEvent did not return within 10s — it self-deadlocked re-locking plukMu (#7151)")
+	}
+
+	w.plukMu.Lock()
+	idleInStructure := w.plukIdleInStructure
+	remaining := w.plukFactLines
+	w.plukMu.Unlock()
+
+	if !idleInStructure {
+		t.Fatal("plukIdleInStructure not set by an idle event during structure phase")
+	}
+	if remaining != nil {
+		t.Errorf("plukFactLines = %v, want nil — consumed lines must be cleared so they are not re-extracted", remaining)
+	}
+
+	st := eng.GetState()
+	if st == nil {
+		t.Fatal("inception state vanished")
+	}
+	if st.AutoFactCount == 0 {
+		t.Fatal("AutoFactCount = 0, want > 0 — no facts were recorded from the buffered lines")
+	}
+}
+
+// TestTryExtractFactsFromPlukWrapperTakesTheLock pins the other half of the
+// #7151 split: the exported-style wrapper must still be safe for a caller that
+// does NOT hold plukMu, since removing its locking entirely would trade a
+// deadlock for a data race.
+func TestTryExtractFactsFromPlukWrapperTakesTheLock(t *testing.T) {
+	w, _ := structurePhaseWatcher(t, 3)
+
+	w.plukMu.Lock()
+	w.plukFactLines = []string{
+		"Vision: deliver a coherent knowledge base for the team",
+		"Constitution: every decision is written down and reviewable",
+		"Requirement: the watcher must survive an agent going idle",
+		"Constraint: no external services beyond the existing forge",
+		"Stakeholder: the on-call engineer who reads these facts first",
+		"Acceptance: the inception advances without manual intervention",
+	}
+	w.plukMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Called WITHOUT holding plukMu, as the coverage test does.
+		w.tryExtractFactsFromPluk(context.Background(), w.inception.GetState())
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("tryExtractFactsFromPluk did not return within 10s")
+	}
+
+	w.plukMu.Lock()
+	remaining := w.plukFactLines
+	w.plukMu.Unlock()
+	if remaining != nil {
+		t.Errorf("plukFactLines = %v, want nil — the wrapper must clear consumed lines too", remaining)
+	}
+}
 func TestPlukIdleKickRetriesAfterGracePeriod(t *testing.T) {
 	mgr := newFakeInceptionAgentMgr(nil)
 	w := agedCaptureWatcher(t, mgr)
