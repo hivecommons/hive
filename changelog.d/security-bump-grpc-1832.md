@@ -1,0 +1,1 @@
+- Bumped the indirect `google.golang.org/grpc` dependency from v1.83.1 to v1.83.2 to resolve GO-2026-6443 (server panic via missing authority or Host headers); govulncheck shows the vulnerable symbols are not reachable from hive code, so this is defense in depth.

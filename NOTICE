@@ -4447,9 +4447,9 @@ Source:   https://github.com/googleapis/go-genproto/blob/08b0e4226688/googleapis
 -----------------------------------------------------------------------------
 
 Package:  google.golang.org/grpc
-Version:  v1.83.1
+Version:  v1.83.2
 License:  Apache-2.0
-Source:   https://github.com/grpc/grpc-go/blob/v1.83.1/LICENSE
+Source:   https://github.com/grpc/grpc-go/blob/v1.83.2/LICENSE
 
 
                                  Apache License
