@@ -1,0 +1,1 @@
+- Renamed the per-mode cadence label from "disabled in \<mode\>" to "no cadence in \<mode\>". `enabled` is a cross-mode flag, so reusing the word "disabled" for a per-mode schedule gap re-created the ambiguity the 0/1 power switch was added to remove. "disabled" now means the enablement axis only.

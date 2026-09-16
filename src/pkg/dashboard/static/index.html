@@ -6301,11 +6301,16 @@
        reads as master power, so an operator seeing it went looking for an on/off
        control and found none — the agent was enabled and unpaused the whole
        time, and the only lever was a per-mode interval buried in the config
-       dialog. Naming the mode says which lever to pull, and keeps "disabled"
-       alone (with the 0/1 switch beside it) meaning the enablement axis. */
+       dialog.
+
+       The wording deliberately avoids "disabled in <mode>". `enabled` is a
+       CROSS-MODE flag, so borrowing its word for a per-mode schedule gap
+       re-creates the exact ambiguity this is meant to remove. "no cadence in
+       <mode>" names the thing that is actually missing and points at the tab
+       that supplies it, leaving "disabled" to mean the 0/1 switch alone. */
     function agentCadenceOffLabel() {
       const mode = (window._lastStatus && window._lastStatus.governor && window._lastStatus.governor.mode || '').toLowerCase();
-      return mode ? `disabled in ${mode}` : 'disabled in this mode';
+      return mode ? `no cadence in ${mode}` : 'no cadence in this mode';
     }
     function agentPowerSwitchHtml(a) {
       const on = !agentIsDisabled(a);
@@ -7764,7 +7769,7 @@
           const colCls = isActive ? `col-active mode-${m}` : '';
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
-          const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. This is separate from the agent\'s 0/1 enable switch.">disabled</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
+          const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
           return `<td class="${colCls}${stateCls}" title="${esc(tip)}">${dot}${badge}</td>`;
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';

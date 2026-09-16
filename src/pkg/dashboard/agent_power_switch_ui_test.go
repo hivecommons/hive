@@ -101,15 +101,22 @@ func TestDisabledAgentOffersOnlyThePowerSwitch(t *testing.T) {
 // TestOffIsNamedByMode pins the vocabulary fix. A bare "off" reads as master
 // power, so an operator seeing it went looking for an on/off control and found
 // none — the agent was enabled and unpaused the whole time, and the only lever
-// was a per-mode interval. Naming the mode says which lever to pull and leaves
-// "disabled" free to mean the enablement axis the 0/1 switch controls.
+// was a per-mode interval. "no cadence in <mode>" names what is actually
+// missing and leaves "disabled" free to mean the cross-mode enablement axis
+// that the 0/1 switch controls.
 func TestOffIsNamedByMode(t *testing.T) {
 	html := indexHTML(t)
 	if !strings.Contains(html, "function agentCadenceOffLabel() {") {
 		t.Fatal("agentCadenceOffLabel must exist as the single source of the cadence-hold wording")
 	}
-	if !strings.Contains(html, "return mode ? `disabled in ${mode}` : 'disabled in this mode';") {
+	if !strings.Contains(html, "return mode ? `no cadence in ${mode}` : 'no cadence in this mode';") {
 		t.Error("the cadence hold must name the governor mode holding the agent")
+	}
+	// `enabled` is a CROSS-MODE flag. Borrowing the word "disabled" for a
+	// per-mode schedule gap re-creates the ambiguity this whole change removes,
+	// so the cadence label must never say it.
+	if strings.Contains(html, "`disabled in ${mode}`") {
+		t.Error("the cadence label must not reuse \"disabled\" — that word belongs to the cross-mode enabled flag")
 	}
 	// The card's state line, the detail header and the interval/next-kick
 	// fields all rendered a bare 'off'. The remaining `isOff ? 'off'` sites are
