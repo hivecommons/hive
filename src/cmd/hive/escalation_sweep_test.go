@@ -385,6 +385,7 @@ func TestRunEscalationSweepExhaustedWording(t *testing.T) {
 		if !store.TryReEngage("acme/widgets", 10, "frozen") {
 			t.Fatalf("re-engage %d should be allowed", i+1)
 		}
+		*clock = clock.Add(escalation.ReEngageCooldown + time.Minute)
 	}
 	got := runEscalationSweep(context.Background(), cfg, client, actionableWith(pr), nil, nil, logger)
 	if !got[escalation.Key("acme/widgets", 10)] {
