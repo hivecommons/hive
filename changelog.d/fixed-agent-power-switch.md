@@ -1,0 +1,4 @@
+- Agent cards and the cadence settings dialog now carry a 0/1 power switch for the agent's `enabled` flag, so enablement can be changed without hunting through the config dialog's General tab.
+- Fixed an inverted control: a cadence-held agent rendered "▶ start" wired to the pause toggle, so clicking it POSTed `/api/pause` and stopped the agent it offered to start. It now opens the Cadences tab, the only place that hold can be cleared.
+- Disabled agents no longer offer a pause button, which applied a temporary hold to an agent the governor already refuses to schedule.
+- Renamed the bare "off" shown on agent cards, in the governor cadence table and on the interval/next-kick fields to name the governor mode holding the agent (e.g. "disabled in surge"), leaving "disabled" to mean the enablement axis the new switch controls.

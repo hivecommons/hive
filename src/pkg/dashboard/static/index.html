@@ -1037,6 +1037,49 @@
     .agent-state.paused { color: var(--red); }
     .agent-state.on-demand { color: var(--indigo); }
     .agent-state.off { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
+    .agent-state.disabled { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
+    /* 0/1 power rocker for the agent `enabled` flag.
+
+       An agent can be dark for four independent reasons — it is disabled in
+       config, an operator paused it, the governor has no cadence for it in the
+       current mode, or its session is stopped. Rendering all four as words in
+       the same badge slot is what made them indistinguishable in practice: an
+       operator reading "off" could not tell which lever to pull, and the
+       enablement lever had no control at all outside a buried config tab.
+
+       A physical 1-over-0 rocker reads as master power and nothing else, so it
+       cannot be confused with the pause button beside it. The "off" position is
+       the DEFAULT (no class), and `.on` raises the lever, so the same markup
+       drives both the immediate card switch and the config dialog's dirty-bag
+       `toggleConfigSwitch`, which toggles exactly that class. */
+    .pwr-switch {
+      display: inline-flex; flex-direction: column; align-items: center;
+      justify-content: space-between; flex: none; position: relative;
+      width: 20px; height: 34px; padding: 2px 0;
+      border: 1px solid var(--border); border-radius: 3px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--fg) 8%, var(--bg)), var(--bg));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      cursor: pointer; vertical-align: middle;
+    }
+    .pwr-switch.readonly { cursor: default; opacity: 0.55; }
+    .pwr-switch .pwr-mark {
+      font-size: 0.5rem; line-height: 1; font-weight: 700;
+      color: var(--muted); z-index: 1; pointer-events: none;
+    }
+    .pwr-switch .pwr-lever {
+      position: absolute; left: 2px; right: 2px; top: 16px; height: 14px;
+      border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.35);
+      background: linear-gradient(180deg, #dcdcdc, #9a9a9a);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+      transition: top 0.12s ease, background 0.12s ease;
+      pointer-events: none;
+    }
+    .pwr-switch.on { border-color: color-mix(in srgb, var(--green) 55%, var(--border)); }
+    .pwr-switch.on .pwr-lever {
+      top: 2px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--green) 55%, #fff), var(--green));
+    }
+    .pwr-switch.on .pwr-mark:first-child { color: var(--green); }
     /* .status-badge — pill recipe; variants pick the color via --pill-c */
     .status-badge { font-weight: 700; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
     .status-badge.blocked { --pill-c: var(--red); }
@@ -4370,9 +4413,9 @@
         <div class="oc-detail-fields">
           <div class="oc-detail-field"><div class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${isInferenceBackendName(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${isInferenceBackendName(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.cadence || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(a.lastKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.nextKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(a.nextKick || '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
           <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
@@ -4443,7 +4486,7 @@
       /* 'disabled' outranks 'down': both reach here with state!=='running',
          but a switched-off agent is not a fault, and labelling it "down" sent
          operators looking for a crash that never happened. */
-      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
+      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? 'working' : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -4486,14 +4529,23 @@
             // resume' when the session is also down — so data-action tracks
             // the session state too, not just the label (#5594 follow-up).
             fastToggle.outerHTML = pausedAgentActionHtml(a);
+          } else if (isOff) {
+            // Cadence hold — same routing as the full render. This used to
+            // rebuild a '▶ start' wired to toggleAgent, which PAUSED the agent.
+            fastToggle.outerHTML = cadenceOffAgentActionHtml(a);
           } else {
-            fastToggle.className = `btn-toggle ${isOff ? 'off' : 'running'}`;
-            fastToggle.textContent = isOff ? '▶ start' : '⏸ pause';
+            fastToggle.className = 'btn-toggle running';
+            fastToggle.textContent = '⏸ pause';
             fastToggle.dataset.action = 'toggleAgent';
             fastToggle.dataset.paused = 'false';
-            fastToggle.title = agentToggleTitle(a, false, isOff);
+            fastToggle.title = agentToggleTitle(a, false, false);
           }
         }
+        // The master-power switch tracks `enabled` on every poll too, so an
+        // enablement change made elsewhere (config dialog, another browser,
+        // hive.yaml reload) is reflected without leaving the panel.
+        const fastPwr = detail.querySelector('.pwr-switch');
+        if (fastPwr) fastPwr.outerHTML = agentPowerSwitchHtml(a);
         // Same for the blockers line, the stat fields and the indicators — they
         // live outside the scroll region, so replacing them wholesale cannot
         // cause the scroll jumps the fast path exists to prevent.
@@ -4594,13 +4646,18 @@
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
-          ${isOnDemand
+          ${agentIsDisabled(a)
+            ? ''
+            : isOnDemand
             ? '<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>'
             : !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')
             ? ''
             : isPaused
             ? pausedAgentActionHtml(a)
-            : `<button class="btn-toggle ${isOff ? 'off' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, isOff))}">${isOff ? '▶ start' : '⏸ pause'}</button>`}
+            : isOff
+            ? cadenceOffAgentActionHtml(a)
+            : `<button class="btn-toggle running" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, false))}">⏸ pause</button>`}
+          ${agentPowerSwitchHtml(a)}
           ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>`)}
           ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
           ${sessionChip(a, '⬇ log', `<a href="${fullLogUrl(a.name, true)}" download class="terminal-link" data-action="openAuthenticatedLink" title="Download the full retained log of this agent's latest run as a text file">⬇ log</a>`)}
@@ -6225,6 +6282,45 @@
     function agentSessionUnavailable(a) {
       return agentIsDisabled(a) && a.state !== 'running';
     }
+    /* agentPowerSwitchHtml renders the master-power 0/1 rocker for an agent's
+       `enabled` flag.
+
+       This is a SHARED helper on purpose, mirroring pausedAgentActionHtml: the
+       switch renders on the card grid, on the detail panel and in the config
+       dialog, and the three drifted apart the last time each site spelled its
+       own affordance. A pin test counts the references so a new render site
+       cannot quietly hand-roll a fourth variant.
+
+       Enablement is deliberately NOT folded into the pause toggle. Pausing is
+       an operator hold the governor honours in every mode; disabling removes
+       the agent from scheduling altogether. They are stored separately and
+       clear separately, so they get separate controls. */
+    /* agentCadenceOffLabel names the mode that is actually holding the agent.
+
+       The per-mode cadence blocker used to render as a bare "off". That word
+       reads as master power, so an operator seeing it went looking for an on/off
+       control and found none — the agent was enabled and unpaused the whole
+       time, and the only lever was a per-mode interval buried in the config
+       dialog. Naming the mode says which lever to pull, and keeps "disabled"
+       alone (with the 0/1 switch beside it) meaning the enablement axis. */
+    function agentCadenceOffLabel() {
+      const mode = (window._lastStatus && window._lastStatus.governor && window._lastStatus.governor.mode || '').toLowerCase();
+      return mode ? `disabled in ${mode}` : 'disabled in this mode';
+    }
+    function agentPowerSwitchHtml(a) {
+      const on = !agentIsDisabled(a);
+      const who = a.displayName || a.name;
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const title = !canEdit
+        ? `${who} is ${on ? 'enabled' : 'disabled'}. Owner role is required to change it.`
+        : on
+          ? `${who} is enabled (1). Switch to 0 to disable it — the governor stops scheduling it in every mode, independently of pause.`
+          : `${who} is disabled (0). Switch to 1 to enable it — it returns to its configured per-mode cadences.`;
+      const action = canEdit
+        ? ` data-action="toggleAgentEnabled" data-agent="${esc(a.name)}" data-enabled="${on ? 'true' : 'false'}"`
+        : '';
+      return `<span class="pwr-switch${on ? ' on' : ''}${canEdit ? '' : ' readonly'}"${action} role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(who)} enabled" title="${esc(title)}"><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></span>`;
+    }
     /* Returns linkHtml unchanged for any agent that can have a session, and an
        inert chip carrying the reason for one that cannot. */
     function sessionChip(a, label, linkHtml) {
@@ -6596,7 +6692,11 @@
         if (rest.length === 0) return base;
         return `${base}. Resuming alone is NOT enough: ${rest.join('; ')}.`;
       }
-      if (isOff) return 'Start this agent \u2014 it is currently off in this governor mode';
+      // No caller passes isOff any more — cadenceOffAgentActionHtml owns that
+      // case and carries its own tooltip. Kept correct rather than deleted so a
+      // future caller cannot resurrect the old "Start this agent" lie, which
+      // described a button that actually POSTed /api/pause.
+      if (isOff) return 'This agent is enabled, but the governor has no cadence for it in the current mode (\u2699\uFE0F \u2192 Cadences)';
       return 'Pause this agent \u2014 stops governor from kicking it until resumed';
     }
     /* Combined primary action for a PAUSED agent \u2014 the follow-up to
@@ -6611,6 +6711,24 @@
        grid, detail panel, detail fast path) builds the paused action here,
        which is the single place that guarantees a paused agent never shows
        a bare Start. */
+    /* Primary action for an agent held by its PER-MODE CADENCE.
+
+       This is the counterpart to pausedAgentActionHtml and exists to close a
+       real inversion bug. The detail panel and its fast path used to render a
+       cadence-held agent as '▶ start' wired to toggleAgent with
+       data-paused="false". toggleAgent re-syncs the real pause flag and then
+       picks `paused ? resume : pause` — so for an agent that was never paused,
+       the button labelled "start" POSTed /api/pause and stopped it. The card
+       grid had it right; the two detail sites had drifted.
+
+       A cadence hold has no start/stop endpoint to call: the only fix is to set
+       an interval for the mode, so every site now routes to the Cadences tab.
+       Building that here — like the paused action — is what keeps the three
+       sites from drifting apart again. */
+    function cadenceOffAgentActionHtml(a) {
+      const who = esc(a.displayName || a.name);
+      return `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" data-tab="Cadences" title="${who} is enabled, but the governor has no cadence for it in the current mode — click to set one">⚙ ${esc(agentCadenceOffLabel())}</button>`;
+    }
     function pausedAgentActionHtml(a) {
       if (a.state === 'running') {
         return `<button class="btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
@@ -6706,10 +6824,16 @@
            keeps it true if that derivation ever changes. The remaining
            blockers ride in the tooltip and on the blockers line below, so the
            operator learns them before the click, not after. */
-        const toggleBtn = canToggle ? (isPaused && canPauseToggle
+        /* A DISABLED agent gets no scheduling button at all. canToggle only ever
+           excluded the supervisor, so a disabled agent still rendered a green
+           '⏸ pause' — offering to apply a temporary operator hold to an agent
+           the governor already refuses to schedule. The click succeeded and
+           changed nothing observable. The 0/1 switch beside this slot is the
+           only lever that means anything here, so it is the only one shown. */
+        const toggleBtn = (canToggle && !agentIsDisabled(a)) ? (isPaused && canPauseToggle
           ? pausedAgentActionHtml(a)
           : isOff
-          ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`
+          ? cadenceOffAgentActionHtml(a)
           : isOnDemand
           ? `<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>`
           : canPauseToggle
@@ -6740,9 +6864,9 @@
         const disabledBadge = agentIsDisabled(a) ? ` <span class="status-badge disabled" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>` : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name)}
-          <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return '<span class="status-badge done-concerns" title="' + esc(a.statusEvidence) + '">concerns</span>';
@@ -6770,9 +6894,9 @@
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' <span class="status-badge needs-context" title="CLI flags are stale — restart agent to apply new mode">⚠ restart needed</span>' : ''}</span></div>
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
-          <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.cadence}</span></div>
+          <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : a.cadence}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${a.lastKick || '—'}</span></div>
-          <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : (a.nextKick || '—')}</span></div>
+          <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input prompt.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : (a.nextKick || '—')}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
           ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
@@ -7640,11 +7764,11 @@
           const colCls = isActive ? `col-active mode-${m}` : '';
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
-          const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge">off</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
+          const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. This is separate from the agent\'s 0/1 enable switch.">disabled</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
           return `<td class="${colCls}${stateCls}" title="${esc(tip)}">${dot}${badge}</td>`;
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
-        const pauseBadge = agentOnDemand ? '<span class="on-demand-badge">on demand</span>' : agentPaused ? '<span class="pause-badge">paused</span>' : agentOff ? '<span class="off-badge">off</span>' : '';
+        const pauseBadge = agentOnDemand ? '<span class="on-demand-badge">on demand</span>' : agentPaused ? '<span class="pause-badge">paused</span>' : agentOff ? `<span class="off-badge">${esc(agentCadenceOffLabel())}</span>` : '';
         const cliPinned = agentData && (agentData.pinnedBoth || agentData.pinnedCli);
         const modelPinned = agentData && (agentData.pinnedBoth || agentData.pinnedModel);
         const cChip = agentData && agentData.cli ? cliChip(agentData.cli, cliPinned, aname) : '?';
@@ -14888,6 +15012,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'linearAgentConnect': linearAgentConnect(); break;
@@ -15187,6 +15312,59 @@ function burnAreaChart() {
       } catch (e) {
         dismissToast(toast, 'Plan failed: ' + e.message, 'error');
         el.disabled = false;
+      }
+    }
+
+    /* setAgentEnabled flips the agent's master-power `enabled` flag.
+
+       It PUTs only `enabled` to the general config section: handleAgentConfigGeneral
+       applies each field independently ("if present"), so a one-key body is a
+       genuine partial update and cannot clobber the display name, launch command
+       or model pins the operator set elsewhere.
+
+       The optimistic DOM flip is deliberately limited to the switch that was
+       clicked. The authoritative repaint arrives over SSE within a few seconds;
+       guessing at the rest of the card's derived state here is what made the old
+       pause toggle render lies when the server disagreed. On failure the switch
+       is put back exactly where it was. */
+    async function setAgentEnabled(agent, enable) {
+      const toast = showToast(`${enable ? 'Enabling' : 'Disabling'} ${agent}...`, 'info', true);
+      const switches = Array.from(document.querySelectorAll(`.pwr-switch[data-agent="${CSS.escape(agent)}"]`));
+      const restore = switches.map(el => el.classList.contains('on'));
+      const paint = (on) => {
+        for (const el of switches) {
+          el.classList.toggle('on', on);
+          el.setAttribute('aria-checked', on ? 'true' : 'false');
+          el.dataset.enabled = on ? 'true' : 'false';
+        }
+      };
+      paint(enable);
+      try {
+        const res = await fetch(`/api/config/agent/${encodeURIComponent(agent)}/general`, {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ enabled: enable })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          switches.forEach((el, i) => {
+            el.classList.toggle('on', restore[i]);
+            el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
+            el.dataset.enabled = restore[i] ? 'true' : 'false';
+          });
+          dismissToast(toast, `Could not ${enable ? 'enable' : 'disable'} ${agent}: ${data.error || 'HTTP ' + res.status}`, 'error');
+          return;
+        }
+        const live = (window._lastAgents || []).find(a => a.name === agent);
+        if (live) live.enabled = enable;
+        dismissToast(toast, `${agent} ${enable ? 'enabled' : 'disabled'}`, 'success');
+      } catch (e) {
+        switches.forEach((el, i) => {
+          el.classList.toggle('on', restore[i]);
+          el.setAttribute('aria-checked', restore[i] ? 'true' : 'false');
+          el.dataset.enabled = restore[i] ? 'true' : 'false';
+        });
+        dismissToast(toast, `Could not ${enable ? 'enable' : 'disable'} ${agent}: ${e.message}`, 'error');
       }
     }
 
@@ -19949,7 +20127,24 @@ function burnAreaChart() {
     }
 
     function renderAgentCadences(c) {
+      // Master power sits at the TOP of this tab on purpose. Cadences are the
+      // per-mode schedule; `enabled` is whether the agent is scheduled at all.
+      // An operator who disabled an agent and later came here to work out why
+      // it never kicks had no way to see that from the cadence grid — every
+      // mode showed a healthy interval. Same switch as the card, but it commits
+      // through the dialog's dirty bag (Save), which is why it carries
+      // toggleConfigSwitch rather than the card's immediate action.
+      const _agentName = _configState.agent || '';
+      const _live = (window._lastAgents || []).find(a => a.name === _agentName);
+      const _enabled = !(_live && _live.enabled === false);
       return `
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:6px">
+          <div class="pwr-switch${_enabled ? ' on' : ''}" data-action="toggleConfigSwitch" data-section="general" data-key="enabled" role="switch" aria-checked="${_enabled ? 'true' : 'false'}" aria-label="Agent enabled" title="Master power for this agent. 0 removes it from governor scheduling in every mode, whatever the cadences below say. Takes effect on Save."><span class="pwr-mark">1</span><span class="pwr-lever"></span><span class="pwr-mark">0</span></div>
+          <div style="font-size:0.78rem;line-height:1.5">
+            <b>Agent power.</b> <code>1</code> = enabled, <code>0</code> = disabled.
+            <span style="color:var(--muted)">A disabled agent is never kicked in any mode, no matter what the cadences below say. This is separate from pausing, which is a temporary operator hold.</span>
+          </div>
+        </div>
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
           <b>Why use it.</b> It lets you run the agent slowly when there's little to do and faster when work piles up, controlling token spend.
