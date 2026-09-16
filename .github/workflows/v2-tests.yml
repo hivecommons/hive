@@ -855,6 +855,13 @@ jobs:
           # = the directory of the block's file. Emits "pkg pct" lines plus a
           # TOTAL over ./pkg/... — the same statements-covered/statements
           # definition `go test -cover` prints, so floors are unchanged.
+          #
+          # Packages are selected by their "/pkg/" path segment rather than by
+          # a hard-coded module prefix. The previous version matched the literal
+          # module path, so the kubestellar -> hivecommons org rename silently
+          # emptied every filter and disabled the whole gate. A segment match
+          # survives any future rename, and only this module's own packages
+          # appear in these profiles, so it cannot over-match.
           awk '
             FNR == 1 { next }              # skip each file'\''s "mode:" line
             {
@@ -873,7 +880,7 @@ jobs:
               gt = 0; gc = 0
               for (p in tot) {
                 printf "%s %.1f\n", p, cov[p] * 100 / tot[p]
-                if (p ~ /^github\.com\/kubestellar\/hive\/pkg\//) {
+                if (p ~ /\/pkg\//) {
                   gt += tot[p]; gc += cov[p]
                 }
               }
@@ -884,6 +891,20 @@ jobs:
           TOTAL=$(awk '$1 == "TOTAL" {print $2 "%"}' pkg-pcts.txt)
           echo "Total coverage (./pkg/...): ${TOTAL:-unavailable}"
 
+          # Fail closed. Every step below is a filter, and an empty filter
+          # result looks exactly like "nothing was wrong". This gate silently
+          # scored zero packages for the whole window in which it still matched
+          # the pre-rename module path github.com/kubestellar/hive, while the
+          # module had become github.com/hivecommons/hive: TOTAL was
+          # "unavailable", pkg-states.txt was empty, the scoring loop never ran
+          # once, and the job reported success on every PR. A gate that cannot
+          # see anything must fail, not pass.
+          if [ -z "$TOTAL" ]; then
+            echo "COVERAGE GATE FAILED: no coverage data parsed from the shard artifacts."
+            echo "coverage-*.out was present but produced no ./pkg/... totals."
+            exit 1
+          fi
+
           # Classify every package exactly once from the combined logs.
           # ./cmd/... is scored too (#4701): the shards have run cmd tests
           # since the partition change, but coverage floors previously applied
@@ -892,8 +913,17 @@ jobs:
           # for trend continuity.
           cat test-*.log > cover-run.log
           grep -E '^(ok|FAIL|\?)' cover-run.log \
-            | awk '$2 ~ /^github\.com\/kubestellar\/hive\/(pkg|cmd)\// {print $1, $2}' \
+            | awk '$2 ~ /\/(pkg|cmd)\// {print $1, $2}' \
             | LC_ALL=C sort -u > pkg-states.txt
+
+          # Second fail-closed guard, for the same reason as the TOTAL one:
+          # an empty pkg-states.txt means the scoring loop never executes and
+          # every floor is vacuously satisfied.
+          if [ ! -s pkg-states.txt ]; then
+            echo "COVERAGE GATE FAILED: no package pass/fail states parsed from test-*.log."
+            echo "No package could be scored against its floor."
+            exit 1
+          fi
 
           # Floor-map key: cmd packages get a "cmd/" prefix so cmd/hivectl can
           # never resolve to pkg/hivectl's floor; pkg packages are keyed by
