@@ -3198,10 +3198,14 @@
 
   <!-- Release channel + last upgrade attempt (#7092). Findable on the spoke's
        own dashboard: which channel this hive follows, and what happened on the
-       last upgrade attempt — with "never attempted", "succeeded" and "failed"
-       rendered as three visually distinct states so a blank panel can never
-       masquerade as success. Populated by renderReleaseStatus() from
-       /api/version's releaseStatus object. -->
+       last upgrade attempt — "succeeded" and "failed" are rendered as visually
+       distinct states so a blank panel can never masquerade as success. The
+       "never attempted" state renders nothing at all: the marker only records
+       upgrades driven through the hub, so a hive moved by any other means
+       (direct image bump, redeploy, spoke roll) reads as "never" no matter how
+       many times it has actually been upgraded, and asserting that to an
+       operator is worse than saying nothing. Populated by
+       renderReleaseStatus() from /api/version's releaseStatus object. -->
   <div id="release-status" class="release-status" hidden></div>
 
   <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
@@ -16765,6 +16769,7 @@ function burnAreaChart() {
       // --- Last upgrade attempt (three distinct states) ---
       var at = rs.attempt || {};
       var aColor = 'var(--muted)', aIcon = 'ⓘ', aLabel = '';
+      var hideAttemptRow = false;
       switch (at.state) {
         case 'succeeded':
           aColor = 'var(--green)'; aIcon = '✅';
@@ -16780,8 +16785,13 @@ function burnAreaChart() {
           break;
         case 'never':
         default:
-          aColor = 'var(--muted)'; aIcon = '—';
-          aLabel = 'Last upgrade: <strong>never attempted</strong>';
+          // "never attempted" tells an operator nothing useful and is wrong
+          // far more often than it is right: the marker only records upgrades
+          // driven THROUGH the hub, so any hive rolled by other means (a
+          // direct image bump, a redeploy, a spoke roll) reads as "never"
+          // however many times it has actually moved. Rather than assert
+          // something false, render nothing for this state.
+          hideAttemptRow = true;
           break;
       }
       // Timestamp — absolute always, relative age as a bonus so staleness is
@@ -16804,8 +16814,10 @@ function burnAreaChart() {
       el.innerHTML =
         '<div class="release-status-row" style="color:' + chColor + '">' + chIcon + ' ' + chLabel + '</div>' +
         selectorHtml +
-        '<div class="release-status-row" style="color:' + aColor + ';font-weight:600">' + aIcon + ' ' + aLabel + whenHtml + '</div>' +
-        detailHtml + staleHtml;
+        (hideAttemptRow ? '' :
+          '<div class="release-status-row" style="color:' + aColor + ';font-weight:600">' + aIcon + ' ' + aLabel + whenHtml + '</div>' +
+          detailHtml) +
+        staleHtml;
     }
 
     async function switchReleaseChannel(sel) {
