@@ -9806,61 +9806,7 @@ func logAgentSandboxPosture(logger *slog.Logger, cfg *config.Config) {
 }
 
 func runHub(logger *slog.Logger, configPath string) {
-	port := 3001
-	if p := os.Getenv("HIVE_HUB_PORT"); p != "" {
-		if parsed, err := strconv.Atoi(p); err == nil {
-			port = parsed
-		}
-	}
-	logger.Info("starting in HUB mode", "port", port)
-
-	hubSrv := hub.NewHubServer(port, logger, gitShort, gitBranch)
-	if cfg, err := config.LoadWithDashboardOverlay(configPath); err == nil {
-		notifier := notify.New(cfg.Notifications, logger)
-		notifier.SetHiveID(cfg.HiveID)
-		buildHookDispatcher(cfg, hookSinks{Notifier: notifier}, logger)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		logger.Warn("hub hooks disabled: failed to load config", "path", configPath, "error", err)
-	}
-	installUpgradePauseEmitter(hubSrv)
-
-	// /api/reach (#3994) needs merged-PR metadata (merge SHA, changed
-	// files). The hub mode has no ambient GitHub client, so reuse the
-	// standard token client when credentials exist; without a token the
-	// endpoint reports 503 rather than serving fabricated data. The base
-	// branch is the hub's own running branch — the lineage its fleet runs.
-	if ghToken := os.Getenv("HIVE_GITHUB_TOKEN"); ghToken != "" {
-		reachGH := github.NewClient(ghToken, "hivecommons", []string{"hive"}, logger, "")
-		hubSrv.SetReachPRSource(hub.NewGitHubPRSource(reachGH, gitBranch))
-	}
-	// Wire 2a's heartbeat-fed registry store into the /api/reach endpoint
-	// (#3973 epic: producer #3993 → consumer #3994). Unconditional — the
-	// registry-backed reporter has no external dependencies, and without it
-	// the endpoint would keep answering from the empty stub forever.
-	hubSrv.SetReachReporter(hubSrv.RegistryReachReporter())
-
-	// Long-lived SaaS pollers (provision watcher, SHA poller, auth audit,
-	// advisory diagnostics) are started here — at the composition root — not
-	// inside route registration, so constructing a HubServer stays free of
-	// background goroutines.
-	hubSrv.StartBackgroundPollers(context.Background())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		sig := <-sigCh
-		logger.Info("hub received signal, shutting down gracefully", "signal", sig)
-		const shutdownTimeout = 10 * time.Second
-		if err := hubSrv.Shutdown(shutdownTimeout); err != nil {
-			logger.Error("hub graceful shutdown failed", "error", err)
-		}
-	}()
-
-	if err := hubSrv.Start(port); err != nil && err != http.ErrServerClosed {
-		logger.Error("hub server failed", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("hub server stopped")
+	runHubWithDeps(context.Background(), logger, configPath, defaultHubDeps())
 }
 
 // resolveLiteLLMInferenceRoute resolves the endpoint and model an agent's
