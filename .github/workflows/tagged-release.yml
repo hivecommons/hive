@@ -713,6 +713,15 @@ jobs:
       # policy-gated, and a fallback expression on an unset secret resolves
       # to the empty string, which is why the fallback chain lives on this
       # step alone.
+      # #7222: RELEASE_PR_TOKEN is a fine-grained PAT scoped to exactly
+      # contents:write + pull-requests:write, so within this step it can ONLY
+      # be used for the PR calls (create/close/merge). The gate-mirror status
+      # POST (#5356) and the scratch-run drain's Actions API calls (#6936)
+      # need statuses:write and actions:write respectively, which the job's
+      # GITHUB_TOKEN has and the PAT deliberately does not — those calls are
+      # pinned to ACTIONS_TOKEN below, like the docker.yml dispatch (#6380)
+      # already was. Widening the PAT instead would hand a long-lived secret
+      # readable by every workflow more power than this one step needs.
       - name: Open and merge a PR from the scratch branch into v4
         id: push_v4
         env:
@@ -761,13 +770,16 @@ jobs:
               # `requested`/`waiting`/`pending` cover runs held for approval or
               # still being dispatched. A run omitted here is exactly as
               # stranded as a missed queued one once the ref disappears.
+              # #7222: Actions API reads/cancels need actions scope, which
+              # only GITHUB_TOKEN carries. Under the PAT these best-effort
+              # calls 403'd silently and the drain became a no-op.
               for run_status in queued in_progress requested waiting pending; do
-                gh api --paginate \
+                GH_TOKEN="$ACTIONS_TOKEN" gh api --paginate \
                   "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&status=${run_status}&per_page=100" \
                   --jq '.workflow_runs[].id' 2>/dev/null \
                 | while IFS= read -r run_id; do
                     [ -n "$run_id" ] || continue
-                    gh api --method POST \
+                    GH_TOKEN="$ACTIONS_TOKEN" gh api --method POST \
                       "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
                       >/dev/null 2>&1 || true
                   done || true
@@ -778,7 +790,7 @@ jobs:
             # proceeds straight to the delete — i.e. exactly the pre-#6936
             # behaviour. This can reduce noise; it can never wedge a release.
             scratch_runs_pending() {
-              gh api \
+              GH_TOKEN="$ACTIONS_TOKEN" gh api \
                 "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&per_page=100" \
                 --jq '[.workflow_runs[] | select(.status != "completed")] | length' 2>/dev/null \
                 || echo 0
@@ -814,7 +826,8 @@ jobs:
           trap cleanup EXIT
 
           echo "Publishing the verified gate as a SHA-scoped commit status (#5356)..."
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${commit_sha}" \
+          # #7222: statuses:write lives on GITHUB_TOKEN, not RELEASE_PR_TOKEN.
+          GH_TOKEN="$ACTIONS_TOKEN" gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${commit_sha}" \
             -f state=success \
             -f context=gate \
             -f description="docker.yml gate verified for automated release"
