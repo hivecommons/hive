@@ -78,6 +78,8 @@ hive-open-pr --repo "<org>/<target-repo>" \
   --label "security,hold"
 ```
 
+The `[sec-check]` PR title above is hive's house style, used when the target repository states no convention of its own. If the repository enforces a PR title format (a Conventional Commits gate, or a rule in its AGENTS.md/CONTRIBUTING), follow the repository's format and drop the `[sec-check]` prefix — the prefix is load-bearing only for ISSUE titles (lane routing), never for PR titles.
+
 Sec-Check can PR: dependency version bumps for CVEs, removing hardcoded secrets, RBAC config fixes, unsafe pattern removal.
 Sec-Check can NOT PR a fix that lives in `.github/workflows/*.yml`: an ISSUES_AND_PRS
 token is minted at the `contributor` tier, which does not carry the Workflows

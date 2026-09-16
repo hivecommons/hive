@@ -295,8 +295,11 @@ func TestBuildTaskPrompt_FallbackWordingCarriesTheFullProcedure(t *testing.T) {
 	for _, want := range []string{
 		"defaultBranchRef",
 		"git fetch upstream",
-		"git checkout -b <your-branch> upstream/<default-branch>",
+		"git checkout -b <your-branch> upstream/<base-branch>",
 		"confirm the PR's base",
+		// #7159: the repository's own contributor rules outrank hive's
+		// default-branch guess; the fallback wording must say so.
+		"AGENTS.md or CONTRIBUTING",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("fallback wording is missing %q; got: %q", want, prompt)

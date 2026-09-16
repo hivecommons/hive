@@ -5762,18 +5762,28 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 		// trustworthy substitute — the upstream repository's own default
 		// branch, read from the clone rather than from whatever the last task
 		// left behind — and keep the "do not use the branch you find" clause,
-		// which is the load-bearing half in both wordings.
+		// which is the load-bearing half in both wordings. The default branch
+		// is still only hive's guess about the repo's conventions: a repo on a
+		// promotion model (default = released line, PRs land on an integration
+		// branch) states its real target in AGENTS.md/CONTRIBUTING, and that
+		// statement outranks the guess (hivecommons/hive#7159).
 		"Do not assume the branch the checkout is currently on is the right base: it may "+
-			"be left over from a previous task. Resolve %s's own default branch "+
-			"('gh repo view %s --json defaultBranchRef'), run 'git fetch upstream', and "+
+			"be left over from a previous task. If the repository's own contributor rules "+
+			"(AGENTS.md or CONTRIBUTING) name the branch PRs must target, use that branch — "+
+			"the repository's rule outranks the default below. Otherwise resolve %s's own "+
+			"default branch ('gh repo view %s --json defaultBranchRef'). Then run "+
+			"'git fetch upstream', and "+
 			"start your work branch from it with "+
-			"'git checkout -b <your-branch> upstream/<default-branch>'. Open the PR "+
+			"'git checkout -b <your-branch> upstream/<base-branch>'. Open the PR "+
 			"against the same branch, and confirm the PR's base is that branch before "+
 			"you report done. ",
 		repoFull, repoFull)
 	if b := strings.TrimSpace(baseBranch); b != "" {
 		baseHint = fmt.Sprintf(
-			"Base this work on the '%s' branch of %s. The checkout may be left on a "+
+			"Base this work on the '%s' branch of %s. If this task did not itself name "+
+				"that branch and the repository's own contributor rules (AGENTS.md or "+
+				"CONTRIBUTING) require PRs to target a different branch, the repository's "+
+				"rule wins — substitute its branch throughout. The checkout may be left on a "+
 				"DIFFERENT branch by a previous task, so do not use whatever branch you "+
 				"find there: run 'git fetch upstream' and start your work branch from the "+
 				"base with 'git checkout -b <your-branch> upstream/%s'. Open the PR against "+

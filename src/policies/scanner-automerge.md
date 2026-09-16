@@ -100,6 +100,8 @@ Steps:
 13. Return immediately — do NOT wait for CI, do NOT merge, do NOT run build or lint
 ```
 
+The `[scanner]` PR title above is hive's house style, used when the target repository states no convention of its own. If the repository enforces a PR title format (a Conventional Commits gate, or a rule in its AGENTS.md/CONTRIBUTING), follow the repository's format and drop the `[scanner]` prefix — the prefix is load-bearing only for ISSUE titles (lane routing), never for PR titles.
+
 **Launch ALL agents in a single batch** — do not wait for one to complete before launching the next. Aim for 4-8 agents running simultaneously.
 
 After dispatching all agents, proceed to the final merge sweep.

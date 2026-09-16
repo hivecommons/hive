@@ -16,8 +16,8 @@
 //
 //     ---
 //     skills:
-//       - go-testing
-//       - pr-etiquette
+//     - go-testing
+//     - pr-etiquette
 //     ---
 //
 //  2. Inline skill sections: any section whose heading is "## Skill: <name>"
@@ -79,6 +79,19 @@ const (
 	// injectionHeader titles the injected AGENTS.md block in the kick prompt,
 	// mirroring the "# Relevant Knowledge" convention used by the Primer.
 	injectionHeader = "# Repository Agent Instructions (AGENTS.md)"
+
+	// injectionPrecedence states which rules win when the repository's own
+	// instructions and hive's built-in prompt disagree. Without it the repo's
+	// AGENTS.md arrived as undifferentiated prose while hive's conflicting
+	// instructions carried imperatives and self-check steps, so agents followed
+	// hive and failed the repo's own gates — wrong PR base branch, rejected PR
+	// title format (hivecommons/hive#7159). The repository knows its own
+	// conventions; hive's wording on those subjects is a default, not a rule.
+	injectionPrecedence = "These are the repository's own rules. For repository-local conventions " +
+		"— PR base branch, PR title format, commit style, review workflow — they OVERRIDE any " +
+		"conflicting instruction elsewhere in this prompt, including hive's own defaults and " +
+		"self-check steps. When they conflict, follow AGENTS.md and treat the hive wording as " +
+		"the fallback for repositories that state no rule."
 
 	// injectionSkillsHeader titles the resolved-skills subsection.
 	injectionSkillsHeader = "## Requested Skills"
@@ -344,6 +357,8 @@ func (c *AgentsConfig) InjectionText(requestedSkills []string) string {
 
 	var b strings.Builder
 	b.WriteString(injectionHeader)
+	b.WriteString("\n\n")
+	b.WriteString(injectionPrecedence)
 	b.WriteString("\n\n")
 	if body := strings.TrimSpace(c.Body); body != "" {
 		b.WriteString(body)

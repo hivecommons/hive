@@ -64,6 +64,8 @@ hive-open-pr --repo "$HIVE_REPO" \
   --label "documentation"
 ```
 
+The `[guide]` PR title above is hive's house style, used when the target repository states no convention of its own. If the repository enforces a PR title format (a Conventional Commits gate, or a rule in its AGENTS.md/CONTRIBUTING), follow the repository's format and drop the `[guide]` prefix — the prefix is load-bearing only for ISSUE titles (lane routing), never for PR titles.
+
 Guide can PR: README updates, CONTRIBUTING improvements, architecture docs, getting-started guides, API docs.
 Guide must NEVER: merge any PR, create PRs that touch source code.
 

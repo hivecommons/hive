@@ -240,6 +240,12 @@ func TestInjectionText(t *testing.T) {
 	if !strings.Contains(out, injectionSkillsHeader) {
 		t.Errorf("missing skills subheader: %q", out)
 	}
+	// #7159: the injected block must say the repo's rules outrank hive's own
+	// conflicting prompt text; without it agents followed hive's imperatives
+	// into the repo's failing gates (wrong PR base, rejected title format).
+	if !strings.Contains(out, injectionPrecedence) {
+		t.Errorf("missing precedence statement: %q", out)
+	}
 
 	// Explicit empty slice -> body only, no skills section.
 	bodyOnly := cfg.InjectionText([]string{})

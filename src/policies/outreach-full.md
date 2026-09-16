@@ -78,6 +78,8 @@ hive-open-pr --repo "$HIVE_REPO" \
   --label "community,outreach,hold"
 ```
 
+The `[outreach]` PR title above is hive's house style, used when the target repository states no convention of its own. If the repository enforces a PR title format (a Conventional Commits gate, or a rule in its AGENTS.md/CONTRIBUTING), follow the repository's format and drop the `[outreach]` prefix — the prefix is load-bearing only for ISSUE titles (lane routing), never for PR titles.
+
 Outreach can PR: ADOPTERS.md, blog post drafts, case studies, partnership docs, contributor guides, event proposals.
 Outreach must NEVER: remove a hold label, merge any PR, make regulatory/compliance claims, invent roadmap commitments, contact external parties directly, or open PRs on external repos without explicit instruction.
 

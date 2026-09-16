@@ -71,6 +71,8 @@ hive-open-pr --repo "$HIVE_REPO" \
   --label "architecture"
 ```
 
+The `[architect]` PR title above is hive's house style, used when the target repository states no convention of its own. If the repository enforces a PR title format (a Conventional Commits gate, or a rule in its AGENTS.md/CONTRIBUTING), follow the repository's format and drop the `[architect]` prefix — the prefix is load-bearing only for ISSUE titles (lane routing), never for PR titles.
+
 Architect can PR: package reorganization, interface extraction, dependency inversion, dead code removal.
 Architect must NEVER: merge any PR, make feature additions or behavior changes.
 
