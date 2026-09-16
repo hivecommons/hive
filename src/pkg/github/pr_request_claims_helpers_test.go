@@ -93,7 +93,7 @@ func TestIsWorkflowFile_Classification(t *testing.T) {
 func TestDowngradeClosingReferences_Rewrites(t *testing.T) {
 	downgrade := map[string]string{
 		claimKey("o/r", 60):        "issue is a tracker",
-		claimKey("other/repo", 12): "issue has unchecked task items",
+		claimKey("other/repo", 12): "issue is labeled as a tracker or epic",
 	}
 	tests := []struct {
 		name string
@@ -139,10 +139,27 @@ func TestDowngradeClosingReferences_Rewrites(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := downgradeClosingReferences(tt.text, "o/r", downgrade); got != tt.want {
+			if got := downgradeClosingReferences(tt.text, "o/r", downgrade, false); got != tt.want {
 				t.Errorf("downgradeClosingReferences(%q) = %q, want %q", tt.text, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDowngradeClosingReferences_AnnotatesBody proves a body downgrade states
+// its reason on the rewritten line (hivecommons/hive#7156): without the
+// annotation the only record of the rewrite is a WARN log line, and the merged
+// PR is indistinguishable from a deliberate agent "Refs".
+func TestDowngradeClosingReferences_AnnotatesBody(t *testing.T) {
+	downgrade := map[string]string{claimKey("o/r", 60): "issue is a tracker"}
+	got := downgradeClosingReferences("Fixes #60\n\nDetails", "o/r", downgrade, true)
+	want := "Refs #60 — closing keyword withheld by the watcher: issue is a tracker\n\nDetails"
+	if got != want {
+		t.Errorf("annotated downgrade = %q, want %q", got, want)
+	}
+	// Refs outside the downgrade map stay untouched even with annotate on.
+	if got := downgradeClosingReferences("Fixes #61", "o/r", downgrade, true); got != "Fixes #61" {
+		t.Errorf("unlisted ref mutated: %q", got)
 	}
 }
 
@@ -207,9 +224,9 @@ func TestIncompleteIssueReason_Classification(t *testing.T) {
 			"issue title marks it as a tracker or epic",
 		},
 		{
-			"unchecked task item",
+			"unchecked task list is acceptance criteria, not a tracker (hive#7156)",
 			&gh.Issue{Title: strp("work"), Body: strp("- [x] done\n* [ ] remaining")},
-			"issue has unchecked task items",
+			"",
 		},
 		{
 			"complete issue",

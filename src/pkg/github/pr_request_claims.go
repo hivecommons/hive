@@ -41,8 +41,6 @@ var titleArtifactRules = []titleArtifactRule{
 	{name: "migration", titleMatch: regexp.MustCompile(`(?i)\bmigrations?\b`), fileMatch: isMigrationFile},
 }
 
-var uncheckedTaskItemRE = regexp.MustCompile(`(?m)^\s*[-*+]\s*\[\s\]`)
-
 // validatePRRequestBody runs the cheap, local body checks — no API calls — so
 // they sit before any gate that spends GitHub quota. Both rejections are
 // permanent (retrying the same file cannot fix them) and both exist because of
@@ -174,7 +172,8 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 	if len(downgrade) == 0 {
 		return title, body, nil
 	}
-	return downgradeClosingReferences(title, defaultRepo, downgrade), downgradeClosingReferences(body, defaultRepo, downgrade), nil
+	return downgradeClosingReferences(title, defaultRepo, downgrade, false),
+		downgradeClosingReferences(body, defaultRepo, downgrade, true), nil
 }
 
 func (c *Client) prRequestRepo(repo string) (string, string) {
@@ -204,9 +203,15 @@ func incompleteIssueReason(issue *gh.Issue) string {
 	if IsTrackerIssue(issue.GetTitle(), labels, issue.GetBody()) {
 		return "issue is a tracker"
 	}
-	if uncheckedTaskItemRE.MatchString(issue.GetBody()) {
-		return "issue has unchecked task items"
-	}
+	// A bare `- [ ]` task list is deliberately NOT a downgrade reason. Every
+	// shipped policy template tells agents to give a single-PR issue a `- [ ]`
+	// acceptance checklist, and nothing in the pipeline ever ticks those boxes,
+	// so treating any unchecked box as "structurally incomplete" rewrote the
+	// Closes #N on exactly the issues hive files for itself and left them open
+	// forever (hivecommons/hive#7156). Multi-phase trackers — the downgrade's
+	// actual target — are already caught above by the epic/tracker labels, the
+	// [epic]/[tracker] title prefixes, and IsTrackerIssue's issue-reference
+	// task-list heuristic.
 	return ""
 }
 
@@ -336,7 +341,13 @@ func hasReporterConfirmation(issue *gh.Issue) bool {
 	return false
 }
 
-func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]string) string {
+// downgradeClosingReferences rewrites Closes/Fixes/Resolves references listed
+// in downgrade to non-closing Refs. When annotate is true (the PR body), the
+// rewritten line also states why the closing keyword was withheld — otherwise
+// the only record of the rewrite is a WARN line in a container log, and a
+// maintainer reading the merged PR cannot tell a watcher downgrade from a
+// deliberate agent choice (hivecommons/hive#7156). Titles are never annotated.
+func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]string, annotate bool) string {
 	if text == "" {
 		return text
 	}
@@ -353,10 +364,15 @@ func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]s
 		if repo == "" {
 			repo = defaultRepo
 		}
-		if _, ok := downgrade[claimKey(strings.ToLower(repo), issue)]; !ok {
+		reason, ok := downgrade[claimKey(strings.ToLower(repo), issue)]
+		if !ok {
 			return match
 		}
-		return "Refs" + match[len(parts[1]):]
+		rewritten := "Refs" + match[len(parts[1]):]
+		if annotate && reason != "" {
+			rewritten += " — closing keyword withheld by the watcher: " + reason
+		}
+		return rewritten
 	})
 }
 

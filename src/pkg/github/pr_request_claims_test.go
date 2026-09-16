@@ -127,13 +127,13 @@ func TestPRRequestWatcher_QuarantinesArtifactClaimMismatch(t *testing.T) {
 
 func TestValidatePRRequestClaims_DowngradesIncompleteIssues(t *testing.T) {
 	tests := []struct {
-		name  string
-		issue map[string]any
+		name       string
+		issue      map[string]any
+		wantReason string
 	}{
-		{"unchecked task", map[string]any{"number": 60, "title": "work", "body": "- [x] first\n- [ ] remaining", "state": "open"}},
-		{"epic label", map[string]any{"number": 60, "title": "work", "body": "several phases", "state": "open", "labels": []map[string]string{{"name": "epic"}}}},
-		{"tracker title", map[string]any{"number": 60, "title": "[Tracker] program", "body": "children", "state": "open"}},
-		{"epic title", map[string]any{"number": 60, "title": "[EPIC] program", "body": "children", "state": "open"}},
+		{"epic label", map[string]any{"number": 60, "title": "work", "body": "several phases", "state": "open", "labels": []map[string]string{{"name": "epic"}}}, "issue is labeled as a tracker or epic"},
+		{"tracker title", map[string]any{"number": 60, "title": "[Tracker] program", "body": "children", "state": "open"}, "issue title marks it as a tracker or epic"},
+		{"epic title", map[string]any{"number": 60, "title": "[EPIC] program", "body": "children", "state": "open"}, "issue title marks it as a tracker or epic"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,10 +146,37 @@ func TestValidatePRRequestClaims_DowngradesIncompleteIssues(t *testing.T) {
 			if err != nil {
 				t.Fatalf("validatePRRequestClaims: %v", err)
 			}
-			if title != "Refs #60: partial work" || body != "Refs: #60\n\nDetails" {
+			wantBody := "Refs: #60 — closing keyword withheld by the watcher: " + tt.wantReason + "\n\nDetails"
+			if title != "Refs #60: partial work" || body != wantBody {
 				t.Fatalf("downgraded title/body = %q / %q", title, body)
 			}
 		})
+	}
+}
+
+// TestValidatePRRequestClaims_LeavesTaskListClosingReference is the break-it
+// proof for hivecommons/hive#7156: every shipped policy template tells agents
+// to give single-PR issues a `- [ ]` acceptance checklist, and nothing ever
+// ticks those boxes, so downgrading Closes #N on any unchecked box left every
+// such issue open forever after its fix merged. An unchecked task list alone
+// must NOT withhold the closing keyword.
+func TestValidatePRRequestClaims_LeavesTaskListClosingReference(t *testing.T) {
+	issue := map[string]any{
+		"number": 318, "title": "docs: cover the four gaps", "state": "open",
+		"body": "## Recommendation\n\n- [ ] gap one\n- [ ] gap two\n- [ ] gap three\n- [ ] gap four",
+	}
+	srv := claimValidationServer(t, nil, issue)
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+
+	title, body, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Head: "quality/test-using-doc", Title: "docs: cover the gaps", Body: "## Related Issue\nCloses #318",
+	})
+	if err != nil {
+		t.Fatalf("validatePRRequestClaims: %v", err)
+	}
+	if title != "docs: cover the gaps" || body != "## Related Issue\nCloses #318" {
+		t.Fatalf("task-list issue downgraded (hive#7156 regression): %q / %q", title, body)
 	}
 }
 
@@ -201,8 +228,8 @@ func TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation(t *t
 	if err != nil {
 		t.Fatalf("validatePRRequestClaims: %v", err)
 	}
-	if body != "Refs #6500\n\nDetails" {
-		t.Fatalf("body was not downgraded (Closes # would let the App bot auto-close a maintainer bug on merge, and the reporter cannot reopen): got %q", body)
+	if !strings.HasPrefix(body, "Refs #6500 — closing keyword withheld by the watcher: human-filed bug:") || !strings.HasSuffix(body, "\n\nDetails") {
+		t.Fatalf("body was not downgraded with a visible reason (Closes # would let the App bot auto-close a maintainer bug on merge, and the reporter cannot reopen): got %q", body)
 	}
 	if title != "fix copilot check" {
 		t.Fatalf("title mutated unexpectedly: %q", title)
