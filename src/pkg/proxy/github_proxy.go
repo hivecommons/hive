@@ -1186,8 +1186,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// handler's deferred Closes reclaim the sockets.
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: p.bodyStallTimeoutDuration()}
 
-		_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
-		if err := resp.Write(client); err != nil {
+		// Rolling per-Write deadline (see stallBoundedWriter): a response that
+		// keeps flowing is never cut for being long, while a client that stops
+		// draining still releases this handler within one stall window.
+		if err := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout}); err != nil {
 			_ = resp.Body.Close()
 			_ = client.SetWriteDeadline(time.Time{})
 			p.logTimeout("proxy response relay timed out", err, "agent", agentName, "path", req.URL.Path)
@@ -1506,6 +1508,39 @@ func (b *stallBoundedBody) Close() error {
 	err := b.body.Close()
 	_ = b.conn.SetReadDeadline(time.Time{})
 	return err
+}
+
+// stallBoundedWriter is the write-side mirror of stallBoundedBody: every Write
+// re-arms the client's write deadline, so the bound is "no progress for idle"
+// rather than "the whole relay must finish within idle".
+//
+// The distinction is not academic. The response relays used to arm a single
+// absolute client.SetWriteDeadline(now+httpWriteTimeout) around
+// resp.Write(client), which is correct for a small buffered body and wrong for
+// a stream: the MITM'd /v1/messages SSE relay holds one Write loop open for the
+// entire generation, so a turn that legitimately streams for longer than
+// httpWriteTimeout was severed mid-stream at exactly that mark — even though
+// tokens were flowing the whole time. The agent saw a truncated body
+// ("Response was interrupted due to a server error", or a TLS-level "cannot
+// decrypt peer's message" when the cut landed mid-record), retried, and —
+// because a retry replays the same long turn — was cut again at the same 60s,
+// livelocking the agent on its longest and most valuable turns. Measured on the
+// hosted spoke: 23 "response relay timed out" in 40 minutes, every one
+// path=/v1/messages with error "write tcp ...: i/o timeout", against an agent
+// that made zero forward progress across six consecutive attempts.
+//
+// Reusing the stall semantics already proven on the read side (#3875) keeps a
+// client that has genuinely gone away bounded — a dead peer stops draining, the
+// socket buffer fills, and the next Write blocks past idle and errors — while a
+// stream that keeps flowing is never cut for being long.
+type stallBoundedWriter struct {
+	conn net.Conn
+	idle time.Duration
+}
+
+func (w *stallBoundedWriter) Write(p []byte) (int, error) {
+	_ = w.conn.SetWriteDeadline(time.Now().Add(w.idle))
+	return w.conn.Write(p)
 }
 
 // tunnelHalfCloseDrainDefault bounds how long one direction of an opaque
@@ -2579,8 +2614,12 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 		if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			p.forwardCopilotResponseWithUsage(client, resp, host, agentName, model)
 		} else {
-			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
-			if err := resp.Write(client); err != nil {
+			// This is the branch that carries Anthropic-style streaming
+			// completions (/v1/messages never matches the OpenAI-shaped
+			// completions suffix), so the Write below can legitimately stay
+			// open for the whole generation. It must therefore be bounded by
+			// stall, not by total duration — see stallBoundedWriter.
+			if err := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout}); err != nil {
 				_ = resp.Body.Close()
 				_ = client.SetWriteDeadline(time.Time{})
 				p.logTimeout("copilot sniff: response relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
@@ -2635,8 +2674,7 @@ func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *htt
 	// buffered copy and drop Content-Length ambiguity by setting it explicitly.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
-	_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
-	if err := resp.Write(client); err != nil {
+	if err := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout}); err != nil {
 		p.logger.Warn("copilot sniff: response write to client failed", "agent", agentName, "error", err)
 	}
 	_ = client.SetWriteDeadline(time.Time{})
