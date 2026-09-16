@@ -1263,6 +1263,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-stylepick select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
 .me-signin{background:var(--cc-surface);border:1px dashed var(--cc-border);border-radius:14px;padding:22px;text-align:center;color:var(--cc-muted);font-size:.9rem;margin-bottom:20px}
 .me-signin b{color:var(--cc-text)}
+/* The signed-out call to action. It was <b> text, which told a visitor to sign
+   in while giving them nothing to click (#7195). Styled as an explicit control
+   rather than an inline link so it reads as the action it is, and underlined on
+   hover/focus so it is not identified by colour alone. */
+.cc-signin-cta{display:inline-block;color:var(--cc-text);font-weight:600;
+  text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.cc-signin-cta:hover,.cc-signin-cta:focus-visible{color:var(--cc-accent,#2ea043)}
+.cc-signin-cta:focus-visible{outline:2px solid var(--cc-accent,#2ea043);outline-offset:2px}
 /* Leaderboard standing strip — the one-line remnant of the dossier on the
    standings tab. Deliberately unobtrusive: the Rankings are the content here. */
 .me-standing{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
@@ -3165,6 +3173,18 @@ function tierBadge(tier,extraCls){
 // Used to SUBTLY highlight the viewer's own row in the Rankings list, and to scope
 // the Fleet work panel's "Mine" filter (#6945).
 var ccMeUsername='';
+// Every signed-out prompt on this page used to render "Sign in with GitHub" as
+// bare <b> text, so the one thing a signed-out visitor was being told to do was
+// the one thing the page gave them no way to do (#7195). The dashboard root is
+// the device-flow sign-in page, and it is already what the auth-error page links
+// to, so the prompt points there rather than inventing a second entry point.
+//
+// This matters most on a spoke: a session on the hub is not a session on the
+// spoke's own origin, so a visitor who is signed in at hive.hivecommons.dev
+// still arrives here anonymous and needs a way to sign in to THIS origin.
+function ccSignInCTA(label){
+  return '<a class="cc-signin-cta" href="/">'+esc(label||'Sign in with GitHub')+'</a>';
+}
 // ccResolveViewer fills ccMeUsername on a tab that has no other reason to ask who
 // is looking. Every existing setter hangs off a DIFFERENT tab — loadMeStanding and
 // loadMeCard (Rankings, Profile) and ccLoadMine, which only assigns on a 2xx — so a
@@ -3355,7 +3375,7 @@ function loadMeStanding(){
   if(!mount)return;
   fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
     if(!auth||!auth.logged_in||!auth.username){
-      mount.innerHTML='<div class="me-standing"><span><b>Sign in</b> to see where you stand.</span></div>';
+      mount.innerHTML='<div class="me-standing"><span>'+ccSignInCTA('Sign in with GitHub')+' to see where you stand.</span></div>';
       return;
     }
     var u=auth.username;
@@ -3424,7 +3444,7 @@ function renderMeError(mount,e){
 function renderMeSignIn(mount,username){
   var msg=username
     ?('<b>'+esc(username)+'</b>, you don’t have a contributor profile on this hive yet. Ship a task to start your card.')
-    :'<b>Sign in</b> to see your personal contributor profile — your rank, milestones, and hives.';
+    :ccSignInCTA('Sign in with GitHub')+' to see your personal contributor profile — your rank, milestones, and hives.';
   mount.innerHTML='<div class="me-signin">'+msg+'</div>';
 }
 
@@ -5079,7 +5099,7 @@ function renderWork(list){
     // you are", so say that and reuse the Profile tab's .me-signin treatment
     // rather than reporting a fleet-wide fact about a list scoped to nobody.
     if(currentScope==='mine'&&!ccMeUsername){
-      el.innerHTML='<div class="me-signin"><b>Sign in with GitHub</b> to see your own work here. '
+      el.innerHTML='<div class="me-signin">'+ccSignInCTA('Sign in with GitHub')+' to see your own work here. '
         +'Switch back to <b>All contributors</b> for everything in flight across the hive.</div>';
       return;
     }
@@ -6556,7 +6576,7 @@ function ccRenderMineMessage(html){
 // Anonymous viewer (401): a prompt, not an error — the same register the Profile
 // tab's renderMeSignIn uses, named for the stats this card actually shows.
 function ccRenderMineSignIn(){
-  ccRenderMineMessage('<b>Sign in with GitHub</b> to see your own contribution stats '
+  ccRenderMineMessage(ccSignInCTA('Sign in with GitHub')+' to see your own contribution stats '
     +'&mdash; issues worked, PRs produced, and your trust tier on this hive.');
 }
 // Signed in, but no contributor profile on this hive yet (403). The username is
