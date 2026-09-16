@@ -49,6 +49,26 @@ const RedPRStaleAfter = 10 * time.Minute
 // unchanged red SHA.
 const MaxReEngagements = 6
 
+// ReEngageCooldown is the minimum spacing between two re-engagements of the
+// SAME red head SHA.
+//
+// Without it, MaxReEngagements is not a budget of six ATTEMPTS — it is a budget
+// of six governor TICKS. StaleRed gates on now-FirstRedAt, and FirstRedAt does
+// not advance while the head SHA is unchanged, so once a red PR crosses
+// RedPRStaleAfter it reads as stale on every subsequent tick, forever. The
+// reaper then burned all six re-engagements back-to-back at tick cadence
+// (~2 min) and the PR was escalated to needs-human ~13 minutes after it went
+// stale — before the owning agent's next kick could even be built, let alone
+// answered. Observed on kubestellar/console#23459 and #23475: both reached
+// re_engagements=6 with exactly ONE entry in RedSHAs, i.e. they were parked for
+// a human having never received a single repair attempt, which is precisely the
+// outcome the re-engagement path exists to prevent.
+//
+// Spacing re-engagements by RedPRStaleAfter makes each one cost at least as
+// much wall-clock as the staleness signal that justified it, so the six
+// attempts span >=1h and a normally-cadenced agent gets real kicks in between.
+const ReEngageCooldown = RedPRStaleAfter
+
 // MachineryVersion identifies the GENERATION of the fix-dispatch machinery.
 // Bump it when the kick/repair pipeline changes materially enough that
 // attempts burned under the previous generation are no longer predictive of
@@ -105,6 +125,11 @@ type Entry struct {
 	// PR goes green. The re-engagement cap (MaxReEngagements) reads this so a
 	// permanently-red, never-moving PR is not nudged forever.
 	ReEngagements int `json:"re_engagements,omitempty"`
+	// LastReEngagedAt is when the most recent re-engagement was granted for
+	// CurRedSHA. ReEngageCooldown is enforced against it so the budget is
+	// spent at the pace an agent can actually answer, not at governor-tick
+	// pace. Reset alongside ReEngagements whenever CurRedSHA changes.
+	LastReEngagedAt time.Time `json:"last_re_engaged_at,omitempty"`
 	// Machinery is the MachineryVersion under which this entry's attempts
 	// were burned. Older-generation entries are granted amnesty (see
 	// MachineryVersion).
@@ -256,6 +281,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.LabelAppliedAt = time.Time{}
 			e.RedSHAs = nil
 			e.ReEngagements = 0
+			e.LastReEngagedAt = time.Time{}
 			e.UpdatedAt = s.now()
 		}
 
@@ -295,6 +321,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		if e.Machinery < MachineryVersion {
 			e.Machinery = MachineryVersion
 			e.ReEngagements = 0
+			e.LastReEngagedAt = time.Time{}
 			e.Escalated = false
 			e.LabelApplied = false
 			e.RedSHAs = nil
@@ -310,6 +337,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.CurRedSHA = o.HeadSHA
 			e.FirstRedAt = s.now()
 			e.ReEngagements = 0
+			e.LastReEngagedAt = time.Time{}
 		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
@@ -448,6 +476,7 @@ func (s *Store) ObserveRed(obs []Observation) {
 				e.CurRedSHA = ""
 				e.FirstRedAt = time.Time{}
 				e.ReEngagements = 0
+				e.LastReEngagedAt = time.Time{}
 			}
 			continue
 		}
@@ -463,6 +492,7 @@ func (s *Store) ObserveRed(obs []Observation) {
 			e.CurRedSHA = o.HeadSHA
 			e.FirstRedAt = now
 			e.ReEngagements = 0
+			e.LastReEngagedAt = time.Time{}
 		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
@@ -513,6 +543,7 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 		e.CurRedSHA = headSHA
 		e.FirstRedAt = s.now()
 		e.ReEngagements = 0
+		e.LastReEngagedAt = time.Time{}
 	}
 	// Machinery amnesty: attempts burned under an older fix-dispatch
 	// generation don't count against the current one. Grant one fresh set
@@ -521,6 +552,7 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 	if e.Machinery < MachineryVersion {
 		e.Machinery = MachineryVersion
 		e.ReEngagements = 0
+		e.LastReEngagedAt = time.Time{}
 		e.Escalated = false
 		e.LabelApplied = false
 		e.LabelAppliedAt = time.Time{}
@@ -529,7 +561,13 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 	if e.ReEngagements >= MaxReEngagements {
 		return false
 	}
+	// Budget is spent at agent pace, not tick pace: a stale red SHA re-reads as
+	// stale every tick, so without this the whole budget evaporates in minutes.
+	if !e.LastReEngagedAt.IsZero() && s.now().Sub(e.LastReEngagedAt) < ReEngageCooldown {
+		return false
+	}
 	e.ReEngagements++
+	e.LastReEngagedAt = s.now()
 	e.UpdatedAt = s.now()
 	s.saveLocked()
 	return true

@@ -154,15 +154,18 @@ func TestStaleRed_HealthyPRNeverStale(t *testing.T) {
 
 func TestTryReEngage_CapHaltsPermanentlyRedPR(t *testing.T) {
 	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
-	clock, _ := mkClock(time.Unix(3_000_000, 0).UTC())
+	clock, cur := mkClock(time.Unix(3_000_000, 0).UTC())
 	s.SetClock(clock)
 
 	s.ObserveRed([]Observation{{Repo: "org/repo", Number: 5, HeadSHA: "stuck", Red: true}})
 	// Exactly MaxReEngagements dispatches are allowed for one unchanged red SHA.
+	// The clock advances past ReEngageCooldown between attempts: this test is
+	// about the cap, not the pacing (see reengage_cooldown_test.go for that).
 	for i := 0; i < MaxReEngagements; i++ {
 		if !s.TryReEngage("org/repo", 5, "stuck") {
 			t.Fatalf("re-engagement %d must be allowed (cap is %d)", i+1, MaxReEngagements)
 		}
+		*cur = cur.Add(ReEngageCooldown + time.Minute)
 	}
 	if s.TryReEngage("org/repo", 5, "stuck") {
 		t.Fatal("re-engagement past the cap must be refused — a never-moving red PR must stop being nudged")
@@ -183,7 +186,7 @@ func TestTryReEngage_EmptySHAReusesTrackedSHA(t *testing.T) {
 	// The merge-watcher hook passes an empty head SHA (it does not re-fetch the
 	// head); the store must reuse the SHA last observed and NOT reset the cap.
 	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
-	clock, _ := mkClock(time.Unix(4_000_000, 0).UTC())
+	clock, cur := mkClock(time.Unix(4_000_000, 0).UTC())
 	s.SetClock(clock)
 
 	s.ObserveRed([]Observation{{Repo: "org/repo", Number: 3, HeadSHA: "abc", Red: true}})
@@ -191,6 +194,7 @@ func TestTryReEngage_EmptySHAReusesTrackedSHA(t *testing.T) {
 		if !s.TryReEngage("org/repo", 3, "") {
 			t.Fatalf("empty-SHA re-engagement %d must be allowed", i+1)
 		}
+		*cur = cur.Add(ReEngageCooldown + time.Minute)
 	}
 	if s.TryReEngage("org/repo", 3, "") {
 		t.Fatal("empty-SHA re-engagement must respect the cap on the tracked SHA")
@@ -204,13 +208,18 @@ func TestTryReEngage_EmptySHAReusesTrackedSHA(t *testing.T) {
 // 2026-08-22: eight red PRs re-engaged every cycle for 15h with zero pushes).
 func TestSweep_EscalatesWhenReEngagementBudgetExhaustedOnUnchangedSHA(t *testing.T) {
 	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	clock, cur := mkClock(time.Unix(6_000_000, 0).UTC())
+	s.SetClock(clock)
 
 	// One red SHA, observed; re-engage to the cap without the SHA ever moving.
+	// Attempts are spaced past ReEngageCooldown — exhausting the budget is a
+	// matter of hours now, not minutes, but it still happens.
 	s.Sweep([]Observation{obs("org/repo", 9, "frozen", true)}, 3)
 	for i := 0; i < MaxReEngagements; i++ {
 		if !s.TryReEngage("org/repo", 9, "frozen") {
 			t.Fatalf("re-engage %d should be allowed", i+1)
 		}
+		*cur = cur.Add(ReEngageCooldown + time.Minute)
 	}
 	if s.TryReEngage("org/repo", 9, "frozen") {
 		t.Fatal("cap must halt further re-engagements")
@@ -227,9 +236,12 @@ func TestSweep_EscalatesWhenReEngagementBudgetExhaustedOnUnchangedSHA(t *testing
 	// A pushed fix (new SHA) resets the budget — a freshly-moving PR must NOT
 	// be treated as exhausted.
 	s2 := Load(filepath.Join(t.TempDir(), "s2.json"))
+	clock2, cur2 := mkClock(time.Unix(7_000_000, 0).UTC())
+	s2.SetClock(clock2)
 	s2.Sweep([]Observation{obs("org/repo", 11, "a", true)}, 3)
 	for i := 0; i < MaxReEngagements; i++ {
 		s2.TryReEngage("org/repo", 11, "a")
+		*cur2 = cur2.Add(ReEngageCooldown + time.Minute)
 	}
 	r = s2.Sweep([]Observation{obs("org/repo", 11, "b", true)}, 3) // branch moved
 	got = r[Key("org/repo", 11)]
