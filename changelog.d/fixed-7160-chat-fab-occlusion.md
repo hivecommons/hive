@@ -1,0 +1,1 @@
+- The dashboard chat button no longer permanently hides data beneath it ([#7160](https://github.com/hivecommons/hive/issues/7160)): it rests translucent and goes solid on hover, focus, while open, or with an unread reply, and the page keeps bottom clearance so the last rows can scroll clear of it.
