@@ -107,6 +107,9 @@ func TestParseColorInt(t *testing.T) {
 		{"#000000", 0},
 		{"#ffffff", 0xffffff},
 		{"", 0x95a5a6}, // default grey
+		// Malformed hex must fall back to the same default grey as an empty
+		// string — the Sscanf-error branch was previously uncovered.
+		{"#zzzzzz", 0x95a5a6},
 	}
 	for _, tc := range cases {
 		got := parseColorInt(tc.input)
