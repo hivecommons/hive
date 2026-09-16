@@ -217,8 +217,13 @@ func TestHandleConnectDirectGitHub(t *testing.T) {
 	// Send a request — the upstream dial to api.github.com:443 will fail
 	// but we've already covered the MITM cert forge + TLS handshake paths
 	fmt.Fprintf(tlsConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
-	// The connection will close because upstream dial fails
-	time.Sleep(500 * time.Millisecond)
+	// The connection closes because the upstream dial fails. Wait on that
+	// observable event -- the proxy hanging up, surfaced as EOF -- instead of
+	// a fixed sleep: it is what this test is actually asserting, it returns as
+	// soon as it happens, and the read deadline bounds the wait if it never
+	// does.
+	_ = tlsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.Copy(io.Discard, tlsConn)
 }
 
 // ---------- proxyHTTP: allowed POST with body draining ----------
