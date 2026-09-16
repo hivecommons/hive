@@ -199,11 +199,19 @@ jobs:
 
           # Floor-map key for a package import path: cmd packages are keyed
           # with a "cmd/" prefix so cmd/hivectl can never resolve to
-          # pkg/hivectl's floor (#4701); everything else keeps the historical
-          # bare-basename key.
+          # pkg/hivectl's floor (#4701).
+          #
+          # pkg packages are keyed by their full path below pkg/ for the same
+          # reason: a bare basename makes every nested package an alias for the
+          # top-level one that shares its name, so they silently share a floor.
+          # v5 is the live example -- it carries both pkg/spoke (96.3%) and
+          # pkg/hub/spoke (90.7%), which both keyed to "spoke", so the [spoke]=95
+          # floor #7146 set for pkg/spoke would have been enforced against
+          # pkg/hub/spoke too and failed it. Keys are now "spoke" vs "hub/spoke".
           floor_key() {
             case "$1" in
               */cmd/*) echo "cmd/${1##*/}" ;;
+              */pkg/*) echo "${1##*/pkg/}" ;;
               *)       echo "${1##*/}" ;;
             esac
           }

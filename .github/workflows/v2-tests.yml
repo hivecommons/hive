@@ -896,10 +896,14 @@ jobs:
             | LC_ALL=C sort -u > pkg-states.txt
 
           # Floor-map key: cmd packages get a "cmd/" prefix so cmd/hivectl can
-          # never resolve to pkg/hivectl's floor; pkg keeps the bare basename.
+          # never resolve to pkg/hivectl's floor; pkg packages are keyed by
+          # their full path below pkg/ so a nested package can never alias the
+          # top-level one sharing its name (v5 has both pkg/spoke and
+          # pkg/hub/spoke). See coverage-hourly.yml for the full rationale.
           floor_key() {
             case "$1" in
               */cmd/*) echo "cmd/${1##*/}" ;;
+              */pkg/*) echo "${1##*/pkg/}" ;;
               *)       echo "${1##*/}" ;;
             esac
           }
