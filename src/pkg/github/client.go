@@ -335,6 +335,18 @@ type PullRequest struct {
 	Mergeable Mergeable `json:"mergeable"`
 	CIStatus  string    `json:"ci_status"`
 	HeadSHA   string    `json:"head_sha,omitempty"`
+	// HeadRef is the PR's head branch name; HeadRepo is the "owner/name" the
+	// head branch lives in. FromFork is true when HeadRepo differs from the
+	// PR's base repository (GitHub's isCrossRepository) — or when the head
+	// repository no longer exists, which is equally unpushable. The hive's
+	// App token can push only to the base repository, so a fork PR can be
+	// reviewed and commented on but never repaired by pushing: listing it in
+	// a push-repair queue without saying so cost a scanner a whole session
+	// and produced a stray branch on the base repo, pushed under the fork's
+	// head-ref name (hivecommons/hive#7386).
+	HeadRef  string `json:"head_ref,omitempty"`
+	HeadRepo string `json:"head_repo,omitempty"`
+	FromFork bool   `json:"from_fork,omitempty"`
 	// FailingChecks names the completed check runs whose conclusion was
 	// failure/action_required. CIFailureExcerpt carries the raw error lines
 	// pulled from those runs' annotations — the evidence a fix agent (or an
@@ -823,6 +835,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()
 		}
+		headRef, headRepo, fromFork := prHeadOrigin(pr)
 
 		actionable = append(actionable, PullRequest{
 			Repo:      repo,
@@ -838,7 +851,10 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			// per-PR and returns it only from the single-PR GET. Reading it
 			// here would yield false for every PR. EnrichCIStatus fills it in
 			// from a per-PR fetch; until then it stays MergeableUnknown.
-			HeadSHA: headSHA,
+			HeadSHA:  headSHA,
+			HeadRef:  headRef,
+			HeadRepo: headRepo,
+			FromFork: fromFork,
 		})
 	}
 
@@ -1182,6 +1198,58 @@ func extractAssignees(users []*gh.User) []string {
 		}
 	}
 	return result
+}
+
+// Reachable actions for a PR in a kick work list (hivecommons/hive#7386):
+// what an agent holding the hive's App token can actually do to it.
+const (
+	// ReachableActionPush: the head branch is in the base repository, so the
+	// agent can check it out, commit, and push a repair.
+	ReachableActionPush = "push"
+	// ReachableActionCommentOnly: the head branch lives in a fork (or a
+	// deleted repository). The agent can review and comment; it cannot push,
+	// and must never push to a branch of the base repo named after the
+	// fork's head ref.
+	ReachableActionCommentOnly = "comment-only"
+)
+
+// ReachableAction classifies a PR for the repair queue: push-repairable, or
+// comment-only because its head is not in the base repository.
+func ReachableAction(pr PullRequest) string {
+	if pr.FromFork {
+		return ReachableActionCommentOnly
+	}
+	return ReachableActionPush
+}
+
+// prHeadOrigin reports where a PR's head branch lives: its ref name, the
+// "owner/name" repository holding it, and whether that is a different
+// repository from the PR's base (a fork PR, GitHub's isCrossRepository). A
+// head whose repository is gone — the fork was deleted after the PR was
+// opened — reports fromFork=true with an empty HeadRepo: there is nothing to
+// push to either way (hivecommons/hive#7386). Comparison is case-insensitive
+// because GitHub repository names are.
+func prHeadOrigin(pr *gh.PullRequest) (headRef, headRepo string, fromFork bool) {
+	if pr == nil || pr.GetHead() == nil {
+		return "", "", false
+	}
+	head := pr.GetHead()
+	headRef = head.GetRef()
+	if head.GetRepo() == nil {
+		return headRef, "", true
+	}
+	headRepo = head.GetRepo().GetFullName()
+	baseRepo := ""
+	if pr.GetBase() != nil && pr.GetBase().GetRepo() != nil {
+		baseRepo = pr.GetBase().GetRepo().GetFullName()
+	}
+	if baseRepo == "" || headRepo == "" {
+		// Cannot compare: an abbreviated payload. Do not guess "fork" — that
+		// would hide every PR from the repair queue — but do not claim
+		// same-repo either when the head is unknown.
+		return headRef, headRepo, headRepo == ""
+	}
+	return headRef, headRepo, !strings.EqualFold(headRepo, baseRepo)
 }
 
 func safeGetLogin(u *gh.User) string {

@@ -473,9 +473,23 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 		}
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, author, title))
+		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), title))
 	}
 	return b.String(), failClosed
+}
+
+// forkAnnotation is the inline marker every PR list carries for a PR whose
+// head lives in a fork (hivecommons/hive#7386): the agent learns "comment
+// only" from the work list, not from a failed push. Empty for same-repo PRs.
+func forkAnnotation(pr github.PullRequest) string {
+	if !pr.FromFork {
+		return ""
+	}
+	head := pr.HeadRepo
+	if head == "" {
+		head = "fork deleted"
+	}
+	return " [fork: " + head + " — comment only, cannot push]"
 }
 
 // buildAgentListAndRoles returns a comma-separated agent list and a formatted
@@ -1099,6 +1113,8 @@ func formatRedPRFixData(data []byte, agent string) string {
 		FailingChecks []string `json:"failing_checks"`
 		Excerpt       string   `json:"excerpt"`
 		Escalated     bool     `json:"escalated"`
+		FromFork      bool     `json:"from_fork"`
+		HeadRepo      string   `json:"head_repo"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -1107,9 +1123,19 @@ func formatRedPRFixData(data []byte, agent string) string {
 		return ""
 	}
 	var mine []ciFailingRow
+	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
 			continue // needs-human: hands off for agents
+		}
+		if pr.FromFork {
+			// A fork PR can never be "yours": the hive pushes only to the base
+			// repository, so it did not open this PR and cannot repair it.
+			// Unattributed rows default to scanner below, which is exactly how
+			// 66 contributor PRs from forks became one scanner's FIX-BEFORE-NEW
+			// gate on the projectbluefin spoke (hivecommons/hive#7386).
+			forks++
+			continue
 		}
 		owner := pr.Agent
 		if owner == "" {
@@ -1126,6 +1152,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI (%d)\n\n", len(mine)))
+	if forks > 0 {
+		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
+	}
 	b.WriteString("These PRs are YOURS and they are red. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
 	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
@@ -1356,7 +1385,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, pr.Author, title))
+		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), title))
 	}
 
 	if actionable.Issues.SLAViolations > 0 {
@@ -1479,26 +1508,69 @@ func (s *Scheduler) buildCIFailingList() string {
 	if err != nil {
 		return "(none)\n"
 	}
+	type ciFailingRow struct {
+		Number   int    `json:"number"`
+		Repo     string `json:"repo"`
+		Title    string `json:"title"`
+		Author   string `json:"author"`
+		HeadSHA  string `json:"head_sha"`
+		HeadRef  string `json:"head_ref"`
+		HeadRepo string `json:"head_repo"`
+		FromFork bool   `json:"from_fork"`
+	}
 	var payload struct {
-		Items []struct {
-			Number  int    `json:"number"`
-			Repo    string `json:"repo"`
-			Title   string `json:"title"`
-			Author  string `json:"author"`
-			HeadSHA string `json:"head_sha"`
-		} `json:"ci_failing"`
+		Items []ciFailingRow `json:"ci_failing"`
 	}
 	if json.Unmarshal(data, &payload) != nil || len(payload.Items) == 0 {
 		return "(none)\n"
 	}
+	// Two queues, not one (hivecommons/hive#7386): a red PR whose head lives
+	// in a fork is comment-only for every agent — the App token pushes to the
+	// base repository and nowhere else. Rendering the two together as one
+	// "repair queue" sent a scanner through 107 PRs of which 66 were forks;
+	// it found out by pushing, and the push landed a stray branch on the base
+	// repo under the fork's head-ref name. The split keeps the push queue
+	// honest about its size and takes the discovery cost off the agent.
+	var pushable, forks []ciFailingRow
+	for _, pr := range payload.Items {
+		if pr.FromFork {
+			forks = append(forks, pr)
+		} else {
+			pushable = append(pushable, pr)
+		}
+	}
 	var b strings.Builder
 	limit := s.prCap()
-	for i, pr := range payload.Items {
+	if len(pushable) == 0 {
+		b.WriteString("  (none you can push to)\n")
+	}
+	for i, pr := range pushable {
 		if i >= limit {
-			b.WriteString(prListOverflowLine(len(payload.Items)-i, limit))
+			b.WriteString(prListOverflowLine(len(pushable)-i, limit))
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s) — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, pr.Title))
+	}
+	if len(forks) > 0 {
+		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, you CANNOT push to these):\n", len(forks)))
+		b.WriteString("  Their head branch lives in the contributor's fork, not in this repo. Do NOT\n")
+		b.WriteString("  `gh pr checkout` + push, and NEVER `git push origin HEAD:<head_ref>` — that creates\n")
+		b.WriteString("  a stray branch on the base repo under a name you do not own. Leave a review\n")
+		b.WriteString("  comment with the fix, or skip.\n")
+		for i, pr := range forks {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(forks)-i, limit))
+				break
+			}
+			head := pr.HeadRepo
+			if head == "" {
+				head = "(fork deleted)"
+			}
+			if pr.HeadRef != "" {
+				head += ":" + pr.HeadRef
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s by @%s [fork: %s — comment only] — %s\n", pr.Number, pr.Repo, pr.Author, head, pr.Title))
+		}
 	}
 	return b.String()
 }

@@ -8964,6 +8964,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// fix-before-new section routes each red PR back to its author; empty
 		// means unattributed (kick builders default it to scanner).
 		Agent string `json:"agent,omitempty"`
+		// HeadRef / HeadRepo / FromFork say where the red branch actually
+		// lives (hivecommons/hive#7386). The hive's App token pushes only to
+		// the base repository, so a fork PR is comment-only for every agent:
+		// ReachableAction spells that out ("push" | "comment-only") so no
+		// kick consumer has to discover it with a failed push — the failure
+		// mode that burned a scanner session and left a stray branch on the
+		// base repo under the fork's head-ref name.
+		HeadRef         string `json:"head_ref,omitempty"`
+		HeadRepo        string `json:"head_repo,omitempty"`
+		FromFork        bool   `json:"from_fork,omitempty"`
+		ReachableAction string `json:"reachable_action"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
@@ -9019,15 +9030,19 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				pr.Mergeable == github.MergeableYes
 			if !onlyOptionalRed {
 				failing = append(failing, failingPR{
-					Number:        pr.Number,
-					Repo:          fullRepo,
-					Title:         pr.Title,
-					Author:        pr.Author,
-					HeadSHA:       pr.HeadSHA,
-					FailingChecks: pr.FailingChecks,
-					Excerpt:       pr.CIFailureExcerpt,
-					Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
-					Agent:         prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+					Number:          pr.Number,
+					Repo:            fullRepo,
+					Title:           pr.Title,
+					Author:          pr.Author,
+					HeadSHA:         pr.HeadSHA,
+					FailingChecks:   pr.FailingChecks,
+					Excerpt:         pr.CIFailureExcerpt,
+					Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+					Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+					HeadRef:         pr.HeadRef,
+					HeadRepo:        pr.HeadRepo,
+					FromFork:        pr.FromFork,
+					ReachableAction: github.ReachableAction(pr),
 				})
 				continue
 			}

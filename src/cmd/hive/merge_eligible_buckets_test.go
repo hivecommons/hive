@@ -33,12 +33,16 @@ type eligibleEntry struct {
 }
 
 type failingEntry struct {
-	Number        int      `json:"number"`
-	Repo          string   `json:"repo"`
-	HeadSHA       string   `json:"head_sha"`
-	FailingChecks []string `json:"failing_checks"`
-	Excerpt       string   `json:"excerpt"`
-	Escalated     bool     `json:"escalated"`
+	Number          int      `json:"number"`
+	Repo            string   `json:"repo"`
+	HeadSHA         string   `json:"head_sha"`
+	FailingChecks   []string `json:"failing_checks"`
+	Excerpt         string   `json:"excerpt"`
+	Escalated       bool     `json:"escalated"`
+	HeadRef         string   `json:"head_ref"`
+	HeadRepo        string   `json:"head_repo"`
+	FromFork        bool     `json:"from_fork"`
+	ReachableAction string   `json:"reachable_action"`
 }
 
 type mergeEligibleInputs struct {
@@ -361,5 +365,32 @@ func TestWriteMergeEligible_EmptyInputStillRewritesBothFiles(t *testing.T) {
 		if _, ok := got["generated_at"]; !ok {
 			t.Errorf("%s has no generated_at: %v", filepath.Base(p), got)
 		}
+	}
+}
+
+// The failing bucket says where each red branch lives and what the agent can
+// do about it (hivecommons/hive#7386): a fork PR is comment-only, a same-repo
+// PR is push-repairable, and the fields are on the wire so kick builders and
+// agents never have to discover it with a failed push.
+func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
+	prs := []github.PullRequest{
+		{Repo: "testsuite", Number: 839, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f1",
+			FailingChecks: []string{"build"}, HeadRef: "sec-check-dashboard", HeadRepo: "alice/testsuite", FromFork: true},
+		{Repo: "testsuite", Number: 840, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f2",
+			FailingChecks: []string{"build"}, HeadRef: "hive/fix-840", HeadRepo: "projectbluefin/testsuite"},
+	}
+	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "projectbluefin"})
+	if len(failing) != 2 {
+		t.Fatalf("failing = %+v, want both PRs", failing)
+	}
+	byNum := map[int]failingEntry{}
+	for _, f := range failing {
+		byNum[f.Number] = f
+	}
+	if f := byNum[839]; !f.FromFork || f.HeadRepo != "alice/testsuite" || f.HeadRef != "sec-check-dashboard" || f.ReachableAction != github.ReachableActionCommentOnly {
+		t.Errorf("fork PR entry = %+v, want from_fork with head origin and reachable_action=comment-only", f)
+	}
+	if f := byNum[840]; f.FromFork || f.HeadRepo != "projectbluefin/testsuite" || f.ReachableAction != github.ReachableActionPush {
+		t.Errorf("same-repo PR entry = %+v, want reachable_action=push", f)
 	}
 }

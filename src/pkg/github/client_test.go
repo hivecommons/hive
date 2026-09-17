@@ -50,6 +50,22 @@ type wirePR struct {
 	CreatedAt string      `json:"created_at"`
 	HTMLURL   string      `json:"html_url"`
 	Mergeable *bool       `json:"mergeable"`
+	// Head / Base carry the branch origin (#7386); nil = absent from the
+	// payload, as older fixtures leave them.
+	Head *wireBranch `json:"head,omitempty"`
+	Base *wireBranch `json:"base,omitempty"`
+}
+
+// wireBranch mirrors the head/base object of a REST pull: ref, sha, and the
+// repository the branch lives in (null when a fork was deleted).
+type wireBranch struct {
+	Ref  string    `json:"ref"`
+	SHA  string    `json:"sha"`
+	Repo *wireRepo `json:"repo"`
+}
+
+type wireRepo struct {
+	FullName string `json:"full_name"`
 }
 
 type wireIssue struct {
