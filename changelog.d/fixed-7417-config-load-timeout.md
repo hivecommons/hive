@@ -1,0 +1,1 @@
+- The agent and governor settings dialogs can no longer hang on "Loading…" forever. The config fetch is bounded by a 12s timeout and reports the stall instead of spinning, and a superseded or dismissed load can no longer paint over the dialog that replaced it.

@@ -17656,8 +17656,9 @@ function burnAreaChart() {
         const rememberedTab = type === 'governor' && savedTab === 'Access' ? 'Security' : savedTab;
         const initialTab = (overrideTab && tabs.includes(overrideTab)) ? overrideTab : (rememberedTab && tabs.includes(rememberedTab) ? rememberedTab : tabs[0]);
         document.getElementById('config-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading…</div>';
-        loadConfigData(type, agentName).finally(() => {
-          if (!_configModalOpen) return;
+        loadConfigData(type, agentName).then((current) => {
+          // A superseded or cancelled load must not paint this dialog.
+          if (!_configModalOpen || !current) return;
           // Nothing loaded: say so, and never render a tab from the empty
           // placeholder (#7405).
           if (_configState.loadError) { renderConfigLoadError(); return; }
@@ -17678,6 +17679,10 @@ function burnAreaChart() {
 
     function closeConfigDialog() {
       _configModalOpen = false;
+      // Invalidate any in-flight load so a late reply cannot repopulate a
+      // dialog the operator has already dismissed.
+      _configLoadSeq++;
+      if (_configLoadAbort) { _configLoadAbort.abort(); _configLoadAbort = null; }
       _configState = { type: null, agent: null, tab: null, data: {}, dirty: {}, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.add('hidden');
       if (location.hash.startsWith('#config/')) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('') : location.pathname);
@@ -18094,19 +18099,50 @@ function burnAreaChart() {
        session is gone — the shared handler already showed the sign-in toast)
        or 'error' with the reason in loadErrorDetail, and every render path
        checks it before touching data. */
+    // Config reads can block server-side: GET /api/config/agent/{name} took the
+    // global agent-manager lock, which a restart holds across tmux/subprocess
+    // work for 10s+ (#7417). GetStatusFast removed that particular wait, but an
+    // unbounded fetch turns ANY future server stall back into a permanent
+    // "Loading…" with no diagnostics, so bound it and say so instead.
+    const CONFIG_LOAD_TIMEOUT_MS = 12000;
+    // Guards against a slow reply for a dialog the operator already closed or
+    // replaced painting over the dialog that superseded it.
+    let _configLoadSeq = 0;
+    let _configLoadAbort = null;
+
     async function loadConfigData(type, agentName) {
       _configState.loadError = null;
       _configState.loadErrorDetail = '';
+      const seq = ++_configLoadSeq;
+      if (_configLoadAbort) _configLoadAbort.abort();
+      const ctl = new AbortController();
+      _configLoadAbort = ctl;
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, CONFIG_LOAD_TIMEOUT_MS);
       try {
         const url = type === 'governor' ? '/api/config/governor' : `/api/config/agent/${agentName}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: ctl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        _configState.data = await res.json();
+        const data = await res.json();
+        if (seq !== _configLoadSeq) return false;
+        _configState.data = data;
       } catch (err) {
-        const expired = await reportFetchFailure('Failed to load config', err);
-        _configState.loadError = expired ? 'session' : 'error';
-        _configState.loadErrorDetail = err && err.message ? err.message : String(err);
+        if (seq !== _configLoadSeq) return false;
+        if (timedOut) {
+          // A timeout is not an expired session: do not send the operator to
+          // sign in again when the server is simply slow.
+          _configState.loadError = 'error';
+          _configState.loadErrorDetail = `timed out after ${Math.round(CONFIG_LOAD_TIMEOUT_MS / 1000)}s — the server did not respond`;
+        } else {
+          const expired = await reportFetchFailure('Failed to load config', err);
+          _configState.loadError = expired ? 'session' : 'error';
+          _configState.loadErrorDetail = err && err.message ? err.message : String(err);
+        }
+      } finally {
+        clearTimeout(timer);
+        if (_configLoadAbort === ctl) _configLoadAbort = null;
       }
+      return true;
     }
 
     /* renderConfigLoadError replaces the dialog body with an explicit
