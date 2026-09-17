@@ -1,0 +1,145 @@
+name: v5 Top-up
+
+# Keeps the v5 GA candidate from going stale faster than the GA checklist can
+# close (#7297).
+#
+# THE PROBLEM. Two rows on the v5 GA bar (#6016) are pinned to exact SHAs —
+# "dual v4/v5 hub-spoke operation validation is linked with exact SHAs" and
+# "GHCR shows `edge` digest-pinned to the GA candidate". Both are invalidated by
+# the next top-up, so while v4 keeps shipping, those rows quietly re-open after
+# every release and the candidate being soaked is never the candidate being
+# validated. PR #7182 topped v5 up and merged at 16:02Z; ~14h later v4 was 58
+# commits ahead again.
+#
+# THE POLICY THIS IMPLEMENTS. #7297 put two options to the maintainer: make the
+# forward-merge a cadence, or slush v4 until GA designation. This is the first:
+# forward-merge v4 into v5 immediately after every v4 release tag, mechanically,
+# with no human step in the normal path. The slush was not chosen here because
+# it halts everyone's v4 work to serve a checklist, and it is the option that
+# cannot be undone by deleting a file.
+#
+# WHY IT CHAINS OFF "Tagged Release". Topping up on every v4 push would open a
+# PR per merge and thrash. A release tag is the natural cadence: it is the point
+# at which v4 has a name worth carrying forward, and it is exactly the boundary
+# #7297 asked for. The daily schedule is a safety net for drift that arrives
+# WITHOUT a release (dependency bumps, revert traffic), not the primary trigger.
+#
+# CONFLICTS ARE A HUMAN SIGNAL, NOT A RETRY. #7199 documented a structural
+# divergence that blocked a top-up at only ~14 commits of drift. When the merge
+# conflicts, this workflow stops and says so rather than forcing anything: a
+# forward-merge that resolves itself wrongly is far worse than one that waits.
+# Nothing is pushed in that case, so re-running after a manual top-up is safe.
+#
+# SECURITY POSTURE. Past top-ups have carried security fixes (grpc v1.83.2 /
+# GO-2026-6443 arrived on v5 through a v4 merge), which is why letting v5 lag is
+# not cosmetic and why this runs unattended.
+
+on:
+  workflow_run:
+    workflows: ["Tagged Release"]
+    types: [completed]
+    branches: [v4]
+  schedule:
+    # Daily safety net for drift that arrives without a release tag.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  top-up:
+    # Only after a SUCCESSFUL release; a failed or superseded release run has
+    # nothing to carry forward. The schedule and manual paths carry no
+    # conclusion, so they are admitted explicitly.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a forward-merge needs both lines' commits, and a
+          # shallow clone makes every merge look like an unrelated history.
+          fetch-depth: 0
+
+      - name: Identify the committer
+        run: |
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release[bot]@users.noreply.github.com"
+
+      - name: Check whether v5 is behind v4
+        id: drift
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin v4 v5
+          behind="$(git rev-list --count origin/v5..origin/v4)"
+          echo "behind=${behind}" >> "$GITHUB_OUTPUT"
+          if [ "${behind}" -eq 0 ]; then
+            echo "v5 is already level with v4 — nothing to top up."
+          else
+            echo "v5 is ${behind} commit(s) behind v4."
+          fi
+
+      - name: Forward-merge v4 into the top-up branch
+        id: merge
+        if: steps.drift.outputs.behind != '0'
+        run: |
+          set -euo pipefail
+          # Always rebuild the branch from v5's tip. Reusing a stale top-up
+          # branch would replay an older merge and could resurrect commits v5
+          # has since had reverted.
+          git checkout -B sync/v4-to-v5 origin/v5
+
+          # --signoff because dco-push-delta.yml and dco-post-merge.yml audit
+          # v5's history, and a merge commit is a commit like any other.
+          if git merge --no-ff --signoff origin/v4 \
+               -m "🌱 Forward-merge v4 into v5 (${{ steps.drift.outputs.behind }} commits)"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report a conflicting top-up and stop
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          echo "::error::v4 -> v5 forward-merge conflicts and needs a human (see #7199 for the precedent)."
+          echo "Nothing was pushed. Resolve locally:"
+          echo "  git checkout -B sync/v4-to-v5 origin/v5"
+          echo "  git merge --no-ff --signoff origin/v4"
+          echo "  # resolve, then push and open a PR against v5"
+          exit 1
+
+      - name: Push the top-up branch
+        if: steps.merge.outputs.conflict == 'false'
+        run: git push --force-with-lease origin sync/v4-to-v5
+
+      - name: Open or refresh the top-up PR
+        if: steps.merge.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND: ${{ steps.drift.outputs.behind }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --base v5 \
+            --head sync/v4-to-v5 --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "PR #${existing} already open for this top-up; the force-push refreshed it."
+            exit 0
+          fi
+          printf '%s\n' \
+            "Automated v4 → v5 top-up (#7297)." \
+            "" \
+            "Carries ${BEHIND} commit(s) from v4 onto v5." \
+            "" \
+            "This runs after every v4 release tag, plus a daily safety net, so the v5 GA candidate stops drifting between the moment it is validated and the moment it is designated. The two SHA-pinned rows on #6016 can be read against this PR's merge commit." \
+            "" \
+            "Opened by .github/workflows/v5-topup.yml. If this PR conflicts the workflow fails instead of opening it — a conflicting forward-merge is a human decision (see #7199)." \
+            > "$RUNNER_TEMP/v5-topup-body.md"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base v5 --head sync/v4-to-v5 \
+            --title "🌱 Forward-merge v4 into v5 (${BEHIND} commits)" \
+            --body-file "$RUNNER_TEMP/v5-topup-body.md"

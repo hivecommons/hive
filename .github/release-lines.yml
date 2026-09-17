@@ -97,6 +97,12 @@ pinned:
   testutil-guard.yml: []
   v2-ci.yml: []
   v2-tests.yml: []
+  # Automated v4 -> v5 forward-merge cadence (#7297). Its only branch filter is
+  # the `workflow_run` trigger, which names the line whose RELEASES it reacts
+  # to — v4, the source of every top-up. v2 is sunset and cuts no releases to
+  # carry forward, and v5 is the merge TARGET rather than a trigger, so it is
+  # not a branch this workflow watches.
+  v5-topup.yml: [-v2]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard
