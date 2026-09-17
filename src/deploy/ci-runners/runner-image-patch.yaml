@@ -15,13 +15,20 @@
 #
 # Applying this rolls all runner pods, so do it while runners are idle.
 #
-# ── Set the tag before applying ─────────────────────────────────────────────
+# ── The tag below is already the published one ──────────────────────────────
 #
-# `image` below is a PLACEHOLDER. Replace it with the registry path and
-# immutable tag you actually pushed. Prefer a digest (`@sha256:...`) or a
-# unique tag over `:latest`: ARC does not re-pull on a tag that has not
-# changed, so a mutable tag makes "which toolchain is on the runners?"
-# unanswerable from the cluster.
+# hivecommons/hive#7398: this file used to carry a `REPLACE_ME` placeholder, so
+# applying the command above verbatim put every runner pod into
+# ImagePullBackOff. `ci-runner-image.yml` run 35215122771 published
+# ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+# (digest sha256:5a26c5dd7c4bbfd7d2707c99ed51b3fb6115b44f5532569452ad036b35c31224),
+# so the concrete reference lives here and the patch is copy-pasteable.
+#
+# When a rebuild publishes a new tag (the workflow refuses to overwrite an
+# existing one — bump `tag_suffix`), update this line in the same change.
+# Always use an immutable tag or a digest, never `:latest`: ARC does not
+# re-pull on a tag that has not changed, so a mutable tag makes "which
+# toolchain is on the runners?" unanswerable from the cluster.
 #
 # ── Rollback ────────────────────────────────────────────────────────────────
 #
@@ -36,5 +43,5 @@
 spec:
   template:
     spec:
-      # REPLACE before applying — see note above.
-      image: ghcr.io/hivecommons/hive-ci-runner:REPLACE_ME
+      # Published by ci-runner-image.yml run 35215122771 — see note above.
+      image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1

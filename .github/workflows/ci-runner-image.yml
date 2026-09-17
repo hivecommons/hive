@@ -232,7 +232,7 @@ jobs:
               echo "entry to the RunnerDeployment) before patching."
               echo
               echo '```console'
-              echo "sed -i 's#image: ghcr.io/hivecommons/hive-ci-runner:REPLACE_ME#image: ${REF}#' src/deploy/ci-runners/runner-image-patch.yaml"
+              echo "sed -i -E 's#^( +image: ).*#\\1${REF}#' src/deploy/ci-runners/runner-image-patch.yaml   # no-op if already this tag"
               echo "kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \\"
               echo "  --type merge --patch-file src/deploy/ci-runners/runner-image-patch.yaml"
               echo '```'

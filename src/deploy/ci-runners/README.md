@@ -139,8 +139,13 @@ docker push ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
 
 ### Apply
 
-This is the step CI cannot do — it needs `vllm-d` cluster access. Set the
-pushed tag in `runner-image-patch.yaml`, then:
+This is the step CI cannot do — it needs `vllm-d` cluster access. Nothing in
+this repository can perform it, and until it is done the runners keep the old
+image and CI keeps hitting the mirrors (#7398).
+
+`runner-image-patch.yaml` already names the published tag
+`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1`, so the
+patch applies as-is; if you pushed a newer tag, set it there first. Then:
 
 ```console
 kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
