@@ -486,6 +486,10 @@ type Manager struct {
 	// re-entrancy deadlock class (see the 2026-07 provisionWG incident).
 	thrashMu sync.Mutex
 	thrash   map[string]*thrashState
+	// statusSnapshots backs GetStatusFast. Own mutex, NEVER m.mu — its whole
+	// purpose is to be readable while m.mu is held by a restart (#7417).
+	statusSnapMu sync.RWMutex
+	statusSnaps  map[string]*AgentProcess
 	// consentWedges records consent-screen restarts for the heartbeat's
 	// ConsentWedged signal (#5577). Own mutex, NEVER m.mu — the recording
 	// sites run with m.mu held. Zero value ready.
@@ -5272,6 +5276,59 @@ func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 // tmuxSendKeysForAgent sends key sequences (C-c, C-u, etc.) using the agent's tmux socket.
 func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
 	m.term().SendKeys(agent, keys...)
+}
+
+// GetStatusFast returns an agent snapshot without ever waiting on the global
+// manager lock.
+//
+// m.mu is a SINGLE GLOBAL lock, and restartWithReason holds it in write mode
+// across the entire tmux relaunch — kill-session, ensureTmuxSession, the
+// caveman install, send-keys and their sleeps. Measured on a live spoke that
+// is an 11.25s hold, and three restarts can land inside 30s. Any handler whose
+// first action is GetStatus therefore stalls for the length of somebody else's
+// restart, which is why every agent settings dialog sat on "Loading..." while
+// one unrelated agent was relaunching (#7417). Agents do not have independent
+// locks: restarting one blocks reads for all of them.
+//
+// So: try the lock, and if a writer holds it (or is waiting — Go's RWMutex
+// makes TryRLock fail for a pending writer, which is exactly what we want),
+// fall back to the last snapshot instead of blocking. Callers that only need
+// display fields get a value that is at worst one restart stale, which beats a
+// 12-second spinner. If no snapshot has been taken yet this returns an error,
+// and every current caller already degrades to its configured values on error.
+//
+// This does NOT fix the lock hold itself — restartWithReason still needs to be
+// phased so the relaunch happens outside m.mu. It stops that hold from being
+// visible to readers who never needed to be serialized against it.
+func (m *Manager) GetStatusFast(name string) (*AgentProcess, error) {
+	if m.mu.TryRLock() {
+		agent, ok := m.agents[name]
+		if !ok {
+			m.mu.RUnlock()
+			return nil, fmt.Errorf("agent %s not found", name)
+		}
+		snap := agent.snapshot()
+		m.mu.RUnlock()
+
+		m.statusSnapMu.Lock()
+		if m.statusSnaps == nil {
+			m.statusSnaps = make(map[string]*AgentProcess)
+		}
+		cached := snap
+		m.statusSnaps[name] = &cached
+		m.statusSnapMu.Unlock()
+
+		return &snap, nil
+	}
+
+	m.statusSnapMu.RLock()
+	cached, ok := m.statusSnaps[name]
+	m.statusSnapMu.RUnlock()
+	if ok && cached != nil {
+		stale := *cached
+		return &stale, nil
+	}
+	return nil, fmt.Errorf("agent %s status unavailable: manager busy", name)
 }
 
 func (m *Manager) GetStatus(name string) (*AgentProcess, error) {

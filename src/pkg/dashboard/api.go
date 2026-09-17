@@ -3338,7 +3338,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proc, err := s.deps.AgentMgr.GetStatus(name)
+	proc, err := s.deps.AgentMgr.GetStatusFast(name)
 
 	cli := agentCfg.Backend
 	if err == nil && proc.BackendOverride != "" {

@@ -1,0 +1,1 @@
+- Agent settings dialogs no longer freeze while an unrelated agent is restarting. The agent config endpoint now reads status without waiting on the global manager lock, which a restart holds across the entire tmux relaunch (11s+ on a live spoke), falling back to the last snapshot rather than blocking.
