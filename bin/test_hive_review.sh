@@ -65,6 +65,44 @@ check_exit "request-changes without body exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 5 --request-changes
 check_exit "comment without body exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 5 --comment
+check_exit "resolve-thread without thread id exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 5 --resolve-thread ""
+check_exit "thread with approve exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 5 --approve --thread PRRT_x
+check_exit "thread comment without body exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 5 --comment --thread PRRT_x
+
+# --- review-bot threads (#7360): in-thread reply + resolve ---
+echo ""
+echo "--- review-bot threads ---"
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+run_script "tbot" --repo "org/repo" 21 --comment --thread PRRT_kwDOAbc --body "fixed the nil check"
+REQ_FILE="$(find_req tbot)"
+if [ -n "$REQ_FILE" ]; then
+  check "thread reply event" "comment" "$(field "$REQ_FILE" event)"
+  check "thread reply thread_id" "PRRT_kwDOAbc" "$(field "$REQ_FILE" thread_id)"
+  check "thread reply body" "fixed the nil check" "$(field "$REQ_FILE" body)"
+else
+  echo "  FAIL: thread reply request not created"; FAIL=$((FAIL + 3))
+fi
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+run_script "rbot" --repo "org/repo" 21 --resolve-thread PRRT_kwDOAbc
+REQ_FILE="$(find_req rbot)"
+if [ -n "$REQ_FILE" ]; then
+  check "resolve event" "resolve_thread" "$(field "$REQ_FILE" event)"
+  check "resolve thread_id" "PRRT_kwDOAbc" "$(field "$REQ_FILE" thread_id)"
+  check "resolve needs no body" "" "$(field "$REQ_FILE" body)"
+else
+  echo "  FAIL: resolve_thread request not created"; FAIL=$((FAIL + 3))
+fi
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+run_script "plainbot" --repo "org/repo" 21 --comment --body "nit"
+REQ_FILE="$(find_req plainbot)"
+if [ -n "$REQ_FILE" ]; then
+  check "plain comment carries no thread_id" "" "$(field "$REQ_FILE" thread_id)"
+else
+  echo "  FAIL: plain comment request not created"; FAIL=$((FAIL + 1))
+fi
 
 # --- approve (no body needed) ---
 echo ""

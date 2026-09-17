@@ -37,24 +37,55 @@ func reviewRequestDir() string {
 var reviewRequestPollInterval = 10 * time.Second
 
 // ReviewRequest is the JSON an agent writes to ReviewRequestDir. Event selects
-// the review type: "approve" | "request_changes" | "comment". Body is required
-// for request_changes/comment (GitHub rejects an empty non-approve review) and
-// optional for approve.
+// the review type: "approve" | "request_changes" | "comment" |
+// "resolve_thread". Body is required for request_changes/comment (GitHub
+// rejects an empty non-approve review) and optional for approve.
+//
+// ThreadID (hivecommons/hive#7360) names one inline review thread — the
+// "PRRT_…" node id review-threads.json lists. With Event "comment" it turns
+// the request into an in-thread REPLY instead of a PR-level review; with
+// Event "resolve_thread" it names the thread to resolve. Both are guarded
+// server-side: the thread's first comment must be from a configured
+// classification.review_bots login and the thread must still be open, so an
+// agent can never reply in or resolve a human's conversation by this path.
 type ReviewRequest struct {
-	Repo   string `json:"repo"`
-	Number int    `json:"number"`
-	Event  string `json:"event"` // approve | request_changes | comment
-	Body   string `json:"body,omitempty"`
-	Agent  string `json:"agent,omitempty"`
+	Repo     string `json:"repo"`
+	Number   int    `json:"number"`
+	Event    string `json:"event"` // approve | request_changes | comment | resolve_thread
+	Body     string `json:"body,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 // ReviewResponse is written next to a consumed request as <name>.result.json.
 type ReviewResponse struct {
-	OK     bool   `json:"ok"`
-	Number int    `json:"number,omitempty"`
-	State  string `json:"state,omitempty"`
-	Error  string `json:"error,omitempty"`
-	At     string `json:"at"`
+	OK       bool   `json:"ok"`
+	Number   int    `json:"number,omitempty"`
+	State    string `json:"state,omitempty"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Error    string `json:"error,omitempty"`
+	At       string `json:"at"`
+}
+
+// Review-thread states recorded in the audit detail (state=) for the two
+// thread-scoped events. They share AuditActionPRReviewed with the PR-level
+// reviews so the activity collector counts them as review output without a
+// new action name.
+const (
+	reviewStateThreadReplied  = "thread_replied"
+	reviewStateThreadResolved = "thread_resolved"
+)
+
+// reviewEventResolveThread is the Event value for resolving a thread; unlike
+// the three review verbs it has no GitHub REST review event behind it.
+const reviewEventResolveThread = "resolve_thread"
+
+func isResolveThreadEvent(event string) bool {
+	switch strings.TrimSpace(strings.ToLower(event)) {
+	case reviewEventResolveThread, "resolve-thread", "resolve":
+		return true
+	}
+	return false
 }
 
 // ReviewRequestAuthorizer mirrors PRRequestAuthorizer: it receives the claimed
@@ -179,15 +210,23 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 
 	apiEvent, state, okEvent := reviewEventToAPI(req.Event)
+	resolveThread := isResolveThreadEvent(req.Event)
+	threadID := strings.TrimSpace(req.ThreadID)
+	// A "comment" that names a thread is an in-thread reply, not a PR review.
+	threadReply := okEvent && apiEvent == "COMMENT" && threadID != ""
 	// Validate shape BEFORE authorizing or touching the API — a hopeless request
 	// must never retry.
 	var shapeErr string
 	switch {
 	case strings.TrimSpace(req.Repo) == "" || req.Number <= 0:
 		shapeErr = "review request requires repo and number"
-	case !okEvent:
-		shapeErr = "review request event must be approve|request_changes|comment"
-	case apiEvent != "APPROVE" && strings.TrimSpace(req.Body) == "":
+	case resolveThread && threadID == "":
+		shapeErr = "resolve_thread requires thread_id"
+	case !okEvent && !resolveThread:
+		shapeErr = "review request event must be approve|request_changes|comment|resolve_thread"
+	case okEvent && threadID != "" && apiEvent != "COMMENT":
+		shapeErr = "thread_id is only valid with event comment (reply) or resolve_thread"
+	case okEvent && apiEvent != "APPROVE" && strings.TrimSpace(req.Body) == "":
 		shapeErr = "review request body is required for request_changes/comment"
 	}
 	if shapeErr != "" {
@@ -208,6 +247,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 	if err := c.reviewAuthz(req.Agent, fileUID); err != nil {
 		c.denyReviewRequest(path, req, err.Error(), nowFn)
+		return
+	}
+
+	if resolveThread || threadReply {
+		c.handleReviewThreadRequest(ctx, path, req, threadID, resolveThread, nowFn)
 		return
 	}
 
@@ -275,6 +319,132 @@ func (c *Client) denyReviewRequest(path string, req ReviewRequest, reason string
 	c.logger.Warn("review-request watcher: DENIED (policy)",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.Int("number", req.Number), slog.String("reason", reason))
+}
+
+// handleReviewThreadRequest is the thread-scoped tail of handleOneReviewRequest
+// (hivecommons/hive#7360): an in-thread reply (Event comment + ThreadID) or a
+// resolveReviewThread mutation (Event resolve_thread). The request has already
+// passed shape validation and the per-agent authorizer.
+//
+// The guard lives HERE, not in the prompt. Before touching the thread the
+// watcher re-fetches it with the App token and denies when:
+//   - classification.review_bots names no login (feature off → nothing is
+//     ever resolvable, whatever the kick said);
+//   - the id resolves to nothing, or to a thread on a different PR than the
+//     request names (a stale or copy-pasted id must not act elsewhere);
+//   - the thread's FIRST comment is not from a configured bot — a human's
+//     conversation is never replied in or resolved by this path;
+//   - the thread is already resolved;
+//   - (reply only) the hive has already replied max_attempts_per_thread
+//     times — the "one more attempt, then stop" ceiling is enforced even if
+//     the monitor's filter is bypassed.
+//
+// Denials quarantine the request as .denied exactly like an authorization
+// failure: they are policy verdicts, not transient errors, so they never
+// retry. Forge errors on the mutation itself go through the same backoff +
+// give-up horizon as a failed review.
+func (c *Client) handleReviewThreadRequest(ctx context.Context, path string, req ReviewRequest, threadID string, resolve bool, nowFn func() time.Time) {
+	bots := c.getReviewBots()
+	if !bots.Enabled() {
+		c.denyReviewRequest(path, req, "classification.review_bots is not configured; thread replies and resolution are disabled", nowFn)
+		return
+	}
+	node, err := c.fetchReviewThreadNode(ctx, threadID)
+	if err != nil {
+		c.retryOrQuarantineReview(path, req, err, nowFn)
+		return
+	}
+	switch {
+	case node == nil:
+		c.denyReviewRequest(path, req, "thread "+threadID+" not found", nowFn)
+		return
+	case node.Number != req.Number || !sameRepoRef(node.Repo, req.Repo, c.org):
+		c.denyReviewRequest(path, req, fmt.Sprintf("thread %s belongs to %s#%d, not the requested PR", threadID, node.Repo, node.Number), nowFn)
+		return
+	case !bots.IsBot(node.FirstAuthor):
+		author := node.FirstAuthor
+		if author == "" {
+			author = "(unknown)"
+		}
+		c.denyReviewRequest(path, req, "thread "+threadID+" was opened by "+author+", which is not a configured review bot; human threads are never resolved by the hive", nowFn)
+		return
+	case node.IsResolved:
+		c.denyReviewRequest(path, req, "thread "+threadID+" is already resolved", nowFn)
+		return
+	case !resolve && node.HiveReplies >= bots.MaxAttempts():
+		c.denyReviewRequest(path, req, fmt.Sprintf("thread %s already has %d hive replies (max_attempts_per_thread=%d); leaving it for a human", threadID, node.HiveReplies, bots.MaxAttempts()), nowFn)
+		return
+	}
+
+	meta := c.attributionMeta(req.Agent)
+	state := reviewStateThreadResolved
+	if resolve {
+		err = c.resolveReviewThread(ctx, threadID)
+	} else {
+		state = reviewStateThreadReplied
+		body := req.Body
+		if c.attributionTrailerOn() {
+			body = AppendTrailer(body, meta)
+		}
+		// Same canary contract as the PR-level review body: agent-supplied
+		// text posted straight to the forge.
+		if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
+			err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+		} else {
+			err = c.replyToReviewThread(ctx, threadID, body)
+		}
+	}
+	if err != nil {
+		c.retryOrQuarantineReview(path, req, err, nowFn)
+		return
+	}
+
+	c.recordCreationAudit(AuditActionPRReviewed, meta,
+		"repo", req.Repo,
+		"number", strconv.Itoa(req.Number),
+		"state", state,
+		"thread", threadID)
+	c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: state, ThreadID: threadID, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Remove(path)
+	c.reviewRetries.clear(path)
+	c.logger.Info("review-request watcher: review thread "+strings.TrimPrefix(state, "thread_")+" by App bot",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("thread", threadID), slog.String("agent", req.Agent))
+}
+
+// retryOrQuarantineReview is the shared forge-failure path: record the error
+// in the result file, back off, and quarantine as .failed past the horizon.
+func (c *Client) retryOrQuarantineReview(path string, req ReviewRequest, err error, nowFn func() time.Time) {
+	c.writeReviewResult(path, ReviewResponse{OK: false, Error: err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
+	if c.reviewRetries.noteFailure(path, nowFn()) {
+		_ = os.Rename(path, path+".failed")
+		c.reviewRetries.clear(path)
+		c.logger.Error("review-request watcher: request exceeded retry horizon, quarantined",
+			slog.String("path", path), slog.String("repo", req.Repo),
+			slog.Int("number", req.Number), slog.String("error", err.Error()))
+		return
+	}
+	c.logger.Warn("review-request watcher: request failed, will retry with backoff",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
+}
+
+// sameRepoRef reports whether a thread's "owner/name" matches the request's
+// repo, which may be bare ("name", resolved against org) or qualified.
+func sameRepoRef(nameWithOwner, requested, org string) bool {
+	nameWithOwner = strings.TrimSpace(nameWithOwner)
+	requested = strings.TrimSpace(requested)
+	if nameWithOwner == "" || requested == "" {
+		return false
+	}
+	if !strings.Contains(requested, "/") {
+		if org == "" {
+			// No org to qualify with: match on the bare repo name only.
+			_, name, _ := strings.Cut(nameWithOwner, "/")
+			return strings.EqualFold(name, requested)
+		}
+		requested = org + "/" + requested
+	}
+	return strings.EqualFold(nameWithOwner, requested)
 }
 
 func (c *Client) writeReviewResult(reqPath string, resp ReviewResponse) {

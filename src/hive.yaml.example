@@ -438,6 +438,22 @@ governor:
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 
+# External review-bot threads on hive-authored PRs (#7360) — optional. When a
+# bot named here leaves inline review threads on a PR the hive opened, the
+# governor lists the unresolved ones in /var/run/hive-metrics/review-threads.json,
+# the agent that opened the PR gets them as fix-before-new work on its next
+# kick, and it replies in-thread / resolves them through the review relay
+# (hive-review --thread / --resolve-thread). The watcher refuses to touch any
+# thread a human opened. The same key may live in hive-project.yaml instead
+# (hive.yaml wins when both name a login). Absent or empty logins = off.
+# classification:
+#   review_bots:
+#     logins:
+#       - "chatgpt-codex-connector[bot]"
+#       - "Copilot"
+#     max_attempts_per_thread: 1   # hive replies per thread before a human takes over
+#     resolve_after_fix: true      # false: reply but leave the thread open
+
 # GitHub authentication — use ONE of these methods
 github:
   # Option 1: Personal access token (simplest)

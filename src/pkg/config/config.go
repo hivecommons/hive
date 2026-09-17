@@ -81,6 +81,10 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// Classification mirrors the Go-consumed subset of hive-project.yaml's
+	// `classification:` block (currently review_bots, hivecommons/hive#7360).
+	// Default empty → the review-thread reconciler is off.
+	Classification ClassificationConfig `yaml:"classification,omitempty" json:"classification,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record

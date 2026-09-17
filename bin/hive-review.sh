@@ -18,15 +18,24 @@
 #   hive-review [<number>|<url>] --repo <owner/repo> --request-changes --body "<b>"
 #   hive-review [<number>|<url>] --repo <owner/repo> --comment --body "<b>"
 #
+# Review-bot threads (hivecommons/hive#7360) — the thread ids come from
+# /var/run/hive-metrics/review-threads.json, which the kick lists for you:
+#   hive-review <number> --repo <owner/repo> --comment --thread <PRRT_id> --body "<one line>"
+#   hive-review <number> --repo <owner/repo> --resolve-thread <PRRT_id>
+# A --comment with --thread is an IN-THREAD reply, not a PR-level review.
+# Both are guarded server-side: the watcher re-fetches the thread and refuses
+# unless its first comment is from a configured classification.review_bots
+# login and it is still open — a human's thread can never be resolved here.
+#
 # request_changes and comment REQUIRE a body (GitHub rejects an empty one);
-# approve may omit it. On success it prints the request path and returns 0; the
-# review is submitted within one watcher tick.
+# approve and resolve-thread may omit it. On success it prints the request path
+# and returns 0; the review is submitted within one watcher tick.
 
 set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/review-requests"
 
-REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""
+REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -38,6 +47,10 @@ while [ $# -gt 0 ]; do
     --approve|-a) EVENT="approve"; shift;;
     --request-changes|-r) EVENT="request_changes"; shift;;
     --comment|-c) EVENT="comment"; shift;;
+    --thread|-t) THREAD="$2"; shift 2;;
+    --thread=*) THREAD="${1#*=}"; shift;;
+    --resolve-thread) EVENT="resolve_thread"; THREAD="$2"; shift 2;;
+    --resolve-thread=*) EVENT="resolve_thread"; THREAD="${1#*=}"; shift;;
     *)
       # A bare positional is the PR number or URL.
       if [ -z "$NUMBER" ]; then
@@ -62,10 +75,18 @@ if [ -n "$BODY_FILE" ]; then
 fi
 
 if [ -z "$REPO" ] || [ -z "$NUMBER" ] || [ -z "$EVENT" ]; then
-  echo "hive-review: --repo, a PR number (or URL), and one of --approve/--request-changes/--comment are required" >&2
+  echo "hive-review: --repo, a PR number (or URL), and one of --approve/--request-changes/--comment/--resolve-thread are required" >&2
   exit 2
 fi
-if [ "$EVENT" != "approve" ] && [ -z "$BODY" ]; then
+if [ "$EVENT" = "resolve_thread" ] && [ -z "$THREAD" ]; then
+  echo "hive-review: --resolve-thread requires a thread id (PRRT_…)" >&2
+  exit 2
+fi
+if [ -n "$THREAD" ] && [ "$EVENT" != "comment" ] && [ "$EVENT" != "resolve_thread" ]; then
+  echo "hive-review: --thread only applies to --comment (in-thread reply) or --resolve-thread" >&2
+  exit 2
+fi
+if [ "$EVENT" != "approve" ] && [ "$EVENT" != "resolve_thread" ] && [ -z "$BODY" ]; then
   echo "hive-review: --request-changes and --comment require --body" >&2
   exit 2
 fi
@@ -94,16 +115,22 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" <<'PY'
 import json, os, sys
-temporary, path, repo, number, event, body, agent = sys.argv[1:8]
+temporary, path, repo, number, event, body, agent, thread = sys.argv[1:9]
 req = {"repo": repo, "number": int(number), "event": event, "agent": agent}
 if body:
     req["body"] = body
+if thread:
+    req["thread_id"] = thread
 with open(temporary, "w") as fh:
     json.dump(req, fh)
 os.replace(temporary, path)
 PY
 
-echo "hive-review: requested $EVENT review on $REPO#$NUMBER as the App bot"
+if [ -n "$THREAD" ]; then
+  echo "hive-review: requested $EVENT on thread $THREAD of $REPO#$NUMBER as the App bot"
+else
+  echo "hive-review: requested $EVENT review on $REPO#$NUMBER as the App bot"
+fi
 echo "hive-review: request $REQ_FILE (Hive submits it within one watcher tick)"

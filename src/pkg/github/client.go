@@ -96,6 +96,14 @@ type Client struct {
 	// the per-agent push-capability policy + forge-resistance. nil fails closed.
 	// Set by StartReviewRequestWatcher.
 	reviewAuthz ReviewRequestAuthorizer
+	// reviewBots is classification.review_bots (hivecommons/hive#7360): the
+	// external review-bot logins whose threads the hive may reply in and
+	// resolve. Zero value = feature off: the monitor reports nothing and the
+	// watcher denies every thread request. Guarded because config reload
+	// re-installs it while the monitor and watcher goroutines read it. Set by
+	// SetReviewBots.
+	reviewBotsMu sync.RWMutex
+	reviewBots   config.ReviewBotsConfig
 	// issueRetries tracks per-request-file retry backoff for the issue-request
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex

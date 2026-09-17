@@ -63,6 +63,14 @@ outreach:                               # optional — only if outreach agent is
     property_id: ""                     # GA4 property ID
     service_account_key: ""             # path to GA4 service account JSON
 
+classification:                         # optional — deterministic classification inputs
+  # External review bots whose inline threads on OPEN hive-authored PRs the
+  # hive addresses and resolves itself (hivecommons/hive#7360). Empty = off.
+  review_bots:
+    logins: []                          # e.g. ["chatgpt-codex-connector[bot]", "Copilot"]
+    max_attempts_per_thread: 1          # hive replies per thread before a human takes over
+    resolve_after_fix: true             # false: reply but leave the thread for a human
+
 dashboard:
   title: ""                             # auto-generated as "{project.name} Hive" if empty
   port: 3001

@@ -125,6 +125,15 @@ classification:
       high: ["security", "vulnerability", "injection", "xss", "sql", "auth", "credential", "secret"]
       medium: ["null", "undefined", "error", "exception", "crash", "race", "deadlock", "memory", "leak"]
       low: ["style", "naming", "format", "whitespace", "comment", "typo", "nit", "minor"]
+  # External review bots whose inline threads on OPEN hive-authored PRs the
+  # hive addresses and resolves itself (hivecommons/hive#7360). copilot_check
+  # above covers merged PRs; this covers open ones. Empty logins = off.
+  review_bots:
+    logins:
+      - "chatgpt-codex-connector[bot]"
+      - "Copilot"
+    max_attempts_per_thread: 1   # hive replies per thread before a human takes over
+    resolve_after_fix: true      # false: reply but leave the thread for a human
 
 # Pipeline: deterministic scripts that run before agent kicks.
 # Categories:

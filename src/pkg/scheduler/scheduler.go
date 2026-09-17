@@ -753,6 +753,10 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// one commit — kicks kept spawning NEW PRs while the reaper's
 		// re-engagements aged every red SHA to its cap unfixed.
 		message = s.addRedPRFixFirst(agentName, message)
+		// Same shape of problem, same seam (hivecommons/hive#7360): a PR this
+		// agent opened is stuck behind unresolved external review-bot threads
+		// and needs a push + in-thread replies before any new work.
+		message = s.addReviewThreadFixFirst(agentName, message)
 		// Non-GitHub work source: tell the agent how the tracker half of its
 		// policy maps onto Linear (identity, auth, filing, PR linking, hold).
 		// Same seam, same reason — a customized template cannot omit it.
@@ -1098,6 +1102,129 @@ func formatRedPRFixData(data []byte, agent string) string {
 				excerpt = string(runes[:redPRFixExcerptRunes]) + "…"
 			}
 			b.WriteString("    evidence: " + strings.ReplaceAll(excerpt, "\n", "\n              ") + "\n")
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// reviewThreadsPath is the review-thread monitor's artifact
+// (github.ReviewThreadsPath); a var here, like ciFailingPath, so tests can
+// point the kick builder at a fixture.
+var reviewThreadsPath = github.ReviewThreadsPath
+
+// addReviewThreadFixFirst prepends a fix-before-new section listing the
+// agent's OWN open PRs that carry unresolved external review-bot threads
+// (hivecommons/hive#7360), with each thread's path, line, and an excerpt of
+// the bot's finding. It reads review-threads.json (written by the governor's
+// eval tick), which — exactly like ci-failing.json — attributes each PR to the
+// agent whose relay request opened it; unattributed rows default to scanner.
+// Escalated (needs-human) PRs are never listed. Inserted at the same
+// below-the-header seam as the red-CI block (which runs first, so this block
+// lands directly above it) so the two stuck-PR lists sit together at the top
+// of the kick, ahead of the work list.
+func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) string {
+	if message == "" || !s.isPRCapableAgent(agentName) {
+		return message
+	}
+	data, err := os.ReadFile(reviewThreadsPath)
+	if err != nil {
+		return message
+	}
+	section := formatReviewThreadFixData(data, s.cfg.BaseAgentName(agentName), s.reviewBotsResolveAfterFix())
+	if section == "" {
+		return message
+	}
+	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
+		return message[:idx+1] + section + message[idx+1:]
+	}
+	return section + message
+}
+
+// reviewBotsResolveAfterFix reads classification.review_bots.resolve_after_fix
+// from the loaded config (default true). The project-file fallback is not
+// consulted here: the kick text only decides whether to ALSO write a
+// resolve_thread request, and the watcher's guard is what actually gates
+// resolution, so a stale answer here costs at most one denied request.
+func (s *Scheduler) reviewBotsResolveAfterFix() bool {
+	if s.cfg == nil {
+		return true
+	}
+	return s.cfg.Classification.ReviewBots.ResolveAfterFixEnabled()
+}
+
+// formatReviewThreadFixData renders the review-thread fix-before-new section
+// for one agent from raw review-threads.json bytes. Empty result means the
+// agent has no open, non-escalated PR with an actionable bot thread.
+func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) string {
+	var report github.ReviewThreadsReport
+	if json.Unmarshal(data, &report) != nil || !report.Enabled {
+		return ""
+	}
+	var mine []github.ReviewThreadPR
+	threads := 0
+	for _, pr := range report.PRs {
+		if pr.Escalated || len(pr.Threads) == 0 {
+			continue // needs-human, or nothing left to address on this PR
+		}
+		owner := pr.Agent
+		if owner == "" {
+			owner = "scanner"
+		}
+		if owner != agent {
+			continue
+		}
+		mine = append(mine, pr)
+		threads += len(pr.Threads)
+	}
+	if len(mine) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n## 💬 FIX-BEFORE-NEW — your open PRs with unresolved review-bot threads (%d PRs, %d threads)\n\n", len(mine), threads))
+	b.WriteString("An external review bot left inline threads on PRs that are YOURS. Until every\n")
+	b.WriteString("thread is resolved these PRs cannot merge. Addressing them comes BEFORE claiming\n")
+	b.WriteString("new issues or opening ANY new PR. ONE pass per kick, for each PR:\n")
+	b.WriteString("  1. gh pr checkout <number> (branch: head_ref below) → address each thread's\n")
+	b.WriteString("     finding → git commit -s → git push to the SAME branch. No replacement PR.\n")
+	b.WriteString("  2. For EACH thread, reply in-thread with ONE line saying what changed, or why\n")
+	b.WriteString("     nothing needed to (the reply goes into the thread, not a new review):\n")
+	b.WriteString("       hive-review <number> --repo <owner/repo> --comment --thread <thread_id> --body \"<one line>\"\n")
+	if resolveAfterFix {
+		b.WriteString("  3. Then resolve it:\n")
+		b.WriteString("       hive-review <number> --repo <owner/repo> --resolve-thread <thread_id>\n")
+	} else {
+		b.WriteString("  3. Do NOT resolve the thread — a human closes it on this hive (resolve_after_fix: false).\n")
+	}
+	b.WriteString("Never reply twice in the same thread: threads you already answered are not listed\n")
+	b.WriteString("here; if one still appears, skip it. Only threads a review bot opened are listed\n")
+	b.WriteString("and only those can be resolved this way — a human's thread is never yours to close.\n\n")
+	shown := 0
+	for _, pr := range mine {
+		if shown >= redPRFixMaxDetailed {
+			b.WriteString(fmt.Sprintf("  … and %d more PRs (full list: %s)\n", len(mine)-shown, reviewThreadsPath))
+			break
+		}
+		shown++
+		title := strings.TrimSpace(pr.Title)
+		if title != "" {
+			title = " — " + title
+		}
+		b.WriteString(fmt.Sprintf("  #%d %s%s\n", pr.Number, pr.Repo, title))
+		b.WriteString(fmt.Sprintf("    head_ref: %s\n", pr.HeadRef))
+		for _, t := range pr.Threads {
+			loc := t.Path
+			if t.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", t.Path, t.Line)
+			}
+			b.WriteString(fmt.Sprintf("    thread %s (%s, by %s)\n", t.ThreadID, loc, t.Author))
+			if excerpt := strings.TrimSpace(t.Body); excerpt != "" {
+				if runes := []rune(excerpt); len(runes) > redPRFixExcerptRunes {
+					excerpt = string(runes[:redPRFixExcerptRunes]) + "…"
+				}
+				b.WriteString("      finding: " + strings.ReplaceAll(excerpt, "\n", "\n               ") + "\n")
+			}
 		}
 	}
 	b.WriteString("\n")

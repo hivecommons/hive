@@ -1613,6 +1613,7 @@ func main() {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	ghClient.SetIssueFilter(cfg.Project.IssueFilter)
+	installReviewBots(ghClient, cfg, logger)
 	// The user write-token client (userGHClient) was removed: every GitHub write
 	// — issues, PRs, comments, merges, and the advisory digest — now goes through
 	// the hive's App installation token (ghClient / kubestellar-hive[bot]). The
@@ -3110,6 +3111,7 @@ func main() {
 			}
 			newClient.SetMergeRequestPolicy(cfg.AutoMerge.AllowUnprotectedBaseSet(), cfg.AutoMerge.NoCIOKSet())
 
+			installReviewBots(newClient, cfg, logger)
 			ghClient = newClient
 			appAuth = newAppAuth
 			agentMgr.SetAppAuth(newAppAuth)
@@ -3569,6 +3571,7 @@ func main() {
 						newClient.SetRequiredChecks(set)
 					}
 					newClient.SetMergeRequestPolicy(cfg.AutoMerge.AllowUnprotectedBaseSet(), cfg.AutoMerge.NoCIOKSet())
+					installReviewBots(newClient, cfg, logger)
 					ghClient = newClient
 					appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
@@ -4980,6 +4983,7 @@ func main() {
 					newClient.SetRequiredChecks(set)
 				}
 				newClient.SetMergeRequestPolicy(cfg.AutoMerge.AllowUnprotectedBaseSet(), cfg.AutoMerge.NoCIOKSet())
+				installReviewBots(newClient, cfg, logger)
 				ghClient = newClient
 				appAuth = newAppAuth
 				agentMgr.SetAppAuth(newAppAuth)
@@ -6080,6 +6084,13 @@ func runEvalCycle(
 	refreshReviewVerdicts(cfg, logger)
 	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSet()
 	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, logger)
+
+	// Review-bot threads (hivecommons/hive#7360): list every unresolved
+	// external-review-bot thread on an open hive-authored PR into
+	// review-threads.json, attributed to the agent that opened the PR the
+	// same way ci-failing.json is, so the scheduler can route each PR back
+	// to its author for a fix + in-thread replies before any new work.
+	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
 
 	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
 	// that is red on a required check AND stale (its red head SHA unchanged past
@@ -8786,6 +8797,75 @@ func fullRepoName(repo, org string) string {
 		return repo
 	}
 	return org + "/" + repo
+}
+
+// installReviewBots installs classification.review_bots on a (possibly
+// rebuilt) GitHub client (hivecommons/hive#7360). hive.yaml's block wins;
+// otherwise the same key is read from hive-project.yaml
+// (config.DefaultProjectYAMLPath, overridable via HIVE_PROJECT_YAML — the
+// path the bash pipeline stages already honour). Nil-safe: a hive without
+// GitHub credentials runs with a nil client for the life of the process.
+func installReviewBots(client *github.Client, cfg *config.Config, logger *slog.Logger) {
+	if client == nil || cfg == nil {
+		return
+	}
+	rb, err := cfg.EffectiveReviewBots(os.Getenv("HIVE_PROJECT_YAML"))
+	if err != nil && logger != nil {
+		logger.Warn("classification.review_bots: project file unreadable; review-thread reconciler stays off", "error", err)
+	}
+	client.SetReviewBots(rb)
+	if logger != nil && rb.Enabled() {
+		logger.Info("review-thread reconciler enabled",
+			"review_bots", rb.Logins,
+			"max_attempts_per_thread", rb.MaxAttempts(),
+			"resolve_after_fix", rb.ResolveAfterFixEnabled())
+	}
+}
+
+// reviewThreadsRefreshInterval throttles the review-thread monitor: the eval
+// tick runs about once a minute, but every hive-authored open PR costs one
+// GraphQL query per pass, and bot threads move on the scale of minutes, not
+// seconds. A var so tests can drive it.
+var reviewThreadsRefreshInterval = 5 * time.Minute
+
+// reviewThreadsLastRefresh is the wall-clock of the last CollectReviewThreads
+// pass (zero = never). Package-level because the eval tick is a free
+// function; only the eval goroutine touches it.
+var reviewThreadsLastRefresh time.Time
+
+// writeReviewThreads is the eval-tick half of the #7360 reconciler. It runs
+// CollectReviewThreads over the governor's actionable PRs at most once per
+// reviewThreadsRefreshInterval, stamps each PR with the agent whose relay
+// request opened it (auditPRAgents — the same attribution ci-failing.json
+// carries) and with the escalation sweep's needs-human verdict, and writes
+// review-threads.json. The feature-off case still writes the (empty) file
+// each refresh so a reader can tell "off" from "never ran".
+func writeReviewThreads(ctx context.Context, client *github.Client, actionable *github.ActionableResult, org string, escalatedPRs map[string]bool, logger *slog.Logger) {
+	if client == nil || actionable == nil {
+		return
+	}
+	now := time.Now()
+	if !reviewThreadsLastRefresh.IsZero() && now.Sub(reviewThreadsLastRefresh) < reviewThreadsRefreshInterval {
+		return
+	}
+	reviewThreadsLastRefresh = now
+
+	report := client.CollectReviewThreads(ctx, actionable.PRs.Items, now)
+	if len(report.PRs) > 0 {
+		prAgents := auditPRAgents(org, now.Add(-auditPRAttributionWindow), "")
+		for i := range report.PRs {
+			pr := &report.PRs[i]
+			pr.Agent = prAgents[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)]
+			pr.Escalated = escalatedPRs[escalation.Key(pr.Repo, pr.Number)]
+		}
+	}
+	if err := github.WriteReviewThreadsReport("", report); err != nil {
+		logger.Warn("failed to write review-threads.json", "error", err)
+		return
+	}
+	if report.Enabled {
+		logger.Info("review-threads.json refreshed", "prs", len(report.PRs), "threads", report.TotalThreads)
+	}
 }
 
 // auditPRAttributionWindow bounds how far back the audit trail is scanned to

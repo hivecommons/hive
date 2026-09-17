@@ -387,7 +387,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_SKIP_PULL` | No | `false` | Skips contributor image pull when set to `true`. |
 | `HIVE_KEEP_CONTAINER` | No | remove failed contributor container | Keeps failed contributor containers for debugging when set to `true`. |
 | `HIVE_PROJECT_CONFIG` | No | `/etc/hive/hive-project.yaml` | Path read by `bin/hive-config.sh` for deterministic pipeline/project metadata. |
-| `HIVE_PROJECT_YAML` | No | `/etc/hive/hive-project.yaml`, then first example found | Path read directly by pipeline stages. |
+| `HIVE_PROJECT_YAML` | No | `/etc/hive/hive-project.yaml`, then first example found | Path read directly by pipeline stages, and by the `hive` binary for the one project-file key it consumes, `classification.review_bots` (see [review-bot-threads.md](review-bot-threads.md)). |
 | `HIVE_RUNTIME_CONFIG` | No | `/etc/hive/hive-runtime.yaml` | Runtime overlay read by `bin/hive-config.sh`. |
 | `HIVE_REPO_DIR` | No | `/tmp/hive` | Hive checkout path used by top-level deployment scripts. Must not be empty or `/`. |
 | `HIVE_BIN` | No | `/usr/local/bin` | Directory containing helper binaries such as `gh-app-token.sh`. |
