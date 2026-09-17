@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -432,4 +433,81 @@ func gateAdvisoryFindings(findings []advisory.Finding, deps advisoryIngestDeps, 
 		safeFindings = append(safeFindings, f)
 	}
 	return safeFindings
+}
+
+// advisoryEnsureDeps injects the two process-pinned effects of the pinned
+// advisory issue retry: the GitHub call that resolves the issue number, and
+// the environment stamp that publishes it to everything reading
+// HIVE_ADVISORY_ISSUE.
+//
+// Same shape as kickDispatchDeps and advisoryIngestDeps above: the decision
+// stays here and testable, the effects are supplied by the caller. Both fields
+// are required; a zero-value deps is a programming error, not a no-op, so
+// ensurePinnedAdvisoryIssue does not silently skip on nil.
+type advisoryEnsureDeps struct {
+	// ensure resolves (creating if necessary) the pinned advisory issue for a
+	// repo. A non-nil error means the number could not be resolved this cycle.
+	ensure func(ctx context.Context, repo string) (int, error)
+	// setenv publishes the resolved number as HIVE_ADVISORY_ISSUE.
+	setenv func(key, value string) error
+}
+
+// ensurePinnedAdvisoryIssue re-resolves the pinned advisory issue while it is
+// still unresolved, and reports the failure that blocked it (#4167, #7232).
+//
+// Why this retries at all: the startup ensure can fail for reasons that
+// deliberately do NOT raise the App banner — a rate limit, a 5xx, a search-API
+// blip. The original gate keyed the retry on that banner, so a hive that hit
+// one of those kept an empty advisoryIssues map for the rest of the process
+// lifetime: every later digest found no issue to post to, and the pinned
+// comment froze at whatever it last said. Retrying here is cheap (one search
+// per eval cycle while unresolved, nothing once resolved) and is the
+// difference between a transient boot error and a permanently wedged digest.
+//
+// The returned error is this cycle's ensure failure, kept so the post-path
+// error recorded later can name the CAUSE (e.g. Issues disabled on a fork,
+// #4329) rather than only the symptom. A nil return means either that the
+// issue is resolved or that there was nothing to do — callers must not treat
+// nil as proof a retry happened.
+//
+// advisoryIssues is mutated in place on success, matching the caller's
+// existing contract: the map is the cycle's live view of resolved issues and
+// later stages in the same cycle read it.
+func ensurePinnedAdvisoryIssue(
+	ctx context.Context,
+	advisoryIssues map[string]int,
+	repo string,
+	deps advisoryEnsureDeps,
+	logger *slog.Logger,
+) error {
+	// No primary repo, or no GitHub to ask. The caller expresses "no client" by
+	// passing a nil ensure, which keeps the nil-client check at the one place
+	// that knows what a client is.
+	if repo == "" || deps.ensure == nil {
+		return nil
+	}
+	if !advisoryIssueUnresolved(advisoryIssues, repo) {
+		return nil
+	}
+
+	num, err := deps.ensure(ctx, repo)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("advisory issue still unresolved — digest cannot be posted this cycle",
+				"repo", repo, "error", err)
+		}
+		return err
+	}
+
+	advisoryIssues[repo] = num
+	if deps.setenv != nil {
+		// Setenv cannot fail on Unix for a valid key/value, but the error is
+		// injected rather than discarded so a test can prove the stamp is
+		// attempted and a future non-Unix path is not silently lossy.
+		_ = deps.setenv("HIVE_ADVISORY_ISSUE", strconv.Itoa(num))
+	}
+	if logger != nil {
+		logger.Info("advisory issue resolved on retry", "repo", repo, "number", num)
+	}
+	return nil
 }

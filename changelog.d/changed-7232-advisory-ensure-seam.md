@@ -1,0 +1,1 @@
+- The pinned advisory issue retry in `runEvalCycle` moved behind an injectable seam (`ensurePinnedAdvisoryIssue`), so the #4167 behaviour that keeps a transient boot failure from permanently wedging the advisory digest is now covered by tests instead of only reachable from a live process. ([#7232](https://github.com/hivecommons/hive/issues/7232))

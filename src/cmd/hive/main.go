@@ -6016,23 +6016,14 @@ func runEvalCycle(
 	// advisoryEnsureErr keeps this cycle's ensure failure so the post-path
 	// error recorded below can name the CAUSE (e.g. Issues disabled on a fork,
 	// #4329) instead of only the symptom.
-	var advisoryEnsureErr error
 	primaryRepoAtCycleStart := primaryAdvisoryRepo(cfg)
 	_, hadPinnedAdvisoryIssueAtCycleStart := advisoryIssueNumber(advisoryIssues, primaryRepoAtCycleStart)
-	if primaryRepoAtCycleStart != "" && ghClient != nil {
-		if advisoryIssueUnresolved(advisoryIssues, primaryRepoAtCycleStart) {
-			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepoAtCycleStart)
-			if retryErr == nil {
-				advisoryIssues[primaryRepoAtCycleStart] = num
-				_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
-				logger.Info("advisory issue resolved on retry", "repo", primaryRepoAtCycleStart, "number", num)
-			} else {
-				advisoryEnsureErr = retryErr
-				logger.Warn("advisory issue still unresolved — digest cannot be posted this cycle",
-					"repo", primaryRepoAtCycleStart, "error", retryErr)
-			}
-		}
+	advisoryEnsureDepsForCycle := advisoryEnsureDeps{setenv: os.Setenv}
+	if ghClient != nil {
+		advisoryEnsureDepsForCycle.ensure = ghClient.EnsureAdvisoryIssue
 	}
+	advisoryEnsureErr := ensurePinnedAdvisoryIssue(
+		ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
 
 	enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
 	actionable, err := ghClient.EnumerateActionable(enumCtx)
