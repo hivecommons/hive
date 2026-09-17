@@ -1,0 +1,1 @@
+- Extracted the SaaS user registry and admin domain (user file persistence under /data/saas/users, require-admin gating, the admin users API, and admin impersonation start/exit/status — 17 functions plus their constants) from `pkg/hub/saas.go` into a new `pkg/hub/saas_users_admin.go`, the next stage of the #7278 god-file split. Pure code motion: no behavior change.
