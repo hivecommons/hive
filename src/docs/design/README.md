@@ -103,6 +103,18 @@ that status is the thing to check before treating a page as current behaviour:
   timestamps and `InferenceSink` discards them, so persisting per-request usage
   with its timestamp would move Copilot from "structurally impossible" to
   phase 3's existing join, in `pkg/tokens` only and off the request path.
+- [GitHub @-mention triggers](github-mention-triggers.md) — **proposed for v6, design only.**
+  The first inbound GitHub trigger: a human summons an agent by mentioning the
+  App on an issue or PR, mirroring the Linear agent-session path
+  (`pkg/linearagent`) that already exists. Poll-first transport so it works on
+  pull-only spokes, a mention grammar with `ask <agent>` routing under the
+  `linear.session_agent` resolution rule, a kick built like the Linear
+  responder's, replies through `Converse` on the existing watcher write path
+  with no new outbound surface, and seven guards each mapped to a mechanism
+  that already has a runtime (dashboard role list, `review_bots` loop list and
+  per-thread cap, ioscan input enforcement). Records the #5591 lesson: the
+  channel type ships with its runtime or not at all. Credits RFC #7483 and
+  lists the maintainer questions still open.
 - [Discord reaction-consensus issue promotion](discord-issue-promotion.md) — **proposed.**
   Design for turning Discord community reaction consensus into the same
   approval label that `project.issue_filter.require_labels` already uses, while
