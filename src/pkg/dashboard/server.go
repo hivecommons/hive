@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	"github.com/hivecommons/hive/pkg/hub"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/openrouter"
@@ -318,6 +319,11 @@ type Server struct {
 	hubBannerMu sync.RWMutex
 	hubBanner   *HubBannerState
 
+	hiveAdviceMu     sync.RWMutex
+	hiveAdviceEpoch  *hiveadvisor.Epoch
+	hiveAdviceLast   *hiveadvisor.Result
+	hiveAdviceLoaded bool
+
 	githubAppRecheckFn func() bool
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
@@ -377,6 +383,7 @@ type StatusPayload struct {
 	// automatically — a human approves a level change via handlePackSetLevel.
 	// Omitted when it could not be computed (e.g. no config yet).
 	ACMMAdvice          *acmmadvisor.Recommendation `json:"acmmAdvice,omitempty"`
+	HiveAdvice          *hiveadvisor.Result         `json:"hiveAdvice,omitempty"`
 	AdvisoryDigest      any                         `json:"advisoryDigest,omitempty"`
 	ContributorPool     *ContributorPoolStatus      `json:"contributorPool,omitempty"`
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
@@ -1807,15 +1814,6 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 
 	status.InferenceBackends = s.buildInferenceBackends()
 
-	// Attach the advisory ACMM level-up recommendation (#5225) from the SAME
-	// signal-collection path the /api/acmm-recommendation endpoint uses, so the
-	// endpoint and the status payload cannot report different advice. Pure
-	// computation over already-collected signals — no I/O on this hot path.
-	// ADVISORY ONLY: this must never auto-apply a level.
-	if advice := acmmadvisor.RecommendFromStatus(s.buildACMMStatusInputs()); advice.CurrentLevel > 0 {
-		status.ACMMAdvice = &advice
-	}
-
 	// Deep checks travel inside the status payload so every dashboard surface
 	// (header pill included) renders the same truth the heartbeat sends the
 	// hub. Judged against the payload in hand: it becomes s.status moments
@@ -1851,6 +1849,16 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		s.logger.Debug("dropping stale status snapshot built before a mutation",
 			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
 		return false
+	}
+
+	// Attach the advisory ACMM level-up recommendation (#5225) from the SAME
+	// signal-collection path the /api/acmm-recommendation endpoint uses, so the
+	// endpoint and the status payload cannot report different advice. Pure
+	// computation over already-collected signals — no I/O on this hot path.
+	// ADVISORY ONLY: this must never auto-apply a level.
+	if advice := acmmadvisor.RecommendFromStatus(s.buildACMMStatusInputsFromStatus(status)); advice.CurrentLevel > 0 {
+		status.ACMMAdvice = &advice
+		s.AttachHiveAdvice(status, time.Now().UTC())
 	}
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq

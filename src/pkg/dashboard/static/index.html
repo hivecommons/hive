@@ -3381,6 +3381,14 @@
     </div>
   </div>
 
+
+  <div id="hive-advice-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="hive-advice-section"><span class="section-chevron">▼</span> 🧭 Hive Advice <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">weekly</span></h2>
+    <div class="section-body">
+      <div id="hive-advice-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+    </div>
+  </div>
+
   <div id="acmm-reco-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-reco-section"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
     <div class="section-body">
@@ -10093,6 +10101,43 @@ function burnAreaChart() {
       applySectionCollapse('platform-section');
     }
 
+
+    function renderHiveAdvice(dto) {
+      const section = document.getElementById('hive-advice-section');
+      const card = document.getElementById('hive-advice-card');
+      if (!section || !card) return;
+      dto = dto || {};
+      const recs = Array.isArray(dto.recommendations) ? dto.recommendations : [];
+      if (recs.length === 0) { section.style.display = 'none'; return; }
+      const epoch = dto.epoch || {};
+      const days = Number.isFinite(Number(dto.nextReviewInDays)) ? Number(dto.nextReviewInDays) : 0;
+      const mode = escapeHtml(epoch.mode || 'IDLE');
+      const until = epoch.end ? new Date(epoch.end).toLocaleDateString() : '';
+      const review = `Frozen for ${mode}; next review in ${days} day${days === 1 ? '' : 's'}${until ? ' (' + escapeHtml(until) + ')' : ''}.`;
+      const items = recs.map((r, i) => {
+        r = r || {};
+        const sigs = Array.isArray(r.signals) ? r.signals : [];
+        const sigHtml = sigs.length ? `<div class="crit-cmp">signals: ${sigs.map((s) => `${escapeHtml(s.name || '')}=${escapeHtml(s.value || '')}`).join(', ')}</div>` : '';
+        return `<li class="reco-crit met">
+          <span class="mark">${i + 1}</span>
+          <div class="crit-body"><div class="crit-name">${escapeHtml(r.title || r.id || 'Recommendation')}</div>
+          <div class="crit-detail">${escapeHtml(r.rationale || '')}</div>${sigHtml}</div>
+        </li>`;
+      }).join('');
+      section.style.display = '';
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge raise">owner advice</span><span class="reco-rationale" style="margin-top:0">${review}</span></div><ul class="reco-checklist">${items}</ul>`;
+      applySectionCollapse('hive-advice-section');
+    }
+
+    async function fetchHiveAdvice() {
+      try {
+        const r = await fetch('/api/hive-advice');
+        if (!r.ok) return;
+        const dto = await r.json();
+        renderHiveAdvice(dto);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+
     function renderACMMReco(rec) {
       const section = document.getElementById('acmm-reco-section');
       const card = document.getElementById('acmm-reco-card');
@@ -10258,7 +10303,7 @@ function burnAreaChart() {
 
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchACMMReco(); fetchLifecycle(); }
+    function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); }
     v4RefreshPanels();
     setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
 
@@ -13879,6 +13924,7 @@ function burnAreaChart() {
       }
       updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
+      renderHiveAdvice(data.hiveAdvice || null);
       renderSystemGauges(data.systemResources || null);
       ocUpdateSidebarAgents();
       renderDebugSection();

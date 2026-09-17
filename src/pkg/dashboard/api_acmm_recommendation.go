@@ -45,6 +45,16 @@ func (s *Server) handleACMMRecommendation(w http.ResponseWriter, r *http.Request
 // not yet track (green-CI streak) is left at zero, which the advisor treats as
 // "not yet earned" rather than inventing a number.
 func (s *Server) buildACMMStatusInputs() acmmadvisor.StatusInputs {
+	var status *StatusPayload
+	if s != nil {
+		s.statusMu.RLock()
+		status = s.status
+		s.statusMu.RUnlock()
+	}
+	return s.buildACMMStatusInputsFromStatus(status)
+}
+
+func (s *Server) buildACMMStatusInputsFromStatus(status *StatusPayload) acmmadvisor.StatusInputs {
 	in := acmmadvisor.StatusInputs{
 		// A hive with no explicit level detects as MinLevel (L1); see
 		// detectACMMLevel. Zero-value fallbacks keep this at a safe default.
@@ -98,18 +108,14 @@ func (s *Server) buildACMMStatusInputs() acmmadvisor.StatusInputs {
 		in.GreenStreak = streak
 	}
 
-	// Live queue/coverage signals come from the most recent status snapshot the
-	// eval loop published. Read it under the status lock and tolerate a nil
-	// snapshot (no eval has run yet).
-	if s != nil {
-		s.statusMu.RLock()
-		status := s.status
-		s.statusMu.RUnlock()
-		if status != nil {
-			in.ActionableIssues = status.Governor.Issues
-			in.HoldCount = status.Hold.Total
-			in.CoveragePct = coverageFromAgentMetrics(status.AgentMetrics)
-		}
+	// Live queue/coverage signals come from the supplied status snapshot. The
+	// status-build path passes the in-flight payload before it is published so
+	// ACMM and hive advice are computed from the same eval cycle; the standalone
+	// API passes the latest published snapshot.
+	if status != nil {
+		in.ActionableIssues = status.Governor.Issues
+		in.HoldCount = status.Hold.Total
+		in.CoveragePct = coverageFromAgentMetrics(status.AgentMetrics)
 	}
 
 	return in

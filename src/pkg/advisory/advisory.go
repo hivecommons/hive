@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -455,6 +456,9 @@ type DigestOptions struct {
 	// file-path refs, only for findings the ranking actually reaches, and at
 	// most once per distinct path. nil disables verification entirely.
 	VerifyPath func(path string) bool
+	// Advice carries the frozen owner-advice epoch shared with the dashboard card.
+	Advice *hiveadvisor.Result
+
 	// ResolveRef reports whether a GitHub issue or pull request has closed.
 	//
 	// When set, BuildDigestFromBeads uses it to retire findings that were
@@ -1054,6 +1058,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 		b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 		b.WriteString("This comment is updated periodically.\n\n")
+		writeAdviceSection(&b, opts.Advice)
 		if len(d.RecentlyResolved) == 0 {
 			b.WriteString(fmt.Sprintf("**Findings:** 0 — ✅ No open advisory findings · evaluated %s.\n\n", d.GeneratedAt.Format(time.RFC3339)))
 		} else {
@@ -1084,6 +1089,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 	b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 	b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 	b.WriteString("Each finding includes a file reference and suggested fix. This comment is updated periodically.\n\n")
+	writeAdviceSection(&b, opts.Advice)
 	b.WriteString(fmt.Sprintf("**Findings:** %d\n\n", d.TotalCount))
 	writeCapNote(&b, d)
 
@@ -1210,6 +1216,28 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 
 // writeCapNote announces a top-N cap and how to lift it. Rendered only when the
 // digest was actually shortened, so an uncapped digest carries no noise.
+
+func writeAdviceSection(b *strings.Builder, advice *hiveadvisor.Result) {
+	if advice == nil || len(advice.Recommendations) == 0 {
+		return
+	}
+	b.WriteString("## Advice\n\n")
+	b.WriteString(fmt.Sprintf("> Frozen for governor mode `%s` until %s (next review in %d day(s)).\n\n",
+		advice.Epoch.Mode, advice.Epoch.End.Format("2006-01-02"), advice.NextReviewInDays))
+	for _, rec := range advice.Recommendations {
+		b.WriteString(fmt.Sprintf("- **%s** — %s", rec.Title, rec.Rationale))
+		if len(rec.Signals) > 0 {
+			parts := make([]string, 0, len(rec.Signals))
+			for _, s := range rec.Signals {
+				parts = append(parts, fmt.Sprintf("%s=%s", s.Name, s.Value))
+			}
+			b.WriteString(" (signals: " + strings.Join(parts, ", ") + ")")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+}
+
 func writeCapNote(b *strings.Builder, d *Digest) {
 	if !d.Capped || d.OverflowCount <= 0 {
 		return
