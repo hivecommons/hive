@@ -2908,6 +2908,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	// Descriptive upgrade posture for the spoke's dashboard (#7262). Always
+	// computed from the same inputs the instruction chain above used, so the
+	// spoke's "N behind"/target line agrees with the hub card by construction.
+	// Deliberately AFTER the chain: hbTarget here is the re-aimed/drained value.
+	resp.UpgradePolicy = s.heartbeatUpgradePolicy(&payload, saasHive, spokeManaged, spokeUpgradesPausedNow, branch, hbTarget)
+
 	if s.restartSpokeForHeartbeat(payload.HiveID) {
 		resp.RestartSpoke = true
 		s.logger.Info("heartbeat: delivering spoke restart", "hive_id", payload.HiveID, "reporter", payload.Reporter)

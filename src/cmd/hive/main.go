@@ -5000,6 +5000,11 @@ func main() {
 				return
 			}
 			dashSrv.SetHubBanner(banner.ID, banner.Message, banner.Color)
+		}), hub.UpgradePolicyCallback(func(p *hub.HeartbeatUpgradePolicy) {
+			// Descriptive only (#7262): the hub's upgrade posture for this
+			// spoke, so the dashboard measures "behind" against the commit
+			// the hub will actually roll us to and renders the hub's schedule.
+			dashSrv.SetHubUpgradePolicy(p)
 		}), hub.VisibilityCallback(func(isPublic bool) {
 			if cfg.Hub.IsPublic != isPublic {
 				logger.Info("hub overrode visibility via heartbeat",

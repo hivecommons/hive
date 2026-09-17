@@ -20,7 +20,8 @@ func TestVersionBadgeUnbuiltTipWording(t *testing.T) {
 		// The known-state arm: muted, no question mark, says why.
 		`has no published image yet — nothing to upgrade to">tip not built yet</span>`,
 		// The genuine-unknown arm survives for real compare failures.
-		`Could not compare this commit with stable v4 tip ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`,
+		// Measured against the resolved target, never a hard-wired v4 (#7262).
+		`Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q — the badge again renders contradictory ✓ + ? behind for an unbuilt tip (#4804)", snippet)

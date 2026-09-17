@@ -16935,6 +16935,19 @@ function burnAreaChart() {
 
     // Git version indicator
     const GIT_VERSION_POLL_MS = 300000;
+    // Label for the commit the "N behind" readout is measured against (#7262):
+    // the hub-reported target (this spoke's release channel or branch head)
+    // when the hub delivered one, else the tip of this build's own branch.
+    // Never a hard-wired "Stable v4 tip" — a v5 spoke is not behind v4.
+    function upgradeTargetLabel(v) {
+      var t = v && v.target;
+      if (!t) return 'Upstream tip';
+      var branch = t.branch || 'upstream';
+      if (t.channel) return 'Hub target (' + branch + ' via :' + t.channel + ')';
+      if (t.source === 'hub') return 'Hub target (' + branch + ' tip)';
+      return branch + ' tip';
+    }
+
     async function fetchGitVersion() {
       try {
         const res = await fetch('/api/version');
@@ -16973,7 +16986,7 @@ function burnAreaChart() {
           html += ` <span class="git-behind" title="${escapeHtml(umTitle)}">⟳ auto-update retrying ${escapeHtml(String(um.attempts))}/${escapeHtml(String(um.maxAttempts))}</span>`;
         }
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
-          ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Stable v4 tip: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
+          ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(upgradeTargetLabel(v))}: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
           : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase()
             // commitsBehind is null for two unrelated reasons (#4804). If the
             // stable tip has no published image, that is a KNOWN state — there
@@ -16982,8 +16995,8 @@ function burnAreaChart() {
             // contradicts the ✓. Only a genuine compare failure keeps the "?".
             // Strict === false so older servers without the field keep "?".
             ? (v.stableV4ImageReady === false
-              ? ` <span style="color:var(--muted)" title="Stable v4 tip ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
-              : ` <span class="git-behind" title="Could not compare this commit with stable v4 tip ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
+              ? ` <span style="color:var(--muted)" title="${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
+              : ` <span class="git-behind" title="Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
             : '');
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
@@ -19576,13 +19589,13 @@ function burnAreaChart() {
 
         <hr style="border-color:var(--border);margin:16px 0">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Auto-update</h4>
-        <div class="config-toggle">
-          <div class="config-toggle-switch ${hub.auto_upgrade ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="auto_upgrade"></div>
-          <span class="config-toggle-label">Automatic Updates <span class="config-info">i<span class="config-tooltip">When on, the hub rolls this hive forward to new versions automatically on the configured schedule. When off, upgrades are applied manually from the version badge at the top of the dashboard.</span></span></span>
+        <div class="config-toggle" id="hub-autoupdate-toggle-row">
+          <div class="config-toggle-switch ${hub.auto_upgrade ? 'on' : ''}" id="hub-autoupdate-toggle" data-action="toggleConfigSwitch" data-section="hub" data-key="auto_upgrade"></div>
+          <span class="config-toggle-label">Automatic Updates <span id="hub-autoupdate-managed-by"></span><span class="config-info">i<span class="config-tooltip" id="hub-autoupdate-toggle-tip">When on, this hive is rolled forward to new versions automatically on the configured schedule. When off, upgrades are applied manually from the version badge at the top of the dashboard. On a hub-managed hive the hub owns this setting and the switch is read-only.</span></span></span>
         </div>
         <div class="config-field">
-          <label>Update schedule <span class="config-info">i<span class="config-tooltip">The cadence the hub applies to this hive's auto-updates. Managed hub-side; shown here read-only. "Unknown" means this spoke has not been told its schedule.</span></span></label>
-          <div style="font-size:0.78rem;color:var(--text)">${esc(autoUpdatePeriodLabel(hub.auto_upgrade_mode))}</div>
+          <label>Update schedule <span class="config-info">i<span class="config-tooltip">The cadence applied to this hive's auto-updates, as reported by the hub on every heartbeat. "Unknown" means the hub has not yet told this spoke its schedule.</span></span></label>
+          <div style="font-size:0.78rem;color:var(--text)" id="hub-autoupdate-schedule">${esc(autoUpdatePeriodLabel(hub.auto_upgrade_mode))}</div>
         </div>
         <div id="hub-autoupdate-status" style="margin-top:6px;font-size:0.78rem;color:var(--muted)">Loading auto-update status…</div>
 
@@ -19719,7 +19732,36 @@ function burnAreaChart() {
         case 'instant': return 'Instant — as soon as a new version is available';
         case 'daily': return 'Daily';
         case 'weekly': return 'Weekly';
-        default: return 'Unknown — managed by the hub';
+        default: return 'Unknown — not yet reported by the hub';
+      }
+    }
+
+    // Reflect the hub's upgrade policy (#7262) onto the Hub tab controls. The
+    // spoke-local hub.auto_upgrade toggle is only the policy when the hub says
+    // the spoke manages its own upgrades (or nobody does); on a hub-managed
+    // hive the hub owns it, so lock the switch and label who owns it.
+    function applyAutoUpdatePolicyToHubTab(au) {
+      var sw = document.getElementById('hub-autoupdate-toggle');
+      var who = document.getElementById('hub-autoupdate-managed-by');
+      var sched = document.getElementById('hub-autoupdate-schedule');
+      if (!au || au.policySource !== 'hub') return;
+      if (sw) {
+        sw.classList.toggle('on', !!au.enabled);
+        var hubOwned = au.managedBy === 'hub';
+        sw.style.pointerEvents = hubOwned ? 'none' : '';
+        sw.style.opacity = hubOwned ? '0.55' : '';
+        sw.title = hubOwned ? 'Managed by the hub — change it from the hub dashboard' : '';
+      }
+      if (who) {
+        var label = au.managedBy === 'hub' ? 'managed by the hub'
+          : au.managedBy === 'spoke' ? 'self-managed on hub instruction'
+          : 'not managed';
+        if (au.paused) label += ', paused fleet-wide';
+        who.textContent = '(' + label + ') ';
+        who.style.color = 'var(--muted)';
+      }
+      if (sched) {
+        sched.textContent = autoUpdatePeriodLabel(au.period) + (au.paused ? ' — paused fleet-wide by a hub admin' : '');
       }
     }
 
@@ -19741,15 +19783,24 @@ function burnAreaChart() {
         switch (au.state) {
           case 'up_to_date': color = 'var(--green)'; icon = '✓'; break;
           case 'disabled': color = 'var(--muted)'; icon = '⊘'; break;
+          case 'paused': color = 'var(--muted)'; icon = '⏸'; break;
           case 'behind': color = 'var(--yellow, #d4a017)'; icon = '⬆'; break;
           case 'retrying': color = 'var(--yellow, #d4a017)'; icon = '⟳'; break;
           case 'failed': color = 'var(--red)'; icon = '⚠'; break;
           case 'unknown': default: color = 'var(--yellow, #d4a017)'; icon = '❔'; break;
         }
+        applyAutoUpdatePolicyToHubTab(au);
         var html = '<div style="color:' + color + ';font-weight:600">' + icon + ' ' + escapeHtml(au.detail || au.state || 'unknown') + '</div>';
         var rows = '';
         if (au.currentCommit) rows += '<div>Current commit: <code>' + escapeHtml(au.currentCommit) + '</code></div>';
-        if (au.targetBranch) rows += '<div>Target line: <code>' + escapeHtml(au.targetBranch) + (au.targetCommit ? '</code> (tip <code>' + escapeHtml(au.targetCommit) + '</code>)' : '</code>') + '</div>';
+        if (au.targetBranch || au.targetChannel) {
+          var line = au.targetBranch ? '<code>' + escapeHtml(au.targetBranch) + '</code>' : '';
+          if (au.targetChannel) line += (line ? ' via ' : '') + '<code>:' + escapeHtml(au.targetChannel) + '</code> channel';
+          var tipWord = au.targetChannel ? 'channel at' : 'tip';
+          rows += '<div>Target line: ' + line + (au.targetCommit ? ' (' + tipWord + ' <code>' + escapeHtml(au.targetCommit) + '</code>)' : '') + '</div>';
+        }
+        if (au.policySource === 'hub') rows += '<div>Policy source: the hub (heartbeat)</div>';
+        else rows += '<div>Policy source: this spoke\'s local config (the hub has not reported a policy)</div>';
         if (au.commitsBehind != null) rows += '<div>Commits behind: ' + escapeHtml(String(au.commitsBehind)) + '</div>';
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div style="color:var(--red)">Last error: ' + escapeHtml(au.lastError) + '</div>';

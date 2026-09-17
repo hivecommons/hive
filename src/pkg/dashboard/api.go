@@ -695,8 +695,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	cached := s.cachedLatestHash
 	cachedMsg := s.cachedLatestMessage
 	cacheAge := time.Since(s.cachedLatestAt)
-	stableV4 := s.cachedStableV4Hash
-	stableV4Age := time.Since(s.cachedStableV4At)
+	policy := s.hubUpgradePolicy
 	s.versionMu.RUnlock()
 
 	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
@@ -711,24 +710,17 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			cachedMsg = msg
 		}
 	}
-	if upstreamBranch() == dashboardStableReleaseBranch {
-		stableV4 = cached
-	} else if stableV4Age > dashboardVersionTipCacheTTL || stableV4 == "" {
-		if latest, err := s.fetchRemoteHashForBranch(dashboardStableReleaseBranch); err == nil && latest != "" {
-			s.versionMu.Lock()
-			s.cachedStableV4Hash = latest
-			s.cachedStableV4At = time.Now()
-			s.versionMu.Unlock()
-			stableV4 = latest
-		}
-	}
+
+	// Upgrade target (#7262). Precedence: the hub's heartbeat policy — the
+	// commit this spoke can actually land on (its release channel's revision,
+	// or its branch head), which is exactly what the hub card measures against
+	// — else the tip of the branch this build came from. Never a hard-wired
+	// stable branch: a v5 spoke measured against v4 said "35 behind" while its
+	// real distance to anything it could reach was 28.
+	target := resolveUpgradeTarget(policy, upstreamBranch(), cached)
 
 	if cached != "" {
-		latestShort := cached
-		const shortHashLen = 7
-		if len(latestShort) > shortHashLen {
-			latestShort = latestShort[:shortHashLen]
-		}
+		latestShort := shortSHADashboard(cached)
 		// Only report "behind" if the container image exists on GHCR
 		containerReady := ghcrTagExistsCached(latestShort)
 		resp["latestHash"] = cached
@@ -738,31 +730,34 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["latestMessage"] = cachedMsg
 		}
 	}
-	if stableV4 != "" {
-		stableShort := shortSHADashboard(stableV4)
-		resp["stableV4Hash"] = stableV4
-		resp["stableV4Short"] = stableShort
+	resp["target"] = target
+	if target.SHA != "" {
+		// stableV4* are the legacy key names the top bar reads; they now carry
+		// the resolved target rather than the v4 tip. Kept so a newer hub UI
+		// and an older spoke keep rendering; the semantic lives in resp["target"].
+		resp["stableV4Hash"] = target.SHA
+		resp["stableV4Short"] = target.Short
 		// Distinguish "the tip has no image yet" (a known state: nothing to
 		// upgrade to, compare never attempted) from "the compare failed"
 		// (genuinely unknown). Without this the frontend renders a yellow
 		// "? behind" next to the green ✓ whenever the tip is unbuilt (#4804).
-		stableImageReady := ghcrTagExistsCached(stableShort)
-		resp["stableV4ImageReady"] = stableImageReady
-		if sameCommitDashboard(versionHash, stableV4) {
+		targetImageReady := ghcrTagExistsCached(target.Short)
+		resp["stableV4ImageReady"] = targetImageReady
+		if sameCommitDashboard(versionHash, target.SHA) {
 			resp["commitsBehind"] = 0
-		} else if stableImageReady {
-			if count, ok := s.commitsBehindStableTip(versionHash, stableV4); ok {
+		} else if targetImageReady {
+			if count, ok := s.commitsBehindStableTip(versionHash, target.SHA); ok {
 				resp["commitsBehind"] = count
 			}
 		}
 	}
 
-	// Auto-update status (#6962, #6963): consolidate everything the spoke knows
-	// locally — the enabled flag, the configured schedule, the target line, the
-	// current commit, how far behind it is, and the on-PVC upgrade marker — into
-	// one explicit status object with a hard "unknown/failed is never healthy"
-	// invariant. This is the findable section the reporter searched the governor
-	// Settings overlay for and could not find.
+	// Auto-update status (#6962, #6963, #7262): consolidate what the spoke
+	// knows — the hub's policy when it has one (who upgrades this hive, on what
+	// schedule, paused or not), else the spoke-local flag and schedule — with
+	// the target line, the current commit, how far behind it is, and the on-PVC
+	// upgrade marker, into one explicit status object with a hard
+	// "unknown/failed is never healthy" invariant.
 	enabled := false
 	period := ""
 	if s.deps != nil && s.deps.Config != nil {
@@ -773,10 +768,6 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if cb, ok := resp["commitsBehind"].(int); ok {
 		behindPtr = &cb
 	}
-	targetCommit := ""
-	if sv, ok := resp["stableV4Short"].(string); ok {
-		targetCommit = sv
-	}
 	var marker map[string]any
 	if m, ok := resp["upgradeMarker"].(map[string]any); ok {
 		marker = m
@@ -784,8 +775,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	resp["autoUpdate"] = buildAutoUpdateStatus(autoUpdateInputs{
 		Enabled:       enabled,
 		Period:        period,
-		TargetBranch:  dashboardStableReleaseBranch,
-		TargetCommit:  targetCommit,
+		Policy:        policy,
+		TargetBranch:  target.Branch,
+		TargetChannel: target.Channel,
+		TargetCommit:  target.Short,
 		CurrentCommit: versionShort,
 		CommitsBehind: behindPtr,
 		Marker:        marker,
@@ -801,7 +794,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	lastBeat, beatOK := hub.LastHeartbeatAttempt()
 	releaseStatus := buildSpokeReleaseStatus(
 		selfDeploymentImageForDashboard(), "",
-		readUpgradeOutcome(), marker,
+		readUpgradeOutcome(), marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
 	if s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
@@ -826,7 +819,87 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 const dashboardHeartbeatStaleAfter = 6 * time.Minute
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
-const dashboardStableReleaseBranch = "v4"
+
+// upgradeTargetSource labels where /api/version's target came from (#7262).
+const (
+	// upgradeTargetSourceHub — the hub's heartbeat upgrade policy.
+	upgradeTargetSourceHub = "hub"
+	// upgradeTargetSourceBranch — the tip of the branch this build came from;
+	// the fallback for a spoke the hub does not manage (or before its first beat).
+	upgradeTargetSourceBranch = "branch"
+)
+
+// upgradeTarget is the resolved "what should this spoke be running" answer
+// every version surface (top bar, Hub tab, auto-update status) is measured
+// against, so they cannot disagree with each other or with the hub card.
+type upgradeTarget struct {
+	Source  string `json:"source"`
+	Branch  string `json:"branch,omitempty"`
+	Channel string `json:"channel,omitempty"`
+	SHA     string `json:"sha,omitempty"`
+	Short   string `json:"short,omitempty"`
+	// Resolved is false only when the hub said the spoke tracks a channel it
+	// could not resolve to a commit; the UI must show "unknown", not a tip.
+	Resolved bool `json:"resolved"`
+	// ManagedBy is "hub", "spoke" or "" (nobody upgrades this hive automatically).
+	ManagedBy string `json:"managedBy,omitempty"`
+	Paused    bool   `json:"paused,omitempty"`
+}
+
+// resolveUpgradeTarget picks the target from the hub policy when one has been
+// delivered, else from the upstream branch tip. Pure so tests pin the
+// precedence directly.
+func resolveUpgradeTarget(policy *hub.HeartbeatUpgradePolicy, branch, branchTip string) upgradeTarget {
+	if policy == nil {
+		return upgradeTarget{
+			Source:   upgradeTargetSourceBranch,
+			Branch:   branch,
+			SHA:      branchTip,
+			Short:    shortSHADashboard(branchTip),
+			Resolved: true,
+		}
+	}
+	t := upgradeTarget{
+		Source:   upgradeTargetSourceHub,
+		Branch:   policy.Branch,
+		Channel:  policy.Channel,
+		Resolved: policy.TargetResolved,
+		Paused:   policy.Paused,
+	}
+	if t.Branch == "" {
+		t.Branch = branch
+	}
+	switch {
+	case policy.HubManaged:
+		t.ManagedBy = upgradeTargetSourceHub
+	case policy.SpokeManaged:
+		t.ManagedBy = "spoke"
+	}
+	if policy.TargetResolved && policy.TargetSHA != "" {
+		t.SHA = policy.TargetSHA
+		t.Short = shortSHADashboard(policy.TargetSHA)
+	} else if policy.TargetResolved && policy.Channel == "" {
+		// Branch-tracking spoke whose hub has not verified an image yet: the
+		// branch tip is the same answer the hub would give.
+		t.SHA = branchTip
+		t.Short = shortSHADashboard(branchTip)
+	}
+	return t
+}
+
+// SetHubUpgradePolicy records the hub's upgrade posture for this spoke as
+// delivered on the heartbeat (#7262). Called from the heartbeat callback; the
+// next /api/version measures against it.
+func (s *Server) SetHubUpgradePolicy(p *hub.HeartbeatUpgradePolicy) {
+	if p == nil {
+		return
+	}
+	cp := *p
+	s.versionMu.Lock()
+	s.hubUpgradePolicy = &cp
+	s.hubUpgradePolicyAt = time.Now()
+	s.versionMu.Unlock()
+}
 
 // upgradeMarkerPath is where cmd/hive persists its self-upgrade attempt
 // bookkeeping (upgradeMarker in cmd/hive/main.go). Var, not const, so tests
@@ -1270,7 +1343,7 @@ func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Reque
 
 	setPendingReleaseChannel(channel)
 	s.auditFromRequest(r, "release_channel_switch", channel, current.Channel)
-	rs := buildSpokeReleaseStatus(selfDeploymentImageForDashboard(), "", readUpgradeOutcome(), readUpgradeMarker(), time.Time{}, false, dashboardHeartbeatStaleAfter)
+	rs := buildSpokeReleaseStatus(selfDeploymentImageForDashboard(), "", readUpgradeOutcome(), readUpgradeMarker(), versionHash, time.Time{}, false, dashboardHeartbeatStaleAfter)
 	rs.Channel.SelectorEnabled = true
 	rs.Channel.SelectorDetail = "Switch requested. The hub has recorded intent; the current channel remains the observed Deployment image until the next heartbeat/rollout lands."
 	if rs.Channel.Channel != channel {

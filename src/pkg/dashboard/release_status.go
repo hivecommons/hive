@@ -107,6 +107,14 @@ type UpgradeAttemptStatus struct {
 	Reason      string `json:"reason,omitempty"`
 	Attempts    int    `json:"attempts,omitempty"`
 	MaxAttempts int    `json:"maxAttempts,omitempty"`
+	// Superseded is true when the recorded success is history: the hive has
+	// since moved to a different commit (a floating-tag pull the hub rolled
+	// without a new spoke-side outcome, #7262). Detail says so; the state stays
+	// "succeeded" because that attempt did land.
+	Superseded bool `json:"superseded,omitempty"`
+	// RunningCommit is the commit the hive is running now, for the superseded
+	// case, so the reader can see both.
+	RunningCommit string `json:"runningCommit,omitempty"`
 	// Detail always explains the state and, for a failure, WHY.
 	Detail string `json:"detail"`
 }
@@ -154,7 +162,7 @@ func readUpgradeOutcome() *upgradeOutcome {
 //
 // Ordering: an unresolved attempt (marker) outranks a past success (outcome),
 // which outranks "never attempted".
-func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any) UpgradeAttemptStatus {
+func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any, runningSHA string) UpgradeAttemptStatus {
 	if marker != nil {
 		st := UpgradeAttemptStatus{}
 		st.Target, _ = marker["target"].(string)
@@ -200,13 +208,23 @@ func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any) U
 		if when == "" {
 			when = st.At
 		}
+		landed := ""
 		if when != "" {
-			st.Detail = fmt.Sprintf("Last upgrade to %s SUCCEEDED — the hive is running the target image (landed %s).",
-				orUnknownSHA(outcome.TargetSHA), when)
-		} else {
-			st.Detail = fmt.Sprintf("Last upgrade to %s SUCCEEDED — the hive is running the target image.",
-				orUnknownSHA(outcome.TargetSHA))
+			landed = fmt.Sprintf(" (landed %s)", when)
 		}
+		// The outcome file is written once, when the instructed upgrade lands.
+		// A later hub-side roll (a :stable/:edge floating-tag pull) moves the
+		// pod without touching it, so "running the target image" must be
+		// checked against the commit actually running, not assumed.
+		if runningSHA != "" && outcome.TargetSHA != "" && !sameCommitDashboard(runningSHA, outcome.TargetSHA) {
+			st.Superseded = true
+			st.RunningCommit = shortSHADashboard(runningSHA)
+			st.Detail = fmt.Sprintf("Last spoke-side upgrade to %s SUCCEEDED%s; the hive has since moved to %s (rolled by the hub or a floating image tag, not by a spoke-side upgrade).",
+				orUnknownSHA(outcome.TargetSHA), landed, st.RunningCommit)
+			return st
+		}
+		st.Detail = fmt.Sprintf("Last upgrade to %s SUCCEEDED — the hive is running the target image%s.",
+			orUnknownSHA(outcome.TargetSHA), landed)
 		return st
 	}
 
@@ -237,10 +255,10 @@ type SpokeReleaseStatus struct {
 // knows locally. imageRef/trackedChannel drive channel resolution; outcome and
 // marker drive the attempt classification; heartbeat freshness drives the
 // staleness warning.
-func buildSpokeReleaseStatus(imageRef, trackedChannel string, outcome *upgradeOutcome, marker map[string]any, lastBeat time.Time, beatOK bool, staleAfter time.Duration) SpokeReleaseStatus {
+func buildSpokeReleaseStatus(imageRef, trackedChannel string, outcome *upgradeOutcome, marker map[string]any, runningSHA string, lastBeat time.Time, beatOK bool, staleAfter time.Duration) SpokeReleaseStatus {
 	st := SpokeReleaseStatus{
 		Channel: buildReleaseChannelStatus(imageRef, trackedChannel),
-		Attempt: buildUpgradeAttemptStatus(outcome, marker),
+		Attempt: buildUpgradeAttemptStatus(outcome, marker, runningSHA),
 	}
 	if beatOK && !lastBeat.IsZero() {
 		st.LastHeartbeatAt = lastBeat.UTC().Format(time.RFC3339)

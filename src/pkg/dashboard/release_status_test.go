@@ -165,7 +165,7 @@ func TestBuildUpgradeAttemptStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildUpgradeAttemptStatus(tc.outcome, tc.marker)
+			got := buildUpgradeAttemptStatus(tc.outcome, tc.marker, "")
 			if got.State != tc.wantState {
 				t.Errorf("State = %q, want %q", got.State, tc.wantState)
 			}
@@ -188,12 +188,12 @@ func TestBuildUpgradeAttemptStatus(t *testing.T) {
 // indistinguishable from a successful upgrade. State, detail and rendered
 // timestamp must all differ.
 func TestNeverAttemptedDistinctFromSucceeded(t *testing.T) {
-	never := buildUpgradeAttemptStatus(nil, nil)
+	never := buildUpgradeAttemptStatus(nil, nil, "")
 	succeeded := buildUpgradeAttemptStatus(&upgradeOutcome{
 		TargetSHA:   "abc1234",
 		RequestedAt: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC),
 		CompletedAt: time.Date(2026, 9, 15, 12, 3, 0, 0, time.UTC),
-	}, nil)
+	}, nil, "")
 
 	if never.State == succeeded.State {
 		t.Fatalf("never and succeeded share State %q — they must be distinct", never.State)
@@ -256,12 +256,12 @@ func TestReadUpgradeOutcome(t *testing.T) {
 // TestBuildSpokeReleaseStatusStaleness pins the "don't present stale data as
 // current" requirement: a fresh beat is reachable, an old beat is not.
 func TestBuildSpokeReleaseStatusStaleness(t *testing.T) {
-	fresh := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil,
+	fresh := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil, "",
 		time.Now().Add(-1*time.Minute), true, 6*time.Minute)
 	if !fresh.HubReachable {
 		t.Errorf("a 1-minute-old beat must be reachable")
 	}
-	stale := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil,
+	stale := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil, "",
 		time.Now().Add(-30*time.Minute), true, 6*time.Minute)
 	if stale.HubReachable {
 		t.Errorf("a 30-minute-old beat must NOT be reachable")

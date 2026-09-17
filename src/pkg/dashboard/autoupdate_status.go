@@ -40,6 +40,18 @@ const (
 	// date (e.g. the version comparison was unavailable). Must NOT read as
 	// healthy — this is the #6963 invariant.
 	autoUpdateStateUnknown = "unknown"
+	// autoUpdateStatePaused — upgrades are managed but the hub's fleet-wide
+	// kill switch is engaged (#7262). Deliberate, like disabled, so healthy;
+	// never "up to date".
+	autoUpdateStatePaused = "paused"
+)
+
+// Who applies upgrades to this hive (#7262). Reported so the Hub tab can lock
+// the spoke-local toggle and say so, instead of rendering that toggle as if it
+// were the policy.
+const (
+	autoUpdateManagedByHub   = "hub"
+	autoUpdateManagedBySpoke = "spoke"
 )
 
 // autoUpdatePeriodUnknown is the period reported when the spoke does not know
@@ -58,9 +70,17 @@ type AutoUpdateStatus struct {
 	// Healthy is the single guard #6963 turns on: false for failed, behind,
 	// retrying AND unknown. The frontend must never paint a non-healthy state
 	// green.
-	Healthy       bool   `json:"healthy"`
-	Period        string `json:"period"`
+	Healthy bool   `json:"healthy"`
+	Period  string `json:"period"`
+	// ManagedBy is "hub" (the hub rolls the Deployment), "spoke" (the spoke
+	// self-upgrades on hub instruction) or "" (nobody). PolicySource says where
+	// that answer came from: "hub" when the heartbeat delivered it, "local" when
+	// only the spoke's own config was available (older hub, or unmanaged hive).
+	ManagedBy     string `json:"managedBy,omitempty"`
+	PolicySource  string `json:"policySource"`
+	Paused        bool   `json:"paused,omitempty"`
 	TargetBranch  string `json:"targetBranch,omitempty"`
+	TargetChannel string `json:"targetChannel,omitempty"`
 	TargetCommit  string `json:"targetCommit,omitempty"`
 	CurrentCommit string `json:"currentCommit,omitempty"`
 	CommitsBehind *int   `json:"commitsBehind,omitempty"`
@@ -77,9 +97,14 @@ type AutoUpdateStatus struct {
 // answers /api/version. Passing it explicitly keeps buildAutoUpdateStatus a
 // pure function that the tests exercise through the real handler.
 type autoUpdateInputs struct {
-	Enabled       bool
-	Period        string // raw config mode (may be "")
+	Enabled bool
+	Period  string // raw config mode (may be "")
+	// Policy is the hub's heartbeat upgrade policy when one has been delivered
+	// (#7262). When non-nil it overrides Enabled/Period: the hub, not the
+	// spoke's config file, is the authority on who upgrades this hive and when.
+	Policy        *hub.HeartbeatUpgradePolicy
 	TargetBranch  string
+	TargetChannel string
 	TargetCommit  string
 	CurrentCommit string
 	CommitsBehind *int           // nil = unknown
@@ -112,18 +137,57 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	st := AutoUpdateStatus{
 		Enabled:       in.Enabled,
 		Period:        normalizeAutoUpdatePeriod(in.Period),
+		PolicySource:  "local",
 		TargetBranch:  in.TargetBranch,
+		TargetChannel: in.TargetChannel,
 		TargetCommit:  in.TargetCommit,
 		CurrentCommit: in.CurrentCommit,
 		CommitsBehind: in.CommitsBehind,
 	}
+	if in.Enabled {
+		st.ManagedBy = autoUpdateManagedBySpoke
+	}
+	unresolvedChannel := ""
+	if p := in.Policy; p != nil {
+		st.PolicySource = upgradeTargetSourceHub
+		st.Enabled = p.HubManaged || p.SpokeManaged
+		st.Period = normalizeAutoUpdatePeriod(p.Schedule)
+		st.Paused = p.Paused
+		switch {
+		case p.HubManaged:
+			st.ManagedBy = autoUpdateManagedByHub
+		case p.SpokeManaged:
+			st.ManagedBy = autoUpdateManagedBySpoke
+		default:
+			st.ManagedBy = ""
+		}
+		if !p.TargetResolved {
+			unresolvedChannel = p.Channel
+			if unresolvedChannel == "" {
+				unresolvedChannel = "its release channel"
+			}
+		}
+	}
 
-	if !in.Enabled {
+	if !st.Enabled {
 		st.State = autoUpdateStateDisabled
 		// Disabled is a deliberate configuration, not a fault, so it is not
 		// "unhealthy" — but it must never read as "up to date" either.
 		st.Healthy = true
-		st.Detail = "Automatic updates are turned off for this hive; new versions are not applied automatically."
+		if st.PolicySource == upgradeTargetSourceHub {
+			st.Detail = "The hub does not apply upgrades to this hive automatically and the spoke's own auto-upgrade is off; new versions are not applied automatically."
+		} else {
+			st.Detail = "Automatic updates are turned off for this hive; new versions are not applied automatically."
+		}
+		return st
+	}
+	if st.Paused {
+		st.State = autoUpdateStatePaused
+		st.Healthy = true
+		st.Detail = "Automatic updates are paused fleet-wide by a hub admin; no new version is applied until the hub resumes spoke upgrades."
+		if in.CommitsBehind != nil && *in.CommitsBehind > 0 {
+			st.Detail += fmt.Sprintf(" This hive is %d commit(s) behind%s.", *in.CommitsBehind, onBranchSuffix(in.TargetBranch))
+		}
 		return st
 	}
 
@@ -167,20 +231,32 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	if in.CommitsBehind == nil {
 		st.State = autoUpdateStateUnknown
 		st.Healthy = false
-		st.Detail = "Could not determine whether this hive is up to date: the version comparison is unavailable. Not treating unknown as healthy."
+		if unresolvedChannel != "" {
+			st.Detail = fmt.Sprintf("Could not determine whether this hive is up to date: the hub could not resolve %s to a commit. Not treating unknown as healthy.", unresolvedChannel)
+		} else {
+			st.Detail = "Could not determine whether this hive is up to date: the version comparison is unavailable. Not treating unknown as healthy."
+		}
 		return st
 	}
 	if *in.CommitsBehind <= 0 {
 		st.State = autoUpdateStateUpToDate
 		st.Healthy = true
-		st.Detail = "This hive is running the latest built commit" + onBranchSuffix(in.TargetBranch) + "."
+		st.Detail = "This hive is running the latest built commit" + onBranchSuffix(in.TargetBranch) + onChannelSuffix(in.TargetChannel) + "."
 		return st
 	}
 	st.State = autoUpdateStateBehind
 	st.Healthy = false
-	st.Detail = fmt.Sprintf("This hive is %d commit(s) behind%s and the update has not been applied yet.",
-		*in.CommitsBehind, onBranchSuffix(in.TargetBranch))
+	st.Detail = fmt.Sprintf("This hive is %d commit(s) behind%s%s and the update has not been applied yet.",
+		*in.CommitsBehind, onBranchSuffix(in.TargetBranch), onChannelSuffix(in.TargetChannel))
 	return st
+}
+
+func onChannelSuffix(channel string) string {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return ""
+	}
+	return " (:" + channel + " channel)"
 }
 
 func onBranchSuffix(branch string) string {

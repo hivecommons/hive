@@ -265,9 +265,12 @@ type Server struct {
 	cachedLatestHash    string
 	cachedLatestMessage string
 	cachedLatestAt      time.Time
-	cachedStableV4Hash  string
-	cachedStableV4At    time.Time
 	commitBehindCache   map[string]int
+	// hubUpgradePolicy is the hub's upgrade posture for this spoke as last
+	// delivered on the heartbeat (#7262); nil until the first beat carrying
+	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.
+	hubUpgradePolicy   *hub.HeartbeatUpgradePolicy
+	hubUpgradePolicyAt time.Time
 
 	contributeHub *ContributeWSHub
 
