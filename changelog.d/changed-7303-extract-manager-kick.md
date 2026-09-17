@@ -1,0 +1,1 @@
+- Extracted the kick-delivery domain (SendKick, the locked delivery path, explain-mode kick suffixes, inference kick stall/nudge handling, and kick history seeding — 22 functions plus their constants) from `pkg/agent/manager.go` into a new `pkg/agent/manager_kick.go`, the next stage of the #7303 god-file split. Pure code motion: no behavior change.
