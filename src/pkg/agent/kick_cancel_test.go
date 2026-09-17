@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -297,21 +298,17 @@ func TestRestart_CancelsPendingAsyncKick(t *testing.T) {
 	if err != nil || !started {
 		t.Fatalf("follow-up SendKickAsync = (%v, %v), want a queued delivery", started, err)
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if d, ok := m.KickDispatchState("worker"); ok && !d.Pending() {
-			if d.Phase != KickPhaseDelivered {
-				t.Fatalf("follow-up dispatch = %+v, want delivered", d)
-			}
-			m.mu.RLock()
-			lastMsg = agent.LastKickMessage
-			m.mu.RUnlock()
-			if lastMsg != "after the restart" {
-				t.Errorf("LastKickMessage = %q, want the follow-up kick", lastMsg)
-			}
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	testutil.EventuallyEvery(t, 30*time.Second, 100*time.Millisecond, func() bool {
+		d, ok := m.KickDispatchState("worker")
+		return ok && !d.Pending()
+	}, "follow-up kick never settled")
+	if d, ok := m.KickDispatchState("worker"); !ok || d.Phase != KickPhaseDelivered {
+		t.Fatalf("follow-up dispatch = %+v, want delivered", d)
 	}
-	t.Fatal("follow-up kick never settled")
+	m.mu.RLock()
+	lastMsg = agent.LastKickMessage
+	m.mu.RUnlock()
+	if lastMsg != "after the restart" {
+		t.Errorf("LastKickMessage = %q, want the follow-up kick", lastMsg)
+	}
 }

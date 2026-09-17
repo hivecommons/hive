@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,14 +194,12 @@ func TestCapturePaneJoinsWrappedBlockedActionMarker(t *testing.T) {
 	m := NewManager(nil, discardLogger(), ProjectContext{})
 	agent := &AgentProcess{Name: "wrap-marker", tmuxSession: session}
 	var output string
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.EventuallyEveryFunc(t, 5*time.Second, 100*time.Millisecond, func() bool {
 		output = tmuxTerminal{m: m}.CapturePane(agent)
-		if strings.Contains(output, blockedActionMarkers[0]) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return strings.Contains(output, blockedActionMarkers[0])
+	}, func() string {
+		return fmt.Sprintf("pane never rendered the blocked-action marker; last capture:\n%s", output)
+	})
 	var matchedLine string
 	for _, captured := range strings.Split(output, "\n") {
 		if strings.Contains(captured, blockedActionMarkers[0]) {
@@ -655,17 +654,11 @@ func TestConfirmMenuOption_SelectsOption(t *testing.T) {
 	// dotfiles takes >2s to first render on some hosts), and confirmMenuOption
 	// treats a pane without the title as "already dismissed" — masking the
 	// race as a wrong-answer failure four Down-keys later.
-	rendered := false
-	for i := 0; i < 100; i++ {
-		if selectedMenuOption(m.captureVisiblePaneForAgent(agent)) != "" {
-			rendered = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if !rendered {
-		t.Fatalf("menu never rendered in the pane: %q", m.captureVisiblePaneForAgent(agent))
-	}
+	testutil.EventuallyEveryFunc(t, 10*time.Second, 100*time.Millisecond, func() bool {
+		return selectedMenuOption(m.captureVisiblePaneForAgent(agent)) != ""
+	}, func() string {
+		return fmt.Sprintf("menu never rendered in the pane: %q", m.captureVisiblePaneForAgent(agent))
+	})
 	// want "accept" is on the selected ❯ line -> confirm immediately.
 	if !m.confirmMenuOption(agent, "Bypass Permissions mode", "accept", "Down") {
 		t.Error("should confirm the already-selected wanted option")
