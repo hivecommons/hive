@@ -1120,6 +1120,23 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .run-meta{margin-left:auto;color:var(--cc-muted);font-size:.72rem;white-space:nowrap}
 .run-reason{margin-top:4px;font-size:.74rem;color:var(--cc-text-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 .run-pane-note{padding:10px 20px;font-size:.74rem;color:var(--cc-muted-2);border-bottom:1px solid var(--cc-border-2)}
+/* Hub decisions card (#7330 — item 4 of #7317 rendered). Shares the run
+   history's login lookup, because the two are the two halves of one
+   conversation: what the relay reported, and what the hub did about it. The
+   palette is deliberately the run-outcome palette — a fence and a failure are
+   equally bad news and should not read differently. */
+.dec-list{max-height:420px;overflow-y:auto}
+.dec-item{padding:10px 20px;border-bottom:1px solid var(--cc-border-2)}
+.dec-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:.8rem}
+.dec-event{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--cc-border);color:var(--cc-muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.dec-event.stale_gen_rejected,.dec-event.unassigned_ignored{color:var(--cc-red);border-color:var(--cc-red)}
+.dec-event.abandoned,.dec-event.lease_expired,.dec-event.resume_rejected{color:var(--cc-amber);border-color:var(--cc-amber)}
+.dec-task{color:var(--cc-text);font-weight:600;overflow-wrap:anywhere}
+.dec-task a{color:inherit;text-decoration:none}
+.dec-task a:hover{text-decoration:underline}
+.dec-meta{margin-left:auto;color:var(--cc-muted);font-size:.72rem;white-space:nowrap}
+.dec-detail{margin-top:4px;font-size:.74rem;color:var(--cc-text-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.dec-note{padding:10px 20px;font-size:.72rem;color:var(--cc-muted-2);border-bottom:1px solid var(--cc-border-2)}
 /* Row is align-items:start (grid), so nudge the small dot down to sit level with
    the username's first line instead of the very top of the row. */
 .clanker-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);flex-shrink:0;margin-top:7px}
@@ -2765,6 +2782,20 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <button type="submit" class="admin-act" id="runs-go">Look up</button>
 </form>
 <div class="runs-list" id="runs-list"><div class="ops-empty">Enter a contributor&rsquo;s login to see their recent runs: outcome, duration, the failure reason, and &mdash; for owners &mdash; what was on the agent&rsquo;s terminal when it stopped.</div></div>
+</div>
+<!-- Hub decisions (#7330, item 4 of #7317). The other half of the conversation:
+     the moments the hub REFUSED, FENCED or IGNORED something the relay sent.
+     Until now those were slog lines on the hub's stdout and nowhere else, so a
+     contributor whose reports were being silently dropped looked exactly like
+     one whose relay never sent any. Filled by the SAME login lookup as the run
+     history above — the operator asks one question, not two.
+     Owner/read-write only (the entries carry generation numbers, lease identity
+     and configured rate limits); a 403 renders as a gate notice, not an error.
+     In-memory only: an empty list means "nothing since the hub started", which
+     the card says out loud so a post-restart blank is not read as innocence. -->
+<div class="ops-card" id="decisions-card" style="margin-top:20px">
+<div class="ops-card-head"><h3>Hub decisions</h3><span class="ops-card-count" id="decisions-count"></span></div>
+<div class="dec-list" id="decisions-list"><div class="ops-empty">Look up a contributor above to see what the hub decided about them: reports it fenced as stale, tasks it took back, and times it declined to hand out work.</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
@@ -5347,6 +5378,9 @@ function ccLookupRuns(user){
   user=(user||'').trim().replace(/^@/,'');
   var input=document.getElementById('runs-user');
   if(input&&input.value!==user)input.value=user;
+  // One lookup fills both cards (#7330): the relay's side and the hub's side of
+  // the same session. Hoisted declaration, so order in the file does not matter.
+  ccLookupDecisions(user);
   var el=document.getElementById('runs-list');
   if(!user){if(el)el.innerHTML='<div class="ops-empty">Enter a contributor&rsquo;s GitHub login.</div>';return;}
   ccRunsUser=user;
@@ -5357,6 +5391,71 @@ function ccLookupRuns(user){
     .catch(function(err){if(el)el.innerHTML='<div class="ops-empty">Could not load runs for '+esc(user)+' ('+esc(err.message)+').</div>';});
 }
 onEl('runs-lookup','submit',function(e){e.preventDefault();var i=document.getElementById('runs-user');ccLookupRuns(i?i.value:'');});
+
+// ── Hub decisions (#7330, item 4 of #7317) ────────────────────────────────
+// The other half of the run history: what the HUB did, not what the relay
+// reported. Driven by the same login lookup — the operator asks one question.
+//
+// Gated owner/read-write server-side, so a 403 is an EXPECTED answer for a
+// read-only viewer and renders as a gate notice. It must not read as a failure:
+// this card sits directly under one a read-only viewer CAN use, and "could not
+// load" there would look like the hive was broken.
+var ccDecUser='';
+function ccDecisionLabel(ev){
+  var map={stale_gen_rejected:'a report was fenced as stale \u2014 the relay believed it reported; the hub did not accept it',
+    unassigned_ignored:'a terminal report arrived for a task this connection did not hold',
+    abandoned:'a held task ended with no terminal report',
+    resume_rejected:'a resume was refused \u2014 no matching server-issued lease',
+    lease_expired:'the hub auto-released the task after its lease went unrenewed',
+    refused:'the hub declined to hand out work'};
+  return map[ev]||(ev||'').replace(/_/g,' ');
+}
+function ccRenderDecisions(user,data){
+  var el=document.getElementById('decisions-list'),cnt=document.getElementById('decisions-count');
+  if(!el)return;
+  var items=(data&&data.decisions)||[];
+  if(cnt)cnt.textContent=items.length?(items.length+' decision'+(items.length===1?'':'s')):'';
+  // "since" is the hub's start time. Saying it is what makes an empty list
+  // legible as "nothing since boot" rather than "nothing ever happened".
+  var since=data&&data.since?('<div class="dec-note">In memory only \u2014 the hub has been recording since '+esc(rel(data.since))+'. A restart empties this.</div>'):'';
+  if(!items.length){
+    el.innerHTML=since+'<div class="ops-empty">The hub recorded no decisions about <b>'+esc(user)+'</b>'+(data&&data.since?' since it started':'')+'.</div>';
+    return;
+  }
+  el.innerHTML=since+items.map(function(d){
+    var ev=d.event||'';
+    var taskTxt=d.repo?(esc(d.repo)+(d.number?'#'+esc(d.number):'')):esc(d.task_id||'');
+    var taskURL=ccIssueURL(d);
+    var taskHtml=taskTxt?(taskURL?('<a href="'+esc(taskURL)+'" target="_blank" rel="noopener noreferrer">'+taskTxt+'</a>'):taskTxt):'';
+    var meta=d.ts?esc(rel(d.ts)):'';
+    var detail=d.detail?esc(d.detail):ccDecisionLabel(ev);
+    return '<div class="dec-item"><div class="dec-head"><span class="dec-event '+esc(ev)+'">'+esc(ev.replace(/_/g,' '))+'</span><span class="dec-task">'+taskHtml+'</span><span class="dec-meta">'+meta+'</span></div>'+
+      '<div class="dec-detail" title="'+esc(ccDecisionLabel(ev))+'">'+detail+'</div></div>';
+  }).join('');
+}
+function ccLookupDecisions(user){
+  var el=document.getElementById('decisions-list'),cnt=document.getElementById('decisions-count');
+  if(cnt)cnt.textContent='';
+  if(!el)return;
+  if(!user){el.innerHTML='<div class="ops-empty">Look up a contributor above to see what the hub decided about them.</div>';return;}
+  ccDecUser=user;
+  el.innerHTML='<div class="ops-empty">Loading hub decisions for '+esc(user)+'&hellip;</div>';
+  fetch('/api/contribute/decisions?username='+encodeURIComponent(user)+'&limit=100')
+    .then(function(r){
+      if(r.status===403){var e=new Error('forbidden');e.gated=true;throw e;}
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      return r.json();
+    })
+    .then(function(d){if(ccDecUser!==user)return;ccRenderDecisions(user,d);})
+    .catch(function(err){
+      if(ccDecUser!==user)return;
+      if(err&&err.gated){
+        el.innerHTML='<div class="ops-empty">Hub decisions are visible to the hive&rsquo;s owner and read-write users. They carry the hub&rsquo;s internal protocol state &mdash; generation numbers, lease identity, configured rate limits &mdash; so the endpoint refuses rather than serving a stripped list.</div>';
+        return;
+      }
+      el.innerHTML='<div class="ops-empty">Could not load hub decisions for '+esc(user)+' ('+esc(err.message)+').</div>';
+    });
+}
 
 async function opsPoll(){
   try{

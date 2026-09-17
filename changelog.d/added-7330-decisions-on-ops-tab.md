@@ -1,0 +1,1 @@
+- The Operations tab now renders the hub's per-contributor decisions beside the run history, filled by the same login lookup, so an operator can see the reports the hub fenced or ignored without curling `/api/contribute/decisions`. A read-only viewer gets an explanation of the gate rather than a load error. ([#7330](https://github.com/hivecommons/hive/issues/7330))
