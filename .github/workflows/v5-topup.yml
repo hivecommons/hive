@@ -100,6 +100,57 @@ jobs:
                -m "🌱 Forward-merge v4 into v5 (${{ steps.drift.outputs.behind }} commits)"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
           else
+            # Inventory the conflict BEFORE aborting (#7337). Aborting first
+            # throws away the only cheap answer to the question the human
+            # actually has: "how big is this, and which files do I need to
+            # understand?" Without it every recurrence reports the same bare
+            # "conflicts" and the work of sizing it is redone by hand.
+            #
+            # Hunk count and conflict-line count are reported separately
+            # because they say different things. A file can hold two hunks and
+            # 21,000 lines when the two lines have diverged wholesale, which is
+            # a very different job from twelve small hunks in a doc.
+            git diff --name-only --diff-filter=U > /tmp/conflicted.txt || true
+
+            : > /tmp/conflict-rows.tsv
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              # A conflicted path is not necessarily a file with markers in it:
+              # a delete/modify conflict leaves NO working-tree file, and grep
+              # then exits 2, which is fatal under `set -e`. Those rows are
+              # still worth reporting (they are a real decision for the human),
+              # so they are counted as zero-hunk rather than skipped.
+              hunks=0
+              lines=0
+              if [ -f "$f" ]; then
+                hunks=$(grep -c "^<<<<<<<" "$f" < /dev/null 2>/dev/null) || hunks=0
+                lines=$(awk "/^<<<<<<</,/^>>>>>>>/" "$f" 2>/dev/null | wc -l | tr -d " ") || lines=0
+              fi
+              printf "%s\t%s\t%s\n" "${hunks:-0}" "${lines:-0}" "$f" >> /tmp/conflict-rows.tsv
+            done < /tmp/conflicted.txt
+            LC_ALL=C sort -rn -k2 /tmp/conflict-rows.tsv -o /tmp/conflict-rows.tsv
+
+            files=$(wc -l < /tmp/conflicted.txt | tr -d " ")
+            total=$(awk -F"\t" "{s+=\$2} END{print s+0}" /tmp/conflict-rows.tsv)
+
+            {
+              echo "### v4 -> v5 forward-merge conflicts"
+              echo ""
+              echo "${{ steps.drift.outputs.behind }} commit(s) behind. Conflicting files, largest first:"
+              echo ""
+              echo "| conflicts | lines | file |"
+              echo "| ---: | ---: | --- |"
+              while IFS="$(printf "\t")" read -r hunks lines f; do
+                [ -n "$f" ] || continue
+                echo "| $hunks | $lines | \`$f\` |"
+              done < /tmp/conflict-rows.tsv
+              echo ""
+              echo "**$files** conflicting file(s), **$total** conflicted line(s) in total."
+            } > /tmp/conflict-report.md
+
+            cat /tmp/conflict-report.md >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/conflict-report.md
+
             git merge --abort || true
             echo "conflict=true" >> "$GITHUB_OUTPUT"
           fi
