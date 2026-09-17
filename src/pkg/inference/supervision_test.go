@@ -1,6 +1,6 @@
-package main
+package inference
 
-// Tests for superviseLocalLiteLLM's supervision loop (30% covered: only the
+// Tests for SuperviseLocalLiteLLM's supervision loop (30% covered: only the
 // pre-cancelled-context guard was pinned, in boot_observability_test.go).
 // These exercise the loop's real work through a PATH-stubbed `litellm`
 // binary — the same technique pkg/agent tests use for CLI stubs — covering:
@@ -81,7 +81,7 @@ func waitForInvocations(t *testing.T, argsFile string, n int, deadline time.Dura
 	}, "litellm stub not invoked %d time(s) within %v (got %d)", n, deadline, invocationCount(argsFile))
 }
 
-// runSupervisor starts superviseLocalLiteLLM against a captured logger and
+// runSupervisor starts SuperviseLocalLiteLLM against a captured logger and
 // returns the log sink, the cancel func, and the done channel.
 func runSupervisor(t *testing.T) (*syncBuffer, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
@@ -90,7 +90,7 @@ func runSupervisor(t *testing.T) (*syncBuffer, context.CancelFunc, <-chan struct
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		superviseLocalLiteLLM(ctx, logger)
+		SuperviseLocalLiteLLM(ctx, logger)
 		close(done)
 	}()
 	return logs, cancel, done
@@ -102,7 +102,7 @@ func awaitReturn(t *testing.T, done <-chan struct{}) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("superviseLocalLiteLLM did not return after context cancellation")
+		t.Fatal("SuperviseLocalLiteLLM did not return after context cancellation")
 	}
 }
 
@@ -125,8 +125,8 @@ func TestSuperviseLocalLiteLLMSpawnsWithLoopbackArgsAndLogsErrorExit(t *testing.
 	line := strings.SplitN(strings.TrimSpace(string(args)), "\n", 2)[0]
 	for _, want := range []string{
 		"--host 127.0.0.1",
-		"--port " + strconv.Itoa(litellmLocalProxyPort),
-		"--config " + litellmLocalConfigPath,
+		"--port " + strconv.Itoa(LocalProxyPort),
+		"--config " + LocalConfigPath,
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("litellm invoked without %q: %q", want, line)
@@ -140,13 +140,13 @@ func TestSuperviseLocalLiteLLMSpawnsWithLoopbackArgsAndLogsErrorExit(t *testing.
 // TestSuperviseLocalLiteLLMRestartsAfterCleanExit pins the supervision
 // promise itself: a proxy that exits cleanly is logged as such and respawned
 // after the backoff. Two recorded invocations prove the time.After arm of the
-// restart select ran; the deadline allows for the 5s litellmRestartDelay.
+// restart select ran; the deadline allows for the 5s RestartDelay.
 func TestSuperviseLocalLiteLLMRestartsAfterCleanExit(t *testing.T) {
 	argsFile := stubLitellm(t, 0)
 	logs, cancel, done := runSupervisor(t)
 	defer cancel()
 
-	waitForInvocations(t, argsFile, 2, litellmRestartDelay+10*time.Second)
+	waitForInvocations(t, argsFile, 2, RestartDelay+10*time.Second)
 	cancel()
 	awaitReturn(t, done)
 
