@@ -3310,7 +3310,7 @@ func main() {
 	// The loop therefore runs for the lifetime of the process (it does NOT
 	// return after the first success) and, whenever the banner is currently
 	// showing, re-runs the SAME read+write verification as the manual "Re-check"
-	// button (githubAppRecheckFn, which calls diagnoseGitHubApp) and clears
+	// button (githubAppRecheckFn, which calls apphealth.Diagnose) and clears
 	// the flag on success. When the banner is not showing there is nothing to do,
 	// so the tick is a cheap no-op that makes no GitHub API calls.
 	{
@@ -5789,13 +5789,7 @@ func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg
 	apphealth.Heal(ctx, appAuth, cfg, logger)
 }
 
-func diagnoseGitHubApp(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) (string, github.AppAuthState) {
-	return apphealth.Diagnose(ctx, appAuth, expectedOwner, appKeyPaths())
-}
 
-func diagnoseGitHubAppFull(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) github.AppAuthDiagnosis {
-	return apphealth.DiagnoseFull(ctx, appAuth, expectedOwner, appKeyPaths())
-}
 
 // maxTimelineEnumeratePerCycle bounds how many enumerated-issue events a single
 // eval cycle records into the lifecycle timeline, keeping the recording loop
@@ -6824,7 +6818,7 @@ func runEvalCycle(
 						case advisoryPostWriteForbidden:
 							// App is installed (we found the issue) but a real
 							// WRITE was forbidden. #2353: attribute this honestly.
-							// diagnoseGitHubApp only inspects installation-level
+							// apphealth.Diagnose only inspects installation-level
 							// PERMISSIONS, so when it comes back healthy (issues:write
 							// granted, right owner) the previous code hard-overrode
 							// that "OK" into a false "lacks Issues: Read & Write"
