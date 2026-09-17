@@ -1,0 +1,1 @@
+- Extract branch-SHA/image-status poller domain from `pkg/hub/saas.go` into `saas_sha_poller.go` (#7278 god-file split; no behavior change).
