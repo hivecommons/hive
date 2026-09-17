@@ -1,0 +1,1 @@
+- Corrected the kick prompt size budget quoted in the Repos tab's cap help text from ~22 KiB to ~25 KiB, matching the measured worst-case sizing in `pkg/dashboard/prompt_history.go` after the issue and PR list caps landed (#7368).
