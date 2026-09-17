@@ -18,14 +18,6 @@ func appHealthChecker() apphealth.Checker {
 	return apphealth.Checker{KeyPaths: []string{appKeys.DataKeyPath, appKeys.ProvisionedKeyPath}}
 }
 
-func diagnoseGitHubApp(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) (string, github.AppAuthState) {
-	return appHealthChecker().DiagnoseMessage(ctx, appAuth, expectedOwner)
-}
-
-func diagnoseGitHubAppFull(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) github.AppAuthDiagnosis {
-	return appHealthChecker().Diagnose(ctx, appAuth, expectedOwner)
-}
-
 func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (bool, string, github.AppAuthState) {
 	return appHealthChecker().ClassifyFailure(ctx, appAuth, expectedOwner, logger)
 }
