@@ -390,8 +390,14 @@ func TestWithheld_ConvergenceScopeExcludesTheNewReasons(t *testing.T) {
 }
 
 // Default GET /api/contribute/queue is unchanged for existing clients; the
-// explanation is opt-in.
+// full explanation set is opt-in.
+//
+// Pinned to mode=off explicitly since #7260 moved the DEFAULT to shadow: this
+// test is about the ?withheld=1 opt-in, not about which mode a fresh hive
+// starts in, and under shadow the payload legitimately carries convergence
+// diagnostics.
 func TestWithheld_QueueEndpointOptIn(t *testing.T) {
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	hub, s := withheldHub(t, func(issue map[string]any) { issue["is_tracker"] = true })
 	s.contributeHub = hub
 

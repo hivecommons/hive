@@ -87,10 +87,10 @@ func (s *Server) handleConvergenceConfigPut(w http.ResponseWriter, r *http.Reque
 // HIVE_CONVERGENCE_MODE override), whether that override is in force, and the
 // captured generation the eval loop is judging under.
 func (s *Server) convergenceSectionResponse(cfg *config.Config) map[string]interface{} {
-	configured := config.ConvergenceModeOff
-	if m, ok := config.NormalizeConvergenceMode(cfg.Convergence.Mode); ok {
-		configured = m
-	}
+	// Resolve through the shared helper so an unset mode reports the real
+	// default (#7260) instead of showing "off" selected in the UI while
+	// shadow is what is actually running.
+	configured := config.ResolveConvergenceMode(cfg.Convergence.Mode)
 	effective := cfg.ConvergenceMode()
 	_, envOverride := config.NormalizeConvergenceMode(os.Getenv(config.ConvergenceModeEnvVar))
 	_, generation := s.ConvergenceModeGeneration()

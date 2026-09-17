@@ -65,7 +65,9 @@ func kickTestDashboard(t *testing.T) *dashboard.Server {
 // TestObserveConvergenceKickAdmission_OffModeIsInert pins the default-off
 // guarantee: no log line is emitted and the actionable population is untouched.
 func TestObserveConvergenceKickAdmission_OffModeIsInert(t *testing.T) {
-	t.Setenv(config.ConvergenceModeEnvVar, "")
+	// #7260 moved the DEFAULT to shadow, so a test about OFF behaviour has to
+	// select off explicitly rather than rely on an unset value.
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	srv := kickTestDashboard(t)
 	actionable := kickTestActionable()
 

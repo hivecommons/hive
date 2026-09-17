@@ -22627,9 +22627,9 @@ function burnAreaChart() {
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Convergence Rollout <span class="config-info">i<span class="config-tooltip">Runtime rollout mode for convergence-driven admission of internal agent kicks (#3845/#4263). Off (default): no change from baseline. Shadow: decisions are computed and recorded but never enforced. Enforce: blocked/unknown work is withheld from internal scheduled/cached kicks. Live — no restart needed.</span></span></div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Convergence Rollout <span class="config-info">i<span class="config-tooltip">Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.</span></span></div>
           <div class="config-field">
-            <label>Mode <span class="config-info">i<span class="config-tooltip">Default is off — existing behavior is unchanged until you opt in. Shadow and enforce consume the same decision, so you can soak-compare a fixed commit under each treatment.</span></span></label>
+            <label>Mode <span class="config-info">i<span class="config-tooltip">Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.</span></span></label>
             <select data-change-action="markDirty" data-arg0="convergence" data-arg1="mode" data-arg-types="s,s,v">
               ${(Array.isArray(cv.modes) ? cv.modes : ['off','shadow','enforce']).map(m => `<option value="${esc(m)}" ${cv.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
             </select>
@@ -23077,7 +23077,9 @@ function burnAreaChart() {
         const data = await res.json();
         const entries = Array.isArray(data.entries) ? data.entries : [];
         if (!entries.length) {
-          out.textContent = 'No soak telemetry recorded yet — set mode to shadow or enforce and let eval cycles run.';
+          out.textContent = data.mode === 'off'
+            ? 'No soak telemetry: mode is off, which records no evidence by design. Switch to shadow to start collecting it.'
+            : 'No soak telemetry recorded yet — it accumulates one row per eval cycle, so give it a few cycles.';
           return;
         }
         const groups = {};
@@ -23089,9 +23091,27 @@ function burnAreaChart() {
           g.unknown += e.unknown || 0; g.differ += e.would_differ ? 1 : 0;
           g.latency += e.decision_latency_ms || 0;
         }
-        out.innerHTML = Object.entries(groups).map(([k, g]) =>
+        const rows = Object.entries(groups).map(([k, g]) =>
           `<div><strong>${esc(k)}</strong>: ${g.passes} passes, ${g.admitted} admitted, ${g.blocked} blocked, ${g.unknown} unknown, ${g.differ} would-differ, avg latency ${(g.latency / g.passes).toFixed(1)}ms</div>`
-        ).join('');
+        );
+        // Promotion hint (#7260). The whole point of shadow is to answer one
+        // question -- "would enforcing have changed anything?" -- so answer it
+        // directly instead of leaving the operator to infer it from counts.
+        // Only offered for a FULL ring: a handful of clean passes is not
+        // evidence, and this must never talk someone into enforce early.
+        const totalPasses = entries.length;
+        const totalDiffer = entries.reduce((n, e) => n + (e.would_differ ? 1 : 0), 0);
+        const maxEntries = data.max_entries || 0;
+        if (data.mode === 'shadow') {
+          if (totalDiffer > 0) {
+            rows.push(`<div style="margin-top:4px">Enforcement would have differed on <strong>${totalDiffer}</strong> of ${totalPasses} passes. Review the withheld candidates in the log before switching to enforce.</div>`);
+          } else if (maxEntries > 0 && totalPasses >= maxEntries) {
+            rows.push('<div style="margin-top:4px;color:var(--green)">Safe to enforce: a full soak ring with no pass where enforcement would have differed.</div>');
+          } else {
+            rows.push(`<div style="margin-top:4px">No pass would have differed so far (${totalPasses} of ${maxEntries || '?'} rows). Let the ring fill before promoting to enforce.</div>`);
+          }
+        }
+        out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
       }

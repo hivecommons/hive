@@ -47,7 +47,9 @@ func withheldNumbers(items []AdmissionWithheldItem) []int {
 // and blocked work still absent (the pre-existing #3857/#3904 gate is NOT
 // toggled by the diagnostics feature).
 func TestAdmissionDiagnostics_OffModeAddsNothing(t *testing.T) {
-	t.Setenv(config.ConvergenceModeEnvVar, "")
+	// #7260 moved the DEFAULT to shadow, so a test about OFF behaviour has to
+	// select off explicitly rather than rely on an unset value.
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	store := depTestStore(t)
 	seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
 	hub, s := depTestHub(t, map[string]*beads.Store{"scanner": store})
@@ -311,7 +313,9 @@ func TestAdmissionDiagnostics_SSEHelloCarriesWithheld(t *testing.T) {
 // TestAdmissionDiagnostics_SSEHelloOffModeOmitsFields: with the toggle off the
 // hello frame must not mention the diagnostics keys at all.
 func TestAdmissionDiagnostics_SSEHelloOffModeOmitsFields(t *testing.T) {
-	t.Setenv(config.ConvergenceModeEnvVar, "")
+	// #7260 moved the DEFAULT to shadow, so a test about OFF behaviour has to
+	// select off explicitly rather than rely on an unset value.
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	store := depTestStore(t)
 	seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
 	_, s := depTestHub(t, map[string]*beads.Store{"scanner": store})

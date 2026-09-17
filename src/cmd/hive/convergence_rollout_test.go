@@ -23,7 +23,9 @@ import (
 // the default-off guarantee at the applicator's return value: the SAME
 // pointer, zero soak rows, zero admission influence.
 func TestApplyConvergenceKickAdmission_OffReturnsBaselineAndRecordsNothing(t *testing.T) {
-	t.Setenv(config.ConvergenceModeEnvVar, "")
+	// #7260 moved the DEFAULT to shadow, so a test about OFF behaviour has to
+	// select off explicitly rather than rely on an unset value.
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	srv := kickTestDashboard(t)
 	actionable := kickTestActionable()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -134,13 +136,17 @@ func TestApplyConvergenceKickAdmission_EnforceToOffRestoresBaseline(t *testing.T
 // change is logged on the crossing and never repeated on later identical
 // passes — the #4305 transition-only discipline.
 func TestApplyConvergenceKickAdmission_TransitionLoggedOnceOnCrossing(t *testing.T) {
+	// The env override must stay UNSET here: this test drives the flip through
+	// the CONFIG, and an env value wins over it, which would pin both passes
+	// to one mode and silently make the crossing unobservable.
 	t.Setenv(config.ConvergenceModeEnvVar, "")
 	srv := kickTestDashboard(t)
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	offCfg := &config.Config{}
+	// Explicit off since #7260 made an empty mode resolve to shadow.
+	offCfg := &config.Config{Convergence: config.ConvergenceConfig{Mode: config.ConvergenceModeOff}}
 	shadowCfg := &config.Config{Convergence: config.ConvergenceConfig{Mode: config.ConvergenceModeShadow}}
 
 	// Boot pass: first capture is NOT a transition.

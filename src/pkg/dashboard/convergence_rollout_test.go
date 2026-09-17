@@ -32,9 +32,12 @@ func convergenceRequest(s *Server, method, path, body string, owner bool) *httpt
 	return w
 }
 
-// TestConvergenceConfig_DefaultIsOff pins the compatibility guarantee: a config
-// with no convergence block reads back mode "off" with effective mode "off".
-func TestConvergenceConfig_DefaultIsOff(t *testing.T) {
+// TestConvergenceConfig_DefaultIsShadow pins #7260 on the settings surface: a
+// config with no convergence block reads back shadow as BOTH the configured
+// and the effective mode. Reporting a configured "off" next to an effective
+// "shadow" would paint the wrong radio button and make the operator think the
+// feature is inert when it is running.
+func TestConvergenceConfig_DefaultIsShadow(t *testing.T) {
 	t.Setenv(config.ConvergenceModeEnvVar, "")
 	s := newFullServer(t)
 	s.authToken = convergence4263Token
@@ -47,8 +50,8 @@ func TestConvergenceConfig_DefaultIsOff(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("bad json: %v", err)
 	}
-	if resp["mode"] != "off" || resp["effective_mode"] != "off" {
-		t.Fatalf("default must be off/off, got %v", resp)
+	if resp["mode"] != "shadow" || resp["effective_mode"] != "shadow" {
+		t.Fatalf("default must be shadow/shadow, got %v", resp)
 	}
 	modes, _ := resp["modes"].([]interface{})
 	if len(modes) != 3 {
@@ -59,7 +62,9 @@ func TestConvergenceConfig_DefaultIsOff(t *testing.T) {
 // TestConvergenceConfig_NonOwnerRejected: both the settings surface and the
 // soak telemetry are owner-only through the full middleware stack.
 func TestConvergenceConfig_NonOwnerRejected(t *testing.T) {
-	t.Setenv(config.ConvergenceModeEnvVar, "")
+	// #7260 moved the DEFAULT to shadow, so a test about OFF behaviour has to
+	// select off explicitly rather than rely on an unset value.
+	t.Setenv(config.ConvergenceModeEnvVar, "off")
 	s := newFullServer(t)
 	s.authToken = convergence4263Token
 

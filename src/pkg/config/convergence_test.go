@@ -9,14 +9,43 @@ import "testing"
 // see zero behaviour change. The env override exists so shadow can be flipped
 // per-process without editing hive.yaml.
 
-func TestConvergenceMode_DefaultIsOff(t *testing.T) {
+// TestConvergenceMode_DefaultIsShadow pins the #7260 default. A hive that has
+// never touched the knob runs in shadow so its soak ring actually fills; "off"
+// returns before computing anything, so the evidence the documented promotion
+// path depends on never existed on any hive whose owner had not already opted
+// in.
+func TestConvergenceMode_DefaultIsShadow(t *testing.T) {
 	t.Setenv(ConvergenceModeEnvVar, "")
 	var nilCfg *Config
-	if got := nilCfg.ConvergenceMode(); got != ConvergenceModeOff {
-		t.Fatalf("nil config resolved %q, want off", got)
+	if got := nilCfg.ConvergenceMode(); got != ConvergenceModeShadow {
+		t.Fatalf("nil config resolved %q, want shadow", got)
 	}
-	if got := (&Config{}).ConvergenceMode(); got != ConvergenceModeOff {
-		t.Fatalf("zero config resolved %q, want off", got)
+	if got := (&Config{}).ConvergenceMode(); got != ConvergenceModeShadow {
+		t.Fatalf("zero config resolved %q, want shadow", got)
+	}
+	// Whitespace-only is still "never chose", not "chose something invalid".
+	for _, raw := range []string{"", " ", "\t", "\n  "} {
+		cfg := &Config{Convergence: ConvergenceConfig{Mode: raw}}
+		if got := cfg.ConvergenceMode(); got != ConvergenceModeShadow {
+			t.Fatalf("blank mode %q resolved %q, want shadow", raw, got)
+		}
+	}
+	if DefaultConvergenceRolloutMode != ConvergenceModeShadow {
+		t.Fatalf("DefaultConvergenceRolloutMode = %q, want shadow", DefaultConvergenceRolloutMode)
+	}
+}
+
+// TestConvergenceMode_ExplicitOffIsHonoured is the other half of #7260: moving
+// the DEFAULT must not take "off" away. It stays selectable as the rollback
+// and as the control arm of #4263's fixed-commit A/B comparison, and an
+// operator who wrote it must keep getting it with no migration.
+func TestConvergenceMode_ExplicitOffIsHonoured(t *testing.T) {
+	t.Setenv(ConvergenceModeEnvVar, "")
+	for _, raw := range []string{"off", "OFF", "  Off  "} {
+		cfg := &Config{Convergence: ConvergenceConfig{Mode: raw}}
+		if got := cfg.ConvergenceMode(); got != ConvergenceModeOff {
+			t.Fatalf("explicit mode %q resolved %q, want off", raw, got)
+		}
 	}
 }
 
@@ -33,9 +62,14 @@ func TestConvergenceMode_ConfiguredShadow(t *testing.T) {
 	}
 }
 
+// TestConvergenceMode_UnrecognisedValueFailsSafeToOff guards the distinction
+// #7260 introduced: UNSET takes the default (shadow), but a NON-EMPTY value
+// this build cannot parse still fails safe to off. A typo or a mode from a
+// newer build must never silently select a posture nobody asked for, so these
+// two cases must not collapse into one another.
 func TestConvergenceMode_UnrecognisedValueFailsSafeToOff(t *testing.T) {
 	t.Setenv(ConvergenceModeEnvVar, "")
-	for _, raw := range []string{"on", "true", "garbage", "enforced", "enforce-all"} {
+	for _, raw := range []string{"on", "true", "garbage", "enforced", "enforce-all", "shadowy", "0"} {
 		cfg := &Config{Convergence: ConvergenceConfig{Mode: raw}}
 		if got := cfg.ConvergenceMode(); got != ConvergenceModeOff {
 			t.Fatalf("mode %q resolved %q, want off", raw, got)
