@@ -3828,7 +3828,7 @@
         if (_authToken) return _authToken;
         if (_authConfigured === null) {
           try {
-            const r = await _origFetch('/api/auth/token');
+            const r = await _fetchWithSessionGuard('/api/auth/token');
             if (r.ok) { const d = await r.json(); _authConfigured = d.configured === 'true' || d.configured === true; }
             else { _authConfigured = false; } // 404 = hosted hive, no token needed
           } catch { _authConfigured = false; }
@@ -3838,7 +3838,7 @@
           // a hub login or device-flow session authorizes mutations on its
           // own, and hosted operators are never given the shared token.
           try {
-            const st = await _origFetch('/api/gh-user-auth/status');
+            const st = await _fetchWithSessionGuard('/api/gh-user-auth/status');
             if (st.ok) {
               const d = await st.json();
               if (d.logged_in) { _authConfigured = false; return null; }
@@ -3857,6 +3857,62 @@
         return _authToken;
       }
       const _origFetch = window.fetch;
+
+      /* ---- An expired session must be readable, never opaque (hivecommons/hive#7433) ----
+         A hosted spoke sits behind the hub's forward-auth gate, and when the
+         hub session lapses that gate answers a 302 to the APEX login host.
+         Under fetch()'s default redirect:'follow' the browser chases it
+         cross-origin, fails the CORS check, and rejects with an
+         unclassifiable "TypeError: Load failed" — so every `res.status === 401`
+         branch in this file is dead code on that path, and the UI cannot tell
+         "you are signed out" from "this hive is unreachable".
+
+         redirect:'manual' removes the guesswork: a redirect becomes an
+         `opaqueredirect` response, which IS observable, and a rejection once
+         again means only "the request never completed". An authenticated /api
+         call has no legitimate reason to redirect, so an opaqueredirect there
+         is exactly the expired session — synthesize the 401 the gate should
+         have sent and let the existing status branches run.
+
+         The hive-api-xhr Ingress (src/pkg/hub/saas_provision.go, #7405) makes
+         the gate answer 401 directly, but it is provisioned per hive: this
+         guard is what covers hives that predate it or have not been
+         re-provisioned, and any other proxy in front of a self-hosted hive.
+
+         GET /api/gh-user-auth/session is exempt: it is the device-flow
+         landing, a real browser navigation whose own 302 back to "/" is its
+         success path, not an XHR. */
+      const SESSION_REDIRECT_EXEMPT_PATHS = ['/api/gh-user-auth/session'];
+      const SESSION_EXPIRED_BODY = JSON.stringify({
+        error: 'session_expired',
+        detail: 'Your session has expired or you are not signed in to this hive. Sign in again and retry — the request was NOT applied.',
+        sign_in: '/'
+      });
+      function _isGuardedApiRequest(url) {
+        let href = '';
+        if (typeof url === 'string') href = url;
+        else if (url && typeof url.href === 'string') href = url.href;
+        else if (url && typeof url.url === 'string') href = url.url;
+        else return false;
+        let u;
+        try { u = new URL(href, window.location.href); } catch (e) { return false; }
+        // Cross-origin calls are somebody else's redirect contract, and the
+        // gate only guards this hive's own /api surface.
+        if (u.origin !== window.location.origin) return false;
+        if (u.pathname !== '/api' && u.pathname.indexOf('/api/') !== 0) return false;
+        return SESSION_REDIRECT_EXEMPT_PATHS.indexOf(u.pathname) === -1;
+      }
+      async function _fetchWithSessionGuard(url, opts) {
+        if (!_isGuardedApiRequest(url)) return _origFetch(url, opts);
+        const res = await _origFetch(url, Object.assign({}, opts || {}, { redirect: 'manual' }));
+        if (res.type !== 'opaqueredirect') return res;
+        return new Response(SESSION_EXPIRED_BODY, {
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       function _attachAuthHeader(opts) {
         if (!_authToken) return;
         opts.headers = opts.headers || {};
@@ -3881,7 +3937,7 @@
             }
           }
         }
-        const res = await _origFetch(url, opts);
+        const res = await _fetchWithSessionGuard(url, opts);
         // A STORED token that the server rejects is stale — the operator
         // rotated HIVE_DASHBOARD_TOKEN since this browser saved it. Without
         // this branch that state is permanent and SILENT: the wrapper only
@@ -3911,7 +3967,7 @@
             if (opts.headers instanceof Headers) retryOpts.headers = new Headers(opts.headers);
             else if (opts.headers) retryOpts.headers = Object.assign({}, opts.headers);
             _attachAuthHeader(retryOpts);
-            return _origFetch(url, retryOpts);
+            return _fetchWithSessionGuard(url, retryOpts);
           }
         }
         return res;
