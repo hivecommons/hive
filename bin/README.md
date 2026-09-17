@@ -13,7 +13,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `issue-classifier.sh` | Classifier | Enriches `actionable.json` with deterministic metadata such as complexity tier, model recommendation, tracker status, cluster key, lane, and architecture-review flag. |
 | `architecture-detector.sh` | Classifier | Adds architecture signals to actionable issues from `hive-project.yaml` rules so the classifier can route them to the architect lane. |
 | `pr-cluster-detector.sh` | Classifier | Groups related actionable issues into clusters using component, reporter timing, label-combo, and failure-mode signals. |
-| `hive-baseline-check.sh` | Classifier | Compares one exact failing check with the repository's default branch and open sibling PRs, returning shared/isolated/unknown so agents do not retry a repository-wide incident per PR. |
+| `hive-baseline-check.sh` | Classifier | Compares one exact failing check with the repository's default branch and open sibling PRs, returning shared/isolated/unknown plus an `action` (`DEFER_TO_INCIDENT`, `MERGE_BASE`, `FIX_DIFF`, `NOT_REACHABLE_FORK`, `RERUN_BASELINE`) so agents do not retry a repository-wide incident per PR — and do not "repair" branches that are merely behind the default branch, trust a days-old green on a time-gated check, or push to a fork head (#7397). Pass the PR number as a third argument for the per-PR verdicts. |
 | `merge-gate.sh` | Gate | Writes `/var/run/hive-metrics/merge-eligible.json`; PRs qualify only when required CI passes, they are not drafts or excluded, and author/review policy allows merge. |
 | `conflict-sweeper.sh` | Gate/enforcer | Processes AI-authored PRs with `mergeable=CONFLICTING`, attempts a rebase, force-pushes clean rebases, or closes unrebasable PRs and reopens the original issue. |
 | `copilot-comment-checker.sh` | Monitor | Prefetches unaddressed Copilot review comments into `/var/run/hive-metrics/copilot-comments.json` for reviewer agents. |
@@ -110,7 +110,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `test_hive_podman_setup.sh` | Contract tests for `hive-podman-setup.sh` (#4470). |
 | `test_hive_podman_update.sh` | Contract tests for `hive-podman-update.sh` (#4378). |
 | `test_hive_podman_lifecycle_probe.sh` | Contract tests for `hive-podman-lifecycle-probe.sh` (#4377). |
-| `test_hive_baseline_check.sh` | Shared-CI classifier regressions for red default branches, exact-name sibling thresholds, reruns, pending checks, and fail-closed API errors. |
+| `test_hive_baseline_check.sh` | Shared-CI classifier regressions for red default branches, exact-name sibling thresholds, reruns, pending checks, fail-closed API errors, and the #7397 verdicts: red siblings all behind a fresh green base are drift (`MERGE_BASE`), all behind a stale green base are unknown (`RERUN_BASELINE`), an up-to-date red sibling is shared regardless of base age, and a fork head is `NOT_REACHABLE_FORK`. |
 | `test_bin_suites_wired.sh` | Fails when a test suite in this directory is not run by any workflow, Justfile target, or hook (#4363). |
 | `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
 | `test_hive_podman_cleanup.sh` | `hive-podman-cleanup.sh` ownership labels and cleanup guard. Analyses arguments only: it contacts no container engine and deletes nothing. |
