@@ -2077,7 +2077,7 @@ func main() {
 		// records it on the audit/activity trail, gated by the same
 		// forge-resistance + push-capability (CanPush) check as opening a PR —
 		// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
-		ghClient.StartReviewRequestWatcher(ctx, agentMgr.AuthorizePROpen, nil)
+		ghClient.StartReviewRequestWatcher(ctx, agentMgr.AuthorizeReviewRequest, nil)
 		// Merge relay: agents request merges by dropping a file (hive-merge)
 		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
 		// mutation GitHub rejects for App tokens ("Resource not accessible by
