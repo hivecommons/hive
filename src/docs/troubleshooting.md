@@ -406,6 +406,21 @@ relaunched onto the new credential, and healthy agents get it pushed into their
 session environment for their next relaunch. You should not have to restart
 agents by hand.
 
+**Start by reading which credential was refused.** The model dropdown's
+`(Copilot seat not licensed)` suffix is GitHub's verdict on whichever
+credential the hive actually presented, which is not necessarily the login you
+just did ([#7302](https://github.com/hivecommons/hive/issues/7302)). Hover the
+dropdown (or read the `copilot model discovery rejected by upstream` log line's
+`credential` field): it names the source — `the dashboard Copilot login`, `the
+COPILOT_GITHUB_TOKEN environment variable`, `an in-agent /login promoted from
+the shared Copilot CLI config`, or `the Copilot CLI's own stored login` — and,
+when GitHub answers `/user`, the account (`GitHub account @name`). If that is
+not the account you expected, the hive is running on a different credential
+and a dashboard re-login with the right one is the fix; if it *is* your
+account, GitHub is refusing that account for the Copilot CLI/API integration —
+an org-managed seat can be licensed for the IDE while org policy blocks the
+CLI — so check the seat and your org's Copilot policy rather than the hive.
+
 Two log lines tell you which way it went:
 
 | line | meaning |

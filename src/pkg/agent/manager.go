@@ -488,6 +488,15 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	// copilotAuthTokenSource names where copilotAuthToken came from — one of
+	// the CopilotTokenSource* constants, "" when no token is held. Never a
+	// secret: it is the ONE thing a "not licensed" verdict cannot be triaged
+	// without (#7302). GitHub's rejection is a statement about whichever
+	// credential hive presented; an owner reading "check the account's seat"
+	// after a successful dashboard login cannot tell whether the rejected
+	// credential was their login, a provisioned COPILOT_GITHUB_TOKEN, or a
+	// stale identity inherited from the shared CLI config.
+	copilotAuthTokenSource string
 	// copilotAuthTokenRejected records that the currently-held authoritative
 	// Copilot token has been observed being rejected upstream by GitHub's
 	// Copilot API ("not licensed to use Copilot" — #6500/#6767). Once set, the
@@ -767,19 +776,38 @@ func (m *Manager) ReloadClaudeToken() {
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
 }
 
+// Copilot token sources, as reported by CopilotTokenSource. Operator-facing
+// phrases: they are spliced verbatim into the model-picker notice and the
+// "rejected by upstream" log line, so each one has to read as an answer to
+// "which credential did GitHub just reject?".
+const (
+	// CopilotTokenSourceEnv: the COPILOT_GITHUB_TOKEN the hive process was
+	// started with (a provisioned/machine token, typically).
+	CopilotTokenSourceEnv = "the COPILOT_GITHUB_TOKEN environment variable"
+	// CopilotTokenSourceDashboardLogin: a device-flow login completed on the
+	// dashboard during this process's lifetime.
+	CopilotTokenSourceDashboardLogin = "the dashboard Copilot login"
+	// CopilotTokenSourceDurableFile: a dashboard login persisted by an earlier
+	// hive process and read back at startup.
+	CopilotTokenSourceDurableFile = "a dashboard Copilot login persisted at " + CopilotUserTokenPath
+	// CopilotTokenSourceCLIConfig: an in-agent `/login` the reconciler promoted
+	// out of the shared Copilot CLI config.
+	CopilotTokenSourceCLIConfig = "an in-agent /login promoted from the shared Copilot CLI config"
+)
+
 // SetCopilotToken updates the cached Copilot token injected into agent
 // environments as COPILOT_GITHUB_TOKEN. A caller setting the token explicitly
 // makes it authoritative over an older token left in the shared CLI config.
 func (m *Manager) SetCopilotToken(token string) {
-	m.installCopilotToken(token, true)
+	m.installCopilotToken(token, true, CopilotTokenSourceDashboardLogin)
 }
 
 // installCopilotToken is setCopilotToken plus the fleet-side half of a token
 // change: a new credential that only ever reaches memory and the on-disk
 // stores is invisible to the agents that are already running on the old one.
 // See propagateCopilotToken.
-func (m *Manager) installCopilotToken(token string, authoritative bool) {
-	if m.setCopilotToken(token, authoritative) {
+func (m *Manager) installCopilotToken(token string, authoritative bool, source string) {
+	if m.setCopilotToken(token, authoritative, source) {
 		m.propagateCopilotToken()
 	}
 }
@@ -787,7 +815,7 @@ func (m *Manager) installCopilotToken(token string, authoritative bool) {
 // setCopilotToken caches token and reports whether the cached VALUE changed.
 // The bool is what gates propagateCopilotToken: re-asserting the same token
 // (the common reconciler outcome) must not churn agent sessions.
-func (m *Manager) setCopilotToken(token string, authoritative bool) bool {
+func (m *Manager) setCopilotToken(token string, authoritative bool, source string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	changed := strings.TrimSpace(token) != strings.TrimSpace(m.copilotAuthToken)
@@ -799,6 +827,12 @@ func (m *Manager) setCopilotToken(token string, authoritative bool) bool {
 		m.copilotAuthTokenRejected = false
 	}
 	m.copilotAuthToken = token
+	// No token, no source: a logout must not leave the picker blaming "the
+	// dashboard Copilot login" for a credential that no longer exists.
+	if strings.TrimSpace(token) == "" {
+		source = ""
+	}
+	m.copilotAuthTokenSource = source
 	// INVARIANT: an EMPTY token is never authoritative (#6500).
 	//
 	// "Authoritative" means "prefer this over whatever identity the shared CLI
@@ -823,7 +857,7 @@ func (m *Manager) setCopilotToken(token string, authoritative bool) bool {
 // authoritative direction instead of restoring the superseded CLI token.
 func (m *Manager) ActivateCopilotToken(token string) error {
 	err := replaceCopilotTokens(sharedCopilotConfigPath, token)
-	m.installCopilotToken(token, true)
+	m.installCopilotToken(token, true, CopilotTokenSourceDashboardLogin)
 	return err
 }
 
@@ -971,6 +1005,19 @@ func (m *Manager) CopilotToken() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.copilotAuthToken
+}
+
+// CopilotTokenSource names where the cached Copilot token came from (one of
+// the CopilotTokenSource* phrases), or "" when no token is held. Safe to
+// display and log: it says which credential hive is presenting, never the
+// credential itself.
+func (m *Manager) CopilotTokenSource() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if strings.TrimSpace(m.copilotAuthToken) == "" {
+		return ""
+	}
+	return m.copilotAuthTokenSource
 }
 
 // BackendAuthAvailable reports whether shared credentials exist for a CLI
@@ -1634,7 +1681,7 @@ func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAc
 		// operator's recovery /login, and the agents still running on the token
 		// it replaces have to be moved onto it or the whole fleet keeps
 		// reporting "not licensed" against a licence that is now fine (#6500).
-		m.installCopilotToken(cliTok, false)
+		m.installCopilotToken(cliTok, false, CopilotTokenSourceCLIConfig)
 		m.logger.Info("copilot session refresh: promoted in-agent login token to the durable store",
 			"path", durablePath)
 		return copilotSyncPromote
@@ -1808,11 +1855,16 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	// completions; write access is gated by --enable-all-github-mcp-tools flag.
 	copilotToken := os.Getenv("COPILOT_GITHUB_TOKEN")
 	copilotTokenAuthoritative := strings.TrimSpace(copilotToken) != ""
+	copilotTokenSource := CopilotTokenSourceEnv
 	if copilotToken == "" {
 		// Fall back to the token persisted by the dashboard's device-flow login.
+		copilotTokenSource = CopilotTokenSourceDurableFile
 		if data, err := os.ReadFile(CopilotUserTokenPath); err == nil {
 			copilotToken = strings.TrimSpace(string(data))
 		}
+	}
+	if strings.TrimSpace(copilotToken) == "" {
+		copilotTokenSource = ""
 	}
 	claudeToken := claude.ReadAccessToken(claude.CredentialsPath)
 
@@ -1834,6 +1886,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 		project:                       project,
 		copilotAuthToken:              copilotToken,
 		copilotAuthTokenAuthoritative: copilotTokenAuthoritative,
+		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
 		uidMap:                        uidMap,
 		kickLogDir:                    kickLogDir,
@@ -7306,9 +7359,17 @@ func replaceCopilotTokens(path, token string) error {
 	return writeCopilotConfig(path, cfg)
 }
 
+// GitHubTokenLogin resolves the GitHub login that owns token via GET /user, or
+// "" on any failure. Exported for the dashboard's model-discovery notice,
+// which names the account behind a rejected Copilot credential (#7302).
+func GitHubTokenLogin(token string) string {
+	return githubTokenLogin(token)
+}
+
 // githubTokenLogin resolves the GitHub login that owns token via GET /user, or
 // "" on any failure. Short-timeout, one call — used only on the rare seed path
-// where the config lacks a valid identity. Overridable in tests.
+// where the config lacks a valid identity and on the model-discovery rejection
+// path. Overridable in tests.
 var githubTokenLogin = func(token string) string {
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
 	if err != nil {

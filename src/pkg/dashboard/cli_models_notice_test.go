@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // Copilot model discovery is best-effort: every failure degrades to a static
@@ -268,6 +270,221 @@ func TestHandleBackends_SurfacesCopilotNotice(t *testing.T) {
 	}
 	if !sawCopilot {
 		t.Fatal("copilot missing from /api/config/backends")
+	}
+}
+
+// --- #7302: the notice names WHICH credential was rejected ---
+//
+// On the kubestellar hive an owner completed the dashboard Copilot login with
+// a licensed account and every picker entry still read "(Copilot seat not
+// licensed)". The label was GitHub's verdict on whatever credential hive
+// presented — which may or may not have been that login — but the notice only
+// said "check the account's seat", so the report could not be triaged from
+// the screenshot. These tests hold the line that a rejection names its
+// credential source and, when GitHub answers, the account behind it.
+
+// swapCopilotLoginLookup stubs the GET /user seam and counts calls.
+func swapCopilotLoginLookup(t *testing.T, login string) *int {
+	t.Helper()
+	calls := 0
+	prev := lookupCopilotTokenLogin
+	lookupCopilotTokenLogin = func(string) string { calls++; return login }
+	t.Cleanup(func() { lookupCopilotTokenLogin = prev })
+	return &calls
+}
+
+// rejectingCopilotAPI stands in for api.github.com + the Copilot API host for
+// the HTTP probe: /copilot_internal/user points the probe at itself, and
+// /models answers the #6500 rejection. Needed whenever a test runs discovery
+// WITH a token, or the raw probe would leave the sandbox.
+func rejectingCopilotAPI(t *testing.T) {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, copilotModelsPath) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("unauthorized: not licensed to use Copilot\n"))
+			return
+		}
+		_, _ = w.Write([]byte(`{"endpoints":{"api":"` + srv.URL + `"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	prev := copilotUserEndpointURL
+	copilotUserEndpointURL = srv.URL + "/copilot_internal/user"
+	t.Cleanup(func() { copilotUserEndpointURL = prev })
+}
+
+func TestDescribeCopilotCredential(t *testing.T) {
+	for _, tc := range []struct{ source, login, want string }{
+		{"", "", ""},
+		{agent.CopilotTokenSourceDashboardLogin, "", agent.CopilotTokenSourceDashboardLogin},
+		{"", "alice", "the Copilot credential of GitHub account @alice"},
+		{agent.CopilotTokenSourceEnv, " alice ", agent.CopilotTokenSourceEnv + " (GitHub account @alice)"},
+	} {
+		if got := describeCopilotCredential(tc.source, tc.login); got != tc.want {
+			t.Errorf("describeCopilotCredential(%q, %q) = %q, want %q", tc.source, tc.login, got, tc.want)
+		}
+	}
+}
+
+// TestCopilotProbeNoticeFor_NamesRejectedCredential: with a credential the
+// notice says which one; without, it keeps the generic wording and never
+// leaves a dangling "—".
+func TestCopilotProbeNoticeFor_NamesRejectedCredential(t *testing.T) {
+	err := errors.New("upstream returned 403 (unauthorized: not licensed to use Copilot)")
+	named := agent.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
+
+	n := copilotProbeNoticeFor(err, func() string { return named })
+	if n == nil {
+		t.Fatal("no notice")
+	}
+	if n.Credential != named {
+		t.Errorf("Credential = %q, want %q", n.Credential, named)
+	}
+	if !strings.Contains(n.Detail, named) {
+		t.Errorf("Detail = %q, want it to name the rejected credential", n.Detail)
+	}
+	if !strings.Contains(n.Detail, "@alice") || !strings.Contains(n.Detail, "github.com/settings/copilot") {
+		t.Errorf("Detail = %q, want the account AND the seat page", n.Detail)
+	}
+	// The bare-403 wording carries it too.
+	if u := copilotProbeNoticeFor(errors.New("upstream returned 401 "), func() string { return named }); u == nil || u.Credential != named || !strings.Contains(u.Detail, named) {
+		t.Errorf("unauthorized notice = %+v, want the credential named", u)
+	}
+
+	// The probe is never charged for the lookup when it says nothing about
+	// the account.
+	if copilotProbeNoticeFor(errors.New("upstream returned 500"), func() string { t.Error("credential resolved for a non-verdict"); return "" }) != nil {
+		t.Error("a 500 produced a notice")
+	}
+
+	for name, thunk := range map[string]func() string{"nil": nil, "unknown": func() string { return "  " }} {
+		g := copilotProbeNoticeFor(err, thunk)
+		if g == nil {
+			t.Fatalf("%s: no notice", name)
+		}
+		if g.Credential != "" {
+			t.Errorf("%s: Credential = %q, want empty", name, g.Credential)
+		}
+		if !strings.Contains(g.Detail, "this hive's Copilot credential") || strings.Contains(g.Detail, "—") {
+			t.Errorf("%s: Detail = %q, want the generic wording with no dangling dash", name, g.Detail)
+		}
+	}
+}
+
+// TestDiscoverCopilotModels_NoticeNamesCredentialSource is the end-to-end
+// shape of #7302: the credential hive actually presented is named in the
+// notice, on the wire, and in the log, for each place a token can come from.
+func TestDiscoverCopilotModels_NoticeNamesCredentialSource(t *testing.T) {
+	rejectingCopilotAPI(t)
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		return nil, errors.New(`sdk helper: exit status 1 (stderr: {"kind":"http","status":403,"body":"unauthorized: not licensed to use Copilot\n"})`)
+	})
+
+	t.Run("dashboard login resolves to the account", func(t *testing.T) {
+		t.Setenv("COPILOT_GITHUB_TOKEN", "")
+		calls := swapCopilotLoginLookup(t, "alice")
+		mgr := agent.NewManager(nil, testLogger(), agent.ProjectContext{})
+		mgr.SetCopilotToken("gho_alice")
+		s := &Server{cliModels: newCLIModelCache(), logger: testLogger(), deps: &Dependencies{AgentMgr: mgr}}
+
+		r := s.discoverCopilotModels()
+		want := agent.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
+		if r.notice == nil || r.notice.Credential != want {
+			t.Fatalf("notice = %+v, want Credential %q", r.notice, want)
+		}
+		if !strings.Contains(r.notice.Detail, "@alice") {
+			t.Errorf("Detail = %q, want the account named", r.notice.Detail)
+		}
+		// Both probes were rejected; the account is looked up once, not per
+		// probe, and not again on the next discovery for the same token.
+		s.discoverCopilotModels()
+		if *calls != 1 {
+			t.Errorf("GET /user called %d times for one token, want 1", *calls)
+		}
+	})
+
+	t.Run("provisioned env token is named as such", func(t *testing.T) {
+		t.Setenv("COPILOT_GITHUB_TOKEN", "ghp_machine")
+		swapCopilotLoginLookup(t, "")
+		s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+
+		r := s.discoverCopilotModels()
+		if r.notice == nil || r.notice.Credential != agent.CopilotTokenSourceEnv {
+			t.Fatalf("notice = %+v, want Credential %q", r.notice, agent.CopilotTokenSourceEnv)
+		}
+		if !strings.Contains(r.notice.Detail, agent.CopilotTokenSourceEnv) {
+			t.Errorf("Detail = %q, want the env var named", r.notice.Detail)
+		}
+	})
+
+	t.Run("no token names the CLI's own stored login", func(t *testing.T) {
+		t.Setenv("COPILOT_GITHUB_TOKEN", "")
+		calls := swapCopilotLoginLookup(t, "bob")
+		s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+
+		r := s.discoverCopilotModels()
+		if r.notice == nil || r.notice.Credential != copilotCredentialStoredCLI {
+			t.Fatalf("notice = %+v, want Credential %q", r.notice, copilotCredentialStoredCLI)
+		}
+		if *calls != 0 {
+			t.Errorf("GET /user called with no token to look up")
+		}
+	})
+
+	t.Run("credential rides the wire", func(t *testing.T) {
+		t.Setenv("COPILOT_GITHUB_TOKEN", "ghp_machine")
+		swapCopilotLoginLookup(t, "svc-bot")
+		s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+
+		rec := httptest.NewRecorder()
+		s.handleBackends(rec, httptest.NewRequest(http.MethodGet, "/api/config/backends", nil))
+		var backends []struct {
+			ID     string `json:"id"`
+			Notice *struct {
+				Credential string `json:"credential"`
+				Detail     string `json:"detail"`
+			} `json:"notice"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &backends); err != nil {
+			t.Fatalf("response not JSON: %v", err)
+		}
+		want := agent.CopilotTokenSourceEnv + " (GitHub account @svc-bot)"
+		for _, b := range backends {
+			if b.ID != "copilot" {
+				continue
+			}
+			if b.Notice == nil || b.Notice.Credential != want {
+				t.Fatalf("copilot notice on the wire = %+v, want credential %q", b.Notice, want)
+			}
+			return
+		}
+		t.Fatal("copilot missing from /api/config/backends")
+	})
+}
+
+// TestCopilotTokenLogin_CachesHitsNotMisses: a resolved login is remembered per
+// token; a miss is retried so a transient /user failure does not leave the
+// notice nameless until the next login.
+func TestCopilotTokenLogin_CachesHitsNotMisses(t *testing.T) {
+	s := &Server{}
+	answers := []string{"", "alice", "never"}
+	calls := 0
+	prev := lookupCopilotTokenLogin
+	lookupCopilotTokenLogin = func(string) string { a := answers[calls]; calls++; return a }
+	t.Cleanup(func() { lookupCopilotTokenLogin = prev })
+
+	if got := s.copilotTokenLogin("tok"); got != "" {
+		t.Fatalf("first lookup = %q, want the miss", got)
+	}
+	if got := s.copilotTokenLogin("tok"); got != "alice" {
+		t.Fatalf("retry after a miss = %q, want alice", got)
+	}
+	if got := s.copilotTokenLogin("tok"); got != "alice" || calls != 2 {
+		t.Fatalf("cached read = %q after %d lookups, want alice after 2", got, calls)
+	}
+	if got := s.copilotTokenLogin(""); got != "" || calls != 2 {
+		t.Fatalf("empty token = %q after %d lookups, want no lookup", got, calls)
 	}
 }
 

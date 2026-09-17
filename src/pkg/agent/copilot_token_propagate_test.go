@@ -156,25 +156,39 @@ func TestPlanCopilotTokenPropagation_LogoutStripsButNeverRelaunches(t *testing.T
 // tick would churn the fleet's sessions.
 func TestSetCopilotTokenReportsValueChange(t *testing.T) {
 	m := testManager(5)
-	if !m.setCopilotToken("gho_a", true) {
+	if !m.setCopilotToken("gho_a", true, CopilotTokenSourceDashboardLogin) {
 		t.Error("first install must report a change")
 	}
-	if m.setCopilotToken("gho_a", true) {
+	if got := m.CopilotTokenSource(); got != CopilotTokenSourceDashboardLogin {
+		t.Errorf("CopilotTokenSource = %q, want %q", got, CopilotTokenSourceDashboardLogin)
+	}
+	if m.setCopilotToken("gho_a", true, CopilotTokenSourceDashboardLogin) {
 		t.Error("re-asserting the same token must report no change")
 	}
 	// Whitespace is not a value change: the durable file is read trimmed and
 	// the CLI config is not, so the same token routinely arrives both ways.
-	if m.setCopilotToken(" gho_a\n", false) {
+	if m.setCopilotToken(" gho_a\n", false, CopilotTokenSourceCLIConfig) {
 		t.Error("whitespace-only difference must report no change")
 	}
-	if !m.setCopilotToken("gho_b", true) {
+	// The source follows the latest installer even when the value did not
+	// change: the same token re-asserted out of the CLI config IS now the CLI
+	// config's token, and the notice must say so.
+	if got := m.CopilotTokenSource(); got != CopilotTokenSourceCLIConfig {
+		t.Errorf("CopilotTokenSource after re-assert = %q, want %q", got, CopilotTokenSourceCLIConfig)
+	}
+	if !m.setCopilotToken("gho_b", true, CopilotTokenSourceDashboardLogin) {
 		t.Error("a different token must report a change")
 	}
-	if !m.setCopilotToken("", true) {
+	if !m.setCopilotToken("", true, CopilotTokenSourceDashboardLogin) {
 		t.Error("logout must report a change")
 	}
 	if m.copilotAuthTokenAuthoritative {
 		t.Error("an empty token must never be authoritative (#6500)")
+	}
+	// A logout must not leave the picker blaming a login that no longer
+	// exists (#7302).
+	if got := m.CopilotTokenSource(); got != "" {
+		t.Errorf("CopilotTokenSource after logout = %q, want empty", got)
 	}
 }
 

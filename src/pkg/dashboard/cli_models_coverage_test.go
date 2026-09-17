@@ -72,8 +72,8 @@ func TestCovD_DiscoverModelsNoCreds(t *testing.T) {
 	if r := s.discoverCopilotModels(); !r.fallback {
 		t.Error("discoverCopilotModels with no token should be fallback")
 	}
-	if tok := s.copilotToken(); tok != "" {
-		t.Errorf("copilotToken should be empty, got %q", tok)
+	if tok, source := s.copilotToken(); tok != "" || source != "" {
+		t.Errorf("copilotToken should be empty with no source, got %q / %q", tok, source)
 	}
 
 	// No Gemini key → fallback.

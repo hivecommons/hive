@@ -297,6 +297,10 @@ type Server struct {
 	// backends (copilot/claude/gemini/goose/codex/agy), each with its own discovery
 	// source and static fallback. See cli_models.go.
 	cliModels *cliModelCache
+	// copilotLogin remembers which GitHub account the current Copilot token
+	// resolves to, so a rejected probe can name it without a /user round trip
+	// per 30 s re-probe. Zero value ready. See copilotTokenLogin.
+	copilotLogin copilotLoginCache
 
 	ready   bool
 	readyAt time.Time

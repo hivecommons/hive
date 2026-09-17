@@ -434,6 +434,16 @@ type cliModelNotice struct {
 	// Detail is the operator-facing sentence: what upstream said and what to
 	// do about it. Never carries a token — see copilotProbeNotice.
 	Detail string `json:"detail"`
+	// Credential names WHICH credential upstream rejected — its source (a
+	// dashboard login, the COPILOT_GITHUB_TOKEN env var, a promoted in-agent
+	// /login, ...) and, when resolvable, the GitHub account it belongs to
+	// (#7302). Without this the notice can only say "check the account's
+	// seat", which an owner who has just logged in with a licensed account
+	// reads as a false claim: GitHub's verdict is about whatever hive
+	// actually presented, and that is not necessarily the login they did.
+	// Also spliced into Detail; kept separately so the hub and tests can
+	// read it without parsing prose. Empty when the source is unknown.
+	Credential string `json:"credential,omitempty"`
 }
 
 type cliModelCacheEntry struct {
@@ -643,7 +653,7 @@ func cliStaticFallback(backend string) []string {
 // Successful results from either live probe feed the same cache/retention
 // machinery (see stabilize) via queryCLIModels.
 func (s *Server) discoverCopilotModels() cliModelResult {
-	token := s.copilotToken()
+	token, source := s.copilotToken()
 
 	// notice is set by whichever probe returns an ENTITLEMENT verdict. Both
 	// probes are tried, so a definitive answer from the first is kept even
@@ -652,14 +662,29 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	// so they can legitimately disagree about WHICH credential is dead).
 	var notice *cliModelNotice
 
+	// credential is resolved lazily, on the rejection path only: naming the
+	// rejected credential costs one GET /user, and a healthy hive must not
+	// pay it on every 30 s probe.
+	credential := func() string {
+		if token == "" {
+			// The SDK helper rode the Copilot CLI's own stored auth in the
+			// agent HOME — hive holds no token of its own to name.
+			return copilotCredentialStoredCLI
+		}
+		return describeCopilotCredential(source, s.copilotTokenLogin(token))
+	}
+
 	if models, err := s.probeCopilotModelsSDK(token); err != nil {
-		notice = copilotProbeNotice(err)
+		notice = copilotProbeNoticeFor(err, credential)
 		if notice != nil {
 			// An entitlement rejection is not a "fall back and move on"
 			// event: it means every agent on this backend is failing right
 			// now. Warn, not Info — this line is the one an operator greps
-			// for when the whole fleet goes quiet (#6500).
-			s.logger.Warn("copilot model discovery rejected by upstream", "class", notice.Class, "err", err.Error())
+			// for when the whole fleet goes quiet (#6500). "credential" is
+			// the discriminator #7302 was missing: WHICH token GitHub was
+			// answering about.
+			s.logger.Warn("copilot model discovery rejected by upstream",
+				"class", notice.Class, "credential", notice.Credential, "err", err.Error())
 		} else {
 			s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
 		}
@@ -684,9 +709,10 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	models, err := fetchCopilotModels(host+copilotModelsPath, token, integrationID)
 	if err != nil || len(models) == 0 {
 		if err != nil {
-			if n := copilotProbeNotice(err); n != nil {
+			if n := copilotProbeNoticeFor(err, credential); n != nil {
 				notice = n
-				s.logger.Warn("copilot model discovery rejected by upstream", "class", n.Class, "err", err.Error())
+				s.logger.Warn("copilot model discovery rejected by upstream",
+					"class", n.Class, "credential", n.Credential, "err", err.Error())
 			} else {
 				// Do NOT log the token or full URL query; just the failure.
 				s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
@@ -716,30 +742,90 @@ const copilotNotLicensedMarker = "not licensed to use copilot"
 // has answered the question, and the answer is that this account cannot run
 // inference.
 func copilotProbeNotice(err error) *cliModelNotice {
+	return copilotProbeNoticeFor(err, nil)
+}
+
+// copilotCredentialStoredCLI describes the credential the SDK probe used when
+// hive itself holds no token: the Copilot CLI resolved its own stored login.
+const copilotCredentialStoredCLI = "the Copilot CLI's own stored login (hive holds no token)"
+
+// describeCopilotCredential renders a credential source plus, when known, the
+// GitHub account it resolves to, as the phrase the notice names it by:
+// "the dashboard Copilot login (GitHub account @alice)". A source with no
+// resolvable login is named on its own; no source at all yields "".
+func describeCopilotCredential(source, login string) string {
+	source = strings.TrimSpace(source)
+	login = strings.TrimSpace(login)
+	switch {
+	case source == "" && login == "":
+		return ""
+	case source == "":
+		return "the Copilot credential of GitHub account @" + login
+	case login == "":
+		return source
+	}
+	return source + " (GitHub account @" + login + ")"
+}
+
+// copilotProbeNoticeFor is copilotProbeNotice with the rejected credential
+// named. credential is a thunk because resolving it is a network round trip
+// that only a rejection should pay for; nil (or a thunk returning "") falls
+// back to the generic "this hive's Copilot credential".
+//
+// The phrasing matters (#7302): a 403 "not licensed" is GitHub's verdict on
+// whichever credential hive PRESENTED, and on a hive where that is a
+// provisioned machine token or a stale identity promoted out of the shared CLI
+// config, telling the owner who has just logged in with a licensed account to
+// "check the account's seat" reads as a false claim about THEIR seat. Naming
+// the credential — "the dashboard Copilot login (GitHub account @alice)" versus
+// "the COPILOT_GITHUB_TOKEN environment variable" — is what lets the next
+// occurrence be triaged from the screenshot instead of the server log.
+func copilotProbeNoticeFor(err error, credential func() string) *cliModelNotice {
 	if err == nil {
 		return nil
 	}
 	lower := strings.ToLower(err.Error())
+	var kind string
 	switch {
 	case strings.Contains(lower, copilotNotLicensedMarker):
+		kind = "unlicensed"
+	case copilotProbeUnauthorized(lower):
+		kind = "unauthorized"
+	default:
+		return nil
+	}
+
+	var named string
+	if credential != nil {
+		named = strings.TrimSpace(credential())
+	}
+	subject := "this hive's Copilot credential"
+	if named != "" {
+		subject = "the Copilot credential hive is using — " + named + " —"
+	}
+
+	switch kind {
+	case "unlicensed":
 		return &cliModelNotice{
 			Class: "auth",
 			Label: "Copilot seat not licensed",
-			Detail: "GitHub rejected this hive's Copilot credential with " +
+			Detail: "GitHub rejected " + subject + " with " +
 				"\"not licensed to use Copilot\", so the model list below is a static guess and " +
-				"agents on this backend cannot run inference. Check the account's seat at " +
-				"github.com/settings/copilot; no hive-side change is needed once it is active again.",
+				"agents on this backend cannot run inference. Check that account's seat at " +
+				"github.com/settings/copilot, or log in on the dashboard with an account that " +
+				"has one; no other hive-side change is needed once the seat is active.",
+			Credential: named,
 		}
-	case copilotProbeUnauthorized(lower):
+	default:
 		return &cliModelNotice{
 			Class: "auth",
 			Label: "Copilot credential rejected",
-			Detail: "GitHub rejected this hive's Copilot credential (HTTP 401/403), so the model " +
+			Detail: "GitHub rejected " + subject + " (HTTP 401/403), so the model " +
 				"list below is a static guess and agents on this backend cannot run inference. " +
-				"Re-run Copilot login, or check the account's seat at github.com/settings/copilot.",
+				"Re-run Copilot login, or check that account's seat at github.com/settings/copilot.",
+			Credential: named,
 		}
 	}
-	return nil
 }
 
 // copilotProbeUnauthorized reports whether a probe error is an upstream
@@ -865,14 +951,55 @@ func parseCopilotSDKModels(data []byte) ([]string, error) {
 }
 
 // copilotToken resolves the Copilot GitHub OAuth token from the agent manager
-// (device-flow login) or the COPILOT_GITHUB_TOKEN env var. Secret — never log.
-func (s *Server) copilotToken() string {
+// (device-flow login, promoted CLI login, or the token it was started with)
+// or the COPILOT_GITHUB_TOKEN env var, together with a display-safe name for
+// where it came from (one of the agent.CopilotTokenSource* phrases; "" when
+// there is no token). The token is a secret — never log it; the source is
+// exactly the thing to log.
+func (s *Server) copilotToken() (token, source string) {
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		if t := s.deps.AgentMgr.CopilotToken(); t != "" {
-			return t
+			return t, s.deps.AgentMgr.CopilotTokenSource()
 		}
 	}
-	return os.Getenv("COPILOT_GITHUB_TOKEN")
+	if t := os.Getenv("COPILOT_GITHUB_TOKEN"); t != "" {
+		return t, agent.CopilotTokenSourceEnv
+	}
+	return "", ""
+}
+
+// copilotLoginCache memoises the GitHub login behind the most recent Copilot
+// token the rejection path had to name. One entry is enough: the hive holds
+// one Copilot token at a time, and a token change is exactly when the login
+// has to be looked up again.
+type copilotLoginCache struct {
+	mu    sync.Mutex
+	token string
+	login string
+}
+
+// lookupCopilotTokenLogin resolves a token to its GitHub login via GET /user.
+// A package-level seam so tests never reach api.github.com.
+var lookupCopilotTokenLogin = agent.GitHubTokenLogin
+
+// copilotTokenLogin returns the GitHub login that owns token, or "" when it
+// cannot be resolved (GitHub unreachable, token revoked). Only the rejection
+// path calls this. A resolved login is remembered per token; a miss is not,
+// so a transient /user failure is retried on the next probe (30 s later) and
+// the notice gains the account name as soon as GitHub answers.
+func (s *Server) copilotTokenLogin(token string) string {
+	if token == "" {
+		return ""
+	}
+	c := &s.copilotLogin
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token == token && c.login != "" {
+		return c.login
+	}
+	login := lookupCopilotTokenLogin(token)
+	c.token, c.login = token, login
+	return login
 }
 
 // copilotAPIHost resolves the per-account Copilot API host from
