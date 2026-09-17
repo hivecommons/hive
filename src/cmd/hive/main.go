@@ -5789,8 +5789,6 @@ func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg
 	apphealth.Heal(ctx, appAuth, cfg, logger)
 }
 
-
-
 // maxTimelineEnumeratePerCycle bounds how many enumerated-issue events a single
 // eval cycle records into the lifecycle timeline, keeping the recording loop
 // O(1)-bounded so it never slows the eval cycle. Since #5656 the store dedupes
