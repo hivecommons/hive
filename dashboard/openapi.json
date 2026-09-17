@@ -1926,7 +1926,7 @@
           "System"
         ],
         "summary": "Available CLI backends and models",
-        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models.",
+        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models. Each CLI backend entry carries `fallback` (the static list is being served because discovery returned nothing), `degraded` (the list came from a live probe that is NOT the catalog the CLI uses — the raw-HTTP Copilot probe after the installed SDK helper failed), an optional `notice` (an entitlement verdict from upstream), and, whenever discovery failed or degraded, `discovery: {ok: false, error, fallback, degraded}` with the token-free failure text so the dropdown can render an explicit error state (#7384). Neither a fallback nor a degraded list is authoritative: clients must not treat a model's absence from one as evidence it is unavailable. The same failures and their recovery are recorded in the audit log as `model_discovery_failed` / `model_discovery_recovered`, once per transition.",
         "responses": {
           "200": {
             "description": "Backends config",

@@ -5487,9 +5487,27 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	cliBackendEntry := func(id, name string, r cliModelResult) map[string]interface{} {
 		entry := map[string]interface{}{
 			"id": id, "name": name, "models": r.models, "fallback": r.fallback,
+			// degraded: a LIVE list that is not the CLI's catalog (the HTTP
+			// probe after the installed SDK helper failed, #7384). Real ids,
+			// wrong inventory — the client labels it and auto-heal must sit
+			// it out exactly as it sits out a fallback.
+			"degraded": r.degraded,
 		}
 		if r.notice != nil {
 			entry["notice"] = r.notice
+		}
+		if r.failed() {
+			// discovery: WHY the list is not authoritative, in the words of
+			// the failure itself. This is the string an operator had to read
+			// off a server log by hand to tell "Could not find a
+			// @github/copilot platform package" from "Not authenticated"
+			// (#7384); now the dropdown carries it.
+			entry["discovery"] = map[string]interface{}{
+				"ok":       false,
+				"error":    r.discoveryErr,
+				"fallback": r.fallback,
+				"degraded": r.degraded,
+			}
 		}
 		return entry
 	}

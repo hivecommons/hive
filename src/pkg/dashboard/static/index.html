@@ -8761,16 +8761,40 @@
           // hiccup and let an owner with dead agents conclude the model
           // configuration was fine. The list is still offered: blanking it
           // would leave nothing configurable, and a seat can come back.
+          // b.discovery: discovery FAILED (or degraded — the list is live
+          // but not the CLI's catalog) and the server says why. Render an
+          // explicit error state, not a plausible-looking static list:
+          // on the projectbluefin spoke a fallback catalog was indistinguishable
+          // from a real one for two days while auto-heal downgraded every
+          // agent off it (#7384). An entitlement notice (#6500) still wins
+          // the label — it is the more specific diagnosis.
+          const discoveryFailed = !!(b.discovery && b.discovery.ok === false);
           const labelSuffix = (b.notice && b.notice.label) ? ` (${b.notice.label})`
+            : discoveryFailed ? (b.degraded
+                ? ' (⚠ model discovery degraded — not the CLI catalog)'
+                : ' (⚠ model discovery failed — showing fallback list)')
             : (b.fallback ? ' (common alias, unverified)' : '');
           if (b.notice && b.notice.detail) {
             console.warn(`[models] ${b.id}: ${b.notice.detail}`);
+          } else if (discoveryFailed) {
+            console.warn(`[models] ${b.id}: model discovery failed — ${b.discovery.error}`);
           }
-          setBackendModelNotice(b.id, b.notice || null);
+          // The tooltip carries the diagnostic text itself — the exact
+          // string ("Could not find a @github/copilot platform package…" vs
+          // "Not authenticated") an operator previously had to read off a
+          // server log to tell the failures apart.
+          setBackendModelNotice(b.id, b.notice || (discoveryFailed ? {
+            class: 'discovery',
+            label: b.degraded ? 'model discovery degraded' : 'model discovery failed',
+            detail: `⚠ model discovery ${b.degraded ? 'degraded' : 'failed'} — ${b.degraded ? 'this list is live but is not the catalog the CLI uses' : 'showing the static fallback list'}. ${b.discovery.error}`,
+          } : null));
           const models = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
           BACKEND_MODELS[b.id] = models;
-          reconcileModelsAfterDiscovery(b.id, models, !!b.fallback);
+          // A degraded list is not authority either: absence from it proves
+          // nothing about what the CLI can run, so auto-heal sits it out
+          // exactly as it sits out a static fallback (#7384).
+          reconcileModelsAfterDiscovery(b.id, models, !!b.fallback || !!b.degraded);
         });
       } catch (e) {
         // Leave BACKEND_MODELS / fallbacks untouched — retried on next refresh hook.

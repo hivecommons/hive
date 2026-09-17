@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -399,12 +401,61 @@ var gooseProviderStaticModels = map[string][]string{
 type cliModelResult struct {
 	models   []string
 	fallback bool // true when the list is the static fallback, not live discovery
+	// degraded is true when the list came from a LIVE probe that is NOT the
+	// catalog the CLI actually uses (#7384): the installed Copilot SDK helper
+	// failed and discovery fell through to the raw-HTTP chat-completions
+	// probe. That list is real — every id in it exists — but it is a
+	// different inventory from the CLI's, so a model's absence from it proves
+	// nothing about what the agent can run. It is served and labelled, and
+	// treated exactly like a fallback everywhere authority matters: excluded
+	// from retention, from model validation, and from auto-heal. On the
+	// projectbluefin spoke this list was served as live for two days and the
+	// browser-side auto-heal moved every agent onto gpt-4o-mini off it.
+	degraded bool
+	// discoveryErr is the token-free reason discovery failed or degraded —
+	// the underlying error text, capped — for the audit log and the model
+	// dropdown. Empty on a clean live result AND on the ordinary
+	// not-configured fallbacks (no key, no credential, no helper installed),
+	// which are not failures and must not raise alarms.
+	discoveryErr string
 	// notice explains WHY the fallback is being served, when the reason is
 	// one the operator can act on. Nil for the ordinary cases — no probe
 	// installed, backend not configured, upstream briefly unreachable —
 	// because those are not the operator's problem to fix and labelling them
 	// would be noise. See cliModelNotice.
 	notice *cliModelNotice
+}
+
+// authoritative reports whether the list may be treated as the backend's
+// real inventory: a clean live probe. Fallback and degraded lists are not.
+func (r cliModelResult) authoritative() bool {
+	return !r.fallback && !r.degraded
+}
+
+// failed reports whether discovery FAILED (as opposed to succeeded, or was
+// simply not configured): an error is recorded.
+func (r cliModelResult) failed() bool {
+	return r.discoveryErr != ""
+}
+
+// cliModelErrLimit caps the error text carried into the audit log and the
+// dropdown. Long enough for the diagnostic phrase ("Could not find a
+// @github/copilot platform package (tried @github/copilot-linux-arm64…)",
+// "Not authenticated"), short enough not to paste a stack trace into a UI.
+const cliModelErrLimit = 240
+
+// cliModelErrText renders an error for discoveryErr: trimmed, single-line,
+// capped. Never called with anything that carries a token — the probes
+// already keep tokens out of their errors.
+func cliModelErrText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	if len(msg) > cliModelErrLimit {
+		msg = msg[:cliModelErrLimit] + "…"
+	}
+	return msg
 }
 
 // cliModelNotice is an operator-actionable reason a live model list could not
@@ -463,6 +514,12 @@ type cliModelCache struct {
 	// stays stable for the frontend's list-change detection.
 	retained      map[string]map[string]int
 	retainedOrder map[string][]string
+	// audited is the last discovery failure audited per backend ("" = the
+	// last audited state was healthy). Discovery re-runs every
+	// cliModelCacheTTL, so the audit log records TRANSITIONS — into a
+	// failed/degraded state, a change of error text, and recovery — not one
+	// entry per probe (#7384).
+	audited map[string]string
 }
 
 func newCLIModelCache() *cliModelCache {
@@ -470,7 +527,30 @@ func newCLIModelCache() *cliModelCache {
 		entries:       make(map[string]cliModelCacheEntry),
 		retained:      make(map[string]map[string]int),
 		retainedOrder: make(map[string][]string),
+		audited:       make(map[string]string),
 	}
+}
+
+// noteDiscoveryState records the discovery outcome for a backend and reports
+// whether it is a transition worth an audit entry: (changed, previous key).
+// key is "" for healthy, otherwise a string describing the failure.
+func (c *cliModelCache) noteDiscoveryState(backend, key string) (changed bool, prev string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.audited == nil {
+		c.audited = make(map[string]string)
+	}
+	prev, seen := c.audited[backend]
+	if seen && prev == key {
+		return false, prev
+	}
+	if !seen && key == "" {
+		// First observation is healthy: nothing to record.
+		c.audited[backend] = key
+		return false, ""
+	}
+	c.audited[backend] = key
+	return true, prev
 }
 
 // stabilize merges a fresh successful LIVE discovery result with recently-seen
@@ -552,7 +632,7 @@ func (s *Server) modelIDsForBackend(backend string) []string {
 		return nil
 	}
 	r, ok := s.cliModels.get(backend)
-	if !ok || r.fallback {
+	if !ok || !r.authoritative() {
 		return nil
 	}
 	return append([]string(nil), (r.models)...)
@@ -592,12 +672,16 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	if len(r.models) == 0 {
 		r.models = dedupeModels(cliStaticFallback(backend))
 		r.fallback = true
-	} else if !r.fallback && s.cliModels != nil {
+	} else if r.authoritative() && s.cliModels != nil {
 		// Smooth nondeterministic live results (see cliModelDropAfterMisses):
 		// a model seen recently is kept through transient upstream omissions
 		// so a single bad sample cannot trigger downstream auto-heal churn.
+		// A DEGRADED list stays out: it is a different inventory, and
+		// folding it into retention would teach the CLI's catalog the HTTP
+		// probe's ids (#7384).
 		r.models = s.cliModels.stabilize(backend, r.models)
 	}
+	s.auditDiscoveryTransition(backend, r)
 	// Applied after stabilization/fallback so the pinned ids survive BOTH
 	// paths: a live sample that omits a rollout-gated id and the static
 	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
@@ -611,6 +695,70 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		s.cliModels.set(backend, r)
 	}
 	return r
+}
+
+// Audit actions for model discovery (#7384). Recorded under the "system"
+// pseudo-user, agent-less, with the backend in the detail.
+const (
+	// auditActionModelDiscoveryFailed: a backend's discovery probe failed or
+	// degraded and a non-authoritative list is being served. One entry per
+	// transition into that state or per change of error text — not per probe.
+	auditActionModelDiscoveryFailed = "model_discovery_failed"
+	// auditActionModelDiscoveryRecovered: a backend previously audited as
+	// failed answered a clean live probe again.
+	auditActionModelDiscoveryRecovered = "model_discovery_recovered"
+)
+
+// auditDiscoveryTransition writes the audit entry the #7384 incident had
+// none of. For two days a spoke served a wrong catalog and downgraded every
+// agent off it, and the only record was a WARN log line nobody read; the
+// audit log — the surface operators and the hub actually look at — said
+// nothing. Failures and recoveries are audited as transitions so the log
+// gains one line when discovery breaks and one when it heals, not one every
+// 30 s. Ordinary not-configured fallbacks (no credential, no helper) carry
+// no error and are not failures, so they are not audited.
+func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
+	if s == nil || s.cliModels == nil {
+		return
+	}
+	key := ""
+	if r.failed() {
+		key = fmt.Sprintf("fallback=%t degraded=%t err=%s", r.fallback, r.degraded, r.discoveryErr)
+	}
+	changed, prev := s.cliModels.noteDiscoveryState(backend, key)
+	if !changed {
+		return
+	}
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	if key == "" {
+		if s.logger != nil {
+			s.logger.Info("model discovery recovered", "backend", backend, "platform", platform)
+		}
+		if s.audit != nil {
+			s.audit.Log("system", auditActionModelDiscoveryRecovered,
+				auditDetail("backend", backend, "platform", platform, "previous", prev), "")
+		}
+		return
+	}
+	served := "live-but-not-the-cli-catalog"
+	if r.fallback {
+		served = "static-fallback"
+	}
+	if s.logger != nil {
+		s.logger.Warn("audit: model discovery failed; serving a non-authoritative list",
+			"backend", backend, "platform", platform, "served", served,
+			"fallback", r.fallback, "degraded", r.degraded, "err", r.discoveryErr)
+	}
+	if s.audit != nil {
+		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
+			"backend", backend,
+			"platform", platform,
+			"fallback", strconv.FormatBool(r.fallback),
+			"degraded", strconv.FormatBool(r.degraded),
+			"served", served,
+			"error", r.discoveryErr,
+		), "")
+	}
 }
 
 // cliStaticFallback returns the current static model list for a CLI backend.
@@ -674,8 +822,15 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 		return describeCopilotCredential(source, s.copilotTokenLogin(token))
 	}
 
+	// sdkErr is set when the INSTALLED helper ran and could not answer. Any
+	// list the HTTP probe serves after that is a different catalog from the
+	// CLI's and must be marked degraded, not live (#7384).
+	var sdkErr string
 	if models, err := s.probeCopilotModelsSDK(token); err != nil {
 		notice = copilotProbeNoticeFor(err, credential)
+		if !errors.Is(err, errCopilotSDKHelperAbsent) {
+			sdkErr = cliModelErrText(err)
+		}
 		if notice != nil {
 			// An entitlement rejection is not a "fall back and move on"
 			// event: it means every agent on this backend is failing right
@@ -703,8 +858,10 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	if token == "" {
 		// No credential at all is "not configured", NOT "not licensed" —
 		// carrying a licence notice here would tell an owner who simply has
-		// not logged in yet to go argue with GitHub about their seat.
-		return cliModelResult{fallback: true, notice: notice}
+		// not logged in yet to go argue with GitHub about their seat. An
+		// installed helper that FAILED is still a failure, though, and is
+		// recorded as one.
+		return cliModelResult{fallback: true, notice: notice, discoveryErr: sdkErr}
 	}
 	host := s.copilotAPIHost(token)
 	integrationID := copilotIntegrationID
@@ -714,6 +871,7 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 
 	models, err := fetchCopilotModels(host+copilotModelsPath, token, integrationID)
 	if err != nil || len(models) == 0 {
+		discoveryErr := sdkErr
 		if err != nil {
 			if n := copilotProbeNoticeFor(err, credential); n != nil {
 				notice = n
@@ -723,10 +881,33 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 				// Do NOT log the token or full URL query; just the failure.
 				s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
 			}
+			discoveryErr = joinDiscoveryErrs(sdkErr, "http probe: "+cliModelErrText(err))
+		} else if discoveryErr == "" {
+			discoveryErr = "http probe returned no models"
 		}
-		return cliModelResult{fallback: true, notice: notice}
+		return cliModelResult{fallback: true, notice: notice, discoveryErr: discoveryErr}
 	}
-	return cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
+	out := cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
+	if sdkErr != "" {
+		// The HTTP probe answered, but it is the chat-completions catalog,
+		// not the CLI's: real ids, wrong inventory. Serve it, say so, and
+		// keep it out of every path that treats a live list as authority.
+		out.degraded = true
+		out.discoveryErr = "copilot SDK helper failed: " + sdkErr + "; serving the HTTP chat-completions catalog, which is not the CLI's"
+	}
+	return out
+}
+
+// joinDiscoveryErrs concatenates the non-empty parts of a multi-stage
+// discovery failure ("sdk helper: … | http probe: …").
+func joinDiscoveryErrs(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " | ")
 }
 
 // copilotNotLicensedMarker is the phrase GitHub's Copilot API uses when an
@@ -1171,8 +1352,9 @@ func (s *Server) discoverGeminiModels() cliModelResult {
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			s.logger.Warn("gemini model discovery failed", "err", err.Error())
+			return cliModelResult{fallback: true, discoveryErr: cliModelErrText(err)}
 		}
-		return cliModelResult{fallback: true}
+		return cliModelResult{fallback: true, discoveryErr: "probe returned no models"}
 	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
 }
@@ -1288,8 +1470,9 @@ func (s *Server) discoverClaudeModels() cliModelResult {
 		if err != nil {
 			// Do NOT log the credential or response body; just the failure.
 			s.logger.Warn("claude model discovery failed", "err", err.Error())
+			return cliModelResult{fallback: true, discoveryErr: cliModelErrText(err)}
 		}
-		return cliModelResult{fallback: true}
+		return cliModelResult{fallback: true, discoveryErr: "probe returned no models"}
 	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
 }

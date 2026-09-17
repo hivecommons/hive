@@ -80,6 +80,17 @@ user" display, which skips them.
 Do not treat a pseudo-user entry as less authoritative; a `system` entry is
 still a real recorded action.
 
+One `system` writer worth knowing by name: CLI model discovery (#7384). When a
+backend's live model probe fails — or degrades to a catalog that is not the
+one the CLI uses — the dashboard writes `model_discovery_failed` with
+`backend=…, platform=<os/arch>, fallback=…, degraded=…, served=…, error=<the
+probe's own message>`, and `model_discovery_recovered` (with `previous=` the
+failure it recovered from) once a clean probe answers again. Entries are
+written on transitions only, never per 30 s probe, and the ordinary
+not-configured fallbacks (no credential, no helper installed) are not
+failures and write nothing. Before this existed, a spoke served a wrong
+catalog for two days and the only record was a server log line.
+
 ## Rotation and retention
 
 Rotation is handled by lumberjack:
