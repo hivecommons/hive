@@ -170,7 +170,11 @@ func TestModalBodyScrollLockReused(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		"(function installModalScrollLock() {",
-		"function sync() { document.body.classList.toggle('modal-open', anyOverlayOpen()); }",
+		// sync() locks the root element as well as the body (#7250) — with
+		// `html { overflow-x: hidden }` in force the root is the viewport
+		// scroll container, so a body-only toggle locks nothing.
+		"document.documentElement.classList.toggle('modal-open', open);",
+		"document.body.classList.toggle('modal-open', open);",
 		"body.modal-open { overflow: hidden; }",
 		// The config overlay is one of the observed overlays.
 		"var OVERLAY_SELECTOR = '.config-overlay,",

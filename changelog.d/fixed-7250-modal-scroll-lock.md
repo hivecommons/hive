@@ -1,0 +1,1 @@
+Settings modal scroll no longer leaks to the dashboard behind it. The lock is now applied to the root element as well as the body: `html { overflow-x: hidden }` makes the root the viewport's scroll container, which silently turned the existing `body.modal-open { overflow: hidden }` rule into a no-op.

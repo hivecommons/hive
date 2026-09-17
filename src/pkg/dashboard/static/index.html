@@ -1825,6 +1825,11 @@
     .config-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
     .config-body {
       flex: 1; overflow-y: auto; padding: 20px;
+      /* min-height:0 lets this flex child actually shrink, so it stays the
+         scroll container even on short tabs (#7250) — a flex item's default
+         min-height:auto would size it to its content and leave nothing to
+         scroll, handing the wheel straight to the page behind. */
+      min-height: 0;
       scrollbar-width: thin; scrollbar-color: var(--border) transparent;
       /* Scroll chaining containment (#2766): reaching the top/bottom of the
          modal body must not hand the wheel to the dashboard behind it. */
@@ -2532,7 +2537,15 @@
        DOM untouched, z-indexes retained at each pattern's rule (they
        encode stacking intent). The acmm JS-built overlay keeps its inline
        styles until the Phase 4 template sweep. */
-    body.modal-open { overflow: hidden; }
+    /* Scroll lock (#7250): the lock MUST be applied to the root element, not
+       just the body element. `html { overflow-x: hidden }` above makes the
+       root the viewport's scroll container, and the body's overflow only
+       propagates to the viewport while the root's overflow is `visible` — so a
+       body-only rule clips nothing and the dashboard keeps scrolling behind
+       the modal. This is why the #2766 and #4805 containment fixes did not
+       hold on tabs whose content fits the panel: with nothing to scroll in
+       .config-body, the wheel event chains straight to an unlocked root. */
+    html.modal-open, body.modal-open { overflow: hidden; }
     .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.55);
@@ -4107,7 +4120,15 @@
         }
         return false;
       }
-      function sync() { document.body.classList.toggle('modal-open', anyOverlayOpen()); }
+      // Toggle on BOTH the root and the body element (#7250):
+      // `html { overflow-x: hidden }` makes the root the viewport scroll
+      // container, so locking the body alone is a no-op and the page scrolls
+      // behind the modal.
+      function sync() {
+        var open = anyOverlayOpen();
+        document.documentElement.classList.toggle('modal-open', open);
+        document.body.classList.toggle('modal-open', open);
+      }
       // Overlays created after startup (kbShowModal's #kb-modal-overlay, the
       // acmm dialog) are appended once and then toggled via style.display, so
       // they need their own attribute observers too — otherwise closing one
