@@ -101,6 +101,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if !ValidateExplainMode(agent.ExplainMode) {
 		return fmt.Errorf("invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", agent.ExplainMode, ExplainModeEnvVar)
 	}
+	if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
+		return err
+	}
 	if err := validateChannels(name, agent.Channels); err != nil {
 		return err
 	}

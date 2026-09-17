@@ -1585,7 +1585,7 @@
           "Agents"
         ],
         "summary": "Agent prompt template",
-        "description": "Returns the CLAUDE.md prompt file for the given agent.",
+        "description": "Returns the agent's kick prompt template (`prompt`, variables substituted unless `?raw=1`), the `sourceFiles` it came from (a repo `url` is present only when pkg/policies/defaults actually ships the file), and `template`: the scheduler's resolution of the configured kick_template — `{kickTemplate, resolved, source, fallback, pathsTried, embeddedDefaultExists}` — so a dangling kick_template is reported with the fallback the kicks actually use rather than rendered as an empty editor (#7390).",
         "parameters": [
           {
             "name": "name",

@@ -843,6 +843,27 @@ var ValidCavemanModes = map[string]bool{
 // ValidateCavemanMode reports whether v is an accepted caveman_mode value.
 func ValidateCavemanMode(v string) bool { return ValidCavemanModes[v] }
 
+// ValidateKickTemplateName gates the SHAPE of a kick_template value: it is a
+// bare file name that the scheduler looks up under the policy directories and
+// the embedded defaults, never a path. Empty is fine (convention lookup). A
+// value carrying a path separator or ".." is refused at load/save time — the
+// scheduler joins it under /data/policies and the cloned examples dir, so a
+// path would read outside them. Whether the NAME resolves to a file is a
+// separate, softer question (a template can legitimately be created later by
+// the prompt editor), answered with a warning by
+// scheduler.WarnDanglingKickTemplates and shown in the prompt editor
+// (hivecommons/hive#7390).
+func ValidateKickTemplateName(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	if strings.ContainsAny(v, `/\`) || strings.Contains(v, "..") {
+		return fmt.Errorf("invalid kick_template %q: must be a bare file name such as scanner-holdgated.md, not a path", v)
+	}
+	return nil
+}
+
 // ReasoningEffortsByBackend lists the reasoning-effort values each CLI
 // backend accepts, for the backends that expose an effort control at all:
 // codex takes `-c model_reasoning_effort="<v>"` and agy takes `--effort <v>`.
@@ -5429,6 +5450,9 @@ func (c *Config) validate() error {
 		}
 		if !ValidateCadenceScope(agent.CadenceScope) {
 			return fmt.Errorf("agent %s: invalid cadence_scope %q (must be aggregate or per_repo)", name, agent.CadenceScope)
+		}
+		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err

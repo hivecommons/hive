@@ -1627,6 +1627,11 @@ func main() {
 	// one (#3498). Explicit thresholds are unaffected.
 	gov.SetRepoCount(cfg.Project.RepoCount())
 	sched := scheduler.New(cfg, logger)
+	// A kick_template that resolves nowhere used to fail silently: the kick
+	// fell through to the pack/convention template with no log line, and the
+	// dashboard prompt editor showed an empty box (hivecommons/hive#7390).
+	// Say so once, at boot, per agent.
+	sched.WarnDanglingKickTemplates()
 
 	// Wire the GitHub prompt-source resolver so agents may source their kick
 	// prompt from a repo (agent.prompt_source). Fetching reuses the hive's App

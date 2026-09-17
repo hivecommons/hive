@@ -20727,13 +20727,32 @@ function burnAreaChart() {
           .then(r => r.json())
           .then(data => {
             const srcEl = document.getElementById(srcId);
+            // data.template: the scheduler's own resolution of the configured
+            // kick_template (#7390). A dangling name used to render as an
+            // empty editor with a 404 repo link and nothing else — and text
+            // typed into that empty box, once saved, became a LIVE override.
+            const tpl = data.template || null;
+            const dangling = !!(tpl && tpl.kickTemplate && !tpl.resolved);
             if (srcEl && data.sourceFiles && (data.sourceFiles || []).length > 0) {
               let items = '';
               for (const sf of (data.sourceFiles || [])) {
                 const note = sf.note ? ' <span style="color:var(--muted)">(' + esc(sf.note) + ')</span>' : '';
+                // No link for a path that does not exist in the repo: the
+                // server omits url when pkg/policies/defaults has no such file.
+                const pathHtml = sf.url
+                  ? '<a href="' + esc(sf.url) + '" target="_blank" rel="noopener" style="color:var(--cyan);text-decoration:none;font-family:var(--font-mono);font-size:0.75rem">' + esc(sf.path) + '</a>'
+                  : '<span style="font-family:var(--font-mono);font-size:0.75rem;color:var(--muted);text-decoration:line-through">' + esc(sf.path) + '</span>';
                 items += '<li style="margin:3px 0"><strong style="color:var(--muted);min-width:80px;display:inline-block">' + esc(sf.label) + ':</strong> '
-                  + '<a href="' + esc(sf.url) + '" target="_blank" rel="noopener" style="color:var(--cyan);text-decoration:none;font-family:var(--font-mono);font-size:0.75rem">' + esc(sf.path) + '</a>'
-                  + note + '</li>';
+                  + pathHtml + note + '</li>';
+              }
+              if (dangling) {
+                items += '<li style="margin:6px 0 2px;color:var(--yellow,#e6b800);font-size:0.75rem">⚠ template not found: <code>' + esc(tpl.kickTemplate) + '</code>'
+                  + ' — kicks fall back to <strong>' + esc(tpl.fallback || 'the built-in kick') + '</strong>.'
+                  + ' Saving text here creates <code>' + esc((tpl.pathsTried || [])[0] || tpl.kickTemplate) + '</code> as a live override; clear <code>kick_template</code> in General to keep the fallback.'
+                  + (tpl.pathsTried && tpl.pathsTried.length ? '<div style="color:var(--muted);font-size:0.68rem;margin-top:2px">looked in: ' + esc(tpl.pathsTried.join(', ')) + '</div>' : '')
+                  + '</li>';
+              } else if (tpl && tpl.kickTemplate && tpl.source) {
+                items += '<li style="margin:3px 0;color:var(--muted);font-size:0.7rem">resolved from: ' + esc(tpl.source) + '</li>';
               }
               srcEl.innerHTML = '<ul style="list-style:none;padding:0;margin:0">' + items + '</ul>';
               srcEl.style.display = 'block';
@@ -20741,7 +20760,9 @@ function burnAreaChart() {
             const previewEl = document.getElementById(previewId);
             if (previewEl) {
               const raw = data.prompt || '';
-              if (!raw) { previewEl.innerHTML = '<span style="color:var(--muted);font-style:italic">(no template found)</span>'; }
+              if (!raw && dangling) {
+                previewEl.innerHTML = '<span style="color:var(--yellow,#e6b800);font-style:italic">⚠ template not found: ' + esc(tpl.kickTemplate) + ' (falling back to ' + esc(tpl.fallback || 'the built-in kick') + ')</span>';
+              } else if (!raw) { previewEl.innerHTML = '<span style="color:var(--muted);font-style:italic">(no template found)</span>'; }
               else { previewEl.innerHTML = formatMarkdownPrompt(raw); }
             }
           })

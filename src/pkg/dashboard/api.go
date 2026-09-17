@@ -4026,8 +4026,23 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if v, ok := body["kickTemplate"]; ok {
-		if s, ok := v.(string); ok {
-			agentCfg.KickTemplate = sanitizeString(s)
+		if str, ok := v.(string); ok {
+			tpl := sanitizeString(str)
+			// Catch a dangling kick_template when it is SET, not never
+			// (hivecommons/hive#7390). The shape was already checked by
+			// validateAgentGeneralInput (bare .md name); a NEW name must also
+			// resolve somewhere the scheduler looks — otherwise the save
+			// succeeds, the kick silently falls back, and the prompt editor
+			// shows an empty box. An unchanged value is left alone so an
+			// already-dangling field cannot block an unrelated edit (display
+			// name, model) until it is fixed.
+			if tpl != "" && tpl != agentCfg.KickTemplate && s.deps.Scheduler != nil {
+				if _, exists := s.deps.Scheduler.TemplateExists(tpl); !exists {
+					jsonError(w, fmt.Sprintf("kick_template %q does not exist: it is not shipped in pkg/policies/defaults and no file of that name is in the policy directories. Save the prompt in the Prompt Template tab first (that creates %s), or pick a shipped template", tpl, filepath.Join(promptTemplateSaveDir, tpl)), http.StatusBadRequest)
+					return
+				}
+			}
+			agentCfg.KickTemplate = tpl
 		}
 	}
 	if v, ok := body["mode"]; ok {
@@ -4716,18 +4731,38 @@ func (s *Server) handleAgentPrompt(w http.ResponseWriter, r *http.Request) {
 		templateName = name + ".md"
 	}
 
-	sourceFiles = append(sourceFiles, map[string]string{
+	// Only link to a repo path that exists (hivecommons/hive#7390). The
+	// editor used to render "src/pkg/policies/defaults/<kick_template>" for
+	// whatever name was configured, and the link 404'd for a dangling one —
+	// the operator's first clue that anything was wrong, and a misleading
+	// one (it read as "the file was removed", not "it never existed").
+	_, embeddedErr := policies.DefaultPolicies.ReadFile("defaults/" + templateName)
+	src := map[string]string{
 		"label": "Kick template",
 		"path":  "src/pkg/policies/defaults/" + templateName,
-		"url":   repoBaseURL + "src/pkg/policies/defaults/" + templateName,
 		"note":  "kick_template: " + templateName,
-	})
+	}
+	if embeddedErr == nil {
+		src["url"] = repoBaseURL + "src/pkg/policies/defaults/" + templateName
+	} else {
+		src["note"] = "kick_template: " + templateName + " — not shipped in pkg/policies/defaults (no repo link)"
+	}
+	sourceFiles = append(sourceFiles, src)
 
-	jsonResponse(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"agent":       name,
 		"prompt":      template,
 		"sourceFiles": sourceFiles,
-	})
+	}
+	// template: how the configured kick_template actually resolves, from the
+	// scheduler's own chain, so the editor can say "template not found:
+	// review.md — kicks fall back to <source>" instead of showing an empty
+	// box that looks like a lost file and, once typed into and saved,
+	// becomes a live override.
+	if s.deps.Scheduler != nil {
+		resp["template"] = s.deps.Scheduler.ResolveTemplate(name)
+	}
+	jsonResponse(w, resp)
 }
 
 // loadPromptTemplateRaw returns the raw template content without variable substitution.
