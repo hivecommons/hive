@@ -517,7 +517,10 @@ func TestHandleGovernorAddAgentDuplicate(t *testing.T) {
 
 func TestHandleGovernorHubUpdate(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"enabled":true,"url":"https://hub.example.com","dashboard_url":"https://dash.example.com","is_public":true,"auto_snapshot":false,"contribute_allow_labels":["good-first-issue"],"contribute_deny_labels":["wontfix"],"disabled_repos":["archived-repo"],"disabled_tiers":["newcomer"]}`
+	// dashboard_url is deliberately absent: since #7451 a differing write to the
+	// hub-owned hub.dashboard_url is rejected with 409 while hub.enabled is true.
+	// That contract has its own coverage in hub_dashboard_url_owned_test.go.
+	body := `{"enabled":true,"url":"https://hub.example.com","is_public":true,"auto_snapshot":false,"contribute_allow_labels":["good-first-issue"],"contribute_deny_labels":["wontfix"],"disabled_repos":["archived-repo"],"disabled_tiers":["newcomer"]}`
 	req := httptest.NewRequest("PUT", "/api/governor/hub", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

@@ -19926,6 +19926,30 @@ function burnAreaChart() {
           <label>Namespace <span class="config-info">i<span class="config-tooltip">The Kubernetes namespace this hive's pod is running in. Unlike the hive's name/org, this never changes after the namespace is first created — see the hive.kubestellar.io/* labels on it for an operator-facing way to map it back to this hive.</span></span></label>
           <input type="text" value="${esc(hub.namespace)}" readonly disabled style="opacity:0.7">
         </div>` : '';
+      // Dashboard URL is hub-owned on a hub-managed spoke: the heartbeat's
+      // project-config push adopts the hub's value whenever it differs and
+      // persists it (cmd/hive/main.go, ProjectConfigCallback — both the
+      // url-only push and the full reconcile), so a local edit is reverted on
+      // the next beat. Until it is reverted a bad value is not inert: this
+      // field is the second-choice source for the OAuth callback origin
+      // (pkg/dashboard/oauth_origin.go), so a typo can lock the operator out
+      // of the dashboard they are editing from. Render it read-only with its
+      // provenance while the hub is enabled — the same wording the auto-update
+      // block uses — and point operators at dashboard.public_url, which wins
+      // for OAuth and is never overwritten by the heartbeat. The server
+      // rejects the write too (handleGovernorHub); a read-only input alone
+      // would be cosmetic. Still editable on an unmanaged spoke (hub
+      // disabled), where no heartbeat overwrites it.
+      const dashboardUrlRow = hub.enabled ? `
+        <div class="config-field">
+          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">Public URL of this hive's dashboard, owned by the hub. The hub re-asserts it on every heartbeat, so it is shown read-only here. For a genuine local override set dashboard.public_url, which takes precedence for OAuth redirects and is not overwritten by the heartbeat.</span></span></label>
+          <input type="text" id="hub-dashboard-url" value="${esc(dashUrl)}" readonly disabled style="opacity:0.7">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Policy source: the hub (heartbeat). Read-only while the hub is enabled — set <code>dashboard.public_url</code> for a local override.</span>
+        </div>` : `
+        <div class="config-field">
+          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">Public URL of this hive's dashboard. Editable because the hub is disabled — once the hub is enabled it owns this value and re-asserts it on every heartbeat.</span></span></label>
+          <input type="text" id="hub-dashboard-url" value="${esc(dashUrl)}" data-change-action="markDirty" data-arg0="hub" data-arg1="dashboard_url" data-arg-types="s,s,v">
+        </div>`;
       return `
         ${namespaceRow}
         <div class="config-toggle">
@@ -19936,10 +19960,7 @@ function burnAreaChart() {
           <label>Hub URL <span class="config-info">i<span class="config-tooltip">URL of the Hive Hub. Heartbeats and task status are sent here.</span></span></label>
           <input type="text" value="${esc(hub.url || '')}" data-change-action="markDirty" data-arg0="hub" data-arg1="url" data-arg-types="s,s,v">
         </div>
-        <div class="config-field">
-          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">Public URL of this hive's dashboard.</span></span></label>
-          <input type="text" value="${esc(dashUrl)}" data-change-action="markDirty" data-arg0="hub" data-arg1="dashboard_url" data-arg-types="s,s,v">
-        </div>
+        ${dashboardUrlRow}
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.is_public ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="is_public"></div>
           <span class="config-toggle-label">Public <span class="config-info">i<span class="config-tooltip">Show this hive on the public hub registry.</span></span></span>

@@ -880,8 +880,28 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.URL != "" {
 		cfg.Hub.URL = body.URL
 	}
+	// hub.dashboard_url is owned by the hub while the hub is enabled: the
+	// heartbeat's project-config push adopts the hub's value whenever it
+	// differs and persists it (cmd/hive/main.go, ProjectConfigCallback), so a
+	// local write cannot survive — and until it is reverted it is actively
+	// harmful, because this field is the second-choice source for the OAuth
+	// callback origin (oauthPublicOrigin) and feeds the hub webhook target and
+	// Discord message links. Reject a differing write rather than accept one
+	// that will be silently undone; dashboard.public_url is the local override
+	// that actually wins for OAuth. A same-value resubmit (the Hub tab PUTs the
+	// whole form) is a no-op, not an error. hubEnabled is read AFTER body.Enabled
+	// is applied, so an operator turning the hub off in the same PUT may set the
+	// URL in that PUT — the resulting spoke is unmanaged, and nothing overwrites
+	// it.
+	hubEnabled := cfg.Hub.Enabled
 	if body.DashboardURL != "" {
-		cfg.Hub.DashboardURL = body.DashboardURL
+		if hubEnabled && body.DashboardURL != cfg.Hub.DashboardURL {
+			jsonError(w, "hub.dashboard_url is owned by the hub while hub.enabled is true — the heartbeat re-asserts it every beat. Set dashboard.public_url for a local override (it takes precedence for OAuth redirects), or disable the hub first.", http.StatusConflict)
+			return
+		}
+		if !hubEnabled {
+			cfg.Hub.DashboardURL = body.DashboardURL
+		}
 	}
 	cfg.Hub.SnapshotURL = body.SnapshotURL
 	if body.IsPublic != nil {
