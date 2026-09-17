@@ -1,0 +1,1 @@
+- Every labelled control on Settings → Features now carries an (i) tooltip, including the previously unexplained Quality Loops section and its Retro loop toggle, where the help text spells out that the loop is deterministic and spends no tokens until an Analysis model is set (#7256). A new coverage guard fails the build if a control is added to that tab without help text.
