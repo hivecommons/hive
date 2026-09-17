@@ -3925,6 +3925,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 
 	agentCfg := s.deps.Config.Agents[name]
+	// Captured before the field writes below, because leaving on-demand is a
+	// TRANSITION rather than a state: acting on it needs the previous value.
+	prevOnDemand := agentCfg.OnDemand
 	if v, ok := body["enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.Enabled = b
@@ -4221,6 +4224,48 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
 				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
 			}
+		}
+	}
+	// An on_demand TRANSITION has to move the process, not just rewrite config.
+	// Both directions were no-ops before, for different reasons:
+	//
+	//   leaving on-demand — ReconcileAgents above reports only agents that were
+	//     just ADDED to the fleet. An agent an operator toggles already exists,
+	//     so it is never in that list, and it was skipped at launch precisely
+	//     BECAUSE it was on-demand ("skipping on-demand agent at startup"). It
+	//     therefore has no process, no pane, and no tmux session to attach to,
+	//     and the toggle appears to do nothing until the pod restarts.
+	//
+	//   becoming on-demand — nothing stopped the running process. The governor
+	//     does stop KICKING it (it skips OnDemand agents), so the agent lingers
+	//     as a live CLI and pane that will never be scheduled again — which is
+	//     not what "on demand" means.
+	//
+	// (#7446)
+	switch onDemandTransition(prevOnDemand, agentCfg.OnDemand, agentCfg.Enabled) {
+	case onDemandStart:
+		startedByReconcile := false
+		for _, added := range addedAgents {
+			if added == name {
+				startedByReconcile = true
+				break
+			}
+		}
+		if !startedByReconcile {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, name); err != nil {
+				// "already running" is an expected, benign outcome here.
+				s.logger.Warn("could not start agent after it left on-demand", "agent", name, "error", err)
+			} else {
+				s.logger.Info("started agent after it left on-demand", "agent", name)
+			}
+		}
+	case onDemandStop:
+		// Stop already returns nil for an agent that is not running, so this is
+		// safe regardless of the agent's current state.
+		if err := s.deps.AgentMgr.Stop(name); err != nil {
+			s.logger.Warn("could not stop agent after it became on-demand", "agent", name, "error", err)
+		} else {
+			s.logger.Info("stopped agent after it became on-demand", "agent", name)
 		}
 	}
 	if s.deps.Governor != nil {
