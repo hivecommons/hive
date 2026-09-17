@@ -1,0 +1,1 @@
+- Extracted the hive provisioning domain (provision request persistence and handlers, placeholder pool selection, spoke project config adoption, hive assignment) from `pkg/hub/saas.go` into `saas_provisioning.go` (#7278).
