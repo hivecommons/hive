@@ -98,3 +98,32 @@ func ParseAgentMode(s string) (AgentMode, bool) {
 	}
 	return ModeAdvisory, false
 }
+
+// ReviewerRole is the agent role that earns the comment-capable review tier.
+const ReviewerRole = "reviewer"
+
+// TokenTierForRole returns the GitHub App scoped-token tier for a mode, taking
+// the agent's functional role into account.
+//
+// The mode ladder is ordinal — advisory < issues < issues+prs < merge — and
+// every capability predicate above is a >= comparison against it. "May post a
+// review on a PR, but may not push, merge, or open an issue" is not a point on
+// that ladder: it sits above advisory for pull requests and below newcomer for
+// issues. Encoding it as a new AgentMode would therefore break the ordering
+// that CanCreateIssues/CanCreatePRs/CanMerge rely on.
+//
+// So it is expressed as a role refinement of the advisory mode instead. An
+// ADVISORY reviewer mints the "reviewer" tier (Contents:read, PullRequests:
+// write) rather than "advisor" (Contents:read, PullRequests:read), which is
+// what lets it post the verdict it just computed. Every other mode, and every
+// other role, is unchanged.
+//
+// This matters for spokes that do not auto-merge: an advisor-tier reviewer's
+// verdict has exactly one consumer, the merge-eligibility gate, so where no
+// merge sweep runs the review is computed and thrown away (#7469).
+func TokenTierForRole(m AgentMode, role string) string {
+	if m == ModeAdvisory && role == ReviewerRole {
+		return "reviewer"
+	}
+	return m.TokenTier()
+}

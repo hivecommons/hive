@@ -1655,7 +1655,7 @@ func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 	if agent.UID <= 0 {
 		return fmt.Errorf("agent %s has no dedicated UID", name)
 	}
-	tier := m.agentMode(agent).TokenTier()
+	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
 	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
 	}
@@ -1697,7 +1697,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 	}
 
 	for _, a := range agents {
-		tier := m.agentMode(a).TokenTier()
+		tier := TokenTierForRole(m.agentMode(a), a.Config.Role)
 		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
 			continue
@@ -1870,7 +1870,7 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 	if m.appAuth == nil || agent.UID <= 0 {
 		return
 	}
-	tier := m.agentMode(agent).TokenTier()
+	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
 	if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 		// Be precise about the blast radius. Since audit H3 the shared-cache
 		// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
@@ -3791,7 +3791,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel
 	launcher, runner := m.sandboxLauncher, m.sandboxRunner
-	cloneMinter := m.tieredSandboxMinterLocked(m.agentMode(agent).TokenTier())
+	cloneMinter := m.tieredSandboxMinterLocked(TokenTierForRole(m.agentMode(agent), agent.Config.Role))
 	var pushMinter pushbroker.TokenMinter
 	var prClient PRCreator
 	pushEnabled := false

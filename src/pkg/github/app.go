@@ -321,6 +321,42 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			// breaking every trusted-tier mint.
 			Workflows: gh.Ptr("write"),
 		}
+	case "reviewer":
+		// The reviewer tier is the advisor tier plus the ability to SAY
+		// something on the pull request it just judged.
+		//
+		// A spoke that does not auto-merge gets nothing from an advisor-tier
+		// reviewer: its verdict's only consumer is the merge-eligibility gate
+		// (cmd/hive/main.go, HasAggregateApproval), so on a hive that never
+		// runs a merge sweep the review is computed and then discarded. The
+		// humans whose queue it was meant to help never see it. Giving the
+		// reviewer PullRequests:write turns the verdict into a posted review.
+		//
+		// PullRequests:write — not Issues:write — is deliberate and is what
+		// keeps this tier honest:
+		//
+		//   - A PR review with a COMMENT event carries a body and appears on
+		//     the conversation, which is the whole requirement. It also allows
+		//     requesting reviewers, so the reviewer can route a PR to the
+		//     person who should look at it.
+		//   - GitHub has no comment-only permission. Issue comments require
+		//     Issues:write, which ALSO grants issue creation — exactly what
+		//     the advisor tier above refuses on purpose. Staying on
+		//     PullRequests:write preserves that property unchanged: this tier
+		//     still cannot open an issue.
+		//   - Merging requires Contents:write, which is absent here. So the
+		//     reviewer's safety asymmetry survives intact: it can withhold,
+		//     annotate, and route, but there is no call it can make that
+		//     merges anything.
+		//
+		// Contents:read is required for the same reason as the advisor tier:
+		// reading the repository at the merge-base is what makes the review
+		// worth posting (#4289).
+		perms = &gh.InstallationPermissions{
+			Contents:     gh.Ptr("read"),
+			Metadata:     gh.Ptr("read"),
+			PullRequests: gh.Ptr("write"),
+		}
 	case "advisor":
 		// Advisors review agent PRs and audit repo contents — their core
 		// function is READING the repo, so Contents:read is required (#4289:
