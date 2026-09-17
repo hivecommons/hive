@@ -900,12 +900,6 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 	if cfg.Governor.Sensing.PullbackSeconds != defaultSensingPullbackSeconds {
 		t.Errorf("sensing_pullback = %d", cfg.Governor.Sensing.PullbackSeconds)
 	}
-	if cfg.Governor.Health.HealthcheckInterval != defaultHealthcheckIntervalS {
-		t.Errorf("healthcheck = %d", cfg.Governor.Health.HealthcheckInterval)
-	}
-	if cfg.Governor.Health.RestartCooldown != defaultRestartCooldownS {
-		t.Errorf("restart_cooldown = %d", cfg.Governor.Health.RestartCooldown)
-	}
 	if cfg.Governor.Budget.PeriodDays != defaultBudgetPeriodDays {
 		t.Errorf("budget_period = %d", cfg.Governor.Budget.PeriodDays)
 	}

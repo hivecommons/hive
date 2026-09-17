@@ -117,10 +117,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"notifications": notifications,
 		"health": map[string]interface{}{
-			"healthcheckInterval": cfg.Governor.Health.HealthcheckInterval,
-			"restartCooldown":     cfg.Governor.Health.RestartCooldown,
-			"modelLock":           cfg.Governor.Health.ModelLock,
-			"watchdog":            watchdogConfigPayload(cfg),
+			"modelLock": cfg.Governor.Health.ModelLock,
+			"watchdog":  watchdogConfigPayload(cfg),
 		},
 		"sensing": map[string]interface{}{
 			"ghRatePatterns":     cfg.Governor.Sensing.GHRatePatterns,
@@ -711,26 +709,19 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// healthcheckInterval / restartCooldown are deliberately absent (#7251):
+	// they were dead knobs that no runtime loop read. Unknown JSON fields are
+	// ignored by decodeBody, so an older dashboard tab still POSTing them is
+	// accepted rather than rejected -- it simply no longer changes anything,
+	// which is what it already did.
 	var body struct {
-		HealthcheckInterval int   `json:"healthcheckInterval"`
-		RestartCooldown     int   `json:"restartCooldown"`
-		ModelLock           *bool `json:"modelLock"`
+		ModelLock *bool `json:"modelLock"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if err := validateGovernorHealth(body.HealthcheckInterval, body.RestartCooldown); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 
-	if body.HealthcheckInterval > 0 {
-		s.deps.Config.Governor.Health.HealthcheckInterval = body.HealthcheckInterval
-	}
-	if body.RestartCooldown > 0 {
-		s.deps.Config.Governor.Health.RestartCooldown = body.RestartCooldown
-	}
 	if body.ModelLock != nil {
 		s.deps.Config.Governor.Health.ModelLock = *body.ModelLock
 	}

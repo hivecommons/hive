@@ -25,15 +25,6 @@ const (
 	// maxStaleTimeout is the maximum stale timeout in seconds (24 hours).
 	maxStaleTimeout = 86400
 
-	// minHealthcheckInterval is the minimum healthcheck interval in seconds.
-	minHealthcheckInterval = 60
-	// maxHealthcheckInterval is the maximum healthcheck interval in seconds (1 hour).
-	maxHealthcheckInterval = 3600
-	// minRestartCooldown is the minimum restart cooldown in seconds.
-	minRestartCooldown = 10
-	// maxRestartCooldown is the maximum restart cooldown in seconds (1 hour).
-	maxRestartCooldown = 3600
-
 	// minBudgetPeriodDays is the minimum budget period in days.
 	minBudgetPeriodDays = 1
 	// maxBudgetPeriodDays is the maximum budget period in days.
@@ -255,17 +246,6 @@ func validateGovernorThresholds(body map[string]int) error {
 	}
 	if qOk && sOk && quiet > surge {
 		return fmt.Errorf("quiet threshold (%d) must be <= surge threshold (%d)", quiet, surge)
-	}
-	return nil
-}
-
-// validateGovernorHealth validates health configuration values.
-func validateGovernorHealth(healthcheckInterval, restartCooldown int) error {
-	if healthcheckInterval != 0 && (healthcheckInterval < minHealthcheckInterval || healthcheckInterval > maxHealthcheckInterval) {
-		return fmt.Errorf("healthcheckInterval must be between %d and %d seconds", minHealthcheckInterval, maxHealthcheckInterval)
-	}
-	if restartCooldown != 0 && (restartCooldown < minRestartCooldown || restartCooldown > maxRestartCooldown) {
-		return fmt.Errorf("restartCooldown must be between %d and %d seconds", minRestartCooldown, maxRestartCooldown)
 	}
 	return nil
 }

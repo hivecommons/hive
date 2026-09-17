@@ -17983,7 +17983,7 @@ function burnAreaChart() {
         case 'Thresholds': return renderGovThresholds(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
-        case 'Budget': return renderGovBudget(d.budget || {});
+        case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
         case 'Health': return renderGovHealth(d.health || {});
         case 'Sensing': return renderGovSensing(d.sensing || {});
@@ -21619,8 +21619,9 @@ function burnAreaChart() {
       renderConfigTab('Repos');
     }
 
-    function renderGovBudget(b) {
+    function renderGovBudget(b, h) {
       loadBudgetExemptions();
+      h = h || {};
       return `
         <div class="config-field-row">
           <div class="config-field"><label>Total Tokens <span class="config-info">i<span class="config-tooltip">Maximum token budget for the period. When usage approaches this limit, the governor will downgrade models or skip low-priority kicks. Set to 0 to disable budget tracking.</span></span></label><input type="number" value="${b.totalTokens || 0}" data-change-action="gh43"></div>
@@ -21633,6 +21634,10 @@ function burnAreaChart() {
         <div class="config-field" style="margin-top:14px">
           <label>Per-Agent Exemptions <span class="config-info">i<span class="config-tooltip">Exempt agents keep getting kicked even while an exhausted budget suppresses everyone else. Toggles apply immediately (no Save needed). The governor panel's global "ignore budget" checkbox bypasses enforcement for ALL agents; these exemptions are per-agent.</span></span></label>
           <div id="budget-exempt-list"><div style="color:var(--muted);font-size:0.75rem;padding:4px 0">Loading exemptions...</div></div>
+        </div>
+        <div class="config-toggle" style="margin-top:14px">
+          <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
+          <span class="config-toggle-label">Model Lock <span class="config-info">i<span class="config-tooltip">When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.</span></span></span>
         </div>`;
     }
 
@@ -21830,18 +21835,20 @@ function burnAreaChart() {
       renderConfigTab('Stats');
     }
 
+    // Health tab (#7251). "Healthcheck Interval" and "Restart Cooldown" used to
+    // head this tab; both were DEAD -- fully plumbed through config, validation
+    // and persistence, but read by no runtime loop. An operator lowering the
+    // interval to 60s got no change, while the cadence that actually governs
+    // liveness sweeps sat further down the same tab under Agent Watchdog.
+    // They are gone, and the watchdog -- the system that really runs -- now
+    // leads the tab, with the escalation breaker after it.
+    //
+    // Model Lock moved to the Budget tab: it disables budget-pressure model
+    // downgrades, which is a budget behaviour, not a health one.
     function renderGovHealth(h) {
       return `
-        <div class="config-field-row">
-          <div class="config-field"><label>Healthcheck Interval (sec) <span class="config-info">i<span class="config-tooltip">How often the governor checks each agent's tmux session for liveness (responding to prompts, no crash indicators). Default is 300 seconds (5 minutes).</span></span></label><input type="number" value="${h.healthcheckInterval || 300}" data-change-action="gh46"></div>
-          <div class="config-field"><label>Restart Cooldown (sec) <span class="config-info">i<span class="config-tooltip">Minimum time between restart attempts for the same agent. Prevents restart loops when an agent keeps crashing. Default is 60 seconds.</span></span></label><input type="number" value="${h.restartCooldown || 60}" data-change-action="gh47"></div>
-        </div>
-        <div class="config-toggle">
-          <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
-          <span class="config-toggle-label">Model Lock <span class="config-info">i<span class="config-tooltip">When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.</span></span></span>
-        </div>
-        ${renderEscalationSection(_configState.data.escalation)}
-        ${renderWatchdogSection(h.watchdog)}`;
+        ${renderWatchdogSection(h.watchdog)}
+        ${renderEscalationSection(_configState.data.escalation)}`;
     }
 
     // Watchdog section on the Health tab (RFC #4665). It lives beside the
@@ -25496,8 +25503,6 @@ function burnAreaChart() {
       gh43: function (event, A) { markDirty('budget','totalTokens',Number(this.value)); },
       gh44: function (event, A) { markDirty('budget','periodDays',Number(this.value)); },
       gh45: function (event, A) { markDirty('budget','criticalPct',Number(this.value)); },
-      gh46: function (event, A) { markDirty('health','healthcheckInterval',Number(this.value)); },
-      gh47: function (event, A) { markDirty('health','restartCooldown',Number(this.value)); },
       gh48: function (event, A) { markDirty('sensing','ttlSeconds',Number(this.value)); },
       gh49: function (event, A) { markDirty('sensing','pullbackSeconds',Number(this.value)); },
       gh50: function (event, A) { markDirty('logging','maxSizeMB',Number(this.value)); },

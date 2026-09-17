@@ -1515,6 +1515,11 @@ func TestHandleGovernorRepos_ForeignOrgRejected(t *testing.T) {
 	}
 }
 
+// TestHandleGovernorHealth_FullUpdate also pins back-compat for #7251: the
+// removed healthcheckInterval/restartCooldown keys must still be ACCEPTED, not
+// rejected. A browser holding an older cached dashboard tab will keep POSTing
+// them, and a 400 there would block the operator from saving Model Lock -- a
+// setting that still works. They are ignored, which is what they already did.
 func TestHandleGovernorHealth_FullUpdate(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPut(s, "/api/config/governor/health", map[string]interface{}{
@@ -1523,10 +1528,7 @@ func TestHandleGovernorHealth_FullUpdate(t *testing.T) {
 		"modelLock":           true,
 	})
 	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-	if deps.Config.Governor.Health.HealthcheckInterval != 120 {
-		t.Errorf("healthcheck = %d, want 120", deps.Config.Governor.Health.HealthcheckInterval)
+		t.Errorf("status = %d, want 200 (stale dashboard tabs must not be rejected)", rec.Code)
 	}
 	if !deps.Config.Governor.Health.ModelLock {
 		t.Error("modelLock should be true")

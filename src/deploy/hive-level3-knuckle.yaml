@@ -112,8 +112,6 @@ governor:
     ttl_seconds: 900
     pullback_seconds: 900
   health:
-    healthcheck_interval: 300
-    restart_cooldown: 60
     model_lock: false
 
 github:

@@ -27,25 +27,23 @@ func TestApplyConfigOverrides_ReplaysAllFields(t *testing.T) {
 		},
 	}
 	applyConfigOverrides(cfg, &snapshot.ConfigOverrides{
-		ProjectRepos:        []string{"org/repo-a", "org/repo-b"},
-		EvalIntervalS:       intPtr(120),
-		Thresholds:          map[string]int{"active": 7, "unknown-mode": 99},
-		SensingGHRate:       []string{"rate limit hit"},
-		SensingCLIExclude:   []string{"harmless"},
-		SensingTTL:          intPtr(300),
-		SensingPullback:     intPtr(45),
-		ExemptLabels:        []string{"urgent", "security"},
-		NtfyServer:          "https://ntfy.example",
-		NtfyTopic:           "hive-alerts",
-		DiscordWebhook:      "https://discord.example/webhook",
-		HealthcheckInterval: intPtr(240),
-		RestartCooldown:     intPtr(90),
-		ModelLock:           boolPtr(true),
-		LogMaxSizeMB:        intPtr(64),
-		LogMaxAgeDays:       intPtr(14),
-		LogMaxBackups:       intPtr(5),
-		LogCompress:         boolPtr(true),
-		LogLevel:            "debug",
+		ProjectRepos:      []string{"org/repo-a", "org/repo-b"},
+		EvalIntervalS:     intPtr(120),
+		Thresholds:        map[string]int{"active": 7, "unknown-mode": 99},
+		SensingGHRate:     []string{"rate limit hit"},
+		SensingCLIExclude: []string{"harmless"},
+		SensingTTL:        intPtr(300),
+		SensingPullback:   intPtr(45),
+		ExemptLabels:      []string{"urgent", "security"},
+		NtfyServer:        "https://ntfy.example",
+		NtfyTopic:         "hive-alerts",
+		DiscordWebhook:    "https://discord.example/webhook",
+		ModelLock:         boolPtr(true),
+		LogMaxSizeMB:      intPtr(64),
+		LogMaxAgeDays:     intPtr(14),
+		LogMaxBackups:     intPtr(5),
+		LogCompress:       boolPtr(true),
+		LogLevel:          "debug",
 	})
 
 	if got := cfg.Project.Repos; len(got) != 2 || got[0] != "org/repo-a" || got[1] != "org/repo-b" {
@@ -86,12 +84,6 @@ func TestApplyConfigOverrides_ReplaysAllFields(t *testing.T) {
 	}
 	if cfg.Notifications.Discord.Webhook != "https://discord.example/webhook" {
 		t.Errorf("Discord.Webhook = %q", cfg.Notifications.Discord.Webhook)
-	}
-	if cfg.Governor.Health.HealthcheckInterval != 240 {
-		t.Errorf("Health.HealthcheckInterval = %d, want 240", cfg.Governor.Health.HealthcheckInterval)
-	}
-	if cfg.Governor.Health.RestartCooldown != 90 {
-		t.Errorf("Health.RestartCooldown = %d, want 90", cfg.Governor.Health.RestartCooldown)
 	}
 	if !cfg.Governor.Health.ModelLock {
 		t.Error("Health.ModelLock not applied")

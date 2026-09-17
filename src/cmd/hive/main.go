@@ -9537,12 +9537,6 @@ func applyConfigOverrides(cfg *config.Config, o *snapshot.ConfigOverrides) {
 		}
 		cfg.Notifications.Discord.Webhook = o.DiscordWebhook
 	}
-	if o.HealthcheckInterval != nil {
-		cfg.Governor.Health.HealthcheckInterval = *o.HealthcheckInterval
-	}
-	if o.RestartCooldown != nil {
-		cfg.Governor.Health.RestartCooldown = *o.RestartCooldown
-	}
 	if o.ModelLock != nil {
 		cfg.Governor.Health.ModelLock = *o.ModelLock
 	}

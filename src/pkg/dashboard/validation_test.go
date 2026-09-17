@@ -314,35 +314,6 @@ func TestValidateGovernorThresholds(t *testing.T) {
 	}
 }
 
-func TestValidateGovernorHealth(t *testing.T) {
-	tests := []struct {
-		name                string
-		healthcheckInterval int
-		restartCooldown     int
-		wantErr             bool
-	}{
-		{"valid", 120, 30, false},
-		{"zero values", 0, 0, false},
-		{"healthcheck too low", 10, 0, true},
-		{"healthcheck too high", 5000, 0, true},
-		{"cooldown too low", 0, 5, true},
-		{"cooldown too high", 0, 5000, true},
-		{"min healthcheck", minHealthcheckInterval, 0, false},
-		{"max healthcheck", maxHealthcheckInterval, 0, false},
-		{"min cooldown", 0, minRestartCooldown, false},
-		{"max cooldown", 0, maxRestartCooldown, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateGovernorHealth(tt.healthcheckInterval, tt.restartCooldown)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateGovernorHealth(%d, %d) error = %v, wantErr %v",
-					tt.healthcheckInterval, tt.restartCooldown, err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestValidateGovernorBudget(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -617,8 +588,20 @@ func TestGovernorNotificationsValidation(t *testing.T) {
 	}
 }
 
+// TestGovernorHealthValidation pins the health endpoint's input contract
+// AFTER #7251 removed healthcheckInterval and restartCooldown.
+//
+// It used to assert that an out-of-range healthcheckInterval was rejected with
+// 400. That validation existed to guard a knob NOTHING READ, so the rejection
+// was pure theatre: an operator was told 10 was invalid and 120 was fine, and
+// neither value ever changed behaviour.
+//
+// The replacement contract is deliberately permissive. A browser holding an
+// older cached dashboard tab keeps POSTing both keys, and rejecting them would
+// stop that operator saving Model Lock -- a setting on the same endpoint that
+// still works. They are accepted and ignored.
 func TestGovernorHealthValidation(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
 
 	tests := []struct {
 		name       string
@@ -626,13 +609,18 @@ func TestGovernorHealthValidation(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:       "healthcheck too low rejected",
+			name:       "legacy healthcheckInterval accepted and ignored",
 			body:       map[string]interface{}{"healthcheckInterval": float64(10)},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "valid health accepted",
+			name:       "legacy keys together accepted and ignored",
 			body:       map[string]interface{}{"healthcheckInterval": float64(120), "restartCooldown": float64(30)},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "modelLock still applies",
+			body:       map[string]interface{}{"modelLock": true},
 			wantStatus: http.StatusOK,
 		},
 	}
@@ -645,6 +633,10 @@ func TestGovernorHealthValidation(t *testing.T) {
 					tt.name, rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
+	}
+
+	if !deps.Config.Governor.Health.ModelLock {
+		t.Error("modelLock did not survive the run; the endpoint must still apply the setting it really owns")
 	}
 }
 

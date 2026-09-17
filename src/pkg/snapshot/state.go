@@ -52,26 +52,24 @@ type BreakerState struct {
 }
 
 type ConfigOverrides struct {
-	ProjectRepos        []string       `json:"project_repos,omitempty"`
-	EvalIntervalS       *int           `json:"eval_interval_s,omitempty"`
-	Thresholds          map[string]int `json:"thresholds,omitempty"`
-	SensingGHRate       []string       `json:"sensing_gh_rate,omitempty"`
-	SensingCLIExclude   []string       `json:"sensing_cli_exclude,omitempty"`
-	SensingLogin        []string       `json:"sensing_login,omitempty"`
-	SensingTTL          *int           `json:"sensing_ttl,omitempty"`
-	SensingPullback     *int           `json:"sensing_pullback,omitempty"`
-	ExemptLabels        []string       `json:"exempt_labels,omitempty"`
-	NtfyServer          string         `json:"ntfy_server,omitempty"`
-	NtfyTopic           string         `json:"ntfy_topic,omitempty"`
-	DiscordWebhook      string         `json:"discord_webhook,omitempty"`
-	HealthcheckInterval *int           `json:"healthcheck_interval,omitempty"`
-	RestartCooldown     *int           `json:"restart_cooldown,omitempty"`
-	ModelLock           *bool          `json:"model_lock,omitempty"`
-	LogMaxSizeMB        *int           `json:"log_max_size_mb,omitempty"`
-	LogMaxAgeDays       *int           `json:"log_max_age_days,omitempty"`
-	LogMaxBackups       *int           `json:"log_max_backups,omitempty"`
-	LogCompress         *bool          `json:"log_compress,omitempty"`
-	LogLevel            string         `json:"log_level,omitempty"`
+	ProjectRepos      []string       `json:"project_repos,omitempty"`
+	EvalIntervalS     *int           `json:"eval_interval_s,omitempty"`
+	Thresholds        map[string]int `json:"thresholds,omitempty"`
+	SensingGHRate     []string       `json:"sensing_gh_rate,omitempty"`
+	SensingCLIExclude []string       `json:"sensing_cli_exclude,omitempty"`
+	SensingLogin      []string       `json:"sensing_login,omitempty"`
+	SensingTTL        *int           `json:"sensing_ttl,omitempty"`
+	SensingPullback   *int           `json:"sensing_pullback,omitempty"`
+	ExemptLabels      []string       `json:"exempt_labels,omitempty"`
+	NtfyServer        string         `json:"ntfy_server,omitempty"`
+	NtfyTopic         string         `json:"ntfy_topic,omitempty"`
+	DiscordWebhook    string         `json:"discord_webhook,omitempty"`
+	ModelLock         *bool          `json:"model_lock,omitempty"`
+	LogMaxSizeMB      *int           `json:"log_max_size_mb,omitempty"`
+	LogMaxAgeDays     *int           `json:"log_max_age_days,omitempty"`
+	LogMaxBackups     *int           `json:"log_max_backups,omitempty"`
+	LogCompress       *bool          `json:"log_compress,omitempty"`
+	LogLevel          string         `json:"log_level,omitempty"`
 }
 
 type AgentState struct {
