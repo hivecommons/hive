@@ -333,8 +333,16 @@ type PullRequest struct {
 	// The zero value is MergeableUnknown ("") so an unfilled field reads as
 	// "we do not know" rather than a false negative.
 	Mergeable Mergeable `json:"mergeable"`
-	CIStatus  string    `json:"ci_status"`
-	HeadSHA   string    `json:"head_sha,omitempty"`
+	// MergeableState is GitHub's raw mergeable_state ("clean", "unstable",
+	// "blocked", "dirty", ...) behind the Mergeable verdict, for display.
+	// The verdict alone cannot tell an operator WHY a PR is or is not
+	// eligible: "unstable" counts as MergeableYes under the standing
+	// non-required-checks policy, so a ✓ on the dashboard can sit next to red
+	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
+	// policy; this is the evidence the pill tooltip shows for it.
+	MergeableState string `json:"mergeable_state,omitempty"`
+	CIStatus       string `json:"ci_status"`
+	HeadSHA        string `json:"head_sha,omitempty"`
 	// HeadRef is the PR's head branch name; HeadRepo is the "owner/name" the
 	// head branch lives in. FromFork is true when HeadRepo differs from the
 	// PR's base repository (GitHub's isCrossRepository) — or when the head
@@ -932,6 +940,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
 		} else {
 			prs[i].Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
+			prs[i].MergeableState = full.GetMergeableState()
 		}
 
 		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, prs[i].HeadSHA, &gh.ListCheckRunsOptions{

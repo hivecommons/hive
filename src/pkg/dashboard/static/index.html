@@ -4750,7 +4750,7 @@
       const _ocSparkCounts = {
         actionable: govActionable,
         openPrs: govPrs,
-        mergeable: (window._lastStatus?.repos || []).reduce((n, r) => n + (r.openPrs || []).filter(p => p.mergeable).length, 0),
+        mergeable: (window._lastStatus?.repos || []).reduce((n, r) => n + (r.openPrs || []).filter(prMergeable).length, 0),
       };
 
       detail.innerHTML = `
@@ -6113,7 +6113,7 @@
         const repos = (window._lastStatus || {}).repos || [];
         if (field === 'actionableCount') return repos.reduce((n, r) => n + (r.actionableIssues || []).length, 0);
         if (field === 'openPrCount') return repos.reduce((n, r) => n + (r.openPrs || []).length, 0);
-        if (field === 'mergeableCount') return repos.reduce((n, r) => n + (r.openPrs || []).filter(p => p.mergeable).length, 0);
+        if (field === 'mergeableCount') return repos.reduce((n, r) => n + (r.openPrs || []).filter(prMergeable).length, 0);
         return 0;
       }
       return undefined;
@@ -8057,6 +8057,32 @@
       return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
+    // `mergeable` on an open PR is the tri-state string the Go side has sent
+    // since #2365 — "yes", "no", or "" for not-yet-known — NOT a bool. A
+    // truthiness test on the raw field reads "no" as eligible, which is
+    // how ~90% of the pills on a hosted hive wore the green ✓ while GitHub
+    // reported them DIRTY or BLOCKED (#7471). Every reader of the field goes
+    // through here so the comparison cannot drift back to truthiness.
+    function prMergeable(p) {
+      return !!p && p.mergeable === 'yes';
+    }
+
+    // The tooltip fragment describing mergeability. `mergeable_state` is
+    // GitHub's raw state behind the verdict: "unstable" counts as eligible
+    // under the standing non-required-checks policy, so an eligible pill
+    // must say that non-required checks may still be red rather than let ✓
+    // read as "all green". An unknown verdict says so instead of saying
+    // nothing, and "no" names the state (dirty, blocked, ...) that refused it.
+    function prMergeNote(p) {
+      const state = p && p.mergeable_state ? String(p.mergeable_state) : '';
+      if (prMergeable(p)) {
+        if (state === 'unstable') return ' (merge eligible — GitHub state: unstable; non-required checks may be red)';
+        return ' (merge eligible' + (state ? ' — GitHub state: ' + state : '') + ')';
+      }
+      if (p && p.mergeable === 'no') return ' (not mergeable' + (state ? ' — GitHub state: ' + state : '') + ')';
+      return ' (mergeability not yet known)';
+    }
+
     async function queuePRAutoMerge(owner, repo, number, btn) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Queueing…'; }
@@ -8131,8 +8157,9 @@
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
-          const mergeIcon = p.mergeable ? '<span class="pill-merge-icon">✓</span>' : '';
-          const mergeClass = p.mergeable ? ' mergeable' : '';
+          const mergeable = prMergeable(p);
+          const mergeIcon = mergeable ? '<span class="pill-merge-icon">✓</span>' : '';
+          const mergeClass = mergeable ? ' mergeable' : '';
           const prAge = pillAge(p.created_at);
           const labels = (p.labels || []).map(l => String(l));
           const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');
@@ -8147,7 +8174,7 @@
           // derived server-side from the title prefix and lane label only.
           const reviewClass = p.review_class ? String(p.review_class) : '';
           const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
@@ -8158,12 +8185,23 @@
           // for auto-merge would contradict the escalation. Removing the
           // needs-human label on GitHub returns the PR to the automated lane
           // and brings the queue action back on the next refresh.
+          //
+          // A PR GitHub reports as not mergeable (conflicts, a required
+          // review or check missing) keeps the button but disabled, with the
+          // state as the reason: a live "Queue auto-merge" beside a DIRTY PR
+          // read as "this is ready to go" (#7471), and the sweep would only
+          // refuse it later as not-mergeable anyway. An unknown verdict still
+          // offers the action — "" means not fetched yet, never "no".
+          const notMergeable = p.mergeable === 'no';
+          const notMergeableTip = 'Not mergeable on GitHub' + (p.mergeable_state ? ' (' + String(p.mergeable_state) + ')' : '') + ' — resolve that before queueing for auto-merge';
           const queueBtn = needsHuman
             ? '<span class="repo-pr-pill needs-human pill-needs-human-badge" title="Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.">⚠ needs human</span>'
             : (canQueue
                 ? (queued
                     ? '<span class="repo-pr-pill mergeable" title="Already queued for Hive auto-merge on green CI">Queued</span>'
-                    : `<button class="repo-pr-pill" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1">Queue auto-merge</button>`)
+                    : (notMergeable
+                        ? `<button class="repo-pr-pill" disabled title="${esc(notMergeableTip)}">Queue auto-merge</button>`
+                        : `<button class="repo-pr-pill" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1">Queue auto-merge</button>`))
                 : '');
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what

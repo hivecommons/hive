@@ -1281,6 +1281,28 @@ func CollectRepoSnapshots(payload *StatusPayload) map[string]governor.RepoSnapsh
 	return result
 }
 
+// openPRIsMergeable reports whether one entry of FrontendRepo.OpenPrs carries
+// the tri-state verdict github.MergeableYes.
+//
+// OpenPrs is []any: buildRepos fills it with github.PullRequest values, and a
+// payload that has been through JSON (tests, replayed snapshots) carries
+// map[string]any with the verdict serialised as the string "yes"/"no"/"".
+// Both shapes are read here. The verdict has been a string since #2365, so a
+// bool comparison never matched and the "Mergeable" sparkline sat at zero
+// (#7471); "" (unknown) and "no" both count as not mergeable.
+func openPRIsMergeable(pr any) bool {
+	switch p := pr.(type) {
+	case github.PullRequest:
+		return p.Mergeable == github.MergeableYes
+	case *github.PullRequest:
+		return p != nil && p.Mergeable == github.MergeableYes
+	case map[string]any:
+		s, _ := p["mergeable"].(string)
+		return s == string(github.MergeableYes)
+	}
+	return false
+}
+
 func CollectAgentStats(payload *StatusPayload) map[string]map[string]any {
 	result := make(map[string]map[string]any)
 	for _, a := range payload.Agents {
@@ -1320,10 +1342,8 @@ func CollectAgentStats(payload *StatusPayload) map[string]map[string]any {
 					total := 0
 					for _, r := range payload.Repos {
 						for _, pr := range r.OpenPrs {
-							if m, ok := pr.(map[string]any); ok {
-								if mb, ok := m["mergeable"].(bool); ok && mb {
-									total++
-								}
+							if openPRIsMergeable(pr) {
+								total++
 							}
 						}
 					}

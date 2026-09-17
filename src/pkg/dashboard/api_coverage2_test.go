@@ -529,9 +529,11 @@ func TestCollectAgentStats_StatusSource(t *testing.T) {
 		Repos: []FrontendRepo{
 			{
 				ActionableIssues: []any{"issue1", "issue2"},
+				// The verdict is the tri-state string from #2365, not a
+				// bool; see TestCollectAgentStats_MergeableCountTriState.
 				OpenPrs: []any{
-					map[string]any{"title": "pr1", "mergeable": true},
-					map[string]any{"title": "pr2", "mergeable": false},
+					map[string]any{"title": "pr1", "mergeable": "yes"},
+					map[string]any{"title": "pr2", "mergeable": "no"},
 				},
 			},
 		},
