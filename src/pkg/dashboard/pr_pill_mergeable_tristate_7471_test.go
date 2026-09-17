@@ -164,6 +164,7 @@ func TestPRPillMergeableHelperBehaviour(t *testing.T) {
 
 	html := indexHTML(t)
 	script := jsFunc(t, html, "prMergeable") + "\n" +
+		jsFunc(t, html, "prMergeState") + "\n" +
 		jsFunc(t, html, "prMergeNote") + "\n" + prPillMergeableAssertions
 
 	path := filepath.Join(t.TempDir(), "pill.js")
@@ -195,12 +196,16 @@ check('works as a filter callback',
   [{ mergeable: 'yes' }, { mergeable: 'no' }, { mergeable: '' }, {}].filter(prMergeable).length === 1);
 
 // The tooltip names the GitHub state behind the verdict.
+// Without a sweep verdict on the wire (#7478) a GitHub "yes" is reported as
+// mergeable on GitHub — never as merge eligible, which only the sweep's own
+// verdict may claim.
 const clean = prMergeNote({ mergeable: 'yes', mergeable_state: 'clean' });
-check('eligible + clean says eligible', clean.includes('merge eligible'));
-check('eligible + clean names the state', clean.includes('clean'));
+check('yes + clean says mergeable on GitHub', clean.includes('mergeable on GitHub'));
+check('yes + clean does not claim merge eligible', !clean.includes('merge eligible'));
+check('yes + clean names the state', clean.includes('clean'));
 
 const unstable = prMergeNote({ mergeable: 'yes', mergeable_state: 'unstable' });
-check('unstable is still eligible', unstable.includes('merge eligible'));
+check('unstable is still mergeable on GitHub', unstable.includes('mergeable on GitHub'));
 check('unstable warns that non-required checks may be red', unstable.includes('non-required checks may be red'));
 
 const dirty = prMergeNote({ mergeable: 'no', mergeable_state: 'dirty' });
@@ -219,7 +224,7 @@ check('unknown says it is not yet known', unknown.includes('not yet known'));
 // A payload predating mergeable_state still renders without "undefined".
 const noState = prMergeNote({ mergeable: 'yes' });
 check('missing state renders no undefined', !noState.includes('undefined'));
-check('missing state still says eligible', noState.includes('merge eligible'));
+check('missing state still says mergeable on GitHub', noState.includes('mergeable on GitHub'));
 check('missing state on "no" renders no undefined', !prMergeNote({ mergeable: 'no' }).includes('undefined'));
 
 if (fails) { console.log(fails + ' check(s) failed'); process.exit(1); }

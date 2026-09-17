@@ -1300,7 +1300,13 @@
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --pill-c: var(--purple); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
+    /* Three pill states (#7478). Green = the governor's merge-eligible
+       verdict: the sweep would merge this now. Amber = GitHub says
+       mergeable but the sweep still wants something (a red check with no
+       required-check set, a hold, a review, an intent verdict) — the honest
+       colour for GitHub's "unstable". No tint for dirty/blocked/unknown. */
     .repo-pr-pill.mergeable { --pill-c: var(--green); }
+    .repo-pr-pill.merge-outstanding { --pill-c: var(--yellow); }
     .repo-pr-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-pr-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-pr-pill .pill-merge-icon { font-size: 0.6rem; margin-left: 1px; }
@@ -8067,18 +8073,48 @@
       return !!p && p.mergeable === 'yes';
     }
 
-    // The tooltip fragment describing mergeability. `mergeable_state` is
-    // GitHub's raw state behind the verdict: "unstable" counts as eligible
-    // under the standing non-required-checks policy, so an eligible pill
-    // must say that non-required checks may still be red rather than let ✓
-    // read as "all green". An unknown verdict says so instead of saying
-    // nothing, and "no" names the state (dirty, blocked, ...) that refused it.
-    function prMergeNote(p) {
-      const state = p && p.mergeable_state ? String(p.mergeable_state) : '';
-      if (prMergeable(p)) {
-        if (state === 'unstable') return ' (merge eligible — GitHub state: unstable; non-required checks may be red)';
-        return ' (merge eligible' + (state ? ' — GitHub state: ' + state : '') + ')';
+    // The pill's colour state (#7478). Green may mean one thing only: the
+    // governor's merge-eligible classifier — the same rule that writes
+    // merge-eligible.json for the sweep — put this PR in the eligible
+    // bucket, so the sweep would merge it now. GitHub's own verdict is
+    // looser: mergeable_state "unstable" is "no conflicts, nothing REQUIRED
+    // red", which on a repo without branch protection includes red CI and no
+    // review, and the sweep will not touch those. So:
+    //   'eligible'    → green ✓   the sweep would merge this now
+    //   'outstanding' → amber ◐   GitHub says mergeable; the sweep still
+    //                             wants something (reason in the tooltip)
+    //   ''            → no tint   dirty / blocked / draft / unknown
+    // A payload without merge_verdict (an older governor, a replayed
+    // snapshot) falls back to GitHub's flag — and lands on AMBER, never
+    // green, because "the sweep would merge this" is exactly what such a PR
+    // has not been shown to satisfy.
+    function prMergeState(p) {
+      const v = p && p.merge_verdict ? p.merge_verdict : null;
+      if (v && typeof v.state === 'string') {
+        if (v.state === 'eligible') return 'eligible';
+        if (v.state === 'outstanding') return 'outstanding';
+        return '';
       }
+      return prMergeable(p) ? 'outstanding' : '';
+    }
+
+    // The tooltip fragment describing mergeability: the verdict's own reason
+    // when the governor supplied one, else GitHub's raw mergeable_state. An
+    // unknown verdict says so instead of saying nothing, and "no" names the
+    // state (dirty, blocked, ...) that refused it.
+    function prMergeNote(p) {
+      const v = p && p.merge_verdict ? p.merge_verdict : null;
+      const state = p && p.mergeable_state ? String(p.mergeable_state) : '';
+      const reason = v && v.reason ? String(v.reason) : '';
+      switch (prMergeState(p)) {
+        case 'eligible':
+          return ' (merge eligible: ' + (reason || 'the sweep would merge this now') + ')';
+        case 'outstanding':
+          if (reason) return ' (mergeable on GitHub, not yet eligible: ' + reason + ')';
+          if (state === 'unstable') return ' (mergeable on GitHub, sweep verdict not available — GitHub state: unstable; non-required checks may be red)';
+          return ' (mergeable on GitHub, sweep verdict not available' + (state ? ' — GitHub state: ' + state : '') + ')';
+      }
+      if (reason) return ' (' + reason + ')';
       if (p && p.mergeable === 'no') return ' (not mergeable' + (state ? ' — GitHub state: ' + state : '') + ')';
       return ' (mergeability not yet known)';
     }
@@ -8157,9 +8193,12 @@
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
-          const mergeable = prMergeable(p);
-          const mergeIcon = mergeable ? '<span class="pill-merge-icon">✓</span>' : '';
-          const mergeClass = mergeable ? ' mergeable' : '';
+          // Green ✓ only on the sweep's own verdict; amber ◐ for mergeable
+          // on GitHub but not yet eligible; nothing otherwise (#7478).
+          const mergeState = prMergeState(p);
+          const mergeIcon = mergeState === 'eligible' ? '<span class="pill-merge-icon">✓</span>'
+            : mergeState === 'outstanding' ? '<span class="pill-merge-icon">◐</span>' : '';
+          const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';
           const prAge = pillAge(p.created_at);
           const labels = (p.labels || []).map(l => String(l));
           const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');

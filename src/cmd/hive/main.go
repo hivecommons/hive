@@ -6101,7 +6101,10 @@ func runEvalCycle(
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
 	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSet()
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, logger)
+	// The per-PR verdicts come back so the dashboard's PR pills can be
+	// painted from the sweep's own classification rather than a looser
+	// reading of GitHub's mergeable flag (hivecommons/hive#7478).
+	mergeVerdicts := writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, logger)
 
 	// Review-bot threads (hivecommons/hive#7360): list every unresolved
 	// external-review-bot thread on an open hive-authored PR into
@@ -6450,6 +6453,10 @@ func runEvalCycle(
 		ctx,
 		metricsCollector,
 	)
+	// Green on a PR pill means "the sweep would merge this now" — the
+	// verdict writeMergeEligible reached for this same actionable set a
+	// few lines up, not a re-derivation from mergeable_state (#7478).
+	dashboard.AttachMergeVerdicts(statusPayload, mergeVerdicts)
 	statusPublished := false
 	// Ingest any JSONL findings agents wrote and persist them as beads.
 	if advisoryStore != nil {
@@ -8938,7 +8945,176 @@ func anyRequiredCheckFailing(failing []string, required map[string]bool) bool {
 	return false
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, logger *slog.Logger) {
+// mergeBucket is where the merge-eligible classifier files a PR: the
+// merge-eligible.json list, the ci-failing.json list, or neither.
+type mergeBucket int
+
+const (
+	mergeBucketSkip mergeBucket = iota
+	mergeBucketFailing
+	mergeBucketEligible
+)
+
+// mergeGates bundles the per-tick inputs the classifier applies beyond the
+// PR itself: the intent and review artifacts and the operator's
+// required-check set.
+type mergeGates struct {
+	enforceIntent         bool
+	intentVerdicts        map[string]intent.Verdict
+	requireReviewApproval bool
+	reviewArtifact        review.Artifact
+	reviewLoaded          bool
+	requiredChecks        map[string]bool
+}
+
+// classifyMergeEligibility is THE merge-eligibility rule: the one place that
+// decides whether a PR goes to merge-eligible.json (the sweep would merge it
+// now), ci-failing.json (its author has CI to fix), or neither. It returns
+// the bucket and, for the dashboard, the same decision as a MergeVerdict with
+// the reason spelled out (hivecommons/hive#7478): the pill is painted from
+// this verdict, so green on the card means exactly what the sweep means by
+// eligible, and never the looser "GitHub says mergeable".
+//
+// intentReason is non-empty only when the intent gate excluded the PR; the
+// caller logs it (the log line carries the verdict tier, which this function
+// does not need).
+func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string, g mergeGates) (bucket mergeBucket, verdict github.MergeVerdict, intentReason string) {
+	// blockedOrOutstanding is the verdict for a PR the sweep will not take
+	// for a reason of its own: the state still depends on what GitHub says,
+	// because a conflicting PR is blocked whatever else is outstanding, and
+	// one whose mergeability was never fetched is unknown, not amber.
+	blockedOrOutstanding := func(reason string) github.MergeVerdict {
+		switch pr.Mergeable {
+		case github.MergeableNo:
+			return github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr)}
+		case github.MergeableUnknown:
+			return github.MergeVerdict{State: github.MergeVerdictUnknown, Reason: "mergeability not yet known; " + reason}
+		}
+		return github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: reason}
+	}
+
+	if pr.Draft {
+		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft"}, ""
+	}
+	if g.enforceIntent {
+		if v, ok := g.intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && v.AgentPR && !v.MergeAllowed() {
+			reason := v.Reason
+			if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
+				reason = intent.ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
+			}
+			return mergeBucketSkip, blockedOrOutstanding("intent verification: " + reason), reason
+		}
+	}
+
+	if pr.CIStatus == "failure" {
+		// A PR red ONLY on non-required checks (perma-red Playwright
+		// shards, coverage) that GitHub itself reports mergeable is NOT a
+		// failing PR — it is merge-eligible, mirroring the
+		// pending-but-mergeable rule below. Without this, every dependabot
+		// PR on a repo with permanently-red optional checks classified as
+		// "failure", landed in ci-failing.json where no sweep or agent
+		// would ever merge it, and accumulated indefinitely (observed on
+		// kubestellar/console 2026-08-28: 16 dependabot PRs, oldest 11
+		// days). Gated on an operator-declared required-check set: with no
+		// set configured we cannot distinguish required from optional and
+		// keep the old fail-closed behavior. The merge step re-enforces
+		// branch protection, so this cannot merge anything GitHub blocks.
+		onlyOptionalRed := len(g.requiredChecks) > 0 &&
+			!anyRequiredCheckFailing(pr.FailingChecks, g.requiredChecks) &&
+			pr.Mergeable == github.MergeableYes
+		if !onlyOptionalRed {
+			reason := "CI failing"
+			if len(pr.FailingChecks) > 0 {
+				reason += ": " + strings.Join(pr.FailingChecks, ", ")
+			}
+			if len(g.requiredChecks) == 0 && pr.Mergeable == github.MergeableYes {
+				// GitHub calls it mergeable (unstable): nothing REQUIRED is
+				// red. The sweep still refuses it because, with no
+				// required-check set declared, it cannot tell optional from
+				// required. Say so — this is the shape #7478 was filed on.
+				reason += " (GitHub reports it mergeable; declare auto_merge.required_checks for the sweep to treat non-required checks as optional)"
+			}
+			return mergeBucketFailing, blockedOrOutstanding(reason), ""
+		}
+	}
+
+	// The hold check sits AFTER the red classification on purpose
+	// (hivecommons/hive#7438): a held PR must never become merge-eligible,
+	// but a held RED PR is still its author's to repair. When this skip ran
+	// first, a level-held agent PR with a failing check vanished from
+	// ci-failing.json, its author never got a fix-before-new block for it,
+	// and it sat red and held until a human did the agent's repair.
+	if held {
+		return mergeBucketSkip, blockedOrOutstanding("held: a hold label keeps it out of the sweep"), ""
+	}
+
+	// A PR whose CI is still "pending" is nonetheless merge-eligible when
+	// GitHub itself reports it as mergeable (mergeStateStatus=unstable):
+	// that state means every REQUIRED check has passed and only
+	// non-required checks remain outstanding. Those non-required checks —
+	// a cancelled Mobile Browser Tests, a still-running coverage-report,
+	// perpetually-pending tide — can never complete on their own, so
+	// waiting for CIStatus=="success" (all checks done) leaves cleanly
+	// mergeable PRs frozen out of the sweep indefinitely (observed
+	// 2026-08-04: three green console PRs stuck for hours). The merge step
+	// re-enforces branch protection, so trusting the mergeable verdict here
+	// cannot merge anything GitHub would actually block.
+	if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes {
+		// Genuinely not ready: a required check is still running (or
+		// mergeability is unknown/no). Leave it out of both buckets, as
+		// before — it neither merges nor gets a fix dispatched.
+		return mergeBucketSkip, blockedOrOutstanding("CI pending"), ""
+	}
+
+	if pr.Mergeable == github.MergeableNo {
+		// A conflicting PR cannot merge no matter how green its checks
+		// are. Listing it as merge-eligible left the eligible count stuck
+		// at N forever while nothing could actually merge (console
+		// #23002/#23003, 2026-08-31: the only two build-gate-green PRs
+		// were DIRTY go.mod dependabot bumps). Conflicts are the
+		// rebase/needs-human path's job, not the sweep's — keep them out
+		// of the eligible bucket.
+		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr)}, ""
+	}
+
+	if g.requireReviewApproval {
+		if !g.reviewLoaded {
+			return mergeBucketSkip, blockedOrOutstanding("review approval required, but review-verdicts.json is unavailable"), ""
+		}
+		if !g.reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA) {
+			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
+		}
+	}
+
+	// Eligible. The reason names what GitHub still shows outstanding that
+	// the sweep chooses to ignore, so a green pill beside a red optional
+	// check does not read as "all green".
+	reason := "the sweep would merge this now"
+	switch {
+	case pr.CIStatus == "failure":
+		reason += " — only non-required checks are red (" + strings.Join(pr.FailingChecks, ", ") + ")"
+	case pr.CIStatus == "pending":
+		reason += " — non-required checks still pending (GitHub: " + pr.MergeableState + ")"
+	case pr.MergeableState == "unstable":
+		reason += " — non-required checks outstanding (GitHub: unstable)"
+	case pr.Mergeable == github.MergeableUnknown:
+		reason += " — mergeability not yet fetched; the sweep re-checks it at merge time"
+	}
+	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
+}
+
+// notMergeableReason names GitHub's own state (dirty, blocked, behind, ...)
+// for a PR it reports as not mergeable; the state is what the operator has
+// to resolve.
+func notMergeableReason(pr github.PullRequest) string {
+	if pr.MergeableState != "" {
+		return "not mergeable on GitHub (" + pr.MergeableState + ")"
+	}
+	return "not mergeable on GitHub"
+}
+
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, logger *slog.Logger) map[string]github.MergeVerdict {
+	verdicts := make(map[string]github.MergeVerdict)
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
@@ -9033,12 +9209,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		candidates = append(candidates, prCandidate{pr: pr, held: true})
 	}
 
+	gates := mergeGates{
+		enforceIntent:         enforceIntent,
+		intentVerdicts:        intentVerdicts,
+		requireReviewApproval: requireReviewApproval,
+		reviewArtifact:        reviewArtifact,
+		reviewLoaded:          reviewLoaded,
+		requiredChecks:        requiredChecks,
+	}
 	seen := make(map[string]bool, len(candidates))
 	for _, cand := range candidates {
 		pr := cand.pr
-		if pr.Draft {
-			continue
-		}
 		key := fmt.Sprintf("%s/%d", pr.Repo, pr.Number)
 		if seen[key] {
 			continue
@@ -9048,90 +9229,33 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// the hold snapshot; both mean the same thing here.
 		held := cand.held || holdSet[key]
 		fullRepo := fullRepoName(pr.Repo, org)
-		if enforceIntent {
-			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.MergeAllowed() {
-				reason := verdict.Reason
-				if verdict.Authorized && verdict.Alignment != nil && verdict.Alignment.Misaligned() {
-					reason = intent.ReasonAlignmentMisaligned + ": " + verdict.Alignment.Rationale
-				}
-				logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", reason)
-				continue
-			}
-		}
 
-		if pr.CIStatus == "failure" {
-			// A PR red ONLY on non-required checks (perma-red Playwright
-			// shards, coverage) that GitHub itself reports mergeable is NOT a
-			// failing PR — it is merge-eligible, mirroring the
-			// pending-but-mergeable rule below. Without this, every dependabot
-			// PR on a repo with permanently-red optional checks classified as
-			// "failure", landed in ci-failing.json where no sweep or agent
-			// would ever merge it, and accumulated indefinitely (observed on
-			// kubestellar/console 2026-08-28: 16 dependabot PRs, oldest 11
-			// days). Gated on an operator-declared required-check set: with no
-			// set configured we cannot distinguish required from optional and
-			// keep the old fail-closed behavior. The merge step re-enforces
-			// branch protection, so this cannot merge anything GitHub blocks.
-			onlyOptionalRed := len(requiredChecks) > 0 &&
-				!anyRequiredCheckFailing(pr.FailingChecks, requiredChecks) &&
-				pr.Mergeable == github.MergeableYes
-			if !onlyOptionalRed {
-				failing = append(failing, failingPR{
-					Number:          pr.Number,
-					Repo:            fullRepo,
-					Title:           pr.Title,
-					Author:          pr.Author,
-					HeadSHA:         pr.HeadSHA,
-					FailingChecks:   pr.FailingChecks,
-					Excerpt:         pr.CIFailureExcerpt,
-					Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
-					Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
-					HeadRef:         pr.HeadRef,
-					HeadRepo:        pr.HeadRepo,
-					FromFork:        pr.FromFork,
-					ReachableAction: github.ReachableAction(pr),
-					Held:            held,
-				})
-				continue
-			}
+		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, gates)
+		verdicts[github.MergeVerdictKey(pr)] = verdict
+		if intentReason != "" {
+			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
+			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)
 		}
-
-		// The hold check sits AFTER the red classification on purpose
-		// (hivecommons/hive#7438): a held PR must never become merge-eligible,
-		// but a held RED PR is still its author's to repair. When this skip ran
-		// first, a level-held agent PR with a failing check vanished from
-		// ci-failing.json, its author never got a fix-before-new block for it,
-		// and it sat red and held until a human did the agent's repair.
-		if held {
+		switch bucket {
+		case mergeBucketSkip:
 			continue
-		}
-
-		// A PR whose CI is still "pending" is nonetheless merge-eligible when
-		// GitHub itself reports it as mergeable (mergeStateStatus=unstable):
-		// that state means every REQUIRED check has passed and only
-		// non-required checks remain outstanding. Those non-required checks —
-		// a cancelled Mobile Browser Tests, a still-running coverage-report,
-		// perpetually-pending tide — can never complete on their own, so
-		// waiting for CIStatus=="success" (all checks done) leaves cleanly
-		// mergeable PRs frozen out of the sweep indefinitely (observed
-		// 2026-08-04: three green console PRs stuck for hours). The merge step
-		// re-enforces branch protection, so trusting the mergeable verdict here
-		// cannot merge anything GitHub would actually block.
-		if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes {
-			// Genuinely not ready: a required check is still running (or
-			// mergeability is unknown/no). Leave it out of both buckets, as
-			// before — it neither merges nor gets a fix dispatched.
-			continue
-		}
-
-		if pr.Mergeable == github.MergeableNo {
-			// A conflicting PR cannot merge no matter how green its checks
-			// are. Listing it as merge-eligible left the eligible count stuck
-			// at N forever while nothing could actually merge (console
-			// #23002/#23003, 2026-08-31: the only two build-gate-green PRs
-			// were DIRTY go.mod dependabot bumps). Conflicts are the
-			// rebase/needs-human path's job, not the sweep's — keep them out
-			// of the eligible bucket.
+		case mergeBucketFailing:
+			failing = append(failing, failingPR{
+				Number:          pr.Number,
+				Repo:            fullRepo,
+				Title:           pr.Title,
+				Author:          pr.Author,
+				HeadSHA:         pr.HeadSHA,
+				FailingChecks:   pr.FailingChecks,
+				Excerpt:         pr.CIFailureExcerpt,
+				Escalated:       escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+				Agent:           prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+				HeadRef:         pr.HeadRef,
+				HeadRepo:        pr.HeadRepo,
+				FromFork:        pr.FromFork,
+				ReachableAction: github.ReachableAction(pr),
+				Held:            held,
+			})
 			continue
 		}
 
@@ -9143,9 +9267,6 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			case "dco-signoff: no":
 				dco = "no"
 			}
-		}
-		if requireReviewApproval && (!reviewLoaded || !reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA)) {
-			continue
 		}
 		eligible = append(eligible, eligiblePR{
 			Number:    pr.Number,
@@ -9168,7 +9289,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	data, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("failed to marshal merge-eligible", "error", err)
-		return
+		return verdicts
 	}
 	atomicWrite(mergeEligiblePath, data)
 	logger.Info("merge-eligible.json updated", "eligible", len(eligible), "ci_failing", len(failing), "total_prs", len(actionable.PRs.Items))
@@ -9180,9 +9301,10 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	failData, err := json.Marshal(failPayload)
 	if err != nil {
 		logger.Warn("failed to marshal ci-failing", "error", err)
-		return
+		return verdicts
 	}
 	atomicWrite(ciFailingPath, failData)
+	return verdicts
 }
 
 func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr *agent.Manager, logger *slog.Logger) review.DispatchPlan {
