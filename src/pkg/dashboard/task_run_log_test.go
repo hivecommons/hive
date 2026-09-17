@@ -16,12 +16,25 @@ import (
 )
 
 // Redirects the run log to a scratch file for one test.
+//
+// The swap and the restore both hold taskRunMu: a hijacked websocket handler
+// can outlive its test (httptest's Close does not wait for hijacked conns),
+// and its deferred disconnect-abandonment append reads taskRunLogPath under
+// that mutex — an unguarded restore in Cleanup races with it.
 func scratchRunLog(t *testing.T) string {
 	t.Helper()
+	dir := t.TempDir()
+	taskRunMu.Lock()
 	prev := taskRunLogPath
-	taskRunLogPath = t.TempDir() + "/task_runs.jsonl"
-	t.Cleanup(func() { taskRunLogPath = prev })
-	return taskRunLogPath
+	taskRunLogPath = dir + "/task_runs.jsonl"
+	path := taskRunLogPath
+	taskRunMu.Unlock()
+	t.Cleanup(func() {
+		taskRunMu.Lock()
+		taskRunLogPath = prev
+		taskRunMu.Unlock()
+	})
+	return path
 }
 
 // The scenario vocabulary is the ratchet axis: every (outcome, signal, kind)
