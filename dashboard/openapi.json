@@ -4395,7 +4395,7 @@
           "Agents"
         ],
         "summary": "Update an agent's backend/model",
-        "description": "Owner-only. Sets backend and/or model (either may be omitted/empty to leave unchanged), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. Does not restart the agent itself; syncs the change into the live process config.",
+        "description": "Owner-only. Sets backend, model and/or reasoning_effort (backend and model may be omitted/empty to leave unchanged; reasoning_effort is applied when present, with \"\" meaning the backend default), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. The change is persisted AND applied to the live launch configuration (#7374): a new model/backend replaces any runtime override left by /api/model, /api/switch, a pin or the governor — previously such an override silently won at launch, so a restart respawned the agent on the old model. Because all three are launch-time flags, the agent is restarted once when any of them actually changed; an unchanged value does not restart.",
         "parameters": [
           {
             "name": "name",
@@ -4419,6 +4419,10 @@
                   },
                   "model": {
                     "type": "string"
+                  },
+                  "reasoning_effort": {
+                    "type": "string",
+                    "description": "Reasoning effort for backends that take one (codex, agy); \"\" clears to the backend default. Omit to leave unchanged."
                   }
                 }
               }
@@ -4427,7 +4431,7 @@
         },
         "responses": {
           "200": {
-            "description": "Backend/model updated",
+            "description": "Backend/model updated and applied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4435,10 +4439,23 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "example": "updated"
+                      "example": "updated",
+                      "description": "\"updated\" on success. When the change needed a restart and that restart failed, a longer status explains that the value is persisted and applied to the launch configuration but the running session is still on the old flags."
                     },
                     "agent": {
                       "type": "string"
+                    },
+                    "applied": {
+                      "type": "boolean",
+                      "description": "True: the values are in the live launch configuration, not just on disk."
+                    },
+                    "restarted": {
+                      "type": "boolean",
+                      "description": "True when the agent was restarted to pick up a changed model, backend or reasoning effort; false when nothing launch-relevant changed or the restart failed."
+                    },
+                    "restart_error": {
+                      "type": "string",
+                      "description": "Present only when the restart failed."
                     }
                   }
                 }
@@ -4446,7 +4463,7 @@
             }
           },
           "400": {
-            "description": "Invalid body or unsupported backend"
+            "description": "Invalid body, unsupported backend, or invalid reasoning effort"
           },
           "403": {
             "description": "Owner role required"

@@ -4340,6 +4340,23 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// What the agent LAUNCHES with is not agentCfg alone: launchInTmux
+	// prefers a live ModelOverride/BackendOverride (set by the card
+	// dropdowns via /api/model and /api/switch, by a pin, or by the
+	// governor's auto-selection) over Config.Model/Backend. Compare the
+	// request against those effective values so a change is detected — and
+	// applied — even when the config field already matched (#7374).
+	prevModel, prevBackend := agentCfg.Model, agentCfg.Backend
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil {
+		if proc.ModelOverride != "" {
+			prevModel = proc.ModelOverride
+		}
+		if proc.BackendOverride != "" {
+			prevBackend = proc.BackendOverride
+		}
+	}
+	modelChanged, backendChanged, effortChanged := false, false, false
+
 	// Operator edits claim ownership so the pack apply that runs on every
 	// restart cannot reconcile the choice back to the pack default.
 	if body.Backend != "" {
@@ -4354,10 +4371,12 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
+		backendChanged = backend != prevBackend
 	}
 	if body.Model != "" {
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
+		modelChanged = agentCfg.Model != prevModel
 	}
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
@@ -4369,6 +4388,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		effortChanged = effort != agentCfg.ReasoningEffort
 		agentCfg.ReasoningEffort = effort
 	}
 	s.deps.Config.Agents[name] = agentCfg
@@ -4388,8 +4408,45 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
+
+	// Apply the change to the LIVE launch configuration, exactly as
+	// handleAgentConfigGeneral and the card dropdowns (/api/model, /api/switch)
+	// do (#7374). UpdateConfig above only refreshed agent.Config; a stale
+	// ModelOverride left by an earlier /api/model or the governor still won
+	// at launch, so "persist, then restart" produced a real respawn on the
+	// OLD model with a 200 and a correct-looking overlay file. Setting the
+	// override to the saved value keeps config, status and the next launch
+	// in agreement; the effort lives in agent.Config and is already synced.
+	// Model, backend and effort are all launch-time flags, so the change is
+	// applied by restarting — once, for however many of them moved.
+	if modelChanged {
+		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
+			s.logger.Warn("failed to apply model from config endpoint", "agent", name, "error", err)
+		}
+	}
+	if backendChanged {
+		if err := s.deps.AgentMgr.SetBackendOverride(name, agentCfg.Backend); err != nil {
+			s.logger.Warn("failed to apply backend from config endpoint", "agent", name, "error", err)
+		}
+	}
+	resp := map[string]any{"ok": true, "status": "updated", "agent": name, "applied": true, "restarted": false}
+	if modelChanged || backendChanged || effortChanged {
+		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+			// Persisted and applied to the launch configuration, but the
+			// running session (if any) is still on the old flags. Say so in
+			// the response rather than returning a bare "updated" — the
+			// silent success is what made this bug invisible.
+			s.logger.Warn("restart after config-endpoint model/backend/effort change failed", "agent", name, "error", err)
+			resp["status"] = "updated; applied to the launch configuration but the restart failed — restart the agent to pick it up"
+			resp["restart_error"] = err.Error()
+		} else {
+			resp["restarted"] = true
+			s.deps.Logger.Info("audit: agent restarted to apply config change", "agent", name,
+				"model_changed", modelChanged, "backend_changed", backendChanged, "effort_changed", effortChanged, "trigger", "dashboard-api")
+		}
+	}
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated", "agent": name})
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Request) {
