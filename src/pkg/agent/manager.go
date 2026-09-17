@@ -5314,8 +5314,11 @@ func (m *Manager) GetStatusFast(name string) (*AgentProcess, error) {
 		if m.statusSnaps == nil {
 			m.statusSnaps = make(map[string]*AgentProcess)
 		}
-		cached := snap
-		m.statusSnaps[name] = &cached
+		// Cache the same pointer we return: AgentProcess contains locks
+		// (paneMu), so copying the value trips govet copylocks. Snapshots
+		// are read-only display values by contract; a later refresh
+		// replaces the map entry rather than mutating this one.
+		m.statusSnaps[name] = &snap
 		m.statusSnapMu.Unlock()
 
 		return &snap, nil
@@ -5325,8 +5328,9 @@ func (m *Manager) GetStatusFast(name string) (*AgentProcess, error) {
 	cached, ok := m.statusSnaps[name]
 	m.statusSnapMu.RUnlock()
 	if ok && cached != nil {
-		stale := *cached
-		return &stale, nil
+		// Returned as-is (no copy) for the same copylocks reason; stale
+		// snapshots are read-only.
+		return cached, nil
 	}
 	return nil, fmt.Errorf("agent %s status unavailable: manager busy", name)
 }
