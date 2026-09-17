@@ -3440,6 +3440,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"restartStrategy":  restartStrategy,
 			"model":            model,
 			"clearOnKick":      agentCfg.ClearOnKick,
+			"onDemand":         agentCfg.OnDemand,
 			"emoji":            agentCfg.Emoji,
 			"color":            agentCfg.Color,
 			"sortOrder":        agentCfg.SortOrder,
@@ -3932,6 +3933,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["clearOnKick"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.ClearOnKick = b
+		}
+	}
+	// On-demand is a real per-agent field that had no control: it was only ever
+	// readable as a badge, so an operator could see "on demand" but not leave it
+	// (hivecommons/hive#7446). Turning it off is necessary but not sufficient —
+	// the agent also needs a cadence in the active mode before it is kicked.
+	if v, ok := body["onDemand"]; ok {
+		if b, ok := v.(bool); ok {
+			agentCfg.OnDemand = b
 		}
 	}
 	if v, ok := body["displayName"]; ok {

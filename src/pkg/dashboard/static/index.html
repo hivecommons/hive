@@ -20405,6 +20405,10 @@ function burnAreaChart() {
           <span class="config-toggle-label">Clear on Kick <span class="config-info">i<span class="config-tooltip">Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.</span></span></span>
         </div>
         <div class="config-toggle">
+          <div class="config-toggle-switch ${g.onDemand === true ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
+          <span class="config-toggle-label">On Demand <span class="config-info">i<span class="config-tooltip">When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.</span></span>${g.onDemand === true ? ' <span class="status-badge">on demand</span>' : ''}</span>
+        </div>
+        <div class="config-toggle">
           <div class="config-toggle-switch ${g.includeRepos !== false ? 'on' : ''}" id="cfg-include-repos" data-action="toggleConfigSwitch" data-section="general" data-key="includeRepos"></div>
           <span class="config-toggle-label">Include Repos in Kicks <span class="config-info">i<span class="config-tooltip">Append monitored repo information to the kick prompt. Disable for agents that don't need repo context (e.g. outreach).</span></span></span>
         </div>
