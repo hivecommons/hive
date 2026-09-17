@@ -3588,6 +3588,48 @@ spec:
     secretName: hive-tls
 {{- end}}
 ---
+# The dashboard's own XHR routes (/api/config/…, /api/terminal/…,
+# /api/gh-user-auth/…). Same auth gate as the page, but WITHOUT auth-signin:
+# a browser can follow the login redirect on a page navigation, but fetch()
+# cannot follow a cross-origin redirect to the IdP — Safari rejects it as
+# "TypeError: Load failed", so the dashboard's res.status === 401 branches
+# never fired and the config dialog fell back to a fabricated all-zero config
+# (#7405). Here an expired session answers a real 401, and the error backend
+# turns it into a JSON body for /api/ callers. Longest-prefix matching keeps
+# /api/v1 and /api/contribute on their own (ungated) Ingresses below.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hive-api-xhr
+  namespace: {{.Namespace}}
+  annotations:
+{{- if not .UseWildcardTLS}}
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
+{{- end}}
+    nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
+    nginx.ingress.kubernetes.io/custom-http-errors: "401,502,503"
+    nginx.ingress.kubernetes.io/default-backend: hive-error-pages
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
+spec:
+  ingressClassName: {{.IngressClass}}
+  rules:
+  - host: {{.DashboardHost}}
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: hive
+            port:
+              number: {{.DashboardPort}}
+{{- if not .UseWildcardTLS}}
+  tls:
+  - hosts:
+    - {{.DashboardHost}}
+    secretName: hive-tls
+{{- end}}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -3798,7 +3840,7 @@ spec:
 
 	// nginx: append a rule + TLS host to each existing Ingress via a JSON patch.
 	patched := 0
-	for _, ing := range []string{"hive", "hive-api", "hive-contribute", "hive-terminal"} {
+	for _, ing := range []string{"hive", "hive-api-xhr", "hive-api", "hive-contribute", "hive-terminal"} {
 		raw, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", ing, "-o", "json").Output()
 		if err != nil {
 			continue // not every spoke has all three

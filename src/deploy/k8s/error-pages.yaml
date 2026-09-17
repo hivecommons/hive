@@ -60,6 +60,51 @@ data:
   # "ok": false is the field clients key off (issue #4241).
   error.json: |
     {"ok":false,"error":"hive unavailable","detail":"This hive is restarting or its API is temporarily unreachable. The request was NOT applied - retry shortly."}
+  # Served for a 401 intercepted on the hive-api-xhr Ingress (the dashboard's
+  # XHR routes under /api/, see src/pkg/hub/saas_provision.go). That Ingress
+  # deliberately has no auth-signin: fetch() cannot follow the cross-origin
+  # redirect to the hub login (Safari rejects it as "TypeError: Load failed"),
+  # so an expired session must come back as a real 401 the dashboard can read
+  # (issue #7405). "ok": false again, and "error": "unauthorized" is the value
+  # clients key off. The HTML twin is for a browser that navigated to an /api/
+  # URL directly (a config download link, /api/docs): the dashboard root still
+  # carries the login redirect, so it points there.
+  unauthorized.json: |
+    {"ok":false,"error":"unauthorized","detail":"Your session has expired or you are not signed in to this hive. Sign in again and retry - the request was NOT applied."}
+  unauthorized.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Hive — Sign in</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: #0d1117;
+          color: #e6edf3;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+        }
+        .container { text-align: center; max-width: 480px; padding: 40px 24px; }
+        .bee { font-size: 64px; margin-bottom: 24px; }
+        h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 12px; }
+        p { font-size: 0.95rem; color: #8b949e; line-height: 1.6; margin-bottom: 24px; }
+        a { color: #f0b429; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="bee">🐝</div>
+        <h1>Your session expired</h1>
+        <p>Sign in again to keep using this hive.</p>
+        <p><a href="/">Sign in</a></p>
+      </div>
+    </body>
+    </html>
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -72,7 +117,8 @@ data:
     #
     # ingress-nginx sends a request here when a hive Ingress intercepts one of
     # the upstream statuses named in its custom-http-errors annotation ("502,503"
-    # -- see the hive Ingress in src/pkg/hub/saas_provision.go). It rewrites the
+    # on the hive Ingress, "401,502,503" on the hive-api-xhr Ingress -- see
+    # src/pkg/hub/saas_provision.go). It rewrites the
     # URI to "/" and passes the original request's metadata in headers:
     #
     #   X-Code          the intercepted upstream status, e.g. "502"
@@ -116,8 +162,13 @@ data:
       # triggered it, so these documents are served AS the upstream's status
       # rather than as 200.
       error_page 500 502 503 504 /error.$hive_error_ext;
+      # 401 gets its own document: it is intercepted from the hive-api-xhr
+      # Ingress (issue #7405) and means "sign in again", not "retry shortly".
+      error_page 401 /unauthorized.$hive_error_ext;
       location = /error.html { internal; }
       location = /error.json { internal; }
+      location = /unauthorized.html { internal; }
+      location = /unauthorized.json { internal; }
 
       # Probed by the kubelet directly, never through the Ingress, so it is not
       # affected by the status mapping below.
@@ -129,6 +180,7 @@ data:
       location / {
         # Reflect the intercepted status back to the caller. `return` answers
         # every method, so a POST is no longer served a static file with 200.
+        if ($http_x_code = "401") { return 401; }
         if ($http_x_code = "500") { return 500; }
         if ($http_x_code = "502") { return 502; }
         if ($http_x_code = "504") { return 504; }

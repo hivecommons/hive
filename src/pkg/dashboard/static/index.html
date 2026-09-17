@@ -1750,6 +1750,11 @@
     .toast.sticky { cursor: pointer; padding-right: 30px; position: relative; }
     .toast-close { position: absolute; top: 4px; right: 8px; font-size: 0.9rem; line-height: 1; color: var(--muted); background: none; border: none; padding: 2px 4px; cursor: pointer; }
     .toast-close:hover { color: var(--text); }
+    /* An action inside a sticky toast (e.g. "Sign in" on the session-expired
+       toast, #7405). It must stay clickable without the click-anywhere
+       dismissal swallowing it — see showSessionExpiredToast. */
+    .toast-action { margin-left: 10px; padding: 2px 9px; font-size: 0.72rem; line-height: 1.4; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; vertical-align: middle; }
+    .toast-action:hover { border-color: var(--accent); color: var(--accent); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-10px); } }
@@ -6276,7 +6281,10 @@
         else if (resp.status === 403) showToast('Your current hive role cannot open terminals.', 'error');
         else showToast('Could not refresh terminal access (HTTP ' + resp.status + ').', 'error');
       } catch (e) {
-        showToast('Could not refresh terminal access: ' + e.message, 'error');
+        // A rejected fetch is how an expired hosted session shows up (the
+        // status branches above never see it); the shared handler decides
+        // whether this is "sign in again" or a real failure (#7405).
+        await reportFetchFailure('Could not refresh terminal access', e);
       }
       return false;
     }
@@ -6312,7 +6320,7 @@
         if (!data.code) throw new Error('server returned no handoff code');
         return data.code;
       } catch (e) {
-        showToast('Could not prepare terminal access: ' + (e.message || e), 'error');
+        await reportFetchFailure('Could not prepare terminal access', e);
         return '';
       }
     }
@@ -15370,6 +15378,114 @@ function burnAreaChart() {
       return await res.json();
     }
 
+    /* ---- Session-expiry-aware fetch failures (#7405) ----
+       On a hosted spoke every request passes the ingress auth gate, and an
+       expired hub session used to surface as a cross-origin redirect to the
+       IdP that fetch() cannot follow: Safari rejects with "TypeError: Load
+       failed", so no `res.status === 401` branch in this file ever fired.
+       Every caller then reported its own "…: Load failed" toast — one expired
+       session produced three at once (config load, terminal assertion
+       renewal, terminal handoff) and none of them said what to do.
+
+       reportFetchFailure is the single funnel for those sites. On a rejected
+       fetch (or an explicit 401/403) it probes the session ONCE, independent
+       of the status code the original request did or did not carry, and when
+       the session is gone shows one actionable "sign in again" toast instead
+       of the caller's message. */
+    const SESSION_EXPIRED_MESSAGE = 'Your session expired — sign in again';
+    const SESSION_PROBE_PATH = '/api/gh-user-auth/status';
+    let _sessionProbe = null;
+    let _sessionExpiredToast = null;
+    let _sessionSignIn = 'reload';
+
+    /* probeSession classifies the current session as 'ok' (signed in),
+       'expired' (the server or the gate said the session is gone) or
+       'unknown' (the probe could not tell — the caller's failure is then an
+       ordinary one). signIn names the recovery for an expired session:
+       'reload' re-enters the hosted login redirect with a full navigation,
+       which the browser CAN follow cross-origin; 'device' starts the
+       self-hosted GitHub device flow. Concurrent callers share one in-flight
+       probe, so three failing requests make one probe and one verdict. */
+    function probeSession() {
+      if (_sessionProbe) return _sessionProbe;
+      _sessionProbe = (async () => {
+        try {
+          const r = await fetch(SESSION_PROBE_PATH, { cache: 'no-store', credentials: 'same-origin' });
+          // The status endpoint itself is public on the spoke, so a 401/403
+          // can only come from the hosted ingress gate: the hub session is
+          // gone (the /api ingress answers a real 401 rather than redirecting
+          // — see the hive-api-xhr Ingress in saas_provision.go).
+          if (r.status === 401 || r.status === 403) return { state: 'expired', signIn: 'reload' };
+          if (!r.ok) return { state: 'unknown' };
+          const d = await r.json().catch(() => null);
+          if (!d || typeof d.logged_in === 'undefined') return { state: 'unknown' };
+          if (d.logged_in) return { state: 'ok' };
+          // logged_in:false is the steady state of a token-mode hive with no
+          // device-flow login at all; it only means "expired" when this page
+          // had an identity earlier.
+          return window._hiveUser ? { state: 'expired', signIn: 'device' } : { state: 'unknown' };
+        } catch (e) {
+          // The probe itself could not complete. On a hosted host that is the
+          // gate's cross-origin bounce (a spoke outage answers 502/503 from
+          // the ingress instead); elsewhere it is an unreachable hive.
+          return isHostedHiveHost() ? { state: 'expired', signIn: 'reload' } : { state: 'unknown' };
+        } finally {
+          _sessionProbe = null;
+        }
+      })();
+      return _sessionProbe;
+    }
+
+    /* A fetch that never produced a response (network error, or a redirect
+       the browser refused to follow) — the shape an expired hosted session
+       takes. Distinct from an HTTP error, which did answer. */
+    function isFetchRejection(err) {
+      return err instanceof TypeError || (!!err && err.name === 'TypeError');
+    }
+    function isAuthStatusError(err) {
+      return !!err && /^HTTP (401|403)\b/.test(String(err.message || ''));
+    }
+
+    function signInAgain() {
+      if (_sessionSignIn === 'device') startGHLogin();
+      else window.location.reload();
+    }
+
+    /* One sticky toast for the whole page: a second expired-session report
+       while the first toast is still up is folded into it. */
+    function showSessionExpiredToast(signIn) {
+      _sessionSignIn = signIn || 'reload';
+      if (_sessionExpiredToast && _sessionExpiredToast.parentNode) return _sessionExpiredToast;
+      const el = showToast(SESSION_EXPIRED_MESSAGE, 'error');
+      const btn = document.createElement('button');
+      btn.className = 'toast-action';
+      btn.textContent = 'Sign in';
+      // The sticky toast dismisses on any click inside it; the action must not
+      // be swallowed by that.
+      btn.addEventListener('click', (ev) => { ev.stopPropagation(); signInAgain(); });
+      el.appendChild(btn);
+      _sessionExpiredToast = el;
+      return el;
+    }
+
+    /* reportFetchFailure(context, err) reports a failed authenticated request.
+       Resolves true when the failure was an expired session — the caller
+       should then render its own signed-out state and NOT retry or fall back
+       to made-up data — and false when it was reported as an ordinary error
+       under `context`. */
+    async function reportFetchFailure(context, err) {
+      if (isFetchRejection(err) || isAuthStatusError(err)) {
+        const session = await probeSession();
+        if (session.state === 'expired') {
+          showSessionExpiredToast(session.signIn);
+          return true;
+        }
+      }
+      const detail = err && err.message ? err.message : String(err);
+      showToast(context + ': ' + (isFetchRejection(err) ? 'could not reach this hive (' + detail + ')' : detail), 'error');
+      return false;
+    }
+
     // Kick delivery is asynchronous (#5325). POST /api/kick answers 202 as soon
     // as the message is queued; whether it actually reached the CLI is read
     // from GET /api/kick/{agent}/status. Poll that until it settles.
@@ -17505,6 +17621,9 @@ function burnAreaChart() {
         document.getElementById('config-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading…</div>';
         loadConfigData(type, agentName).finally(() => {
           if (!_configModalOpen) return;
+          // Nothing loaded: say so, and never render a tab from the empty
+          // placeholder (#7405).
+          if (_configState.loadError) { renderConfigLoadError(); return; }
           const dn = (_configState.data.general || {}).displayName;
           if (dn && type !== 'governor') {
             document.querySelector('.config-title').textContent = `${dn} Configuration`;
@@ -17931,20 +18050,58 @@ function burnAreaChart() {
       if (hashTarget) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#config/' + encodeURIComponent(hashTarget) + '/' + encodeURIComponent(tabId)) : '#config/' + encodeURIComponent(hashTarget) + '/' + encodeURIComponent(tabId));
     }
 
+    /* loadConfigData fills _configState.data from the server, or records why
+       it could not. It never fabricates a config: the old `data = {}`
+       fallback rendered every field as 0/blank/off and armed Save to persist
+       exactly those zeros (#7405). On failure loadError is 'session' (the
+       session is gone — the shared handler already showed the sign-in toast)
+       or 'error' with the reason in loadErrorDetail, and every render path
+       checks it before touching data. */
     async function loadConfigData(type, agentName) {
+      _configState.loadError = null;
+      _configState.loadErrorDetail = '';
       try {
         const url = type === 'governor' ? '/api/config/governor' : `/api/config/agent/${agentName}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         _configState.data = await res.json();
       } catch (err) {
-        showToast(`Failed to load config: ${err.message}`, 'error');
-        _configState.data = {};
+        const expired = await reportFetchFailure('Failed to load config', err);
+        _configState.loadError = expired ? 'session' : 'error';
+        _configState.loadErrorDetail = err && err.message ? err.message : String(err);
       }
+    }
+
+    /* renderConfigLoadError replaces the dialog body with an explicit
+       "nothing loaded" state. No tab renders (a tab would read the
+       placeholder data and show it as real values) and Save is disabled
+       through syncRepoSaveGuard. */
+    function renderConfigLoadError() {
+      const body = document.getElementById('config-body');
+      if (!body) return;
+      const expired = _configState.loadError === 'session';
+      const detail = expired ? SESSION_EXPIRED_MESSAGE : escapeHtml(_configState.loadErrorDetail || 'unknown error');
+      body.innerHTML = '<div class="config-load-error" style="text-align:center;padding:40px">' +
+        '<div style="color:var(--red);font-weight:600">Could not load configuration — not showing values</div>' +
+        '<div style="color:var(--muted);margin-top:8px;font-size:0.8rem">' + detail + '</div>' +
+        '<div style="margin-top:16px">' +
+        (expired
+          ? '<button class="btn" data-action="signInAgain">Sign in</button>'
+          : '<button class="btn" data-action="retryConfigLoad">Retry</button>') +
+        '</div></div>';
+      if (typeof syncRepoSaveGuard === 'function') syncRepoSaveGuard();
+    }
+
+    function retryConfigLoad() {
+      if (!_configModalOpen || _configState.isCreate || !_configState.type) return;
+      openConfigDialog(_configState.type, _configState.agent, _configState.initialTabOverride);
     }
 
     function renderConfigTab(tabId) {
       const body = document.getElementById('config-body');
+      // A tab click after a failed load must not render the placeholder data
+      // as if it were the agent's config (#7405).
+      if (_configState.loadError) { renderConfigLoadError(); return; }
       if (_configState.type === 'agent') {
         body.innerHTML = renderAgentTab(tabId);
         // The Prompts tab renders a shell synchronously, then loads this
@@ -23713,18 +23870,26 @@ function burnAreaChart() {
     // syncRepoSaveGuard disables the config dialog Save button while the Repos
     // tab has repos but no default selected, so a hive can never be saved without
     // exactly one default (requirement #4). Called after every config tab render.
+    const CONFIG_NOT_LOADED_MESSAGE = 'Configuration did not load — there is nothing to save.';
     function syncRepoSaveGuard() {
       const saveBtn = document.querySelector('.config-footer .config-save');
       if (!saveBtn) return;
       let block = false;
+      let why = '';
       const d = _configState.data || {};
-      if (_configState.type === 'governor' && Array.isArray(d.repos) && d.repos.length > 0) {
+      if (_configState.loadError) {
+        // Nothing loaded, so there is nothing real to save; a Save here would
+        // persist the placeholder's zeros (#7405).
+        block = true;
+        why = CONFIG_NOT_LOADED_MESSAGE;
+      } else if (_configState.type === 'governor' && Array.isArray(d.repos) && d.repos.length > 0) {
         block = !d.primaryRepo || !d.repos.includes(d.primaryRepo);
+        why = 'Set a default repo before saving — click a ☆ star in the Repos tab.';
       }
       saveBtn.disabled = block;
       saveBtn.style.opacity = block ? '0.5' : '';
       saveBtn.style.cursor = block ? 'not-allowed' : '';
-      saveBtn.title = block ? 'Set a default repo before saving — click a ☆ star in the Repos tab.' : '';
+      saveBtn.title = block ? why : '';
     }
 
     function addListItem(section, key, inputId) {
@@ -23873,6 +24038,14 @@ function burnAreaChart() {
 
     async function saveConfig() {
       const dirty = _configState.dirty;
+
+      // Guard: the dialog never loaded a config (#7405). Save is disabled in
+      // this state, but a keyboard/racy click could still reach here — refuse
+      // rather than PUT values that were never the agent's.
+      if (_configState.loadError) {
+        showToast(CONFIG_NOT_LOADED_MESSAGE, 'error');
+        return;
+      }
 
       // Guard: a governor config with repos must always name a default that is
       // one of them (requirement #4). The Save button is disabled in this state,

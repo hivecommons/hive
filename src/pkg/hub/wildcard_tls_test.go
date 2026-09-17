@@ -158,7 +158,7 @@ func renderManifestWildcard(t *testing.T, useWildcard bool) string {
 	return buf.String()
 }
 
-// ingressBlocks returns the four provisioned nginx Ingress documents by name.
+// ingressBlocks returns the five provisioned nginx Ingress documents by name.
 func ingressBlocks(t *testing.T, manifest string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -166,7 +166,7 @@ func ingressBlocks(t *testing.T, manifest string) map[string]string {
 		if !strings.Contains(block, "kind: Ingress") {
 			continue
 		}
-		for _, name := range []string{"hive-api", "hive-contribute", "hive-terminal", "hive"} {
+		for _, name := range []string{"hive-api-xhr", "hive-api", "hive-contribute", "hive-terminal", "hive"} {
 			if strings.Contains(block, "name: "+name+"\n") {
 				out[name] = block
 				break
@@ -176,7 +176,7 @@ func ingressBlocks(t *testing.T, manifest string) map[string]string {
 	return out
 }
 
-var provisionedIngresses = []string{"hive", "hive-api", "hive-contribute", "hive-terminal"}
+var provisionedIngresses = []string{"hive", "hive-api-xhr", "hive-api", "hive-contribute", "hive-terminal"}
 
 // The default must be byte-for-byte the historical behaviour: a cluster that
 // has not opted in keeps every tls: block and every issuer annotation.

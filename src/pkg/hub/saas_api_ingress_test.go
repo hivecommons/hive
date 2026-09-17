@@ -6,7 +6,9 @@ import (
 )
 
 func TestHostedNginxIngressBypassesBrowserAuthOnlyForAPIV1(t *testing.T) {
-	apiStart := strings.Index(k8sManifestTemplate, "name: hive-api")
+	// Exact name: hive-api-xhr (the session-gated dashboard XHR prefix, #7405)
+	// sits right before this Ingress and shares the prefix.
+	apiStart := strings.Index(k8sManifestTemplate, "name: hive-api\n")
 	if apiStart < 0 {
 		t.Fatal("hosted manifest is missing a dedicated hive-api ingress")
 	}
