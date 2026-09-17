@@ -81,12 +81,12 @@ This is the finding that should shape step 4, so it comes before the answers.
 
 ### 2.1 `pkg/convergence/mutation` — the fenced lease, already built
 
-`Ledger` (`src/pkg/convergence/mutation/ledger.go:81`) is a durable claim ledger
+`Ledger` (`src/pkg/convergence/mutation/ledger.go:82`) is a durable claim ledger
 whose every transition is a compare-and-set on `{key, expected epoch, expected
-state}`. `Acquire` (`:166`) grants at `prev+1` and persists before returning, so
+state}`. `Acquire` (`:167`) grants at `prev+1` and persists before returning, so
 an epoch is never handed out that a restart could forget. `ValidateEpoch`
-(`:257`) is the fence, checked at the mutation boundary. Expiry reconciles an
-`ActiveMutation` entry to `Waiting` rather than `Released` (`:134`), so a crashed
+(`:258`) is the fence, checked at the mutation boundary. Expiry reconciles an
+`ActiveMutation` entry to `Waiting` rather than `Released` (`:135`), so a crashed
 holder is fenced without its ownership being silently discarded.
 
 Alongside it, `Journal` (`journal.go:166`) records each logical operation with an
@@ -118,14 +118,14 @@ prototypes.
 
 | | atomic CAS on claim | cross-process serialization | corruption-resistant persist |
 |---|---|---|---|
-| `beads.Store` | **no** — `Claim` (`beads.go:441`) sets `in_progress` unconditionally through `Update` (`:419`) | **yes** — `lockAndRefresh` takes an exclusive `flock` and re-reads (`xproc_lock.go:32`) | **yes** — unique temp name per writer (`beads.go:773`), fixed in #4742 |
-| `mutation.Ledger` | **yes** — every transition is a CAS (`ledger.go:220`) with a monotonic epoch | **no** — serialized by an in-process `sync.Mutex` only (`ledger.go:81`) | **no** — fixed `path + ".tmp"`, no fsync (`ledger.go:285`) |
+| `beads.Store` | **no** — `Claim` (`beads.go:443`) sets `in_progress` unconditionally through `Update` (`:421`) | **yes** — `lockAndRefresh` takes an exclusive `flock` and re-reads (`xproc_lock.go:32`) | **yes** — unique temp name per writer (`beads.go:828`), fixed in #4742 |
+| `mutation.Ledger` | **yes** — every transition is a CAS (`ledger.go:221`) with a monotonic epoch | **no** — serialized by an in-process `sync.Mutex` only (`ledger.go:82`) | **no** — fixed `path + ".tmp"`, no fsync (`ledger.go:286`) |
 | `turn.FileStore` | **no** — `SessionEnvelope` carries no owner, epoch or lease at all | **no** | **yes** — `CreateTemp` + `Sync` + rename + dir fsync (`store.go:17`) |
 
 Each implementation holds two of the three properties, and a different two. The
 `mutation.Ledger` persist gap is the *same* fixed-temp-name pattern that #4742
 removed from beads — the beads code carries the explanatory comment
-(`beads.go:789-794`) and the ledger, written later and independently, does not.
+(`beads.go:844-849`) and the ledger, written later and independently, does not.
 
 **Pinned by test.** `TestTwoOpenLedgersBothAcquireTheSameClaim` and
 `TestReopeningAfterAConcurrentAcquireSeesOnlyTheLastWriter`
@@ -156,17 +156,17 @@ blocking.
 The issue's hard problem 2 is explicit: cross-process handoff "must go through
 the existing atomic offer→claim path". The path exists. The atomicity does not:
 
-- `Store.Claim` (`beads.go:441`) sets `StatusInProgress` unconditionally via
-  `Update` (`:419`). The cross-process `flock` (`xproc_lock.go:32`) serializes
+- `Store.Claim` (`beads.go:443`) sets `StatusInProgress` unconditionally via
+  `Update` (`:421`). The cross-process `flock` (`xproc_lock.go:32`) serializes
   the two *writes*; nothing compares against the prior status, so the second
-  caller is told it succeeded. `bd update --claim` (`src/cmd/bd/main.go:243`)
+  caller is told it succeeded. `bd update --claim` (`src/cmd/bd/main.go:169`)
   prints "Claimed" either way.
-- A claim records **no claimant**. `Bead.Actor` (`beads.go:111`) is set at
+- A claim records **no claimant**. `Bead.Actor` (`beads.go:113`) is set at
   `Create` and means *addressee*, not *holder*, and `Claim` never touches it. So
   re-entry cannot distinguish "I already hold this, resume it" from "somebody
   else holds this, leave it alone" — the one distinction a lease exists to make.
-- `Ready` (`beads.go:578`) is a pure read with no reservation, consumed only by
-  `bd ready` (`src/cmd/bd/main.go:169`). Offer→claim is therefore a
+- `Ready` (`beads.go:580`) is a pure read with no reservation, consumed only by
+  `bd ready` (`src/cmd/bd/main.go:243`). Offer→claim is therefore a
   read-then-write across two separate short-lived CLI processes.
 
 **Pinned by test.** `TestClaimDoesNotRejectAnAlreadyClaimedBead`,
@@ -219,8 +219,8 @@ version field that makes the format evolvable.
 | field | why |
 |---|---|
 | `Owner` | who holds this envelope now. `TaskRef` names the work, not the holder; §3.2 shows the bead cannot supply it. |
-| `Epoch` | the fencing token. Must be minted by the ledger, not by the envelope, so it is monotonic across processes. `mutation.Entry.Epoch` (`ledger.go:58`) is that value. |
-| `LeaseExpiry` | so a crashed holder's work becomes adoptable without a human. `mutation.Ledger` already reconciles expiry to `Waiting` (`ledger.go:134`). |
+| `Epoch` | the fencing token. Must be minted by the ledger, not by the envelope, so it is monotonic across processes. `mutation.Entry.Epoch` (`ledger.go:59`) is that value. |
+| `LeaseExpiry` | so a crashed holder's work becomes adoptable without a human. `mutation.Ledger` already reconciles expiry to `Waiting` (`ledger.go:135`). |
 
 And one behaviour change: `Persist` must become a **compare-and-set on
 `Epoch`**, refusing a write from a holder the ledger has already fenced.

@@ -353,7 +353,7 @@ depend on when the hub last restarted.
 
 ## Note: the empty-master readers
 
-The task flagged that `hub_keys.go:314`, `:356`, and `:390` read
+The task flagged that `hub_keys.go:466`, `:508`, and `:586` read
 `os.Getenv("HIVE_HUB_SECRET")` directly, and that this env var is UNSET on the
 live hub pod — raising the question of what is currently deriving keys from an
 empty master.
@@ -361,12 +361,12 @@ empty master.
 It is not a bug. Those three sites are inside `spokeDomainKey`,
 `SpokeHeartbeatKey`, and `SpokeSSOPublicKey` — all SPOKE-side resolvers. The
 `hive` binary serves both roles but selects between them at startup:
-`runHub()` (`src/cmd/hive/main.go:9477`) is the only caller of
+`runHub()` (`src/cmd/hive/main.go:9464`) is the only caller of
 `hub.NewHubServer`, and it is a distinct mode from the spoke path. On a hub
 pod those three functions are never called, so the empty `HIVE_HUB_SECRET`
 they would read is never consulted.
 
-The hub's own material comes from `NewHubServer` (`server.go:1107`), which
+The hub's own material comes from `NewHubServer` (`server.go:1383`), which
 reads the env var, falls back to `/data/saas/hub-secret.key`, and generates +
 persists a fresh secret if both are absent — and `provisionMasterSecret()`
 mirrors that same order. Both resolve to the 64-byte file that exists on the
