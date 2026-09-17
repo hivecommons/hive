@@ -10172,19 +10172,21 @@ function burnAreaChart() {
         r = r || {};
         const evidence = Array.isArray(r.evidence) ? r.evidence : [];
         const ev = evidence[0] || {};
+        const trigger = r.trigger || (r.criterion ? 'acmm-shortfall' : 'hive-code-defect');
+        const subject = r.criterion || trigger;
         const title = recovered ? 'Recovered: ' : '';
         const periodic = ev.periodicity ? `; periodic ${escapeHtml(ev.periodicity || '')}` : '';
         return `<li class="reco-crit ${recovered ? 'met' : 'unmet'}">
           <span class="mark">${recovered ? '✓' : i + 1}</span>
-          <div class="crit-body"><div class="crit-name">${title}${escapeHtml(r.criterion || 'unmet ACMM criterion')}</div>
+          <div class="crit-body"><div class="crit-name">${title}${escapeHtml(subject)}</div>
           <div class="crit-detail">${escapeHtml(ev.severity || 'medium')} ${escapeHtml(ev.component || 'hive')} / ${escapeHtml(ev.error_class || 'unknown')}; count ${escapeHtml(String(ev.count || 0))} in ${escapeHtml(ev.window || 'n/a')}${periodic}</div>
-          <div class="crit-cmp">fingerprint: ${escapeHtml(r.fingerprint || '')}; instance: ${escapeHtml(r.instance_id || '')}</div></div>
+          <div class="crit-cmp">trigger: ${escapeHtml(trigger)}; fingerprint: ${escapeHtml(r.fingerprint || '')}; instance: ${escapeHtml(r.instance_id || '')}</div></div>
         </li>`;
       };
       const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
       const recoveryHtml = recoveries.map((r, i) => mk(r, i, true)).join('');
       section.style.display = '';
-      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale" style="margin-top:0">Persistent ACMM shortfalls attributed to hive defects. Reports contain shape-only scrubbed evidence.</span></div><ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale" style="margin-top:0">Persistent ACMM shortfalls and hive-code defect symptoms. Reports contain shape-only scrubbed evidence.</span></div><ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
       applySectionCollapse('fleet-report-section');
     }
 

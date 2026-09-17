@@ -1,6 +1,8 @@
 package fleetreport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"reflect"
 	"strings"
 	"testing"
@@ -38,7 +40,7 @@ func TestEvaluateRequiresPersistentUnmetEpochsJustLevelledUpDoesNotFile(t *testi
 		Mode:       "BUSY",
 		ACMMLevel:  4,
 		Unmet:      []acmmadvisor.Criterion{{Name: "Green-CI streak"}},
-		Evidence:   []Evidence{{Component: "agent-runtime", Agent: "quality", ErrorClass: "agent crash loop", Count: 4, Window: time.Hour, Severity: "high", Attributable: true}},
+		Evidence:   []Evidence{{Component: "target-repo", Agent: "quality", ErrorClass: "required check failed", Count: 4, Window: time.Hour, Severity: "high", Attributable: true}},
 	}
 	got := Evaluate(obs, State{}, true)
 	if len(got.Reports) != 0 {
@@ -224,5 +226,93 @@ func TestEvaluateRetriesPendingRecoveryAfterCriterionPruned(t *testing.T) {
 	}}, false)
 	if len(got.Recoveries) != 1 || got.Recoveries[0].Fingerprint != "fp" {
 		t.Fatalf("pending recovery not retried: %#v", got.Recoveries)
+	}
+}
+
+func TestEvaluateTriggerBHiveDefectWithoutACMMShortfall(t *testing.T) {
+	obs := Observation{
+		EpochStart: time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC),
+		HiveID:     "hive-a",
+		Version:    "v4.40.2",
+		Commit:     "abcdef1234567890",
+		Mode:       "QUIET",
+		ACMMLevel:  3,
+		Evidence:   []Evidence{{Component: "proxy-write", Agent: "scanner", Lane: "pr", ErrorClass: "write: broken pipe", Count: 6, Window: 10 * time.Minute, Periodicity: "1m13s", Severity: "high", Attributable: true}},
+	}
+	got := Evaluate(obs, State{}, true)
+	if len(got.Reports) != 1 {
+		t.Fatalf("Trigger B reports=%#v, want one", got.Reports)
+	}
+	r := got.Reports[0]
+	if r.Trigger != TriggerHiveDefect || r.Criterion != "" {
+		t.Fatalf("trigger/criterion = %q/%q, want Trigger B without criterion", r.Trigger, r.Criterion)
+	}
+	if !contains(r.Labels, "trigger:hive-code-defect") || containsPrefix(r.Labels, "criterion:") {
+		t.Fatalf("Trigger B labels wrong: %v", r.Labels)
+	}
+	if strings.Contains(r.Body, "unmet criterion") || !strings.Contains(r.Body, "No ACMM shortfall is required") {
+		t.Fatalf("Trigger B body should omit unmet criterion and explain defect trigger:\n%s", r.Body)
+	}
+}
+
+func TestDefectFingerprintStableAndVersionScoped(t *testing.T) {
+	a := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.2")
+	b := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.2")
+	c := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.3")
+	d := Fingerprint("write: broken pipe", "proxy-write", "v4.40.2", "green-ci-streak")
+	if a != b || a == c || a == d || len(a) != 24 {
+		t.Fatalf("bad defect fingerprint stability/scope: a=%s b=%s c=%s d=%s", a, b, c, d)
+	}
+}
+
+func TestTriggerBRecoveryWhenEvidenceClears(t *testing.T) {
+	state := State{Open: map[string]OpenIssue{"fp": {Number: 9, Trigger: TriggerHiveDefect}}}
+	got := Evaluate(Observation{HiveID: "hive-a"}, state, false)
+	if len(got.Recoveries) != 1 || got.Recoveries[0].Criterion != "" || got.Recoveries[0].Trigger != TriggerHiveDefect {
+		t.Fatalf("Trigger B recovery = %#v", got.Recoveries)
+	}
+	if strings.Contains(got.Recoveries[0].Body, "unmet") {
+		t.Fatalf("Trigger B recovery should not mention unmet criterion: %s", got.Recoveries[0].Body)
+	}
+}
+
+func containsPrefix(xs []string, prefix string) bool {
+	for _, x := range xs {
+		if strings.HasPrefix(x, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTriggerARecoveryWaitsForCriterionToClear(t *testing.T) {
+	crit := acmmadvisor.Criterion{Name: "Green CI streak"}
+	state := State{Open: map[string]OpenIssue{"fp": {Number: 4, Trigger: TriggerACMMShortfall, Criterion: "green-ci-streak"}}}
+	got := Evaluate(Observation{HiveID: "hive-a", Unmet: []acmmadvisor.Criterion{crit}}, state, false)
+	if len(got.Recoveries) != 0 {
+		t.Fatalf("Trigger A recovered while criterion still unmet: %#v", got.Recoveries)
+	}
+}
+
+func TestTriggerAFingerprintPreservesLegacyScheme(t *testing.T) {
+	got := Fingerprint("write: broken pipe", "proxy", "v4.40.0", "green-ci-streak")
+	h := sha256.Sum256([]byte("write: broken pipe|proxy|v4.40.0|green-ci-streak"))
+	want := hex.EncodeToString(h[:])[:24]
+	if got != want {
+		t.Fatalf("Fingerprint changed from legacy scheme: got %s want %s", got, want)
+	}
+}
+
+func TestRecoveredTriggerBRecurrenceReportsAgain(t *testing.T) {
+	ev := Evidence{Component: "proxy-write", ErrorClass: "write: broken pipe", Count: 6, Window: time.Minute, Periodicity: "10s", Severity: "high", Attributable: true}
+	fp := DefectFingerprint(ev.ErrorClass, ev.Component, "v4.40.2")
+	report := BuildDefectReport(Observation{HiveID: "hive-a", Version: "v4.40.2"}, ev, fp, AnonymousInstanceID("hive-a"), "v4.40.2", "abcdef")
+	state := State{Open: map[string]OpenIssue{fp: {Number: 7, Trigger: TriggerHiveDefect, Recovered: true, BodyHash: StableBodyHash(report.Body)}}}
+	got := Evaluate(Observation{HiveID: "hive-a", Version: "v4.40.2", Evidence: []Evidence{ev}}, state, false)
+	if len(got.Reports) != 1 {
+		t.Fatalf("recovered recurrence did not report again: %#v", got.Reports)
+	}
+	if got.State.Open[fp].Recovered {
+		t.Fatalf("active recurrence should clear recovered flag: %#v", got.State.Open[fp])
 	}
 }

@@ -19,6 +19,9 @@ import (
 )
 
 const (
+	TriggerACMMShortfall = "acmm-shortfall"
+	TriggerHiveDefect    = "hive-code-defect"
+
 	PersistentUnmetEpochs = 2
 	DefaultEvidenceWindow = 10 * time.Minute
 	periodicMinEvents     = 3
@@ -71,6 +74,7 @@ type OpenIssue struct {
 	OpenedByHive bool   `json:"opened_by_hive"`
 	Recovered    bool   `json:"recovered,omitempty"`
 	Criterion    string `json:"criterion,omitempty"`
+	Trigger      string `json:"trigger,omitempty"`
 	BodyHash     string `json:"body_hash,omitempty"`
 }
 
@@ -80,7 +84,8 @@ type Report struct {
 	Title       string     `json:"title"`
 	Body        string     `json:"body"`
 	Labels      []string   `json:"labels"`
-	Criterion   string     `json:"criterion"`
+	Criterion   string     `json:"criterion,omitempty"`
+	Trigger     string     `json:"trigger"`
 	Evidence    []Evidence `json:"evidence"`
 	Recovered   bool       `json:"recovered,omitempty"`
 }
@@ -164,27 +169,22 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		}
 		state.Criteria[key] = cs
 	}
+
 	res := Result{DryRun: dryRun, State: state}
 	for key := range state.Criteria {
 		if _, ok := unmetKeys[key]; !ok {
 			delete(state.Criteria, key)
 		}
 	}
-	for fp, open := range state.Open {
-		if open.Criterion != "" && !open.Recovered {
-			if _, stillUnmet := unmetKeys[open.Criterion]; !stillUnmet {
-				res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Criterion: open.Criterion}))
-			}
-		}
-	}
-
 	if len(obs.Evidence) == 0 {
 		for _, name := range unmetKeys {
 			res.OperatorCriteria = append(res.OperatorCriteria, name)
 		}
 		sort.Strings(res.OperatorCriteria)
-		return res
 	}
+
+	active := map[string]bool{}
+	coveredByACMM := map[string]bool{}
 	for key, name := range unmetKeys {
 		if len(state.Criteria[key].Epochs) < PersistentUnmetEpochs {
 			continue
@@ -195,16 +195,64 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			}
 			fp := Fingerprint(ev.ErrorClass, ev.Component, version, key)
 			report := BuildReport(obs, key, name, ev, fp, instance, version, commit)
+			active[fp] = true
+			coveredByACMM[evidenceKey(ev)] = true
 			open := state.Open[fp]
+			wasRecovered := open.Recovered
+			if wasRecovered {
+				open.Recovered = false
+				open.BodyHash = ""
+			}
 			if open.Criterion == "" {
 				open.Criterion = key
-				state.Open[fp] = open
 			}
-			if dryRun || open.Number == 0 || open.BodyHash != StableBodyHash(report.Body) {
+			if open.Trigger == "" {
+				open.Trigger = TriggerACMMShortfall
+			}
+			state.Open[fp] = open
+			if dryRun || wasRecovered || open.Number == 0 || open.BodyHash != StableBodyHash(report.Body) {
 				res.Reports = append(res.Reports, report)
 			}
 		}
 	}
+
+	for _, ev := range obs.Evidence {
+		if !ev.Attributable || !isHiveCodeEvidence(ev) || coveredByACMM[evidenceKey(ev)] {
+			continue
+		}
+		fp := DefectFingerprint(ev.ErrorClass, ev.Component, version)
+		report := BuildDefectReport(obs, ev, fp, instance, version, commit)
+		active[fp] = true
+		open := state.Open[fp]
+		wasRecovered := open.Recovered
+		if wasRecovered {
+			open.Recovered = false
+			open.BodyHash = ""
+		}
+		if open.Trigger == "" {
+			open.Trigger = TriggerHiveDefect
+		}
+		state.Open[fp] = open
+		if dryRun || wasRecovered || open.Number == 0 || open.BodyHash != StableBodyHash(report.Body) {
+			res.Reports = append(res.Reports, report)
+		}
+	}
+
+	for fp, open := range state.Open {
+		if open.Recovered || active[fp] {
+			continue
+		}
+		trigger := openTrigger(open)
+		switch trigger {
+		case TriggerACMMShortfall:
+			if _, stillUnmet := unmetKeys[open.Criterion]; !stillUnmet {
+				res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Criterion: open.Criterion, Trigger: trigger}))
+			}
+		case TriggerHiveDefect:
+			res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Trigger: trigger}))
+		}
+	}
+
 	sort.Slice(res.Reports, func(i, j int) bool { return res.Reports[i].Fingerprint < res.Reports[j].Fingerprint })
 	sort.Slice(res.Recoveries, func(i, j int) bool { return res.Recoveries[i].Fingerprint < res.Recoveries[j].Fingerprint })
 	res.State = state
@@ -217,7 +265,8 @@ func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidenc
 	severityLabel := "severity:" + labelValue(ev.Severity)
 	versionLabel := "version:" + labelValue(version)
 	instanceLabel := "instance:" + instance
-	labels := []string{"fleet-report", componentLabel, severityLabel, versionLabel, instanceLabel, criterionLabel}
+	triggerLabel := "trigger:" + TriggerACMMShortfall
+	labels := []string{"fleet-report", componentLabel, severityLabel, versionLabel, instanceLabel, criterionLabel, triggerLabel}
 	sort.Strings(labels)
 	title := fmt.Sprintf("Fleet report: %s blocks %s [%s]", ev.Component, criterionName, fingerprint)
 	body := fmt.Sprintf(`<!-- hive-fleet-fingerprint:%s -->
@@ -242,7 +291,41 @@ A spoke reports that a hive-attributable condition is preventing it from satisfy
 | detected periodicity | %s |
 | self-recovered | no |
 `, fingerprint, instance, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, criterionName, criterionKey, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, ev.Count, ev.Window, emptyDash(ev.Periodicity))
-	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Evidence: []Evidence{ev}}
+	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Evidence: []Evidence{ev}}
+}
+
+func BuildDefectReport(obs Observation, ev Evidence, fingerprint, instance, version, commit string) Report {
+	componentLabel := "component:" + labelValue(ev.Component)
+	severityLabel := "severity:" + labelValue(ev.Severity)
+	versionLabel := "version:" + labelValue(version)
+	instanceLabel := "instance:" + instance
+	triggerLabel := "trigger:" + TriggerHiveDefect
+	labels := []string{"fleet-report", componentLabel, severityLabel, versionLabel, instanceLabel, triggerLabel}
+	sort.Strings(labels)
+	title := fmt.Sprintf("Fleet report: %s hive-code defect [%s]", ev.Component, fingerprint)
+	body := fmt.Sprintf(`<!-- hive-fleet-fingerprint:%s -->
+<!-- hive-fleet-instance:%s -->
+
+A spoke reports a symptom attributable to hive's own code paths. No ACMM shortfall is required for this trigger.
+
+## Evidence
+
+| Field | Value |
+|---|---|
+| trigger | %s |
+| anonymous instance | %s |
+| hive version | %s |
+| hive commit | %s |
+| mode | %s |
+| ACMM level | L%d |
+| component | %s |
+| agent/lane | %s / %s |
+| error class | %s |
+| count + window | %d in %s |
+| detected periodicity | %s |
+| self-recovered | no |
+`, fingerprint, instance, TriggerHiveDefect, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, ev.Count, ev.Window, emptyDash(ev.Periodicity))
+	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Trigger: TriggerHiveDefect, Evidence: []Evidence{ev}}
 }
 
 func RecoveryReport(open OpenIssue, report Report) Report {
@@ -253,6 +336,11 @@ func RecoveryReport(open OpenIssue, report Report) Report {
 
 func Fingerprint(errorClass, component, version, criterion string) string {
 	h := sha256.Sum256([]byte(strings.Join([]string{strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(version)), strings.ToLower(strings.TrimSpace(criterion))}, "|")))
+	return hex.EncodeToString(h[:])[:24]
+}
+
+func DefectFingerprint(errorClass, component, version string) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{TriggerHiveDefect, strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(version))}, "|")))
 	return hex.EncodeToString(h[:])[:24]
 }
 
@@ -272,6 +360,34 @@ func isBenign(e ErrorEvent) bool {
 	class := strings.ToLower(e.Class)
 	component := strings.ToLower(e.Component)
 	return strings.Contains(class, "i/o timeout") && (strings.Contains(component, "read") || strings.Contains(component, "keepalive"))
+}
+
+func evidenceKey(ev Evidence) string {
+	return strings.Join([]string{strings.ToLower(strings.TrimSpace(ev.Component)), strings.ToLower(strings.TrimSpace(ev.Agent)), strings.ToLower(strings.TrimSpace(ev.Lane)), strings.ToLower(strings.TrimSpace(ev.ErrorClass))}, "\x00")
+}
+
+func isHiveCodeEvidence(ev Evidence) bool {
+	component := strings.ToLower(strings.TrimSpace(ev.Component))
+	if component == "" || strings.Contains(component, "fleet-report") || strings.Contains(component, "reporting") {
+		return false
+	}
+	owned := []string{"proxy", "scheduler", "request-watcher", "watcher", "dashboard", "agent-runtime", "agent-lifecycle", "backend-auth", "inference-gateway", "merge", "pr-title", "github-client"}
+	for _, prefix := range owned {
+		if strings.Contains(component, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func openTrigger(open OpenIssue) string {
+	if open.Trigger != "" {
+		return open.Trigger
+	}
+	if open.Criterion != "" {
+		return TriggerACMMShortfall
+	}
+	return TriggerHiveDefect
 }
 
 func periodicity(events []ErrorEvent) string {

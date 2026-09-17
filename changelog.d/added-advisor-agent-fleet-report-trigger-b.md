@@ -1,0 +1,1 @@
+- Fleet self-reporting now also previews and optionally files hive-code defect reports when calibrated hive-owned runtime symptoms appear even without an ACMM shortfall.

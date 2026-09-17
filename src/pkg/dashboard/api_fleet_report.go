@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
@@ -38,8 +39,12 @@ type FleetReportStatus struct {
 }
 
 func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string, dryRun bool) *fleetreport.Result {
-	if status == nil || status.ACMMAdvice == nil {
+	if status == nil {
 		return nil
+	}
+	var unmet []acmmadvisor.Criterion
+	if status.ACMMAdvice != nil {
+		unmet = status.ACMMAdvice.Unmet
 	}
 	state := s.loadFleetReportState()
 	obs := fleetreport.Observation{
@@ -49,7 +54,7 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Commit:     commit,
 		Mode:       status.Governor.Mode,
 		ACMMLevel:  status.ACMMLevel,
-		Unmet:      status.ACMMAdvice.Unmet,
+		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
