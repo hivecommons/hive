@@ -415,7 +415,7 @@ jobs:
       - name: Partition packages into balanced buckets
         id: partition
         run: |
-          R=3
+          R=4
           # Anchored: drops exactly pkg/hub and exactly pkg/agent — the sliced
           # jobs run those two bare package paths. A subpackage of either
           # would land here, never nowhere. pkg/hubbackup et al. stay here.
@@ -433,14 +433,22 @@ jobs:
 
           weight() {
             case "$1" in
-              */pkg/github)    echo 51 ;;
-              */pkg/dashboard) echo 48 ;;
-              */pkg/proxy)     echo 47 ;;
-              */pkg/hubbackup) echo 29 ;;
-              */pkg/config)    echo 23 ;;
-              */cmd/hive)      echo 16 ;;
-              */pkg/discord)   echo 15 ;;
-              *)               echo 3  ;;
+              */cmd/hive)       echo 138 ;;
+              */pkg/dashboard)  echo 104 ;;
+              */pkg/github)     echo 62 ;;
+              */pkg/proxy)      echo 44 ;;
+              */pkg/scheduler)  echo 39 ;;
+              */pkg/config)     echo 31 ;;
+              */pkg/hubbackup)  echo 30 ;;
+              */pkg/ioscan)     echo 16 ;;
+              */pkg/skillreg)   echo 15 ;;
+              */pkg/tui)        echo 13 ;;
+              */pkg/discord)    echo 13 ;;
+              */pkg/apphealth)  echo 12 ;;
+              */pkg/convergence) echo 10 ;;
+              */pkg/mint)       echo 8 ;;
+              */pkg/rotation)   echo 6 ;;
+              *)                echo 3  ;;
             esac
           }
 
