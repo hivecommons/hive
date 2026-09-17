@@ -20,7 +20,7 @@ func TestIssueRefsCarryExternalWork(t *testing.T) {
 		{Repo: "acme/repo", SourceType: "linear", ExternalID: "ENG-2", Title: "second"},
 	}
 
-	refs := issueRefsForAgent("scanner", issues)
+	refs := issueRefsForAgent("scanner", issues, maxIssuesPerKick)
 	if len(refs) != 2 {
 		t.Fatalf("both external items must be referenced in the kick, got %d: %v", len(refs), refs)
 	}
@@ -43,7 +43,7 @@ func TestIssueRefsCarryExternalWork(t *testing.T) {
 func TestIssueRefsKeepGitHubSpelling(t *testing.T) {
 	refs := issueRefsForAgent("scanner", []github.Issue{
 		{Repo: "acme/repo", Number: 42, Title: "a github issue"},
-	})
+	}, maxIssuesPerKick)
 	if len(refs) != 1 || refs[0] != "acme/repo#42" {
 		t.Fatalf("github ref = %v, want [acme/repo#42]", refs)
 	}
@@ -57,7 +57,7 @@ func TestIssueRefsDropUnidentifiableItems(t *testing.T) {
 		{Repo: "acme/repo", Title: "no identity"},
 		{Repo: "", Number: 7, Title: "no repository"},
 		{Repo: "acme/repo", Number: 3, Title: "fine"},
-	})
+	}, maxIssuesPerKick)
 	if len(refs) != 1 || refs[0] != "acme/repo#3" {
 		t.Fatalf("only the identifiable item may be referenced, got %v", refs)
 	}
@@ -69,7 +69,7 @@ func TestIssueRefsDedupeOnCanonicalIdentity(t *testing.T) {
 	refs := issueRefsForAgent("scanner", []github.Issue{
 		{Repo: "acme/repo", SourceType: "jira", ExternalID: "OPS-1"},
 		{Repo: "acme/repo", SourceType: "jira", ExternalID: "OPS-1"},
-	})
+	}, maxIssuesPerKick)
 	if len(refs) != 1 {
 		t.Fatalf("a repeated enumeration of one item must yield one ref, got %v", refs)
 	}

@@ -50,13 +50,19 @@ const (
 	//   template body      ~3.0 KiB (mean of the 30 shipped policy templates
 	//                                in pkg/policies/defaults; largest is
 	//                                scanner-automerge.md at 10.5 KiB)
-	//   issue list         up to 12.7 KiB (maxIssuesPerKick=100 issues x ~127 B
-	//                                per formatIssueList line: age, repo,
-	//                                number, labels, 60-rune title)
-	//   PR list            ~3.5 KiB at 30 open PRs x ~120 B per line
+	//   issue list         up to 12.7 KiB (governor.kick_limits.max_issues,
+	//                                default 100 issues x ~127 B per
+	//                                formatIssueList line: age, repo, number,
+	//                                labels, 60-rune title)
+	//   PR list            up to ~6 KiB (governor.kick_limits.max_prs, default
+	//                                50 open PRs x ~120 B per line; ~3.5 KiB
+	//                                at a typical 30). The cap is load-bearing:
+	//                                before it existed a spoke with 302 open
+	//                                PRs delivered a 69.5 KiB kick, ~36 KiB of
+	//                                it this list (hivecommons/hive#7368).
 	//   knowledge section  ~3.0 KiB (knowledge_max_facts default 25)
 	//   repos section      ~0.4 KiB
-	// giving ~22 KiB for a worst-case prompt and ~8 KiB for a typical one.
+	// giving ~25 KiB for a worst-case prompt and ~8 KiB for a typical one.
 	//
 	// At the most aggressive shipped cadence pack (level-6 "busy": supervisor
 	// 2m, scanner/ci-maintainer 10m, quality 15m, architect/sec-check 30m,

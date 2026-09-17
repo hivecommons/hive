@@ -200,6 +200,15 @@ agents:
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
 
+  # Kick prompt list caps (#7368). Every issue list and every PR list in a
+  # kick is cut at these counts, with an explicit "… and N more" line, so a
+  # large backlog cannot balloon the prompt (302 open PRs once produced a
+  # 69.5 KiB kick that took ~3 minutes to type into the agent). Zero/absent
+  # means the default; there is no "uncapped".
+  # kick_limits:
+  #   max_issues: 100
+  #   max_prs: 50
+
   # Agent self-healing watchdog (RFC #4665): k8s-style liveness/readiness
   # reconciliation. Observes the tmux pane (not the state echo), restarts dead
   # agents with exponential backoff, escalates crash loops to pause + alert,

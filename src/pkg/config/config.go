@@ -1400,6 +1400,9 @@ type GovernorConfig struct {
 	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Trajectory TrajectoryConfig `yaml:"trajectory"`
 	Replan     ReplanConfig     `yaml:"replan"`
+	// KickLimits caps the issue and PR lists in every kick prompt
+	// (hivecommons/hive#7368). Absent = defaults (100 issues, 50 PRs).
+	KickLimits KickLimitsConfig `yaml:"kick_limits,omitempty" json:"kick_limits,omitempty"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
 	// like OpenRouter, a LiteLLM proxy, vLLM, or llm-d). An agent routes through
 	// a gateway by naming it as its backend. When empty, a single implicit

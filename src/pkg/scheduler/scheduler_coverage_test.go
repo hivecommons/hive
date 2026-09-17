@@ -138,7 +138,7 @@ func TestFormatPRList_TruncatesTitle(t *testing.T) {
 }
 
 func TestFormatMergeEligibleDataShowsQueuedMarker(t *testing.T) {
-	result := formatMergeEligibleData([]byte(`{"merge_eligible":[{"number":7,"repo":"acme/widget","title":"fix it","queued":true}]}`))
+	result := formatMergeEligibleData([]byte(`{"merge_eligible":[{"number":7,"repo":"acme/widget","title":"fix it","queued":true}]}`), maxPRsPerKick)
 	if !strings.Contains(result, "#7 acme/widget [queued for auto-merge]") {
 		t.Fatalf("queued marker missing from merge-eligible output: %s", result)
 	}
