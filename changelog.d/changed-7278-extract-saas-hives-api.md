@@ -1,0 +1,1 @@
+- Extract per-user hive listing/lifecycle API domain from `pkg/hub/saas.go` into `saas_hives_api.go` (#7278 god-file split; no behavior change).
