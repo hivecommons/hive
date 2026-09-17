@@ -1,0 +1,1 @@
+- Extract the tmux terminal-seam domain from `pkg/agent/manager.go` into `manager_tmux.go` (#7303 god-file split; no behavior change).
