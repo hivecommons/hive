@@ -1,0 +1,1 @@
+- Extracted the per-hive access management domain (authorized user lists, grantable users, access add/remove, and the access request/approve/deny flow — 23 functions plus their types and constants) from `pkg/hub/saas.go` into a new `pkg/hub/saas_access.go`, the next stage of the #7278 god-file split. Pure code motion: no behavior change.
