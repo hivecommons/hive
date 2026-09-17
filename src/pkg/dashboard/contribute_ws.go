@@ -4028,6 +4028,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"username", contributor.profile.GitHubUsername,
 					"abandoned_task", abandoned.TaskID,
 				)
+				// #7317 item 4: the slog line above rotates away, and this is
+				// the event an operator most needs when a contributor hands
+				// work back in a loop. Observational only.
+				h.server.recordContributorDecision(contributor.profile.GitHubUsername,
+					decisionTaskAbandoned, abandoned.TaskID, "")
 				// kubestellar/hive#2545: a contributor that sends "ready" while
 				// still holding a task (e.g. the relay's own MAX_TASK_DURATION_MS
 				// watchdog gives up and requeues, or an agent that never actually
@@ -4068,6 +4073,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				h.logger.Info("[contribute-ws] no tasks available",
 					"username", contributor.profile.GitHubUsername,
 				)
+				h.server.recordContributorDecision(contributor.profile.GitHubUsername,
+					decisionNoTasksAvailable, "", "")
 			case task.Type == "task_unavailable":
 				// An explicit negative-ack rather than silence. #2436 finding 1/2/3
 				// covers the enforced refusals (mint failure, disabled tier,
@@ -4253,6 +4260,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						"task", msg.TaskID,
 						"client_gen", staleGen,
 					)
+					h.server.recordContributorDecision(contributor.profile.GitHubUsername,
+						decisionStaleProgressRejected, msg.TaskID,
+						"client_gen="+strconv.FormatUint(staleGen, 10))
 					continue
 				}
 				contributor.tmuxOutput = msg.TmuxOutput
@@ -4533,6 +4543,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
 					)
+					h.server.recordContributorDecision(contributor.profile.GitHubUsername,
+						decisionUnassignedCompleteIgnored, msg.TaskID, "")
 				}
 			}
 
@@ -4556,6 +4568,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						"task", msg.TaskID,
 						"client_gen", staleGen,
 					)
+					// The decision that makes a hand-back look silent: the
+					// relay DID report a failure and the hub refused it.
+					h.server.recordContributorDecision(contributor.profile.GitHubUsername,
+						decisionStaleFailureRejected, msg.TaskID,
+						"client_gen="+strconv.FormatUint(staleGen, 10))
 					continue
 				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID

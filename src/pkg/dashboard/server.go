@@ -82,6 +82,11 @@ type Server struct {
 	sidebar    interface{}
 	sidebarMu  sync.RWMutex
 
+	// contributorDecisions buffers recent hub-side decisions per contributor
+	// so an operator can see why a struggling contributor's reports were
+	// refused (#7317). Zero value is ready; see contributor_decisions.go.
+	contributorDecisions contributorDecisionLog
+
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time

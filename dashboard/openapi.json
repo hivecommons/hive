@@ -5758,7 +5758,7 @@
           "Governor"
         ],
         "summary": "Watchdog activity readout",
-        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and — in observe mode — whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
+        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and \u2014 in observe mode \u2014 whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
         "parameters": [
           {
             "name": "days",
@@ -5887,7 +5887,7 @@
                     },
                     "promotion": {
                       "type": "object",
-                      "description": "Observe → Heal hint; present only in observe mode",
+                      "description": "Observe \u2192 Heal hint; present only in observe mode",
                       "properties": {
                         "safe": {
                           "type": "boolean",
@@ -18183,6 +18183,94 @@
                     },
                     "frozen": {
                       "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contribute/decisions": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Recent hub-side decisions about one contributor",
+        "description": "The hub's own decisions about a contributor \u2014 task handed back without completion, nothing available to offer, a stale-generation report rejected, a task_complete for a task they did not hold. Each was previously a slog line on the hub process's stdout and nowhere else, which is the access a hosted-hive operator does not have. Answers \"why did the hub refuse that report?\" alongside /api/contribute/runs' \"what happened to that task?\". In-memory and bounded per contributor, so it covers the recent past, not history. Public, GET only, no side effects \u2014 the username and task id are already public on /api/contribute/activity and everything else is the hub's own bookkeeping. No contributor-supplied text, no tokens, no pane output.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "GitHub login to look up, matched case-insensitively. Required in practice: the buffer is per-contributor and an empty username returns no decisions."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 50
+            },
+            "description": "Maximum decisions to return, newest first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent hub-side decisions, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "task_abandoned",
+                              "no_tasks_available",
+                              "stale_progress_rejected",
+                              "stale_failure_rejected",
+                              "unassigned_complete_ignored"
+                            ],
+                            "description": "Closed vocabulary; values are stable so week-over-week filtering keeps working."
+                          },
+                          "task": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string",
+                            "description": "Short hub-authored qualifier, e.g. the client generation that made a report stale. Never contributor-supplied text."
+                          }
+                        }
+                      }
                     }
                   }
                 }

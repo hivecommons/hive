@@ -422,6 +422,10 @@ func (s *Server) registerContributeRoutes() {
 	// touched none of them. Public like the other /api/contribute* reads — see
 	// handleContributeRuns for why that posture is inherited rather than chosen.
 	s.mux.HandleFunc("GET /api/contribute/runs", s.handleContributeRuns)
+	// Appended at the end for the same citation-stability reason as the route
+	// above. The hub-side decisions behind a struggling contributor (#7317
+	// item 4); same public-read posture, see handleContributeDecisions.
+	s.mux.HandleFunc("GET /api/contribute/decisions", s.handleContributeDecisions)
 }
 
 func randomHex(n int) string {
