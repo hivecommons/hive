@@ -23,8 +23,7 @@ func TestModePolarity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Recommend(Request{Now: now, Signals: tt.sig, TopN: 1})
-			got = Recommend(Request{Now: now, Signals: mergeMode(tt.sig, tt.mode), TopN: 1})
+			got := Recommend(Request{Now: now, Signals: mergeMode(tt.sig, tt.mode), TopN: 1})
 			if len(got.Recommendations) != 1 || got.Recommendations[0].ID != tt.want {
 				t.Fatalf("top recommendation = %#v, want %s", got.Recommendations, tt.want)
 			}
