@@ -579,6 +579,71 @@ type ProjectConfig struct {
 	// directory that is absent or holds no AGENTS.md is also a no-op; nothing
 	// here can fail a kick. See CheckoutRootFor.
 	CheckoutsDir string `yaml:"checkouts_dir,omitempty"`
+	// MaxIssuesPerKick and MaxPRsPerKick bound how many issues and PRs are
+	// listed in an agent kick prompt. They exist to keep the prompt a
+	// manageable size for the agents that consume these lists (scanner above
+	// all): the lists are injected verbatim, so without a bound the prompt
+	// grows without limit with the backlog. A spoke with 302 open PRs produced
+	// a 69.5 KiB kick against a ~22 KiB documented worst case
+	// (hivecommons/hive#7368).
+	//
+	// Backlog size varies enormously between hives, so these are operator
+	// settings rather than constants — the Repos tab edits both.
+	//
+	// Zero or absent means "use the default" (DefaultMaxIssuesPerKick /
+	// DefaultMaxPRsPerKick), which is the pre-existing behavior for the issue
+	// list. Zero deliberately does NOT mean unlimited: uncapped lists are the
+	// bug these settings exist to prevent. Read them through IssueListCap and
+	// PRListCap, never directly.
+	MaxIssuesPerKick int `yaml:"max_issues_per_kick,omitempty"`
+	MaxPRsPerKick    int `yaml:"max_prs_per_kick,omitempty"`
+}
+
+const (
+	// DefaultMaxIssuesPerKick is the issue-list bound applied when the operator
+	// has not set one. It matches the constant that preceded the setting.
+	DefaultMaxIssuesPerKick = 100
+	// DefaultMaxPRsPerKick is the PR-list bound applied when the operator has
+	// not set one. It comes from the prompt size budget documented in
+	// pkg/dashboard/prompt_history.go, which sizes the PR section at "~3.5 KiB
+	// at 30 open PRs x ~120 B per line".
+	DefaultMaxPRsPerKick = 30
+	// MinKickListCap is the smallest list an operator may configure. A cap of
+	// zero would hide the work list entirely and idle the agent, so the floor
+	// is 1 and zero is reserved to mean "unset, use the default".
+	MinKickListCap = 1
+	// MaxKickListCap is the largest list an operator may configure. At ~127 B
+	// per issue line this is ~63 KiB for one section — already past the point
+	// where the prompt is the problem — so it is the ceiling rather than a
+	// recommendation.
+	MaxKickListCap = 500
+)
+
+// clampKickListCap applies the shared unset/floor/ceiling policy for the two
+// kick-list caps: zero or negative means "unset" and yields def.
+func clampKickListCap(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	if v < MinKickListCap {
+		return MinKickListCap
+	}
+	if v > MaxKickListCap {
+		return MaxKickListCap
+	}
+	return v
+}
+
+// IssueListCap returns the effective bound on issues listed in a kick prompt,
+// with the default applied when the operator has not set one.
+func (p *ProjectConfig) IssueListCap() int {
+	return clampKickListCap(p.MaxIssuesPerKick, DefaultMaxIssuesPerKick)
+}
+
+// PRListCap returns the effective bound on PRs listed in a kick prompt, with
+// the default applied when the operator has not set one.
+func (p *ProjectConfig) PRListCap() int {
+	return clampKickListCap(p.MaxPRsPerKick, DefaultMaxPRsPerKick)
 }
 
 const (

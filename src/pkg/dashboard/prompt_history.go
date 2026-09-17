@@ -53,7 +53,7 @@ const (
 	//   issue list         up to 12.7 KiB (maxIssuesPerKick=100 issues x ~127 B
 	//                                per formatIssueList line: age, repo,
 	//                                number, labels, 60-rune title)
-	//   PR list            ~3.5 KiB at 30 open PRs x ~120 B per line
+	//   PR list            ~3.5 KiB at maxPRsPerKick=30 PRs x ~120 B per line
 	//   knowledge section  ~3.0 KiB (knowledge_max_facts default 25)
 	//   repos section      ~0.4 KiB
 	// giving ~22 KiB for a worst-case prompt and ~8 KiB for a typical one.

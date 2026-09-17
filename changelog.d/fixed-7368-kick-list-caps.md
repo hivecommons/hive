@@ -1,0 +1,1 @@
+- Bounded the PR lists in agent kick prompts, which were uncapped while issues were capped — a hive with 302 open PRs produced a 69.5 KiB kick, over 3x the documented budget. Both the issue and PR caps are now adjustable on Settings → Repos (#7368).

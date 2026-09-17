@@ -110,6 +110,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"requireLabels": cfg.Project.IssueFilter.RequireLabels,
 		"repos":         repos,
 		"primaryRepo":   primaryRepo,
+		// Kick-list caps, shown on the Repos tab. The EFFECTIVE values are sent
+		// (defaults resolved) so the fields always display the number actually
+		// in force rather than a blank box when the operator has never set one.
+		"maxIssuesPerKick": cfg.Project.IssueListCap(),
+		"maxPRsPerKick":    cfg.Project.PRListCap(),
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -162,14 +167,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// service-account-file fallback chain. Omitted (empty string)
 			// outside a cluster, which the Hub tab renders by skipping the
 			// line rather than showing a blank/"undefined" value.
-			"namespace":                          podNamespace(),
-			"url":                                cfg.Hub.URL,
-			"dashboard_url":                      cfg.Hub.DashboardURL,
-			"snapshot_url":                       cfg.Hub.SnapshotURL,
-			"is_public":                          cfg.Hub.IsPublic,
-			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
-			"snapshot_frame_ancestors":           cfg.Dashboard.SnapshotFrameAncestors,
-			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
+			"namespace":                podNamespace(),
+			"url":                      cfg.Hub.URL,
+			"dashboard_url":            cfg.Hub.DashboardURL,
+			"snapshot_url":             cfg.Hub.SnapshotURL,
+			"is_public":                cfg.Hub.IsPublic,
+			"auto_snapshot":            cfg.Hub.AutoSnapshot,
+			"snapshot_frame_ancestors": cfg.Dashboard.SnapshotFrameAncestors,
+			"auto_upgrade":             cfg.Hub.AutoUpgrade,
 			// auto_upgrade_mode is the configured SCHEDULE (instant/daily/weekly)
 			// surfaced read-only so the governor Settings overlay Hub tab can
 			// show the auto-update policy the reporter went looking for (#6962).
@@ -1753,6 +1758,21 @@ func agentDeletionResponse(status, name string, packLevels []int) map[string]any
 	return resp
 }
 
+// validateKickListCap bounds an operator-supplied kick-list cap. Zero is
+// accepted and means "unset — use the default"; it deliberately does NOT mean
+// unlimited, since an uncapped list is the bug these settings exist to prevent
+// (hivecommons/hive#7368).
+func validateKickListCap(v int, label string) error {
+	if v == 0 {
+		return nil
+	}
+	if v < config.MinKickListCap || v > config.MaxKickListCap {
+		return fmt.Errorf("%s must be between %d and %d (or 0 to use the default)",
+			label, config.MinKickListCap, config.MaxKickListCap)
+	}
+	return nil
+}
+
 func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -1761,15 +1781,38 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Repos       []string `json:"repos"`
 		PrimaryRepo *string  `json:"primaryRepo,omitempty"`
+		// Kick-list caps. POINTER-typed so an absent key means "unchanged" —
+		// the Repos tab sends only the fields the operator actually touched,
+		// and editing a repo must not reset the caps (and vice versa).
+		MaxIssuesPerKick *int `json:"maxIssuesPerKick,omitempty"`
+		MaxPRsPerKick    *int `json:"maxPRsPerKick,omitempty"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if len(body.Repos) == 0 && body.PrimaryRepo == nil {
+	// A cap-only save carries no repos and no primary, which is legitimate —
+	// the guard below must only fire when the request changes nothing at all.
+	capsOnly := body.MaxIssuesPerKick != nil || body.MaxPRsPerKick != nil
+	if len(body.Repos) == 0 && body.PrimaryRepo == nil && !capsOnly {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
+	}
+
+	// Validate the caps BEFORE any mutation so a rejected value cannot leave
+	// a half-applied config behind.
+	if body.MaxIssuesPerKick != nil {
+		if err := validateKickListCap(*body.MaxIssuesPerKick, "max issues per kick"); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.MaxPRsPerKick != nil {
+		if err := validateKickListCap(*body.MaxPRsPerKick, "max PRs per kick"); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	org := s.deps.Config.Project.Org
 
@@ -1911,6 +1954,15 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "set a default repo before saving — one of the monitored repos must be marked as the default (the repo where the advisory issue is maintained)", http.StatusBadRequest)
 			return
 		}
+	}
+
+	// Applied after the repo guards so a rejected repo change cannot persist a
+	// cap edit from the same request.
+	if body.MaxIssuesPerKick != nil {
+		s.deps.Config.Project.MaxIssuesPerKick = *body.MaxIssuesPerKick
+	}
+	if body.MaxPRsPerKick != nil {
+		s.deps.Config.Project.MaxPRsPerKick = *body.MaxPRsPerKick
 	}
 
 	if err := s.saveConfig(); err != nil {

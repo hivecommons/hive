@@ -404,7 +404,7 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 	shown := 0
 	failClosed := false
 	for _, issue := range issues {
-		if shown >= maxIssuesPerKick {
+		if shown >= s.issueListCap() {
 			break
 		}
 		// The issue title AND labels are untrusted external text about to be
@@ -454,7 +454,11 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 	}
 	var b strings.Builder
 	failClosed := false
+	shown := 0
 	for _, pr := range actionable.PRs.Items {
+		if shown >= s.prListCap() {
+			break
+		}
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
 		// classification routing, and an attacker controls both the title and their
@@ -469,6 +473,10 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, author, title))
+		shown++
+	}
+	if omitted := len(actionable.PRs.Items) - shown; omitted > 0 {
+		b.WriteString(fmt.Sprintf("  ... %d more open PRs not shown (list capped at %d)\n", omitted, s.prListCap()))
 	}
 	return b.String(), failClosed
 }
@@ -541,7 +549,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 				Agent:     agentName,
 				Repo:      repo,
 				Message:   msg,
-				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(targetIssues)),
+				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(targetIssues), s.issueListCap()),
 			})
 		}
 	}
@@ -604,13 +612,16 @@ func filterHoldByRepo(hold github.HoldResult, repo string) github.HoldResult {
 	return out
 }
 
-func issueRefsForAgent(agentName string, issues []github.Issue) []string {
+// issueRefsForAgent returns the issue refs an agent's work-source identity is
+// built from. limit bounds the list the same way the kick prompt's issue list
+// is bounded; callers pass s.issueListCap().
+func issueRefsForAgent(agentName string, issues []github.Issue, limit int) []string {
 	agentIssues := issues
 	if agentName != "scanner" {
 		agentIssues = filterByLane(issues, agentName)
 	}
-	if len(agentIssues) > maxIssuesPerKick {
-		agentIssues = agentIssues[:maxIssuesPerKick]
+	if limit > 0 && len(agentIssues) > limit {
+		agentIssues = agentIssues[:limit]
 	}
 	refs := make([]string, 0, len(agentIssues))
 	seen := make(map[string]bool, len(agentIssues))
@@ -727,7 +738,41 @@ Your workdir is, at most, a checkout of the primary repo — never of the others
 	return b.String()
 }
 
-const maxIssuesPerKick = 100
+// maxIssuesPerKick is the fallback issue-list bound used when no config is
+// reachable. The effective value is operator-configurable — read it through
+// s.issueListCap(), which honours project.max_issues_per_kick.
+const maxIssuesPerKick = config.DefaultMaxIssuesPerKick
+
+// issueListCap and prListCap return the operator-configured bounds on how many
+// issues and PRs a kick prompt may list.
+//
+// These caps exist to keep the kick prompt a manageable size for the agents
+// that actually consume these lists — scanner above all, which receives both in
+// full. The lists are injected verbatim into the prompt, so an unbounded list
+// makes prompt size track backlog size: a spoke with 302 open PRs produced a
+// 69.5 KiB kick, over 3x the ~22 KiB worst case that
+// pkg/dashboard/prompt_history.go sizes prompt retention against
+// (hivecommons/hive#7368).
+//
+// Truncation is safe because both lists arrive in priority order, not arrival
+// order: issues are sorted oldest-first by age, and PRs by review class (fixes
+// > refactors/docs > tests) then oldest-first within a class. The tail that
+// gets dropped is therefore the newest and lowest-priority work, and every
+// capped site emits an explicit "... N more" marker so the agent is told the
+// list is partial.
+func (s *Scheduler) issueListCap() int {
+	if s == nil || s.cfg == nil {
+		return config.DefaultMaxIssuesPerKick
+	}
+	return s.cfg.Project.IssueListCap()
+}
+
+func (s *Scheduler) prListCap() int {
+	if s == nil || s.cfg == nil {
+		return config.DefaultMaxPRsPerKick
+	}
+	return s.cfg.Project.PRListCap()
+}
 
 const (
 	holdGatedACMMMinLevel = 3
@@ -1116,7 +1161,11 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 		if item.Type != "pr" {
 			continue
 		}
-		if shown >= maxIssuesPerKick {
+		// Held PRs are a PR list, so they follow the PR cap — not the issue cap
+		// they were originally wired to. The STAND DOWN marker below carries the
+		// full omitted count either way, so the gate stays correct when the list
+		// is truncated.
+		if shown >= s.prListCap() {
 			omitted++
 			continue
 		}
@@ -1150,7 +1199,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	b.WriteString(fmt.Sprintf("ACTIONABLE ISSUES (%d, oldest first):\n", len(scannerIssues)))
 	shown := 0
 	for _, issue := range scannerIssues {
-		if shown >= maxIssuesPerKick {
+		if shown >= s.issueListCap() {
 			break
 		}
 		tier := string(issue.ComplexityTier)
@@ -1175,13 +1224,21 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	}
 
 	b.WriteString(fmt.Sprintf("ACTIONABLE PRs (%d):\n", actionable.PRs.Count))
+	shownPRs := 0
 	for _, pr := range actionable.PRs.Items {
+		if shownPRs >= s.prListCap() {
+			break
+		}
 		title := pr.Title
 		const maxPRTitleRunes = 70
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, pr.Author, title))
+		shownPRs++
+	}
+	if omitted := len(actionable.PRs.Items) - shownPRs; omitted > 0 {
+		b.WriteString(fmt.Sprintf("  ... %d more open PRs not shown (list capped at %d)\n", omitted, s.prListCap()))
 	}
 
 	if actionable.Issues.SLAViolations > 0 {
@@ -1194,13 +1251,21 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	// prompt is ever built. See kubestellar/hive#3963.
 	if len(actionable.PRs.StaleDrafts) > 0 {
 		b.WriteString(fmt.Sprintf("\nYOUR STALE DRAFT PRs (%d, >48h old — finish, mark ready, or close):\n", len(actionable.PRs.StaleDrafts)))
+		shownDrafts := 0
 		for _, d := range actionable.PRs.StaleDrafts {
+			if shownDrafts >= s.prListCap() {
+				break
+			}
 			title := d.Title
 			const maxDraftTitleRunes = 70
 			if runes := []rune(title); len(runes) > maxDraftTitleRunes {
 				title = string(runes[:maxDraftTitleRunes])
 			}
 			b.WriteString(fmt.Sprintf("  %s#%d %s\n", d.Repo, d.Number, title))
+			shownDrafts++
+		}
+		if omitted := len(actionable.PRs.StaleDrafts) - shownDrafts; omitted > 0 {
+			b.WriteString(fmt.Sprintf("  ... %d more stale draft PRs not shown (list capped at %d)\n", omitted, s.prListCap()))
 		}
 	}
 
@@ -1449,7 +1514,7 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 		b.WriteString(fmt.Sprintf("\nTEST-RELATED ISSUES (%d):\n", len(qualityIssues)))
 		shown := 0
 		for _, issue := range qualityIssues {
-			if shown >= maxIssuesPerKick {
+			if shown >= s.issueListCap() {
 				break
 			}
 			title := issue.Title
@@ -1507,7 +1572,7 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 		b.WriteString(fmt.Sprintf("ARCHITECTURE-RELATED ISSUES (%d):\n", len(architectIssues)))
 		shown := 0
 		for _, issue := range architectIssues {
-			if shown >= maxIssuesPerKick {
+			if shown >= s.issueListCap() {
 				break
 			}
 			title := issue.Title
