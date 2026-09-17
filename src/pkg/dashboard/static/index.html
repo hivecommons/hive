@@ -24810,11 +24810,74 @@ function burnAreaChart() {
           return;
         }
         if (data.logged_in && !data.pending) {
-          if (statusEl) { statusEl.textContent = '✓ Logged in!'; statusEl.style.color = 'var(--green)'; }
-          showToast('GitHub Copilot authenticated', 'success');
-          setTimeout(function() { cancelCopilotLogin(); }, 1500);
+          showCopilotSeatVerdict(statusEl, data.seat);
         }
       } catch (e) { /* keep polling */ }
+    }
+
+    // A stored token is not an entitlement: activation can fail server-side and
+    // org policy can refuse the integration, both of which leave a token behind
+    // that looks like a working login (issue 7309). The dialog therefore reports
+    // the verified seat verdict, not the mere presence of a token.
+    function showCopilotSeatVerdict(statusEl, seat) {
+      var state = (seat && seat.state) || 'unknown';
+      if (state === 'active') {
+        if (statusEl) { statusEl.textContent = 'Logged in — Copilot seat verified'; statusEl.style.color = 'var(--green)'; }
+        showToast('GitHub Copilot authenticated and seat verified', 'success');
+        setTimeout(function() { cancelCopilotLogin(); }, 1500);
+        return;
+      }
+      if (state === 'unknown') {
+        if (statusEl) { statusEl.textContent = 'Logged in — seat not yet verified'; statusEl.style.color = 'var(--muted)'; }
+        showToast('GitHub Copilot authenticated', 'success');
+        setTimeout(function() { cancelCopilotLogin(); }, 1500);
+        return;
+      }
+      // Verified failure: keep the dialog open with the actionable detail.
+      // Closing here is what previously sent adopters away believing the
+      // backend worked.
+      var warn = (state === 'unreachable') ? 'var(--muted)' : 'var(--red)';
+      if (statusEl) {
+        statusEl.innerHTML = '<strong>Login saved, but this account cannot run inference yet.</strong>' +
+          '<div style="margin-top:8px;text-align:left;line-height:1.45">' + esc(seat.detail || '') + '</div>' +
+          (seat.credential ? '<div style="margin-top:8px;text-align:left;color:var(--muted)">Verified: ' +
+            esc(seat.credential) + '</div>' : '') +
+          '<button data-action="recheckCopilotSeat" style="margin-top:10px;background:var(--green);color:var(--bg);' +
+            'border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer">Re-verify</button>';
+        statusEl.style.color = warn;
+      }
+      cancelCopilotLogin(true);
+    }
+
+    // Re-verify from the login dialog, repainting it in place so an adopter who
+    // has just activated a seat or had a policy lifted sees the new verdict
+    // without restarting the device flow.
+    async function recheckCopilotSeat() {
+      var statusEl = document.getElementById('copilot-auth-status');
+      if (statusEl) { statusEl.textContent = 'Verifying…'; statusEl.style.color = 'var(--muted)'; }
+      var seat = await verifyCopilotSeat();
+      if (seat) showCopilotSeatVerdict(document.getElementById('copilot-auth-status'), seat);
+    }
+
+    // Re-run verification on demand; used by the "Verify login" affordance so an
+    // adopter can self-check after fixing a seat or an org policy, without
+    // logging out and back in.
+    async function verifyCopilotSeat() {
+      try {
+        var resp = await fetch('/api/copilot-auth/verify', { method: 'POST' });
+        var data = await resp.json();
+        var seat = data.seat || {};
+        if (seat.state === 'active') {
+          showToast('Copilot seat verified — inference is available', 'success');
+        } else if (seat.state === 'unknown') {
+          showToast('No Copilot credential to verify — log in first', 'info');
+        } else {
+          showToast(seat.detail || 'Copilot seat could not be verified', 'error');
+        }
+        return seat;
+      } catch (e) {
+        showToast('Copilot verification failed: ' + e.message, 'error');
+      }
     }
 
     function cancelCopilotLogin(keepOverlay) {

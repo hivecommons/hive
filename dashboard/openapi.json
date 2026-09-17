@@ -15155,6 +15155,62 @@
         }
       }
     },
+    "/api/copilot-auth/verify": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Verify the Copilot seat",
+        "description": "Re-runs seat verification against copilot_internal/user for the Copilot credential the hive currently holds, and returns the fresh verdict. A stored device-flow token proves only that GitHub minted one; it is not evidence the account can run inference. Separate from the status endpoint because it costs a network round trip while status is polled during login. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Verification verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seat": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "description": "active: GitHub accepted the credential and the seat is live. no_seat: GitHub's explicit licence verdict. blocked: a 403 that is not a licence verdict, usually an org policy refusing the integration ID. rejected: a 401, meaning the login did not activate server-side. unreachable: network failure or 5xx, which says nothing about the account. unknown: no credential, or nothing verified yet.",
+                          "enum": [
+                            "unknown",
+                            "active",
+                            "no_seat",
+                            "blocked",
+                            "rejected",
+                            "unreachable"
+                          ]
+                        },
+                        "detail": {
+                          "type": "string",
+                          "description": "Operator-facing explanation including what to do next. Empty when state is unknown."
+                        },
+                        "credential": {
+                          "type": "string",
+                          "description": "Which credential was verified, so a verdict is never misread as being about an account the operator did not use.",
+                          "example": "the dashboard Copilot login (GitHub account @alice)"
+                        },
+                        "checked_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
     "/api/gh-user-auth/logout": {
       "post": {
         "tags": [

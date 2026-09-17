@@ -83,7 +83,18 @@ type copilotAuthFlow struct {
 func (s *Server) registerCopilotAuthRoutes() {
 	s.mux.HandleFunc("GET /api/copilot-auth/status", s.handleCopilotAuthStatus)
 	s.mux.HandleFunc("POST /api/copilot-auth/start", s.handleCopilotAuthStart)
+	s.mux.HandleFunc("POST /api/copilot-auth/verify", s.handleCopilotAuthVerify)
 	s.mux.HandleFunc("POST /api/copilot-auth/logout", s.handleCopilotAuthLogout)
+}
+
+// handleCopilotAuthVerify re-runs seat verification on demand and returns the
+// fresh verdict. Separate from the status endpoint because it costs a network
+// round trip and status is polled every few seconds during a login.
+func (s *Server) handleCopilotAuthVerify(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"seat": s.copilotSeatStatus(true)})
 }
 
 // handleCopilotAuthStatus reports whether a Copilot token is present and
@@ -105,6 +116,12 @@ func (s *Server) handleCopilotAuthStatus(w http.ResponseWriter, r *http.Request)
 		"logged_in": loggedIn,
 		"pending":   polling,
 		"error":     lastError,
+		// seat is the verdict from the last verification (#7309). logged_in
+		// means only "a token is stored" — it is NOT evidence the account can
+		// run inference, which is precisely how the #7302 failures stayed
+		// invisible. Read from cache; the login path and the verify endpoint
+		// are what refresh it.
+		"seat": s.copilotSeatStatus(false),
 	})
 }
 
@@ -282,7 +299,24 @@ func (s *Server) pollCopilotToken(ctx context.Context, deviceCode string, interv
 				return
 			}
 			setDone("")
-			s.deps.Logger.Info("Copilot CLI authenticated via device flow")
+			// Verify before the dialog reports success. A saved token is not
+			// an entitlement (#7309): activation can fail server-side, or org
+			// policy can refuse the integration, and both leave a token behind
+			// that looks like a working login until every agent goes quiet.
+			seat := s.copilotSeatStatus(true)
+			switch seat.State {
+			case copilotSeatActive:
+				s.deps.Logger.Info("Copilot CLI authenticated via device flow",
+					"seat", seat.State, "credential", seat.Credential)
+			case copilotSeatUnknown:
+				s.deps.Logger.Info("Copilot CLI authenticated via device flow", "seat", seat.State)
+			default:
+				// Warn, not Info: the login "succeeded" but this backend
+				// cannot serve inference, and this line is what an operator
+				// greps when the fleet goes quiet.
+				s.deps.Logger.Warn("Copilot CLI authenticated via device flow but seat verification failed",
+					"seat", seat.State, "credential", seat.Credential, "detail", seat.Detail)
+			}
 			return
 		case "authorization_pending":
 			continue

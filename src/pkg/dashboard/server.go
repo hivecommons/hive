@@ -301,6 +301,11 @@ type Server struct {
 	// resolves to, so a rejected probe can name it without a /user round trip
 	// per 30 s re-probe. Zero value ready. See copilotTokenLogin.
 	copilotLogin copilotLoginCache
+	// copilotSeat remembers the most recent seat-verification verdict for the
+	// current Copilot credential, so the polled auth-status endpoint can report
+	// it without a network call per poll. Zero value ready. See
+	// copilot_seat_verify.go.
+	copilotSeat copilotSeatCache
 
 	ready   bool
 	readyAt time.Time

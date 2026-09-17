@@ -24,9 +24,49 @@ routes model calls to:
    (`/data/copilot-user-token`) and shared by all copilot agents.
    Alternatively, provide a token via the `COPILOT_GITHUB_TOKEN` env var
    (see [env-vars.md](../src/docs/env-vars.md)).
-3. Pick a model: Hive probes your plan's live, entitlement-filtered Copilot
+3. **Verify the login actually activated.** A saved token is *not* proof the
+   account can run inference: the device flow can fail server-side, and an org
+   policy can refuse the CLI integration even when the seat is valid. The login
+   dialog now verifies the seat before it reports success, and you can re-check
+   at any time with the **Re-verify** button or
+   `POST /api/copilot-auth/verify`. `GET /api/copilot-auth/status` carries the
+   same verdict under `seat`.
+4. Pick a model: Hive probes your plan's live, entitlement-filtered Copilot
    `/models` list, so the agent's model dropdown shows exactly what your
    Copilot subscription can use.
+
+### Verifying your Copilot login
+
+`logged_in: true` means only that a token is stored. The `seat.state` field is
+the answer that matters, and each value has one cause and one fix:
+
+| `seat.state` | What GitHub said | What to do |
+| --- | --- | --- |
+| `active` | 200 — the seat is live | Nothing; agents can run inference. |
+| `no_seat` | 403 "not licensed to use Copilot" | The account genuinely has no seat. Check [github.com/settings/copilot](https://github.com/settings/copilot), or log in with an account that has one. |
+| `blocked` | 403 that is *not* a licence verdict | Usually an **org policy blocking the integration ID**, not a seat problem. Ask an org owner to allow the Copilot CLI integration, or set `HIVE_COPILOT_INTEGRATION_ID` to one your org permits. |
+| `rejected` | 401 | The login never fully activated. Run the login again and approve the device code before it expires. |
+| `unreachable` | network failure or 5xx | Transient or hive-side. It says nothing about the account — retry. |
+
+Every verdict also carries `credential`, naming **which** credential was
+verified — the dashboard login, or `COPILOT_GITHUB_TOKEN`. This matters because
+a hive can hold more than one: if the verdict names a credential you did not
+expect, that mismatch is the bug, not the seat.
+
+Self-checks from a shell on the hive:
+
+```bash
+# Does this token have a Copilot seat at all?
+gh api /copilot_internal/user
+
+# What did the hive log at login time?
+#   "Copilot CLI authenticated via device flow"                       -> activated
+#   "... authenticated via device flow but seat verification failed"  -> see seat= and detail=
+```
+
+If model names in the dashboard carry a `(Copilot seat not licensed)` suffix,
+read the seat verdict first: that label is the *catalog probe's* verdict and
+can be about a different credential than the one you just logged in with.
 
 Full per-backend setup details (install, auth, confinement) are in
 [backend-setup.md](backend-setup.md).
