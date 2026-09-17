@@ -5935,100 +5935,37 @@ func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth,
 	return apphealth.ClassifyRepoCoverage(ctx, appAuth, org, repos, logger)
 }
 
-// primaryAdvisoryRepo returns the repo the advisory digest is posted to: the
-// configured primary repo, falling back to the first listed repo. Shared by the
-// boot ensure, the per-cycle re-ensure, and the post path so all three can never
-// disagree about WHICH repo's pinned issue the digest belongs to.
+// The advisory digest posting policy moved to pkg/advisory (#7238 stage 2).
+// These wrappers keep the existing call sites unchanged; advisoryPostGate is
+// now an owned instance rather than a package-level struct tests reset.
+var advisoryPostGate = advisory.NewPostGate()
+
 func primaryAdvisoryRepo(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	if cfg.Project.PrimaryRepo != "" {
-		return cfg.Project.PrimaryRepo
-	}
-	if len(cfg.Project.Repos) > 0 {
-		return cfg.Project.Repos[0]
-	}
-	return ""
+	return advisory.PrimaryRepo(cfg)
 }
 
-// advisoryIssueUnresolved reports whether the pinned advisory issue for repo is
-// still unknown, i.e. the digest has nowhere to go. A recorded 0 counts as
-// unresolved: it is the zero value a failed ensure would leave behind, and
-// posting to issue 0 is not a thing.
 func advisoryIssueUnresolved(advisoryIssues map[string]int, repo string) bool {
-	num, ok := advisoryIssues[repo]
-	return !ok || num <= 0
+	return advisory.IssueUnresolved(advisoryIssues, repo)
 }
 
 func advisoryIssueNumber(advisoryIssues map[string]int, repo string) (int, bool) {
-	num, ok := advisoryIssues[repo]
-	return num, ok && num > 0
+	return advisory.IssueNumber(advisoryIssues, repo)
 }
 
 func shouldBuildAdvisoryDigest(beadStores map[string]*beads.Store, ghClient *github.Client, hasExistingPinnedIssue bool) bool {
-	if len(beadStores) > 0 {
-		return true
-	}
-	return ghClient != nil && hasExistingPinnedIssue
+	return advisory.ShouldBuildDigest(beadStores, ghClient != nil, hasExistingPinnedIssue)
 }
 
 func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, hasPinnedIssue bool) bool {
-	if digest == nil {
-		return false
-	}
-	if digest.TotalCount > 0 || len(digest.RecentlyResolved) > 0 {
-		return true
-	}
-	return ghClient != nil && hasPinnedIssue
+	return advisory.ShouldPostDigest(digest, ghClient != nil, hasPinnedIssue)
 }
 
-// advisoryPostGate tracks, per repo, when the digest was last SUCCESSFULLY
-// posted, so governor.advisory.update_interval_s (#4820) can throttle the
-// GitHub round-trip. Package-level because runEvalCycle carries no state of
-// its own, and mutex-guarded because startup/restart call sites exist besides
-// the ticker. clampLogged makes the "interval clamped" warning a one-shot
-// instead of a per-cycle drone.
-var advisoryPostGate = struct {
-	mu          sync.Mutex
-	lastSuccess map[string]time.Time
-	clampLogged bool
-}{lastSuccess: map[string]time.Time{}}
-
-// advisoryPostDue reports whether the update-interval gate is open for a post
-// attempt to repo, logging (once) if the configured value was clamped. An
-// interval of 0 (unset knob) means the gate is ALWAYS open — the digest posts
-// every eval cycle, exactly the pre-#4820 cadence — and a repo with no
-// successful post since process start is open too, so the first post is never
-// delayed. The gate advances only on SUCCESS (recordAdvisoryPostSuccess,
-// mirroring how the #4818 skip-guard records its hash): a failed attempt is
-// retried on the very next cycle instead of waiting out the interval, keeping
-// error recovery — and the hub's staleness signal — as prompt as today.
 func advisoryPostDue(advCfg config.AdvisoryConfig, repo string, now time.Time, logger *slog.Logger) bool {
-	interval := advCfg.UpdateInterval()
-	advisoryPostGate.mu.Lock()
-	defer advisoryPostGate.mu.Unlock()
-	if raw := advCfg.UpdateIntervalS; raw > 0 && time.Duration(raw)*time.Second != interval && !advisoryPostGate.clampLogged {
-		advisoryPostGate.clampLogged = true
-		logger.Warn("advisory update_interval_s outside allowed bounds — clamped",
-			"configured_s", raw, "effective_s", int(interval.Seconds()),
-			"min_s", config.MinAdvisoryUpdateIntervalS, "max_s", config.MaxAdvisoryUpdateIntervalS)
-	}
-	if interval <= 0 {
-		return true
-	}
-	last, ok := advisoryPostGate.lastSuccess[repo]
-	return !ok || now.Sub(last) >= interval
+	return advisoryPostGate.Due(advCfg, repo, now, logger)
 }
 
-// recordAdvisoryPostSuccess advances the update-interval gate for repo after a
-// successful digest write. Skip-if-unchanged cycles count too: pkg/github
-// returns nil for them by design so freshness advances (#4818/#4821), and an
-// unchanged digest is exactly the case the throttle exists to quiet.
 func recordAdvisoryPostSuccess(repo string, now time.Time) {
-	advisoryPostGate.mu.Lock()
-	defer advisoryPostGate.mu.Unlock()
-	advisoryPostGate.lastSuccess[repo] = now
+	advisoryPostGate.RecordSuccess(repo, now)
 }
 
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when

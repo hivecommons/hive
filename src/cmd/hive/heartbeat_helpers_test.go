@@ -33,23 +33,6 @@ func TestQuotaExhaustedProcessCount(t *testing.T) {
 // advisoryIssueNumber must treat a recorded 0 as "not resolved" — 0 is the
 // zero value a failed ensure leaves behind, and posting to issue 0 is not a
 // thing. This is the read-side twin of advisoryIssueUnresolved.
-func TestAdvisoryIssueNumber(t *testing.T) {
-	issues := map[string]int{"org/ok": 42, "org/zero": 0}
-
-	if num, ok := advisoryIssueNumber(issues, "org/ok"); !ok || num != 42 {
-		t.Errorf("advisoryIssueNumber(org/ok) = %d, %v; want 42, true", num, ok)
-	}
-	if _, ok := advisoryIssueNumber(issues, "org/zero"); ok {
-		t.Error("advisoryIssueNumber(org/zero) reported ok for a recorded 0")
-	}
-	if _, ok := advisoryIssueNumber(issues, "org/missing"); ok {
-		t.Error("advisoryIssueNumber(org/missing) reported ok for an absent repo")
-	}
-	if _, ok := advisoryIssueNumber(nil, "org/ok"); ok {
-		t.Error("advisoryIssueNumber(nil map) reported ok")
-	}
-}
-
 // convergenceModeEffect is operator-facing notification text: each enrolled
 // mode must produce a distinct, non-empty explanation, and every unknown mode
 // must fall back to the inert-baseline wording.

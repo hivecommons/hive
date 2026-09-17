@@ -8,88 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/beads"
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 )
-
-func TestPrimaryAdvisoryRepo(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  *config.Config
-		want string
-	}{
-		{"nil config", nil, ""},
-		{"primary wins", &config.Config{Project: config.ProjectConfig{PrimaryRepo: "org/a", Repos: []string{"org/b"}}}, "org/a"},
-		{"falls back to first repo", &config.Config{Project: config.ProjectConfig{Repos: []string{"org/b", "org/c"}}}, "org/b"},
-		{"nothing configured", &config.Config{}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := primaryAdvisoryRepo(tc.cfg); got != tc.want {
-				t.Fatalf("primaryAdvisoryRepo = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// The per-cycle re-ensure must fire for a repo that never resolved AND for one
-// whose recorded number is the failed-ensure zero value — the state that left
-// certus posting nowhere for six days (#4167).
-func TestAdvisoryIssueUnresolved(t *testing.T) {
-	issues := map[string]int{"org/zero": 0, "org/ok": 42}
-	if !advisoryIssueUnresolved(issues, "org/missing") {
-		t.Error("a repo with no entry must be treated as unresolved")
-	}
-	if !advisoryIssueUnresolved(issues, "org/zero") {
-		t.Error("a recorded issue number of 0 must be treated as unresolved")
-	}
-	if advisoryIssueUnresolved(issues, "org/ok") {
-		t.Error("a resolved issue number must not trigger a re-ensure")
-	}
-}
-
-func TestEmptyAdvisoryDigestRequiresExistingIssueAndClient(t *testing.T) {
-	client := &github.Client{}
-
-	if !shouldBuildAdvisoryDigest(nil, client, true) {
-		t.Fatal("empty digest should still be built for an existing advisory issue")
-	}
-	if shouldBuildAdvisoryDigest(nil, client, false) {
-		t.Fatal("empty digest must not create advisory participation from nothing")
-	}
-	if shouldBuildAdvisoryDigest(nil, nil, true) {
-		t.Fatal("empty digest requires a GitHub client capable of attempting the write")
-	}
-	if !shouldBuildAdvisoryDigest(map[string]*beads.Store{"scanner": nil}, nil, false) {
-		t.Fatal("non-empty store set should still build so missing-issue errors can be reported")
-	}
-}
-
-func TestEmptyAdvisoryDigestPostsOnlyToExistingIssue(t *testing.T) {
-	client := &github.Client{}
-	empty := &advisory.Digest{}
-	withFinding := &advisory.Digest{TotalCount: 1}
-	withResolved := &advisory.Digest{RecentlyResolved: []advisory.ResolvedFinding{{Title: "fixed"}}}
-
-	if !shouldPostAdvisoryDigest(empty, client, true) {
-		t.Fatal("empty digest should post as a freshness marker when a pinned issue exists")
-	}
-	if shouldPostAdvisoryDigest(empty, client, false) {
-		t.Fatal("empty digest must not post without an existing pinned issue")
-	}
-	if shouldPostAdvisoryDigest(empty, nil, true) {
-		t.Fatal("empty digest must not post without a GitHub client")
-	}
-	if !shouldPostAdvisoryDigest(withFinding, nil, false) {
-		t.Fatal("findings must still flow to the missing-issue error path")
-	}
-	if !shouldPostAdvisoryDigest(withResolved, nil, false) {
-		t.Fatal("recently resolved findings must still flow to the missing-issue error path")
-	}
-}
 
 // A hive with findings but no advisory issue must report a post ERROR to the
 // hub. Before #4167 this path was a silent skip, so the spoke reported neither a
