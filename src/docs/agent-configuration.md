@@ -523,7 +523,7 @@ On startup and on every config reload, `defsrc.ApplyToConfig` (`src/pkg/defsrc/d
 - **Startup**, line 1294 — applied once before the first kick, so a repo edit made while the hive was down is already reflected.
 - **Config reload**, line 3009 — re-applied on every reload, before `initAgentConfigDrivenSystems`, so downstream systems see the merged config.
 
-Both call sites build the same `defsrc.Resolver` (`main.go:1287`), gated by `func(slug string) bool { return cfg.GitHubDefinitionAllowed(slug) }` (`main.go:1289`).
+Both call sites build the same `defsrc.Resolver` (`main.go:1655`), gated by `func(slug string) bool { return cfg.GitHubDefinitionAllowed(slug) }` (`main.go:1657`).
 
 ### What fields the live definition can change
 

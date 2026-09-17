@@ -145,17 +145,17 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/main.go:99`) and
-`spokeAppKeyDir = "/data"` (`:104`), with `spokeAppKeyFileMode = 0o600`
-(`:116`) and the comment "signing material must never be readable by anything
-else sharing the PVC or the pod" (`:114-115`). `/data` is the PVC mount in the spoke template
-(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:5297`)
+`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/main.go:207`) and
+`spokeAppKeyDir = "/data"` (`:212`), with `spokeAppKeyFileMode = 0o600`
+(`:224`) and the comment "signing material must never be readable by anything
+else sharing the PVC or the pod" (`:222-223`). `/data` is the PVC mount in the spoke template
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7225`)
 already establishes that identity-critical state persists there across
 restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`src/cmd/hive/main.go:95-97`.
+`src/cmd/hive/main.go:203-204`.
 
 ### First boot, pod roll, PVC loss
 
@@ -364,8 +364,8 @@ context, not by the hub. The template already injects per-hive secret material
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
 (`src/pkg/hub/saas_provision.go:2763`) already carries private key material at provision
 time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`src/cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
-before any heartbeat has run" (`:108`).
+(`src/cmd/hive/main.go:206`), which the spoke holds "from its very first boot —
+before any heartbeat has run" (`:216`).
 
 So there is an existing, precedented channel for giving a spoke a secret at
 birth that the hub does not have to reach in to deliver.
