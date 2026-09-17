@@ -172,10 +172,28 @@ jobs:
             # are prefixed ("cmd/<name>") so cmd/hivectl can never collide with
             # pkg/hivectl's floor. Recorded just below what v4 measures after
             # #4700/#4719 so the ratchet can turn as CLI tests land.
-            [cmd/bd]=58       # 60.4% after #4700's kb-CLI tests
-            [cmd/hive]=17     # 18.8% after #4719's merge-authz tests; bulk is main()/run-loop wiring
-            [cmd/apiproxy]=13 # 14.7%
-            [cmd/hive-backup]=68 # 71.1% after #4736's CLI entry-point tests
+            # ── Ratchet turned for #7407 ────────────────────────────────────
+            # NO code change — the cmd floors had drifted 27-82 points below
+            # what the packages hold, so deleting most of the bd or apiproxy
+            # CLI tests would still have passed the gate. Re-measured on
+            # 2026-09-17 with the gate's own command (`-short -count=1`), three
+            # consecutive runs, zero variance. Floors are set ~2-3 points under
+            # the LOWER of the two independent measurements (linux, as the gate
+            # runs, and darwin, where a contributor reproduces locally) so
+            # normal variance cannot fail CI on either platform:
+            #   cmd/bd          95.7 linux / 94.4 darwin
+            #   cmd/apiproxy    95.6 linux / 94.4 darwin
+            #   cmd/hive-backup 90.4 linux / 87.8 darwin
+            #   cmd/hive        44.8 linux / 51.6 darwin
+            #   cmd/hivectl    100.0 both
+            [cmd/bd]=92       # 95.7% on 2026-09-17; was 58
+            [cmd/hive]=42     # 44.8% on 2026-09-17; bulk is main()/run-loop wiring; was 17
+            [cmd/apiproxy]=92 # 95.6% on 2026-09-17; was 13
+            [cmd/hive-backup]=85 # 90.4% on 2026-09-17; was 68
+            # cmd/hivectl gained tests in a3f9842c and holds 100.0%, so it is no
+            # longer exempt below — floored here instead of falling back to the
+            # 90 default (#7407).
+            [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the
@@ -183,7 +201,13 @@ jobs:
           # default). Exempt from the NO TEST FILES hard failure by name so any
           # NEW untested cmd package still fails the gate. Remove an entry the
           # moment its package gains a test file.
-          UNTESTED_CMD_MAINS='cmd/hivectl'
+          #
+          # Empty since #7407: cmd/hivectl was the only entry and it gained
+          # src/cmd/hivectl/main_test.go in a3f9842c, so `go test` no longer
+          # emits a "[no test files]" line for it and the exemption could never
+          # match. The mechanism below is intact and still hard-fails any new
+          # untested cmd main; it simply has nothing to exempt today.
+          UNTESTED_CMD_MAINS=''
 
           # Capture the full `go test -cover` output ONCE, then classify every
           # line. The previous version piped through `grep '^ok'`, which silently

@@ -838,16 +838,26 @@ jobs:
             #   tests) and the gate was no longer catching a drop. Re-measured
             #   on the 2026-09-01 hourly run and moved to ~2–4 points under
             #   what they hold. cmd/apiproxy is unchanged at 13.9%.
-            [cmd/bd]=75       # 78.8% on 2026-09-01 (60.4% after #4700's kb-CLI tests)
-            [cmd/hive]=35     # 37.5% on 2026-09-01 (18.8% after #4719); bulk is main()/run-loop wiring
-            [cmd/apiproxy]=13 # 14.7%
-            [cmd/hive-backup]=78 # 81.9% on 2026-09-01 (71.1% after #4736's CLI entry-point tests)
+            # ── Ratchet turned for #7407 ────────────────────────────────────
+            # NO code change — re-measured on 2026-09-17 with `go test -cover
+            # ./cmd/... -short -count=1` (three runs, zero variance) and moved
+            # to ~2-3 points under the lower of the linux/darwin measurements.
+            # See coverage-hourly.yml for the full rationale and both numbers.
+            [cmd/bd]=92       # 95.7% on 2026-09-17; was 75
+            [cmd/hive]=42     # 44.8% on 2026-09-17; bulk is main()/run-loop wiring; was 35
+            [cmd/apiproxy]=92 # 95.6% on 2026-09-17; was 13
+            [cmd/hive-backup]=85 # 90.4% on 2026-09-17; was 78
+            [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the
           # gate already floors. KEEP IN SYNC with coverage-hourly.yml. Any NEW
           # untested cmd package still hard-fails.
-          UNTESTED_CMD_MAINS='cmd/hivectl'
+          #
+          # Empty since #7407: cmd/hivectl, the only entry, gained tests in
+          # a3f9842c, so no "[no test files]" line is emitted for it and the
+          # exemption could never match. The mechanism itself is unchanged.
+          UNTESTED_CMD_MAINS=''
 
           # Merge every shard profile: per-block counts are summed, so the N
           # partial pkg/agent profiles combine into the package's true
