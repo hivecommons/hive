@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	"github.com/hivecommons/hive/pkg/hub"
@@ -392,6 +393,7 @@ type StatusPayload struct {
 	// Omitted when it could not be computed (e.g. no config yet).
 	ACMMAdvice          *acmmadvisor.Recommendation `json:"acmmAdvice,omitempty"`
 	HiveAdvice          *hiveadvisor.Result         `json:"hiveAdvice,omitempty"`
+	FleetReport         *fleetreport.Result         `json:"fleetReport,omitempty"`
 	AdvisoryDigest      any                         `json:"advisoryDigest,omitempty"`
 	ContributorPool     *ContributorPoolStatus      `json:"contributorPool,omitempty"`
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
@@ -1867,6 +1869,12 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	if advice := acmmadvisor.RecommendFromStatus(s.buildACMMStatusInputsFromStatus(status)); advice.CurrentLevel > 0 {
 		status.ACMMAdvice = &advice
 		s.AttachHiveAdvice(status, time.Now().UTC())
+		version, commit := fleetReportBuildInfo()
+		dryRun := true
+		if s.deps != nil && s.deps.Config != nil {
+			dryRun = s.deps.Config.Governor.FleetReport.DryRun()
+		}
+		s.AttachFleetReport(status, version, commit, dryRun)
 	}
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq

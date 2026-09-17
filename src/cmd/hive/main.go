@@ -58,6 +58,7 @@ import (
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -139,6 +140,46 @@ func normalizeVersion(raw string) string {
 // to the hub, via `--version`, the hub heartbeat, and dashboard registration.
 func reportedVersion() string {
 	return normalizeVersion(version)
+}
+
+func publishFleetReports(ctx context.Context, logger *slog.Logger, ghClient *github.Client, dashSrv *dashboard.Server, res *fleetreport.Result, dryRun bool) {
+	if res == nil || dryRun || ghClient == nil || dashSrv == nil {
+		return
+	}
+	for _, report := range res.Reports {
+		write, err := ghClient.EnsureFleetReport(ctx, report)
+		if err != nil {
+			logger.Warn("fleet report: upstream write failed", "fingerprint", report.Fingerprint, "error", err)
+			continue
+		}
+		dashSrv.MarkFleetReportPosted(report.Fingerprint, write.Number, write.URL, write.Created, report.Body)
+		logger.Info("fleet report: upstream report recorded", "fingerprint", report.Fingerprint, "issue", write.Number, "created", write.Created, "commented", write.Commented, "reaction", write.ReactionSent)
+	}
+	for _, report := range res.Recoveries {
+		open, ok := dashSrv.FleetReportOpenIssue(report.Fingerprint)
+		if !ok {
+			continue
+		}
+		if open.Number <= 0 {
+			issue, found, err := ghClient.FleetReportIssue(ctx, report.Fingerprint)
+			if err != nil {
+				logger.Warn("fleet report: recovery lookup failed", "fingerprint", report.Fingerprint, "error", err)
+				continue
+			}
+			if !found {
+				dashSrv.ClearFleetReportOpen(report.Fingerprint)
+				continue
+			}
+			open.Number = issue.Number
+			open.URL = issue.URL
+		}
+		if err := ghClient.PostFleetReportRecovery(ctx, open.Number, report, open.OpenedByHive); err != nil {
+			logger.Warn("fleet report: recovery write failed", "fingerprint", report.Fingerprint, "issue", open.Number, "error", err)
+			continue
+		}
+		dashSrv.MarkFleetReportRecovered(report.Fingerprint)
+		logger.Info("fleet report: recovery recorded", "fingerprint", report.Fingerprint, "issue", open.Number, "closed", open.OpenedByHive)
+	}
 }
 
 var (
@@ -1303,6 +1344,7 @@ func main() {
 		gitShort = gitShort[:7]
 	}
 	dashboard.SetGitVersion(gitHash, gitShort)
+	dashboard.SetFleetReportBuildInfo(reportedVersion(), gitShort)
 	dashboard.SetGitBranch(gitBranch)
 	// Channel-delivered spokes ("stable" retag of a v4 build) label their
 	// version badge with the channel; "" outside a cluster or on branch/SHA
@@ -7171,6 +7213,8 @@ func runEvalCycle(
 	if !statusPublished {
 		dashSrv.UpdateStatusIfFresh(statusPayload, buildEpoch)
 	}
+
+	publishFleetReports(ctx, logger, ghClient, dashSrv, statusPayload.FleetReport, cfg.Governor.FleetReport.DryRun())
 
 	if agentStats := dashboard.CollectAgentStats(statusPayload); len(agentStats) > 0 {
 		gov.AttachAgentStats(agentStats)

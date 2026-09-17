@@ -1,0 +1,1 @@
+- Added dry-run fleet self-reporting for persistent ACMM shortfalls attributed to hive defects, including deterministic fingerprints, scrubbed evidence, dashboard previews, and opt-in upstream filing to hivecommons/hive.

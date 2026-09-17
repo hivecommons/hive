@@ -1495,7 +1495,22 @@ type GovernorConfig struct {
 	// (#4294) — the gateway declining to spend more money, as distinct from the
 	// hive's own token Budget above. See ProviderBudgetConfig.
 	ProviderBudget ProviderBudgetConfig `yaml:"provider_budget,omitempty" json:"provider_budget,omitempty"`
+
+	// FleetReport controls spoke self-reporting to hivecommons/hive. The default
+	// is dry-run: operators must explicitly set file_upstream=true before any
+	// report leaves the hive.
+	FleetReport FleetReportConfig `yaml:"fleet_report,omitempty" json:"fleet_report,omitempty"`
 }
+
+// FleetReportConfig controls upstream fleet self-reporting.
+type FleetReportConfig struct {
+	// FileUpstream is the explicit opt-in to create/comment on hivecommons/hive.
+	// The zero value is dry-run, which still surfaces the would-file reports on
+	// the dashboard for operator review.
+	FileUpstream bool `yaml:"file_upstream,omitempty" json:"file_upstream,omitempty"`
+}
+
+func (f FleetReportConfig) DryRun() bool { return !f.FileUpstream }
 
 // ProviderBudgetConfig tunes how long the hive keeps agent kicks suspended
 // after the inference provider refuses on a spending limit (#4294).
@@ -3682,15 +3697,15 @@ type DiscordConfig struct {
 }
 
 type HubConfig struct {
-	Enabled             bool   `yaml:"enabled"`
-	URL                 string `yaml:"url"`
-	IsPublic            bool   `yaml:"is_public"`
-	SnapshotURL         string `yaml:"snapshot_url"`
-	DashboardURL        string `yaml:"dashboard_url"`
-	HiveType            string `yaml:"hive_type"`
-	ClusterID           string `yaml:"cluster_id"`
-	AutoSnapshot        bool   `yaml:"auto_snapshot"`
-	AutoUpgrade         bool   `yaml:"auto_upgrade"`
+	Enabled      bool   `yaml:"enabled"`
+	URL          string `yaml:"url"`
+	IsPublic     bool   `yaml:"is_public"`
+	SnapshotURL  string `yaml:"snapshot_url"`
+	DashboardURL string `yaml:"dashboard_url"`
+	HiveType     string `yaml:"hive_type"`
+	ClusterID    string `yaml:"cluster_id"`
+	AutoSnapshot bool   `yaml:"auto_snapshot"`
+	AutoUpgrade  bool   `yaml:"auto_upgrade"`
 	// AutoUpgradeMode is the SCHEDULE the hub applies to this hive's
 	// auto-upgrades: "instant", "daily" or "weekly" (see
 	// hub.AutoUpgradeMode*). The authoritative value lives hub-side; this field

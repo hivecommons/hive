@@ -3389,6 +3389,13 @@
     </div>
   </div>
 
+  <div id="fleet-report-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="fleet-report-section"><span class="section-chevron">▼</span> 📡 Fleet Report Preview <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">dry-run</span></h2>
+    <div class="section-body">
+      <div id="fleet-report-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+    </div>
+  </div>
+
   <div id="acmm-reco-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-reco-section"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
     <div class="section-body">
@@ -10129,6 +10136,37 @@ function burnAreaChart() {
       applySectionCollapse('hive-advice-section');
     }
 
+
+
+    function renderFleetReport(dto) {
+      const section = document.getElementById('fleet-report-section');
+      const card = document.getElementById('fleet-report-card');
+      if (!section || !card) return;
+      dto = dto || {};
+      const reports = Array.isArray(dto.reports) ? dto.reports : [];
+      const recoveries = Array.isArray(dto.recoveries) ? dto.recoveries : [];
+      if (reports.length === 0 && recoveries.length === 0) { section.style.display = 'none'; return; }
+      const dryRun = dto.dry_run !== false;
+      const mk = (r, i, recovered) => {
+        r = r || {};
+        const evidence = Array.isArray(r.evidence) ? r.evidence : [];
+        const ev = evidence[0] || {};
+        const title = recovered ? 'Recovered: ' : '';
+        const periodic = ev.periodicity ? `; periodic ${escapeHtml(ev.periodicity || '')}` : '';
+        return `<li class="reco-crit ${recovered ? 'met' : 'unmet'}">
+          <span class="mark">${recovered ? '✓' : i + 1}</span>
+          <div class="crit-body"><div class="crit-name">${title}${escapeHtml(r.criterion || 'unmet ACMM criterion')}</div>
+          <div class="crit-detail">${escapeHtml(ev.severity || 'medium')} ${escapeHtml(ev.component || 'hive')} / ${escapeHtml(ev.error_class || 'unknown')}; count ${escapeHtml(String(ev.count || 0))} in ${escapeHtml(ev.window || 'n/a')}${periodic}</div>
+          <div class="crit-cmp">fingerprint: ${escapeHtml(r.fingerprint || '')}; instance: ${escapeHtml(r.instance_id || '')}</div></div>
+        </li>`;
+      };
+      const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
+      const recoveryHtml = recoveries.map((r, i) => mk(r, i, true)).join('');
+      section.style.display = '';
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale" style="margin-top:0">Persistent ACMM shortfalls attributed to hive defects. Reports contain shape-only scrubbed evidence.</span></div><ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
+      applySectionCollapse('fleet-report-section');
+    }
+
     async function fetchHiveAdvice() {
       try {
         const r = await fetch('/api/hive-advice');
@@ -13925,13 +13963,14 @@ function burnAreaChart() {
       updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
+      renderFleetReport(data.fleetReport || null);
       renderSystemGauges(data.systemResources || null);
       ocUpdateSidebarAgents();
       renderDebugSection();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'repos-section', 'beads-section', 'acmm-eval-section',
-        'platform-section', 'audit-section', 'nous-section', 'inception-section',
+        'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
       ];
