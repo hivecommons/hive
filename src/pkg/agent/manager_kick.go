@@ -220,11 +220,50 @@ func (m *Manager) SendKick(name string, message string) error {
 // must hold m.mu and must already have verified the CLI is ready for input
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
+// kickChunkPauseUnlocked waits out one inter-chunk delay with m.mu released,
+// then re-acquires it and re-validates that the kick still belongs to the
+// session it was pinned to.
+//
+// Returns false if the agent disappeared, was replaced, or restarted while
+// unlocked, meaning the remaining chunks must not be typed — the pane they
+// would land in is a different run's. This mirrors the epoch revalidation
+// SendKick already does around waitForInputPromptForAgent (#7363).
+//
+// The identity check is deliberately pointer-based as well as epoch-based: a
+// replacement AgentProcess for the same name starts its kickEpoch at zero, so
+// an epoch comparison alone could alias a fresh object as "unchanged".
+//
+// Always returns with m.mu held, including on the false path, so callers can
+// keep their `Locked` contract.
+func (m *Manager) kickChunkPauseUnlocked(agent *AgentProcess, epoch int, d time.Duration) bool {
+	name := agent.Name
+
+	m.mu.Unlock()
+	time.Sleep(d)
+	m.mu.Lock()
+
+	current, ok := m.agents[name]
+	if !ok || current != agent {
+		return false
+	}
+	return agent.kickEpoch == epoch
+}
+
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
 	// Claim the pane for the whole of delivery so the pane poller does not
 	// mistake a kick-in-progress for a hung CLI and restart the session out
 	// from under the typist. See AgentProcess.kickDelivering.
-	agent.kickDelivering.Store(true)
+	//
+	// The claim is exclusive, not just advisory. m.mu is released across the
+	// inter-chunk pauses below (#7417), so a second delivery for this agent
+	// can now reach this point while the first is still typing; before that
+	// change the lock alone made it impossible. Two typists sharing one pane
+	// would interleave their chunks into a single corrupt prompt.
+	if !agent.kickDelivering.CompareAndSwap(false, true) {
+		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
+			"agent", agent.Name, "trigger", trigger)
+		return
+	}
 	defer agent.kickDelivering.Store(false)
 
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
@@ -263,18 +302,40 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		IsInferenceBackend(effectiveBackend(agent)),
 		resolveExplainMode(agent.Config, m.explainModeDefault()))
 
-	// Send message in chunks (400 rune max per chunk, rune-safe)
+	// Send message in chunks (400 rune max per chunk, rune-safe).
+	//
+	// m.mu is released across each inter-chunk pause. A kick carrying a large
+	// ${PR_LIST}/${ISSUE_LIST} runs to tens of kilobytes, and at chunkSize
+	// per chunkDelay that is minutes of typing. Holding the manager lock for
+	// that whole span starves everything that needs it — measured on a
+	// 350-PR kick: 209 seconds during which the dashboard was unresponsive,
+	// the hub heartbeat timed out and shipped LAST-GOOD stale stats to stay
+	// online, and the LLM proxy dropped other agents' in-flight requests
+	// (#7417). Pausing unlocked drops the hold to one chunk at a time.
 	runes := []rune(message)
 	if len(runes) <= chunkSize {
 		m.tmuxSendLiteralForAgent(agent, message)
 	} else {
+		epoch := agent.kickEpoch
 		for offset := 0; offset < len(runes); offset += chunkSize {
 			end := offset + chunkSize
 			if end > len(runes) {
 				end = len(runes)
 			}
 			m.tmuxSendLiteralForAgent(agent, string(runes[offset:end]))
-			time.Sleep(chunkDelay)
+			if end >= len(runes) {
+				break // no pause after the final chunk
+			}
+			if !m.kickChunkPauseUnlocked(agent, epoch, chunkDelay) {
+				// The session this kick was pinned to is gone. Abandon the
+				// remaining chunks rather than type them into a pane that now
+				// belongs to a different run, and leave LastKick unset so the
+				// governor does not record a kick that was never delivered.
+				m.logger.Warn("kick delivery abandoned: agent restarted mid-send",
+					"agent", agent.Name, "trigger", trigger,
+					"sent_runes", end, "total_runes", len(runes))
+				return
+			}
 		}
 	}
 
