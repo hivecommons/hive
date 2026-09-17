@@ -1,0 +1,54 @@
+name: Issue Closed Hint
+
+# Tells the reporter, every time their issue is closed, that `/reopen` exists
+# (issue-reopen-command.yml, #6762).
+#
+# Most hive issues are closed by a merged agent PR or by a maintainer, not by
+# the reporter. GitHub then offers the reporter no reopen button, and without a
+# hint they either give up or re-file the same bug (#6767 after #6500). The
+# `/reopen` command fixes the permission gap but is invisible unless someone
+# knows to look for it — this makes the hint consistent on every closure
+# instead of depending on whoever closed the issue remembering to say so.
+#
+# Skipped when the reporter closed the issue themselves (nothing to tell them)
+# and for pull requests (the `issues` event never fires for those).
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  hint:
+    name: Point the reporter at /reopen
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.issue.user.login != github.event.sender.login
+    steps:
+      - name: Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          REPORTER: ${{ github.event.issue.user.login }}
+          CLOSER: ${{ github.event.sender.login }}
+          REASON: ${{ github.event.issue.state_reason }}
+        run: |
+          set -euo pipefail
+          # Written to a file rather than inlined: a multi-line --body inside a
+          # YAML block scalar picks up the block's indentation and renders as a
+          # code block on GitHub.
+          {
+            printf '@%s this issue was closed by @%s' "${REPORTER}" "${CLOSER}"
+            case "${REASON}" in
+              not_planned) printf ' as not planned' ;;
+              completed)   printf ' as completed' ;;
+            esac
+            printf '.\n\n'
+            printf 'If you are still seeing the problem, comment `/reopen` and it will be reopened for you — you do not need write access. '
+            printf 'Please add what you are still observing (version, logs, steps) so it is not closed the same way again.\n'
+          } > /tmp/closed-hint.md
+          gh issue comment "${ISSUE}" --repo "${REPO}" --body-file /tmp/closed-hint.md
