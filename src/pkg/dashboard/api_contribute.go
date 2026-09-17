@@ -239,6 +239,48 @@ func (s *Server) registerContributeRoutes() {
 	// Same tail-registration reasoning as the route above: api-reference.md
 	// cites routes by file:line.
 	s.mux.HandleFunc("GET /api/contribute/decisions", s.handleContributeDecisions)
+	// Sign-in return trampoline for the public /contribute pages on a
+	// hub-proxied spoke (#7453). Deliberately NOT a public path: on a hosted
+	// spoke nginx gates it, an anonymous visitor is bounced through the hub
+	// login and comes back here with a session, and the handler sends them on
+	// to the tab they were on. Tail-registered for the same file:line reason.
+	s.mux.HandleFunc("GET /auth/return", s.handleAuthReturn)
+}
+
+// handleAuthReturn bounces a freshly signed-in visitor back to the same-origin
+// path in ?to= (#7453). The Operations tab's "Sign in with GitHub" link used to
+// point at "/" — the dashboard root, the only gated page a hosted spoke has —
+// so a visitor who signed in landed on the dashboard and had to find their way
+// back to /contribute/operations by hand. Linking to /contribute/operations
+// itself would not work: /contribute is public, so the ingress never asks for
+// a login there.
+//
+// Same-origin paths only: "to" must start with a single "/" (never "//" or a
+// scheme), or the visitor is sent to /contribute. Nothing else is trusted from
+// the query.
+func (s *Server) handleAuthReturn(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, safeReturnPath(r.URL.Query().Get("to")), http.StatusFound)
+}
+
+// authReturnDefault is where /auth/return sends a visitor whose ?to= is
+// missing or not a same-origin path.
+const authReturnDefault = "/contribute"
+
+// safeReturnPath accepts only a same-origin absolute path: a leading "/",
+// not "//" (protocol-relative) or "/\", no scheme, no host, no
+// control characters.
+func safeReturnPath(to string) string {
+	if to == "" || !strings.HasPrefix(to, "/") || strings.HasPrefix(to, "//") || strings.HasPrefix(to, "/\\") {
+		return authReturnDefault
+	}
+	if strings.ContainsAny(to, "\r\n\x00") {
+		return authReturnDefault
+	}
+	// A string that starts with a single "/" has no scheme and no authority,
+	// so the prefix checks above are the whole same-origin argument; no URL
+	// parsing is needed (and none is done, to keep this file's route
+	// registrations — cited by line in api-reference.md — where they are).
+	return to
 }
 
 // contributorSaveMu serializes profile writes across ALL goroutines (H2,

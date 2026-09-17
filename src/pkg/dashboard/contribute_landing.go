@@ -218,7 +218,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	// applyDocumentScriptSrcElem below stamps them before the first Write
 	// (#3848 part 1 / #3907, see csp_script_src.go).
 	var page bytes.Buffer
-	fmt.Fprintf(&page, strings.ReplaceAll(`<!DOCTYPE html>
+	// {{HIVE_HUB_PROXIED}} is substituted the same way (#7453): the sign-in
+	// link needs to know whether a login is the hub's (bounce through the gated
+	// /auth/return trampoline and come back to this tab) or this spoke's own
+	// device flow (the dashboard root). A JS boolean literal, never user input.
+	hubProxiedJS := "false"
+	if s.hubProxied() {
+		hubProxiedJS = "true"
+	}
+	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
      visitor who pinned a theme never sees a frame of the other one. Kept to the
@@ -1611,6 +1619,10 @@ var cmds=document.getElementById('copy-cmds');
 // break-out here. HTML escaping is NOT sufficient in a script data context.
 var hubURL=%s;
 var ccProjectName=%s;
+// Whether this spoke's sign-in is the hub's (hosted) rather than its own device
+// flow. Substituted server-side as a boolean literal; see ccSignInHref.
+var ccHubProxied={{HIVE_HUB_PROXIED}};
+window.ccHubProxied=ccHubProxied;
 // Shared with the second script block's IIFE (the dossier renderer lives there
 // and needs the project name for its masthead). Without this the bare reference
 // in renderMeCard resolves to nothing and every dossier render throws.
@@ -2637,8 +2649,23 @@ var ccMeUsername='';
 // This matters most on a spoke: a session on the hub is not a session on the
 // spoke's own origin, so a visitor who is signed in at hive.hivecommons.dev
 // still arrives here anonymous and needs a way to sign in to THIS origin.
+//
+// On a hub-proxied spoke the link goes through /auth/return?to=<this tab>
+// (#7453): "/" is the dashboard, and a visitor who signed in landed there
+// instead of back on the tab they were reading. /auth/return is gated, so
+// the ingress sends an anonymous visitor through the hub login and the spoke
+// then bounces them back to "to" (same-origin paths only). Linking to this
+// tab directly would not sign anyone in: /contribute is public, so the
+// ingress never asks. A self-hosted spoke keeps "/" — its device-flow sign-in
+// page is the dashboard root itself.
+function ccSignInHref(){
+  var hubProxied=(typeof window!=='undefined'&&window.ccHubProxied)||(typeof ccHubProxied!=='undefined'&&ccHubProxied);
+  if(!hubProxied)return '/';
+  var here=location.pathname+location.search+location.hash;
+  return '/auth/return?to='+encodeURIComponent(here);
+}
 function ccSignInCTA(label){
-  return '<a class="cc-signin-cta" href="/">'+esc(label||'Sign in with GitHub')+'</a>';
+  return '<a class="cc-signin-cta" href="'+esc(ccSignInHref())+'">'+esc(label||'Sign in with GitHub')+'</a>';
 }
 // ccResolveViewer fills ccMeUsername on a tab that has no other reason to ask who
 // is looking. Every existing setter hangs off a DIFFERENT tab — loadMeStanding and
@@ -6396,7 +6423,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	applyDocumentScriptSrcElem(w, page.Bytes())
 	_, _ = w.Write(page.Bytes())
 }

@@ -776,9 +776,21 @@ const ssoHandoffPath = "/sso"
 //   - Value: the hive's dashboard token — the raw value stored in the spoke's
 //     "hive-secrets" k8s secret under key "dashboard-token", i.e. the same
 //     string the spoke reads from DASHBOARD_AUTH_TOKEN into its authToken.
-//   - Set ONLY on the authenticated success path; NEVER on public-path,
-//     unfurl-bot, unauthenticated (401), or no-access (403) responses.
+//   - Set ONLY when the hub has resolved a real hub session for the caller:
+//     the authenticated success path, and (#7453) a public path served to a
+//     signed-in caller. NEVER on an anonymous public-path 200, an
+//     unfurl-bot 200, an unauthenticated 401, or a no-access 403.
 const proxyAuthHeader = "X-Hive-Proxy-Auth"
+
+// publicPathGuestRole is the X-Hive-Role forwarded on a PUBLIC path for a
+// signed-in hub user who holds no grant on this hive. The spoke's
+// public-path identity gate (trustProxyIdentity) accepts identity only when
+// both X-Hive-User and X-Hive-Role are present, and its public handlers hand
+// extra capability only to owner / read-write — "read" grants nothing beyond
+// what an anonymous visitor already gets; it just lets /api/contribute/me say
+// whose contribution it is showing. A non-public path never sees it: a
+// grant-less user is still refused there (403 below).
+const publicPathGuestRole = "read"
 
 // spokeProxyAuthCacheTTL bounds how long a hive's dashboard token is memoized
 // so the per-request auth-check subrequest avoids a kubectl exec on every call
@@ -915,6 +927,13 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 	}
 	for _, p := range publicPaths {
 		if strings.HasPrefix(originalURI, p) {
+			// A public path ALWAYS answers 200 — anonymous access to the
+			// leaderboard and the contributor relay must keep working — but a
+			// caller who does carry a hub session is identified all the same
+			// (#7453). Answering a bare 200 here meant X-Hive-User never reached
+			// /api/contribute/me on a hosted spoke, so the Operations tab told
+			// the signed-in owner they were not signed in.
+			s.setPublicPathIdentity(w, r, hiveID)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -965,4 +984,32 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(proxyAuthHeader, proxyAuth)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// setPublicPathIdentity sets X-Hive-User / X-Hive-Role / X-Hive-Proxy-Auth on
+// a public-path auth-check response when — and only when — the caller has a
+// valid hub session. The role is the caller's grant on this hive (the
+// canonical owner elevated exactly as the gated path does, #4081), or
+// publicPathGuestRole for a signed-in user with no grant. An anonymous caller
+// gets no identity headers and no proof, so the spoke treats the request as
+// anonymous, exactly as before.
+func (s *HubServer) setPublicPathIdentity(w http.ResponseWriter, r *http.Request, hiveID string) {
+	username := s.getAuthUser(r)
+	if username == "" {
+		return
+	}
+	role := publicPathGuestRole
+	if user := loadSaaSUser(username); user != nil {
+		if granted, ok := user.Hives[hiveID]; ok && granted != "" {
+			role = granted
+		}
+	}
+	if role != "owner" && s.userOwnsHive(username, hiveID) {
+		role = "owner"
+	}
+	w.Header().Set("X-Hive-User", username)
+	w.Header().Set("X-Hive-Role", role)
+	if proxyAuth := s.spokeProxyAuthToken(hiveID); proxyAuth != "" {
+		w.Header().Set(proxyAuthHeader, proxyAuth)
+	}
 }

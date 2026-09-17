@@ -21,11 +21,16 @@ func TestContributeSignInCTAIsALink(t *testing.T) {
 	for _, want := range []string{
 		"<a ",
 		`class="cc-signin-cta"`,
-		`href="/"`, // the dashboard root IS the device-flow sign-in page
+		`href="'+esc(ccSignInHref())+'"`, // the destination depends on the spoke's auth shape (#7453)
 	} {
 		if !strings.Contains(fn, want) {
 			t.Errorf("ccSignInCTA does not emit %q; it must be a real link, not styled text.\ngot:\n%s", want, fn)
 		}
+	}
+	// On a self-hosted spoke the dashboard root IS the device-flow sign-in
+	// page, so that is still where the link goes there.
+	if href := jsFunc(t, body, "ccSignInHref"); !strings.Contains(href, "if(!hubProxied)return '/';") {
+		t.Errorf("ccSignInHref no longer sends a self-hosted spoke's visitor to the dashboard root:\n%s", href)
 	}
 	if !strings.Contains(body, ".cc-signin-cta{") {
 		t.Error("the .cc-signin-cta rule is missing, so the control would be indistinguishable from prose")

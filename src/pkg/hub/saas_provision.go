@@ -3670,6 +3670,16 @@ metadata:
 {{- end}}
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # /api/contribute is PUBLIC (the hub's auth-check answers 200 for it,
+    # signed in or not) but not anonymous by choice: a signed-in visitor's
+    # identity must still reach /api/contribute/me, or the Operations tab
+    # tells the hive's own owner they are not signed in (#7453). The auth-url
+    # is what carries X-Hive-User/X-Hive-Role/X-Hive-Proxy-Auth for a caller
+    # with a hub session; without it nginx never asks. No auth-signin, for
+    # the same reason hive-api-xhr has none: fetch() cannot follow the
+    # cross-origin login redirect — and a public path never needs one.
+    nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
 spec:
   ingressClassName: {{.IngressClass}}
   rules:

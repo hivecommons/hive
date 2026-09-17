@@ -110,9 +110,9 @@ func TestAPIXHRIngressAnswers401WithoutRedirect(t *testing.T) {
 
 // TestAPIXHRIngressDoesNotUngateSiblings: the page Ingress and the terminal
 // Ingress keep their auth-signin (a browser navigation CAN follow it and that
-// is how a signed-out user reaches the login page at all), and the bearer-token
-// /api/v1 and public /api/contribute Ingresses stay ungated — longest-prefix
-// matching keeps them ahead of /api.
+// is how a signed-out user reaches the login page at all), the bearer-token
+// /api/v1 Ingress stays ungated, and the public /api/contribute Ingress never
+// redirects — longest-prefix matching keeps both ahead of /api.
 func TestAPIXHRIngressDoesNotUngateSiblings(t *testing.T) {
 	blocks := ingressBlocks(t, renderManifestWildcard(t, false))
 	for _, name := range []string{"hive", "hive-terminal"} {
@@ -120,13 +120,17 @@ func TestAPIXHRIngressDoesNotUngateSiblings(t *testing.T) {
 			t.Errorf("%s lost its auth-signin; a signed-out browser navigation would get a bare 401 instead of the login page:\n%s", name, blocks[name])
 		}
 	}
-	for _, name := range []string{"hive-api", "hive-contribute"} {
-		if strings.Contains(blocks[name], "auth-url") {
-			t.Errorf("%s gained an auth gate; it serves bearer-token/public traffic that has no hub session:\n%s", name, blocks[name])
-		}
+	if strings.Contains(blocks["hive-api"], "auth-url") {
+		t.Errorf("hive-api gained an auth gate; it serves bearer-token traffic that has no hub session:\n%s", blocks["hive-api"])
+	}
+	// #7453: /api/contribute asks the hub WHO is calling (so a signed-in
+	// visitor's identity reaches /api/contribute/me) but never redirects —
+	// the path is public and fetch() cannot follow the login redirect anyway.
+	if strings.Contains(blocks["hive-contribute"], "nginx.ingress.kubernetes.io/auth-signin") {
+		t.Errorf("hive-contribute carries auth-signin; /api/contribute is public and fetch() cannot follow the redirect:\n%s", blocks["hive-contribute"])
 	}
 	if !strings.Contains(blocks["hive-api"], "path: /api/v1") || !strings.Contains(blocks["hive-contribute"], "path: /api/contribute") {
-		t.Error("the /api/v1 and /api/contribute paths moved; they must stay longer prefixes than /api so nginx keeps routing them to their ungated Ingresses")
+		t.Error("the /api/v1 and /api/contribute paths moved; they must stay longer prefixes than /api so nginx keeps routing them to their own Ingresses")
 	}
 }
 
