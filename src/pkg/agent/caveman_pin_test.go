@@ -21,7 +21,7 @@ import (
 // is a bare hex SHA (7-40 hex chars), so the regression cannot be
 // reintroduced.
 func TestCavemanPinIsNotBareSHA(t *testing.T) {
-	src, err := os.ReadFile("manager.go")
+	src, err := os.ReadFile("manager_launch.go")
 	if err != nil {
 		t.Fatalf("reading manager.go: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCavemanPinIsNotBareSHA(t *testing.T) {
 // prompts). See PR #4548. Every `skills add` invocation in manager.go must
 // therefore carry a `-y` argument.
 func TestCavemanSkillsAddIsHeadless(t *testing.T) {
-	src, err := os.ReadFile("manager.go")
+	src, err := os.ReadFile("manager_launch.go")
 	if err != nil {
 		t.Fatalf("reading manager.go: %v", err)
 	}

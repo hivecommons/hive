@@ -1,0 +1,1 @@
+- Extract the launch-command/caveman-installer domain from `pkg/agent/manager.go` into `manager_launch.go` (#7303 god-file split; no behavior change).

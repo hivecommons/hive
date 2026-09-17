@@ -50,7 +50,7 @@ func TestPiLaunchCommandPassesModelFlag(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "manager.go"))
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "manager_launch.go"))
 	if err != nil {
 		t.Fatalf("read manager.go: %v", err)
 	}
