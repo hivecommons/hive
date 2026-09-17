@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -370,4 +372,64 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		delivered = append(delivered, msg.Agent)
 	}
 	return delivered
+}
+
+// advisoryIngestDeps are the side effects of recording an ioscan canary leak
+// found in a newly ingested advisory finding. Decisions (whether a finding is
+// scanned, whether a leak blocks it) live in gateAdvisoryFindings; the effects
+// stay at the call site in runEvalCycle, same split as kickDispatchDeps.
+type advisoryIngestDeps struct {
+	// scanCanary runs the canary scan over one finding's report text. nil when
+	// ioscan or its canaries are disabled: nothing is scanned, nothing blocked.
+	scanCanary func(agent, reportText, source string) (ioscan.CanaryLeak, bool)
+	// failClosed is cfg.Ioscan.FailClosed(): a leaking finding is withheld from
+	// persistence instead of merely being recorded.
+	failClosed bool
+	// auditLog records the leak in the dashboard audit trail.
+	auditLog func(actor, action, detail, agent string)
+	// recordLeakBead persists the critical canary-leak bead for the agent.
+	recordLeakBead func(leak ioscan.CanaryLeak)
+}
+
+// gateAdvisoryFindings is runEvalCycle's ioscan canary gate over one cycle's
+// newly read advisory findings, extracted verbatim behind a seam (#7232).
+//
+// The rules, each previously unreachable without a live dashboard and bead
+// stores:
+//
+//   - With canaries disabled (scanCanary == nil) every finding passes through
+//     unscanned; the gate never blocks on configuration alone.
+//   - A leak is ALWAYS recorded — audit entry plus critical bead — whether or
+//     not it blocks. Fail-open still leaves evidence.
+//   - Only failClosed turns a leak into a withheld finding. The scan text is
+//     the finding's title, detail, file, type and severity joined by newlines,
+//     so a canary smuggled into any of those fields is caught.
+func gateAdvisoryFindings(findings []advisory.Finding, deps advisoryIngestDeps, logger *slog.Logger) []advisory.Finding {
+	safeFindings := make([]advisory.Finding, 0, len(findings))
+	for _, f := range findings {
+		logger.Info("advisory finding ingested",
+			"agent", f.Agent,
+			"severity", f.Severity,
+			"type", f.Type,
+			"title", f.Title,
+			"file", f.File,
+			"line", f.Line,
+		)
+		blockFinding := false
+		if deps.scanCanary != nil {
+			reportText := strings.Join([]string{f.Title, f.Detail, f.File, f.Type, f.Severity}, "\n")
+			if leak, ok := deps.scanCanary(f.Agent, reportText, "advisory-finding"); ok {
+				detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
+				deps.auditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
+				deps.recordLeakBead(leak)
+				blockFinding = deps.failClosed
+			}
+		}
+		if blockFinding {
+			logger.Warn("ioscan fail-closed blocked advisory finding with canary leak", "agent", f.Agent)
+			continue
+		}
+		safeFindings = append(safeFindings, f)
+	}
+	return safeFindings
 }

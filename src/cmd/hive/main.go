@@ -6437,38 +6437,25 @@ func runEvalCycle(
 		if err != nil {
 			logger.Warn("failed to read advisory findings", "error", err)
 		} else if len(findings) > 0 {
-			safeFindings := make([]advisory.Finding, 0, len(findings))
-			// Log each new finding for the audit trail
-			for _, f := range findings {
-				logger.Info("advisory finding ingested",
-					"agent", f.Agent,
-					"severity", f.Severity,
-					"type", f.Type,
-					"title", f.Title,
-					"file", f.File,
-					"line", f.Line,
-				)
-				blockFinding := false
-				if cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled() {
-					reportText := strings.Join([]string{f.Title, f.Detail, f.File, f.Type, f.Severity}, "\n")
-					if leak, ok := ioscan.DefaultCanaries.Scan(f.Agent, reportText, "advisory-finding"); ok {
-						detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
-						dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
-						if store, ok := beadStores[leak.Agent]; ok && store != nil {
-							if b, berr := store.Create("Canary token leaked via "+leak.Source, beads.TypeAdvisory, beads.PriorityCritical, leak.Agent, ""); berr == nil {
-								_ = store.SetMetadata(b.ID, "rule", ioscan.CanaryLeakRule)
-								_ = store.SetMetadata(b.ID, "source", leak.Source)
-							}
-						}
-						blockFinding = cfg.Ioscan.FailClosed()
-					}
-				}
-				if blockFinding {
-					logger.Warn("ioscan fail-closed blocked advisory finding with canary leak", "agent", f.Agent)
-					continue
-				}
-				safeFindings = append(safeFindings, f)
+			// The canary gate's decisions live behind a seam (#7232); only the
+			// effects — audit entry, critical bead — are supplied here.
+			var scanCanary func(agent, reportText, source string) (ioscan.CanaryLeak, bool)
+			if cfg.Ioscan.IsEnabled() && cfg.Ioscan.CanariesEnabled() {
+				scanCanary = ioscan.DefaultCanaries.Scan
 			}
+			safeFindings := gateAdvisoryFindings(findings, advisoryIngestDeps{
+				scanCanary: scanCanary,
+				failClosed: cfg.Ioscan.FailClosed(),
+				auditLog:   dashSrv.AuditLog,
+				recordLeakBead: func(leak ioscan.CanaryLeak) {
+					if store, ok := beadStores[leak.Agent]; ok && store != nil {
+						if b, berr := store.Create("Canary token leaked via "+leak.Source, beads.TypeAdvisory, beads.PriorityCritical, leak.Agent, ""); berr == nil {
+							_ = store.SetMetadata(b.ID, "rule", ioscan.CanaryLeakRule)
+							_ = store.SetMetadata(b.ID, "source", leak.Source)
+						}
+					}
+				},
+			}, logger)
 			if persisted := advisory.PersistAsBeads(safeFindings, beadStores); persisted > 0 {
 				logger.Info("advisory findings persisted as beads", "count", persisted)
 			}
