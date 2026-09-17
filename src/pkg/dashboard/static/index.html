@@ -21687,8 +21687,28 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Kick-list cap bounds, mirroring MinKickListCap / MaxKickListCap /
+    // DefaultMaxIssuesPerKick / DefaultMaxPRsPerKick in pkg/config/kick_limits.go.
+    // The server re-validates, so these only shape the input and the help text.
+    const KICK_LIST_CAP_MAX = 500;
+    const KICK_LIST_CAP_ISSUE_DEFAULT = 100;
+    const KICK_LIST_CAP_PR_DEFAULT = 50;
+
     function renderGovRepos(repos) {
       const primary = _configState.data.primaryRepo || '';
+      // The API sends EFFECTIVE caps (defaults already resolved), so these
+      // boxes always show the number actually in force rather than a blank.
+      // Dirty edits win so a value the operator just typed survives a re-render
+      // (adding a repo re-renders this whole tab before Save).
+      const dirtyCaps = _configState.dirty.repos || {};
+      const caps = {
+        issues: dirtyCaps.maxIssuesPerKick !== undefined
+          ? dirtyCaps.maxIssuesPerKick
+          : (_configState.data.maxIssuesPerKick || KICK_LIST_CAP_ISSUE_DEFAULT),
+        prs: dirtyCaps.maxPRsPerKick !== undefined
+          ? dirtyCaps.maxPRsPerKick
+          : (_configState.data.maxPRsPerKick || KICK_LIST_CAP_PR_DEFAULT),
+      };
       // ghHost is the hive's forge, derived server-side by ResolvedBaseURL()
       // (base_url, or the api_url host for pooled GHE hives that carry
       // base_url: ""). A hive is single-forge — validateSingleRepoHost rejects
@@ -21754,6 +21774,29 @@ function burnAreaChart() {
           </div>
           <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:6px"></div>
           ${defaultWarn}
+        </div>
+        <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="font-size:0.8rem;font-weight:600;margin-bottom:4px">Kick prompt list caps</div>
+          <p style="font-size:0.75rem;color:var(--muted);margin-bottom:12px">
+            These caps limit how many issues and pull requests are listed in an agent's kick
+            prompt. They exist to keep the prompt a manageable size for the agents that read
+            those lists — <strong>scanner</strong> above all, which receives both in full. The
+            lists are pasted into the prompt as-is, so without a cap the prompt grows with your
+            backlog: a hive with 302 open PRs produced a 69.5&nbsp;KiB kick against a budget of
+            about 22&nbsp;KiB, and because a kick is typed into a terminal, an oversized prompt
+            also takes minutes to deliver. Lower them if your backlog is large; raise them if
+            your hive is small and you want agents to see everything.
+          </p>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Max issues per kick <span class="config-info">i<span class="config-tooltip">How many issues at most are listed in a kick prompt. Issues are listed oldest first, so the cap keeps the oldest (most overdue) work and drops the newest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_ISSUE_DEFAULT}.</span></span></label>
+              <input type="number" min="1" max="${KICK_LIST_CAP_MAX}" value="${caps.issues}" data-change-action="gh79">
+            </div>
+            <div class="config-field">
+              <label>Max PRs per kick <span class="config-info">i<span class="config-tooltip">How many pull requests at most are listed in a kick prompt. PRs are listed in review-priority order (fixes before refactors and docs before tests, oldest first within each class), so the cap keeps the highest-priority PRs and drops the rest — the agent is told how many were omitted. Range 1-${KICK_LIST_CAP_MAX}. Default ${KICK_LIST_CAP_PR_DEFAULT}.</span></span></label>
+              <input type="number" min="1" max="${KICK_LIST_CAP_MAX}" value="${caps.prs}" data-change-action="gh80">
+            </div>
+          </div>
         </div>`;
     }
 
@@ -25927,6 +25970,8 @@ function burnAreaChart() {
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh77: function (event, A) { projectObservabilityPlatformsChanged(this); },
       gh78: function (event, A) { projectObservabilityReferenceChanged(this); },
+      gh79: function (event, A) { markDirty('repos','maxIssuesPerKick',Number(this.value)); },
+      gh80: function (event, A) { markDirty('repos','maxPRsPerKick',Number(this.value)); },
       gh0: function (event, A) { document.getElementById('gh-setup-overlay').style.display='none'; },
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },

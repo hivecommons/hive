@@ -22,6 +22,30 @@ const (
 	DefaultMaxPRsPerKick    = 50
 )
 
+// Bounds an operator may set a cap to. The ceiling matters: without it a
+// setting of `max_prs: 100000` is honoured verbatim and reproduces the very
+// unbounded prompt this block exists to prevent, through the control meant to
+// prevent it. 500 is far above any useful backlog slice for a single turn
+// while still keeping the fully-expanded list inside a sane prompt size.
+const (
+	MinKickListCap = 1
+	MaxKickListCap = 500
+)
+
+// clampKickListCap resolves one configured cap: non-positive means "unset, use
+// the default", and anything above the ceiling is pinned to it rather than
+// rejected, so a bad value in hive.yaml degrades to a safe cap instead of
+// failing the hive's startup.
+func clampKickListCap(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	if v > MaxKickListCap {
+		return MaxKickListCap
+	}
+	return v
+}
+
 // KickLimitsConfig is `governor.kick_limits`: how many items each list in a
 // kick prompt may carry. Zero or absent means the default; a negative value is
 // treated as the default too (a cap of "none" is exactly the failure this
@@ -36,18 +60,12 @@ type KickLimitsConfig struct {
 	MaxPRs int `yaml:"max_prs,omitempty" json:"max_prs,omitempty"`
 }
 
-// IssuesPerKick returns max_issues with the default applied.
+// IssuesPerKick returns max_issues with the default and the ceiling applied.
 func (k KickLimitsConfig) IssuesPerKick() int {
-	if k.MaxIssues <= 0 {
-		return DefaultMaxIssuesPerKick
-	}
-	return k.MaxIssues
+	return clampKickListCap(k.MaxIssues, DefaultMaxIssuesPerKick)
 }
 
-// PRsPerKick returns max_prs with the default applied.
+// PRsPerKick returns max_prs with the default and the ceiling applied.
 func (k KickLimitsConfig) PRsPerKick() int {
-	if k.MaxPRs <= 0 {
-		return DefaultMaxPRsPerKick
-	}
-	return k.MaxPRs
+	return clampKickListCap(k.MaxPRs, DefaultMaxPRsPerKick)
 }
