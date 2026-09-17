@@ -685,8 +685,14 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 			// answering about.
 			s.logger.Warn("copilot model discovery rejected by upstream",
 				"class", notice.Class, "credential", notice.Credential, "err", err.Error())
-		} else {
+		} else if errors.Is(err, errCopilotSDKHelperAbsent) {
 			s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
+		} else {
+			// The helper is installed and failed. The HTTP fallback serves a
+			// DIFFERENT catalog than the CLI offers, so this is a real defect
+			// an operator needs to see (#7365).
+			s.logger.Warn("copilot SDK model discovery failed; the model list will not match the CLI",
+				"err", err.Error())
 		}
 	} else if len(models) == 0 {
 		s.logger.Info("copilot SDK model discovery returned no models, falling back to HTTP probe")
@@ -882,13 +888,26 @@ func (s *Server) probeCopilotModelsSDK(token string) ([]string, error) {
 	return parseCopilotSDKModels(out)
 }
 
+// errCopilotSDKHelperAbsent marks the one SDK-probe failure that is NOT worth
+// an operator's attention: the helper is not installed at all. That is the
+// normal state on a dev machine and in unit tests, where falling through to the
+// HTTP probe is correct and unremarkable.
+//
+// Every OTHER failure means the helper IS installed and could not answer, which
+// is an actionable misconfiguration — the dashboard will go on serving a model
+// list the CLI will not use, and an operator picking from it sees the selection
+// save and then do nothing (#7365). Same reasoning as the entitlement Warn
+// added for #6500: a fallback that silently changes WHICH catalog is served is
+// not a "fall back and move on" event.
+var errCopilotSDKHelperAbsent = errors.New("sdk helper not installed")
+
 // execCopilotSDKHelper is the real helper runner: `node copilot-models.mjs`
 // with the inherited environment plus the agent HOME (stored CLI auth) and,
 // when known, the device-flow token. Skips instantly when the helper is not
 // installed (dev machines, unit tests).
 func execCopilotSDKHelper(ctx context.Context, token string) ([]byte, error) {
 	if _, err := os.Stat(copilotSDKHelperPath); err != nil {
-		return nil, fmt.Errorf("sdk helper not installed: %w", err)
+		return nil, fmt.Errorf("%w: %v", errCopilotSDKHelperAbsent, err)
 	}
 	cmd := exec.CommandContext(ctx, copilotSDKNodeBinary, copilotSDKHelperPath)
 	// os/exec documents that for duplicate keys the LAST value wins, so

@@ -19,8 +19,9 @@
 //   - never prints tokens or environment values.
 
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // ---- Constants ----
 
@@ -34,14 +35,32 @@ const INTERNAL_TIMEOUT_MS = 15_000;
 const EXIT_OK = 0;
 const EXIT_FAIL = 1;
 
-// Node entry of the PINNED copilot CLI installed globally by the image
-// (src/Dockerfile Layer 3). The image deletes the CLI's native binary so the
-// CLI runs its Node.js path (which honors NODE_EXTRA_CA_CERTS); pointing the
-// SDK's runtime connection at THIS entry guarantees the probe runs the fleet's
-// pinned CLI — never the newer @github/copilot the SDK bundles as its own
-// nested dependency, whose native binary does not trust the proxy CA.
-// The SDK spawns `node <entry> --server ...` when the path ends in ".js".
-const PINNED_CLI_ENTRY = "/usr/local/lib/node_modules/@github/copilot/index.js";
+// Install directory of the PINNED copilot CLI (src/Dockerfile Layer 3).
+// Pointing the SDK's runtime connection at this package's entry guarantees the
+// probe runs the fleet's pinned CLI — never the newer @github/copilot the SDK
+// nests as its own dependency, whose native binary does not trust the proxy CA.
+const COPILOT_PACKAGE_DIR = "/usr/local/lib/node_modules/@github/copilot";
+
+// Entry filenames to try when the package manifest does not name one. Ordered
+// newest-first. THIS LIST IS A FALLBACK, NOT THE PRIMARY MECHANISM — see
+// resolveCopilotCliEntry, which reads the package's own "bin" field first.
+//
+// hivecommons/hive#7365: this file previously hardcoded a single entry,
+// "index.js", which @github/copilot has never shipped — not in 1.0.78, not in
+// 1.0.59. The package contains exactly four files (npm-loader.js,
+// package.json, LICENSE.md, README.md). So the existsSync() guard below was
+// always false, cliPath was always undefined, and the SDK fell back to
+// resolving a platform package from ITS OWN directory — which cannot see the
+// one nested under @github/copilot/node_modules. Every discovery cycle on
+// every spoke failed with "Could not find a @github/copilot platform package",
+// and the dashboard silently served the legacy chat-completions catalog
+// instead of the CLI's real one.
+const CLI_ENTRY_BASENAMES = ["npm-loader.js", "index.js"];
+
+// The image's stable CLI symlink, used as a last resort. Resolved through
+// realpath because the SDK only spawns `node <entry>` when the path ends in
+// ".js"; a bare "copilot" path would be exec'd directly instead.
+const CLI_BIN_SYMLINK = "/usr/local/bin/copilot";
 
 // npm global roots to search for @github/copilot-sdk. ESM bare-specifier
 // resolution NEVER consults the global node_modules, so a plain
@@ -68,11 +87,27 @@ function fail(message) {
   process.exit(EXIT_FAIL);
 }
 
+// isDirectRun reports whether this module was executed as the process entry
+// (`node copilot-models.mjs`) rather than imported. The watchdog and main() are
+// side effects that must NOT fire on import, so the unit tests can exercise
+// resolveCopilotCliEntry without spawning a copilot server or arming a timer.
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+}
+
 // Watchdog: force-exit on deadline no matter what the SDK is doing. Not
 // unref()ed on purpose — a successful run exits explicitly before it fires.
-setTimeout(() => {
-  fail(`timed out after ${INTERNAL_TIMEOUT_MS}ms`);
-}, INTERNAL_TIMEOUT_MS);
+if (isDirectRun()) {
+  setTimeout(() => {
+    fail(`timed out after ${INTERNAL_TIMEOUT_MS}ms`);
+  }, INTERNAL_TIMEOUT_MS);
+}
 
 // ---- SDK loading ----
 
@@ -95,16 +130,92 @@ function loadSdk() {
   throw new Error(`cannot load ${SDK_PACKAGE_NAME} (${errors.join("; ")})`);
 }
 
+// ---- CLI entry resolution (hivecommons/hive#7365) ----
+
+// resolveCopilotCliEntry decides which copilot CLI entry the SDK should drive.
+//
+// Resolution order:
+//   1. COPILOT_CLI_PATH — explicit operator override, honored verbatim.
+//   2. the package's OWN package.json "bin" field, joined to the package dir.
+//      This is the mechanism that survives upstream renaming its entry, which
+//      is exactly what #7365 was: a hardcoded filename that silently stopped
+//      matching. Reading the manifest means the next rename costs nothing.
+//   3. known entry basenames, newest-first.
+//   4. realpath of the image's /usr/local/bin/copilot symlink.
+//
+// Returns undefined when the pinned package is not installed at all — a dev
+// checkout, where letting the SDK resolve its own bundled CLI is correct.
+//
+// Throws when the package IS installed but no entry can be found. That case is
+// an image that will never produce a working probe, and #7365 is the argument
+// for making it loud: the old code treated it as "no pinned CLI", handed off to
+// the SDK, and the resulting failure looked identical to "not in the image".
+export function resolveCopilotCliEntry(deps = {}) {
+  const {
+    env = process.env,
+    exists = existsSync,
+    readFile = readFileSync,
+    realpath = realpathSync,
+    packageDir = COPILOT_PACKAGE_DIR,
+    binSymlink = CLI_BIN_SYMLINK,
+  } = deps;
+
+  if (env.COPILOT_CLI_PATH) return env.COPILOT_CLI_PATH;
+
+  // Not the image (or the CLI layer failed to install): let the SDK resolve.
+  if (!exists(packageDir)) return undefined;
+
+  const tried = [];
+
+  // (2) The manifest's own bin field.
+  const manifestPath = path.join(packageDir, "package.json");
+  try {
+    const manifest = JSON.parse(readFile(manifestPath, "utf8"));
+    const bin = manifest?.bin;
+    const rel = typeof bin === "string" ? bin : bin?.copilot;
+    if (rel) {
+      const entry = path.resolve(packageDir, rel);
+      if (exists(entry)) return entry;
+      tried.push(`${entry} (from package.json bin)`);
+    }
+  } catch (err) {
+    tried.push(`${manifestPath} unreadable (${err?.code || err?.message})`);
+  }
+
+  // (3) Known basenames.
+  for (const base of CLI_ENTRY_BASENAMES) {
+    const entry = path.join(packageDir, base);
+    if (exists(entry)) return entry;
+    tried.push(entry);
+  }
+
+  // (4) The image's stable symlink, resolved to its real .js target.
+  try {
+    if (exists(binSymlink)) {
+      const real = realpath(binSymlink);
+      if (real.endsWith(".js") && exists(real)) return real;
+      tried.push(`${binSymlink} -> ${real} (not a .js entry)`);
+    }
+  } catch (err) {
+    tried.push(`${binSymlink} unresolvable (${err?.code || err?.message})`);
+  }
+
+  throw new Error(
+    `the pinned copilot CLI is installed at ${packageDir} but no runnable entry was found ` +
+      `(tried: ${tried.join("; ")}). Set COPILOT_CLI_PATH to override.`,
+  );
+}
+
 // ---- Main ----
 
 async function main() {
   const { CopilotClient, RuntimeConnection } = loadSdk();
 
-  // Honor an explicit COPILOT_CLI_PATH override, else pin to the image's CLI
-  // entry when present, else let the SDK resolve (dev machines).
-  const cliPath =
-    process.env.COPILOT_CLI_PATH ||
-    (existsSync(PINNED_CLI_ENTRY) ? PINNED_CLI_ENTRY : undefined);
+  // Resolve the CLI entry the SDK should drive (#7365). Throws when the pinned
+  // package is present but unusable — main()'s catch reports it on stderr and
+  // exits nonzero, so the Go caller logs a precise cause instead of the SDK's
+  // misleading "platform package not found".
+  const cliPath = resolveCopilotCliEntry();
   const options = {};
   if (cliPath) {
     options.connection = RuntimeConnection.forStdio({ path: cliPath });
@@ -141,7 +252,9 @@ async function main() {
   }
 }
 
-main().then(
-  () => process.exit(EXIT_OK),
-  (err) => fail(err?.message || String(err)),
-);
+if (isDirectRun()) {
+  main().then(
+    () => process.exit(EXIT_OK),
+    (err) => fail(err?.message || String(err)),
+  );
+}

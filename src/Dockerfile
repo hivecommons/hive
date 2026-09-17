@@ -217,6 +217,21 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # 1.0.78 npm wrapper only spawns the platform binary — deleting it now
 # breaks the CLI outright instead of triggering a fallback.
 ARG COPILOT_VERSION=1.0.78
+# NOTE (#7365): --ignore-scripts is safe here and needs NO vendor follow-up
+# step, unlike Layer 7 (claude-code). The two packages link their platform
+# binary by different mechanisms:
+#   - @anthropic-ai/claude-code has `postinstall: node install.cjs`, which is
+#     what --ignore-scripts skips — hence Layer 7 runs it explicitly.
+#   - @github/copilot declares NO scripts at all (`npm view @github/copilot
+#     scripts` is empty). Its platform binary is a plain optionalDependency,
+#     which npm installs regardless of --ignore-scripts, and npm-loader.js
+#     resolves at runtime via import.meta.resolve from its OWN directory.
+# Verified by installing 1.0.78 with --ignore-scripts into a scratch prefix:
+# @github/copilot/node_modules/@github/copilot-<platform> is present. It is
+# NESTED, not hoisted, which is why `ls /usr/local/lib/node_modules/@github`
+# does not show it and #7365 first read as a missing package. Do not "fix"
+# this layer by adding a platform-package install; the gap was in
+# bin/copilot-models.mjs, which never told the SDK where the CLI was.
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@github/copilot@${COPILOT_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
