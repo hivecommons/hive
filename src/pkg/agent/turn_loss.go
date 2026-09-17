@@ -114,7 +114,7 @@ type TurnLoss struct {
 // the same m.mu-then-paneMu order snapshot() takes.
 //
 // archivedBytes is what archiveKickLogBytesLocked reported for this teardown.
-func (m *Manager) noteTurnInterruptedLocked(agent *AgentProcess, reason string, archivedBytes int) {
+func (m *Manager) noteTurnInterruptedLocked(agent *AgentProcess, reason string, archivedBytes int) TurnInterruption {
 	now := turnLossNow()
 
 	rec := TurnInterruption{At: now, Reason: reason, Bytes: archivedBytes}
@@ -166,6 +166,7 @@ func (m *Manager) noteTurnInterruptedLocked(agent *AgentProcess, reason string, 
 		attrs = append(attrs, "since_output_s", rec.SinceOutput.Seconds())
 	}
 	m.logger.Info("audit: turn interrupted mid-flight", attrs...)
+	return rec
 }
 
 // tearDownTurnLocked archives an outgoing session's kick output and records
@@ -175,13 +176,20 @@ func (m *Manager) noteTurnInterruptedLocked(agent *AgentProcess, reason string, 
 //
 // It must run BEFORE whatever destroys the scrollback — kill-session on
 // restart, container teardown on shutdown. Callers must hold m.mu.
-func (m *Manager) tearDownTurnLocked(agent *AgentProcess, reason string) {
+//
+// It reports whether a turn was interrupted at all and whether that turn was
+// producing (the pane changed after the kick landed). The restart path uses
+// the second answer to arm the restart/kick breaker (#7363): the accounting
+// here already knew each restart in the observed loop was destroying a
+// producing turn; now something acts on it.
+func (m *Manager) tearDownTurnLocked(agent *AgentProcess, reason string) (interrupted, producing bool) {
 	if !agent.kickLogPending {
-		return
+		return false, false
 	}
 	archived := m.archiveKickLogBytesLocked(agent, reason)
-	m.noteTurnInterruptedLocked(agent, reason, archived)
+	rec := m.noteTurnInterruptedLocked(agent, reason, archived)
 	agent.kickLogPending = false
+	return true, rec.Producing
 }
 
 // SeedTurnLoss restores an agent's accumulated turn-loss record from persisted

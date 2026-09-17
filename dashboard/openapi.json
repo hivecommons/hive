@@ -3424,7 +3424,7 @@
           "Agents"
         ],
         "summary": "Restart an agent",
-        "description": "Restarts the agent's session. Restart operations are serialized per-server to prevent concurrent pause/resume/restart cycles from interfering through shared tmux/config state.",
+        "description": "Restarts the agent's session. Restart operations are serialized per-server to prevent concurrent pause/resume/restart cycles from interfering through shared tmux/config state. A restart also cancels any kick still being delivered to the agent (the queued prompt is not replayed into the relaunched session), and when it interrupts a turn the agent was actively producing, new kicks are refused for a short hold so the restart cannot be followed within seconds by a kick that gets restarted in its turn (#7363).",
         "parameters": [
           {
             "name": "agent",
@@ -3450,6 +3450,10 @@
                     },
                     "agent": {
                       "type": "string"
+                    },
+                    "kickCancelled": {
+                      "type": "boolean",
+                      "description": "Present and true when the restart cancelled a kick that was still being delivered to the agent; the prompt was not replayed into the relaunched session."
                     }
                   }
                 }

@@ -393,6 +393,10 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// what the teardown discarded (#4002).
 	m.tearDownTurnLocked(agent, "restart")
 
+	// The bootstrap prompt IS the next turn, so pending kicks are cancelled
+	// (#7363) but the breaker is not armed: nothing here is a replay.
+	m.invalidateKicksOnRestartLocked(agent, "bootstrap", false, true)
+
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
 	// not UID isolation is enabled. killAgentProcesses (UID-based) is only safe
@@ -666,6 +670,22 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 }
 
 func (m *Manager) RestartWithReason(ctx context.Context, name, reason string) error {
+	return m.restartWithReason(ctx, name, reason, false)
+}
+
+// restartForKick is the restart a kick delivery performs on its OWN behalf
+// when it finds the CLI crashed or wedged on a consent screen (SendKick /
+// deliverKickAsync). It still invalidates every OTHER pending kick for the
+// agent, but it neither fails the caller's dispatch record nor arms the
+// restart/kick breaker: the caller captures the new kick epoch after this
+// returns and is the intended next delivery, not a replay (#7363).
+func (m *Manager) restartForKick(ctx context.Context, name string) error {
+	return m.restartWithReason(ctx, name, "operator", true)
+}
+
+// restartWithReason is RestartWithReason's body. kickInitiated marks a
+// restart performed by a kick delivery for itself — see restartForKick.
+func (m *Manager) restartWithReason(ctx context.Context, name, reason string, kickInitiated bool) error {
 	// Detach from the caller's cancellation. Restart is routinely invoked from
 	// goroutines whose OWN context is the per-launch agentCtx this function is
 	// about to cancel (pollTmuxOutputForAgent's token-detected and TLS-error
@@ -709,7 +729,16 @@ func (m *Manager) RestartWithReason(ctx context.Context, name, reason string) er
 	// the CLI or the session — kill-session destroys the scrollback and with
 	// it the only record of the previous run (#4295/#4296). The same funnel
 	// records what this teardown cost the in-flight turn (#4002).
-	m.tearDownTurnLocked(agent, "restart")
+	_, producing := m.tearDownTurnLocked(agent, "restart")
+
+	// A restart cancels the agent's pending kicks (#7363): the session the
+	// message was composed for is about to be destroyed, and an operator who
+	// clicked restart must not have the interrupted work replayed into the
+	// relaunched CLI. When the teardown just destroyed a PRODUCING turn, also
+	// arm the breaker so a kick cannot follow within seconds and be restarted
+	// in its turn — the loop observed live. A kick's own recovery restart is
+	// exempt from both the dispatch failure and the breaker (restartForKick).
+	m.invalidateKicksOnRestartLocked(agent, reason, producing && !kickInitiated, !kickInitiated)
 
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
@@ -792,6 +821,11 @@ func (m *Manager) ResetRestartCount(name string) error {
 	agent.RestartCount = 0
 	agent.RestartEvents = nil
 	agent.LastRestartReason = "operator"
+	// Resetting the counter is the operator saying "I have looked at this";
+	// lift the restart/kick breaker with it (#7363) so a deliberate kick
+	// need not wait out the hold.
+	agent.kickHoldUntil = time.Time{}
+	agent.kickHoldReason = ""
 	return nil
 }
 

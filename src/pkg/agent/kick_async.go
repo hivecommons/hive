@@ -114,6 +114,46 @@ func (r *kickDispatchRegistry) settle(name, phase, errMsg string) {
 	d.SettledAt = time.Now()
 }
 
+// settleDispatch settles ONE specific dispatch, and only while it is still the
+// agent's current pending one. A delivery goroutine must settle the dispatch
+// it was started for, never "whatever is pending for this agent now": after a
+// restart cancels its dispatch (#7363) a fresh SendKickAsync may already have
+// registered a new one, and the stale goroutine's failure must not be written
+// over that live dispatch.
+func (r *kickDispatchRegistry) settleDispatch(d *KickDispatch, phase, errMsg string) {
+	if d == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, ok := r.byAgent[d.Agent]
+	if !ok || cur != d || !d.Pending() {
+		return
+	}
+	d.Phase = phase
+	d.Error = errMsg
+	d.SettledAt = time.Now()
+}
+
+// cancel fails the agent's pending dispatch, if any, with the given reason and
+// reports whether one was pending. Called by the restart path (#7363): the
+// operator's poll then sees "failed: cancelled by restart" right away instead
+// of "pending" for however long the relaunched CLI takes to show a prompt —
+// and the goroutine behind it, which checks the kick epoch before typing,
+// never delivers.
+func (r *kickDispatchRegistry) cancel(name, reason string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.byAgent[name]
+	if !ok || !d.Pending() {
+		return false
+	}
+	d.Phase = KickPhaseFailed
+	d.Error = reason
+	d.SettledAt = time.Now()
+	return true
+}
+
 func (r *kickDispatchRegistry) get(name string) (KickDispatch, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -200,6 +240,10 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 		return false, fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
 			name, class, line, remaining.Round(time.Second))
 	}
+	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
 		session := agent.tmuxSession
@@ -211,18 +255,19 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 
 	// Claim the in-flight slot BEFORE spawning, so two concurrent callers can
 	// never both spawn. The loser returns started=false with no error.
-	if _, fresh := m.kickDispatches.begin(name); !fresh {
+	dispatch, fresh := m.kickDispatches.begin(name)
+	if !fresh {
 		m.logger.Info("kick already in flight, not delivering again", "name", name)
 		return false, nil
 	}
 
 	go func() {
 		if dErr := m.deliverKickAsync(name, message); dErr != nil {
-			m.kickDispatches.settle(name, KickPhaseFailed, dErr.Error())
+			m.kickDispatches.settleDispatch(dispatch, KickPhaseFailed, dErr.Error())
 			m.logger.Warn("async kick delivery failed", "name", name, "error", dErr)
 			return
 		}
-		m.kickDispatches.settle(name, KickPhaseDelivered, "")
+		m.kickDispatches.settleDispatch(dispatch, KickPhaseDelivered, "")
 	}()
 
 	return true, nil
@@ -269,7 +314,7 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
 			"name", name, "consent_screen", consentScreen)
 		m.mu.Unlock()
-		if err := m.Restart(context.Background(), name); err != nil {
+		if err := m.restartForKick(context.Background(), name); err != nil {
 			return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
 		}
 		if !m.waitForCLIReadyForAgent(agent) {
@@ -283,13 +328,27 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		}
 	}
 
+	// Pin this delivery to the agent's CURRENT session (#7363). Captured after
+	// the recovery restart above, which this delivery itself initiated, and
+	// checked again before typing: any OTHER restart that lands while we wait
+	// below — an operator's dashboard restart above all — bumps the epoch, and
+	// this message is then dropped rather than typed into the relaunched CLI.
+	// A restart is the operator saying "stop"; replaying the very work it
+	// interrupted is how a 71 KB prompt looped forever on a live spoke.
+	epoch := agent.kickEpoch
+
 	// Wait for the input prompt (❯) before sending — the CLI may be showing a
 	// trust prompt or still initializing even though the pane matched a broad
 	// marker like "Copilot". This is the leg that can take up to
 	// inputPromptTimeout and is exactly why this function is not on the request
-	// path. Exhausting it is a genuine failure and is reported as one.
+	// path. Exhausting it is a genuine failure and is reported as one. The
+	// wait also returns early the moment a restart invalidates this kick, so
+	// the goroutine does not linger for the whole relaunch.
 	m.mu.Unlock()
-	if !m.waitForInputPromptForAgent(agent) {
+	if !m.waitForInputPromptForAgentUnless(agent, m.kickEpochChangedFn(agent, epoch)) {
+		if m.kickEpochChanged(agent, epoch) {
+			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
+		}
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
 	}
 
@@ -299,9 +358,18 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	if !ok {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
 	}
+	if agent.kickEpoch != epoch {
+		return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
+	}
+	if agent.State != StateRunning {
+		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
 			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
+	}
+	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+		return err
 	}
 	m.deliverKickLocked(agent, message, "send-kick")
 	return nil

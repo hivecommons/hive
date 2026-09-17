@@ -2576,7 +2576,15 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	s.deps.Logger.Info("audit: agent restarted", "agent", name, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "restart", "", name)
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "restarted", "agent": name})
+	// A restart cancels the agent's pending kick (#7363). Tell the operator
+	// so: the old behaviour was to silently replay the interrupted prompt into
+	// the relaunched CLI, and "restarted" alone would leave them expecting
+	// exactly that.
+	resp := map[string]any{"ok": true, "status": "restarted", "agent": name}
+	if d, ok := s.deps.AgentMgr.KickDispatchState(name); ok && d.Phase == agent.KickPhaseFailed && strings.HasPrefix(d.Error, "cancelled:") {
+		resp["kickCancelled"] = true
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {

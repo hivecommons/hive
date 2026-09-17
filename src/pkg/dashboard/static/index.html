@@ -15626,7 +15626,11 @@ function burnAreaChart() {
       const res = await fetch(`/api/restart/${agent}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Restart failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} restarted — supervisor will respawn`, 'success');
+      // A restart cancels a kick that was still being delivered (#7363) —
+      // say so, because the old behaviour replayed it into the new session.
+      dismissToast(toast, data.kickCancelled
+        ? `${agent} restarted — the pending kick was cancelled, not replayed`
+        : `${agent} restarted — supervisor will respawn`, 'success');
     }
 
     async function resetRestarts(agent) {

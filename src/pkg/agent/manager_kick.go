@@ -135,6 +135,9 @@ func (m *Manager) SendKick(name string, message string) error {
 		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
 			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
 	}
+	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+		return err
+	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
 		return fmt.Errorf("tmux session %s not found", agent.tmuxSession)
@@ -157,7 +160,7 @@ func (m *Manager) SendKick(name string, message string) error {
 		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
 			"name", name, "consent_screen", consentScreen)
 		m.mu.Unlock()
-		if err := m.Restart(context.Background(), name); err != nil {
+		if err := m.restartForKick(context.Background(), name); err != nil {
 			m.mu.Lock()
 			return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
 		}
@@ -172,12 +175,20 @@ func (m *Manager) SendKick(name string, message string) error {
 		}
 	}
 
+	// Pin the delivery to the current session (#7363) — see deliverKickAsync
+	// for the full rationale. Captured after this kick's own recovery restart
+	// so that restart does not cancel the kick it was made for.
+	epoch := agent.kickEpoch
+
 	// Wait for the input prompt (❯) before sending — the CLI may be
 	// showing a trust prompt or still initializing even though
 	// tmuxPaneHasCLI matched a broad marker like "Copilot".
 	m.mu.Unlock()
-	if !m.waitForInputPromptForAgent(agent) {
+	if !m.waitForInputPromptForAgentUnless(agent, m.kickEpochChangedFn(agent, epoch)) {
 		m.mu.Lock()
+		if agent.kickEpoch != epoch {
+			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
+		}
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
 	}
 	m.mu.Lock()
@@ -185,9 +196,18 @@ func (m *Manager) SendKick(name string, message string) error {
 	if !ok {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
 	}
+	if agent.kickEpoch != epoch {
+		return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
+	}
+	if agent.State != StateRunning {
+		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
 			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
+	}
+	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
+		return err
 	}
 
 	m.deliverKickLocked(agent, message, "send-kick")

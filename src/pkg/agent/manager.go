@@ -398,6 +398,18 @@ type AgentProcess struct {
 	// so tests can assert the announcement actually happened without a tmux
 	// server.
 	lastLaunchFailureBanner string
+	// kickEpoch increments on every restart TEARDOWN (not launch): a kick that
+	// captured an older epoch while waiting for the input prompt is dropped
+	// instead of being typed into the relaunched session (#7363). launchGen is
+	// not reused for this because it only moves on a COMPLETED launch — a
+	// pending kick must die the moment the operator's restart begins.
+	kickEpoch int
+	// kickHoldUntil / kickHoldReason are the restart/kick loop breaker (#7363):
+	// a restart that destroyed a PRODUCING turn arms a short hold during which
+	// SendKick/SendKickAsync refuse with a reason, so the restart cannot be
+	// followed within seconds by a kick that will itself be restarted.
+	kickHoldUntil  time.Time
+	kickHoldReason string
 }
 
 type RestartEvent struct {
@@ -4344,11 +4356,25 @@ func truncateTail(s string, n int) string {
 }
 
 func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
+	return m.waitForInputPromptForAgentUnless(agent, nil)
+}
+
+// waitForInputPromptForAgentUnless is waitForInputPromptForAgent with an
+// abort predicate, consulted once per poll tick: when it reports true the wait
+// returns false at once instead of running out inputPromptTimeout. The kick
+// paths pass a "this kick's epoch moved" check (#7363) so a restart that
+// invalidates a pending kick releases its goroutine promptly rather than
+// leaving it to notice only once the relaunched CLI shows a prompt. A nil
+// predicate never aborts.
+func (m *Manager) waitForInputPromptForAgentUnless(agent *AgentProcess, abort func() bool) bool {
 	deadline := time.After(inputPromptTimeout)
 	ticker := time.NewTicker(inputPromptPollInterval)
 	defer ticker.Stop()
 
 	for {
+		if abort != nil && abort() {
+			return false
+		}
 		select {
 		case <-deadline:
 			m.logger.Warn("prompt timeout — dumping pane",
