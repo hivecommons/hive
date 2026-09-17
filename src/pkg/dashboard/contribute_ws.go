@@ -2529,6 +2529,69 @@ func (h *ContributeWSHub) recordTaskFailureForTask(task *WSTaskAssign, permanent
 	h.recordTaskFailureKey(task.identityKey(), permanent)
 }
 
+// abandonReason is the synthetic reason text written to the run log for a task
+// that ended with no terminal report. Free text like a client-reported reason,
+// but hub-authored, and phrased to say what the hub OBSERVED rather than to
+// guess why — the hub genuinely does not know whether the relay's CLI died,
+// stalled, or simply decided to ask for different work.
+func abandonReason(cause string) string {
+	switch cause {
+	case abandonCauseHandback:
+		return "abandoned: relay asked for new work while still holding this task"
+	case abandonCauseDisconnect:
+		return "abandoned: connection lost with the task still held"
+	default:
+		return "abandoned: task ended without a terminal report"
+	}
+}
+
+// appendAbandonedRun writes the run record for a task that ended without a
+// task_complete or task_failed (#7317).
+//
+// DECLARE, never ROUTE — the same boundary task_run_log.go draws. Both callers
+// have already done their routing (lease revoke, cooldown, activity rail) by
+// the time they reach this; nothing here feeds back into any of it. It is
+// called AFTER those so a telemetry problem can never affect them, and it is
+// best-effort for the same reason: appendTaskRun swallows its own errors.
+//
+// The connection's own fields (backend, model, effort, role) are read WITHOUT
+// contributor.mu. Both call sites reach this from the connection's own
+// goroutine after releasing that lock, and these fields are set once at
+// registration and not mutated afterwards — the same access the addActivity
+// call immediately above each site already makes.
+func (h *ContributeWSHub) appendAbandonedRun(c *ContributorConnection, task *WSTaskAssign, cause string, assignedAt time.Time) {
+	if c == nil || c.profile == nil || task == nil {
+		return
+	}
+	provider := ""
+	if c.cliBackend == "pi" {
+		provider, _, _ = strings.Cut(c.model, "/")
+	}
+	rec := TaskRunRecord{
+		TaskID:       task.TaskID,
+		Repo:         task.Repo,
+		Number:       task.Number,
+		Username:     c.profile.GitHubUsername,
+		Backend:      c.cliBackend,
+		Provider:     provider,
+		Model:        c.model,
+		Effort:       c.reasoningEffort,
+		Role:         c.role,
+		Outcome:      outcomeAbandoned,
+		AbandonCause: cause,
+		Reason:       abandonReason(cause),
+	}
+	// Zero when the task was adopted on the resume path without a fresh
+	// assignment (see taskAssignedAt's comment). Left unset rather than
+	// reported as a 0-second run, which would read as an instant hand-back —
+	// the very thing an operator is trying to tell apart from a 26-minute
+	// stall.
+	if !assignedAt.IsZero() {
+		rec.DurationS = time.Since(assignedAt).Seconds()
+	}
+	h.appendTaskRun(rec)
+}
+
 func (h *ContributeWSHub) recordTaskFailureKey(key string, permanent bool) {
 	if key == "" {
 		return
@@ -3591,6 +3654,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		if contributor != nil && contributor.profile != nil {
 			contributor.mu.Lock()
 			abandonedTask := contributor.currentTask
+			// #7317: see the `ready` path — captured under the same lock so the
+			// run record can carry how long the task was held before the socket
+			// died.
+			abandonedTaskAt := contributor.taskAssignedAt
 			contributor.currentTask = nil
 			// #2568: bump the generation on release so any late message from this
 			// now-defunct socket carrying the old generation is fenced.
@@ -3689,6 +3756,13 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				h.addActivity(contributor.profile.GitHubUsername, "released: connection lost",
 					contributor.role, contributor.cliBackend, contributor.model,
 					contributor.reasoningEffort, taskDescOf(abandonedTask))
+				// #7317: the durable half of the same visibility argument #5097
+				// makes above. The activity rail is capped and drops off; the run
+				// log is what an operator reads an hour later. Note this runs only
+				// on a REAL abandonment — the #5322 re-adoption check above has
+				// already set abandonedTask to nil for a ghost socket, so a
+				// reconnect that resumed its task writes no abandonment row.
+				h.appendAbandonedRun(contributor, abandonedTask, abandonCauseDisconnect, abandonedTaskAt)
 			}
 			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
 			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
@@ -3922,6 +3996,13 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			contributor.mu.Lock()
 			abandoned := contributor.currentTask
+			// #7317: captured under the same lock as currentTask so the run record
+			// below can report the task's real wall-clock duration. On the session
+			// that prompted the issue these land on the relay's own timeouts —
+			// ~26 min is PANE_STALL_TIMEOUT_MS, ~10 min is CLI_READY_TIMEOUT_MS —
+			// which is the most diagnostic number in the record, and it was being
+			// discarded along with the rest of the abandonment.
+			abandonedAt := contributor.taskAssignedAt
 			contributor.currentTask = nil
 			// #2568: bump the generation on release so a re-`ready` abandon fences any
 			// later message echoing the old generation for the just-abandoned task.
@@ -3965,6 +4046,13 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				if abandoned.Number > 0 {
 					h.recordTaskFailureForTask(abandoned, false)
 				}
+				// #7317: and leave a durable trace. Everything above this line is
+				// about ROUTING the abandoned issue (lease, cooldown, activity rail);
+				// none of it survives for an operator to read later. The run log is
+				// the only per-run record that does, and this path never wrote one —
+				// so a contributor that handed eleven tasks back in two hours showed
+				// a single row, and run-stats reported one failure for the session.
+				h.appendAbandonedRun(contributor, abandoned, abandonCauseHandback, abandonedAt)
 			}
 			h.logger.Info("[contribute-ws] ready for work",
 				"username", contributor.profile.GitHubUsername,

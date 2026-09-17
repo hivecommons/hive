@@ -67,6 +67,43 @@ const (
 	// scenarioUnspecifiedFailure: a failure with no usable kind (older relay,
 	// or an unrecognized value).
 	scenarioUnspecifiedFailure = "unspecified_failure"
+	// scenarioAbandonedHandback: the relay asked for new work while still
+	// holding a task (contribute_ws.go's `ready` path). No terminal report ever
+	// arrived, so before #7317 this produced no record at all — which is why a
+	// session that handed eleven tasks back in a row showed one row here.
+	scenarioAbandonedHandback = "abandoned_handback"
+	// scenarioAbandonedDisconnect: the socket dropped while a task was held and
+	// no live connection re-adopted it. Same invisibility as above.
+	scenarioAbandonedDisconnect = "abandoned_disconnect"
+	// scenarioAbandonedOther: defensive backstop for an abandonment cause this
+	// file does not know. Unreachable from the two call sites today; here so an
+	// unrecognized cause is visible as itself rather than silently filed as one
+	// of the two above.
+	scenarioAbandonedOther = "abandoned_other"
+)
+
+// Terminal outcomes. "completed" and "failed" are the two terminal REPORTS a
+// relay can send; "abandoned" is the hub's own observation that a held task
+// ended without either (#7317). Kept distinct rather than folded into "failed"
+// because #4260 established that a dropped socket is not a failure of the work
+// — booking it as one is what turned three dropped sockets into a quarantine of
+// an issue nobody had failed. The run log inherits that distinction so
+// run-stats can count abandonments without inflating the failure rate the
+// backend ratchet reads.
+const (
+	outcomeCompleted = "completed"
+	outcomeFailed    = "failed"
+	outcomeAbandoned = "abandoned"
+)
+
+// Why a held task ended without a terminal report. Hub-OBSERVED, never client
+// reported — which is what separates these from FailureKind, whose values are
+// self-reported and advisory.
+const (
+	// abandonCauseHandback: a `ready` arrived while the task was still held.
+	abandonCauseHandback = "handback"
+	// abandonCauseDisconnect: the read loop ended with the task still held.
+	abandonCauseDisconnect = "disconnect"
 )
 
 // TaskRunRecord is one terminal task report, flattened to the fields an
@@ -86,8 +123,13 @@ type TaskRunRecord struct {
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
 	Role     string `json:"role,omitempty"`
-	// Outcome is "completed" or "failed" — which terminal message arrived.
-	Outcome          string  `json:"outcome"`
+	// Outcome is "completed", "failed" (which terminal message arrived) or
+	// "abandoned" (none did — see the outcome constants).
+	Outcome string `json:"outcome"`
+	// AbandonCause is set only when Outcome is "abandoned": "handback" or
+	// "disconnect". Hub-observed; it is what deriveScenario keys on, so the
+	// scenario never has to be parsed back out of Reason's free text.
+	AbandonCause     string  `json:"abandon_cause,omitempty"`
 	CompletionSignal string  `json:"completion_signal,omitempty"`
 	Verdict          string  `json:"verdict,omitempty"`
 	VerdictReason    string  `json:"verdict_reason,omitempty"`
@@ -104,10 +146,20 @@ type TaskRunRecord struct {
 	Session string `json:"session,omitempty"`
 }
 
-// deriveScenario maps a terminal report's normalized fields onto the closed
-// scenario vocabulary above. Pure; table-tested.
-func deriveScenario(outcome, completionSignal, failureKind string) string {
-	if outcome == "completed" {
+// deriveScenario maps a run's normalized fields onto the closed scenario
+// vocabulary above. Pure; table-tested.
+func deriveScenario(outcome, completionSignal, failureKind, abandonCause string) string {
+	if outcome == outcomeAbandoned {
+		switch abandonCause {
+		case abandonCauseHandback:
+			return scenarioAbandonedHandback
+		case abandonCauseDisconnect:
+			return scenarioAbandonedDisconnect
+		default:
+			return scenarioAbandonedOther
+		}
+	}
+	if outcome == outcomeCompleted {
 		switch completionSignal {
 		case completionSignalVerdict:
 			return scenarioVerdictComplete
@@ -132,7 +184,7 @@ func deriveScenario(outcome, completionSignal, failureKind string) string {
 // block its read loop meaningfully) on telemetry.
 func (h *ContributeWSHub) appendTaskRun(rec TaskRunRecord) {
 	rec.TS = time.Now().UTC().Format(time.RFC3339)
-	rec.Scenario = deriveScenario(rec.Outcome, rec.CompletionSignal, rec.FailureKind)
+	rec.Scenario = deriveScenario(rec.Outcome, rec.CompletionSignal, rec.FailureKind, rec.AbandonCause)
 	if rec.Session == "" {
 		rec.Session = rec.TaskID
 	}
@@ -175,10 +227,15 @@ func (h *ContributeWSHub) appendTaskRun(rec TaskRunRecord) {
 // /api/contribute/run-stats. Aggregates only — no usernames, matching the
 // public read-only posture of the other /api/contribute* GETs.
 type taskRunBackendStats struct {
-	Backend   string         `json:"backend"`
-	Total     int            `json:"total"`
-	Completed int            `json:"completed"`
-	Failed    int            `json:"failed"`
+	Backend   string `json:"backend"`
+	Total     int    `json:"total"`
+	Completed int    `json:"completed"`
+	Failed    int    `json:"failed"`
+	// Abandoned counts runs that ended with no terminal report (#7317). Its own
+	// bucket rather than part of Failed: these rows are NEW to the log, and
+	// folding them into Failed would have moved every backend's failure rate on
+	// the day they started being written, for no change in behaviour.
+	Abandoned int            `json:"abandoned"`
 	Scenarios map[string]int `json:"scenarios"`
 	// ChromeIdleShare is idle_complete / completed — the sentinel
 	// non-compliance rate, the number to ratchet toward zero.
@@ -230,12 +287,22 @@ func readTaskRunStats(path string, window time.Duration) ([]taskRunBackendStats,
 		}
 		st.Total++
 		st.Scenarios[rec.Scenario]++
-		if rec.Outcome == "completed" {
+		switch rec.Outcome {
+		case outcomeCompleted:
 			st.Completed++
-		} else {
+		case outcomeAbandoned:
+			st.Abandoned++
+		default:
 			st.Failed++
 		}
-		if rec.DurationS > 0 {
+		// Abandonment durations are deliberately NOT in the percentile pool.
+		// They measure how long the hub waited for a report that never came —
+		// on the session that prompted #7317 that was 26 minutes of relay
+		// pane-stall timeout, which would have dragged the backend's p50 up
+		// without anything about its real run times having changed. The
+		// per-run endpoint surfaces them individually, where the number means
+		// what an operator reading it thinks it means.
+		if rec.DurationS > 0 && rec.Outcome != outcomeAbandoned {
 			durations[b] = append(durations[b], rec.DurationS)
 		}
 	}
@@ -276,5 +343,107 @@ func (s *Server) handleContributeRunStats(w http.ResponseWriter, r *http.Request
 		"window_days": days,
 		"total":       total,
 		"backends":    stats,
+	})
+}
+
+// taskRunsMaxLimit bounds one /api/contribute/runs response. The live log is
+// capped at taskRunLogMaxBytes, so an unbounded read is already bounded — this
+// bounds the RESPONSE, which is what an operator's browser has to render.
+const taskRunsMaxLimit = 500
+
+// readTaskRunsForUser returns one user's runs from the live log, newest first,
+// at most limit of them.
+//
+// Same live-log-only scope as readTaskRunStats (the endpoint answers
+// "recently", the files answer "ever") and the same torn-line tolerance: a
+// half-written tail line is skipped, never fatal, because this endpoint is
+// most useful exactly while a contributor is actively writing to the log.
+//
+// The username match is exact and case-insensitive: GitHub logins are
+// case-preserving but case-insensitive, and an operator pasting a login from
+// the activity rail should not get an empty answer over capitalization.
+func readTaskRunsForUser(path, username string, window time.Duration, limit int) ([]TaskRunRecord, error) {
+	taskRunMu.Lock()
+	data, err := os.ReadFile(path)
+	taskRunMu.Unlock()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []TaskRunRecord{}, nil
+		}
+		return nil, err
+	}
+	cutoff := ""
+	if window > 0 {
+		cutoff = time.Now().UTC().Add(-window).Format(time.RFC3339)
+	}
+	want := strings.ToLower(strings.TrimSpace(username))
+	out := []TaskRunRecord{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec TaskRunRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if cutoff != "" && rec.TS < cutoff { // RFC3339 is lexically sortable
+			continue
+		}
+		if want != "" && strings.ToLower(rec.Username) != want {
+			continue
+		}
+		out = append(out, rec)
+	}
+	// Newest first: an operator opening this is asking "what just happened",
+	// and the answer is at the end of an append-only file.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].TS > out[j].TS })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// handleContributeRuns serves GET /api/contribute/runs?username=<u>&days=N&limit=N:
+// the per-run history behind the aggregates in run-stats (#7317).
+//
+// This is the read path task_run_log.go was missing. Every field it returns was
+// already being written to the log on every terminal report; there was simply
+// no endpoint that served a single record, so the `reason` on a failure — the
+// one string that says WHY a contributor is struggling — was reachable only by
+// reading the file on the hub host. That is precisely the access a hosted-hive
+// operator does not have.
+//
+// Public read-only like the sibling /api/contribute* GETs. That posture is
+// inherited rather than chosen: the username is already public on
+// /api/contribute/activity and the leaderboard, and `reason` is already served
+// as-is on /api/contribute/fleet's last_failure for a CONNECTED contributor.
+// What changes here is durability, not audience — the same text, still readable
+// after the socket drops. No token, no pane output (that is #7317 item 3, which
+// wants a gate), no field that is not already on one of those two endpoints.
+func (s *Server) handleContributeRuns(w http.ResponseWriter, r *http.Request) {
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	days := 7
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 365 {
+			days = n
+		}
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= taskRunsMaxLimit {
+			limit = n
+		}
+	}
+	runs, err := readTaskRunsForUser(taskRunLogPath, username, time.Duration(days)*24*time.Hour, limit)
+	if err != nil {
+		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{
+		"username":    username,
+		"window_days": days,
+		"limit":       limit,
+		"returned":    len(runs),
+		"runs":        runs,
 	})
 }

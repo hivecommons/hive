@@ -412,6 +412,16 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/hives/{id}/heartbeat", s.handleHivesHeartbeat)
 	s.mux.HandleFunc("DELETE /api/hives/{id}", s.handleHivesDelete)
 	s.mux.HandleFunc("POST /api/hives/onboard", s.handleHivesOnboard)
+
+	// Read-only PER-RUN task history for one contributor (#7317): the records
+	// behind /api/contribute/run-stats' aggregates — outcome, failure kind,
+	// reason, duration, scenario, per task. Registered at the tail of this
+	// function on purpose: src/docs/api-reference.md cites every route by
+	// file:line, so inserting one mid-list rewrites the citation of every route
+	// below it and check-api-reference-citations.sh goes red for a change that
+	// touched none of them. Public like the other /api/contribute* reads — see
+	// handleContributeRuns for why that posture is inherited rather than chosen.
+	s.mux.HandleFunc("GET /api/contribute/runs", s.handleContributeRuns)
 }
 
 func randomHex(n int) string {

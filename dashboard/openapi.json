@@ -11622,6 +11622,10 @@
                           "failed": {
                             "type": "integer"
                           },
+                          "abandoned": {
+                            "type": "integer",
+                            "description": "Runs that ended with no terminal report (relay hand-back or lost connection). Counted separately from `failed` so these rows, new in v4.46, do not move the failure rate the backend ratchet reads."
+                          },
                           "scenarios": {
                             "type": "object",
                             "description": "Map of scenario name -> count",
@@ -11638,6 +11642,170 @@
                           },
                           "duration_p95_s": {
                             "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contribute/runs": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Per-run task history for one contributor",
+        "description": "The per-run records behind /api/contribute/run-stats' aggregates: outcome, failure kind, reason, duration and scenario for each task a contributor ran in the window. Answers \"why is this contributor struggling?\" from the dashboard, without shell access to the hub host. Public, GET only, no side effects \u2014 the username is already public on /api/contribute/activity and the reason is already served on /api/contribute/fleet's last_failure for a connected contributor; what this adds is durability, not audience. No tokens and no pane output.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "GitHub login to filter on, matched case-insensitively. Omit for every contributor's runs."
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 365,
+              "default": 7
+            },
+            "description": "Trailing window in days; 0 reads everything in the live log."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "description": "Maximum records to return, newest first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-run task history, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "task_id": {
+                            "type": "string"
+                          },
+                          "task_gen": {
+                            "type": "integer"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "effort": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "completed",
+                              "failed",
+                              "abandoned"
+                            ],
+                            "description": "Which terminal report arrived, or `abandoned` when none did."
+                          },
+                          "abandon_cause": {
+                            "type": "string",
+                            "enum": [
+                              "handback",
+                              "disconnect"
+                            ],
+                            "description": "Set only when outcome is `abandoned`. `handback`: the relay asked for new work while still holding the task. `disconnect`: the socket dropped with the task held and no live connection re-adopted it. Hub-observed, never client-reported."
+                          },
+                          "completion_signal": {
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "type": "string"
+                          },
+                          "verdict_reason": {
+                            "type": "string"
+                          },
+                          "failure_kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "The client-reported failure reason, or \u2014 for an abandonment \u2014 the hub's synthetic description of what it observed."
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          },
+                          "duration_s": {
+                            "type": "number",
+                            "description": "Assignment to terminal report, in seconds. Omitted when the task was adopted on the resume path and has no fresh assignment timestamp \u2014 absent means unknown, not zero."
+                          },
+                          "pr_url": {
+                            "type": "string"
+                          },
+                          "pr_verified": {
+                            "type": "boolean"
+                          },
+                          "scenario": {
+                            "type": "string"
+                          },
+                          "session": {
+                            "type": "string"
                           }
                         }
                       }
