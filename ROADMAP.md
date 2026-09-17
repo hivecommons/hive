@@ -168,6 +168,51 @@ Direction:
   [spoke-wildcard-tls.md](src/docs/spoke-wildcard-tls.md), and
   [troubleshooting.md](src/docs/troubleshooting.md).
 
+## Recently shipped (September 2026)
+
+Roughly ninety v4 releases (v4.19.0 → v4.51.2) landed between 2026-09-08 and
+2026-09-17. Themes, with representative releases ([CHANGELOG.md](CHANGELOG.md)
+has the full record):
+
+- **Merge-safety hardening**: the merge-request watcher independently
+  verifies CI and no longer treats absent check runs as passing (v4.19.0),
+  refuses merges into base branches without branch protection unless
+  explicitly allowlisted (v4.22.0), and `docker.yml` refuses a dispatched
+  `release_sha` that is not an ancestor of the branch (v4.23.1). A
+  post-merge DCO trailer check surfaces squash commits with missing
+  sign-offs (v4.21.0).
+- **Hub↔spoke trust**: hub→spoke heartbeat responses are independently
+  signed (v4.36.0) with persisted verifier state (v4.37.0); agent-control
+  mutation endpoints require the owner role (v4.27.2); `ioscan` canary
+  egress detection covers encoded/obfuscated exfiltration (v4.28.3).
+- **Large-spoke scale envelope**: the backlog size one spoke is known to
+  work at is now a stated design dimension —
+  [`src/docs/scale-envelope.md`](src/docs/scale-envelope.md) (v4.51.0,
+  [#7392](https://github.com/hivecommons/hive/issues/7392)) — with
+  per-repo governor cadences (v4.31.0–v4.32.0) and held-red-PR repair
+  routed back to the owning agent instead of deadlocking
+  (v4.51.2, [#7438](https://github.com/hivecommons/hive/issues/7438)).
+- **Operator visibility**: struggling-contributor diagnosis from the
+  dashboard without hub shell access (v4.46.0–v4.49.0), contributor-queue
+  placement explanations (v4.30.0), and `backend_auth` / `agent_auth`
+  canaries for inference-provider failures (v4.26.0).
+- **Fleet self-reporting**: an opted-in hive can file calibrated
+  hive-defect reports upstream, from dry-run previews (v4.41.0) to
+  documented filing (v4.44.0).
+- **Backends**: muse (v4.21.0) and Oh My Pi interactive (v4.28.0)
+  contributor backends, per-agent `reasoning_effort` with the gpt-6-astra
+  default (v4.19.0), and Copilot device-flow login that verifies the seat
+  before reporting success (v4.47.0).
+- **Attribution and issue lifecycle**: issue authors credited as
+  co-authors on resolving commits (v4.26.0), requester attribution on
+  hive-opened PRs (v4.39.0), and task-list sweeps that close hive-filed
+  issues when every checkbox is ticked and a merged PR references them
+  (v4.34.0–v4.35.0).
+- **v4→v5 mechanics**: the forward-merge is a mechanical cadence
+  (v4.47.0, [#7297](https://github.com/hivecommons/hive/issues/7297)),
+  and `v5` collapsed to v4's file layout to cut merge friction toward the
+  GA bar ([#6016](https://github.com/hivecommons/hive/issues/6016)).
+
 ## Recently shipped (August 2026)
 
 Highlights from the last month of merges to `v4` (and `v5` where noted):
