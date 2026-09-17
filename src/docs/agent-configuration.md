@@ -468,9 +468,11 @@ Telemetry and operations are L5/L6-only agents. They stay absent below L5 and re
 Configure that opt-in under **Settings → Project Observability**. This tab is
 for the managed project's target stack; the **Features** tab separately controls
 Hive's own OpenTelemetry export. Selecting platforms persists them under
-`governor.project_observability`, and enabling an agent replaces its all-mode
-paused cadence with a conservative `24h` interval (which can then be tuned from
-the agent's Cadences tab).
+`governor.project_observability` — and nothing else. The tab does not enable
+either agent (#7261 removed its enable toggles): it shows a read-only status
+line per agent (the agent card's `Enabled` flag plus its real per-mode
+cadences), and actually un-pausing an agent is done from **Agents → Cadences**
+(a conservative `24h` per mode is a good starting point).
 
 ```yaml
 governor:

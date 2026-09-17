@@ -45,7 +45,7 @@ governor:
         credential_secret: observability/honeycomb-key
 ```
 
-Reference fields accept **names only** — an environment-variable name or a `secret-name/key` reference. Literal endpoints, tokens, and API keys are rejected. Selecting platforms and saving persists them under `governor.project_observability`, and replaces operations' (and telemetry's) all-mode `paused` cadence with a conservative `24h` interval, which can then be tuned from the agent's Cadences tab.
+Reference fields accept **names only** — an environment-variable name or a `secret-name/key` reference. Literal endpoints, tokens, and API keys are rejected. Selecting platforms and saving persists them under `governor.project_observability` — and nothing else: saving does **not** un-pause the agent (#7261 removed the enable toggles this tab used to carry). The tab shows a read-only status line per agent reporting its `Enabled` flag and real per-mode cadences; to actually run operations, un-pause it yourself from **Agents → Cadences** (a conservative `24h` in each mode is a good starting point).
 
 After telemetry's first advisory run, platforms mentioned in its findings are preselected as suggestions in the Project Observability tab. They stay unsaved until an operator reviews and clicks **Save** — only then does the persisted declaration govern future operations (and telemetry) work.
 
@@ -72,7 +72,7 @@ ACMM packs additionally set `backend: copilot`, `model: claude-sonnet-4-6`, `mod
 
 ## Cadence and budget considerations
 
-Operations is a heavyweight, PR-capable agent once enabled. Follow the same guidance as every other agent un-paused at L5/L6: set all modes to `12h` or `1d` first (the automatic un-pause already lands at a conservative `24h`), watch its output for a few cycles, and only shorten the cadence once you understand what it's producing and how much budget it consumes per run.
+Operations is a heavyweight, PR-capable agent once enabled. Follow the same guidance as every other agent un-paused at L5/L6: set all modes to `12h` or `1d` first, watch its output for a few cycles, and only shorten the cadence once you understand what it's producing and how much budget it consumes per run.
 
 ## What to read next
 
