@@ -103,3 +103,44 @@ func TestGHUserAuthStatusHubProxiedAnonymousLoggedOut(t *testing.T) {
 		t.Fatalf("anonymous hub-proxied auth status = %+v, want logged_in=false", got)
 	}
 }
+
+// TestContributeMeTokenProtectedSpokeAnonymousIsNotTheOwner covers the third
+// deployment shape (#7394, residual of #7362): a standalone spoke protected by
+// a dashboard auth token. /api/contribute* is public, so anonymous internet
+// requests reach the handler — the persisted owner token must not stand in
+// for them there either.
+func TestContributeMeTokenProtectedSpokeAnonymousIsNotTheOwner(t *testing.T) {
+	s := ownerTokenServer(t, "solo", false)
+	s.authToken = "spoke-dashboard-token"
+	seedStatsProfile(t, "solo", 5, 2, 1)
+
+	rec := getAs(s, "/api/contribute/me", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous GET /api/contribute/me on token-protected spoke = %d, body %s; want 401", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGHUserAuthStatusTokenProtectedSpokeAnonymousLoggedOut is the sibling
+// for handleGHUserAuthStatus: an anonymous caller on a token-protected spoke
+// must read as logged-out, not learn the owner's GitHub identity.
+func TestGHUserAuthStatusTokenProtectedSpokeAnonymousLoggedOut(t *testing.T) {
+	s := ownerTokenServer(t, "solo", false)
+	s.authToken = "spoke-dashboard-token"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/gh-user-auth/status", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auth status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		LoggedIn bool   `json:"logged_in"`
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.LoggedIn || got.Username != "" {
+		t.Fatalf("anonymous token-protected auth status = %+v, want logged_in=false", got)
+	}
+}

@@ -7147,7 +7147,14 @@ func (s *Server) resolveViewerUsername(r *http.Request) string {
 	if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
 		return hubUser
 	}
-	if s.directRouteAuthzEnabled() || s.hubProxied() {
+	// SECURITY (#7394, residual of #7362): ANY auth boundary makes an absent
+	// session/X-Hive-User an anonymous caller — including a dashboard auth
+	// token. /api/contribute* is public (isPublicPath), so on a token-protected
+	// standalone spoke anonymous internet requests reach this code; the owner
+	// fallback must not stand in for them. Same "genuinely open spoke"
+	// predicate hubDecisionViewer and paneTailViewer use. The token-protected
+	// owner still resolves via the device-flow session checked above.
+	if s.directRouteAuthzEnabled() || s.hubProxied() || s.authToken != "" {
 		return ""
 	}
 	tokenData, err := os.ReadFile(userTokenPath)
