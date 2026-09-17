@@ -1,0 +1,1 @@
+- Split cluster health and telemetry out of `pkg/hub/saas.go` into `pkg/hub/saas_cluster_health.go` ([#7278](https://github.com/hivecommons/hive/issues/7278)). A pure move of 1,001 lines with no API or behaviour change; saas.go drops from 23,348 to 22,346 lines. First of the staged same-package splits that issue proposes.
