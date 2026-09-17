@@ -54,7 +54,7 @@ Distribution amplifies whatever first-run experience exists. Two bugs filed
 of every task, so the funnel Phase 2 widens would land on a broken first
 impression:
 
-- #6654 — the assignment prompt (`src/pkg/dashboard/contribute_ws.go:5555`)
+- #6654 — the assignment prompt (`src/pkg/dashboard/contribute_ws.go:5708`)
   emits a `gh repo fork ... --remote=true <dir>` invocation that current `gh`
   rejects (`--remote` invalid with a repository argument, no destination
   positional), and unconditionally assumes a fork is possible even when the
