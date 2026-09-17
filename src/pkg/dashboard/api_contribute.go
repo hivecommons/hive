@@ -422,6 +422,16 @@ func (s *Server) registerContributeRoutes() {
 	// touched none of them. Public like the other /api/contribute* reads — see
 	// handleContributeRuns for why that posture is inherited rather than chosen.
 	s.mux.HandleFunc("GET /api/contribute/runs", s.handleContributeRuns)
+	// Read-only HUB DECISIONS for one contributor (#7330): the refusals, fences
+	// and ignored reports the hub makes ABOUT a contributor, which existed only
+	// as slog lines on the hub's stdout. Owner/read-write ONLY — enforced
+	// in-handler via hubDecisionViewer, because the /api/contribute prefix is
+	// public in isPublicPath. Unlike a run's failure reason (already served
+	// anonymously as last_failure on /api/contribute/fleet) these carry the
+	// hub's internal protocol state, so the handler 403s rather than stripping.
+	// Same tail-registration reasoning as the route above: api-reference.md
+	// cites routes by file:line.
+	s.mux.HandleFunc("GET /api/contribute/decisions", s.handleContributeDecisions)
 }
 
 func randomHex(n int) string {

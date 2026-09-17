@@ -11818,6 +11818,116 @@
         }
       }
     },
+    "/api/contribute/decisions": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Hub decisions about one contributor",
+        "description": "The refusals, generation fences, ignored reports and lease expiries the hub decided ABOUT a contributor, which previously existed only as log lines on the hub's stdout. Answers \"is this contributor's relay being silently dropped?\" from the dashboard, without shell access to the hub host.\n\nOWNER / READ-WRITE ONLY, enforced in-handler: unlike a run's failure reason (already served anonymously as last_failure on /api/contribute/fleet) these carry the hub's internal protocol state \u2014 generation numbers, lease identity, configured rate-limit thresholds. Anyone else gets 403 rather than a stripped list, because nothing useful remains once those fields are removed.\n\nIN MEMORY ONLY and bounded (200 entries per login, 200 logins). It does not survive a hub restart; `since` reports when the ring started, so an empty list reads as \"nothing since boot\" rather than \"nothing happened\".",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "GitHub login to report on. Required."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            },
+            "description": "Maximum decisions to return, newest first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hub decisions, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the in-memory ring started. Absent if it has never been written."
+                    },
+                    "in_memory_only": {
+                      "type": "boolean",
+                      "description": "Always true: the ring does not survive a hub restart."
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string",
+                            "enum": [
+                              "stale_gen_rejected",
+                              "unassigned_ignored",
+                              "abandoned",
+                              "resume_rejected",
+                              "lease_expired",
+                              "refused"
+                            ],
+                            "description": "Closed vocabulary. `stale_gen_rejected`: the #2568 generation fence dropped a report whose task_gen no longer matched the assignment. `unassigned_ignored`: a terminal report arrived for a task this connection does not hold. `abandoned`: a held task ended with no terminal report. `resume_rejected`: a task_progress could not adopt a task (no lease, or the admission gate refused). `lease_expired`: the hub auto-released a task whose lease went unrenewed. `refused`: the hub declined to hand out work (role, tier, concurrency, rate limit, failure streak)."
+                          },
+                          "task_id": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "detail": {
+                            "type": "string",
+                            "description": "The structured fields of the matching hub log line, flattened to one operator-readable string. Hub-authored throughout; no client free text."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "username is required"
+          },
+          "403": {
+            "description": "Not an owner or read-write user of this hive"
+          }
+        }
+      }
+    },
     "/api/contribute/opportunistic": {
       "get": {
         "tags": [
