@@ -24,26 +24,40 @@ func TestKickChunkPause_ReleasesManagerLock(t *testing.T) {
 	agent := &AgentProcess{Name: "scanner"}
 	m.agents["scanner"] = agent
 
+	m.mu.Lock()
+
+	// Launched while this goroutine already holds m.mu, so the contender's
+	// Lock cannot possibly succeed until the chunk pause releases it. That
+	// ordering is the setup — no timing margin is needed to establish it.
+	started := make(chan struct{})
 	acquired := make(chan struct{})
 	go func() {
-		// Give the pause time to have unlocked before we contend for it.
-		time.Sleep(20 * time.Millisecond)
+		close(started)
 		m.mu.Lock()
 		close(acquired)
 		m.mu.Unlock()
 	}()
+	<-started
 
-	m.mu.Lock()
 	ok := m.kickChunkPauseUnlocked(agent, agent.kickEpoch, 120*time.Millisecond)
+
+	// Checked BEFORE releasing the lock, which is what makes this a real
+	// assertion: if the pause held m.mu throughout, the contender is still
+	// blocked right now and this channel is still open. Checking after the
+	// unlock would pass either way.
+	select {
+	case <-acquired:
+	default:
+		m.mu.Unlock()
+		<-acquired
+		t.Fatal("another goroutine could not take m.mu during the chunk pause — the lock is still held across delivery (#7417)")
+	}
+
 	m.mu.Unlock()
+	<-acquired
 
 	if !ok {
 		t.Fatal("pause reported the agent changed, but nothing changed")
-	}
-	select {
-	case <-acquired:
-	case <-time.After(time.Second):
-		t.Fatal("another goroutine could not take m.mu during the chunk pause — the lock is still held across delivery (#7417)")
 	}
 }
 
@@ -93,16 +107,23 @@ func TestKickChunkPause_ReturnsHoldingTheLock(t *testing.T) {
 			m.agents["scanner"] = agent
 			epoch := agent.kickEpoch
 
+			m.mu.Lock()
+
+			// Same ordering as above: the mutator is launched while m.mu is
+			// held, so its Lock is satisfied only once the pause releases the
+			// mutex. The mutation therefore lands inside the pause window
+			// without needing a timing margin to arrange it.
+			started := make(chan struct{})
 			done := make(chan struct{})
 			go func() {
-				time.Sleep(10 * time.Millisecond)
+				close(started)
 				m.mu.Lock()
 				tc.mutate(m, agent)
 				m.mu.Unlock()
 				close(done)
 			}()
+			<-started
 
-			m.mu.Lock()
 			got := m.kickChunkPauseUnlocked(agent, epoch, 80*time.Millisecond)
 			// If the lock were not held here this would deadlock or panic on
 			// unlock of an unlocked mutex.
