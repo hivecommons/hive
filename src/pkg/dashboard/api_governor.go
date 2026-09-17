@@ -1764,11 +1764,13 @@ func agentDeletionResponse(status, name string, packLevels []int) map[string]any
 // unlimited, because an uncapped list is exactly the bug these settings exist
 // to prevent (hivecommons/hive#7368).
 func validateKickListCap(v int, label string) error {
+	// 0 is the operator's explicit "unlimited" and is always accepted; the
+	// Min/Max bounds only constrain a real cap.
 	if v == 0 {
 		return nil
 	}
 	if v < config.MinKickListCap || v > config.MaxKickListCap {
-		return fmt.Errorf("%s must be between %d and %d (or 0 to use the default)",
+		return fmt.Errorf("%s must be between %d and %d (or 0 for unlimited)",
 			label, config.MinKickListCap, config.MaxKickListCap)
 	}
 	return nil
@@ -1960,11 +1962,17 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 
 	// Applied after the repo guards (which roll back on failure) so a rejected
 	// repo change cannot persist a cap edit that arrived in the same request.
+	//
+	// The config fields are pointers so "absent" stays distinct from an
+	// explicit 0 (unlimited); copy the value rather than aliasing the request
+	// body, which goes out of scope with the request.
 	if body.MaxIssuesPerKick != nil {
-		s.deps.Config.Governor.KickLimits.MaxIssues = *body.MaxIssuesPerKick
+		v := *body.MaxIssuesPerKick
+		s.deps.Config.Governor.KickLimits.MaxIssues = &v
 	}
 	if body.MaxPRsPerKick != nil {
-		s.deps.Config.Governor.KickLimits.MaxPRs = *body.MaxPRsPerKick
+		v := *body.MaxPRsPerKick
+		s.deps.Config.Governor.KickLimits.MaxPRs = &v
 	}
 
 	if err := s.saveConfig(); err != nil {

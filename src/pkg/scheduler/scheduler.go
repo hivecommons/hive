@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -534,12 +535,9 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 	}
 	var b strings.Builder
 	b.WriteString(notice)
-	shown := 0
 	failClosed := false
-	for _, issue := range issues {
-		if shown >= s.issueCap() {
-			break
-		}
+	shown := fairShareByRepo(issues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+	for _, issue := range shown {
 		// The issue title AND labels are untrusted external text about to be
 		// injected into an agent kick, and labels additionally drive classification
 		// routing (pkg/classify). Gate both through ioscan (F11): a blocked
@@ -571,7 +569,6 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 			}
 			b.WriteString("\n")
 		}
-		shown++
 	}
 	return b.String(), failClosed
 }
@@ -588,11 +585,8 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 	var b strings.Builder
 	failClosed := false
 	limit := s.prCap()
-	for i, pr := range actionable.PRs.Items {
-		if i >= limit {
-			b.WriteString(prListOverflowLine(len(actionable.PRs.Items)-i, limit))
-			break
-		}
+	shown := fairShareByRepo(actionable.PRs.Items, limit, func(pr github.PullRequest) string { return pr.Repo })
+	for _, pr := range shown {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
 		// classification routing, and an attacker controls both the title and their
@@ -607,6 +601,9 @@ func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) 
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), title))
+	}
+	if omitted := len(actionable.PRs.Items) - len(shown); omitted > 0 {
+		b.WriteString(prListOverflowLine(omitted, limit))
 	}
 	return b.String(), failClosed
 }
@@ -916,7 +913,72 @@ func (s *Scheduler) prCap() int {
 // at the cap, so the agent knows the list is partial rather than complete —
 // a silent slice would read as "these are all the PRs".
 func prListOverflowLine(omitted, limit int) string {
-	return fmt.Sprintf("  … and %d more open PRs not listed (cap %d per kick; they return on later kicks as this list drains)\n", omitted, limit)
+	return fmt.Sprintf("  … and %d more open PRs not listed (cap %d per kick, shared evenly across repos; they return on later kicks as this list drains)\n", omitted, limit)
+}
+
+// fairShareByRepo picks which items survive a kick list cap, spreading the
+// budget evenly across the repos present instead of filling it from the head
+// of the list (hivecommons/hive#7455).
+//
+// A flat prefix cut spends the whole budget on whichever repos sort first. On
+// a 16-repo spoke with 305 open PRs the cap of 50 was exhausted inside the
+// third repo, so 13 repos contributed nothing to any kick — and an agent handed
+// an issue in one of those repos could not see the open PR already doing that
+// work, which is how two PRs get opened for the same change.
+//
+// Allocation is round-robin over repos in first-appearance order: every repo
+// takes one slot per pass until the cap is reached or the items run out. That
+// yields an even share without computing one, and a repo holding fewer items
+// than its share simply drops out of later passes, redistributing the
+// remainder to repos that still have work — "10 from each unless there aren't
+// 10 to retrieve".
+//
+// A limit of config.KickListUnlimited (0) or less returns every item. The
+// result preserves the caller's original ordering so the rendered list still
+// groups by repo; only membership is decided here.
+func fairShareByRepo[T any](items []T, limit int, repoOf func(T) string) []T {
+	if limit <= config.KickListUnlimited || len(items) <= limit {
+		return items
+	}
+
+	order := make([]string, 0, 16)
+	pending := make(map[string][]int, 16)
+	for i, item := range items {
+		repo := repoOf(item)
+		if _, seen := pending[repo]; !seen {
+			order = append(order, repo)
+		}
+		pending[repo] = append(pending[repo], i)
+	}
+
+	picked := make([]int, 0, limit)
+	for len(picked) < limit {
+		progressed := false
+		for _, repo := range order {
+			if len(picked) >= limit {
+				break
+			}
+			queue := pending[repo]
+			if len(queue) == 0 {
+				continue
+			}
+			picked = append(picked, queue[0])
+			pending[repo] = queue[1:]
+			progressed = true
+		}
+		// Every repo is drained; nothing left to hand out even though the cap
+		// has room. Without this the loop spins forever.
+		if !progressed {
+			break
+		}
+	}
+
+	sort.Ints(picked)
+	out := make([]T, 0, len(picked))
+	for _, i := range picked {
+		out = append(out, items[i])
+	}
+	return out
 }
 
 const (

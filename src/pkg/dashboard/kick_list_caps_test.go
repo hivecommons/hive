@@ -39,7 +39,7 @@ func TestGovernorRepos_CapOnlySaveIsAccepted(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxPRs; got != 12 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxPRs); got != 12 {
 		t.Errorf("MaxPRs = %d, want 12", got)
 	}
 }
@@ -64,10 +64,10 @@ func TestGovernorRepos_SavesBothCaps(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxIssues; got != 40 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxIssues); got != 40 {
 		t.Errorf("MaxIssues = %d, want 40", got)
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxPRs; got != 15 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxPRs); got != 15 {
 		t.Errorf("MaxPRs = %d, want 15", got)
 	}
 }
@@ -76,18 +76,18 @@ func TestGovernorRepos_SavesBothCaps(t *testing.T) {
 // the repo list must not reset caps the operator set earlier.
 func TestGovernorRepos_OmittedCapIsUnchanged(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Governor.KickLimits.MaxIssues = 55
-	srv.deps.Config.Governor.KickLimits.MaxPRs = 22
+	srv.deps.Config.Governor.KickLimits.MaxIssues = capPtr(55)
+	srv.deps.Config.Governor.KickLimits.MaxPRs = capPtr(22)
 
 	w := putRepos(t, srv, `{"repos":["repo1"],"primaryRepo":"repo1"}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxIssues; got != 55 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxIssues); got != 55 {
 		t.Errorf("MaxIssues = %d, want it left at 55", got)
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxPRs; got != 22 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxPRs); got != 22 {
 		t.Errorf("MaxPRs = %d, want it left at 22", got)
 	}
 }
@@ -118,7 +118,7 @@ func TestGovernorRepos_RejectsOutOfRangeCaps(t *testing.T) {
 // A rejected cap must not be half-applied: validation runs before any mutation.
 func TestGovernorRepos_RejectedCapLeavesConfigUntouched(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Governor.KickLimits.MaxPRs = 25
+	srv.deps.Config.Governor.KickLimits.MaxPRs = capPtr(25)
 
 	body := fmt.Sprintf(`{"maxIssuesPerKick":40,"maxPRsPerKick":%d}`, config.MaxKickListCap+1)
 	w := putRepos(t, srv, body)
@@ -126,30 +126,31 @@ func TestGovernorRepos_RejectedCapLeavesConfigUntouched(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", w.Code)
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxIssues; got != 0 {
-		t.Errorf("MaxIssues = %d, want 0 — the valid field must not apply when the request is rejected", got)
+	if got := srv.deps.Config.Governor.KickLimits.MaxIssues; got != nil {
+		t.Errorf("MaxIssues = %d, want it still absent — the valid field must not apply when the request is rejected", *got)
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxPRs; got != 25 {
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxPRs); got != 25 {
 		t.Errorf("MaxPRs = %d, want it left at 25", got)
 	}
 }
 
-// Zero means "unset, use the default" and must be accepted — it is how the
-// operator clears a custom cap.
-func TestGovernorRepos_ZeroCapIsAcceptedAsUnset(t *testing.T) {
+// Zero is the operator's explicit "unlimited" (#7455) and must be accepted and
+// persisted as such — not silently folded back into the default, which is what
+// an absent key means.
+func TestGovernorRepos_ZeroCapIsAcceptedAsUnlimited(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Governor.KickLimits.MaxPRs = 12
+	srv.deps.Config.Governor.KickLimits.MaxPRs = capPtr(12)
 
 	w := putRepos(t, srv, `{"maxPRsPerKick":0}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := srv.deps.Config.Governor.KickLimits.MaxPRs; got != 0 {
-		t.Errorf("MaxPRs = %d, want 0 (unset)", got)
+	if got := capValue(srv.deps.Config.Governor.KickLimits.MaxPRs); got != 0 {
+		t.Errorf("MaxPRs = %d, want an explicit 0", got)
 	}
-	if got := srv.deps.Config.Governor.KickLimits.PRsPerKick(); got != config.DefaultMaxPRsPerKick {
-		t.Errorf("effective cap = %d, want the default %d", got, config.DefaultMaxPRsPerKick)
+	if got := srv.deps.Config.Governor.KickLimits.PRsPerKick(); got != config.KickListUnlimited {
+		t.Errorf("effective cap = %d, want unlimited (%d)", got, config.KickListUnlimited)
 	}
 }
 
@@ -157,8 +158,8 @@ func TestGovernorRepos_ZeroCapIsAcceptedAsUnset(t *testing.T) {
 // send the EFFECTIVE cap rather than a bare zero for an unset value.
 func TestGovernorConfig_ExposesEffectiveCaps(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Governor.KickLimits.MaxIssues = 0 // unset
-	srv.deps.Config.Governor.KickLimits.MaxPRs = 17
+	srv.deps.Config.Governor.KickLimits.MaxIssues = nil // absent → default
+	srv.deps.Config.Governor.KickLimits.MaxPRs = capPtr(17)
 
 	req := httptest.NewRequest("GET", "/api/config/governor", nil)
 	w := httptest.NewRecorder()
@@ -179,3 +180,15 @@ func TestGovernorConfig_ExposesEffectiveCaps(t *testing.T) {
 		t.Errorf("maxPRsPerKick = %v, want 17", resp["maxPRsPerKick"])
 	}
 }
+
+// capValue dereferences a kick-list cap for assertions. The config fields are
+// pointers so an absent key stays distinct from an explicit 0 (unlimited);
+// a nil here means "not set" and can never equal a wanted value.
+func capValue(p *int) int {
+	if p == nil {
+		return -1
+	}
+	return *p
+}
+
+func capPtr(v int) *int { return &v }

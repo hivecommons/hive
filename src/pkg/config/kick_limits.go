@@ -32,32 +32,57 @@ const (
 	MaxKickListCap = 500
 )
 
-// clampKickListCap resolves one configured cap: non-positive means "unset, use
-// the default", and anything above the ceiling is pinned to it rather than
-// rejected, so a bad value in hive.yaml degrades to a safe cap instead of
-// failing the hive's startup.
-func clampKickListCap(v, def int) int {
-	if v <= 0 {
+// KickListUnlimited is the resolved cap meaning "list every item". An operator
+// opts in explicitly with `max_prs: 0`; it is never the result of an absent
+// key, because an absent key is nil and resolves to the default instead.
+//
+// Callers MUST treat this as "no limit" rather than "show nothing" — a bare
+// `if len(items) > cap` comparison silently empties the list at 0.
+const KickListUnlimited = 0
+
+// clampKickListCap resolves one configured cap.
+//
+//   - nil (key absent) → the default. This is the common case and must stay
+//     bounded: making an unset key unlimited would hand every spoke that never
+//     configured kick_limits the 69.5 KiB kick described above.
+//   - 0 → KickListUnlimited, the operator's explicit opt-out of capping.
+//   - negative → the default. A negative cap has no sensible reading, and
+//     failing a hive's startup over a typo is worse than ignoring it.
+//   - above the ceiling → pinned to MaxKickListCap rather than rejected, so a
+//     bad value in hive.yaml degrades to a safe cap.
+func clampKickListCap(v *int, def int) int {
+	if v == nil {
 		return def
 	}
-	if v > MaxKickListCap {
+	switch {
+	case *v == 0:
+		return KickListUnlimited
+	case *v < 0:
+		return def
+	case *v > MaxKickListCap:
 		return MaxKickListCap
+	default:
+		return *v
 	}
-	return v
 }
 
 // KickLimitsConfig is `governor.kick_limits`: how many items each list in a
-// kick prompt may carry. Zero or absent means the default; a negative value is
-// treated as the default too (a cap of "none" is exactly the failure this
-// exists to prevent). When a list is cut, the prompt says so with an explicit
-// "… and N more" line so the agent knows the list is partial.
+// kick prompt may carry. An absent key means the default; an explicit 0 means
+// unlimited; a negative value falls back to the default. When a list is cut,
+// the prompt says so with an explicit "… and N more" line so the agent knows
+// the list is partial.
+//
+// The fields are pointers so an absent key is distinguishable from an explicit
+// `0`. With a plain int the two are identical after unmarshalling, and giving
+// 0 the "unlimited" meaning would silently uncap every spoke that never
+// configured this block.
 type KickLimitsConfig struct {
 	// MaxIssues caps every issue list in a kick (work list, lane lists, held
-	// PR list). Default DefaultMaxIssuesPerKick.
-	MaxIssues int `yaml:"max_issues,omitempty" json:"max_issues,omitempty"`
+	// PR list). Absent → DefaultMaxIssuesPerKick, 0 → unlimited.
+	MaxIssues *int `yaml:"max_issues,omitempty" json:"max_issues,omitempty"`
 	// MaxPRs caps every PR list in a kick (actionable PRs, stale drafts,
-	// merge-eligible, CI-failing). Default DefaultMaxPRsPerKick.
-	MaxPRs int `yaml:"max_prs,omitempty" json:"max_prs,omitempty"`
+	// merge-eligible, CI-failing). Absent → DefaultMaxPRsPerKick, 0 → unlimited.
+	MaxPRs *int `yaml:"max_prs,omitempty" json:"max_prs,omitempty"`
 }
 
 // IssuesPerKick returns max_issues with the default and the ceiling applied.

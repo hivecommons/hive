@@ -86,7 +86,7 @@ func TestScannerMessage_PRListCapped(t *testing.T) {
 // lists per hive, and the issue cap now reads from the same block.
 func TestKickLimits_ConfigOverridesBothCaps(t *testing.T) {
 	s := newScheduler()
-	s.cfg.Governor.KickLimits = config.KickLimitsConfig{MaxIssues: 3, MaxPRs: 5}
+	s.cfg.Governor.KickLimits = config.KickLimitsConfig{MaxIssues: ptr(3), MaxPRs: ptr(5)}
 
 	actionable := &github.ActionableResult{PRs: github.PRResult{Count: 20, Items: manyPRs(20)}}
 	if out := s.formatPRList(actionable); prLineCount(out) != 5 || !strings.Contains(out, "… and 15 more open PRs not listed (cap 5 per kick") {
@@ -107,10 +107,18 @@ func TestKickLimits_ConfigOverridesBothCaps(t *testing.T) {
 		t.Errorf("issueRefsForAgent honoured %d, want 3", len(refs))
 	}
 
-	// Zero / negative fall back to the defaults — "no cap" is not a setting.
-	s.cfg.Governor.KickLimits = config.KickLimitsConfig{MaxIssues: -1, MaxPRs: 0}
+	// A negative value falls back to the default; an explicit 0 is unlimited
+	// (#7455), and an absent key stays at the default.
+	s.cfg.Governor.KickLimits = config.KickLimitsConfig{MaxIssues: ptr(-1), MaxPRs: ptr(0)}
+	if s.issueCap() != maxIssuesPerKick {
+		t.Errorf("issueCap() = %d, want the default %d", s.issueCap(), maxIssuesPerKick)
+	}
+	if s.prCap() != config.KickListUnlimited {
+		t.Errorf("prCap() = %d, want unlimited for an explicit max_prs: 0", s.prCap())
+	}
+	s.cfg.Governor.KickLimits = config.KickLimitsConfig{}
 	if s.issueCap() != maxIssuesPerKick || s.prCap() != maxPRsPerKick {
-		t.Errorf("caps = (%d, %d), want defaults (%d, %d)", s.issueCap(), s.prCap(), maxIssuesPerKick, maxPRsPerKick)
+		t.Errorf("absent caps = (%d, %d), want defaults (%d, %d)", s.issueCap(), s.prCap(), maxIssuesPerKick, maxPRsPerKick)
 	}
 	var nilSched *Scheduler
 	if nilSched.prCap() != maxPRsPerKick || (&Scheduler{}).issueCap() != maxIssuesPerKick {
@@ -146,3 +154,5 @@ func TestMergeEligibleAndCIFailingLists_Capped(t *testing.T) {
 		t.Errorf("ci-failing list not capped:\n%s", out)
 	}
 }
+
+func ptr(v int) *int { return &v }
