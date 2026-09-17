@@ -9,9 +9,13 @@ import (
 
 // Convergence mode values, mirroring the convergence.mode /
 // HIVE_CONVERGENCE_MODE toggle surface (#4246, formalised by #4263). The
-// resolution rule is the same default-off one used by config.ConvergenceMode
-// and pkg/convergence/outcome: anything that is not an exact recognised mode
-// is OFF. Callers pass config.ConvergenceMode()'s resolved value through.
+// resolution rule here is: anything that is not an exact recognised mode is
+// OFF. Callers pass config.ConvergenceMode()'s ALREADY-RESOLVED value through,
+// so this layer only ever sees a settled mode and its job is to refuse to
+// invent one. Note that config.ConvergenceMode itself no longer resolves an
+// UNSET mode to off -- since #7260 an unset mode takes the shadow default --
+// so do not read this as "the config layer defaults to off"; it defaults a
+// non-empty unrecognised value to off, which is the property mirrored here.
 const (
 	// ModeOff disables every proof surface: nothing is recorded, verified,
 	// reported, or gated. Byte-identical behavior to today.

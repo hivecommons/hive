@@ -8,7 +8,7 @@ import (
 
 // Convergence mode values, mirroring the convergence.mode /
 // HIVE_CONVERGENCE_MODE toggle surface introduced for #4246. The resolution
-// rule is the same default-off one: anything that is not a recognised
+// rule is the same fail-safe one: anything that is not a recognised
 // enabling mode — a typo, an empty string, a future value — is OFF. When the
 // config-owned toggle lands, callers should pass config.ConvergenceMode()'s
 // resolved value straight through here.
@@ -33,9 +33,10 @@ func ModeEnabled(mode string) bool {
 //
 // It returns nil unless the mode is enabled — and a nil OutcomeStatus makes
 // convergence.Evaluate behave byte-identically to today, which is the
-// default-off guarantee: the ledger is inert unless an operator turns the
-// toggle on, and a candidate with no declared outcome (no record, therefore
-// no status to attach) retains existing admission behavior unconditionally.
+// inert-unless-enabled guarantee: the ledger contributes nothing unless the
+// mode is an enabling one, and a candidate with no declared outcome (no
+// record, therefore no status to attach) retains existing admission behavior
+// unconditionally.
 //
 // observedGeneration is whatever generation the caller's observer
 // authoritatively read for this outcome's declaration; zero means "never
