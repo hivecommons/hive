@@ -343,8 +343,8 @@ func TestApplyDocumentScriptSrcElem(t *testing.T) {
 // /contribute lane end-to-end as well.
 func TestDynamicHTMLHandlersStampDocumentCSP(t *testing.T) {
 	for file, wantCalls := range map[string]int{
-		"api_contribute.go": 1, // handleContributeLanding
-		"api.go":            1, // handleSnapshotPage
+		"contribute_landing.go": 1, // handleContributeLanding
+		"api.go":                1, // handleSnapshotPage
 	} {
 		src, err := os.ReadFile(file)
 		if err != nil {
