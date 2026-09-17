@@ -48,35 +48,35 @@ plainly — that is the main thing a spike is for.
 The backend CLI is launched **once per tmux session**, as an interactive
 foreground process typed into a shell pane, and it stays there across many
 turns. `launchInTmux` creates a detached shell session
-(`src/pkg/agent/manager.go:2227`, `newSessionCommands`, which issues a plain
-`tmux new-session -d` at `src/pkg/agent/manager.go:2243`) and then *types the CLI
+(`src/pkg/agent/manager.go:2196`, `newSessionCommands`, which issues a plain
+`tmux new-session -d` at `src/pkg/agent/manager.go:2212`) and then *types the CLI
 invocation into that shell*:
 
 ```go
-m.tmuxSendLiteralForAgent(agent, fullCmd)   // src/pkg/agent/manager.go:3021
+m.tmuxSendLiteralForAgent(agent, fullCmd)   // src/pkg/agent/manager.go:2990
 time.Sleep(textToEnterDelay)
-m.tmuxSendEntersForAgent(agent)             // src/pkg/agent/manager.go:3023
+m.tmuxSendEntersForAgent(agent)             // src/pkg/agent/manager.go:2992
 ```
 
 The composed command line is per-backend and is built as a string —
 `claude --model … --dangerously-skip-permissions`
-(`src/pkg/agent/manager.go:10272`), `copilot … --allow-all`
-(`src/pkg/agent/manager.go:10299`), and so on.
+(`src/pkg/agent/manager.go:8628`), `copilot … --allow-all`
+(`src/pkg/agent/manager.go:8655`), and so on.
 
 Nothing in the kick path ever spawns a process. `deliverKickLocked`
-(`src/pkg/agent/manager.go:5175`) only manipulates the existing pane.
+(`src/pkg/agent/manager_kick.go:223`) only manipulates the existing pane.
 
 ### 1.2 A turn starts with simulated keystrokes
 
-`SendKick` (`src/pkg/agent/manager.go:5082`) is the entry point; it delegates to
-`deliverKickLocked` (`src/pkg/agent/manager.go:5175`), which:
+`SendKick` (`src/pkg/agent/manager_kick.go:110`) is the entry point; it delegates to
+`deliverKickLocked` (`src/pkg/agent/manager_kick.go:223`), which:
 
 - clears any stale input with `C-c` then `C-u`
-  (`src/pkg/agent/manager.go:5193`),
+  (`src/pkg/agent/manager_kick.go:241`),
 - types the prompt literally, chunked, via
-  `tmuxSendLiteralForAgent` (`src/pkg/agent/manager.go:5221`, implementation at
-  `src/pkg/agent/manager.go:5512` → `tmux send-keys -l`),
-- submits with `tmuxSendEntersForAgent` (`src/pkg/agent/manager.go:5235`).
+  `tmuxSendLiteralForAgent` (`src/pkg/agent/manager_kick.go:269`, implementation at
+  `src/pkg/agent/manager.go:4872` → `tmux send-keys -l`),
+- submits with `tmuxSendEntersForAgent` (`src/pkg/agent/manager_kick.go:283`).
 
 The prompt reaches the model the same way a human's keyboard would. There is no
 API call, no stdin pipe, and no structured request that hive could inspect,
@@ -89,10 +89,10 @@ turns, so there is no exit to wait for. Turn completion is **inferred from pane
 text**, by two independent mechanisms:
 
 **The readiness gate before the next kick.**
-`waitForInputPromptForAgent` (`src/pkg/agent/manager.go:4393`) polls
+`waitForInputPromptForAgent` (`src/pkg/agent/manager.go:4362`) polls
 `captureTmuxPaneForAgent` and returns once `paneShowsInputPrompt`
-(`src/pkg/agent/manager.go:4320`) matches a per-backend marker string. `SendKick`
-calls it at `src/pkg/agent/manager.go:5151`. This gate is the only thing that
+(`src/pkg/agent/manager.go:4289`) matches a per-backend marker string. `SendKick`
+calls it at `src/pkg/agent/manager_kick.go:355`. This gate is the only thing that
 stops hive typing a new prompt on top of an in-flight response.
 
 The gate is bounded by `inputPromptTimeout` (120s), which is why operator kicks
@@ -105,16 +105,16 @@ a retried click cannot type the prompt twice. The governor's tick still calls
 `SendKick` synchronously — it has no proxy in front of it.
 
 **The pane poller.** `pollTmuxOutputForAgent`
-(`src/pkg/agent/manager.go:3234`) runs a `3 * time.Second` ticker
-(`src/pkg/agent/manager.go:3235`) for the agent's whole lifetime, diffing
+(`src/pkg/agent/manager.go:3203`) runs a `3 * time.Second` ticker
+(`src/pkg/agent/manager.go:3204`) for the agent's whole lifetime, diffing
 captured pane content to maintain `agent.LastPaneChange`
-(`src/pkg/agent/manager.go:3310`) — hive's only evidence that a running,
+(`src/pkg/agent/manager.go:3279`) — hive's only evidence that a running,
 authenticated CLI is actually doing something.
 
 Stall recovery is likewise textual: `nudgeIfKickStalled`
-(`src/pkg/agent/manager.go:6244`) compares `paneContentHash(pane)` against
-`agent.lastInferKickPane` (`src/pkg/agent/manager.go:6272`), and
-`paneShowsActiveWork` (`src/pkg/agent/manager.go:6092`) matches a spinner or a
+(`src/pkg/agent/manager_kick.go:744`) compares `paneContentHash(pane)` against
+`agent.lastInferKickPane` (`src/pkg/agent/manager_kick.go:772`), and
+`paneShowsActiveWork` (`src/pkg/agent/manager_kick.go:668`) matches a spinner or a
 token-counter marker.
 
 ### 1.4 Scheduling: one shared ticker, not a per-turn continuation
@@ -128,11 +128,11 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
 - `Governor.Evaluate` (`src/pkg/governor/governor.go:316`) calls it at
   `src/pkg/governor/governor.go:413` and returns the due list.
 - The driving loop is a single ticker in `main`:
-  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5316`, loop at
-  `src/cmd/hive/main.go:5372`, evaluation at `src/cmd/hive/main.go:6127`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6261`
-  (`src/pkg/scheduler/scheduler.go:509`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:6338`.
+  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5325`, loop at
+  `src/cmd/hive/main.go:5381`, evaluation at `src/cmd/hive/main.go:6143`,
+  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6277`
+  (`src/pkg/scheduler/scheduler.go:661`), and delivery via
+  `agentMgr.SendKick` at `src/cmd/hive/main.go:6354`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -149,17 +149,17 @@ CLI subprocess.
 
 | State | Where | Citation |
 |---|---|---|
-| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:896`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5705` |
-| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/main.go:2149` |
+| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:921`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5736` |
+| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/main.go:2155` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:41`; `watchdog.PersistedAgent` `src/pkg/watchdog/reconciler.go:205` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:49` |
 | Governor budget/spend/eval history, cadence overrides, ACMM level | same file | `src/pkg/snapshot/state.go:16-42` |
-| **Full text of every delivered prompt** | `/data/prompt-history.jsonl` (lumberjack-rotated JSONL) | `src/pkg/dashboard/prompt_history.go:44`; writer `Server.RecordPrompt` `src/pkg/dashboard/prompt_history.go:365`, wired at `src/cmd/hive/main.go:3617` |
+| **Full text of every delivered prompt** | `/data/prompt-history.jsonl` (lumberjack-rotated JSONL) | `src/pkg/dashboard/prompt_history.go:44`; writer `Server.RecordPrompt` `src/pkg/dashboard/prompt_history.go:371`, wired at `src/cmd/hive/main.go:3625` |
 | **Rendered terminal scrollback, per kick** | `/data/logs/kicks/<agent>/<ts>-<reason>.log` | `src/pkg/agent/kick_logs.go:43` (`defaultKickLogDir`); writer `archiveKickLogLocked` `src/pkg/agent/kick_logs.go:180` |
 | Token-usage summary | `/data/metrics/token-summary.json` | `src/pkg/tokens/collector.go:194`, `:121` |
 | Structured audit trail | `/data/audit.jsonl`, reloaded into a ring at boot | `src/pkg/dashboard/audit.go:22`, `loadFromDisk` `:88` |
-| Agent-name → UID allocation | `/var/run/hive/uid-map.json` | `UIDMapPath` `src/pkg/agent/uidmap.go:17`; load `src/pkg/agent/manager.go:2113` |
-| Backend CLI's own session/credential files | the CLI's own `HOME` / `CODEX_HOME`, rooted at `/data/home` | per-agent `CODEX_HOME` `src/pkg/agent/manager.go:9014`, helper `:7534`; per-agent HOME `src/pkg/agent/interactive_home.go:57`; shared `.claude` bridged by symlink `interactive_home.go:74` |
+| Agent-name → UID allocation | `/var/run/hive/uid-map.json` | `UIDMapPath` `src/pkg/agent/uidmap.go:17`; load `src/pkg/agent/manager.go:2082` |
+| Backend CLI's own session/credential files | the CLI's own `HOME` / `CODEX_HOME`, rooted at `/data/home` | per-agent `CODEX_HOME` `src/pkg/agent/manager.go:7837`, helper `:7534`; per-agent HOME `src/pkg/agent/interactive_home.go:57`; shared `.claude` bridged by symlink `interactive_home.go:74` |
 
 Two caveats on that table:
 
@@ -167,7 +167,7 @@ Two caveats on that table:
   conventionally ephemeral, so whether it survives a pod restart depends on the
   deployment's volume configuration rather than on the code. The load path
   treats absence as a recoverable fallback
-  (`src/pkg/agent/manager.go:2113-2117`), so this is a durability *asymmetry* rather than
+  (`src/pkg/agent/manager.go:2082-2086`), so this is a durability *asymmetry* rather than
   a known failure — noted here because it is the only place the otherwise
   consistent "durable means `/data`" rule does not hold.
 - The last row is the important one for the RFC and is discussed in §5.
@@ -175,28 +175,28 @@ Two caveats on that table:
 ### 2.2 In-process — lost on restart
 
 All of the following are fields of `AgentProcess`
-(`src/pkg/agent/manager.go:225`) or goroutines owned by the manager. None is
+(`src/pkg/agent/manager.go:221`) or goroutines owned by the manager. None is
 written anywhere.
 
 | State | Field / mechanism | Citation |
 |---|---|---|
-| Live output ring buffer | `OutputBuffer *RingBuffer` — pure in-memory circular slice, no persistence path | `src/pkg/agent/manager.go:252`; `src/pkg/agent/ringbuffer.go` |
-| Last captured pane content | `lastPaneCapture []string`, guarded by `paneMu` | `src/pkg/agent/manager.go:253-254` |
-| Activity clock | `LastPaneChange` (guarded by `paneMu`) | `src/pkg/agent/manager.go:319` |
-| Most recent kick text | `LastKickMessage` — replaced on every kick; the durable copy is truncated (`KickRecord.Snippet`) or lives in prompt-history | `src/pkg/agent/manager.go:255`; explicitly called out at `src/pkg/dashboard/prompt_history.go:26-31` |
-| tmux session/socket identity | `tmuxSession`, `tmuxSocket` | `src/pkg/agent/manager.go:261-262` |
-| Per-launch cancel func and launch generation | `cancel context.CancelFunc`, `launchGen int` | `src/pkg/agent/manager.go:263`, `:318` |
-| Launch-serialization flag | `launching bool` (guarded by `m.mu`) | `src/pkg/agent/manager.go:273` |
-| One-shot bootstrap override | `BootstrapOverride` | `src/pkg/agent/manager.go:275` |
-| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:295`, `:284`, `:286` |
-| Login / quota observations | `NeedsLogin`, `QuotaExhausted` | `src/pkg/agent/manager.go:307-308` |
-| Consent-screen watcher timers | `consentSeenAt`, `lastConsentDismiss` | `src/pkg/agent/manager.go:327-328` |
-| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:329-332`, `:319`, `:327` |
-| Transient-API-error nudge cooldown | `lastTransientNudge`, `transientNudgesThisKick` | `src/pkg/agent/manager.go:336-337` |
-| Un-archived-scrollback flag | `kickLogPending` (guarded by `m.mu`) | `src/pkg/agent/manager.go:355` |
-| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:364`, `:336`, `:345` |
-| Poller goroutines themselves | `go m.pollTmuxOutputForAgent(agent, agentCtx)` and siblings, tied to a per-launch context | `src/pkg/agent/manager.go:2954`, `:2570`, `:2576` |
-| Blocked-action thrash windows | `Manager.thrash map[string]*thrashState` under its own `thrashMu` — deliberately *not* `m.mu`, to avoid re-entrancy from the output-capture goroutines | `src/pkg/agent/manager.go:476-480`; `thrashState` `:3654`; trip logic `recordBlockedAndCheck` `:3659` |
+| Live output ring buffer | `OutputBuffer *RingBuffer` — pure in-memory circular slice, no persistence path | `src/pkg/agent/manager.go:248`; `src/pkg/agent/ringbuffer.go` |
+| Last captured pane content | `lastPaneCapture []string`, guarded by `paneMu` | `src/pkg/agent/manager.go:249-250` |
+| Activity clock | `LastPaneChange` (guarded by `paneMu`) | `src/pkg/agent/manager.go:315` |
+| Most recent kick text | `LastKickMessage` — replaced on every kick; the durable copy is truncated (`KickRecord.Snippet`) or lives in prompt-history | `src/pkg/agent/manager.go:251`; explicitly called out at `src/pkg/dashboard/prompt_history.go:26-31` |
+| tmux session/socket identity | `tmuxSession`, `tmuxSocket` | `src/pkg/agent/manager.go:257-258` |
+| Per-launch cancel func and launch generation | `cancel context.CancelFunc`, `launchGen int` | `src/pkg/agent/manager.go:259`, `:318` |
+| Launch-serialization flag | `launching bool` (guarded by `m.mu`) | `src/pkg/agent/manager.go:269` |
+| One-shot bootstrap override | `BootstrapOverride` | `src/pkg/agent/manager.go:271` |
+| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:291`, `:284`, `:286` |
+| Login / quota observations | `NeedsLogin`, `QuotaExhausted` | `src/pkg/agent/manager.go:303-304` |
+| Consent-screen watcher timers | `consentSeenAt`, `lastConsentDismiss` | `src/pkg/agent/manager.go:323-324` |
+| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:325-328`, `:319`, `:327` |
+| Transient-API-error nudge cooldown | `lastTransientNudge`, `transientNudgesThisKick` | `src/pkg/agent/manager.go:332-333` |
+| Un-archived-scrollback flag | `kickLogPending` (guarded by `m.mu`) | `src/pkg/agent/manager.go:351` |
+| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:360`, `:336`, `:345` |
+| Poller goroutines themselves | `go m.pollTmuxOutputForAgent(agent, agentCtx)` and siblings, tied to a per-launch context | `src/pkg/agent/manager.go:2923`, `:2570`, `:2576` |
+| Blocked-action thrash windows | `Manager.thrash map[string]*thrashState` under its own `thrashMu` — deliberately *not* `m.mu`, to avoid re-entrancy from the output-capture goroutines | `src/pkg/agent/manager.go:484-488`; `thrashState` `:3654`; trip logic `recordBlockedAndCheck` `:3659` |
 
 Note the asymmetry: several counters that exist precisely to *stop a runaway
 loop* (`tokenRestartAttempts`, `transientNudgesThisKick`, `stallNudgeSent`) are
@@ -209,7 +209,7 @@ bug report — see Open questions.
 ### 2.3 tmux state, and the one accidental survival path
 
 tmux is a separate process tree with its own server per agent socket
-(`src/pkg/agent/manager.go:2172` builds `tmux -L <socket>`). What tmux holds —
+(`src/pkg/agent/manager.go:2141` builds `tmux -L <socket>`). What tmux holds —
 the running CLI process and its scrollback — is therefore outside hive's memory
 and *can* outlive a hive process restart.
 
@@ -224,31 +224,31 @@ if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) {
     return nil
 }
 ```
-(`src/pkg/agent/manager.go:2937-2966`)
+(`src/pkg/agent/manager.go:2906-2935`)
 
 Three things about this are worth stating precisely:
 
 - **It is one of two reattach points, and both are early returns rather than a
   recovery routine.** The other is `ensureTmuxSession`
-  (`src/pkg/agent/manager.go:2568`), whose first act is
+  (`src/pkg/agent/manager.go:2537`), whose first act is
   `if m.tmuxSessionExistsForAgent(agent) { return nil }`
-  (`src/pkg/agent/manager.go:2569-2571`) — a surviving session is reused, not
+  (`src/pkg/agent/manager.go:2538-2540`) — a surviving session is reused, not
   recreated. Boot reaches both: `main` unconditionally calls
   `agentMgr.Start(ctx, name)` for every enabled agent
-  (`src/cmd/hive/main.go:4005`) and the reuse-vs-relaunch decision is taken
+  (`src/cmd/hive/main.go:4013`) and the reuse-vs-relaunch decision is taken
   inside. There is no `Adopt`, `Reattach`, or `RecoverAgents` function;
   searching for one finds only `RestoreBreaker`
-  (`src/pkg/agent/manager.go:9372`), which restores control metadata and is
+  (`src/pkg/agent/manager.go:8181`), which restores control metadata and is
   explicitly documented as *not* touching agent state: "a boot restore must
   never change agent state, only reattach the breaker"
-  (`src/pkg/agent/manager.go:9369`).
+  (`src/pkg/agent/manager.go:8178`).
 
   Because reattachment is emergent from two independent early returns rather
   than an explicit path, nothing in the codebase names it, tests it end to end,
   or reports whether it happened. The only trace is a log line
-  (`src/pkg/agent/manager.go:2938`).
+  (`src/pkg/agent/manager.go:2907`).
 - **The adoption test is a screen-scrape.** `tmuxPaneHasCLIForAgent`
-  (`src/pkg/agent/manager.go:2588`) is one line: `paneHasCLIMarker(
+  (`src/pkg/agent/manager.go:2557`) is one line: `paneHasCLIMarker(
   m.captureVisiblePaneForAgent(agent))`. Hive decides whether an agent's
   conversation is still alive by pattern-matching rendered terminal output.
 - **It does not survive the deployment's actual restart mode.** In hosted
@@ -266,33 +266,33 @@ apply.
 
 ## 3. What a restart actually does to a turn
 
-`Restart` (`src/pkg/agent/manager.go:9704`) does not resume anything. In order:
+`Restart` (`src/pkg/agent/manager_restart.go:668`) does not resume anything. In order:
 
 1. `C-c` into the pane and cancel the launch context
-   (`src/pkg/agent/manager.go:9742-9746`).
+   (`src/pkg/agent/manager_restart.go:722-726`).
 2. Archive the scrollback *before* it is destroyed —
    `tearDownTurnLocked(agent, "restart")`
-   (`src/pkg/agent/manager.go:9752`), with the comment that `kill-session`
+   (`src/pkg/agent/manager_restart.go:394`), with the comment that `kill-session`
    destroys the only record of the previous run
-   (`src/pkg/agent/manager.go:9748-9751`).
+   (`src/pkg/agent/manager_restart.go:728-731`).
 3. Reap the CLI process and any UID-owned helpers
-   (`src/pkg/agent/manager.go:9760-9764`).
-4. `tmux kill-session` (`src/pkg/agent/manager.go:9771`).
+   (`src/pkg/agent/manager_restart.go:749-753`).
+4. `tmux kill-session` (`src/pkg/agent/manager_restart.go:760`).
 
 The replacement CLI starts with **no prompt at all** in the default case.
-`buildBootstrapPrompt` (`src/pkg/agent/manager.go:3881`) unconditionally returns `""`
-(`src/pkg/agent/manager.go:3889`), with the reasoning recorded inline: the
+`buildBootstrapPrompt` (`src/pkg/agent/manager.go:3850`) unconditionally returns `""`
+(`src/pkg/agent/manager.go:3858`), with the reasoning recorded inline: the
 governor's first eval cycle kicks all due agents with fully substituted
 templates, whereas sending a boot prompt here leaked unsubstituted `${ISSUE_LIST}`
-placeholders to the agent (`src/pkg/agent/manager.go:3882-3887`).
+placeholders to the agent (`src/pkg/agent/manager.go:3851-3856`).
 
 So a restarted agent sits idle at its input prompt until the shared governor
 ticker (§1.4) next finds it due. Only the explicit override paths supply text
-directly: `RestartWithBootstrap` (`src/pkg/agent/manager.go:9411`) sets
+directly: `RestartWithBootstrap` (`src/pkg/agent/manager_restart.go:371`) sets
 `BootstrapOverride`, and `RestartThenSendKick`
-(`src/pkg/agent/manager.go:9487`) is documented as restarting "with a clean
+(`src/pkg/agent/manager_restart.go:451`) is documented as restarting "with a clean
 slate". Whichever path runs, delivery is gated on the new pane reaching its
-input marker (`deliverStartupKick`, `src/pkg/agent/manager.go:5470`).
+input marker (`deliverStartupKick`, `src/pkg/agent/manager_kick.go:349`).
 
 **Restart is a reset, not a resume.** Whatever the agent had established in its
 conversation — plan, working context, partial tool results — is gone, and the
@@ -348,12 +348,12 @@ RFC.
 ### 5.1 Hive does not own the conversation, and cannot read it
 
 Every supported backend is an opaque interactive subprocess. Hive composes a
-command line as a string (`src/pkg/agent/manager.go:10272`, `:2455`, `:2478`),
+command line as a string (`src/pkg/agent/manager.go:8628`, `:2455`, `:2478`),
 types it into a shell, and from then on interacts only through keystrokes in and
 rendered characters out.
 
 Hive sets `HOME` and a per-agent `CODEX_HOME`
-(`src/pkg/agent/manager.go:9014`, helper at `src/pkg/agent/manager.go:7533`) so
+(`src/pkg/agent/manager.go:7837`, helper at `src/pkg/agent/manager.go:6356`) so
 that each agent's CLI writes its session files somewhere hive controls the
 *location* of. That is location control, not format control: nothing in
 `src/pkg/agent/` parses, writes, or migrates a backend session file.
@@ -414,10 +414,10 @@ rather than a new one to invent.
 
 This is the load-bearing constraint behind all of the above and is worth
 isolating. Turn completion (§1.3), liveness classification (§4), stall
-detection (`src/pkg/agent/manager.go:6244`), auth failure
+detection (`src/pkg/agent/manager_kick.go:744`), auth failure
 (`src/pkg/watchdog/classify.go:98`), quota exhaustion
-(`src/pkg/agent/manager.go:308`), and even whether a surviving CLI can be
-adopted (`src/pkg/agent/manager.go:2588`) are all decided by matching substrings
+(`src/pkg/agent/manager.go:304`), and even whether a surviving CLI can be
+adopted (`src/pkg/agent/manager.go:2557`) are all decided by matching substrings
 against rendered terminal output.
 
 A structured turn return value — the RFC's testability and subagent-sync
@@ -538,9 +538,9 @@ Things this spike did not establish, and what would settle each.
    Settling it requires per-backend version-pinned testing against the actual
    binaries, since an undocumented on-disk format is not a contract.
 2. **Should the manager-side nudge and restart counters join the persisted
-   envelope?** `tokenRestartAttempts` (`src/pkg/agent/manager.go:304`),
-   `transientNudgesThisKick` (`src/pkg/agent/manager.go:337`), and
-   `stallNudgeSent` (`src/pkg/agent/manager.go:331`) are loop-breakers that
+   envelope?** `tokenRestartAttempts` (`src/pkg/agent/manager.go:300`),
+   `transientNudgesThisKick` (`src/pkg/agent/manager.go:333`), and
+   `stallNudgeSent` (`src/pkg/agent/manager.go:327`) are loop-breakers that
    reset to zero on restart, while the watchdog's equivalent ladder is
    deliberately persisted (`src/pkg/watchdog/reconciler.go:391`). Whether the
    difference is intentional (these counters are per-launch by design, and a
@@ -557,13 +557,13 @@ Things this spike did not establish, and what would settle each.
    *Since answered: dead code.* The function used to assemble a candidate
    policy-file list and then discard it by returning `""`; the path
    construction has since been deleted, and the function is now an explained
-   `return ""` stub (`src/pkg/agent/manager.go:3881-3890`, `return ""` at
+   `return ""` stub (`src/pkg/agent/manager.go:3850-3859`, `return ""` at
    `:3890`), with the removal recorded in its comment.
 5. **Are there non-tmux agent execution paths with different properties?**
    `src/pkg/agent/sandbox_executor.go` runs a different shape of execution
    (`src/pkg/agent/sandbox_executor.go:353` composes its own command line) and
    inference backends are handled separately
-   (`IsInferenceBackend`, `src/pkg/agent/manager.go:766`). This spike scoped
+   (`IsInferenceBackend`, `src/pkg/agent/manager.go:759`). This spike scoped
    itself to the tmux CLI path, which is the fleet's normal mode; the sandbox
    and inference paths were not mapped and may not share these constraints.
 

@@ -62,8 +62,8 @@ wires the same signal path to `GET /api/acmm-recommendation`
 There is also a current per-repo checkout-root mechanism, but not the exact
 `governor.acmm.repo_roots` spelling from the RFC. On `v4`,
 `ProjectConfig.CheckoutRootFor` supplies a host-local checkout root for one
-monitored repo (`src/pkg/config/config.go:562`), and the scheduler resolves
-per-repo roots through `agentsRepoRoot` (`src/pkg/scheduler/scheduler.go:1480`).
+monitored repo (`src/pkg/config/config.go:566`), and the scheduler resolves
+per-repo roots through `agentsRepoRoot` (`src/pkg/scheduler/scheduler.go:1912`).
 The onboarding reconciler should follow the current config structure rather than
 revive stale field names.
 
