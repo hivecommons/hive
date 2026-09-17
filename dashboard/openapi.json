@@ -5758,7 +5758,7 @@
           "Governor"
         ],
         "summary": "Watchdog activity readout",
-        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and — in observe mode — whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
+        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and \u2014 in observe mode \u2014 whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
         "parameters": [
           {
             "name": "days",
@@ -5887,7 +5887,7 @@
                     },
                     "promotion": {
                       "type": "object",
-                      "description": "Observe → Heal hint; present only in observe mode",
+                      "description": "Observe \u2192 Heal hint; present only in observe mode",
                       "properties": {
                         "safe": {
                           "type": "boolean",
@@ -11646,6 +11646,171 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/contribute/runs": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Per-contributor run history",
+        "description": "Returns one contributor's terminal task reports from the durable task-run log, newest first \u2014 the raw records behind /api/contribute/run-stats (outcome, failure_kind, reason, scenario, duration), so an operator can troubleshoot a struggling contributor without shell access to the hub. Includes hub-synthesized 'abandoned' records for hand-backs that produced no terminal report. Public, GET only, no side effects; the reason text is the same bounded string the fleet endpoint already exposes as last_failure.reason.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "GitHub username to return runs for (case-insensitive). Required: without it the endpoint would dump the whole log."
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 365,
+              "default": 7
+            },
+            "description": "Trailing window in days; 0 reads everything in the live log."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
+            },
+            "description": "Maximum records returned (newest first). total still reports the full window count."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One contributor's run records, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Matching records in the window before the limit was applied"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "description": "RFC3339 UTC timestamp the record was written"
+                          },
+                          "task_id": {
+                            "type": "string"
+                          },
+                          "task_gen": {
+                            "type": "integer"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "username": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "effort": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "completed",
+                              "failed",
+                              "abandoned"
+                            ],
+                            "description": "Which terminal report arrived; 'abandoned' is hub-synthesized for a hand-back (relay re-advertised ready, or connection lost) that produced no terminal report"
+                          },
+                          "completion_signal": {
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "type": "string"
+                          },
+                          "verdict_reason": {
+                            "type": "string"
+                          },
+                          "failure_kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "Bounded failure/hand-back reason \u2014 the same string the fleet view serves as last_failure.reason"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          },
+                          "duration_s": {
+                            "type": "number"
+                          },
+                          "pr_url": {
+                            "type": "string"
+                          },
+                          "pr_verified": {
+                            "type": "boolean"
+                          },
+                          "scenario": {
+                            "type": "string",
+                            "enum": [
+                              "verdict_complete",
+                              "idle_complete",
+                              "headless_complete",
+                              "env_failure",
+                              "task_failure",
+                              "unspecified_failure",
+                              "abandoned"
+                            ]
+                          },
+                          "session": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing username query parameter"
           }
         }
       }

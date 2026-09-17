@@ -347,6 +347,13 @@ func (s *Server) registerContributeRoutes() {
 	// duration percentiles per backend. Public like the other /api/contribute*
 	// reads (aggregate counts only; no usernames, no reasons, no tokens).
 	s.mux.HandleFunc("GET /api/contribute/run-stats", s.handleContributeRunStats)
+	// Read-only per-contributor RUN HISTORY (hive#7317): the raw records behind
+	// run-stats, filtered to one username — outcome, failure_kind, reason,
+	// scenario, duration — so an operator can see WHY a struggling contributor's
+	// tasks ended without shell access to the hub. Public like the sibling
+	// reads: the reason text is the same bounded string the fleet view already
+	// serves as last_failure.reason.
+	s.mux.HandleFunc("GET /api/contribute/runs", s.handleContributeRuns)
 	// Read-only TRIAGE ladder (#2612 part b): the contribute issues grouped into a
 	// Warp-style lifecycle (Triaging → Ready → Implementing → Reviewing → Closed),
 	// DERIVED LIVE from the ready queue + fleet snapshot + the PR→issue link (part

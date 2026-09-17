@@ -67,7 +67,17 @@ const (
 	// scenarioUnspecifiedFailure: a failure with no usable kind (older relay,
 	// or an unrecognized value).
 	scenarioUnspecifiedFailure = "unspecified_failure"
+	// scenarioAbandoned: the task ended with no terminal report at all — the
+	// relay re-advertised ready while still holding it, or the connection
+	// dropped and nothing re-adopted the task (hive#7317). Before these
+	// records, such hand-backs were invisible to the run log, so run-stats
+	// undercounted exactly the sessions most worth investigating.
+	scenarioAbandoned = "abandoned"
 )
+
+// outcomeAbandoned is the Outcome for a hand-back record (hive#7317): neither
+// "completed" nor "failed" arrived; the hub synthesized the record itself.
+const outcomeAbandoned = "abandoned"
 
 // TaskRunRecord is one terminal task report, flattened to the fields an
 // operator aggregates on. All enum-ish fields hold hub-NORMALIZED values
@@ -107,6 +117,9 @@ type TaskRunRecord struct {
 // deriveScenario maps a terminal report's normalized fields onto the closed
 // scenario vocabulary above. Pure; table-tested.
 func deriveScenario(outcome, completionSignal, failureKind string) string {
+	if outcome == outcomeAbandoned {
+		return scenarioAbandoned
+	}
 	if outcome == "completed" {
 		switch completionSignal {
 		case completionSignalVerdict:

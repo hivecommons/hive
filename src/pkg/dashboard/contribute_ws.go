@@ -3591,7 +3591,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		if contributor != nil && contributor.profile != nil {
 			contributor.mu.Lock()
 			abandonedTask := contributor.currentTask
+			abandonedAssignedAt := contributor.taskAssignedAt
 			contributor.currentTask = nil
+			contributor.taskAssignedAt = time.Time{}
 			// #2568: bump the generation on release so any late message from this
 			// now-defunct socket carrying the old generation is fenced.
 			contributor.currentTaskGen = h.nextTaskGen()
@@ -3689,6 +3691,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				h.addActivity(contributor.profile.GitHubUsername, "released: connection lost",
 					contributor.role, contributor.cliBackend, contributor.model,
 					contributor.reasoningEffort, taskDescOf(abandonedTask))
+				// hive#7317: the durable twin of the activity entry above. A
+				// dropped socket previously left no run record at all, so the
+				// run log showed nothing for exactly the sessions an operator
+				// most needs to reconstruct after the contributor is gone.
+				h.appendAbandonedTaskRun(contributor, abandonedTask, abandonedAssignedAt, taskRunReasonConnectionLost)
 			}
 			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
 			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
@@ -3922,7 +3929,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			contributor.mu.Lock()
 			abandoned := contributor.currentTask
+			abandonedAssignedAt := contributor.taskAssignedAt
 			contributor.currentTask = nil
+			contributor.taskAssignedAt = time.Time{}
 			// #2568: bump the generation on release so a re-`ready` abandon fences any
 			// later message echoing the old generation for the just-abandoned task.
 			contributor.currentTaskGen = h.nextTaskGen()
@@ -3965,6 +3974,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				if abandoned.Number > 0 {
 					h.recordTaskFailureForTask(abandoned, false)
 				}
+				// hive#7317: make the hand-back durable. Without this record a
+				// session that gave back 10 of 11 tasks left ONE row in the run
+				// log — the per-run evidence an operator needs was exactly the
+				// rows that were never written. DECLARE only, like every
+				// appendTaskRun call.
+				h.appendAbandonedTaskRun(contributor, abandoned, abandonedAssignedAt, taskRunReasonReadvertised)
 			}
 			h.logger.Info("[contribute-ws] ready for work",
 				"username", contributor.profile.GitHubUsername,
