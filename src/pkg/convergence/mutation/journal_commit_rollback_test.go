@@ -1,6 +1,7 @@
 package mutation
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -162,5 +163,59 @@ func TestJournal_CommitRollback_ReconcilePersistFailureKeepsUnresolved(t *testin
 	}
 	if op.Status != StatusPlanned || len(op.Attempts) != 2 {
 		t.Fatalf("recovered reconcile must authorize exactly one retry: %+v", op)
+	}
+}
+
+// Row: OpenJournal's refusal arms beyond unparseable and forged entries
+// (already pinned by TestJournal_CorruptAndForgedRefuse): an unreadable file
+// and two entries for the same logical ID each refuse to open, leaving the
+// bytes exactly as found for inspection.
+func TestOpenJournal_UnreadableAndConflictingEntriesRefuse(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("unreadable file does not block root")
+	}
+
+	unreadable := filepath.Join(t.TempDir(), "journal.json")
+	if err := writeFile(unreadable, `{"version":1,"operations":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if _, err := OpenJournal(unreadable); err == nil {
+		t.Fatal("an unreadable journal must refuse to open")
+	}
+
+	// Build one VALID persisted operation via the real journal, then
+	// duplicate it on disk: two entries for one logical ID must refuse.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "journal.json")
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatalf("OpenJournal: %v", err)
+	}
+	if _, err := j.Begin(testEffect(), 1, "alice", time.Now()); err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	var persisted struct {
+		Version    int               `json:"version"`
+		Operations []json.RawMessage `json:"operations"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, path)), &persisted); err != nil {
+		t.Fatalf("decoding persisted journal: %v", err)
+	}
+	persisted.Operations = append(persisted.Operations, persisted.Operations[0])
+	dupBytes, err := json.Marshal(persisted)
+	if err != nil {
+		t.Fatalf("re-encoding journal: %v", err)
+	}
+	if err := writeFile(path, string(dupBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenJournal(path); err == nil {
+		t.Fatal("a journal holding conflicting entries for one logical ID must refuse to open")
+	}
+	if got := readFile(t, path); got != string(dupBytes) {
+		t.Fatalf("refused bytes must be left for inspection, got %q", got)
 	}
 }
