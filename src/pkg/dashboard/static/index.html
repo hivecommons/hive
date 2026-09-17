@@ -21388,14 +21388,14 @@ function burnAreaChart() {
       const sPct = (s / THRESH_BAR_MAX) * 100;
       return `
         <div class="config-field" style="margin-bottom:20px">
-          <label title="Whether governor mode is computed from the aggregate hive queue or each repo's own actionable queue.">Cadence mode scope <span class="config-info">i<span class="config-tooltip">Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.</span></span></label>
+          <label>Cadence mode scope <span class="config-info">i<span class="config-tooltip">Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.</span></span></label>
           <select id="cfg-cadence-scope" data-change-action="markDirty" data-arg0="cadence-scope" data-arg1="cadenceScope" data-arg-types="s,s,v">
             ${[['aggregate', 'Aggregate (default)'], ['per_repo', 'Per repo']]
               .map(([v, label]) => `<option value="${v}" ${activeScope === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
         <div class="config-field" style="margin-bottom:20px">
-          <label title="How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.">Multi-repo threshold scaling <span class="config-info">i<span class="config-tooltip">How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.</span></span></label>
+          <label>Multi-repo threshold scaling <span class="config-info">i<span class="config-tooltip">How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.</span></span></label>
           <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v" ${activeScope === 'per_repo' ? 'disabled style="opacity:0.6"' : ''}>
             ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
