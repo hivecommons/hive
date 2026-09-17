@@ -344,9 +344,17 @@ type StatusPayload struct {
 	// StatusInstance identifies the server process that produced the seq.
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
-	StatusInstance string          `json:"statusInstance"`
-	HiveID         string          `json:"hiveId"`
-	Agents         []FrontendAgent `json:"agents"`
+	StatusInstance string `json:"statusInstance"`
+	HiveID         string `json:"hiveId"`
+	// HiveIDEditable reports whether the Hive ID may be changed from this
+	// dashboard, and HiveIDLockReason explains why not when it may not
+	// (#7247). Computed server-side for the same reason the release-channel
+	// selector is: whether a hive is hub-managed is not something the browser
+	// can determine, and a UI that guesses would either offer an edit that
+	// always 409s or hide one that is legitimately available.
+	HiveIDEditable   bool            `json:"hiveIdEditable"`
+	HiveIDLockReason string          `json:"hiveIdLockReason,omitempty"`
+	Agents           []FrontendAgent `json:"agents"`
 	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
 	// that were left out of Agents (the dashboard cards), each with the stable
 	// reason category it was omitted for. It exists so an operator whose

@@ -275,9 +275,13 @@ func BuildFrontendStatus(
 	health := buildHealth(ghClient, ctx)
 	mergeAgentAuthHealth(health, agents)
 
+	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
+
 	payload := &StatusPayload{
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
 		HiveID:              cfg.HiveID,
+		HiveIDEditable:      !hiveIDLocked,
+		HiveIDLockReason:    hiveIDLockReason,
 		Agents:              agents,
 		HiddenAgents:        hiddenAgents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),

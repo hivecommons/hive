@@ -21124,6 +21124,12 @@ function burnAreaChart() {
     // ── Governor Tab Renderers ──
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
+      // Hive ID edit lock (#7247). The server decides; the browser cannot tell
+      // whether this hive is hub-managed. Default to LOCKED when the field is
+      // absent so an older spoke that predates this flag fails safe (offering
+      // an edit that always 409s is worse than hiding an available one).
+      const hiveIdEditable = (window._lastStatus || {}).hiveIdEditable !== false;
+      const hiveIdLockReason = (window._lastStatus || {}).hiveIdLockReason || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
       const attrib = (_configState.data || {}).attribution || {};
       const genAdv = (_configState.data || {}).general_advanced || {};
@@ -21148,10 +21154,10 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Hive ID <span class="config-info">i<span class="config-tooltip">Unique identifier for this hive instance. Stamped into beads and available as \${HIVE_ID} in agent CLAUDE.md templates. Persists across container restarts.</span></span></label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="cfg-hive-id" value="${esc(currentId)}" placeholder="hive-xxxxxxxx" style="flex:1" data-input-action="markDirty" data-arg0="general" data-arg1="hiveId" data-arg-types="s,s,v">
-            <button data-action="saveHiveId" style="font-size:0.75rem;padding:6px 14px;background:var(--green);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600">Save</button>
+            <input type="text" id="cfg-hive-id" value="${esc(currentId)}" placeholder="hive-xxxxxxxx" style="flex:1" ${hiveIdEditable ? '' : 'readonly disabled'} data-input-action="markDirty" data-arg0="general" data-arg1="hiveId" data-arg-types="s,s,v">
+            ${hiveIdEditable ? '<button data-action="saveHiveId" style="font-size:0.75rem;padding:6px 14px;background:var(--green);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600">Save</button>' : '<span style="font-size:0.7rem;color:var(--muted);white-space:nowrap">&#128274; Hub-managed</span>'}
           </div>
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Format: hive-adjective-noun (e.g. hive-bold-hawk). Changes take effect immediately.</span>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
         <div class="config-field">
           <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI-native Continuous Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
@@ -21307,6 +21313,14 @@ function burnAreaChart() {
     async function saveHiveId() {
       const input = document.getElementById('cfg-hive-id');
       if (!input) return;
+      // Second line of defence (#7247): the control is not rendered when the
+      // ID is hub-managed, but a stale DOM or a console call could still reach
+      // here. The server refuses with 409 regardless; this just gives the
+      // operator the reason instead of a generic failure toast.
+      if ((window._lastStatus || {}).hiveIdEditable === false) {
+        showToast((window._lastStatus || {}).hiveIdLockReason || 'Hive ID is managed by the hub', 'error');
+        return;
+      }
       const newId = input.value.trim();
       if (!newId) { showToast('Hive ID cannot be empty', 'error'); return; }
       try {
