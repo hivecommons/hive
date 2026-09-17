@@ -895,6 +895,36 @@ func resolveUpgradeTarget(policy *hub.HeartbeatUpgradePolicy, branch, branchTip 
 // SetHubUpgradePolicy records the hub's upgrade posture for this spoke as
 // delivered on the heartbeat (#7262). Called from the heartbeat callback; the
 // next /api/version measures against it.
+// SetHubPushedDashboardURL records that the hub delivered a vanity dashboard
+// URL on a heartbeat (#7451). From then on hub.dashboard_url is rendered
+// read-only on the Hub tab and a save that tries to change it is refused.
+func (s *Server) SetHubPushedDashboardURL(url string) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return
+	}
+	s.versionMu.Lock()
+	s.hubPushedDashboardURL = url
+	s.versionMu.Unlock()
+}
+
+// hubOwnsDashboardURL reports whether hub.dashboard_url belongs to the hub
+// rather than to this spoke's operator (#7451). True on a hub-proxied
+// (hosted) spoke — the hub's ingress terminates the hostname and the hub
+// pushes the vanity URL on the heartbeat — and on any spoke that has received
+// such a push in this process lifetime (covers hosted spokes reached over an
+// OpenShift Route, which are not hub-proxied). A self-hosted spoke that merely
+// registered with the hub keeps the field: there hub.dashboard_url is how the
+// spoke TELLS the hub where its dashboard is.
+func (s *Server) hubOwnsDashboardURL() bool {
+	if s.hubProxied() {
+		return true
+	}
+	s.versionMu.RLock()
+	defer s.versionMu.RUnlock()
+	return s.hubPushedDashboardURL != ""
+}
+
 func (s *Server) SetHubUpgradePolicy(p *hub.HeartbeatUpgradePolicy) {
 	if p == nil {
 		return

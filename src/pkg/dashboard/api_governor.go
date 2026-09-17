@@ -168,14 +168,24 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// service-account-file fallback chain. Omitted (empty string)
 			// outside a cluster, which the Hub tab renders by skipping the
 			// line rather than showing a blank/"undefined" value.
-			"namespace":                          podNamespace(),
-			"url":                                cfg.Hub.URL,
-			"dashboard_url":                      cfg.Hub.DashboardURL,
-			"snapshot_url":                       cfg.Hub.SnapshotURL,
-			"is_public":                          cfg.Hub.IsPublic,
-			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
-			"snapshot_frame_ancestors":           cfg.Dashboard.SnapshotFrameAncestors,
-			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
+			"namespace": podNamespace(),
+			"url":       cfg.Hub.URL,
+			// dashboard_url_owner says who may change dashboard_url (#7451):
+			// "hub" on a hub-managed spoke (the hub's ingress terminates the
+			// hostname and the heartbeat pushes the vanity URL, so an edit is
+			// reverted — and until then feeds the OAuth callback origin), else
+			// "spoke". public_url is dashboard.public_url, the operator-owned
+			// field that already wins over dashboard_url for OAuth and is never
+			// overwritten by the heartbeat — the right knob for a local vanity
+			// host. Both are read-only display info, never accepted on save.
+			"dashboard_url":            cfg.Hub.DashboardURL,
+			"dashboard_url_owner":      dashboardURLOwner(s.hubOwnsDashboardURL()),
+			"public_url":               cfg.Dashboard.PublicURL,
+			"snapshot_url":             cfg.Hub.SnapshotURL,
+			"is_public":                cfg.Hub.IsPublic,
+			"auto_snapshot":            cfg.Hub.AutoSnapshot,
+			"snapshot_frame_ancestors": cfg.Dashboard.SnapshotFrameAncestors,
+			"auto_upgrade":             cfg.Hub.AutoUpgrade,
 			// auto_upgrade_mode is the configured SCHEDULE (instant/daily/weekly)
 			// surfaced read-only so the governor Settings overlay Hub tab can
 			// show the auto-update policy the reporter went looking for (#6962).
@@ -874,6 +884,17 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.deps.Config
+	// #7451: on a hub-managed spoke the hub owns dashboard_url — the next
+	// heartbeat would revert an edit, and until it did the new value would
+	// be the OAuth callback origin (oauth_origin.go), so a typo locks the
+	// operator out of the dashboard they typed it into. Refuse the whole
+	// save, BEFORE any field is applied, rather than accept-and-revert; the
+	// Hub tab renders the field read-only for the same reason, this is the
+	// API-level guard.
+	if body.DashboardURL != "" && body.DashboardURL != cfg.Hub.DashboardURL && s.hubOwnsDashboardURL() {
+		jsonError(w, "hub.dashboard_url is owned by the hub on this spoke and is set from its heartbeat; to serve the dashboard from a different host set dashboard.public_url instead", http.StatusConflict)
+		return
+	}
 	if body.Enabled != nil {
 		cfg.Hub.Enabled = *body.Enabled
 	}
@@ -2252,4 +2273,12 @@ func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Re
 		return
 	}
 	okResponse(w, map[string]string{"status": "ok", "org": org})
+}
+
+// dashboardURLOwner names who may change hub.dashboard_url (#7451).
+func dashboardURLOwner(hubOwned bool) string {
+	if hubOwned {
+		return "hub"
+	}
+	return "spoke"
 }

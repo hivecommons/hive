@@ -5081,6 +5081,10 @@ func main() {
 			// working config: with no org there is nothing to reconcile except the
 			// URL, so adopt it, persist, and return without touching the project.
 			if pc.Org == "" {
+				// Whether or not it differs, a pushed URL is the hub saying it
+				// owns this value; the dashboard renders the field read-only
+				// from here on (#7451).
+				dashSrv.SetHubPushedDashboardURL(pc.DashboardURL)
 				if pc.DashboardURL != "" && cfg.Hub.DashboardURL != pc.DashboardURL {
 					logger.Info("adopting vanity dashboard URL from hub heartbeat (url-only push)",
 						"was", cfg.Hub.DashboardURL, "now", pc.DashboardURL)
@@ -5110,6 +5114,7 @@ func main() {
 			// host). Track it in the already-reconciled check so a URL-only change
 			// still gets applied and persisted.
 			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
+			dashSrv.SetHubPushedDashboardURL(pc.DashboardURL) // #7451: hub-owned from here on
 			authorMatched := pc.AIAuthor == "" || cfg.Project.AIAuthor == pc.AIAuthor
 			apiURLMatched := pc.GitHubAPIURL == "" || cfg.GitHub.APIURL == pc.GitHubAPIURL
 			// Issue filter: nil means "the hub is not speaking to this field"

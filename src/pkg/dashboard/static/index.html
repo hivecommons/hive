@@ -19890,6 +19890,34 @@ function burnAreaChart() {
       }
     }
 
+    /* renderHubDashboardURLField (#7451): hub.dashboard_url is a SETTING only
+       on a spoke that owns its own hostname. On a hub-managed spoke the hub's
+       ingress terminates the host and the heartbeat pushes the vanity URL, so
+       an edit here is reverted by the next beat — and until it is, the value
+       is the second-choice OAuth callback origin (oauth_origin.go): a typo
+       locks the operator out of the dashboard they typed it into. The server
+       says who owns it (dashboard_url_owner) and refuses a hub-owned change
+       with 409; this renders it read-only with the provenance spelled out,
+       the way the auto-update block does, and points at dashboard.public_url —
+       the operator-owned field that already wins for OAuth and is never
+       overwritten — for anyone who genuinely needs a different host. */
+    function renderHubDashboardURLField(hub, dashUrl) {
+      if (hub.dashboard_url_owner !== 'hub') {
+        return `
+        <div class="config-field">
+          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">Public URL of this hive's dashboard, as reported to the hub.</span></span></label>
+          <input type="text" value="${esc(dashUrl)}" data-change-action="markDirty" data-arg0="hub" data-arg1="dashboard_url" data-arg-types="s,s,v">
+        </div>`;
+      }
+      const publicUrl = hub.public_url || '';
+      return `
+        <div class="config-field">
+          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">The public URL the hub serves this dashboard at. Owned by the hub: it is delivered on the heartbeat and any local edit is reverted by the next one. To serve the dashboard from a different host, set dashboard.public_url — it takes precedence for OAuth and is never overwritten.</span></span></label>
+          <input type="text" id="hub-dashboard-url" value="${esc(dashUrl)}" readonly disabled style="opacity:0.7">
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">Owned by the hub (heartbeat) — read-only here.${publicUrl ? ' Local override in effect for OAuth: dashboard.public_url = ' + esc(publicUrl) : ''}</div>
+        </div>`;
+    }
+
     function renderGovHub(hub) {
       const dashUrl = hub.dashboard_url || window.location.origin || '';
       const snapUrl = hub.snapshot_url || (hub.auto_snapshot && dashUrl ? dashUrl.replace(/\/$/, '') + '/snapshot' : '');
@@ -19936,10 +19964,7 @@ function burnAreaChart() {
           <label>Hub URL <span class="config-info">i<span class="config-tooltip">URL of the Hive Hub. Heartbeats and task status are sent here.</span></span></label>
           <input type="text" value="${esc(hub.url || '')}" data-change-action="markDirty" data-arg0="hub" data-arg1="url" data-arg-types="s,s,v">
         </div>
-        <div class="config-field">
-          <label>Dashboard URL <span class="config-info">i<span class="config-tooltip">Public URL of this hive's dashboard.</span></span></label>
-          <input type="text" value="${esc(dashUrl)}" data-change-action="markDirty" data-arg0="hub" data-arg1="dashboard_url" data-arg-types="s,s,v">
-        </div>
+        ${renderHubDashboardURLField(hub, dashUrl)}
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.is_public ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="is_public"></div>
           <span class="config-toggle-label">Public <span class="config-info">i<span class="config-tooltip">Show this hive on the public hub registry.</span></span></span>

@@ -271,6 +271,11 @@ type Server struct {
 	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.
 	hubUpgradePolicy   *hub.HeartbeatUpgradePolicy
 	hubUpgradePolicyAt time.Time
+	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
+	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
+	// an operator edit would be reverted by the next push, and until then a
+	// wrong value feeds the OAuth callback origin. Guarded by versionMu.
+	hubPushedDashboardURL string
 
 	contributeHub *ContributeWSHub
 
