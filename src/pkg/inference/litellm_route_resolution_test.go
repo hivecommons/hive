@@ -1,4 +1,4 @@
-package main
+package inference
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// resolveLiteLLMInferenceRoute is the route-install decision tree for the
+// ResolveLiteLLMRoute is the route-install decision tree for the
 // built-in "litellm" backend. It shipped inline in main() with no coverage,
 // which is exactly how the #5393 outage happened: a hive configured ONLY
 // through the Model Gateways tab (explicit gateway named "litellm", legacy
@@ -16,13 +16,13 @@ import (
 // Gateways tab Test button passed. 231ca4b fixed it; this table pins the fix.
 //
 // The `gateway fallback` cases below FAIL against pre-231ca4b behavior (delete
-// the gateway-fallback block in resolveLiteLLMInferenceRoute and they go red
+// the gateway-fallback block in ResolveLiteLLMRoute and they go red
 // with ok=false), which is the point — a test that passes on both the fixed and
 // the broken code would guard nothing.
 func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 	// The bundled local proxy's loopback URL is not a literal here: it must
-	// track litellmLocalProxyURL(), which owns the port.
-	localProxy := litellmLocalProxyURL()
+	// track LocalLiteLLMProxyURL(), which owns the port.
+	localProxy := LocalLiteLLMProxyURL()
 
 	cases := []struct {
 		name           string
@@ -172,7 +172,7 @@ func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 				Gateways: tc.gateways,
 			}}
 
-			endpoint, model, ok := resolveLiteLLMInferenceRoute(cfg, tc.backend, tc.requestedModel)
+			endpoint, model, ok := ResolveLiteLLMRoute(cfg, tc.backend, tc.requestedModel)
 
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (endpoint=%q model=%q)", ok, tc.wantOK, endpoint, model)
@@ -202,7 +202,7 @@ func TestResolveLiteLLMInferenceRouteEnvEndpoint(t *testing.T) {
 		Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "https://gateway.example"}},
 	}}
 
-	endpoint, model, ok := resolveLiteLLMInferenceRoute(cfg, "litellm", "")
+	endpoint, model, ok := ResolveLiteLLMRoute(cfg, "litellm", "")
 	if !ok || endpoint != "https://from-env.example" || model != "legacy-model" {
 		t.Fatalf("env endpoint: got (%q, %q, %v), want (https://from-env.example, legacy-model, true)", endpoint, model, ok)
 	}

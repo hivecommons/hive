@@ -1,13 +1,15 @@
-package main
+package inference
 
 import (
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// resolveWatsonxGateway must prefer the gateway BOTH named and kinded
+// ResolveWatsonxGateway must prefer the gateway BOTH named and kinded
 // "watsonx" (the built-in backend's canonical slot) over a merely
 // watsonx-kinded gateway with another name, fall back to kind-only when no
 // canonical slot exists, and return nil when no watsonx gateway is configured
@@ -32,21 +34,21 @@ func TestResolveWatsonxGateway(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{Governor: config.GovernorConfig{Gateways: tc.gateways}}
-			got := resolveWatsonxGateway(cfg)
+			got := ResolveWatsonxGateway(cfg)
 			if tc.want == "" {
 				if got != nil {
-					t.Fatalf("resolveWatsonxGateway = %+v, want nil", got)
+					t.Fatalf("ResolveWatsonxGateway = %+v, want nil", got)
 				}
 				return
 			}
 			if got == nil || got.Endpoint != tc.want {
-				t.Fatalf("resolveWatsonxGateway endpoint = %v, want %q", got, tc.want)
+				t.Fatalf("ResolveWatsonxGateway endpoint = %v, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// For every non-watsonx kind, resolveGatewayAuth must hand back the resolved
+// For every non-watsonx kind, ResolveGatewayAuth must hand back the resolved
 // API key VERBATIM with no extra headers — only watsonx swaps the raw key for
 // an IAM bearer and adds the project header. A mutated key or a stray header
 // on a litellm/openrouter route would break auth at the upstream.
@@ -55,7 +57,7 @@ func TestResolveGatewayAuthNonWatsonxPassesKeyVerbatim(t *testing.T) {
 	t.Setenv(keyEnv, "sk-verbatim-key")
 	gw := &config.GatewayConfig{Name: "openrouter", Kind: "litellm", APIKeyEnv: keyEnv}
 
-	key, headers := resolveGatewayAuth(gw, "scanner", "openrouter", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "openrouter", restoreTestLogger())
 
 	if key != "sk-verbatim-key" {
 		t.Errorf("key = %q, want the resolved key verbatim", key)
@@ -69,21 +71,27 @@ func TestResolveGatewayAuthNonWatsonxPassesKeyVerbatim(t *testing.T) {
 // key and still no headers — never a fabricated credential.
 func TestResolveGatewayAuthKeylessGateway(t *testing.T) {
 	gw := &config.GatewayConfig{Name: "local-vllm", Kind: "vllm"}
-	key, headers := resolveGatewayAuth(gw, "scanner", "local-vllm", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "local-vllm", restoreTestLogger())
 	if key != "" || headers != nil {
 		t.Errorf("keyless gateway auth = (%q, %v), want empty key and nil headers", key, headers)
 	}
 }
 
-// litellmLocalProxyURL is the forwarding contract between the Go inference
+// LocalLiteLLMProxyURL is the forwarding contract between the Go inference
 // translator and the bundled litellm proxy: loopback-only (agents must never
 // reach it directly) on the dedicated local-proxy port.
 func TestLitellmLocalProxyURLIsLoopback(t *testing.T) {
-	url := litellmLocalProxyURL()
+	url := LocalLiteLLMProxyURL()
 	if !strings.HasPrefix(url, "http://127.0.0.1:") {
-		t.Errorf("litellmLocalProxyURL = %q, want a loopback http URL", url)
+		t.Errorf("LocalLiteLLMProxyURL = %q, want a loopback http URL", url)
 	}
 	if url != "http://127.0.0.1:18445" {
-		t.Errorf("litellmLocalProxyURL = %q, want the pinned local-proxy port 18445 the translator forwards to", url)
+		t.Errorf("LocalLiteLLMProxyURL = %q, want the pinned local-proxy port 18445 the translator forwards to", url)
 	}
+}
+
+// restoreTestLogger is a discard logger. cmd/hive had one shared by every test
+// in package main; pkg/inference needs its own, which is the point.
+func restoreTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

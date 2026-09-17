@@ -1,4 +1,4 @@
-package main
+package inference
 
 import (
 	"net/http"
@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
@@ -21,7 +20,7 @@ func swapDefaultMinter(t *testing.T, endpoint string) {
 	t.Cleanup(func() { watsonx.DefaultMinter = orig })
 }
 
-// On the watsonx path, resolveGatewayAuth must hand the agent the MINTED IAM
+// On the watsonx path, ResolveGatewayAuth must hand the agent the MINTED IAM
 // bearer — never the raw IBM Cloud API key — and attach the project header
 // when a project is configured. Leaking the raw key to the upstream request
 // would both fail auth and put the long-lived key on the wire per-request.
@@ -42,7 +41,7 @@ func TestResolveGatewayAuthWatsonxMintsBearer(t *testing.T) {
 		ProjectID: "proj-123",
 	}
 
-	key, headers := resolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
 
 	if key != "iam-bearer-token" {
 		t.Errorf("key = %q, want the minted IAM bearer, never the raw API key", key)
@@ -67,7 +66,7 @@ func TestResolveGatewayAuthWatsonxKindCaseInsensitive(t *testing.T) {
 	t.Setenv(keyEnv, "raw-key")
 	gw := &config.GatewayConfig{Name: "watsonx", Kind: "WatsonX", APIKeyEnv: keyEnv}
 
-	key, headers := resolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
 	if key != "cased-bearer" {
 		t.Errorf("key = %q, want the minted bearer for a case-varied watsonx kind", key)
 	}
@@ -76,10 +75,10 @@ func TestResolveGatewayAuthWatsonxKindCaseInsensitive(t *testing.T) {
 	}
 }
 
-// When the IAM mint fails, resolveGatewayAuth must fall back to the RAW key
+// When the IAM mint fails, ResolveGatewayAuth must fall back to the RAW key
 // (so watsonx returns a clear upstream 401) rather than dropping the route,
 // and must still attach the project header. This is the documented contract
-// in resolveGatewayAuth's failure branch.
+// in ResolveGatewayAuth's failure branch.
 func TestResolveGatewayAuthWatsonxMintFailureFallsBackToRawKey(t *testing.T) {
 	iam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"errorMessage":"key rejected"}`, http.StatusBadRequest)
@@ -96,7 +95,7 @@ func TestResolveGatewayAuthWatsonxMintFailureFallsBackToRawKey(t *testing.T) {
 		ProjectID: "proj-456",
 	}
 
-	key, headers := resolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
 
 	if key != "raw-rejected-key" {
 		t.Errorf("key = %q, want the raw key passed through on mint failure", key)
@@ -121,56 +120,11 @@ func TestResolveGatewayAuthWatsonxNoProjectIDNoHeaders(t *testing.T) {
 	t.Setenv(keyEnv, "raw-key-2")
 	gw := &config.GatewayConfig{Name: "watsonx", Kind: config.GatewayKindWatsonx, APIKeyEnv: keyEnv}
 
-	key, headers := resolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
+	key, headers := ResolveGatewayAuth(gw, "scanner", "watsonx", restoreTestLogger())
 	if key != "bearer-no-proj" {
 		t.Errorf("key = %q, want the minted bearer", key)
 	}
 	if headers != nil {
 		t.Errorf("headers = %v, want nil when project_id is empty", headers)
-	}
-}
-
-// curatorConfigFromHive is the only bridge between the operator-facing
-// knowledge_curator config block and the knowledge package's CuratorConfig.
-// Every field must survive the copy: a silently dropped field here means an
-// operator setting (e.g. auto_promote_threshold) is parsed but never acted on.
-func TestCuratorConfigFromHiveCopiesEveryField(t *testing.T) {
-	enabled := true
-	in := config.KnowledgeCurator{
-		Enabled:              &enabled,
-		Schedule:             "0 3 * * *",
-		ExtractFrom:          []string{"retro", "beads"},
-		AutoPromoteThreshold: 0.75,
-		PromoteFrom:          "hive",
-		PromoteTo:            "org",
-	}
-
-	got := curatorConfigFromHive(in)
-
-	want := knowledge.CuratorConfig{
-		Enabled:              &enabled,
-		Schedule:             "0 3 * * *",
-		ExtractFrom:          []string{"retro", "beads"},
-		AutoPromoteThreshold: 0.75,
-		PromoteFrom:          "hive",
-		PromoteTo:            "org",
-	}
-	if got.Enabled == nil || *got.Enabled != *want.Enabled {
-		t.Errorf("Enabled = %v, want %v", got.Enabled, want.Enabled)
-	}
-	if got.Schedule != want.Schedule {
-		t.Errorf("Schedule = %q, want %q", got.Schedule, want.Schedule)
-	}
-	if len(got.ExtractFrom) != 2 || got.ExtractFrom[0] != "retro" || got.ExtractFrom[1] != "beads" {
-		t.Errorf("ExtractFrom = %v, want %v", got.ExtractFrom, want.ExtractFrom)
-	}
-	if got.AutoPromoteThreshold != want.AutoPromoteThreshold {
-		t.Errorf("AutoPromoteThreshold = %v, want %v", got.AutoPromoteThreshold, want.AutoPromoteThreshold)
-	}
-	if got.PromoteFrom != want.PromoteFrom || got.PromoteTo != want.PromoteTo {
-		t.Errorf("Promote from/to = %q/%q, want %q/%q", got.PromoteFrom, got.PromoteTo, want.PromoteFrom, want.PromoteTo)
-	}
-	if zero := curatorConfigFromHive(config.KnowledgeCurator{}); zero.Enabled != nil || zero.Schedule != "" || zero.ExtractFrom != nil {
-		t.Errorf("zero-value input produced non-zero CuratorConfig: %+v", zero)
 	}
 }
