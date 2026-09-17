@@ -358,9 +358,17 @@ func TestSSEGapIsReportedOnAnIdleStream(t *testing.T) {
 	}
 	// The heartbeat itself must keep going — the gap is a signal on a healthy
 	// connection, not a teardown.
-	if !strings.Contains(rec.BodyString(), ": ping") {
-		t.Error("no heartbeat comment in the stream; the ping branch stopped pinging")
-	}
+	//
+	// This has to WAIT rather than read the body once. On the ticker branch the
+	// handler writes the gap frame first and the ping comment second
+	// (contribute_sse.go, the `case <-ticker.C` arm: flushGap, then
+	// `: ping`, then Flush). The wait above returns the instant "gap" appears,
+	// which can be in between those two writes, so an immediate assertion here
+	// raced the ping into existence and failed intermittently under load
+	// (#7017). Waiting keeps the same contract — the ping branch must keep
+	// pinging — without depending on which side of that window we observed.
+	waitFor(t, func() bool { return strings.Contains(rec.BodyString(), ": ping") },
+		"the heartbeat comment to follow the gap frame; the ping branch stopped pinging")
 	select {
 	case <-done:
 		t.Fatal("the handler exited; a reported gap must not tear down the stream")
