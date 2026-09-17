@@ -12,7 +12,24 @@ import (
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
-const fleetReportStatePath = "/data/fleet-report-state.json"
+// fleetReportStatePath is where the issue-lifecycle state (posted /
+// recovered / cleared fingerprints) persists across restarts. Production
+// always uses this path; a var (not const) only so tests can redirect it to a
+// temp file via SetFleetReportStatePathForTest, mirroring the
+// knowledge.SetBaseDirForTest convention.
+var fleetReportStatePath = "/data/fleet-report-state.json"
+
+// SetFleetReportStatePathForTest redirects fleet-report state persistence to
+// path for the lifetime of t.
+func SetFleetReportStatePathForTest(t interface {
+	Helper()
+	Cleanup(func())
+}, path string) {
+	t.Helper()
+	old := fleetReportStatePath
+	fleetReportStatePath = path
+	t.Cleanup(func() { fleetReportStatePath = old })
+}
 
 var fleetReportBuild = struct {
 	sync.RWMutex
