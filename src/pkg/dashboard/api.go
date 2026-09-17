@@ -4340,6 +4340,11 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Captured before the edits below so only a REAL change pushes a new
+	// launch override and restarts the session — this endpoint is also PUT
+	// with unchanged values by the config dialog's save-everything path.
+	prevBackend, prevModel, prevEffort := agentCfg.Backend, agentCfg.Model, agentCfg.ReasoningEffort
+
 	// Operator edits claim ownership so the pack apply that runs on every
 	// restart cannot reconcile the choice back to the pack default.
 	if body.Backend != "" {
@@ -4388,6 +4393,39 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
+
+	// Persisting alone is NOT enough: the model/backend an agent actually
+	// launches with is the manager's per-agent override when one is set
+	// (AgentProcess.effectiveModel/effectiveBackend), not AgentProcess.Config.
+	// A stale override left by a card dropdown, an auto-heal or the governor
+	// therefore shadowed this edit — hive.yaml and the agent overlay showed
+	// the new model, yet the next restart respawned the CLI on the OLD one
+	// with no warning anywhere (hivecommons/hive#7374). Push the saved values
+	// through Set*Override, exactly as the config dialog's general section
+	// does, then restart once so the live launch command matches what was
+	// just written. Backend first: SetModelOverride canonicalizes copilot
+	// model ids against the effective backend.
+	backendChanged := agentCfg.Backend != prevBackend
+	modelChanged := agentCfg.Model != prevModel
+	effortChanged := agentCfg.ReasoningEffort != prevEffort
+	if backendChanged {
+		if err := s.deps.AgentMgr.SetBackendOverride(name, agentCfg.Backend); err != nil {
+			s.logger.Warn("failed to apply backend from models config", "agent", name, "error", err)
+		}
+	}
+	if modelChanged {
+		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
+			s.logger.Warn("failed to apply model from models config", "agent", name, "error", err)
+		}
+	}
+	// The reasoning effort exists only on the launch command line, so it too
+	// needs a fresh process — matching handleEffortSet.
+	if backendChanged || modelChanged || effortChanged {
+		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+			s.logger.Warn("restart after models config change failed", "agent", name, "error", err)
+		}
+	}
+
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }

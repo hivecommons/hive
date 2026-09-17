@@ -1,0 +1,1 @@
+- Fixed `PUT /api/config/agent/{name}/models` persisting a new model/backend without applying it: a stale per-agent launch override shadowed the saved value, so the next restart respawned the agent on the old model. The endpoint now pushes the saved backend/model into the manager override and restarts the session when the values actually change (#7374).
