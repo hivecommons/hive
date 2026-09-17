@@ -99,7 +99,7 @@ The complete built-in scheduler set in v4 is:
 | `${INCEPTION_SLUG}` | Inception slug. | Empty when inactive. |
 | `${INCEPTION_REPO_URL}` | Inception repository URL. | Empty when inactive. |
 | `${MERGE_ELIGIBLE}` | Formatted merge-eligible PR list from `/var/run/hive-metrics/merge-eligible.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
-| `${CI_FAILING}` | Formatted failing-CI PR list from `/var/run/hive-metrics/ci-failing.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
+| `${CI_FAILING}` | Formatted failing-CI PR list from `/var/run/hive-metrics/ci-failing.json`. Held red PRs (`hold` label) are counted but not listed here: a held PR is repaired only by the agent that opened it, via the FIX-BEFORE-NEW block the scheduler prepends to that agent's kick, which marks it `held for human review — fix CI, do not remove the hold` ([#7438](https://github.com/hivecommons/hive/issues/7438)). | Renders `(none)` when the file is absent, invalid, or empty. |
 
 Dashboard prompt previews substitute only the config-only subset that does not require a live GitHub scan: `${AGENT_NAME}`, `${AGENT_DISPLAY_NAME}`, `${PROJECT_NAME}`, `${PROJECT_ORG}`, `${PROJECT_PRIMARY_REPO}`, `${PROJECT_AI_AUTHOR}`, `${PROJECT_REPOS_LIST}`, `${HIVE_REPO}`, and `${HIVE_ID}`. Live-only variables such as `${ISSUE_LIST}`, `${PR_LIST}`, `${QUEUE_ISSUES}`, `${KNOWLEDGE}`, `${MERGE_ELIGIBLE}`, and `${CI_FAILING}` are resolved when the scheduler sends an actual kick.
 

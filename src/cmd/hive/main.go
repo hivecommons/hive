@@ -8980,6 +8980,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		HeadRepo        string `json:"head_repo,omitempty"`
 		FromFork        bool   `json:"from_fork,omitempty"`
 		ReachableAction string `json:"reachable_action"`
+		// Held marks a PR carrying a hold label (the ACMM level gate's, or a
+		// human's). The hold is a MERGE checkpoint, not a repair checkpoint
+		// (hivecommons/hive#7438): a held red PR is still its author's to fix,
+		// so it is listed here with the flag rather than dropped — the owning
+		// agent's fix-before-new block says "fix CI, do not remove the hold".
+		Held bool `json:"held,omitempty"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
@@ -9002,9 +9008,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 		key := fmt.Sprintf("%s/%d", pr.Repo, pr.Number)
-		if holdSet[key] {
-			continue
-		}
+		held := holdSet[key]
 		fullRepo := fullRepoName(pr.Repo, org)
 		if enforceIntent {
 			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.MergeAllowed() {
@@ -9048,9 +9052,20 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 					HeadRepo:        pr.HeadRepo,
 					FromFork:        pr.FromFork,
 					ReachableAction: github.ReachableAction(pr),
+					Held:            held,
 				})
 				continue
 			}
+		}
+
+		// The hold check sits AFTER the red classification on purpose
+		// (hivecommons/hive#7438): a held PR must never become merge-eligible,
+		// but a held RED PR is still its author's to repair. When this skip ran
+		// first, a level-held agent PR with a failing check vanished from
+		// ci-failing.json, its author never got a fix-before-new block for it,
+		// and it sat red and held until a human did the agent's repair.
+		if held {
+			continue
 		}
 
 		// A PR whose CI is still "pending" is nonetheless merge-eligible when

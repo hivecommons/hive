@@ -43,6 +43,7 @@ type failingEntry struct {
 	HeadRepo        string   `json:"head_repo"`
 	FromFork        bool     `json:"from_fork"`
 	ReachableAction string   `json:"reachable_action"`
+	Held            bool     `json:"held"`
 }
 
 type mergeEligibleInputs struct {
@@ -142,10 +143,24 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 			want: bucketNeither,
 		},
 		{
-			name: "held PR is never listed anywhere",
+			name: "held green PR is never listed anywhere",
 			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableYes},
 			in:   mergeEligibleInputs{hold: github.HoldResult{Items: []github.HoldItem{{Repo: "hivecommons/hive", Number: 3}}}},
 			want: bucketNeither,
+		},
+		{
+			name:     "held RED PR is ci_failing — the hold is a merge checkpoint, not a repair checkpoint",
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 33, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"Python Unit Tests"}},
+			in:       mergeEligibleInputs{hold: github.HoldResult{Items: []github.HoldItem{{Repo: "hivecommons/hive", Number: 33}}}},
+			want:     bucketFailing,
+			guarding: "hivecommons/hive#7438: sec-check's level-held #188 sat red and held, invisible to its author, until a human repaired it",
+		},
+		{
+			name:     "held PR red only on optional checks is still never eligible",
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 34, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright"}},
+			in:       mergeEligibleInputs{requiredChecks: required, hold: github.HoldResult{Items: []github.HoldItem{{Repo: "hivecommons/hive", Number: 34}}}},
+			want:     bucketNeither,
+			guarding: "the moved hold check must still sit in front of the merge-eligible path",
 		},
 		{
 			name:     "red with no required-check set fails closed into ci_failing",
@@ -219,6 +234,35 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 				t.Fatalf("PR #%d landed in %s, want %s (%s)", tc.pr.Number, got, tc.want, tc.guarding)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#7438 acceptance: a non-draft red PR carrying a hold lands
+// in ci_failing with held:true and never in eligible, so its author's
+// fix-before-new block can list it with the do-not-remove-the-hold note.
+func TestWriteMergeEligible_HeldRedPRIsFailingWithHeldFlag(t *testing.T) {
+	held := github.PullRequest{Repo: "hive", Number: 188, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"Python Unit Tests"}}
+	free := github.PullRequest{Repo: "hive", Number: 190, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"lint"}}
+	in := mergeEligibleInputs{org: "hivecommons", hold: github.HoldResult{Items: []github.HoldItem{{Repo: "hive", Number: 188}}}}
+	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{held, free}, in)
+	if len(eligible) != 0 {
+		t.Fatalf("a held PR became merge-eligible: %+v", eligible)
+	}
+	if len(failing) != 2 {
+		t.Fatalf("ci_failing = %+v, want both red PRs (held #188 and unheld #190)", failing)
+	}
+	byNumber := map[int]failingEntry{}
+	for _, f := range failing {
+		byNumber[f.Number] = f
+	}
+	if !byNumber[188].Held {
+		t.Errorf("#188 is in ci_failing without held:true: %+v", byNumber[188])
+	}
+	if byNumber[190].Held {
+		t.Errorf("#190 carries held:true but has no hold: %+v", byNumber[190])
+	}
+	if byNumber[188].FailingChecks == nil || byNumber[188].FailingChecks[0] != "Python Unit Tests" {
+		t.Errorf("held entry lost its CI evidence: %+v", byNumber[188])
 	}
 }
 

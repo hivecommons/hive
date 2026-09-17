@@ -1244,9 +1244,22 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	return section + message
 }
 
+// heldRedPRNote is appended to a held PR's entry in the fix-before-new
+// block: the hold is a merge checkpoint, not a repair checkpoint
+// (hivecommons/hive#7438), and the agent's own policy says never to touch a
+// held item — this line is the explicit, narrow exception.
+const heldRedPRNote = "held for human review — fix CI, do not remove the hold"
+
+// heldRedPRExemptAgent is the one agent whose held PRs are NOT routed back
+// for repair: the level-hold comment tells humans that outreach PRs are
+// always held for their review, so an outreach PR must not be edited after a
+// human may have started reading it.
+const heldRedPRExemptAgent = "outreach"
+
 // formatRedPRFixData renders the fix-before-new section for one agent from
 // raw ci-failing.json bytes. Empty result means the agent has no open,
-// non-escalated red PRs.
+// non-escalated red PRs. A held red PR (hivecommons/hive#7438) is listed like
+// any other — with heldRedPRNote — except for outreach's.
 func formatRedPRFixData(data []byte, agent string) string {
 	type ciFailingRow struct {
 		Number        int      `json:"number"`
@@ -1258,6 +1271,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Escalated     bool     `json:"escalated"`
 		FromFork      bool     `json:"from_fork"`
 		HeadRepo      string   `json:"head_repo"`
+		Held          bool     `json:"held"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -1287,6 +1301,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 		if owner != agent {
 			continue
 		}
+		if pr.Held && owner == heldRedPRExemptAgent {
+			continue // a human may already be reading it; leave it alone
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -1309,6 +1326,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if pr.Held {
+			b.WriteString("    " + heldRedPRNote + "\n")
+		}
 		if len(pr.FailingChecks) > 0 {
 			b.WriteString(fmt.Sprintf("    failing: %s\n", strings.Join(pr.FailingChecks, ", ")))
 		}
@@ -1689,6 +1709,7 @@ func (s *Scheduler) buildCIFailingList() string {
 		HeadRef  string `json:"head_ref"`
 		HeadRepo string `json:"head_repo"`
 		FromFork bool   `json:"from_fork"`
+		Held     bool   `json:"held"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -1696,6 +1717,21 @@ func (s *Scheduler) buildCIFailingList() string {
 	if json.Unmarshal(data, &payload) != nil || len(payload.Items) == 0 {
 		return "(none)\n"
 	}
+	// Held red PRs ride ci-failing.json since hivecommons/hive#7438 so their
+	// AUTHOR can repair them, but they are not this shared queue's business:
+	// every policy says never touch a held item, and only the owning agent's
+	// fix-before-new block carries the narrow exception. Keep them out here
+	// so a repair agent does not push to a PR a human is reviewing.
+	held := 0
+	kept := payload.Items[:0]
+	for _, pr := range payload.Items {
+		if pr.Held {
+			held++
+			continue
+		}
+		kept = append(kept, pr)
+	}
+	payload.Items = kept
 	// Two queues, not one (hivecommons/hive#7386): a red PR whose head lives
 	// in a fork is comment-only for every agent — the App token pushes to the
 	// base repository and nowhere else. Rendering the two together as one
@@ -1715,6 +1751,9 @@ func (s *Scheduler) buildCIFailingList() string {
 	limit := s.prCap()
 	if len(pushable) == 0 {
 		b.WriteString("  (none you can push to)\n")
+	}
+	if held > 0 {
+		b.WriteString(fmt.Sprintf("  (%d held red PR(s) are not listed: a held PR is repaired only by the agent that opened it, via its own FIX-BEFORE-NEW block)\n", held))
 	}
 	for i, pr := range pushable {
 		if i >= limit {

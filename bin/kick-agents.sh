@@ -793,7 +793,10 @@ if [ -f "$_FAILING_FILE" ]; then
 import json
 d = json.load(open('$_FAILING_FILE'))
 for p in d.get('ci_failing', []):
-    if p.get('escalated'):
+    # held: a held red PR is its author's to repair via the Go scheduler's
+    # FIX-BEFORE-NEW block (hivecommons/hive#7438); this shared list must not
+    # offer it to anyone else.
+    if p.get('escalated') or p.get('held'):
         continue
     checks = ','.join(p.get('failing_checks', [])[:4])
     print(f\"  {p['repo']}#{p['number']} [{checks}] {p['title'][:60]}\")
