@@ -5672,6 +5672,10 @@ func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 	spokealerts.ApplyNoCadence(gov, dashSrv)
 }
 
+func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
+	spokealerts.ApplyModeUnscheduled(gov, dashSrv)
+}
+
 // agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
 // stall-replan lane. Kick delegates to SendKick, which takes the manager lock
 // ITSELF and is only ever called here from the governor tick (never from the
@@ -6168,6 +6172,15 @@ func runEvalCycle(
 		actionable.Issues.SLAViolations,
 		governor.RepoDepthsFromActionable(actionable),
 	)
+
+	// The weaker sibling of the banner above (#7474): an agent SOME mode
+	// schedules but the mode the fleet is now in does not — a reviewer with a
+	// cadence only in surge goes silent the moment its own work drives the
+	// backlog below the surge threshold, and every other signal calls it
+	// healthy. Applied after Evaluate so it reads the mode this tick settled
+	// on; self-clears when the mode changes back or the operator fills the
+	// gap.
+	applyModeUnscheduledAlert(gov, dashSrv)
 
 	// Crash-restarted agents may get a "resume" kick ahead of their cadence
 	// slot so work interrupted mid-task resumes promptly — but ONLY through

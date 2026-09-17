@@ -174,6 +174,81 @@ func TestNoCadenceRaisesAndClearsOnTheGovernorSignal(t *testing.T) {
 	}
 }
 
+type fakeModeUnscheduled struct {
+	agents []governor.ModeUnscheduledAgent
+}
+
+func (f fakeModeUnscheduled) ModeUnscheduledAgents() []governor.ModeUnscheduledAgent {
+	return f.agents
+}
+
+// The mode-unscheduled banner (#7474) exists because an agent whose only
+// cadence is in surge reads as healthy on every other signal once the fleet
+// leaves surge. Its copy must say which agent, which mode the fleet is in,
+// which modes DO schedule it, and how to close the gap.
+func TestModeUnscheduledMessageNamesAgentModeAndFix(t *testing.T) {
+	msg := ModeUnscheduledMessage([]governor.ModeUnscheduledAgent{
+		{Agent: "reviewer", Mode: "busy", CadenceModes: []string{"surge"}},
+		{Agent: "auditor", Mode: "busy", CadenceModes: []string{"quiet", "surge"}},
+	})
+
+	for _, want := range []struct{ part, why string }{
+		{"reviewer", "names the affected agent"},
+		{"auditor", "names every affected agent, not just the first"},
+		{"only in surge", "says which modes DO schedule the reviewer"},
+		{"quiet and surge", "lists every scheduling mode for the auditor"},
+		{"current busy mode", "names the mode the fleet is in"},
+		{"will not kick", "states the symptom"},
+		{"add a busy cadence", "states the fix for the mode the fleet is in"},
+		{"idle cadence is inherited", "offers the fix that covers every mode"},
+	} {
+		if !strings.Contains(msg, want.part) {
+			t.Errorf("banner copy missing %q — it must be the line that %s.\ngot: %s",
+				want.part, want.why, msg)
+		}
+	}
+	if ModeUnscheduledMessage(nil) != "" {
+		t.Errorf("an empty list must render no banner line")
+	}
+}
+
+// Raise while an agent is configured but not scheduled in the current mode;
+// clear as soon as none is. The banner is amber: a hole in the cadence ladder
+// is not a broken hive.
+func TestModeUnscheduledRaisesAndClearsOnTheGovernorSignal(t *testing.T) {
+	sink := &recordingSink{}
+	ApplyModeUnscheduled(fakeModeUnscheduled{[]governor.ModeUnscheduledAgent{
+		{Agent: "reviewer", Mode: "busy", CadenceModes: []string{"surge"}},
+	}}, sink)
+	got, ok := sink.find(ModeUnscheduledAlertID)
+	if !ok {
+		t.Fatalf("no alert raised under %q; got %+v", ModeUnscheduledAlertID, sink.added)
+	}
+	if got.severity != "warning" {
+		t.Errorf("severity = %q, want %q — a cadence gap is not a broken hive", got.severity, "warning")
+	}
+	if !strings.Contains(got.message, "reviewer") {
+		t.Errorf("banner does not name the agent: %q", got.message)
+	}
+	if len(sink.cleared) != 0 {
+		t.Errorf("must not clear while an agent is unscheduled; cleared=%v", sink.cleared)
+	}
+	// Distinct identity from the never-scheduled banner: the two describe
+	// disjoint classes and must be able to coexist on screen.
+	if ModeUnscheduledAlertID == NoCadenceAlertID {
+		t.Fatal("ModeUnscheduledAlertID must not collide with NoCadenceAlertID")
+	}
+
+	sink2 := &recordingSink{}
+	ApplyModeUnscheduled(fakeModeUnscheduled{nil}, sink2)
+	if len(sink2.added) != 0 {
+		t.Errorf("must raise nothing once every agent is scheduled; got %+v", sink2.added)
+	}
+	if !contains(sink2.cleared, ModeUnscheduledAlertID) {
+		t.Errorf("must clear %q once every agent is scheduled; cleared=%v", ModeUnscheduledAlertID, sink2.cleared)
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
