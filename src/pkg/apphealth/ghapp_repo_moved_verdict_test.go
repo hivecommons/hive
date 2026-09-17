@@ -1,4 +1,4 @@
-package main
+package apphealth
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 // Tests for the org-transfer verdict (#5774), the branch
-// classifyGitHubAppRepoCoverage takes before it falls through to
+// ClassifyRepoCoverage takes before it falls through to
 // AppStateRepoNotCovered.
 //
 // The stakes are the same asymmetry #4360 pinned, one level deeper. A
@@ -26,7 +26,7 @@ import (
 func TestClassifyGitHubAppRepoCoverage_TransferGetsItsOwnVerdict(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("hivecommons/hive"))
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL),
 		"kubestellar", []string{"hive"}, verdictTestLogger())
 
@@ -61,7 +61,7 @@ func TestClassifyGitHubAppRepoCoverage_TransferGetsItsOwnVerdict(t *testing.T) {
 func TestClassifyGitHubAppRepoCoverage_OrdinaryScopeGapStillReportsNotCovered(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("acme/widgets", "otherorg/gadgets"))
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL),
 		"acme", []string{"widgets", "gadgets"}, verdictTestLogger())
 
@@ -85,7 +85,7 @@ func TestClassifyGitHubAppRepoCoverage_OrdinaryScopeGapStillReportsNotCovered(t 
 func TestClassifyGitHubAppRepoCoverage_AmbiguousDestinationFallsBack(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("hivecommons/hive", "someoneelse/hive"))
 
-	_, _, state := classifyGitHubAppRepoCoverage(
+	_, _, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL),
 		"kubestellar", []string{"hive"}, verdictTestLogger())
 
@@ -101,7 +101,7 @@ func TestClassifyGitHubAppRepoCoverage_AmbiguousDestinationFallsBack(t *testing.
 func TestClassifyGitHubAppRepoCoverage_FullyCoveredStaysSilentAfterTheChange(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("kubestellar/hive"))
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL),
 		"kubestellar", []string{"hive"}, verdictTestLogger())
 

@@ -1,4 +1,4 @@
-package main
+package apphealth
 
 import (
 	"context"
@@ -34,18 +34,18 @@ func healTestAppAuthPEM(t *testing.T) []byte {
 	})
 }
 
-// healGitHubAppInstallation must be a pure no-op — no panic, no API call —
+// Heal must be a pure no-op — no panic, no API call —
 // for every combination of nil/keyless/orgless inputs. Passing a nil logger
 // where the real caller always supplies one would still be safe, but every
-// call site does supply one, so these use restoreTestLogger() throughout and
+// call site does supply one, so these use verdictTestLogger() throughout and
 // rely on a nil appAuth/cfg/org short-circuiting before the logger is ever
 // touched.
 func TestHealGitHubAppInstallationGuardsNoOp(t *testing.T) {
-	logger := restoreTestLogger()
+	logger := verdictTestLogger()
 	cfg := &config.Config{Project: config.ProjectConfig{Org: "acme"}}
 
 	t.Run("nil appAuth", func(t *testing.T) {
-		healGitHubAppInstallation(context.Background(), nil, cfg, logger)
+		Heal(context.Background(), nil, cfg, logger)
 	})
 
 	t.Run("keyless appAuth", func(t *testing.T) {
@@ -56,7 +56,7 @@ func TestHealGitHubAppInstallationGuardsNoOp(t *testing.T) {
 		if err == nil && auth.HasKey() {
 			t.Fatal("test setup: expected a keyless AppAuth")
 		}
-		healGitHubAppInstallation(context.Background(), auth, nil, logger)
+		Heal(context.Background(), auth, nil, logger)
 	})
 
 	t.Run("nil cfg with keyed appAuth", func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestHealGitHubAppInstallationGuardsNoOp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewAppAuthFromPEM: %v", err)
 		}
-		healGitHubAppInstallation(context.Background(), auth, nil, logger)
+		Heal(context.Background(), auth, nil, logger)
 	})
 
 	t.Run("empty org", func(t *testing.T) {
@@ -73,12 +73,12 @@ func TestHealGitHubAppInstallationGuardsNoOp(t *testing.T) {
 			t.Fatalf("NewAppAuthFromPEM: %v", err)
 		}
 		emptyOrgCfg := &config.Config{Project: config.ProjectConfig{Org: ""}}
-		healGitHubAppInstallation(context.Background(), auth, emptyOrgCfg, logger)
+		Heal(context.Background(), auth, emptyOrgCfg, logger)
 	})
 }
 
 // A VerifyInstallation failure (unreachable/erroring API) must be swallowed:
-// healGitHubAppInstallation logs and returns rather than propagating, since
+// Heal logs and returns rather than propagating, since
 // the self-heal tick runs unattended on every heartbeat and a transient API
 // error must never be treated as fatal.
 func TestHealGitHubAppInstallationVerifyErrorIsSwallowed(t *testing.T) {
@@ -94,7 +94,7 @@ func TestHealGitHubAppInstallationVerifyErrorIsSwallowed(t *testing.T) {
 	cfg := &config.Config{Project: config.ProjectConfig{Org: "acme"}}
 
 	// Must return normally (no panic) even though every API call 500s.
-	healGitHubAppInstallation(context.Background(), auth, cfg, restoreTestLogger())
+	Heal(context.Background(), auth, cfg, verdictTestLogger())
 }
 
 // healTestAPIServer serves just the two endpoints RediscoverAndAdopt walks:
@@ -151,7 +151,7 @@ func TestHealGitHubAppInstallationAlreadyCorrectIsNoOp(t *testing.T) {
 		GitHub:  config.GitHubConfig{InstallationID: 2},
 	}
 
-	healGitHubAppInstallation(context.Background(), auth, cfg, restoreTestLogger())
+	Heal(context.Background(), auth, cfg, verdictTestLogger())
 
 	if cfg.GitHub.InstallationID != 2 {
 		t.Fatalf("installation_id changed on the already-correct path: got %d, want 2", cfg.GitHub.InstallationID)
@@ -188,7 +188,7 @@ func TestHealGitHubAppInstallationAdoptsAndPersists(t *testing.T) {
 		GitHub: config.GitHubConfig{InstallationID: 2},
 	}
 
-	healGitHubAppInstallation(context.Background(), auth, cfg, restoreTestLogger())
+	Heal(context.Background(), auth, cfg, verdictTestLogger())
 
 	if cfg.GitHub.InstallationID != 777 {
 		t.Fatalf("cfg.GitHub.InstallationID = %d, want adopted 777", cfg.GitHub.InstallationID)
@@ -224,7 +224,7 @@ func TestHealGitHubAppInstallationSaveFailureKeepsAdoption(t *testing.T) {
 		GitHub:  config.GitHubConfig{InstallationID: 2},
 	}
 
-	healGitHubAppInstallation(context.Background(), auth, cfg, restoreTestLogger())
+	Heal(context.Background(), auth, cfg, verdictTestLogger())
 
 	if cfg.GitHub.InstallationID != 777 {
 		t.Fatalf("cfg.GitHub.InstallationID = %d, want in-memory adoption 777 despite save failure", cfg.GitHub.InstallationID)

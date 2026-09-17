@@ -1,4 +1,4 @@
-package main
+package apphealth
 
 import (
 	"context"
@@ -13,14 +13,14 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
-// Tests for classifyGitHubAppRepoCoverage (#4360), the boot-time check that
+// Tests for ClassifyRepoCoverage (#4360), the boot-time check that
 // asks whether the App installation actually covers the configured repos.
 // The stakes are asymmetric: a false "not covered" verdict sends an operator
 // to change an installation setting that was already correct, while a missed
 // one leaves the misleading "key never arrived" story in place. These tests
 // pin both directions.
 
-// repoCoverageServer stubs the two endpoints classifyGitHubAppRepoCoverage
+// repoCoverageServer stubs the two endpoints ClassifyRepoCoverage
 // exercises through a real AppAuth: the installation-token mint and the
 // installation repository listing. verdictTestAuth (ghapp_banner_verdict_test.go)
 // builds the AppAuth with a fresh key, so unlike the pkg/github tests we
@@ -60,7 +60,7 @@ func listingOf(full ...string) http.HandlerFunc {
 // A hive with no App auth at all has nothing to check; the verdict must be
 // silence, not an accusation.
 func TestClassifyGitHubAppRepoCoverage_NilAuthStaysSilent(t *testing.T) {
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), nil, "acme", []string{"widgets"}, verdictTestLogger())
 	if raise {
 		t.Error("nil AppAuth must not raise the banner")
@@ -82,7 +82,7 @@ func TestClassifyGitHubAppRepoCoverage_NoConfiguredReposStaysSilent(t *testing.T
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	raise, _, state := classifyGitHubAppRepoCoverage(
+	raise, _, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL), "acme", nil, verdictTestLogger())
 	if raise {
 		t.Error("an empty repo list must not raise the banner")
@@ -101,7 +101,7 @@ func TestClassifyGitHubAppRepoCoverage_ListingErrorDefersToCredentialChecks(t *t
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": "boom"})
 	})
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL), "acme", []string{"widgets"}, verdictTestLogger())
 	if raise {
 		t.Error("a failed listing must not raise the coverage banner")
@@ -119,7 +119,7 @@ func TestClassifyGitHubAppRepoCoverage_ListingErrorDefersToCredentialChecks(t *t
 func TestClassifyGitHubAppRepoCoverage_FullCoverageIsOK(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("acme/widgets", "acme/Gadgets"))
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL), "acme",
 		[]string{"widgets", "acme/gadgets"}, verdictTestLogger())
 	if raise {
@@ -140,7 +140,7 @@ func TestClassifyGitHubAppRepoCoverage_FullCoverageIsOK(t *testing.T) {
 func TestClassifyGitHubAppRepoCoverage_MissingRepoRaisesWithAccurateCopy(t *testing.T) {
 	srv := repoCoverageServer(t, listingOf("acme/widgets"))
 
-	raise, msg, state := classifyGitHubAppRepoCoverage(
+	raise, msg, state := ClassifyRepoCoverage(
 		context.Background(), verdictTestAuth(t, srv.URL), "acme",
 		[]string{"widgets", "gizmos"}, verdictTestLogger())
 	if !raise {

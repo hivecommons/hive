@@ -1,4 +1,4 @@
-package main
+package apphealth
 
 import (
 	"context"
@@ -34,9 +34,9 @@ func verdictTestLogger() *slog.Logger {
 }
 
 // verdictTestAuth builds a real AppAuth backed by a freshly generated key on
-// disk and pointed at a stub API, so classifyGitHubAppFailure exercises the
+// disk and pointed at a stub API, so ClassifyFailure exercises the
 // same code path production does.
-func verdictTestAuth(t *testing.T, apiURL string) *github.AppAuth {
+func verdictTestAuthKeys(t *testing.T, apiURL string) (*github.AppAuth, string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, verdictTestKeyBits)
 	if err != nil {
@@ -50,20 +50,33 @@ func verdictTestAuth(t *testing.T, apiURL string) *github.AppAuth {
 	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
 		t.Fatalf("writing test key: %v", err)
 	}
-	// diagnoseGitHubApp pre-flights the well-known spoke key paths and reports
-	// key-missing without any API call when none holds content. Point one of
-	// them at the real key so these tests exercise the API classification the
-	// verdict actually depends on. Restored via t.Cleanup.
-	origProvisioned, origPVC := spokeProvisionedAppKeyPath, spokeAppKeyPath
-	spokeProvisionedAppKeyPath, spokeAppKeyPath = keyPath, keyPath
-	t.Cleanup(func() {
-		spokeProvisionedAppKeyPath, spokeAppKeyPath = origProvisioned, origPVC
-	})
 	auth, err := github.NewAppAuth(verdictTestAppID, verdictTestInstallationID, keyPath, verdictTestLogger(), apiURL)
 	if err != nil {
 		t.Fatalf("NewAppAuth: %v", err)
 	}
+	return auth, keyPath
+}
+
+// verdictTestAuth returns just the AppAuth, for the classifiers that take no
+// KeyPaths.
+func verdictTestAuth(t *testing.T, apiURL string) *github.AppAuth {
+	t.Helper()
+	auth, _ := verdictTestAuthKeys(t, apiURL)
 	return auth
+}
+
+// verdictTestKeys points both well-known spoke key paths at a real key.
+//
+// Diagnose pre-flights those paths and reports key-missing without any API
+// call when neither holds content, so these tests would never reach the API
+// classification they are about without this.
+//
+// Before #7238 this was done by assigning package-main vars and restoring them
+// in t.Cleanup -- shared mutable state that made these tests order-dependent
+// and unrunnable outside cmd/hive. The paths are now an argument, so the same
+// setup is a value with no global reach and nothing to restore.
+func verdictTestKeys(keyPath string) KeyPaths {
+	return KeyPaths{Spoke: keyPath, Provisioned: keyPath}
 }
 
 // TestClassifyGitHubAppFailure_UnknownDoesNotRaiseBanner is the regression test
@@ -76,9 +89,9 @@ func verdictTestAuth(t *testing.T, apiURL string) *github.AppAuth {
 func TestClassifyGitHubAppFailure_UnknownDoesNotRaiseBanner(t *testing.T) {
 	// Port 1 is reserved and refuses connections, so no status is ever
 	// returned and classification is genuinely inconclusive.
-	auth := verdictTestAuth(t, "http://127.0.0.1:1")
+	auth, keyPath := verdictTestAuthKeys(t, "http://127.0.0.1:1")
 
-	raise, msg, state := classifyGitHubAppFailure(context.Background(), auth, "katamari", verdictTestLogger())
+	raise, msg, state := ClassifyFailure(context.Background(), auth, "katamari", verdictTestKeys(keyPath), verdictTestLogger())
 	if raise {
 		t.Error("an unreachable GitHub API must not raise the App banner")
 	}
@@ -106,7 +119,7 @@ func TestClassifyGitHubAppFailure_RateLimitDoesNotRaiseBanner(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	raise, _, state := classifyGitHubAppFailure(context.Background(), verdictTestAuth(t, srv.URL), "katamari", verdictTestLogger())
+	raise, _, state := ClassifyFailure(authK(t, srv.URL))
 	if raise {
 		t.Error("a rate-limited probe must not raise the App banner")
 	}
@@ -130,7 +143,7 @@ func TestClassifyGitHubAppFailure_HealthyAppDoesNotRaiseBanner(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	raise, msg, state := classifyGitHubAppFailure(context.Background(), verdictTestAuth(t, srv.URL), "katamari", verdictTestLogger())
+	raise, msg, state := ClassifyFailure(authK(t, srv.URL))
 	if raise {
 		t.Errorf("a healthy App must not raise the banner (state=%s, msg=%q)", state, msg)
 	}
@@ -149,7 +162,7 @@ func TestClassifyGitHubAppFailure_GenuineFailureStillRaises(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	raise, msg, state := classifyGitHubAppFailure(context.Background(), verdictTestAuth(t, srv.URL), "katamari", verdictTestLogger())
+	raise, msg, state := ClassifyFailure(authK(t, srv.URL))
 	if !raise {
 		t.Error("a genuinely uninstalled App must still raise the banner")
 	}
@@ -174,7 +187,7 @@ func TestClassifyGitHubAppFailure_OperatorFaultIsNotBlamedOnUser(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	raise, _, state := classifyGitHubAppFailure(context.Background(), verdictTestAuth(t, srv.URL), "katamari", verdictTestLogger())
+	raise, _, state := ClassifyFailure(authK(t, srv.URL))
 	if !raise {
 		t.Error("an invalid key is a real fault and must raise the banner")
 	}
@@ -188,7 +201,7 @@ func TestClassifyGitHubAppFailure_OperatorFaultIsNotBlamedOnUser(t *testing.T) {
 
 // TestClassifyGitHubAppWriteForbidden_HealthyInstallSurfacesWriteFailure is the
 // #2353 regression: the App authenticates, the installation resolves on the
-// right account and grants issues:write (so diagnoseGitHubApp returns OK), yet a
+// right account and grants issues:write (so Diagnose returns OK), yet a
 // real write returned 403 "Resource not accessible by integration". Health must
 // NOT stay silent (None) and must NOT be mislabeled "lacks Issues: Read &
 // Write" — it must report the DISTINCT write-forbidden state with accurate copy
@@ -205,11 +218,13 @@ func TestClassifyGitHubAppWriteForbidden_HealthyInstallSurfacesWriteFailure(t *t
 	}))
 	defer srv.Close()
 
-	msg, state := classifyGitHubAppWriteForbidden(
+	auth, keyPath := verdictTestAuthKeys(t, srv.URL)
+	msg, state := ClassifyWriteForbidden(
 		context.Background(),
-		verdictTestAuth(t, srv.URL),
+		auth,
 		"open-horizon-services",
 		"Getting-Started",
+		verdictTestKeys(keyPath),
 	)
 	if state == github.AppStateOK || state == github.AppStateUnknown {
 		t.Fatalf("a write-403 on a healthy install must not stay silent; state=%s", state)
@@ -241,35 +256,23 @@ func TestClassifyGitHubAppWriteForbidden_RealAuthProblemWins(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, state := classifyGitHubAppWriteForbidden(
+	auth, keyPath := verdictTestAuthKeys(t, srv.URL)
+	_, state := ClassifyWriteForbidden(
 		context.Background(),
-		verdictTestAuth(t, srv.URL),
+		auth,
 		"open-horizon-services",
 		"Getting-Started",
+		verdictTestKeys(keyPath),
 	)
 	if state != github.AppStateKeyInvalid {
 		t.Errorf("state = %s, want key-invalid — the real fault must win", state)
 	}
 }
 
-// TestIsGitHubRateLimitText covers the one place error-string matching survives
-// — where it can only ever cause an extra correct classification, never an
-// accusation.
-func TestIsGitHubRateLimitText(t *testing.T) {
-	if isGitHubRateLimitText(nil) {
-		t.Error("nil is not a rate limit")
-	}
-	for _, s := range []string{"API rate limit exceeded", "secondary RATE LIMIT hit"} {
-		if !isGitHubRateLimitText(errString(s)) {
-			t.Errorf("%q should be detected as a rate limit", s)
-		}
-	}
-	if isGitHubRateLimitText(errString("403 Resource not accessible by integration")) {
-		t.Error("a plain 403 is not a rate limit")
-	}
+// authK adapts the two-value verdictTestAuthKeys to the argument shape
+// each classifier wants, keeping the call sites as compact as they were when
+// the key paths were globals.
+func authK(t *testing.T, apiURL string) (context.Context, *github.AppAuth, string, KeyPaths, *slog.Logger) {
+	auth, keyPath := verdictTestAuthKeys(t, apiURL)
+	return context.Background(), auth, "katamari", verdictTestKeys(keyPath), verdictTestLogger()
 }
-
-// errString is a minimal error carrying exactly the message given.
-type errString string
-
-func (e errString) Error() string { return string(e) }
