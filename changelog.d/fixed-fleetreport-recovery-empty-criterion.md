@@ -1,0 +1,1 @@
+- Fleet self-report recovery comments no longer render an empty criterion reference. A hive-code defect carries no ACMM criterion, so its recovery comment read "no longer observes the ACMM shortfall/evidence for ``"; recovery text now names the ACMM criterion only when there is one, and names the defect otherwise.

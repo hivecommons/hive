@@ -330,8 +330,17 @@ A spoke reports a symptom attributable to hive's own code paths. No ACMM shortfa
 
 func RecoveryReport(open OpenIssue, report Report) Report {
 	report.Recovered = true
-	report.Body = safeText(fmt.Sprintf("<!-- hive-fleet-fingerprint:%s -->\n<!-- hive-fleet-instance:%s -->\n\nRecovery: this spoke no longer observes the ACMM shortfall/evidence for `%s`.\n\nself-recovered: yes\n", report.Fingerprint, report.InstanceID, report.Criterion))
+	report.Body = safeText(fmt.Sprintf("<!-- hive-fleet-fingerprint:%s -->\n<!-- hive-fleet-instance:%s -->\n\nRecovery: %s\n\nself-recovered: yes\n", report.Fingerprint, report.InstanceID, recoverySubject(report)))
 	return report
+}
+
+// recoverySubject names what stopped being observed. A hive-code defect has no
+// ACMM criterion attached, so naming one would render an empty reference.
+func recoverySubject(report Report) string {
+	if criterion := strings.TrimSpace(report.Criterion); criterion != "" {
+		return fmt.Sprintf("this spoke no longer observes the ACMM shortfall for `%s`.", criterion)
+	}
+	return "this spoke no longer observes the reported hive-code defect."
 }
 
 func Fingerprint(errorClass, component, version, criterion string) string {

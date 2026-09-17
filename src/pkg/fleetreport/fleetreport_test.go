@@ -350,3 +350,23 @@ func TestRecoveredTriggerBRecurrenceReportsAgain(t *testing.T) {
 		t.Fatalf("active recurrence should clear recovered flag: %#v", got.State.Open[fp])
 	}
 }
+
+// A hive-code defect carries no ACMM criterion, so the recovery comment must
+// not render an empty reference. Observed live as: "... shortfall/evidence for
+// “."
+func TestRecoveryBodyOmitsEmptyCriterionForHiveDefect(t *testing.T) {
+	got := RecoveryReport(OpenIssue{Trigger: TriggerHiveDefect}, Report{Fingerprint: "abc123", InstanceID: "inst", Trigger: TriggerHiveDefect})
+	if strings.Contains(got.Body, "``") {
+		t.Fatalf("recovery body rendered an empty criterion: %q", got.Body)
+	}
+	if !strings.Contains(got.Body, "hive-code defect") {
+		t.Fatalf("recovery body did not name the defect: %q", got.Body)
+	}
+}
+
+func TestRecoveryBodyNamesACMMCriterion(t *testing.T) {
+	got := RecoveryReport(OpenIssue{Trigger: TriggerACMMShortfall}, Report{Fingerprint: "abc123", InstanceID: "inst", Criterion: "green-ci-streak", Trigger: TriggerACMMShortfall})
+	if !strings.Contains(got.Body, "`green-ci-streak`") {
+		t.Fatalf("recovery body dropped the criterion: %q", got.Body)
+	}
+}
