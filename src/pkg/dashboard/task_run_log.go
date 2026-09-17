@@ -233,6 +233,29 @@ func (h *ContributeWSHub) appendTaskRun(rec TaskRunRecord) {
 	if rec.Session == "" {
 		rec.Session = rec.TaskID
 	}
+	// Client-controlled free text gets the SAME boundary treatment the live
+	// fleet snapshot applies (#7334). Both of these are strings the relay
+	// chose: Reason is copied verbatim off task_failed, VerdictReason off
+	// task_complete with nothing but a TrimSpace. contribute_ws.go redacts and
+	// bounds Reason at its read boundary precisely because "it is an error
+	// string the relay chose, so it can carry a token it happened to print" —
+	// and CLIs printing credentials in auth errors is common enough that
+	// redactTokens exists at all.
+	//
+	// This log bypassed that. It is served on a PUBLIC, unauthenticated path
+	// (handleContributeRuns), it OUT-LIVES the connection the fleet view is
+	// scoped to, and it is readable per-username over a window up to a year —
+	// so an unredacted token here is strictly worse than one in the live view,
+	// not equivalent.
+	//
+	// Applied at WRITE time rather than read time, deliberately: the on-disk
+	// log is also read by operators, backups and the rotated .1 file, none of
+	// which pass through a handler. Redacting on the way out would leave the
+	// secret at rest. Truncation is part of the same boundary — a registered
+	// relay must not be able to bloat records that every anonymous reader
+	// then downloads.
+	rec.Reason = truncateFailureReason(redactTokens(rec.Reason))
+	rec.VerdictReason = truncateFailureReason(redactTokens(rec.VerdictReason))
 	data, err := json.Marshal(rec)
 	if err != nil {
 		if h != nil && h.logger != nil {
@@ -461,9 +484,17 @@ func readTaskRunsForUser(path, username string, window time.Duration, limit int)
 // Public read-only like the sibling /api/contribute* GETs. That posture is
 // inherited rather than chosen: the username is already public on
 // /api/contribute/activity and the leaderboard, and `reason` is already served
-// as-is on /api/contribute/fleet's last_failure for a CONNECTED contributor.
+// on /api/contribute/fleet's last_failure for a CONNECTED contributor.
 // What changes here is durability, not audience — the same text, still readable
-// after the socket drops. No token, no field that is not already on one of
+// after the socket drops.
+//
+// That last sentence only holds because appendTaskRun redacts and bounds
+// `reason` and `verdict_reason` on the way in. An earlier revision of this
+// comment claimed the fleet view served `reason` "as-is"; it does not — it
+// redacts and truncates at its read boundary, and this log used to skip that
+// while being MORE exposed (public, durable, per-username, year-long window).
+// That gap was #7334. Durability without the redaction is not the same
+// posture, it is a weaker one. No token, no field that is not already on one of
 // those two endpoints — with one gated exception: pane_tail (#7317 item 3) is
 // served only to an owner/read-write viewer, see below.
 func (s *Server) handleContributeRuns(w http.ResponseWriter, r *http.Request) {
