@@ -1,0 +1,249 @@
+# ci-runner-image (#7289): build and publish the self-hosted runner image
+# that carries the CI toolchain (src/deploy/ci-runners/Dockerfile, #7206).
+#
+# ── Why a workflow ──────────────────────────────────────────────────────────
+#
+# #7206 baked gcc/libc6-dev/tmux into the ARC runner image so race shards stop
+# depending on apt egress from the cluster — the failure class behind #6648 →
+# #6870 → #6935 → #7124 → #7201 → #7289. The Dockerfile merged on 2026-09-16;
+# a day later the image still did not exist on GHCR, because publishing it was
+# left to "an operator with docker + GHCR write", and two more shards had died
+# at "Prepare cgo toolchain" in the meantime. This workflow removes the GHCR
+# half of that operator dependency: the build runs here, on a GitHub-hosted
+# runner, with the job's own GITHUB_TOKEN (packages: write). What remains for
+# an operator is the one thing CI cannot do — `kubectl patch` the
+# RunnerDeployment in `arc-systems` to the tag this run prints.
+#
+# ── Where it runs ───────────────────────────────────────────────────────────
+#
+# `ubuntu-latest`, never `${{ vars.HIVE_RUNNER_LABELS }}`. The image exists to
+# remove CI's dependency on the self-hosted cluster's egress; building it ON
+# that cluster would reintroduce the dependency at the one moment it matters
+# most (the Dockerfile's own apt-get needs a mirror). GitHub-hosted runners
+# have the egress the build needs, and docker.yml already proves the
+# GITHUB_TOKEN → GHCR push path from them.
+#
+# ── Triggers ────────────────────────────────────────────────────────────────
+#
+# workflow_dispatch  builds AND pushes. Inputs pick the base runner image and
+#                    the tag suffix; the pushed tag is
+#                    ghcr.io/<owner>/hive-ci-runner:<runner version>-<suffix>,
+#                    e.g. v2.337.0-ubuntu-24.04-toolchain-1 — immutable by
+#                    construction, as runner-image-patch.yaml requires. A
+#                    re-run with the same suffix is refused rather than
+#                    overwriting: ARC does not re-pull an unchanged tag, so a
+#                    silently replaced tag would make "which toolchain are the
+#                    runners on?" unanswerable.
+# pull_request       builds only (no login, no push), path-filtered to the
+#                    Dockerfile and this file. The Dockerfile verifies
+#                    `gcc --version` / `tmux -V` during the build, so this is
+#                    the CI gate that keeps a Dockerfile change from shipping
+#                    an image that quietly sends shards back to the mirrors.
+#
+# No `push:` trigger, on purpose. A merged Dockerfile change must not roll a
+# new image tag on its own: the tag only matters once an operator patches the
+# RunnerDeployment to it, and that operator should be the one choosing when
+# the pods roll (it restarts every runner). Dispatch it when you are ready to
+# apply. (No `branches:` filter here also keeps this workflow outside the
+# release-line guard's pinned/unpinned classification, deliberately.)
+#
+# ── Cache policy ────────────────────────────────────────────────────────────
+#
+# No `cache-from`/`cache-to: type=gha`. The repo's Actions cache is the exact
+# resource #7206 measured as full (9.99 GB of 10 GB, 96.6% buildkit blobs), and
+# it is why the #7009 offline .deb cache could never survive. An image that
+# exists to get CI OUT of that competition must not add multi-hundred-MB base
+# layers to it. The build is one apt-get on a pulled base image; a cold build
+# is minutes, and it runs rarely.
+name: CI Runner Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_base_image:
+        description: >-
+          Base image (the ARC runner image the deployment currently runs).
+          Must match the live runner version — see the Dockerfile header.
+        required: false
+        default: summerwind/actions-runner:v2.337.0-ubuntu-24.04
+        type: string
+      tag_suffix:
+        description: >-
+          Suffix appended to the base image's version to form the pushed tag
+          (<runner version>-<suffix>). Bump it for every rebuild on the same
+          base; an existing tag is never overwritten.
+        required: true
+        default: toolchain-1
+        type: string
+  pull_request:
+    paths:
+      - 'src/deploy/ci-runners/Dockerfile'
+      - '.github/workflows/ci-runner-image.yml'
+
+# One image build at a time: two dispatches racing for the same tag would
+# otherwise both pass the exists-check below and the second would overwrite.
+concurrency:
+  group: ci-runner-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/hive-ci-runner
+
+jobs:
+  build:
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Build and push' || 'Build (PR gate, no push)' }}
+    # GitHub-hosted on purpose — see the header. Do not route this through
+    # HIVE_RUNNER_LABELS.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Resolve the base image and the tag once, up front, so every later step
+      # (the exists-check, the build, the summary) agrees on them.
+      #
+      # The tag is <version part of the base image ref>-<suffix>: for
+      # summerwind/actions-runner:v2.337.0-ubuntu-24.04 and suffix
+      # toolchain-1 that is v2.337.0-ubuntu-24.04-toolchain-1 — the exact
+      # example in README.md § "Baking the CI toolchain". Deriving it from the
+      # base ref (rather than taking a free-form tag input) means the tag
+      # always says which runner release it was built on, which is what the
+      # #6648 suite caveat needs an operator to be able to read off the
+      # cluster.
+      - name: Resolve image reference
+        id: ref
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_INPUT: ${{ inputs.runner_base_image }}
+          SUFFIX_INPUT: ${{ inputs.tag_suffix }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          base="${BASE_INPUT:-}"
+          suffix="${SUFFIX_INPUT:-}"
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            # PR gate: build the Dockerfile's own default base. The tag is
+            # never pushed, so it only has to be a valid reference.
+            base="$(sed -nE 's/^ARG RUNNER_BASE_IMAGE=(.+)$/\1/p' src/deploy/ci-runners/Dockerfile | head -1)"
+            suffix="pr-${PR_NUMBER:-0}"
+          fi
+          if [ -z "$base" ] || [ -z "$suffix" ]; then
+            echo "::error::base image and tag suffix are both required (base='$base', suffix='$suffix')"
+            exit 1
+          fi
+          case "$suffix" in
+            *[!A-Za-z0-9._-]*|'')
+              echo "::error::tag suffix '$suffix' must match [A-Za-z0-9._-]+"
+              exit 1 ;;
+          esac
+          version="${base##*:}"
+          if [ "$version" = "$base" ] || [ -z "$version" ]; then
+            echo "::error::base image '$base' carries no tag; pin the runner version (name:vX.Y.Z-ubuntu-NN.NN)"
+            exit 1
+          fi
+          tag="${version}-${suffix}"
+          {
+            echo "base=$base"
+            echo "tag=$tag"
+            echo "ref=${IMAGE}:${tag}"
+          } >> "$GITHUB_OUTPUT"
+          echo "base image: $base"
+          echo "target:     ${IMAGE}:${tag}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Immutable tags are the contract (runner-image-patch.yaml explains why:
+      # ARC does not re-pull an unchanged tag). Refuse to overwrite. A 404 from
+      # the manifest lookup is the expected first-run answer; the package not
+      # existing at all reads the same way from `docker manifest inspect`.
+      - name: Refuse to overwrite an existing tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$REF" >/dev/null 2>&1; then
+            echo "::error::$REF already exists. Tags are immutable — bump tag_suffix (e.g. toolchain-2) and dispatch again."
+            exit 1
+          fi
+          echo "$REF is free."
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build${{ github.event_name == 'workflow_dispatch' && ' and push' || '' }}
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: src/deploy/ci-runners
+          file: src/deploy/ci-runners/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'workflow_dispatch' }}
+          tags: ${{ steps.ref.outputs.ref }}
+          build-args: |
+            RUNNER_BASE_IMAGE=${{ steps.ref.outputs.base }}
+          # Provenance/SBOM attestations would turn the pushed tag into an OCI
+          # index; ARC pulls a plain image and the digest printed below should
+          # be the image's own, so keep the manifest simple.
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.base.name=${{ steps.ref.outputs.base }}
+            org.opencontainers.image.description=hivecommons/hive self-hosted CI runner with gcc/libc6-dev/tmux baked in (#7206)
+
+      # Hand the operator exactly what the README's "Apply" step needs: the
+      # immutable reference (tag and digest) and the two commands. This is the
+      # hand-off point between what CI can do and what needs cluster access.
+      - name: Summary
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ steps.ref.outputs.ref }}
+          TAG: ${{ steps.ref.outputs.tag }}
+          BASE: ${{ steps.ref.outputs.base }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## CI runner image"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| base image | \`$BASE\` |"
+            if [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "| pushed | \`$REF\` |"
+              echo "| digest | \`$DIGEST\` |"
+              echo
+              echo "### Roll the runners onto it (needs \`vllm-d\` cluster access)"
+              echo
+              echo "First push only: the package is created **private**; ARC pulls anonymously, so make"
+              echo "\`hive-ci-runner\` public in the org's package settings (or add an \`imagePullSecrets\`"
+              echo "entry to the RunnerDeployment) before patching."
+              echo
+              echo '```console'
+              echo "sed -i 's#image: ghcr.io/hivecommons/hive-ci-runner:REPLACE_ME#image: ${REF}#' src/deploy/ci-runners/runner-image-patch.yaml"
+              echo "kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \\"
+              echo "  --type merge --patch-file src/deploy/ci-runners/runner-image-patch.yaml"
+              echo '```'
+              echo
+              echo "Patching rolls every runner pod — apply while runners are idle. Then on the next"
+              echo "\`v2 Tests\` run, **Prepare cgo toolchain for race tests** should report the tool"
+              echo "already present with no apt network I/O (#7289's close condition)."
+            else
+              echo "| built (not pushed) | \`$REF\` |"
+              echo
+              echo "PR gate only: the Dockerfile built and its \`gcc --version\` / \`tmux -V\` verification"
+              echo "passed. Nothing was pushed. Dispatch this workflow from \`v4\` to publish."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

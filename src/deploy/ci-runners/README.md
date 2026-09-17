@@ -89,32 +89,58 @@ small apt entry, so shards are forced back onto the mirrors.
 
 ### Build and push
 
+CI does this part (#7289): dispatch **CI Runner Image**
+(`.github/workflows/ci-runner-image.yml`) from `v4`. It builds the
+Dockerfile on a GitHub-hosted runner — deliberately *not* on the self-hosted
+cluster, whose egress is the problem the image exists to remove — and pushes
+with the job's own `GITHUB_TOKEN`, so no personal GHCR write access is needed.
+
 ```console
-cd "$(git rev-parse --show-toplevel)"
-docker build -f src/deploy/ci-runners/Dockerfile \
-  -t ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1 \
-  src/deploy/ci-runners
-docker push ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+gh workflow run ci-runner-image.yml --ref v4 \
+  -f runner_base_image=summerwind/actions-runner:v2.337.0-ubuntu-24.04 \
+  -f tag_suffix=toolchain-1
+gh run watch   # the job summary prints the pushed tag, its digest, and the apply commands
 ```
 
-The build verifies `gcc --version` and `tmux -V` itself, so a stale base image
-or a dead mirror fails the build rather than shipping an image that quietly
-sends CI back to the network.
+The pushed tag is `<runner version>-<tag_suffix>`, e.g.
+`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1`, and
+the workflow refuses to overwrite a tag that already exists — bump
+`tag_suffix` for every rebuild on the same base. The same workflow also runs
+on any PR that touches the Dockerfile, build-only, as the gate that keeps a
+Dockerfile change from shipping an image that quietly sends CI back to the
+network: the build verifies `gcc --version` and `tmux -V` itself, so a stale
+base image or a dead mirror fails there.
+
+**First push only:** GHCR creates the `hive-ci-runner` package **private**,
+and ARC pulls images anonymously (the RunnerDeployment carries no
+`imagePullSecrets`). Make the package public in the org's package settings —
+as `hive`, `hive-hub` and `hive-contributor` already are — before applying the
+patch, or every runner pod will sit in `ImagePullBackOff`.
 
 Use an immutable tag or a digest. ARC does not re-pull an unchanged tag, so
 `:latest` makes "which toolchain are the runners on?" unanswerable.
 
 If the deployed runner version has moved past the `RUNNER_BASE_IMAGE` default,
-override it — and re-read the suite caveat below if the Ubuntu **release**
-changed:
+pass the current one as `runner_base_image` — and re-read the suite caveat
+below if the Ubuntu **release** changed. The tag derives from that input, so
+it always records which runner release the image was built on.
+
+The workflow is a convenience, not a requirement. The same build works from a
+laptop with `docker` and GHCR write access:
 
 ```console
-docker build --build-arg RUNNER_BASE_IMAGE=summerwind/actions-runner:vX.Y.Z-ubuntu-24.04 ...
+cd "$(git rev-parse --show-toplevel)"
+docker build -f src/deploy/ci-runners/Dockerfile \
+  --build-arg RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04 \
+  -t ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1 \
+  src/deploy/ci-runners
+docker push ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
 ```
 
 ### Apply
 
-Set the pushed tag in `runner-image-patch.yaml`, then:
+This is the step CI cannot do — it needs `vllm-d` cluster access. Set the
+pushed tag in `runner-image-patch.yaml`, then:
 
 ```console
 kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
