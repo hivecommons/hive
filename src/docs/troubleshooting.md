@@ -463,6 +463,18 @@ The agent-card **last kick** / **next kick** fields describe when work is *start
 
 Every kick path — scheduled cadence, manual restart, crash-resume, CEL event triggers — records itself in `last kick` and the 🕘 *past kicks* archive, so a timestamp that has *not* moved is positive evidence that no new kick happened.
 
+## The card says "working" but the pane is sitting at a prompt
+
+A kick is recorded when the prompt is *delivered*, not when the agent produces anything, and a running process is not evidence of work. Once the agent's CLI is back at its idle prompt after a kick, the hive classifies how that turn **ended** ([#7421](https://github.com/hivecommons/hive/issues/7421)) and the card stops saying `working`:
+
+| Card | What happened | What the hive does |
+|---|---|---|
+| **asked for direction** | The agent ended its turn asking the operator what to do (`What should I focus on?`, `Awaiting your kick or specific task assignment.`). The kick already told it; this is a defect. | Re-kicks the agent ~5 minutes later instead of waiting out the cadence — once per hour, so a model that answers every kick with a question cannot turn the cadence into a loop. |
+| **blocked** — `policy stand-down: …` | The agent stood down on a policy condition (`STAND DOWN.`). A legitimate refusal. | Recorded as blocked with the stand-down line as the reason; the cadence is unchanged — fix the condition it names. |
+| **no-op** | The agent reported `no issue opened, no PR opened, no bead created` without standing down. | Recorded as a no-op. |
+
+The verdict is also stamped on the kick history (`outcome` / `outcomeReason` on each entry), so the 🕘 *past kicks* list distinguishes a kick that produced work from one that did not. A turn with none of these signatures is recorded as `ended` — which means only that no no-op was recognised, not that work was done. The hive can prove from a pane that nothing happened; it cannot prove that something did.
+
 ## An agent runs, but not the way I expect — why did it do that?
 
 Agents are told to act, not narrate: every policy carries an "Output Rules —

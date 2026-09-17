@@ -791,8 +791,14 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	}
 
 	// The pane moved since the kick — the CLI consumed it and the response
-	// completed (idle prompt, no active-work indicator). Check whether any
-	// tools ran since the kick before declaring the response prose-only.
+	// completed (idle prompt, no active-work indicator). That is the end of
+	// the kicked turn: classify how it ended (#7421) before deciding whether
+	// it needs an action nudge.
+	if sinceKick >= kickOutcomeGrace {
+		m.settleKickOutcomeLocked(agent, pane, now)
+	}
+	// Check whether any tools ran since the kick before declaring the
+	// response prose-only.
 	if agent.actionNudgeSent || sinceKick < inferenceActionNudgeGrace {
 		m.mu.Unlock()
 		return

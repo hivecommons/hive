@@ -1895,6 +1895,13 @@ func main() {
 	archiveOnShutdown := func() { agentMgr.ArchiveAllKickLogs("shutdown") }
 	preShutdownHooks.add("archive-kick-logs", archiveOnShutdown)
 	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
+	// #7421: the governor records a kick when it is dispatched; the manager
+	// tells it afterwards how the turn ENDED, so a kick that produced a
+	// clarifying question or a policy stand-down is not counted like one that
+	// produced work (and a question earns an early re-kick).
+	agentMgr.SetKickOutcomeObserver(func(agentName string, outcome agent.KickOutcome) {
+		gov.RecordKickOutcome(agentName, outcome.Kind, outcome.Reason, outcome.KickAt, outcome.At)
+	})
 
 	// Say out loud when the sandbox opt-in is configured but inert. The gate is
 	// two-part (global agent_sandbox.enabled AND a per-agent sandbox.enabled),
@@ -2209,7 +2216,7 @@ func main() {
 		if len(saved.KickHistory) > 0 {
 			records := make([]governor.KickRecord, len(saved.KickHistory))
 			for i, ke := range saved.KickHistory {
-				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent}
+				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason}
 			}
 			gov.SeedKickHistory(records)
 			logger.Info("kick history restored", "entries", len(records))
@@ -7612,7 +7619,7 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 	govKickHistory := gov.KickHistory()
 	kickEntries := make([]snapshot.GovKickEntry, len(govKickHistory))
 	for i, kr := range govKickHistory {
-		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent}
+		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason}
 	}
 
 	state := &snapshot.PersistedState{

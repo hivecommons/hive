@@ -157,6 +157,10 @@ type AgentTurnInterruption struct {
 type GovKickEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 	Agent     string    `json:"agent"`
+	// Outcome / OutcomeReason: how the kicked turn ended (#7421) — "question",
+	// "stand-down", "no-op", "ended" — or empty when never classified.
+	Outcome       string `json:"outcome,omitempty"`
+	OutcomeReason string `json:"outcome_reason,omitempty"`
 }
 
 type AgentKickEntry struct {

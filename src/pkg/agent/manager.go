@@ -349,6 +349,11 @@ type AgentProcess struct {
 	TurnLoss        TurnLoss
 	actionNudgeSent bool // no-action watchdog: at most one action nudge per kick
 	ActionNudges    int  // total prose-only-response action nudges sent (surfaced to the dashboard)
+	// KickOutcome is how the most recent kicked turn ENDED (#7421): a
+	// clarifying question, a policy stand-down, an explicit nothing-produced
+	// report, or plain "ended". Settled(LastKick) is false while the current
+	// turn is still running. Guarded by m.mu; see kick_outcome.go.
+	KickOutcome KickOutcome
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -570,6 +575,9 @@ type Manager struct {
 	// m.mu, so the pointer must be readable from a locked context, and the
 	// observer is always invoked on its own goroutine. See kick_observer.go.
 	kickObserver atomic.Pointer[func(agentName, event, detail string)]
+	// kickOutcomeObserver receives the verdict on how each kicked turn ended
+	// (#7421); the governor consumes it. Same discipline as kickObserver.
+	kickOutcomeObserver atomic.Pointer[func(agentName string, outcome KickOutcome)]
 
 	// kickDispatches tracks asynchronous kick dispatches (#5325): the in-flight
 	// guard that makes delivery exactly-once, and the latest outcome per agent
@@ -2808,6 +2816,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 
 	var prevLines []string
 	loginStreak := 0
+	outcomeTick := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -3146,9 +3155,29 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				}
 			}
 			prevLines = filtered
+
+			// #7421: once the kicked turn is over (the CLI is back at its idle
+			// prompt), classify how it ended — a clarifying question, a policy
+			// stand-down, a nothing-produced report — so the governor stops
+			// counting a delivered-but-fruitless kick as a completed one.
+			// Inference backends are classified from the stall watchdog
+			// instead (nudgeIfKickStalled), which already tracks their turn.
+			// The gate is cheap; the visible-pane capture only happens once the
+			// gate passes, and is throttled to one in kickOutcomePollEvery ticks.
+			if !IsInferenceBackend(effectiveBackend(agent)) {
+				outcomeTick++
+				if outcomeTick%kickOutcomePollEvery == 0 {
+					m.maybeSettleKickOutcome(agent, func() string { return m.captureVisiblePaneForAgent(agent) })
+				}
+			}
 		}
 	}
 }
+
+// kickOutcomePollEvery throttles the post-kick turn-ended check to one visible
+// pane capture per this many 3s poll ticks (15s), so a long turn does not
+// cost an extra tmux exec every tick.
+const kickOutcomePollEvery = 5
 
 // blockingPrompt is a startup-blocking modal that must be answered with a
 // SPECIFIC numbered option rather than a bare Enter or a generic
@@ -4916,6 +4945,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		TurnLoss:                  cloneTurnLoss(a.TurnLoss),
 		KickHistory:               history,
 		LastKickMessage:           a.LastKickMessage,
+		KickOutcome:               a.KickOutcome,
 		NeedsLogin:                needsLogin,
 		QuotaExhausted:            quotaExhausted,
 		LastPaneChange:            lastPaneChange,

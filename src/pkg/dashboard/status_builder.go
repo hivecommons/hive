@@ -716,8 +716,13 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			model = proc.ModelOverride
 		}
 
+		// busy: "working" used to mean nothing more than "the process is
+		// running" — an agent parked at its idle prompt after a fruitless kick
+		// read exactly like one mid-task (#7421). A kicked turn the manager has
+		// seen END is idle, whatever the process state says; liveness is not
+		// evidence of work.
 		busy := "idle"
-		if proc.State == agent.StateRunning {
+		if proc.State == agent.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
 			busy = "working"
 		}
 
@@ -852,6 +857,19 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			TransientNudges: proc.TransientNudges,
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
+		}
+		// #7421: how the last kicked turn ended, so the card can say "asked
+		// the operator what to do" or "stood down" instead of implying work.
+		if proc.KickOutcome.Settled(proc.LastKick) {
+			a.KickOutcome = proc.KickOutcome.Kind
+			a.KickOutcomeReason = proc.KickOutcome.Reason
+			if proc.KickOutcome.Kind == agent.KickOutcomeStandDown {
+				a.StructuredStatus = "BLOCKED"
+				a.StatusEvidence = "blocked: policy stand-down"
+				if r := strings.TrimSpace(proc.KickOutcome.Reason); r != "" {
+					a.StatusEvidence += ": " + r
+				}
+			}
 		}
 		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
 			a.BackendAuthStatus = status

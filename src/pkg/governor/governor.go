@@ -67,6 +67,11 @@ type KickRecord struct {
 	Timestamp time.Time `json:"timestamp"`
 	Agent     string    `json:"agent"`
 	Repo      string    `json:"repo,omitempty"`
+	// Outcome is how the kicked turn ENDED, stamped after the fact by
+	// RecordKickOutcome (#7421): "question", "stand-down", "no-op" or "ended".
+	// Empty while the turn is running or when the manager never classified it.
+	Outcome       string `json:"outcome,omitempty"`
+	OutcomeReason string `json:"outcomeReason,omitempty"`
 }
 
 type AgentReportRecord struct {
@@ -209,6 +214,7 @@ type Governor struct {
 	evalHistory  []EvalSnapshot
 	kickHistory  []KickRecord
 	agentReports map[string]AgentReportRecord
+	kickOutcomes map[string]KickOutcomeRecord
 	budget       BudgetInfo
 	now          func() time.Time
 
@@ -266,6 +272,7 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 		evalHistory:  make([]EvalSnapshot, 0, evalHistoryCapacity),
 		kickHistory:  make([]KickRecord, 0, kickHistoryCapacity),
 		agentReports: make(map[string]AgentReportRecord),
+		kickOutcomes: make(map[string]KickOutcomeRecord),
 		resumeKicks:  make(map[string]time.Time),
 		now:          time.Now,
 		// 1 repo = scaling is a no-op, so a governor built without a repo count
@@ -831,6 +838,10 @@ func (g *Governor) agentsDueForKick() []string {
 			}
 		} else if lastKick.IsZero() || now.Sub(lastKick) >= cadence.Interval {
 			due = true
+		} else if g.questionRekickDueLocked(agentName, lastKick, now) {
+			// #7421: the last kick ended on a clarifying question — nothing was
+			// produced, so waiting out the full interval is waiting for nothing.
+			due = true
 		}
 		if !due {
 			continue
@@ -1229,6 +1240,7 @@ func (g *Governor) SeedKickHistory(records []KickRecord) {
 	}
 	g.kickHistory = make([]KickRecord, len(records), kickHistoryCapacity)
 	copy(g.kickHistory, records)
+	g.seedKickOutcomesFromHistoryLocked()
 }
 
 func (g *Governor) SeedBudget(spend int64, byAgent map[string]int64, byModel map[string]int64, resetAt time.Time) {

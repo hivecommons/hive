@@ -6423,6 +6423,24 @@
     function agentSessionUnavailable(a) {
       return agentIsDisabled(a) && a.state !== 'running';
     }
+    /* kickOutcomeBadgeHtml names how the last kicked turn ENDED when it did not
+       end in work (#7421). A turn that ended on a clarifying question ("What
+       should I focus on?") is a defect — the governor re-kicks it early — and
+       an explicit nothing-produced report is a no-op; both used to render as
+       a plain "working"/"idle" state indistinguishable from an agent that
+       opened a PR. A policy stand-down arrives as the BLOCKED badge above and
+       is not repeated here. */
+    function kickOutcomeBadgeHtml(a) {
+      if (!a.kickOutcome) return '';
+      const reason = a.kickOutcomeReason ? esc(a.kickOutcomeReason) : '';
+      if (a.kickOutcome === 'question') {
+        return '<span class="status-badge needs-context" title="Last kick ended on a clarifying question instead of work; the governor re-kicks it early.' + (reason ? ' — ' + reason : '') + '">asked for direction</span>';
+      }
+      if (a.kickOutcome === 'no-op') {
+        return '<span class="status-badge needs-context" title="Last kick ended reporting nothing was produced.' + (reason ? ' — ' + reason : '') + '">no-op</span>';
+      }
+      return '';
+    }
     /* agentPowerSwitchHtml renders the master-power 0/1 rocker for an agent's
        `enabled` flag.
 
@@ -7019,7 +7037,7 @@
             if (a.structuredStatus === 'DONE') return '<span class="status-badge done">done</span>';
             if (isStale) return '<span class="status-badge needs-context">stale</span>';
             return '';
-          })()}${agentSpendChip(a.name)}</div>
+          })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
           ${agentBlockerLineHtml(a)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state

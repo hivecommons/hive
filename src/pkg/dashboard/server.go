@@ -581,6 +581,12 @@ type FrontendAgent struct {
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
 	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// KickOutcome is how the last kicked turn ENDED (#7421): "question" (asked
+	// the operator what to do — a defect), "stand-down" (policy refusal —
+	// blocked), "no-op" (reported nothing produced) or "ended". Empty while
+	// the turn is still running. KickOutcomeReason is the deciding pane line.
+	KickOutcome       string `json:"kickOutcome,omitempty"`
+	KickOutcomeReason string `json:"kickOutcomeReason,omitempty"`
 	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
 	// from the same classifyProviderError verdict as StructuredStatus's
 	// "blocked: inference" evidence, so the dashboard can render an explicit
