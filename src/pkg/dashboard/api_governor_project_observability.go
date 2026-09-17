@@ -22,8 +22,6 @@ var (
 	secretReferencePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?/[A-Za-z0-9._-]+$`)
 )
 
-const defaultOperabilityCadence = "24h"
-
 func (s *Server) handleGovernorProjectObservabilityGet(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -44,12 +42,10 @@ func (s *Server) handleGovernorProjectObservabilityPut(w http.ResponseWriter, r 
 		return
 	}
 	var body struct {
-		OpenSource        *[]string                                         `json:"open_source"`
-		KubeNative        *[]string                                         `json:"kube_native"`
-		Commercial        *[]string                                         `json:"commercial"`
-		References        *map[string]config.ProjectObservabilityBackendRef `json:"references"`
-		TelemetryEnabled  *bool                                             `json:"telemetry_enabled"`
-		OperationsEnabled *bool                                             `json:"operations_enabled"`
+		OpenSource *[]string                                         `json:"open_source"`
+		KubeNative *[]string                                         `json:"kube_native"`
+		Commercial *[]string                                         `json:"commercial"`
+		References *map[string]config.ProjectObservabilityBackendRef `json:"references"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -88,12 +84,6 @@ func (s *Server) handleGovernorProjectObservabilityPut(w http.ResponseWriter, r 
 	if body.Commercial != nil {
 		effective.Commercial = commercial
 	}
-	if (body.TelemetryEnabled != nil && *body.TelemetryEnabled) || (body.OperationsEnabled != nil && *body.OperationsEnabled) {
-		if len(effective.OpenSource)+len(effective.KubeNative)+len(effective.Commercial) == 0 {
-			jsonError(w, "select at least one project observability platform before enabling an agent", http.StatusBadRequest)
-			return
-		}
-	}
 	if body.OpenSource != nil {
 		cfg.Governor.ProjectObservability.OpenSource = openSource
 	}
@@ -105,12 +95,6 @@ func (s *Server) handleGovernorProjectObservabilityPut(w http.ResponseWriter, r 
 	}
 	if body.References != nil {
 		cfg.Governor.ProjectObservability.References = references
-	}
-	if body.TelemetryEnabled != nil {
-		setOperabilityAgentEnabled(cfg, "telemetry", *body.TelemetryEnabled)
-	}
-	if body.OperationsEnabled != nil {
-		setOperabilityAgentEnabled(cfg, "operations", *body.OperationsEnabled)
 	}
 
 	if err := s.saveConfig(); err != nil {
@@ -178,42 +162,51 @@ func validateObservabilityReferences(values *map[string]config.ProjectObservabil
 	return out, nil
 }
 
-func setOperabilityAgentEnabled(cfg *config.Config, agent string, enabled bool) {
+// operabilityAgentStatus reports, read-only, what the rest of the dashboard
+// already says about one of the operability agents.
+//
+// Before #7261 this tab owned a third "is this agent on" switch whose
+// semantics matched neither of the other two: writing it rewrote the agent's
+// cadence in EVERY governor mode (destroying per-mode tuning), and reading it
+// back asked "does any mode have a non-paused cadence", which is unrelated to
+// the agent's own Enabled flag. The card could therefore say enabled while
+// this tab said off. There is now exactly one writer for each fact -- the
+// agent card owns Enabled, the Cadences tab owns cadences -- and this function
+// only reports them so the operator can see the state without this tab being
+// able to clobber it.
+func operabilityAgentStatus(cfg *config.Config, agent string) map[string]interface{} {
+	status := map[string]interface{}{
+		"configured": false,
+		"enabled":    false,
+		"cadences":   map[string]string{},
+	}
+	if cfg == nil {
+		return status
+	}
+	if ac, ok := cfg.Agents[agent]; ok {
+		status["configured"] = true
+		status["enabled"] = ac.Enabled
+	}
+	cadences := map[string]string{}
 	for modeName, mode := range cfg.Governor.Modes {
-		if mode.Cadences == nil {
-			mode.Cadences = make(map[string]config.Cadence)
-		}
-		current, exists := mode.Cadences[agent]
-		if enabled {
-			if !exists || current.IsPaused() {
-				mode.Cadences[agent] = config.NewIntervalCadence(defaultOperabilityCadence)
-			}
-		} else {
-			mode.Cadences[agent] = config.NewIntervalCadence("paused")
-		}
-		cfg.Governor.Modes[modeName] = mode
-	}
-}
-
-func operabilityAgentEnabled(cfg *config.Config, agent string) bool {
-	for _, mode := range cfg.Governor.Modes {
-		if cadence, ok := mode.Cadences[agent]; ok && !cadence.IsPaused() {
-			return true
+		if cadence, ok := mode.Cadences[agent]; ok {
+			cadences[modeName] = cadence.String()
 		}
 	}
-	return false
+	status["cadences"] = cadences
+	return status
 }
 
 func projectObservabilitySectionResponse(cfg *config.Config) map[string]interface{} {
 	p := cfg.Governor.ProjectObservability
 	return map[string]interface{}{
-		"open_source":        p.OpenSource,
-		"kube_native":        p.KubeNative,
-		"commercial":         p.Commercial,
-		"references":         p.References,
-		"telemetry_enabled":  operabilityAgentEnabled(cfg, "telemetry"),
-		"operations_enabled": operabilityAgentEnabled(cfg, "operations"),
-		"supported":          projectObservabilityPlatforms,
+		"open_source":       p.OpenSource,
+		"kube_native":       p.KubeNative,
+		"commercial":        p.Commercial,
+		"references":        p.References,
+		"supported":         projectObservabilityPlatforms,
+		"telemetry_status":  operabilityAgentStatus(cfg, "telemetry"),
+		"operations_status": operabilityAgentStatus(cfg, "operations"),
 	}
 }
 

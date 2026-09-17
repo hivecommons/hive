@@ -22631,6 +22631,32 @@ function burnAreaChart() {
     // renderGovProjectObservability configures the MANAGED PROJECT targets for
     // telemetry/operations. It never accepts raw endpoints or credentials:
     // only environment-variable names and secret-name/key references.
+    // operabilityAgentStatusRow renders one read-only status line for an
+    // operability agent. This tab deliberately cannot change any of it
+    // (#7261): enablement is owned by the agent card and cadences by
+    // Agents -> Cadences, and the enable toggles that used to live here were a
+    // third switch that silently rewrote every mode's cadence on write and
+    // reported an unrelated fact on read.
+    function operabilityAgentStatusRow(name, status) {
+      status = status || {};
+      const cadences = status.cadences || {};
+      const modes = Object.keys(cadences).sort();
+      let detail;
+      if (!status.configured) {
+        detail = 'not configured on this hive';
+      } else if (!status.enabled) {
+        detail = 'disabled on its agent card';
+      } else if (modes.length === 0) {
+        detail = 'enabled &middot; no cadence in any mode, so it never runs on a schedule';
+      } else {
+        detail = 'enabled &middot; ' + modes.map(m => `${esc(m)} ${esc(cadences[m])}`).join(' / ');
+      }
+      return `<div class="config-field" style="margin-bottom:8px">
+        <label>${esc(name)} agent</label>
+        <div style="font-size:0.72rem;color:var(--muted)">${detail} &mdash; edit in <b>Agents &rarr; Cadences</b>.</div>
+      </div>`;
+    }
+
     function renderGovProjectObservability(p) {
       p = p || {};
       const familyKeys = ['open_source', 'kube_native', 'commercial'];
@@ -22665,9 +22691,9 @@ function burnAreaChart() {
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Targets for the managed project's telemetry and operations agents. Hive's own OTLP export remains in <b>Features</b>.</p>
         ${hasDetectedTargets ? '<div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Telemetry findings supplied detected platform suggestions. Review the selections below; Save explicitly confirms and persists them.</div>' : ''}
-        <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Select backends, then explicitly enable either agent. Enabling replaces its all-mode paused cadence with a conservative 24h cadence; tune individual modes later from the agent's Cadences tab.</div>
-        <div class="config-toggle"><div class="config-toggle-switch ${p.telemetry_enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="project-observability" data-key="telemetry_enabled"></div><span class="config-toggle-label">Enable telemetry agent</span></div>
-        <div class="config-toggle" style="margin-top:8px"><div class="config-toggle-switch ${p.operations_enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="project-observability" data-key="operations_enabled"></div><span class="config-toggle-label">Enable operations agent</span></div>
+        <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Select which observability backends the telemetry and operations agents should target in managed repositories. Whether those agents run at all is not set here: enablement lives on the agent card and per-mode schedules live in Agents → Cadences. Their current state is shown below, read-only.</div>
+        ${operabilityAgentStatusRow('telemetry', p.telemetry_status)}
+        ${operabilityAgentStatusRow('operations', p.operations_status)}
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Target platforms</div><div class="config-field-row">${family('open_source','Open source')}${family('kube_native','Kube-native')}</div>${family('commercial','Commercial')}</div>
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Safe references</div><p style="font-size:0.72rem;color:var(--muted)">Names only. Literal URLs, tokens, and API keys are rejected server-side.</p>${refRows || '<p style="font-size:0.72rem;color:var(--muted)">Select a platform to configure its references.</p>'}</div>`;
     }
