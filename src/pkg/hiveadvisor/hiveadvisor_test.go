@@ -126,3 +126,58 @@ func mergeMode(s Signals, mode string) Signals {
 	s.Mode = mode
 	return s
 }
+
+// Every clamp in normalizeSignals and the past-end daysUntil branch, so the
+// coverage floor tracks real behavior rather than the happy path.
+func TestSignalClampsAndPastEpochEnd(t *testing.T) {
+	now := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+
+	// All-negative signals must clamp to zero everywhere they surface.
+	got := Recommend(Request{Now: now, Signals: Signals{
+		Mode: "quiet", QueueIssues: -3, QueuePRs: -2, HoldCount: -1,
+		RepoCount: -4, DisabledAgentCount: -5, NoCadenceAgentCount: -6,
+		BudgetUsedPct: -10,
+	}})
+	if len(got.Recommendations) == 0 {
+		t.Fatal("clamped quiet hive should still get a recommendation")
+	}
+	for _, r := range got.Recommendations {
+		if r.ID == "enable-disabled-agent" || r.ID == "add-agent-cadence" {
+			t.Fatalf("negative agent counts must clamp to 0, got %s", r.ID)
+		}
+	}
+
+	// BUSY with a >100%% budget must clamp to 100 and still advise holding cadence.
+	got = Recommend(Request{Now: now, Signals: Signals{Mode: "busy", BudgetUsedPct: 250, QueuePRs: 1}})
+	found := false
+	for _, r := range got.Recommendations {
+		if r.ID == "watch-budget-before-cadence" {
+			found = true
+			for _, s := range r.Signals {
+				if s.Name == "budget_used_pct" && s.Value != "100.0" {
+					t.Fatalf("budget_used_pct = %s, want clamped 100.0", s.Value)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("busy + exhausted budget should advise watch-budget-before-cadence, got %v", ids(got.Recommendations))
+	}
+
+	// A previous epoch whose end has already passed yields 0 days remaining,
+	// not a negative count — and is not frozen.
+	prev := &Epoch{Start: now.Add(-8 * 24 * time.Hour), End: now.Add(-24 * time.Hour), Mode: "BUSY",
+		Recommendations: []Recommendation{rec("stale", 1, "stale", "stale")}}
+	got = Recommend(Request{Now: now, Signals: Signals{Mode: "busy", QueuePRs: 2}, Previous: prev})
+	if got.Frozen {
+		t.Fatal("an expired epoch must not stay frozen")
+	}
+
+	// daysUntil exactly at the boundary: now == end -> 0.
+	exact := &Epoch{Start: now.Add(-EpochLength), End: now, Mode: "BUSY",
+		Recommendations: []Recommendation{rec("stale", 1, "stale", "stale")}}
+	got = Recommend(Request{Now: now, Signals: Signals{Mode: "busy", QueuePRs: 2}, Previous: exact})
+	if got.Frozen {
+		t.Fatal("an epoch ending exactly now must roll over, not freeze")
+	}
+}
