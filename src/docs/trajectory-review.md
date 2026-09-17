@@ -47,7 +47,7 @@ model is appropriate — this is a divergence classifier, not a coding model.
 
 ## Configuration
 
-**Dashboard:** Governor Config → **General** tab has a full **Trajectory Review**
+**Dashboard:** Governor Config → **Features** tab has a full **Trajectory Review**
 panel: an on/off toggle (on by default), a status chip that distinguishes
 *On — active* from *On — no reviewer endpoint (not running)* so the control is
 never silently inert, an explanation of why it exists and what it requires, and
@@ -77,7 +77,7 @@ governor:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Turn the lane on/off. Also on the Governor → General tab. No reviews run (zero cost) until a LiteLLM reviewer endpoint is configured. |
+| `enabled` | `true` | Turn the lane on/off. Also on the Governor → Features tab. No reviews run (zero cost) until a LiteLLM reviewer endpoint is configured. |
 | `interval_s` | `600` | Seconds between reviews; the governor eval interval is the floor. |
 | `model` | `litellm.default_model` | Reviewer model id sent to LiteLLM. |
 | `transcript_lines` | `120` | Trailing transcript lines sent per agent. |
