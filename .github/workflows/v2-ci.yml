@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -58,6 +58,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build
         run: go build ./cmd/hive/

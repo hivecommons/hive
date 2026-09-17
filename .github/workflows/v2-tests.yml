@@ -159,7 +159,7 @@ jobs:
       fail-fast: false
       matrix:
         idx: [1, 2, 3]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -170,6 +170,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -266,7 +279,7 @@ jobs:
       fail-fast: false
       matrix:
         idx: [1, 2, 3, 4, 5]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -277,6 +290,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
@@ -371,7 +397,7 @@ jobs:
   # 3s — they are all ≤ 8s). The hints only affect BALANCE, never MEMBERSHIP:
   # a stale weight makes a bucket slower, not a package untested.
   list-packages:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
     defaults:
@@ -384,6 +410,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
@@ -485,7 +524,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.list-packages.outputs.matrix) }}
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -496,6 +535,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
@@ -586,8 +638,12 @@ jobs:
   # No -coverprofile here: pkg/dashboard's coverage floor is scored from the
   # rest-bucket profile; this lane exists only to vary the execution order.
   test-dashboard-shuffle:
-    name: test (dashboard shuffle)
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    name: test (dashboard shuffle ${{ matrix.idx }}/2)
+    strategy:
+      fail-fast: false
+      matrix:
+        idx: [1, 2]
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -598,6 +654,19 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
@@ -627,32 +696,46 @@ jobs:
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
 
       - name: Test pkg/dashboard in shuffled order
+        env:
+          IDX: ${{ matrix.idx }}
+          TOTAL: ${{ strategy.job-total }}
         run: |
           set -o pipefail
+          # Sliced like test-hub (NR mod N — pairwise disjoint, jointly
+          # exhaustive) so no single job carries the whole ~6-minute lane;
+          # -shuffle still varies order within each slice every run.
+          go test ./pkg/dashboard -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          if [ ! -s all-tests.txt ]; then
+            echo "::error::go test -list produced no test functions for pkg/dashboard — refusing to run an empty slice (fail closed)"
+            exit 1
+          fi
+          awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
+          echo "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"
+          RUN="^($(paste -sd'|' slice.txt))$"
           # Bound on concurrent t.Parallel tests inside the package: high
           # enough to keep the lane fast, low enough that the package's many
           # httptest servers cannot exhaust ephemeral ports (see job comment).
           PARALLEL_TESTS=4
-          if go test ./pkg/dashboard -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" \
-            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-dashboard-shuffle.log; then
+          if go test ./pkg/dashboard -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" -run "$RUN" \
+            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-dashboard-shuffle-"$IDX".log; then
             exit 0
           fi
           # The test binary prints "-test.shuffle <seed>" as its first line;
           # put the seed in the annotation so the failure is reproducible.
-          SEED=$(grep -m1 -E '^-test\.shuffle [0-9]+' test-dashboard-shuffle.log | awk '{print $2}')
-          echo "::error::pkg/dashboard failed under shuffled order. Reproduce from src/ with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel $PARALLEL_TESTS -shuffle=${SEED:-<seed line missing from log>}"
+          SEED=$(grep -m1 -E '^-test\.shuffle [0-9]+' test-dashboard-shuffle-"$IDX".log | awk '{print $2}')
+          echo "::error::pkg/dashboard failed under shuffled order (slice $IDX/$TOTAL). Reproduce from src/ with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel $PARALLEL_TESTS -run '$RUN' -shuffle=${SEED:-<seed line missing from log>}"
           exit 1
 
       - name: Slowest tests in this lane
         if: always()
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "dashboard shuffle" test-dashboard-shuffle.log
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "dashboard shuffle ${{ matrix.idx }}/2" test-dashboard-shuffle-${{ matrix.idx }}.log
 
       - name: Upload shuffle log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-dashboard-shuffle-log
-          path: src/test-dashboard-shuffle.log
+          name: test-dashboard-shuffle-log-${{ matrix.idx }}
+          path: src/test-dashboard-shuffle-${{ matrix.idx }}.log
           if-no-files-found: warn
           retention-days: 1
 
@@ -665,7 +748,7 @@ jobs:
   # summary says it is not complete green test evidence.
   test:
     if: always()
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
       - name: Check shard results
@@ -767,7 +850,7 @@ jobs:
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
     if: github.event_name == 'pull_request'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [test-hub, test-agent, test-rest]
     steps:
       - name: Download shard coverage artifacts
@@ -1014,7 +1097,7 @@ jobs:
 
   create-issue-on-failure:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     permissions:
       contents: read
@@ -1066,3 +1149,60 @@ jobs:
               body: `## Test ${wasCancelled ? 'Cancelled' : 'Failure'}\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** ${branch}\n\nScheduled test run was ${kind}. See the [workflow run](${runUrl}) for details.`,
               labels: ['ci-failure', 'kind/bug'],
             });
+
+  # Compiles the whole tree's test binaries (race) plus the plain build once
+  # per v4 push and saves GOCACHE keyed by SHA. Every PR shard restores the
+  # nearest ancestor's cache via the prefix restore-key above, so shard jobs
+  # compile incrementally (seconds) instead of rebuilding ~2 minutes of -race
+  # objects each. Push/schedule only: PR-scoped cache saves are invisible to
+  # other branches and would only thrash the repo's 10GB cache budget.
+  warm-build-cache:
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Restore warm Go build cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Restore cgo toolchain package cache
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+
+      - name: Prepare cgo toolchain for race tests
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
+            --require gcc --for '-race tests' \
+            --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      # -run '^$' compiles every package's test binary without running a test;
+      # the plain build covers the non-race objects build-and-test needs.
+      - name: Compile tree into the build cache
+        run: |
+          go build ./... 
+          go test -race -count=1 -run '^$' ./pkg/... ./cmd/... ./internal/... > /dev/null
+
+      - name: Save warm Go build cache
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
