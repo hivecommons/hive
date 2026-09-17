@@ -231,6 +231,15 @@ The setup endpoint is intentionally public because GitHub opens it in a browser 
 
 To rotate a private key, generate a new key in GitHub, mount it at the configured `key_file`, restart Hive, then delete the old key in GitHub after the new one is confirmed working. If an installation was replaced, use `/gh-setup` again or update `github.installation_id` and restart/reload the hive.
 
+## API quota: conditional requests and post-reset pacing
+
+An installation token has an hourly REST allowance (about 6,650 requests for a 16-repo installation) shared by everything that uses that installation — the hive's own sweeps and every agent's scoped token. Two behaviours in the shared HTTP transport keep the hive's share small ([#7430](https://github.com/hivecommons/hive/issues/7430)):
+
+- **Conditional requests.** Every repeat `GET` of a resource the hive has already fetched carries `If-None-Match` with the remembered `ETag`; GitHub answers `304 Not Modified`, which is **not charged** against the quota, and the hive replays the remembered body. Unchanged issue and PR lists — the common case between two governor cycles — cost nothing. Cached bodies are keyed by the requesting identity as well as the URL, so an agent's scoped token never reads a body the App fetched. A replayed response carries `X-Hive-Cache: revalidated`.
+- **Post-reset pacing.** When GitHub answers a primary-limit `403` (`X-RateLimit-Remaining: 0`), the hive does not fire everything it had queued the instant the window resets — that is how a spoke re-exhausted its quota one second after every reset. For ten minutes after the reset, requests are spaced ~2 s apart (the same slow start already used after a secondary limit), so the new window is spent gradually.
+
+If a hive is still exhausting its quota, look for consumers outside the hive process on the same installation: agents' `gh` calls and the API proxy count against it too.
+
 ## Hub-distributed App keys (hosted fleet) — operator runbook
 
 On a hosted fleet the hub — not the hive owner — is the App-key authority. The hub keeps one PEM per cluster at `/data/saas/app-keys/<clusterID>.pem` (owner-only file modes, on the same PVC as the hub's other secrets) and reconciles it to every spoke on that cluster over the heartbeat. A claimed hive whose cluster has no stored key is delivered `key_delivered=false` at claim time and then receives nothing on any beat — it stays `Degraded` on `key-missing` forever until an operator uploads a key. **The hive owner cannot see, supply, or fix this key**; every owner-facing surface deliberately stays silent for the operator-side states (`key-missing`, `key-invalid`, `no-app-assigned`).

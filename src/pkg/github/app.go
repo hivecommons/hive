@@ -625,7 +625,12 @@ func (t *appTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req2.Header.Set("Authorization", "Bearer "+token)
 	base := t.base
 	if base == nil {
-		base = sharedProxyTrust.sharedTransport()
+		// The App client carries the bulk of the hive's GitHub traffic (every
+		// enumeration, sweep and preflight), yet it used to hit the raw shared
+		// transport — outside the post-rate-limit pacing every OTHER client
+		// got, and with no conditional requests (#7430). Same chain as
+		// proxyTrustingHTTPClient now.
+		base = githubTransportChain(sharedProxyTrust.sharedTransport())
 	}
 	return base.RoundTrip(req2)
 }

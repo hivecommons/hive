@@ -1007,13 +1007,28 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 			return count, true
 		}
 	}
+	// A pair that failed to compare is not retried on every status build:
+	// with the quota exhausted that was a ~1/s stream of doomed requests
+	// and warnings against the very limit the hive was waiting out (#7430).
+	// The answer is cosmetic (a "behind by N" badge); one retry per
+	// commitBehindRetryAfter is plenty.
+	if failedAt, ok := s.commitBehindFailedAt[key]; ok && time.Since(failedAt) < commitBehindRetryAfter {
+		s.versionMu.RUnlock()
+		return 0, false
+	}
 	s.versionMu.RUnlock()
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
 		return 0, false
 	}
 	count, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "hivecommons", "hive", base, head)
 	if err != nil {
-		s.logger.Warn("failed to compare commits behind stable tip", "base", base, "head", head, "error", err)
+		s.versionMu.Lock()
+		if s.commitBehindFailedAt == nil {
+			s.commitBehindFailedAt = map[string]time.Time{}
+		}
+		s.commitBehindFailedAt[key] = time.Now()
+		s.versionMu.Unlock()
+		s.logger.Warn("failed to compare commits behind stable tip; not retrying for a while", "base", base, "head", head, "retry_after", commitBehindRetryAfter.String(), "error", err)
 		return 0, false
 	}
 	s.versionMu.Lock()
@@ -1024,6 +1039,10 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	s.versionMu.Unlock()
 	return count, true
 }
+
+// commitBehindRetryAfter is how long a failed base...head compare is left
+// alone before the status builder asks GitHub again.
+const commitBehindRetryAfter = 5 * time.Minute
 
 func shortSHADashboard(s string) string {
 	s = strings.TrimSpace(s)

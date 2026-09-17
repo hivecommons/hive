@@ -8,7 +8,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,16 +164,10 @@ func TestProxyTrustingHTTPClient_UsesPool(t *testing.T) {
 	if client.Timeout != mintClientTimeout {
 		t.Errorf("timeout = %v want %v", client.Timeout, mintClientTimeout)
 	}
-	// The transport is now wrapped by the slow-start pacer (see slowstart.go);
-	// the proxy-trust guarantee lives on its INNER transport.
-	ss, ok := client.Transport.(*slowStartTransport)
-	if !ok {
-		t.Fatalf("transport type = %T, want *slowStartTransport wrapper", client.Transport)
-	}
-	tr, ok := ss.inner.(*http.Transport)
-	if !ok {
-		t.Fatalf("inner transport type = %T", ss.inner)
-	}
+	// The transport is wrapped by the slow-start pacer and the ETag cache (see
+	// githubTransportChain); the proxy-trust guarantee lives on the INNERMOST,
+	// socket-owning transport.
+	tr := socketTransportOf(t, client.Transport)
 	if tr.TLSClientConfig == nil || tr.TLSClientConfig.RootCAs == nil {
 		t.Fatal("expected RootCAs pool to be set on the mint client")
 	}
