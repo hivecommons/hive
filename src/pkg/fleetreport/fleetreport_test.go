@@ -256,12 +256,46 @@ func TestEvaluateTriggerBHiveDefectWithoutACMMShortfall(t *testing.T) {
 }
 
 func TestDefectFingerprintStableAndVersionScoped(t *testing.T) {
-	a := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.2")
-	b := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.2")
-	c := DefectFingerprint("write: broken pipe", "proxy-write", "v4.40.3")
+	a := DefectFingerprint("write: broken pipe", "proxy-write", "scanner", "v4.40.2")
+	b := DefectFingerprint("write: broken pipe", "proxy-write", "scanner", "v4.40.2")
+	c := DefectFingerprint("write: broken pipe", "proxy-write", "scanner", "v4.40.3")
 	d := Fingerprint("write: broken pipe", "proxy-write", "v4.40.2", "green-ci-streak")
 	if a != b || a == c || a == d || len(a) != 24 {
 		t.Fatalf("bad defect fingerprint stability/scope: a=%s b=%s c=%s d=%s", a, b, c, d)
+	}
+}
+
+// Every agent shares the "agent-runtime" component, so a fingerprint that omits
+// the agent collapses distinct lanes into one issue and turns per-agent reports
+// into a comment storm on a single thread.
+func TestDefectFingerprintSeparatesAgentsSharingAComponent(t *testing.T) {
+	scanner := DefectFingerprint("agent crash loop", "agent-runtime", "scanner", "v4.42.0")
+	quality := DefectFingerprint("agent crash loop", "agent-runtime", "quality", "v4.42.0")
+	if scanner == quality {
+		t.Fatalf("distinct agents collided on one fingerprint: %s", scanner)
+	}
+}
+
+func TestEvaluateOpensOneIssuePerAgentForSharedComponent(t *testing.T) {
+	mk := func(agent string, count int) Evidence {
+		return Evidence{Component: "agent-runtime", Agent: agent, Lane: agent, ErrorClass: "agent crash loop", Count: count, Severity: "high", Attributable: true}
+	}
+	obs := Observation{HiveID: "hive-a", Version: "v4.42.0", Evidence: []Evidence{mk("scanner", 43), mk("quality", 39)}}
+	got := Evaluate(obs, State{}, true)
+	if len(got.Reports) != 2 {
+		t.Fatalf("reports = %d, want 2", len(got.Reports))
+	}
+	if got.Reports[0].Fingerprint == got.Reports[1].Fingerprint {
+		t.Fatalf("per-agent reports shared a fingerprint: %s", got.Reports[0].Fingerprint)
+	}
+}
+
+func TestCountWindowOmitsUnclaimedWindow(t *testing.T) {
+	if got := countWindow(43, 0); got != "43 (cumulative)" {
+		t.Fatalf("countWindow with no window = %q", got)
+	}
+	if got := countWindow(6, 10*time.Minute); got != "6 in 10m0s" {
+		t.Fatalf("countWindow with window = %q", got)
 	}
 }
 
@@ -305,7 +339,7 @@ func TestTriggerAFingerprintPreservesLegacyScheme(t *testing.T) {
 
 func TestRecoveredTriggerBRecurrenceReportsAgain(t *testing.T) {
 	ev := Evidence{Component: "proxy-write", ErrorClass: "write: broken pipe", Count: 6, Window: time.Minute, Periodicity: "10s", Severity: "high", Attributable: true}
-	fp := DefectFingerprint(ev.ErrorClass, ev.Component, "v4.40.2")
+	fp := DefectFingerprint(ev.ErrorClass, ev.Component, ev.Agent, "v4.40.2")
 	report := BuildDefectReport(Observation{HiveID: "hive-a", Version: "v4.40.2"}, ev, fp, AnonymousInstanceID("hive-a"), "v4.40.2", "abcdef")
 	state := State{Open: map[string]OpenIssue{fp: {Number: 7, Trigger: TriggerHiveDefect, Recovered: true, BodyHash: StableBodyHash(report.Body)}}}
 	got := Evaluate(Observation{HiveID: "hive-a", Version: "v4.40.2", Evidence: []Evidence{ev}}, state, false)

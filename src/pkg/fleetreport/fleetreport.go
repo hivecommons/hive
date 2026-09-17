@@ -220,7 +220,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		if !ev.Attributable || !isHiveCodeEvidence(ev) || coveredByACMM[evidenceKey(ev)] {
 			continue
 		}
-		fp := DefectFingerprint(ev.ErrorClass, ev.Component, version)
+		fp := DefectFingerprint(ev.ErrorClass, ev.Component, ev.Agent, version)
 		report := BuildDefectReport(obs, ev, fp, instance, version, commit)
 		active[fp] = true
 		open := state.Open[fp]
@@ -287,10 +287,10 @@ A spoke reports that a hive-attributable condition is preventing it from satisfy
 | component | %s |
 | agent/lane | %s / %s |
 | error class | %s |
-| count + window | %d in %s |
+| count + window | %s |
 | detected periodicity | %s |
 | self-recovered | no |
-`, fingerprint, instance, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, criterionName, criterionKey, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, ev.Count, ev.Window, emptyDash(ev.Periodicity))
+`, fingerprint, instance, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, criterionName, criterionKey, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
 	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Evidence: []Evidence{ev}}
 }
 
@@ -321,10 +321,10 @@ A spoke reports a symptom attributable to hive's own code paths. No ACMM shortfa
 | component | %s |
 | agent/lane | %s / %s |
 | error class | %s |
-| count + window | %d in %s |
+| count + window | %s |
 | detected periodicity | %s |
 | self-recovered | no |
-`, fingerprint, instance, TriggerHiveDefect, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, ev.Count, ev.Window, emptyDash(ev.Periodicity))
+`, fingerprint, instance, TriggerHiveDefect, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
 	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Trigger: TriggerHiveDefect, Evidence: []Evidence{ev}}
 }
 
@@ -339,8 +339,8 @@ func Fingerprint(errorClass, component, version, criterion string) string {
 	return hex.EncodeToString(h[:])[:24]
 }
 
-func DefectFingerprint(errorClass, component, version string) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{TriggerHiveDefect, strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(version))}, "|")))
+func DefectFingerprint(errorClass, component, agent, version string) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{TriggerHiveDefect, strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(agent)), strings.ToLower(strings.TrimSpace(version))}, "|")))
 	return hex.EncodeToString(h[:])[:24]
 }
 
@@ -456,6 +456,15 @@ func shortCommit(s string) string {
 		return "unknown"
 	}
 	return s
+}
+
+// countWindow renders the count/window cell. A non-positive window means the
+// count is not windowed, so no observation period is claimed for it.
+func countWindow(count int, window time.Duration) string {
+	if window <= 0 {
+		return fmt.Sprintf("%d (cumulative)", count)
+	}
+	return fmt.Sprintf("%d in %s", count, window)
 }
 
 func emptyDash(s string) string {

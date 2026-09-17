@@ -114,8 +114,11 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 			out = append(out, fleetreport.Evidence{Component: "backend-auth", Agent: a.Name, Lane: a.Role, ErrorClass: "backend authentication failure", Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
 			continue
 		}
-		if a.Restarts >= 3 || strings.Contains(strings.ToLower(a.State), "crash") {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent crash loop", Count: a.Restarts, Window: 24 * time.Hour, Severity: "high", Attributable: true})
+		// a.Restarts is a cumulative process restart counter that every cadence
+		// kick increments, so it cannot distinguish a crash loop from healthy
+		// scheduled cycling. Only an explicit crash state is evidence here.
+		if strings.Contains(strings.ToLower(a.State), "crash") {
+			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent crash loop", Count: maxInt(1, a.Restarts), Severity: "high", Attributable: true})
 			continue
 		}
 		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges > 0 {
