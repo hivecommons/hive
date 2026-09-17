@@ -112,16 +112,44 @@ func TestHeldPRCoordinationScansUntrustedTitles(t *testing.T) {
 
 func TestHeldPRCoordinationFailsClosedWhenSnapshotDoesNotFit(t *testing.T) {
 	s := heldPRCoordinationScheduler(t, 3, "ISSUES_AND_PRS")
-	items := make([]github.HoldItem, maxIssuesPerKick+1)
+	items := make([]github.HoldItem, maxHeldPRsPerRepoPerKick+1)
 	for i := range items {
 		items[i] = github.HoldItem{Repo: "acme/widget", Number: i + 1, Type: "pr", Title: "occupied work"}
 	}
 	msg := s.BuildAgentMessage("quality", nil, &github.ActionableResult{
 		Hold: github.HoldResult{PRs: len(items), Total: len(items), Items: items},
 	})
-	if !strings.Contains(msg, "1 additional open held PRs omitted; STAND DOWN this kick") ||
+	if !strings.Contains(msg, "1 additional open held PRs omitted in acme/widget; STAND DOWN for acme/widget this kick") ||
 		!strings.Contains(msg, "unseen occupied ground cannot be proven disjoint") {
 		t.Fatalf("truncated snapshot did not fail closed:\n%s", msg)
+	}
+}
+
+// A repo whose held PRs overflow the cap must not blank the snapshot for the
+// other repos in the same sweep. Before the per-repo cap the limit was global,
+// so one crowded repo pushed the combined list past the cap and stood the agent
+// down across every tracked repo — and because it could no longer open PRs, the
+// backlog that caused the overflow could never drain.
+func TestHeldPRCoordinationTruncationIsScopedToTheCrowdedRepo(t *testing.T) {
+	s := heldPRCoordinationScheduler(t, 3, "ISSUES_AND_PRS")
+	items := make([]github.HoldItem, 0, maxHeldPRsPerRepoPerKick+2)
+	for i := 0; i < maxHeldPRsPerRepoPerKick+1; i++ {
+		items = append(items, github.HoldItem{Repo: "acme/crowded", Number: i + 1, Type: "pr", Title: "occupied work"})
+	}
+	items = append(items, github.HoldItem{Repo: "acme/quiet", Number: 7, Type: "pr", Title: "lone held pr"})
+
+	msg := s.BuildAgentMessage("quality", nil, &github.ActionableResult{
+		Hold: github.HoldResult{PRs: len(items), Total: len(items), Items: items},
+	})
+
+	if !strings.Contains(msg, "STAND DOWN for acme/crowded this kick") {
+		t.Fatalf("crowded repo did not fail closed:\n%s", msg)
+	}
+	if strings.Contains(msg, "STAND DOWN for acme/quiet") {
+		t.Fatalf("uncrowded repo was stood down by another repo's overflow:\n%s", msg)
+	}
+	if !strings.Contains(msg, "acme/quiet#7 lone held pr") {
+		t.Fatalf("uncrowded repo dropped out of the snapshot entirely:\n%s", msg)
 	}
 }
 

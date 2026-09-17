@@ -934,8 +934,9 @@ Before choosing work:
    and, when needed, ` + "`gh pr diff <number> --repo <repo>`" + `. The supplied list is the
    authoritative open-PR snapshot; do not run ` + "`gh pr list`" + ` to rebuild it.
 3. If another PR already covers any intended ground, choose a disjoint cluster
-   or stand down. If the snapshot says additional PRs were omitted, stand down:
-   unseen occupied ground cannot be proven disjoint. Do not write a second
+   or stand down. If the snapshot flags a repo as having omitted PRs, stand
+   down for that repo: unseen occupied ground cannot be proven disjoint. Repos
+   the snapshot lists in full remain workable. Do not write a second
    implementation and do not remove hold.
 4. Make each new PR title and body name the exact files/functions/cluster it
    claims so the next kick can make the same comparison.
@@ -1274,34 +1275,63 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 	return b.String()
 }
 
+// maxHeldPRsPerRepoPerKick bounds the held-PR snapshot per repository instead
+// of across the whole kick.
+//
+// Disjointness is only ever evaluated against PRs in the repo the agent is
+// about to touch, so a repo-scoped cap preserves the fail-closed guarantee
+// exactly — the agent still refuses to act wherever the snapshot is
+// incomplete — while preventing one crowded repo from blanking the snapshot
+// for every other repo in the sweep.
+//
+// The previous global cap reused maxIssuesPerKick, which coupled two unrelated
+// limits and made the stand-down fire on render-cap overflow rather than on
+// real contention: a spoke tracking 16 repos stood down across all of them
+// because a single repo pushed the combined list one item past 100, and could
+// then never open the PRs that would drain the backlog causing the overflow.
+const maxHeldPRsPerRepoPerKick = 100
+
 func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableResult) (string, bool) {
 	if actionable == nil {
 		return "  (none)", false
 	}
 	var b strings.Builder
 	shown := 0
-	omitted := 0
 	failClosed := false
+
+	repoOrder := make([]string, 0, 8)
+	byRepo := make(map[string][]github.HoldItem)
 	for _, item := range actionable.Hold.Items {
 		if item.Type != "pr" {
 			continue
 		}
-		if shown >= s.issueCap() {
-			omitted++
-			continue
+		if _, seen := byRepo[item.Repo]; !seen {
+			repoOrder = append(repoOrder, item.Repo)
 		}
-		title, verdict := s.enforceIssueTextVerdict(item.Title)
-		failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
-		const maxHeldPRTitleRunes = 70
-		if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
-			title = string(runes[:maxHeldPRTitleRunes])
+		byRepo[item.Repo] = append(byRepo[item.Repo], item)
+	}
+
+	for _, repo := range repoOrder {
+		items := byRepo[repo]
+		limit := len(items)
+		if limit > maxHeldPRsPerRepoPerKick {
+			limit = maxHeldPRsPerRepoPerKick
 		}
-		b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
-		shown++
+		for _, item := range items[:limit] {
+			title, verdict := s.enforceIssueTextVerdict(item.Title)
+			failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
+			const maxHeldPRTitleRunes = 70
+			if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
+				title = string(runes[:maxHeldPRTitleRunes])
+			}
+			b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
+			shown++
+		}
+		if omitted := len(items) - limit; omitted > 0 {
+			b.WriteString(fmt.Sprintf("  ... %d additional open held PRs omitted in %s; STAND DOWN for %s this kick\n", omitted, repo, repo))
+		}
 	}
-	if omitted > 0 {
-		b.WriteString(fmt.Sprintf("  ... %d additional open held PRs omitted; STAND DOWN this kick\n", omitted))
-	}
+
 	if shown == 0 {
 		return "  (none)", failClosed
 	}
