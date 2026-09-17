@@ -56,6 +56,14 @@ on:
         description: 'List what would be deleted without deleting it'
         type: boolean
         default: false
+      quota_target_mb:
+        description: 'Reclaim superseded buildkit blobs until usage is under this (MB)'
+        type: string
+        default: '8192'
+      min_blob_age_days:
+        description: 'Never reclaim a buildkit blob younger than this many days'
+        type: string
+        default: '3'
 
 permissions:
   actions: write
@@ -80,6 +88,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # Defaults repeated here because scheduled and `delete`-triggered
+          # runs have no inputs context at all (it is empty, not defaulted).
+          QUOTA_TARGET_MB: ${{ inputs.quota_target_mb || '8192' }}
+          MIN_BLOB_AGE_DAYS: ${{ inputs.min_blob_age_days || '3' }}
         run: |
           set -euo pipefail
 
@@ -98,7 +110,7 @@ jobs:
               --jq '.actions_caches | length')
             [ "$count" -gt 0 ] || break
             gh api "repos/${REPO}/actions/caches?per_page=100&page=${page}" \
-              --jq '.actions_caches[] | [.id, .ref, .size_in_bytes, .key] | @tsv' >> /tmp/caches.tsv
+              --jq '.actions_caches[] | [.id, .ref, .size_in_bytes, .key, .created_at] | @tsv' >> /tmp/caches.tsv
             page=$(( page + 1 ))
             # Hard stop so a pagination bug can never spin forever.
             [ "$page" -le 50 ] || { echo "::warning::stopping at page 50"; break; }
@@ -153,21 +165,22 @@ jobs:
           echo "::endgroup::"
 
           if [ ! -s /tmp/dead_refs.txt ]; then
-            echo "No caches on deleted branches. Nothing to reclaim."
-            exit 0
+            echo "No caches on deleted branches."
           fi
 
           echo "::group::Deleting"
           reclaimed=0
           deleted=0
-          while IFS=$'\t' read -r id ref size key; do
-            if grep -qxF "$ref" /tmp/dead_refs.txt; then
+          : > /tmp/deleted_ids.txt
+          while IFS=$'\t' read -r id ref size key created; do
+            if [ -s /tmp/dead_refs.txt ] && grep -qxF "$ref" /tmp/dead_refs.txt; then
               mb=$(( size / 1048576 ))
               if [ "${DRY_RUN:-false}" = "true" ]; then
                 echo "would delete ${mb}MB  ${ref}  ${key}"
               else
                 if gh api -X DELETE "repos/${REPO}/actions/caches/${id}" --silent >/dev/null 2>&1; then
                   echo "deleted ${mb}MB  ${ref}  ${key}"
+                  echo "$id" >> /tmp/deleted_ids.txt
                   deleted=$(( deleted + 1 ))
                   reclaimed=$(( reclaimed + size ))
                 else
@@ -179,6 +192,105 @@ jobs:
               fi
             fi
           done < /tmp/caches.tsv
+          echo "::endgroup::"
+
+          # ---------------------------------------------------------------
+          # Second pass: reclaim quota from SUPERSEDED buildkit blobs (#7336)
+          #
+          # The dead-branch pass above cannot fix the eviction this file was
+          # written to stop, because almost none of the quota is on dead
+          # branches. Measured 2026-09-17, 392 entries totalling 10.89 GB —
+          # already OVER the 10 GB ceiling, so LRU eviction is running
+          # continuously:
+          #
+          #   refs/heads/v4 .......... 9.21 GB across 324 entries (PROTECTED)
+          #   buildkit-blob-* ........ 10.54 GB across 293 entries (97%)
+          #   hive-cgo-race-apt-* .... ABSENT
+          #
+          # The apt entry the header describes as "deleted within hours" was
+          # not merely evicted, it did not exist at all — and the branch
+          # holding the quota is v4, which the pass above will never touch by
+          # design. Protecting v4's caches and reclaiming v4's quota are not
+          # the same thing: docker.yml exports a fresh content-addressed blob
+          # set on every push, and the superseded ones stay until LRU picks a
+          # victim. The victim is always the smallest useful entry.
+          #
+          # Age is measured on created_at, NOT last_accessed_at. Every blob in
+          # the repo showed a last_accessed_at inside 24h because buildkit
+          # reads the cache manifest on every build, which refreshes the
+          # timestamp for blobs it then does not use. created_at is the only
+          # field that distinguishes a superseded blob from a live one.
+          #
+          # Deleting a buildkit blob costs a rebuild of that layer and nothing
+          # else — they are content-addressed and re-exported by the next
+          # docker.yml run. That is why this pass may touch protected branches
+          # while the dead-branch pass must not: it reclaims a REBUILDABLE
+          # export, never a branch's only copy of anything.
+          #
+          # Targeted, not unconditional: it deletes oldest-first only while
+          # usage exceeds QUOTA_TARGET_MB, and never touches a blob younger
+          # than MIN_BLOB_AGE_DAYS. At the measured population a 3-day floor
+          # frees 2.50 GB (49 blobs), taking the repo to 8.39 GB — enough
+          # headroom that a ~50 MB apt entry survives.
+          echo "::group::Reclaiming buildkit quota"
+          quota_target_mb="${QUOTA_TARGET_MB:-8192}"
+          min_age_days="${MIN_BLOB_AGE_DAYS:-3}"
+          # ISO-8601 UTC, compared as a STRING. mktime() is a gawk extension
+          # and Ubuntu's default awk is mawk, so an epoch comparison would die
+          # with "calling undefined function mktime" on the runner. These
+          # timestamps are fixed-width, zero-padded and UTC, so they sort and
+          # compare lexically — which also sidesteps the fractional seconds
+          # GitHub includes (2026-09-17T14:33:32.300134Z).
+          cutoff=$(date -u -d "${min_age_days} days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null \
+            || date -u -v-"${min_age_days}"d +%Y-%m-%dT%H:%M:%S)
+
+          # Recompute current usage from what SURVIVED the pass above.
+          : > /tmp/live.tsv
+          while IFS=$'\t' read -r id ref size key created; do
+            # Explicit if/then, not `grep && continue`: under `set -e` the
+            # exit status of a failed AND-OR list is treated inconsistently
+            # across shells, and a no-match grep here is the NORMAL case.
+            if grep -qxF "$id" /tmp/deleted_ids.txt 2>/dev/null; then
+              continue
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$ref" "$size" "$key" "$created" >> /tmp/live.tsv
+          done < /tmp/caches.tsv
+
+          used=$(awk -F'\t' '{s+=$3} END{print s+0}' /tmp/live.tsv)
+          target=$(( quota_target_mb * 1048576 ))
+          echo "usage after dead-branch pass: $(( used / 1048576 )) MB (target ${quota_target_mb} MB)"
+
+          if [ "$used" -le "$target" ]; then
+            echo "under target; no buildkit reclaim needed"
+          else
+            # Oldest-first: the least likely to be referenced by a current image.
+            awk -F'\t' -v cutoff="$cutoff" '
+              $4 ~ /^buildkit-blob/ && $5 < cutoff { print $5 "\t" $1 "\t" $3 "\t" $4 }
+            ' /tmp/live.tsv | LC_ALL=C sort > /tmp/blob_candidates.tsv
+
+            echo "$(wc -l < /tmp/blob_candidates.tsv | tr -d ' ') blob(s) older than ${min_age_days}d eligible"
+            while IFS=$'\t' read -r created id size key; do
+              [ "$used" -gt "$target" ] || break
+              mb=$(( size / 1048576 ))
+              if [ "${DRY_RUN:-false}" = "true" ]; then
+                echo "would delete ${mb}MB  ${created}  ${key}"
+                used=$(( used - size ))
+                blob_reclaimed=$(( ${blob_reclaimed:-0} + size ))
+                blob_deleted=$(( ${blob_deleted:-0} + 1 ))
+              elif gh api -X DELETE "repos/${REPO}/actions/caches/${id}" --silent >/dev/null 2>&1; then
+                echo "deleted ${mb}MB  ${created}  ${key}"
+                used=$(( used - size ))
+                blob_reclaimed=$(( ${blob_reclaimed:-0} + size ))
+                blob_deleted=$(( ${blob_deleted:-0} + 1 ))
+              else
+                # Raced by GitHub's own eviction or a concurrent prune. The
+                # quota is free either way, so this is success.
+                echo "::notice::could not delete cache ${id} (already gone?)"
+                used=$(( used - size ))
+              fi
+            done < /tmp/blob_candidates.tsv
+          fi
+          echo "final usage: $(( used / 1048576 )) MB"
           echo "::endgroup::"
 
           {
@@ -193,5 +305,8 @@ jobs:
               echo "- Reclaimed: **$(( reclaimed / 1048576 )) MB**"
             fi
             echo ""
-            echo "Protects the \`hive-cgo-race-apt-*\` offline package cache from LRU eviction (kubestellar/hive#7031)."
+            echo "- Buildkit blobs reclaimed: **${blob_deleted:-0}** ($(( ${blob_reclaimed:-0} / 1048576 )) MB)"
+            echo "- Usage after prune: **$(( used / 1048576 )) MB** (target ${quota_target_mb} MB)"
+            echo ""
+            echo "Protects the \`hive-cgo-race-apt-*\` offline package cache from LRU eviction (kubestellar/hive#7031, #7336)."
           } >> "$GITHUB_STEP_SUMMARY"
