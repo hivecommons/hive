@@ -6054,6 +6054,12 @@ func runEvalCycle(
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+	// Held PRs need CI status too, or a red held PR can never be repaired:
+	// the hold label kept it out of PRs.Items, so nothing ever learned it was
+	// red and no agent was ever told to fix it (hivecommons/hive#7438). This
+	// enriches the held list ONLY for the repair path — held PRs still never
+	// reach the merge sweep, escalation or the queue counts.
+	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
 
 	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
 	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
@@ -9003,12 +9009,37 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			reviewLoaded = true
 		}
 	}
+	// Two populations, one classifier (hivecommons/hive#7438). PRs.Items are
+	// the merge candidates. PRs.Held are PRs the hold gate removed from Items
+	// — they can never become merge-eligible, but a RED one still has to reach
+	// its authoring agent, otherwise it deadlocks: it stays red, so it stays
+	// held, so nothing ever repairs it.
+	type prCandidate struct {
+		pr   github.PullRequest
+		held bool
+	}
+	candidates := make([]prCandidate, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
 	for _, pr := range actionable.PRs.Items {
+		candidates = append(candidates, prCandidate{pr: pr})
+	}
+	for _, pr := range actionable.PRs.Held {
+		candidates = append(candidates, prCandidate{pr: pr, held: true})
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	for _, cand := range candidates {
+		pr := cand.pr
 		if pr.Draft {
 			continue
 		}
 		key := fmt.Sprintf("%s/%d", pr.Repo, pr.Number)
-		held := holdSet[key]
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		// The hold can arrive either as membership in PRs.Held or as a row in
+		// the hold snapshot; both mean the same thing here.
+		held := cand.held || holdSet[key]
 		fullRepo := fullRepoName(pr.Repo, org)
 		if enforceIntent {
 			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.MergeAllowed() {

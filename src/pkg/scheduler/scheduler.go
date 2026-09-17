@@ -1695,6 +1695,16 @@ func formatMergeEligibleData(data []byte, limit int) string {
 	return b.String()
 }
 
+// heldMarker annotates a red PR that is under hold. Held PRs entered this list
+// with hivecommons/hive#7438 so they can be repaired; the marker is what keeps
+// an agent from reading their presence as permission to merge or unhold them.
+func heldMarker(held bool) string {
+	if !held {
+		return ""
+	}
+	return " [" + heldRedPRNote + "]"
+}
+
 func (s *Scheduler) buildCIFailingList() string {
 	data, err := os.ReadFile(ciFailingPath)
 	if err != nil {
@@ -1760,7 +1770,7 @@ func (s *Scheduler) buildCIFailingList() string {
 			b.WriteString(prListOverflowLine(len(pushable)-i, limit))
 			break
 		}
-		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s) — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, pr.Title))
+		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, heldMarker(pr.Held), pr.Title))
 	}
 	if len(forks) > 0 {
 		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, you CANNOT push to these):\n", len(forks)))
@@ -1780,7 +1790,7 @@ func (s *Scheduler) buildCIFailingList() string {
 			if pr.HeadRef != "" {
 				head += ":" + pr.HeadRef
 			}
-			b.WriteString(fmt.Sprintf("  #%d %s by @%s [fork: %s — comment only] — %s\n", pr.Number, pr.Repo, pr.Author, head, pr.Title))
+			b.WriteString(fmt.Sprintf("  #%d %s by @%s [fork: %s — comment only]%s — %s\n", pr.Number, pr.Repo, pr.Author, head, heldMarker(pr.Held), pr.Title))
 		}
 	}
 	return b.String()

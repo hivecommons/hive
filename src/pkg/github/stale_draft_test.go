@@ -43,7 +43,7 @@ func TestFetchPRs_StaleAppDraftIsSurfaced(t *testing.T) {
 	c := newTestClient(t, server, "acme", []string{"widget"})
 	c.appBotLogin = "acme-bot[bot]"
 
-	actionable, held, staleDrafts, total, err := c.fetchPRs(t.Context(), "widget")
+	actionable, held, _, staleDrafts, total, err := c.fetchPRs(t.Context(), "widget")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestFetchPRs_RecentAppDraftNotSurfaced(t *testing.T) {
 	c := newTestClient(t, server, "acme", []string{"widget"})
 	c.appBotLogin = "acme-bot[bot]"
 
-	_, _, staleDrafts, _, err := c.fetchPRs(t.Context(), "widget")
+	_, _, _, staleDrafts, _, err := c.fetchPRs(t.Context(), "widget")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestFetchPRs_HumanStaleDraftNotSurfaced(t *testing.T) {
 	c := newTestClient(t, server, "acme", []string{"widget"})
 	c.appBotLogin = "acme-bot[bot]"
 
-	_, _, staleDrafts, _, err := c.fetchPRs(t.Context(), "widget")
+	_, _, _, staleDrafts, _, err := c.fetchPRs(t.Context(), "widget")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}

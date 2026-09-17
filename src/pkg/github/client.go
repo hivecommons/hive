@@ -460,6 +460,18 @@ type PRResult struct {
 	// EVERY draft before the agent ever sees it, so that instruction had
 	// nothing to act on. See kubestellar/hive#3963.
 	StaleDrafts []PullRequest `json:"stale_drafts,omitempty"`
+	// Held carries the FULL PullRequest for every non-draft PR that fetchPRs
+	// moved into HoldResult.Items. HoldItem has no CIStatus, head SHA or
+	// failing-check names, so a held PR used to be invisible to every red-PR
+	// consumer: the hold label removed it from Items before CI was ever
+	// enriched, and a red held PR could therefore never be repaired — it
+	// stayed red, so it stayed held (hivecommons/hive#7438).
+	//
+	// This is a SEPARATE list on purpose. Held PRs must not re-enter Items:
+	// the merge sweep, escalation, duplicate-PR guard and the queue counts all
+	// read Items, and the hold is exactly the gate that must keep them out.
+	// Only the CI-repair path reads Held.
+	Held []PullRequest `json:"held,omitempty"`
 }
 
 type HoldResult struct {
@@ -592,6 +604,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	var allIssues []Issue
 	var allPRs []PullRequest
 	var holdItems []HoldItem
+	var allHeldPRs []PullRequest
 	var allStaleDrafts []PullRequest
 	totalByRepo := make(map[string]RepoCounts)
 
@@ -609,7 +622,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldPRs, staleDrafts, prTotal, err := c.fetchPRs(ctx, repo)
+		prs, heldItems, heldPRs, staleDrafts, prTotal, err := c.fetchPRs(ctx, repo)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -618,7 +631,8 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			continue
 		}
 		allPRs = append(allPRs, prs...)
-		holdItems = append(holdItems, heldPRs...)
+		holdItems = append(holdItems, heldItems...)
+		allHeldPRs = append(allHeldPRs, heldPRs...)
 		allStaleDrafts = append(allStaleDrafts, staleDrafts...)
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
@@ -640,6 +654,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// presentational — this is the order last-actionable.json and the
 	// dashboard show, not a signal any agent or the governor acts on.
 	SortPullRequestsForReview(allPRs)
+	SortPullRequestsForReview(allHeldPRs)
 	SortHoldItemsForReview(holdItems)
 
 	holdIssueCount := 0
@@ -657,6 +672,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		Count:       len(allPRs),
 		Items:       allPRs,
 		StaleDrafts: allStaleDrafts,
+		Held:        allHeldPRs,
 	}
 	result.Hold = HoldResult{
 		Issues: holdIssueCount,
@@ -773,7 +789,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 // this way — a human's stale draft is their call, not ours to nag about.
 const staleDraftAfter = 48 * time.Hour
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, staleDrafts []PullRequest, totalPRs int, err error) {
+// prHeadSHA reads a PR's head commit, tolerating a nil head.
+func prHeadSHA(pr *gh.PullRequest) string {
+	if pr.GetHead() == nil {
+		return ""
+	}
+	return pr.GetHead().GetSHA()
+}
+
+func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, totalPRs int, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -785,7 +809,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -807,6 +831,26 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 				CreatedAt:   pr.GetCreatedAt().Time,
 				ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
 			})
+			// Also keep the full PR so the CI-repair path can see whether a
+			// held PR is red (hivecommons/hive#7438). Drafts stay out, exactly
+			// as they do for the actionable list. This slice never feeds the
+			// merge sweep — the hold gate is untouched.
+			if !pr.GetDraft() {
+				headRef, headRepo, fromFork := prHeadOrigin(pr)
+				heldPRs = append(heldPRs, PullRequest{
+					Repo:      repo,
+					Number:    pr.GetNumber(),
+					Title:     pr.GetTitle(),
+					Author:    safeGetLogin(pr.GetUser()),
+					Labels:    labels,
+					CreatedAt: pr.GetCreatedAt().Time,
+					URL:       pr.GetHTMLURL(),
+					HeadSHA:   prHeadSHA(pr),
+					HeadRef:   headRef,
+					HeadRepo:  headRepo,
+					FromFork:  fromFork,
+				})
+			}
 			continue
 		}
 
@@ -858,7 +902,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		})
 	}
 
-	return actionable, held, staleDrafts, totalPRs, nil
+	return actionable, held, heldPRs, staleDrafts, totalPRs, nil
 }
 
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit

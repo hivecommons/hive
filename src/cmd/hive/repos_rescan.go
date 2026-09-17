@@ -77,6 +77,9 @@ func rescanRepos(
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+	// Held PRs are enriched on the same terms as the eval tick so a manual
+	// rescan produces the same red-held-PR view (hivecommons/hive#7438).
+	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
 	lastActionable.Store(actionable)

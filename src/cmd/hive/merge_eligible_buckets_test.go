@@ -47,6 +47,9 @@ type failingEntry struct {
 }
 
 type mergeEligibleInputs struct {
+	// heldPRs is the PRs.Held population: PRs the hold gate removed from
+	// Items, which must still be classified as red work (hivecommons/hive#7438).
+	heldPRs        []github.PullRequest
 	hold           github.HoldResult
 	org            string
 	escalated      map[string]bool
@@ -68,7 +71,7 @@ func runWriteMergeEligible(t *testing.T, prs []github.PullRequest, in mergeEligi
 		ciFailingPath = origFail
 	})
 
-	actionable := &github.ActionableResult{PRs: github.PRResult{Items: prs}}
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: prs, Held: in.heldPRs}}
 	writeMergeEligible(actionable, in.hold, in.org, in.escalated, false, nil, in.requireReview, in.requiredChecks,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
