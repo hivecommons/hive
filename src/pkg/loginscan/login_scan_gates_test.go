@@ -1,4 +1,4 @@
-package main
+package loginscan
 
 import (
 	"context"
@@ -34,8 +34,8 @@ func TestScanForLoginRequiredStandsDownWithoutUsablePatterns(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Must return without touching any of the nil collaborators.
-			scanForLoginRequired(context.Background(), loginScanConfig(tc.patterns),
-				nil, nil, nil, restoreTestLogger(), nil)
+			Scan(context.Background(), loginScanConfig(tc.patterns),
+				nil, nil, nil, testLogger(), nil)
 		})
 	}
 }
@@ -47,7 +47,7 @@ func TestScanForLoginRequiredStandsDownWithoutUsablePatterns(t *testing.T) {
 // invalid-pattern skip itself does not panic or short-circuit the whole
 // function, only the individual bad pattern.
 func TestScanForLoginRequiredMixedValidityPatternsReachesScanLoop(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := agent.NewManager(map[string]config.AgentConfig{}, testLogger(), agent.ProjectContext{})
 	cfg := loginScanConfig([]string{"", "[unclosed", "please log in"})
 
 	// A nil dashSrv/notifier is safe here only because there are no running
@@ -55,5 +55,5 @@ func TestScanForLoginRequiredMixedValidityPatternsReachesScanLoop(t *testing.T) 
 	// never executes. This still proves the function gets PAST the early
 	// "no usable patterns" return (which the panic-on-touch test above
 	// verifies happens for an all-invalid list) to the scan loop itself.
-	scanForLoginRequired(context.Background(), cfg, mgr, nil, nil, restoreTestLogger(), newLoginSightingTracker())
+	Scan(context.Background(), cfg, mgr, nil, nil, testLogger(), NewSightingTracker())
 }

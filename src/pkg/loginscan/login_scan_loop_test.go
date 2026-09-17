@@ -1,4 +1,4 @@
-package main
+package loginscan
 
 import (
 	"context"
@@ -97,8 +97,8 @@ func TestScanForLoginRequiredLoopBodyHandlesVerdicts(t *testing.T) {
 	}
 	notifier := &fakeLoginScanNotifier{}
 	auditor := &fakeLoginScanAuditor{}
-	sightings := newLoginSightingTracker()
-	sightings.observe("pause", true)
+	sightings := NewSightingTracker()
+	sightings.Observe("pause", true)
 
 	cfg := loginScanLoopConfig([]string{"please log in"}, map[string]string{
 		"clean":   "claude",
@@ -108,7 +108,7 @@ func TestScanForLoginRequiredLoopBodyHandlesVerdicts(t *testing.T) {
 		"stopped": "claude",
 	})
 
-	scanForLoginRequired(context.Background(), cfg, mgr, notifier, auditor, restoreTestLogger(), sightings)
+	Scan(context.Background(), cfg, mgr, notifier, auditor, testLogger(), sightings)
 
 	assertSameElements(t, mgr.pauses, []string{"pause"})
 	assertSameElements(t, mgr.refreshes, []string{"pause"})
@@ -116,7 +116,7 @@ func TestScanForLoginRequiredLoopBodyHandlesVerdicts(t *testing.T) {
 		"high|🔑 Login required: pause|Agent 'pause' needs authentication. Open the agent's terminal (tmux attach -t hive-pause) and run the login command for the CLI (copilot). Run: copilot auth login",
 	})
 	assertSameElements(t, auditor.entries, []string{"system|pause|trigger=login-detector|pause"})
-	if got := sightings.observe("pause", true); got != 1 {
+	if got := sightings.Observe("pause", true); got != 1 {
 		t.Fatalf("pause should forget the prior sighting streak; next observation got %d, want 1", got)
 	}
 	for _, lines := range mgr.lines {
@@ -150,16 +150,16 @@ func TestScanForLoginRequiredLoopBodyContinuesAfterPaneReadError(t *testing.T) {
 	}
 	notifier := &fakeLoginScanNotifier{}
 	auditor := &fakeLoginScanAuditor{}
-	sightings := newLoginSightingTracker()
+	sightings := NewSightingTracker()
 	for name := range mgr.statuses {
-		sightings.observe(name, true)
+		sightings.Observe(name, true)
 	}
 
 	cfg := loginScanLoopConfig([]string{"please log in"}, map[string]string{
 		"one": "claude", "two": "claude", "three": "claude",
 	})
 
-	scanForLoginRequired(context.Background(), cfg, mgr, notifier, auditor, restoreTestLogger(), sightings)
+	Scan(context.Background(), cfg, mgr, notifier, auditor, testLogger(), sightings)
 
 	if len(mgr.getOutputCalls) != len(mgr.statuses) {
 		t.Fatalf("pane-read error must not abort the scan; GetOutput calls = %v, want %d calls",
@@ -180,7 +180,7 @@ func TestScanForLoginRequiredLoopBodyAcceptsEmptyAgentList(t *testing.T) {
 	mgr := &fakeLoginScanManager{statuses: map[string]*agent.AgentProcess{}}
 	cfg := loginScanLoopConfig([]string{"please log in"}, nil)
 
-	scanForLoginRequired(context.Background(), cfg, mgr, &fakeLoginScanNotifier{}, &fakeLoginScanAuditor{}, restoreTestLogger(), newLoginSightingTracker())
+	Scan(context.Background(), cfg, mgr, &fakeLoginScanNotifier{}, &fakeLoginScanAuditor{}, testLogger(), NewSightingTracker())
 
 	if len(mgr.getOutputCalls) != 0 || len(mgr.pauses) != 0 || len(mgr.refreshes) != 0 {
 		t.Fatalf("empty agent list should do no work: reads=%v pauses=%v refreshes=%v",

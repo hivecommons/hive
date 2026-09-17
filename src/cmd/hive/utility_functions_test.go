@@ -10,26 +10,6 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
-func TestLoginCommandForBackend(t *testing.T) {
-	cases := []struct {
-		backend string
-		want    string
-	}{
-		{"claude", "Run: claude login"},
-		{"copilot", "Run: copilot auth login"},
-		{"gemini", "Run: gemini auth login"},
-		{"goose", "Run: goose auth login"},
-		{"unknown-backend", "Run the login command for unknown-backend"},
-		{"", "Run the login command for "},
-	}
-	for _, tc := range cases {
-		got := loginCommandForBackend(tc.backend)
-		if got != tc.want {
-			t.Errorf("loginCommandForBackend(%q) = %q, want %q", tc.backend, got, tc.want)
-		}
-	}
-}
-
 func TestActionableIssueRefPinsGitHubAndWorksourceIdentity(t *testing.T) {
 	cases := []struct {
 		name  string
