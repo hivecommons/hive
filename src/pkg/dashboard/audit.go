@@ -200,6 +200,37 @@ func (a *AuditLog) LastUserActions() map[string]string {
 // filePath is a parameter (defaulting to auditLogPath when "") so tests can
 // point it at a fixture without touching /data.
 func (a *AuditLog) OutputActionsSince(since time.Time, actions map[string]bool, filePath string) []AuditEntry {
+	match := func(action string) bool { return len(actions) == 0 || actions[action] }
+	return a.actionsSince(since, match, nil, filePath)
+}
+
+// ActionsWithPrefixSince is OutputActionsSince for a whole FAMILY of actions
+// named by prefix — the watchdog's `watchdog-*` entries (#7254) — rather than
+// an enumerated set. Same sources (current file plus rotated/compressed
+// backups), same ordering (oldest first), same tolerance of malformed lines.
+//
+// The prefix doubles as a byte-level pre-filter: a line that does not contain
+// the serialized `"action":"<prefix>` fragment cannot decode to a matching
+// entry, so it is skipped without a JSON decode. On the hive this was built
+// against, that is the difference between decoding 28,775 entries to find 0
+// and decoding 0 — every line in the file was written by this package's own
+// json.Marshal, whose field order and spacing are fixed, so the fragment is
+// exact rather than heuristic. A line that somehow lacks it but still names a
+// matching action would only ever have come from a hand-edited file.
+func (a *AuditLog) ActionsWithPrefixSince(since time.Time, prefix, filePath string) []AuditEntry {
+	match := func(action string) bool { return strings.HasPrefix(action, prefix) }
+	var hint []byte
+	if prefix != "" {
+		hint = []byte(`"action":"` + prefix)
+	}
+	return a.actionsSince(since, match, hint, filePath)
+}
+
+// actionsSince is the shared file scanner behind OutputActionsSince and
+// ActionsWithPrefixSince. match decides per action name; lineHint, when
+// non-empty, lets a line be dropped before decoding when it cannot contain a
+// match (callers that pass it must guarantee every matching line contains it).
+func (a *AuditLog) actionsSince(since time.Time, match func(action string) bool, lineHint []byte, filePath string) []AuditEntry {
 	if filePath == "" {
 		filePath = auditLogPath
 	}
@@ -214,11 +245,14 @@ func (a *AuditLog) OutputActionsSince(since time.Time, actions map[string]bool, 
 			if len(line) == 0 {
 				continue
 			}
+			if len(lineHint) > 0 && !bytes.Contains(line, lineHint) {
+				continue
+			}
 			var e AuditEntry
 			if json.Unmarshal(line, &e) != nil || e.Timestamp == "" {
 				continue
 			}
-			if len(actions) > 0 && !actions[e.Action] {
+			if !match(e.Action) {
 				continue
 			}
 			t, perr := time.Parse(time.RFC3339, e.Timestamp)
@@ -230,6 +264,39 @@ func (a *AuditLog) OutputActionsSince(since time.Time, actions map[string]bool, 
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
 	return out
+}
+
+// RecentWithPrefixSince is the in-memory counterpart of ActionsWithPrefixSince:
+// matching entries from the ring, oldest first. It exists for a hive with no
+// /data volume (local runs, tests), where nothing is ever written to disk and
+// the ring is the only record. It is a fallback, not an alternative — the ring
+// holds auditRingCap entries and is emptied by a restart, so on a real hive the
+// file is the source of truth and callers must prefer it.
+func (a *AuditLog) RecentWithPrefixSince(since time.Time, prefix string) []AuditEntry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []AuditEntry
+	for _, e := range a.ring {
+		if !strings.HasPrefix(e.Action, prefix) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil || t.Before(since) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// HasOnDiskLog reports whether any audit file exists at filePath ("" → the
+// production path) — the test that decides whether a reader may trust the
+// files or must fall back to the ring.
+func (a *AuditLog) HasOnDiskLog(filePath string) bool {
+	if filePath == "" {
+		filePath = auditLogPath
+	}
+	return len(auditLogFiles(filePath)) > 0
 }
 
 func auditLogFiles(filePath string) []string {

@@ -17909,7 +17909,7 @@ function burnAreaChart() {
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
         // Health tab loads it from its own endpoint.
-        if (tabId === 'Health') loadEscalationConfig();
+        if (tabId === 'Health') { loadEscalationConfig(); loadWatchdogActivity(); }
         // Opening the Model Gateways tab loads the live gateway list and
         // renders the manager into its container.
         if (tabId === 'Model Gateways') {
@@ -22026,10 +22026,12 @@ function burnAreaChart() {
           Observes each agent's actual terminal rather than its configured state, and can restart agents that are running but dead.
         </p>
         ${pausedBanner}${healBanner}${observeBanner}
+        ${renderWatchdogActivityShell()}
         <div class="config-field-row">
           <div class="config-field">
             <label>Mode <span class="config-info">i<span class="config-tooltip">How much authority the watchdog has over your agents. Start in Observe, read the Audit Log, then move to Heal.</span></span></label>
             <select data-change-action="markDirty" data-arg0="health" data-arg1="watchdogMode" data-arg-types="s,s,s">${opts}</select>
+            <div id="watchdog-promotion-hint" style="font-size:0.7rem;margin-top:4px;min-height:1em"></div>
           </div>
           <div class="config-field">
             <label>Probe interval (sec) <span class="config-info">i<span class="config-tooltip">Minimum seconds between watchdog sweeps. Each sweep captures one terminal per agent, so this is the main throttle on its cost.</span></span></label>
@@ -22051,6 +22053,215 @@ function burnAreaChart() {
           Restart backoff ladder: <code style="font-family:var(--font-mono)">${ladder}</code>
           <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
         </div>`;
+    }
+
+    // ── Watchdog activity strip (#7254) ──────────────────────────────────────
+    // "Review the watchdog-*-observed entries in the Audit Log, then switch to
+    // Heal" is only a data-driven decision if the data is on the page. The
+    // strip under the mode banner shows how many actions the watchdog took
+    // (heal) or WOULD have taken (observe) in the trailing 30 days, a daily
+    // histogram of them, the current liveness verdict per probed agent, and —
+    // in observe — whether anything in the window argues against promotion.
+    //
+    // It is filled in place (loadConvergenceSoak pattern) rather than by
+    // re-rendering the tab, so a fetch landing after the operator has touched
+    // the mode select never repaints their unsaved edit away.
+    let _watchdogActivity = null;      // last GET /api/watchdog/activity body
+    let _watchdogActivityAt = 0;       // epoch ms of that fetch; 0 = never / invalidated
+    let _watchdogActivityErr = '';     // last fetch failure, '' when fine
+    let _watchdogActivityLoading = false;
+    const WATCHDOG_ACTIVITY_DAYS = 30;
+    const WATCHDOG_ACTIVITY_TTL_MS = 60000;
+
+    // Element ids the shell renders and fillWatchdogActivity targets. Named
+    // once so the static-HTML guard and the fill code cannot drift apart.
+    const WATCHDOG_ACTIVITY_IDS = {
+      strip: 'watchdog-activity',
+      count: 'watchdog-activity-count',
+      spark: 'watchdog-activity-spark',
+      actions: 'watchdog-activity-actions',
+      liveness: 'watchdog-liveness',
+      hint: 'watchdog-promotion-hint',
+    };
+
+    function invalidateWatchdogActivity() { _watchdogActivityAt = 0; }
+
+    // renderWatchdogActivityShell is the synchronous placeholder: the strip's
+    // frame with its element ids, awaiting the fetch. The mode is NOT read from
+    // config here — the readout reports the mode actually in force (kill
+    // switch applied), which is the one the headline must describe.
+    function renderWatchdogActivityShell() {
+      const I = WATCHDOG_ACTIVITY_IDS;
+      return `
+        <div id="${I.strip}" style="border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-bottom:12px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted)">Watchdog activity · last ${WATCHDOG_ACTIVITY_DAYS} d</div>
+            <div id="${I.spark}"></div>
+          </div>
+          <div id="${I.count}" style="font-size:0.85rem;margin-top:4px;color:var(--muted)">Loading…</div>
+          <div id="${I.actions}" style="font-size:0.7rem;margin-top:4px"></div>
+          <div id="${I.liveness}" style="margin-top:8px"></div>
+        </div>`;
+    }
+
+    // loadWatchdogActivity fetches the readout when the Health tab opens and
+    // fills the strip once it lands. Cached for a minute: every re-render of
+    // the tab calls this, and the strip is a file scan server-side.
+    async function loadWatchdogActivity() {
+      const fresh = _watchdogActivityAt && Date.now() - _watchdogActivityAt < WATCHDOG_ACTIVITY_TTL_MS;
+      if (fresh) { fillWatchdogActivity(); return; }
+      if (_watchdogActivityLoading) return;
+      _watchdogActivityLoading = true;
+      try {
+        const res = await fetch(`/api/watchdog/activity?days=${WATCHDOG_ACTIVITY_DAYS}`);
+        if (!res.ok) throw new Error(res.status === 403 ? 'read-write access is required to see watchdog activity' : `HTTP ${res.status}`);
+        _watchdogActivity = await res.json();
+        _watchdogActivityErr = '';
+      } catch (err) {
+        _watchdogActivity = null;
+        _watchdogActivityErr = err && err.message ? err.message : String(err);
+      } finally {
+        _watchdogActivityAt = Date.now();
+        _watchdogActivityLoading = false;
+      }
+      fillWatchdogActivity();
+    }
+
+    // Audit action short names (the `watchdog-` prefix stripped), as the API
+    // keys byAction. Base names carry severity; the `-observed` twin of each
+    // is the same decision, not taken.
+    const WATCHDOG_ACTION_LABELS = {
+      'restart': 'restart',
+      'crashloop-pause': 'crash-loop pause',
+      'giveup': 'give-up',
+      'healthy-reset': 'healthy reset',
+    };
+    function watchdogActionBase(key) { return String(key).replace(/-observed$/, ''); }
+    function watchdogActionObserved(key) { return /-observed$/.test(String(key)); }
+    function watchdogActionSevere(key) {
+      const b = watchdogActionBase(key);
+      return b === 'crashloop-pause' || b === 'giveup';
+    }
+    // Colour by severity (#7254): observed = muted, restart = amber,
+    // pause/give-up = red. A pause the watchdog only WOULD have taken is still
+    // red — it is the verdict that decides promotion, taken or not.
+    function watchdogActionColor(key) {
+      if (watchdogActionSevere(key)) return 'var(--red)';
+      if (watchdogActionObserved(key)) return 'var(--muted)';
+      if (watchdogActionBase(key) === 'restart') return 'var(--yellow)';
+      return 'var(--muted)';
+    }
+    // The strip's overall colour is its worst action's colour.
+    function watchdogActivityColor(a) {
+      const keys = Object.keys(a.byAction || {}).filter(k => (a.byAction[k] || 0) > 0);
+      if (keys.some(watchdogActionSevere)) return 'var(--red)';
+      if (keys.some(k => !watchdogActionObserved(k) && watchdogActionBase(k) === 'restart')) return 'var(--yellow)';
+      return 'var(--muted)';
+    }
+
+    // watchdogActivitySparkSvg draws the daily histogram through the existing
+    // axis sparkline (fact/cost pattern) so it reads like every other 30-day
+    // trend on the dashboard. axisSparkSvg is used rather than sparkSvg
+    // because sparkSvg carries the last non-zero value forward through zero
+    // days — right for a gauge, wrong for a count of events where a zero day
+    // IS the news.
+    function watchdogActivitySparkSvg(a) {
+      const daily = Array.isArray(a.daily) ? a.daily : [];
+      if (daily.length < 2) return '';
+      const color = watchdogActivityColor(a);
+      const verb = a.acting ? 'taken' : 'would have been taken';
+      return axisSparkSvg(daily, d => d.count || 0, d => Date.parse(d.date + 'T00:00:00Z'), fmtSparkVal, color,
+        `Watchdog actions per day (last ${a.days} d) — actions ${verb}; vertical axis: actions/day, horizontal axis: date`);
+    }
+
+    // watchdogLivenessTable renders the per-agent verdict: the pane class the
+    // reconciler last saw (or crash-loop when it paused the agent), how long
+    // the agent has been in it, and the two other condition axes.
+    function watchdogLivenessTable(agents) {
+      if (!Array.isArray(agents) || !agents.length) {
+        return `<div style="font-size:0.7rem;color:var(--muted)">No agent has been probed yet — liveness appears after the watchdog's first sweep.</div>`;
+      }
+      const stateColor = s =>
+        s === 'ready' ? 'var(--ok, var(--green))'
+        : s === 'crash-loop' ? 'var(--red)'
+        : (s === 'shell-prompt' || s === 'stuck-overlay' || s === 'no-output' || s === 'no-session') ? 'var(--yellow)'
+        : 'var(--muted)';
+      const axis = (label, v) => v
+        ? `<span title="${esc(label)}: ${esc(v)}" style="color:${v === 'True' ? 'var(--ok, var(--green))' : v === 'False' ? 'var(--danger, var(--red))' : 'var(--muted)'};margin-left:6px">${v === 'True' ? '✓' : v === 'False' ? '✕' : '?'} ${esc(label)}</span>`
+        : '';
+      const rows = agents.map(ag => {
+        const since = ag.since ? relativeAge(ag.since) : '';
+        const sinceCell = since ? `<span style="color:var(--muted)" title="${esc(ag.since)}">for ${esc(since.replace(/ ago$/, ''))}</span>` : '';
+        const paused = ag.paused && ag.state !== 'crash-loop' ? `<span style="color:var(--muted);margin-left:6px">(paused)</span>` : '';
+        return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:2px 0" title="${esc(ag.message || '')}">
+            <span style="min-width:90px;font-weight:600">${esc(ag.name)}</span>
+            <span style="color:${stateColor(ag.state)};font-family:var(--font-mono)">${esc(ag.state || 'unknown')}</span>
+            ${sinceCell}${paused}
+            <span>${axis('auth', ag.authenticated)}${axis('producing', ag.producing)}</span>
+          </div>`;
+      }).join('');
+      return `<div style="font-size:0.72rem;color:var(--muted);margin-bottom:2px">Per-agent liveness (current watchdog verdict)</div><div style="font-size:0.72rem">${rows}</div>`;
+    }
+
+    // watchdogPromotionHintHTML is the Observe → Heal verdict beside the mode
+    // select. In observe: "Safe to promote" or the reason it is not. In heal:
+    // when the watchdog last acted, so a healing hive that has done nothing for
+    // weeks is visibly quiet rather than silently trusted.
+    function watchdogPromotionHintHTML(a) {
+      if (a.mode === 'observe' && a.promotion) {
+        const ok = !!a.promotion.safe;
+        return `<span style="color:${ok ? 'var(--ok, var(--green))' : 'var(--yellow)'};font-weight:600">${ok ? 'Safe to promote to Heal' : 'Not yet safe to promote'}</span>
+          <span style="color:var(--muted)"> — ${esc(a.promotion.reason || '')}</span>`;
+      }
+      if (a.mode === 'heal') {
+        return a.lastActionAt
+          ? `<span style="color:var(--muted)">Last action: <span title="${esc(a.lastActionAt)}">${esc(WATCHDOG_ACTION_LABELS[a.lastAction] || a.lastAction || 'action')} ${esc(relativeAge(a.lastActionAt))}</span></span>`
+          : `<span style="color:var(--muted)">No action taken in ${a.days} d.</span>`;
+      }
+      return '';
+    }
+
+    // fillWatchdogActivity paints the fetched readout into the shell. A
+    // failed fetch says so in the strip; it never leaves "Loading…" standing.
+    function fillWatchdogActivity() {
+      const I = WATCHDOG_ACTIVITY_IDS;
+      const strip = document.getElementById(I.strip);
+      if (!strip) return;
+      const count = document.getElementById(I.count);
+      const spark = document.getElementById(I.spark);
+      const actions = document.getElementById(I.actions);
+      const liveness = document.getElementById(I.liveness);
+      const hint = document.getElementById(I.hint);
+      const a = _watchdogActivity;
+      if (!a) {
+        if (count) count.innerHTML = `<span style="color:var(--muted)">Watchdog activity unavailable${_watchdogActivityErr ? ' — ' + esc(_watchdogActivityErr) : ''}.</span>`;
+        if (spark) spark.innerHTML = '';
+        if (actions) actions.innerHTML = '';
+        if (liveness) liveness.innerHTML = '';
+        if (hint) hint.innerHTML = '';
+        return;
+      }
+      const total = a.total || 0;
+      const color = total ? watchdogActivityColor(a) : 'var(--text)';
+      const headline = a.mode === 'off'
+        ? `Watchdog is off — nothing is being observed.`
+        : a.acting
+          ? `<strong style="color:${color};font-size:1.1rem">${total}</strong> action${total === 1 ? '' : 's'} taken by the watchdog in ${a.days} d`
+          : `<strong style="color:${color};font-size:1.1rem">${total}</strong> action${total === 1 ? '' : 's'} the watchdog WOULD have taken in ${a.days} d`;
+      if (count) count.innerHTML = `<span style="color:var(--text)">${headline}</span>`;
+      if (spark) spark.innerHTML = watchdogActivitySparkSvg(a);
+      if (actions) {
+        const keys = Object.keys(a.byAction || {}).filter(k => (a.byAction[k] || 0) > 0)
+          .sort((x, y) => (watchdogActionSevere(y) - watchdogActionSevere(x)) || (a.byAction[y] - a.byAction[x]));
+        actions.innerHTML = keys.length
+          ? keys.map(k => {
+              const label = (WATCHDOG_ACTION_LABELS[watchdogActionBase(k)] || watchdogActionBase(k)) + (watchdogActionObserved(k) ? ' (observed)' : '');
+              return `<span style="color:${watchdogActionColor(k)};margin-right:10px;white-space:nowrap" title="audit action watchdog-${esc(k)}">${a.byAction[k]} ${esc(label)}</span>`;
+            }).join('')
+          : `<span style="color:var(--muted)">No <code>watchdog-*</code> entries in the Audit Log for this window.</span>`;
+      }
+      if (liveness) liveness.innerHTML = watchdogLivenessTable(a.agents);
+      if (hint) hint.innerHTML = watchdogPromotionHintHTML(a);
     }
 
     // Escalation breaker section on the Health tab. The config lives at the
@@ -23739,6 +23950,10 @@ function burnAreaChart() {
               body: JSON.stringify(watchdog)
             });
             if (!wdRes.ok) throw new Error(await saveErrorMessage(wdRes));
+            // The activity strip's headline ("would have taken" vs "taken")
+            // and promotion hint depend on the mode just saved; drop the
+            // cached readout so the next Health render fetches it afresh.
+            invalidateWatchdogActivity();
             if (Object.keys(health).length > 0) {
               const hRes = await fetch(`${base}/health`, {
                 method: 'PUT',

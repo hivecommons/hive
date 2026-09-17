@@ -139,6 +139,116 @@ func TestWatchdogConditionsRenderOnAgentCard(t *testing.T) {
 	}
 }
 
+// ── #7254: watchdog activity strip on the Health tab ─────────────────────────
+
+// TestWatchdogActivityStripRendersOnHealthTab asserts the activity strip lands
+// directly under the mode banner, carries every element id the fill code
+// targets, is fetched when the Health tab opens, and reads the endpoint that
+// serves it.
+func TestWatchdogActivityStripRendersOnHealthTab(t *testing.T) {
+	html := watchdogUIHTML(t)
+
+	// The shell renders inside the watchdog section, between the mode banners
+	// and the mode select — under the banner, as #7254 specifies.
+	banner := strings.Index(html, "${pausedBanner}${healBanner}${observeBanner}")
+	shell := strings.Index(html, "${renderWatchdogActivityShell()}")
+	modeSelect := strings.Index(html, `data-arg1="watchdogMode"`)
+	if banner < 0 || shell < 0 || modeSelect < 0 {
+		t.Fatalf("banner/shell/mode markers not all found: %d %d %d", banner, shell, modeSelect)
+	}
+	if !(banner < shell && shell < modeSelect) {
+		t.Errorf("activity strip must sit directly under the mode banner and above the mode select (banner=%d shell=%d select=%d)", banner, shell, modeSelect)
+	}
+
+	// Every id the fill code targets is declared once, in the id table.
+	for _, id := range []string{
+		"watchdog-activity",
+		"watchdog-activity-count",
+		"watchdog-activity-spark",
+		"watchdog-activity-actions",
+		"watchdog-liveness",
+		"watchdog-promotion-hint",
+	} {
+		if !strings.Contains(html, `'`+id+`'`) {
+			t.Errorf("index.html must declare the strip element id %q", id)
+		}
+	}
+	// The promotion hint renders beside the mode select (its own div, under
+	// the select, inside the same config-field).
+	if !strings.Contains(html, `<div id="watchdog-promotion-hint"`) {
+		t.Error("the promotion hint container must render next to the mode select")
+	}
+
+	// Fetched when the Health tab opens, from the endpoint this PR adds, with
+	// the 30-day window the issue specifies.
+	if !strings.Contains(html, "if (tabId === 'Health') { loadEscalationConfig(); loadWatchdogActivity(); }") {
+		t.Error("opening the Health tab must load the watchdog activity readout")
+	}
+	if !strings.Contains(html, "`/api/watchdog/activity?days=${WATCHDOG_ACTIVITY_DAYS}`") {
+		t.Error("the strip must read GET /api/watchdog/activity")
+	}
+	if !strings.Contains(html, "const WATCHDOG_ACTIVITY_DAYS = 30;") {
+		t.Error("the strip's window must be the 30 days #7254 specifies")
+	}
+	// Saving a mode change invalidates the cached readout, so the headline
+	// ("would have taken" vs "taken") follows the mode just saved.
+	if !strings.Contains(html, "invalidateWatchdogActivity();") {
+		t.Error("the watchdog save path must invalidate the cached activity readout")
+	}
+}
+
+// TestWatchdogActivityStripIsHonestAboutMode is the same honesty rule the
+// banners follow: in observe the count is what the watchdog WOULD have done;
+// in heal it is what it did. Both wordings must exist, gated on `acting`.
+func TestWatchdogActivityStripIsHonestAboutMode(t *testing.T) {
+	html := watchdogUIHTML(t)
+	for _, snippet := range []string{
+		"the watchdog WOULD have taken in ${a.days} d",
+		"taken by the watchdog in ${a.days} d",
+		"Safe to promote to Heal",
+		"Not yet safe to promote",
+		// Heal mode shows the last action instead of a promotion verdict.
+		"No action taken in ${a.days} d.",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("activity strip is missing %q", snippet)
+		}
+	}
+	// Severity colouring per #7254: observed muted, restart amber, pause /
+	// give-up red — and the severe check spans the -observed twins.
+	if !strings.Contains(html, "return b === 'crashloop-pause' || b === 'giveup';") {
+		t.Error("severity must key on the crash-loop pause and give-up verdicts")
+	}
+	// The histogram must not carry zeros forward: a zero day is the news.
+	if !strings.Contains(html, "return axisSparkSvg(daily, d => d.count || 0") {
+		t.Error("the daily histogram must render through axisSparkSvg (no zero carry-forward)")
+	}
+}
+
+// TestWatchdogActivityUIHasNoUndefinedCallees extends the ReferenceError guard
+// to the strip's helpers.
+func TestWatchdogActivityUIHasNoUndefinedCallees(t *testing.T) {
+	html := watchdogUIHTML(t)
+	for _, fn := range []string{
+		"renderWatchdogActivityShell",
+		"loadWatchdogActivity",
+		"fillWatchdogActivity",
+		"invalidateWatchdogActivity",
+		"watchdogActivitySparkSvg",
+		"watchdogLivenessTable",
+		"watchdogPromotionHintHTML",
+		"watchdogActivityColor",
+		"axisSparkSvg",
+		"relativeAge",
+		"fmtSparkVal",
+	} {
+		declared := regexp.MustCompile(`(?m)^\s*(async\s+)?(function\s+` + fn + `\s*\(|const\s+` + fn + `\s*=)`)
+		if !declared.MatchString(html) {
+			t.Errorf("watchdog activity UI calls %q but it is never declared", fn)
+		}
+	}
+}
+
 // TestWatchdogConfigPayloadReportsResolvedSettings asserts the Health payload
 // carries the settings actually IN FORCE, so a hive that never wrote a
 // governor.watchdog block shows real values rather than blanks.

@@ -357,6 +357,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/beads/reset/{agent}", s.handleBeadsResetAgent)
 
 	s.mux.HandleFunc("GET /api/auth/token", s.handleAuthToken)
+
+	// Watchdog activity readout for the Health tab (#7254): the watchdog-*
+	// audit actions in a trailing window, bucketed per day, plus per-agent
+	// liveness — the data an Observe → Heal decision rests on.
+	s.mux.HandleFunc("GET /api/watchdog/activity", s.handleWatchdogActivity)
 }
 
 var (

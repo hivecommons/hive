@@ -5752,6 +5752,166 @@
         }
       }
     },
+    "/api/watchdog/activity": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Watchdog activity readout",
+        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and — in observe mode — whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            },
+            "description": "Trailing window in calendar days ending today. Values above 90 (the audit log's retention) are clamped; non-positive or non-integer values are a 400."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Watchdog activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "days": {
+                      "type": "integer",
+                      "description": "Window actually applied, after clamping"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC midnight opening the window"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "observe",
+                        "heal"
+                      ],
+                      "description": "Watchdog authority in force (fleet-wide kill switch applied)"
+                    },
+                    "acting": {
+                      "type": "boolean",
+                      "description": "Whether the mode takes fleet-changing action; false means the counts are actions the watchdog WOULD have taken"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "taken": {
+                      "type": "integer",
+                      "description": "Actions performed"
+                    },
+                    "observed": {
+                      "type": "integer",
+                      "description": "Actions recorded with the -observed suffix (observe mode)"
+                    },
+                    "byAction": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      },
+                      "description": "Counts keyed by audit action minus the watchdog- prefix: restart, crashloop-pause, giveup, healthy-reset, and their -observed twins"
+                    },
+                    "daily": {
+                      "type": "array",
+                      "description": "One bucket per UTC day in the window, oldest first, zero-filled",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "YYYY-MM-DD (UTC)"
+                          },
+                          "count": {
+                            "type": "integer"
+                          },
+                          "byAction": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "description": "Current watchdog liveness per probed, enabled agent (agents never swept are omitted)",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "Pane class (ready, shell-prompt, auth-required, stuck-overlay, no-output, no-session, unknown) or crash-loop when the watchdog paused the agent"
+                          },
+                          "since": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "authenticated": {
+                            "type": "string",
+                            "description": "Authenticated condition status: True, False or Unknown"
+                          },
+                          "producing": {
+                            "type": "string",
+                            "description": "Producing condition status: True, False or Unknown"
+                          },
+                          "paused": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "lastAction": {
+                      "type": "string",
+                      "description": "Short name of the newest entry in the window"
+                    },
+                    "lastActionAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "promotion": {
+                      "type": "object",
+                      "description": "Observe → Heal hint; present only in observe mode",
+                      "properties": {
+                        "safe": {
+                          "type": "boolean",
+                          "description": "True when the window holds no crash-loop pause or give-up verdict, taken or observed"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days is not a positive integer"
+          },
+          "403": {
+            "description": "Requires read-write role"
+          }
+        }
+      }
+    },
     "/api/config/governor/advisory": {
       "get": {
         "tags": [

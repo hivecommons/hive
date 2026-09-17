@@ -157,6 +157,39 @@ beside the escalation breaker, so nobody has to hand-edit `hive.yaml`. The
 backoff ladder is shown there read-only: it is a derived progression, and an
 arbitrary ladder invites a one-second cap.
 
+### Watchdog activity strip
+
+"Read the Audit Log, then switch" is only a data-driven decision if the data is
+on the page, so the Health tab shows a **Watchdog activity** strip directly
+under the mode banner ([#7254](https://github.com/hivecommons/hive/issues/7254)):
+
+- **The number** — every `watchdog-*` audit action in the trailing 30 days,
+  broken down by action. In `observe` the headline reads "N actions the
+  watchdog WOULD have taken in 30 d"; in `heal`, "N actions taken". A hive
+  that has sat in `observe` with nothing to act on shows **0**, which is an
+  answer rather than an absence.
+- **The sparkline** — a per-day histogram of those actions with real axes,
+  coloured by the worst thing in the window: observed-only is muted, a taken
+  restart is amber, a crash-loop pause or give-up (taken *or* observed) is red.
+- **Per-agent liveness** — the reconciler's current verdict for every agent it
+  has probed (`ready`, `stuck-overlay`, `shell-prompt`, `no-output`,
+  `no-session`, `auth-required`, or `crash-loop` once the watchdog has paused
+  it), how long the agent has been in that state, and the `Authenticated` /
+  `Producing` axes. Agents the watchdog has never swept are omitted rather than
+  listed as healthy.
+- **The promotion hint**, beside the mode select. In `observe`: **Safe to
+  promote to Heal** when the window holds no crash-loop pause or give-up
+  verdict, with the number of would-be restarts the verdict rests on; otherwise
+  the count of severe verdicts to investigate first. In `heal`: when the
+  watchdog last acted, so a healing hive that has been quiet for weeks is
+  visibly quiet rather than silently trusted.
+
+The strip is served by `GET /api/watchdog/activity?days=30` (read-write role,
+the same tier as the Audit Log it is derived from). The endpoint reads the
+on-disk audit log — current file plus rotated backups, so the window survives
+pod restarts and the 500-entry in-memory ring — and buckets by UTC calendar
+day. `days` is clamped to the log's 90-day retention.
+
 ### Fleet-wide kill switch
 
 Set `HIVE_WATCHDOG_PAUSE=true` on the deployment to downgrade every hive that

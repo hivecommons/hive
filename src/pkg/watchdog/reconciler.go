@@ -96,13 +96,30 @@ const auditUser = "watchdog"
 // that does not parse detail text. A reader must never mistake "would have
 // paused" for "paused".
 const (
-	auditActionRestart      = "watchdog-restart"
-	auditActionPause        = "watchdog-crashloop-pause"
-	auditActionHealthyReset = "watchdog-healthy-reset"
-	auditActionGiveUp       = "watchdog-giveup"
+	auditActionRestart      = AuditActionPrefix + "restart"
+	auditActionPause        = AuditActionPrefix + "crashloop-pause"
+	auditActionHealthyReset = AuditActionPrefix + "healthy-reset"
+	auditActionGiveUp       = AuditActionPrefix + "giveup"
 	// observedSuffix marks an action the watchdog declined to take because it
 	// is running in observe mode.
 	observedSuffix = "-observed"
+)
+
+// The exported vocabulary of the audit trail, for readers outside this package
+// (the dashboard's Health tab activity strip, #7254). Readers classify entries
+// by these rather than by string literals of their own, so a renamed action
+// cannot silently vanish from the count that decides Observe → Heal.
+const (
+	// AuditActionPrefix namespaces every audit action the watchdog writes.
+	// Filtering the audit log on it yields exactly the watchdog's record.
+	AuditActionPrefix = "watchdog-"
+	// AuditObservedSuffix marks an action the watchdog only WOULD have taken.
+	AuditObservedSuffix = observedSuffix
+
+	AuditActionRestart      = auditActionRestart
+	AuditActionPause        = auditActionPause
+	AuditActionHealthyReset = auditActionHealthyReset
+	AuditActionGiveUp       = auditActionGiveUp
 )
 
 // auditActionFor returns the action name for a decision, marking it not-taken
