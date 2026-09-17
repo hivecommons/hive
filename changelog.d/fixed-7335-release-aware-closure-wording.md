@@ -1,0 +1,1 @@
+- The issue-closure hint and `/reopen` bot comments no longer tell reporters that a merge-closed fix "did not resolve the problem". Both now say the fix only takes effect once it ships in a tagged release and the deployment updates, and ask the reporter to check their running version first. ([#7335](https://github.com/hivecommons/hive/issues/7335))

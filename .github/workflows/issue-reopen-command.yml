@@ -85,6 +85,6 @@ jobs:
           # code block on GitHub.
           {
             printf 'Reopened at the request of @%s, who %s.\n\n' "${COMMENTER}" "${reason}"
-            printf 'If this was closed by a merged PR, the fix it contained did not resolve the problem - please add whatever you are still seeing so it is not closed the same way again. See #6762 for why this command exists.\n'
+            printf 'If this was closed by a merged PR, first check whether the fix has reached you: it only takes effect after it ships in a tagged release and your deployment updates to it. If your running version already contains the fix and the problem persists, please add whatever you are still seeing (running version, logs, steps) so it is not closed the same way again. See #6762 for why this command exists.\n'
           } > /tmp/reopen-comment.md
           gh issue comment "${ISSUE}" --repo "${REPO}" --body-file /tmp/reopen-comment.md

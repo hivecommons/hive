@@ -48,7 +48,8 @@ jobs:
               completed)   printf ' as completed' ;;
             esac
             printf '.\n\n'
+            printf 'If this was closed by a merged PR, the fix only takes effect once it ships in a tagged release and your deployment updates to it — check your running version against the fix before concluding the fix failed.\n\n'
             printf 'If you are still seeing the problem, comment `/reopen` and it will be reopened for you — you do not need write access. '
-            printf 'Please add what you are still observing (version, logs, steps) so it is not closed the same way again.\n'
+            printf 'Please add what you are still observing (running version, logs, steps) so it is not closed the same way again.\n'
           } > /tmp/closed-hint.md
           gh issue comment "${ISSUE}" --repo "${REPO}" --body-file /tmp/closed-hint.md
