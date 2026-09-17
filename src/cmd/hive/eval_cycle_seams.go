@@ -280,3 +280,94 @@ func decideProviderBudgetAlert(latched, suppress bool, cause string, since time.
 	}
 	return providerBudgetAlert{Clear: true}
 }
+
+// ── Kick dispatch (#7232) ───────────────────────────────────────────────────
+
+// kickDispatchDeps carries the effects the kick-dispatch loop performs, so the
+// loop's DECISIONS can be exercised without a tmux session, a governor, a
+// dashboard, or a live tracing exporter.
+//
+// The header comment above says effects stay at the call site. Dispatch is the
+// one place that could not follow that rule: its decisions are not separable
+// from its effects, because each decision is defined BY an effect it must or
+// must not perform -- "withhold this kick" means SendKick is not called,
+// "release the probe" means the stamp is written exactly once. A pure function
+// returning a plan would not have pinned the thing that actually matters here,
+// which is the ordering and the skip paths.
+//
+// Every field is required; dispatchAgentKicks does not nil-check them, because
+// a silently-skipped effect is precisely the failure this seam exists to
+// prevent. The production wiring in runEvalCycle supplies all of them.
+type kickDispatchDeps struct {
+	// backoffRemaining reports a per-agent provider-error backoff.
+	backoffRemaining func(agent string) (time.Duration, string, string, bool)
+	// sendKick delivers the kick. A non-nil error means nothing was sent.
+	sendKick func(agent, message string) error
+	// startKickSpan opens the agent.kick tracing span and returns its closer;
+	// the closer takes the SendKick error (nil on success) so a failed kick is
+	// recorded on the span before it ends.
+	startKickSpan func(agent string) func(err error)
+	// onReviewDelivered records a delivered review kick and persists the
+	// dispatch state. Split from onDelivered because the original code runs it
+	// BEFORE the span closes and before the probe stamp, and this extraction
+	// preserves effect ORDER exactly rather than merely preserving the set of
+	// effects.
+	onReviewDelivered func(msg scheduler.KickMessage)
+	// onDelivered runs last, for the effects that must NOT happen when a kick
+	// was withheld or failed: governor repo accounting, audit log, lifecycle
+	// timeline, token snapshot.
+	onDelivered func(msg scheduler.KickMessage)
+	// markProbeReleased stamps the provider-budget probe. Called at most once
+	// per dispatch, and only after a kick actually goes out.
+	markProbeReleased func(at time.Time)
+	// now supplies the probe stamp's timestamp.
+	now func() time.Time
+}
+
+// dispatchAgentKicks sends this cycle's kick messages, applying the two skip
+// rules and the single-probe rule.
+//
+// It returns the agents whose kicks were actually delivered, in order, which
+// is what lets a caller (and a test) distinguish "withheld" from "failed" from
+// "sent" without reaching into the effects.
+//
+// The rules, all of which are load-bearing and individually guarded:
+//
+//   - An agent inside a provider-error backoff is skipped entirely. No span is
+//     opened for it, because a withheld kick is not an attempted kick.
+//   - A kick whose send FAILS performs none of the delivered-effects. Recording
+//     an audit entry or a timeline kick for a kick that never landed would make
+//     the dashboard assert something that did not happen.
+//   - The probe stamp is written at most ONCE, after the first kick that
+//     actually goes out. Stamping on a withheld or failed kick would re-arm
+//     suppression without having learned anything about the provider, which is
+//     the entire point of releasing a probe.
+func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps kickDispatchDeps, logger *slog.Logger) []string {
+	var delivered []string
+	for _, msg := range msgs {
+		if remaining, class, line, ok := deps.backoffRemaining(msg.Agent); ok {
+			logger.Warn("provider inference error: withholding agent kick during backoff",
+				"agent", msg.Agent,
+				"class", class,
+				"retry_in", remaining.Round(time.Second),
+				"error", line)
+			continue
+		}
+		endSpan := deps.startKickSpan(msg.Agent)
+		logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
+		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
+			endSpan(err)
+			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
+			continue
+		}
+		deps.onReviewDelivered(msg)
+		endSpan(nil)
+		if releaseProbe {
+			deps.markProbeReleased(deps.now())
+			releaseProbe = false
+		}
+		deps.onDelivered(msg)
+		delivered = append(delivered, msg.Agent)
+	}
+	return delivered
+}

@@ -6712,62 +6712,61 @@ func runEvalCycle(
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
 
+	// Kick dispatch lives behind a seam (#7232): the skip rules and the
+	// single-probe rule are the decisions worth testing, and they were
+	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
 	if len(messages) > 0 {
-		for _, msg := range messages {
-			if remaining, class, line, ok := agentMgr.ProviderErrorBackoffRemaining(msg.Agent); ok {
-				logger.Warn("provider inference error: withholding agent kick during backoff",
-					"agent", msg.Agent,
-					"class", class,
-					"retry_in", remaining.Round(time.Second),
-					"error", line)
-				continue
-			}
-			agentCfg := cfg.Agents[msg.Agent]
-			_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
-				msg.Agent,
-				agentCfg.Backend,
-				agentCfg.Model,
-				agentCfg.Role,
-				string(govState.Mode),
-				inferACMMLevel(cfg),
-			)...)
-			logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
-			if err := agentMgr.SendKick(msg.Agent, msg.Message); err != nil {
-				kickSpan.RecordError(err)
-				kickSpan.End()
-				logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
-				continue
-			}
-			if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
-				deliveredReviewKicks = append(deliveredReviewKicks, k)
-				persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
-			}
-			kickSpan.End()
-			if releaseProviderBudgetProbe {
-				providerBudgetProbe.markReleased(time.Now())
-				releaseProviderBudgetProbe = false
-			}
-			gov.RecordKickForRepo(msg.Agent, msg.Repo)
-			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
-
-			// Record issue-scoped kicks into the lifecycle timeline. Cheap,
-			// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
-			recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-
-			// Log token state at time of kick for cost attribution
-			if tokenCollector != nil {
-				if summary := tokenCollector.Summary(); summary != nil {
-					agentTokens := summary.ByAgent[msg.Agent]
-					logger.Info("kick token snapshot",
-						"agent", msg.Agent,
-						"agent_tokens", agentTokens,
-						"total_tokens", summary.TotalTokens,
-						"total_sessions", summary.SessionCount,
-					)
+		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
+			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
+			sendKick:         agentMgr.SendKick,
+			startKickSpan: func(agentName string) func(error) {
+				agentCfg := cfg.Agents[agentName]
+				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
+					agentName,
+					agentCfg.Backend,
+					agentCfg.Model,
+					agentCfg.Role,
+					string(govState.Mode),
+					inferACMMLevel(cfg),
+				)...)
+				return func(err error) {
+					if err != nil {
+						kickSpan.RecordError(err)
+					}
+					kickSpan.End()
 				}
-			}
-		}
+			},
+			onReviewDelivered: func(msg scheduler.KickMessage) {
+				if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
+					deliveredReviewKicks = append(deliveredReviewKicks, k)
+					persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
+				}
+			},
+			onDelivered: func(msg scheduler.KickMessage) {
+				gov.RecordKickForRepo(msg.Agent, msg.Repo)
+				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
+
+				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
+				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
+				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
+
+				// Log token state at time of kick for cost attribution
+				if tokenCollector != nil {
+					if summary := tokenCollector.Summary(); summary != nil {
+						agentTokens := summary.ByAgent[msg.Agent]
+						logger.Info("kick token snapshot",
+							"agent", msg.Agent,
+							"agent_tokens", agentTokens,
+							"total_tokens", summary.TotalTokens,
+							"total_sessions", summary.SessionCount,
+						)
+					}
+				}
+			},
+			markProbeReleased: providerBudgetProbe.markReleased,
+			now:               time.Now,
+		}, logger)
 	}
 	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
