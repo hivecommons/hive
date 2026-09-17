@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // Redirects the run log to a scratch file for one test.
@@ -631,19 +633,17 @@ func TestTaskRunLog_RecordedOnHandback(t *testing.T) {
 	// The hand-back: ready again, still holding the task, no terminal report.
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
 
-	var data []byte
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	// The handler writes the record asynchronously relative to this goroutine,
+	// and appendTaskRun O_CREATEs the file before writing, so a fixed sleep can
+	// observe an empty or absent file on a loaded runner (#6453). Polled via
+	// testutil.EventuallyValue rather than a sleep loop — the sleep ratchet in
+	// internal/testutil counts a new time.Sleep in a test as a regression, and
+	// this is exactly the wait it points at Eventually for.
+	data := testutil.EventuallyValue(t, 5*time.Second, func() ([]byte, bool) {
 		b, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(b, []byte("\n")) {
-			data = b
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no abandonment record within 5s: err=%v partial=%q", err, b)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return b, err == nil && bytes.Contains(b, []byte("\n"))
+	}, "no abandonment record written to %s", path)
+
 	var rec TaskRunRecord
 	if err := json.Unmarshal([]byte(strings.Split(strings.TrimSpace(string(data)), "\n")[0]), &rec); err != nil {
 		t.Fatalf("unmarshal: %v", err)
