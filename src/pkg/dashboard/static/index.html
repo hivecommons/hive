@@ -2374,6 +2374,14 @@
     .section-body.collapsed {
       max-height: 0 !important; opacity: 0; pointer-events: none;
     }
+    /* A section that groups other collapsible sections (Hive Advisory). The
+       stock 5000px cap is sized for one panel; five nested panels overflow it
+       and the tail gets clipped by the overflow:hidden above. */
+    .section-body.section-group-body { max-height: 40000px; }
+    .section-group-header {
+      font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
 
     /* ── Compact agent cards (#1533) ── */
     .agent-card .agent-card-details { transition: max-height 200ms ease, opacity 200ms ease; overflow: hidden; }
@@ -3318,11 +3326,44 @@
   <div class="governor" id="governor"></div>
 
   <div id="advisory-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
-    <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: 8px; cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
-      <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest
-    </h2>
-    <div class="section-body">
-      <div id="advisory-digest"></div>
+    <h2 style="margin-bottom: 8px;" class="section-label section-group-header section-header-toggle" data-action="toggleSection" data-arg0="advisory-section"><span class="section-chevron">▼</span> 🧭 Hive Advisory</h2>
+    <div class="section-body section-group-body">
+    <div id="advisory-digest-section" style="margin-bottom: 20px;">
+      <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: 8px; cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
+        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest
+      </h2>
+      <div class="section-body">
+        <div id="advisory-digest"></div>
+      </div>
+    </div>
+
+    <div id="hive-advice-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+      <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="hive-advice-section"><span class="section-chevron">▼</span> 🧭 Hive Advice <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">weekly</span></h2>
+      <div class="section-body">
+        <div id="hive-advice-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+      </div>
+    </div>
+
+    <div id="fleet-report-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+      <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="fleet-report-section"><span class="section-chevron">▼</span> 📡 Fleet Report Preview <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">dry-run</span></h2>
+      <div class="section-body">
+        <div id="fleet-report-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+      </div>
+    </div>
+
+    <div id="acmm-reco-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+      <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-reco-section"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
+      <div class="section-body">
+        <div id="acmm-reco-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+      </div>
+    </div>
+
+    <div id="lifecycle-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+      <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
+      <div class="section-body">
+        <div id="lifecycle-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -3395,33 +3436,9 @@
   </div>
 
 
-  <div id="hive-advice-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="hive-advice-section"><span class="section-chevron">▼</span> 🧭 Hive Advice <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">weekly</span></h2>
-    <div class="section-body">
-      <div id="hive-advice-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
-    </div>
-  </div>
 
-  <div id="fleet-report-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="fleet-report-section"><span class="section-chevron">▼</span> 📡 Fleet Report Preview <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">dry-run</span></h2>
-    <div class="section-body">
-      <div id="fleet-report-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
-    </div>
-  </div>
 
-  <div id="acmm-reco-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-reco-section"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
-    <div class="section-body">
-      <div id="acmm-reco-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
-    </div>
-  </div>
 
-  <div id="lifecycle-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="lifecycle-section"><span class="section-chevron">▼</span> 🔀 Lifecycle Timeline</h2>
-    <div class="section-body">
-      <div id="lifecycle-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
-    </div>
-  </div>
 
   <div id="audit-section" style="margin-top: 16px; margin-bottom: 24px;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="audit-section"><span class="section-chevron">▼</span> 📋 Audit Log</h2>
@@ -10213,16 +10230,35 @@ function burnAreaChart() {
       const mk = (r, i, recovered) => {
         r = r || {};
         const evidence = Array.isArray(r.evidence) ? r.evidence : [];
-        const ev = evidence[0] || {};
+        const ev = evidence[0] || null;
         const trigger = r.trigger || (r.criterion ? 'acmm-shortfall' : 'hive-code-defect');
         const subject = r.criterion || trigger;
         const title = recovered ? 'Recovered: ' : '';
-        const periodic = ev.periodicity ? `; periodic ${escapeHtml(ev.periodicity || '')}` : '';
-        return `<li class="reco-crit ${recovered ? 'met' : 'unmet'}">
+        // A recovery carries no evidence by construction (fleetreport.go
+        // RecoveryReport builds it from fingerprint/instance/criterion/trigger
+        // only) — it records that a symptom STOPPED being observed. Rendering
+        // the evidence line anyway printed every fallback at once, as
+        // "medium hive / unknown; count 0 in n/a", which reads like measured
+        // data. Say what the backend already says in Body instead.
+        let detail = '';
+        if (recovered) {
+          detail = r.criterion
+            ? `No longer observing the ACMM shortfall for ${escapeHtml(r.criterion)}.`
+            : 'No longer observing the reported hive-code defect.';
+        } else if (ev) {
+          const periodic = ev.periodicity ? `; periodic ${escapeHtml(ev.periodicity)}` : '';
+          const where = ev.window ? ` in ${escapeHtml(ev.window)}` : '';
+          const count = Number(ev.count) > 0 ? `; count ${escapeHtml(String(ev.count))}${where}` : '';
+          detail = `${escapeHtml(ev.severity || 'medium')} ${escapeHtml(ev.component || 'hive')} / ${escapeHtml(ev.error_class || 'unknown')}${count}${periodic}`;
+        }
+        const fp = r.fingerprint || '';
+        const inst = r.instance_id || '';
+        const ids = (fp || inst) ? ` title="fingerprint: ${escapeHtml(fp)}&#10;instance: ${escapeHtml(inst)}"` : '';
+        return `<li class="reco-crit ${recovered ? 'met' : 'unmet'}"${ids}>
           <span class="mark">${recovered ? '✓' : i + 1}</span>
           <div class="crit-body"><div class="crit-name">${title}${escapeHtml(subject)}</div>
-          <div class="crit-detail">${escapeHtml(ev.severity || 'medium')} ${escapeHtml(ev.component || 'hive')} / ${escapeHtml(ev.error_class || 'unknown')}; count ${escapeHtml(String(ev.count || 0))} in ${escapeHtml(ev.window || 'n/a')}${periodic}</div>
-          <div class="crit-cmp">trigger: ${escapeHtml(trigger)}; fingerprint: ${escapeHtml(r.fingerprint || '')}; instance: ${escapeHtml(r.instance_id || '')}</div></div>
+          ${detail ? `<div class="crit-detail">${detail}</div>` : ''}
+          <div class="crit-cmp">trigger: ${escapeHtml(trigger)}${fp ? `; fingerprint ${escapeHtml(fp.slice(0, 12))}…` : ''}</div></div>
         </li>`;
       };
       const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
@@ -14034,7 +14070,8 @@ function burnAreaChart() {
       renderDebugSection();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
-        'advisory-section', 'repos-section', 'beads-section', 'acmm-eval-section',
+        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section',
+        'repos-section', 'beads-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
