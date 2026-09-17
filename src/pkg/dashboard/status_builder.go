@@ -1019,22 +1019,106 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	}
 }
 
-// loadStatsConfig reads the per-agent stats configuration from /data/agents/{name}/stats.json.
-// Falls back to config StatsDisplay, then built-in defaults when the file is missing or empty.
-func loadStatsConfig(name string) []any {
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
+// agentStatsDataDir is where per-agent stats.json files live. A variable so
+// tests can point the readers at a temp dir.
+var agentStatsDataDir = "/data/agents"
+
+func agentStatsPath(name string) string {
+	return fmt.Sprintf("%s/%s/stats.json", agentStatsDataDir, name)
+}
+
+// ciMaintainerStatsAgent is the one agent whose stat strip is the primary
+// repo's CI/coverage/release health. That strip is a description of the
+// repository's workflows, not of the agent, so it only means something on the
+// agent that owns them.
+const ciMaintainerStatsAgent = "ci-maintainer"
+
+// statKeys returns the ordered key list of a stats config.
+func statKeys(stats []any) []string {
+	keys := make([]string, 0, len(stats))
+	for _, raw := range stats {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		k, _ := m["key"].(string)
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// isClonedCIMaintainerStrip reports whether a stats config stored for `name`
+// is ci-maintainer's CI/coverage strip verbatim — the same keys in the same
+// order — on an agent that is not ci-maintainer.
+//
+// Why this exists: the image used to seed /data/agents/reviewer/stats.json
+// with a byte-copy of ci-maintainer's set (a retired seed, copied by
+// `cp -rn` on every boot until the file existed). Any spoke that later
+// created an agent named "reviewer" — an ADVISORY, on-demand agent that owns
+// no repository — inherited the strip and rendered "COVERAGE 0% current,
+// goal: 91%" plus thirteen workflow dots for pipelines it does not have
+// (#7411). The seed is gone, but the copies it already made persist on
+// existing spokes; this predicate lets the readers recognise and drop them.
+func isClonedCIMaintainerStrip(name string, stats []any) bool {
+	if name == ciMaintainerStatsAgent {
+		return false
+	}
+	want := statKeys(defaultStatsConfig(ciMaintainerStatsAgent))
+	got := statKeys(stats)
+	if len(got) != len(want) || len(got) == 0 {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// clonedStatsPruned guards the once-per-agent log line for a pruned clone.
+var clonedStatsPruned sync.Map
+
+// readAgentStatsFile reads /data/agents/{name}/stats.json, accepting either the
+// {"stats":[...]} wrapper the API writes or a bare array (the seed shape).
+// Returns ok=false when the file is missing, unparseable, or empty — callers
+// then fall back to config/defaults.
+//
+// A file that is ci-maintainer's strip cloned onto another agent is treated as
+// absent AND removed, so the fabricated coverage/CI numbers stop rendering on
+// the next status build instead of persisting until an operator finds the
+// Stats tab (#7411, fix 4). Removal is logged once per agent.
+func readAgentStatsFile(name string) ([]any, bool) {
+	statsFile := agentStatsPath(name)
 	data, err := os.ReadFile(statsFile)
-	if err == nil {
-		var wrapper struct {
-			Stats []any `json:"stats"`
+	if err != nil {
+		return nil, false
+	}
+	var stats []any
+	var wrapper struct {
+		Stats []any `json:"stats"`
+	}
+	if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
+		stats = wrapper.Stats
+	} else if json.Unmarshal(data, &stats) != nil || len(stats) == 0 {
+		return nil, false
+	}
+	if isClonedCIMaintainerStrip(name, stats) {
+		if err := os.Remove(statsFile); err != nil && !os.IsNotExist(err) {
+			slog.Warn("could not remove cloned ci-maintainer stats", "agent", name, "path", statsFile, "error", err)
+		} else if _, seen := clonedStatsPruned.LoadOrStore(name, true); !seen {
+			slog.Warn("removed stats.json that cloned ci-maintainer's CI/coverage strip onto another agent (#7411)", "agent", name, "path", statsFile)
 		}
-		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
-			return wrapper.Stats
-		}
-		var stats []any
-		if json.Unmarshal(data, &stats) == nil && len(stats) > 0 {
-			return stats
-		}
+		return nil, false
+	}
+	return stats, true
+}
+
+// loadStatsConfig reads the per-agent stats configuration from /data/agents/{name}/stats.json.
+// Falls back to built-in defaults when the file is missing or empty.
+func loadStatsConfig(name string) []any {
+	if stats, ok := readAgentStatsFile(name); ok {
+		return stats
 	}
 	return defaultStatsConfig(name)
 }
@@ -1091,19 +1175,8 @@ func resolveStatsSources(stats []any, cfg *config.Config) []any {
 
 // LoadStatsConfigWithCfg reads stats from disk, then falls back to config StatsDisplay field.
 func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
-	data, err := os.ReadFile(statsFile)
-	if err == nil {
-		var wrapper struct {
-			Stats []any `json:"stats"`
-		}
-		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
-			return wrapper.Stats
-		}
-		var stats []any
-		if json.Unmarshal(data, &stats) == nil && len(stats) > 0 {
-			return stats
-		}
+	if stats, ok := readAgentStatsFile(name); ok {
+		return stats
 	}
 	if agentCfg, ok := cfg.Agents[name]; ok && len(agentCfg.StatsDisplay) > 0 {
 		result := make([]any, 0, len(agentCfg.StatsDisplay))

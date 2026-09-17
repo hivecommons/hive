@@ -3459,12 +3459,15 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			"replicas":         agentCfg.Replicas,
 		},
-		"cadences":       cadences,
-		"models":         models,
-		"pipeline":       pipeline,
-		"hooks":          hooks,
-		"restrictions":   restrictions,
-		"stats":          stats,
+		"cadences":     cadences,
+		"models":       models,
+		"pipeline":     pipeline,
+		"hooks":        hooks,
+		"restrictions": restrictions,
+		"stats":        stats,
+		// The Stats tab offers only sources that apply to THIS agent (#7411):
+		// an ADVISORY/on-demand agent is never offered the CI health strip.
+		"statSources":    map[string]any{"sources": statSourcesFor(&agentCfg), "styles": statStyles},
 		"prompt":         lastPrompt,
 		"promptTemplate": promptTemplate,
 		"channels":       agentCfg.Channels,
@@ -3895,21 +3898,7 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 }
 
 func (s *Server) loadAgentStats(name string) []any {
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
-	data, err := os.ReadFile(statsFile)
-	if err == nil {
-		var wrapper struct {
-			Stats []any `json:"stats"`
-		}
-		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
-			return wrapper.Stats
-		}
-		var stats []any
-		if json.Unmarshal(data, &stats) == nil && len(stats) > 0 {
-			return stats
-		}
-	}
-	return defaultStatsConfig(name)
+	return loadStatsConfig(name)
 }
 
 func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request) {
@@ -4592,8 +4581,8 @@ func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
-	_ = os.MkdirAll(fmt.Sprintf("/data/agents/%s", name), 0o755)
+	statsFile := agentStatsPath(name)
+	_ = os.MkdirAll(filepath.Dir(statsFile), 0o755)
 
 	data, err := json.Marshal(body)
 	if err == nil {
@@ -5123,7 +5112,22 @@ func valueOrDefault(v, dflt string) string {
 	return dflt
 }
 
-func (s *Server) handleStatSources(w http.ResponseWriter, r *http.Request) {
+// healthStatsApply reports whether the "health" stat source — the primary
+// repo's CI/coverage/release workflow checks — is meaningful for an agent.
+// Those checks describe the repository's pipelines, so they belong on the
+// agent that owns CI. An ADVISORY or on-demand agent runs no pipeline and
+// produces verdicts, not builds; offering it the strip is how a reviewer ends
+// up displaying "COVERAGE 0% vs goal 91%" for nothing (#7411).
+func healthStatsApply(agentCfg config.AgentConfig) bool {
+	if agentCfg.OnDemand {
+		return false
+	}
+	return !strings.EqualFold(agentCfg.Mode, "ADVISORY")
+}
+
+// statSourcesFor returns the stat sources the Stats tab may offer an agent.
+// agentCfg == nil means unscoped (every source).
+func statSourcesFor(agentCfg *config.AgentConfig) map[string]any {
 	sources := map[string]any{
 		"status": map[string]any{
 			"label":  "Repo Status",
@@ -5150,8 +5154,24 @@ func (s *Server) handleStatSources(w http.ResponseWriter, r *http.Request) {
 			"fields": []string{"input", "output", "cacheRead", "cacheCreate", "sessions", "messages"},
 		},
 	}
-	styles := []string{"number", "dot", "pct", "pct-bar", "spark"}
-	jsonResponse(w, map[string]any{"sources": sources, "styles": styles})
+	if agentCfg != nil && !healthStatsApply(*agentCfg) {
+		delete(sources, "health")
+	}
+	return sources
+}
+
+var statStyles = []string{"number", "dot", "pct", "pct-bar", "spark"}
+
+// handleStatSources answers the stat source catalogue. With ?agent=<name> the
+// catalogue is scoped to what makes sense for that agent (see healthStatsApply).
+func (s *Server) handleStatSources(w http.ResponseWriter, r *http.Request) {
+	var scope *config.AgentConfig
+	if name := r.URL.Query().Get("agent"); name != "" {
+		if agentCfg, ok := s.deps.Config.Agents[name]; ok {
+			scope = &agentCfg
+		}
+	}
+	jsonResponse(w, map[string]any{"sources": statSourcesFor(scope), "styles": statStyles})
 }
 
 func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Request) {

@@ -6060,27 +6060,33 @@
         return `<span class="ind-dot-item"${tipAttr}><span class="health-dot ${dotCls}"></span><span class="ind-dlabel">${label}</span></span>`;
       }
 
+      /* A percentage with no underlying metric renders as "—", the same way
+         LAST KICK / AVG/PASS do on the card. `v || 0` turned an absent value
+         into a hard 0% — indistinguishable from a real, catastrophic result
+         (#7411: a reviewer with no coverage at all showed "0% vs goal 91%"). */
+      const hasValue = v !== undefined && v !== null && v !== '';
+
       if (style === 'pct') {
         const PCT_GOOD = 90;
         const PCT_WARN = 70;
-        const cls = v >= PCT_GOOD ? 'good' : v >= PCT_WARN ? 'warn' : 'bad';
-        return `<span class="ind-dot-item"${tipAttr}><span class="health-ci ${cls}">${v || 0}%</span><span class="ind-dlabel">${label}</span></span>`;
+        const cls = !hasValue ? 'unknown' : v >= PCT_GOOD ? 'good' : v >= PCT_WARN ? 'warn' : 'bad';
+        return `<span class="ind-dot-item"${tipAttr}><span class="health-ci ${cls}">${hasValue ? v + '%' : '—'}</span><span class="ind-dlabel">${label}</span></span>`;
       }
 
       if (style === 'pct-bar') {
-        const pct = v || 0;
+        const pct = hasValue ? v : 0;
         const target = stat.target || 100;
         const TARGET_WARN_OFFSET = 10;
-        const covCls = pct >= target ? 'ind-ok' : pct >= target - TARGET_WARN_OFFSET ? 'ind-warn' : 'ind-err';
+        const covCls = !hasValue ? '' : pct >= target ? 'ind-ok' : pct >= target - TARGET_WARN_OFFSET ? 'ind-warn' : 'ind-err';
         const barColor = pct >= target ? 'var(--green)' : pct >= target - TARGET_WARN_OFFSET ? 'var(--yellow)' : 'var(--red)';
         const MAX_BAR_WIDTH = 120;
         const BAR_HEIGHT = 6;
         return `<div class="ind-group"><span class="ind-group-label">${label.toUpperCase()}</span><div class="ind-dots">
-          <span class="ind-dot-item"><span class="ind-num ${covCls}">${pct}%</span><span class="ind-dlabel">current</span></span>
+          <span class="ind-dot-item"><span class="ind-num ${covCls}">${hasValue ? pct + '%' : '—'}</span><span class="ind-dlabel">current</span></span>
           <span class="ind-dot-item"><span class="ind-dlabel">goal: ${target}%</span></span>
           <span class="ind-dot-item" style="flex:1;max-width:${MAX_BAR_WIDTH}px">
             <div style="background:var(--border);border-radius:3px;height:${BAR_HEIGHT}px;width:100%;position:relative">
-              <div style="background:${barColor};height:100%;border-radius:3px;width:${Math.min(pct / target * 100, 100)}%"></div>
+              <div style="background:${barColor};height:100%;border-radius:3px;width:${hasValue ? Math.min(pct / target * 100, 100) : 0}%"></div>
             </div>
           </span>
         </div></div>`;
@@ -21972,19 +21978,36 @@ function burnAreaChart() {
     }
     ensureStatSources();
 
+    /* statSourcesForDialog returns the source catalogue for the agent the
+       config dialog is showing. The agent config response carries a catalogue
+       scoped to that agent (#7411: an ADVISORY/on-demand agent is never
+       offered the CI "health" strip — those checks describe the primary
+       repo's pipelines, not the agent); the page-wide unscoped catalogue is
+       the fallback for older servers and the create dialog. */
+    function statSourcesForDialog() {
+      const scoped = _configState.data && _configState.data.statSources;
+      if (scoped && scoped.sources) return scoped;
+      return _statSources || { sources: {}, styles: [] };
+    }
+
     function renderAgentStatsTab(stats) {
-      const sources = (_statSources || {}).sources || {};
-      const styles = (_statSources || {}).styles || ['number', 'dot', 'pct', 'pct-bar', 'spark'];
+      const catalogue = statSourcesForDialog();
+      const sources = catalogue.sources || {};
+      const styles = catalogue.styles && catalogue.styles.length ? catalogue.styles : ['number', 'dot', 'pct', 'pct-bar', 'spark'];
       const sourceKeys = Object.keys(sources);
 
       const rows = (stats || []).map((s, i) => {
         const fieldOptions = (sources[s.source] || {}).fields || [];
+        // A row whose source is no longer offered to this agent (e.g. a
+        // health stat left on an advisory agent) still shows its own source,
+        // so the operator can see what it is and remove it.
+        const rowSourceKeys = s.source && !sourceKeys.includes(s.source) ? sourceKeys.concat([s.source]) : sourceKeys;
         return `<div class="config-stat-row" data-idx="${i}">
           <div class="config-field-row" style="margin-bottom:4px;align-items:center">
             <div class="config-field" style="flex:0.7"><label title="Display name shown on the agent card for this metric">Label</label><input type="text" value="${esc(s.label || '')}" data-change-action="updateStat" data-arg0="${i}" data-arg1="label" data-arg-types="j,s,v"></div>
             <div class="config-field" style="flex:0.8"><label title="Data source to pull this metric from (e.g. agentMetrics, github, budget)">Source</label>
               <select data-change-action="updateStatSource" data-arg0="${i}" data-arg-types="j,v" title="Changing the source resets the field to the first available option">
-                ${sourceKeys.map(k => `<option value="${k}" ${s.source === k ? 'selected' : ''}>${(sources[k] || {}).label || k}</option>`).join('')}
+                ${rowSourceKeys.map(k => `<option value="${esc(k)}" ${s.source === k ? 'selected' : ''}>${esc((sources[k] || {}).label || k)}${sources[k] ? '' : ' (not offered to this agent)'}</option>`).join('')}
               </select>
             </div>
             <div class="config-field" style="flex:0.8"><label title="Specific data field from the selected source to display">Field</label>
@@ -22030,7 +22053,7 @@ function burnAreaChart() {
       const stats = _configState.data.stats || [];
       if (!stats[idx]) return;
       stats[idx].source = newSource;
-      const sources = (_statSources || {}).sources || {};
+      const sources = statSourcesForDialog().sources || {};
       const fields = (sources[newSource] || {}).fields || [];
       stats[idx].field = fields[0] || '';
       markDirty('stats', 'stats', stats);
@@ -22063,7 +22086,7 @@ function burnAreaChart() {
 
     function addStat() {
       if (!_configState.data.stats) _configState.data.stats = [];
-      const sources = (_statSources || {}).sources || {};
+      const sources = statSourcesForDialog().sources || {};
       const firstSource = Object.keys(sources)[0] || 'agentMetrics';
       const firstField = ((sources[firstSource] || {}).fields || [])[0] || '';
       const newKey = 'stat_' + Date.now();

@@ -871,8 +871,10 @@ if [ "$(id -u)" = "0" ]; then
   # The seed copy above runs as root, so everything it creates is root-owned.
   # Roster agents get re-chowned to their own hive-<agent> UID in the
   # per-agent loop below, but /data/agents ITSELF and any seeded directory for
-  # an agent no longer in the roster (e.g. the retired "reviewer" seed) stay
-  # root-owned forever. The permissions watcher runs as dev after the
+  # an agent no longer in the roster stay root-owned forever. (The retired
+  # "reviewer" seed that used to be the example here is gone: it was a
+  # byte-copy of ci-maintainer's CI/coverage stat strip and any spoke that
+  # later created a "reviewer" agent inherited it, #7411.) The permissions watcher runs as dev after the
   # privilege drop, cannot chown, and would warn about them on every tick
   # (#4488). This is the one moment we are still root and the chown actually
   # succeeds, so hand root-owned agent-data entries to dev:node NOW.

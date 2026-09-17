@@ -222,7 +222,7 @@ Rounding out the schema — fields you will rarely touch:
 | `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
 | `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit the hive default |
 | `metrics_collector` | Named metrics source for the stats panel | none |
-| `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
+| `stats_display` | Custom sidebar metrics (key, label, source, field, style). The `health` source (the primary repo's CI/coverage/release checks) is offered only to agents that can own CI — never to an `ADVISORY` or `on_demand` agent — and a `pct`/`pct-bar` stat with no measurement renders `—`, not `0%`. | none (an agent starts with no stats unless it is a built-in with defaults) |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
 
 ## Explain mode (debugging agent behaviour)
