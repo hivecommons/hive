@@ -499,6 +499,13 @@ type ContributeWSHub struct {
 	// upgrade path and from deferred cleanup, and must never contend with or
 	// re-enter h.mu.
 	pendingConns atomic.Int64
+	// handlers tracks live HandleWS invocations so a caller (in practice:
+	// tests) can wait for hijacked websocket handlers to fully unwind.
+	// httptest's Server.Close does not wait for hijacked connections, so a
+	// handler's deferred bookkeeping — the disconnect-abandonment task-run
+	// append, decision-ring writes — can land AFTER a test returns, racing
+	// t.TempDir() removal ("directory not empty") and any restored globals.
+	handlers sync.WaitGroup
 	activityMu   sync.RWMutex
 	activity     []ActivityEntry
 	// absorbedReconnects counts flaps collapsed by absorbReconnectFlapLocked
@@ -3615,6 +3622,10 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 const maxWSConnections = 50
 
 func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	// Counted from the first instruction so a drain (h.handlers.Wait) covers
+	// every deferred write this handler can make — see the field comment.
+	h.handlers.Add(1)
+	defer h.handlers.Done()
 	// SECURITY (audit F9, CWE-770): the cap must count sockets that are still
 	// authenticating, not just authenticated ones.
 	//
