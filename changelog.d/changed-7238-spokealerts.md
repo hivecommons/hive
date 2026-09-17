@@ -1,0 +1,1 @@
+- Moved the provider-budget and no-cadence dashboard alert policy out of `cmd/hive` into a new `pkg/spokealerts` package, continuing the staged breakup of the `cmd/hive` god file (#7238 stage 4). Behaviour is unchanged.

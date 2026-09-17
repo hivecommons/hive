@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/spokealerts"
 )
 
 // applyNoCadenceAlert (#5577) is the spoke-side parity for the hub's
@@ -37,9 +38,9 @@ func TestApplyNoCadenceAlertRaisesCauseAndFixBanner(t *testing.T) {
 	applyNoCadenceAlert(gov, srv)
 
 	alerts := publishedAlerts(t, srv)
-	a, ok := alertByID(alerts, noCadenceAlertID)
+	a, ok := alertByID(alerts, spokealerts.NoCadenceAlertID)
 	if !ok {
-		t.Fatalf("no %q alert published, alerts: %+v", noCadenceAlertID, alerts)
+		t.Fatalf("no %q alert published, alerts: %+v", spokealerts.NoCadenceAlertID, alerts)
 	}
 	if a.Severity != "warning" {
 		t.Errorf("severity = %q, want warning (unconfigured, not broken)", a.Severity)
@@ -67,14 +68,14 @@ func TestApplyNoCadenceAlertClearsAfterKick(t *testing.T) {
 	})
 
 	applyNoCadenceAlert(gov, srv)
-	if _, ok := alertByID(publishedAlerts(t, srv), noCadenceAlertID); !ok {
+	if _, ok := alertByID(publishedAlerts(t, srv), spokealerts.NoCadenceAlertID); !ok {
 		t.Fatal("precondition: alert not raised")
 	}
 
 	gov.RecordKick("telemetry")
 	applyNoCadenceAlert(gov, srv)
 
-	if a, ok := alertByID(publishedAlerts(t, srv), noCadenceAlertID); ok {
+	if a, ok := alertByID(publishedAlerts(t, srv), spokealerts.NoCadenceAlertID); ok {
 		t.Fatalf("alert not cleared after kick: %+v", a)
 	}
 }

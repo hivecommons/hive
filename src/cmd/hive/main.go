@@ -82,6 +82,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -5470,18 +5471,10 @@ func main() {
 	}
 }
 
-// Dashboard system-alert IDs for the budget thresholds.
-const (
-	budgetWarnAlertID      = "budget-warn"
-	budgetExhaustedAlertID = "budget-exhausted"
-	// noCadenceAlertID is the never-kicked cause+fix banner (#5577): enabled
-	// agents with no cadence in any mode and no kick ever.
-	noCadenceAlertID = "agent-no-cadence"
-	// providerBudgetAlertID is the PROVIDER spend rebuff (#4294), kept distinct
-	// from the two token-budget alerts above so an operator can tell "we used
-	// our token allowance" from "the gateway will not spend more money".
-	providerBudgetAlertID = "provider-budget-exceeded"
-)
+// providerBudgetAlertID is the PROVIDER spend rebuff (#4294), kept distinct
+// from the token-budget alert IDs in pkg/spokealerts so an operator can tell
+// "we used our token allowance" from "the gateway will not spend more money".
+const providerBudgetAlertID = "provider-budget-exceeded"
 
 // buildRepoActivityWire maps the dashboard activity collector's per-repo
 // snapshot into the plain hub wire structs the heartbeat carries. Kept here (in
@@ -5647,57 +5640,15 @@ func (p *providerBudgetProbeState) reset() {
 	p.lastProbe = time.Time{}
 }
 
-// applyBudgetAlerts turns budget threshold crossings into dashboard system
-// alerts and notifications. Crossings fire once per window (governor tracks
-// the one-shot flags); alerts are cleared when the threshold no longer
-// applies (window rolled, limit raised, or budgeting disabled).
+// The budget and no-cadence alert policy moved to pkg/spokealerts (#7238
+// stage 4). These wrappers keep the call sites unchanged and adapt the
+// concrete dashboard/notify/governor types to the package's interfaces.
 func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions, dashSrv *dashboard.Server, notifier *notify.Notifier) {
-	if !trans.WarnActive {
-		dashSrv.ClearSystemAlert(budgetWarnAlertID)
-	}
-	if !trans.ExhaustedActive {
-		dashSrv.ClearSystemAlert(budgetExhaustedAlertID)
-	}
-
-	budget := gov.GetBudget()
-	if trans.WarnCrossed {
-		msg := fmt.Sprintf("token budget at %d%%+ of weekly limit: %d of %d tokens used",
-			governor.BudgetWarnPct, budget.CurrentSpend, budget.WeeklyLimit)
-		dashSrv.AddSystemAlert(budgetWarnAlertID, "warning", msg)
-		notifier.Send("Budget warning", msg, notify.PriorityDefault)
-	}
-	if trans.ExhaustedCrossed {
-		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
-		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
-			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
-		dashSrv.AddSystemAlert(budgetExhaustedAlertID, "error", msg)
-		notifier.Send("Budget exhausted", msg, notify.PriorityHigh)
-	}
+	spokealerts.ApplyBudget(gov, trans, dashSrv, notifier)
 }
 
-// applyNoCadenceAlert keeps the never-kicked cause+fix banner (#5577) in sync
-// with the governor's view: raised (warning, not error — the hive is not
-// broken, it is unconfigured) while any enabled, governor-kickable agent has
-// no cadence in any mode and has never been kicked; cleared the moment the
-// operator sets a cadence or any kick path reaches the agent. This is the
-// spoke-side parity for the hub verdict's no-cadence amber: the same
-// governor-derived signal, rendered where the operator can act on it, with no
-// hub round-trip.
 func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
-	agents := gov.NoCadenceAgents()
-	if len(agents) == 0 {
-		dashSrv.ClearSystemAlert(noCadenceAlertID)
-		return
-	}
-	dashSrv.AddSystemAlert(noCadenceAlertID, "warning", noCadenceAlertMessage(agents))
-}
-
-// noCadenceAlertMessage renders the banner line: symptom, cause AND fix — the
-// exact gap the RFC calls out in the dashboard's not-producing warnings,
-// which name only the symptom.
-func noCadenceAlertMessage(agents []string) string {
-	return fmt.Sprintf("agent(s) %s enabled but never kicked — no cadence configured; set cadences on the agent card",
-		strings.Join(agents, ", "))
+	spokealerts.ApplyNoCadence(gov, dashSrv)
 }
 
 // agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3

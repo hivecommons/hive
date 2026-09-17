@@ -10,6 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/spokealerts"
 )
 
 // Tests for applyBudgetAlerts (cmd/hive/main.go), which was previously
@@ -63,9 +64,9 @@ func TestApplyBudgetAlertsWarnCrossingRaisesWarningAlert(t *testing.T) {
 	applyBudgetAlerts(gov, trans, srv, notifier)
 
 	alerts := publishedAlerts(t, srv)
-	warn, ok := alertByID(alerts, budgetWarnAlertID)
+	warn, ok := alertByID(alerts, spokealerts.BudgetWarnAlertID)
 	if !ok {
-		t.Fatalf("no %q alert published, alerts: %+v", budgetWarnAlertID, alerts)
+		t.Fatalf("no %q alert published, alerts: %+v", spokealerts.BudgetWarnAlertID, alerts)
 	}
 	if warn.Severity != "warning" {
 		t.Errorf("warn alert severity = %q, want %q", warn.Severity, "warning")
@@ -73,7 +74,7 @@ func TestApplyBudgetAlertsWarnCrossingRaisesWarningAlert(t *testing.T) {
 	if !strings.Contains(warn.Message, "950 of 1000 tokens used") {
 		t.Errorf("warn alert message = %q, want spend/limit figures", warn.Message)
 	}
-	if _, ok := alertByID(alerts, budgetExhaustedAlertID); ok {
+	if _, ok := alertByID(alerts, spokealerts.BudgetExhaustedAlertID); ok {
 		t.Error("exhausted alert raised on a warn-only crossing")
 	}
 }
@@ -91,9 +92,9 @@ func TestApplyBudgetAlertsExhaustedCrossingRaisesErrorAlert(t *testing.T) {
 	applyBudgetAlerts(gov, trans, srv, notifier)
 
 	alerts := publishedAlerts(t, srv)
-	exhausted, ok := alertByID(alerts, budgetExhaustedAlertID)
+	exhausted, ok := alertByID(alerts, spokealerts.BudgetExhaustedAlertID)
 	if !ok {
-		t.Fatalf("no %q alert published, alerts: %+v", budgetExhaustedAlertID, alerts)
+		t.Fatalf("no %q alert published, alerts: %+v", spokealerts.BudgetExhaustedAlertID, alerts)
 	}
 	if exhausted.Severity != "error" {
 		t.Errorf("exhausted alert severity = %q, want %q", exhausted.Severity, "error")
@@ -125,7 +126,7 @@ func TestApplyBudgetAlertsSteadyStateKeepsAlertWithoutReRaising(t *testing.T) {
 	alerts := publishedAlerts(t, srv)
 	count := 0
 	for _, a := range alerts {
-		if a.ID == budgetWarnAlertID {
+		if a.ID == spokealerts.BudgetWarnAlertID {
 			count++
 		}
 	}
@@ -144,7 +145,7 @@ func TestApplyBudgetAlertsClearsAlertsWhenThresholdNoLongerApplies(t *testing.T)
 
 	gov.UpdateBudgetFromTotals(0, nil, nil)
 	applyBudgetAlerts(gov, gov.UpdateBudgetFromTotals(1000, nil, nil), srv, notifier)
-	if _, ok := alertByID(publishedAlerts(t, srv), budgetExhaustedAlertID); !ok {
+	if _, ok := alertByID(publishedAlerts(t, srv), spokealerts.BudgetExhaustedAlertID); !ok {
 		t.Fatal("fixture: exhausted alert not raised")
 	}
 
@@ -156,10 +157,10 @@ func TestApplyBudgetAlertsClearsAlertsWhenThresholdNoLongerApplies(t *testing.T)
 	applyBudgetAlerts(gov, trans, srv, notifier)
 
 	alerts := publishedAlerts(t, srv)
-	if _, ok := alertByID(alerts, budgetExhaustedAlertID); ok {
+	if _, ok := alertByID(alerts, spokealerts.BudgetExhaustedAlertID); ok {
 		t.Error("exhausted alert not cleared after limit raise")
 	}
-	if _, ok := alertByID(alerts, budgetWarnAlertID); ok {
+	if _, ok := alertByID(alerts, spokealerts.BudgetWarnAlertID); ok {
 		t.Error("warn alert not cleared after limit raise")
 	}
 }
