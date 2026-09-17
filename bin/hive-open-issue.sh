@@ -21,6 +21,15 @@
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #
+# Every shape accepts --dry-run (-n): validate the arguments, print the exact
+# request that WOULD be written, and exit 0 without writing it — nothing is
+# created. A flag this shim does not understand is REFUSED (exit 2), never
+# silently dropped: the original parser swallowed unknown flags, so an agent
+# probing its access with `gh issue create --dry-run` filed a real issue with
+# the body "placeholder" that its create-only token could not then edit,
+# comment on, or close (hivecommons/hive#7400 / #7393). To retract an issue
+# you filed by mistake, use `hive-open-issue close --repo <r> <number>`.
+#
 # "claim" records that this agent is starting work on an issue: the watcher
 # applies a `hive/claimed-by-<agent>` LABEL (App bots cannot be GitHub
 # assignees, so a label is the visible, auditable ownership signal) and audits
@@ -48,7 +57,9 @@ esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
 OVERRIDE_REASON=""
+DRY_RUN=0
 LABELS=()
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --number, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -65,10 +76,23 @@ while [ $# -gt 0 ]; do
     --label=*) LABELS+=("${1#*=}"); shift;;
     --number=*) NUMBER="${1#*=}"; shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
+    --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
+    # These are the only flags that are accepted and IGNORED: an App bot
+    # cannot be an assignee, and web/editor/template are interactive gh
+    # affordances with no server-side meaning.
     --assignee|-a|--milestone|-m|--project|-p|--template|-T) shift 2;;
+    --assignee=*|--milestone=*|--project=*|--template=*) shift;;
     --web|-w|--editor|-e) shift;;
+    -*)
+      # Anything else that looks like a flag is refused, not swallowed. A
+      # flag whose whole purpose may be to PREVENT a write (--dry-run before
+      # this shim knew it; gh's --edit-last, --create-if-none, --recover …)
+      # must never be ignored on the way to a write the agent cannot undo
+      # (hivecommons/hive#7400).
+      echo "hive-open-issue: unsupported flag: $1 (supported: $SUPPORTED_FLAGS). Unknown gh flags are refused rather than silently dropped; nothing was created." >&2
+      exit 2;;
     *)
       # A bare positional for a comment/claim is the issue/PR number or URL.
       if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ] || [ "$KIND" = "close" ]; } && [ -z "$NUMBER" ]; then
@@ -128,7 +152,6 @@ except Exception: pass
   [ -n "$MAPPED" ] && AGENT="$MAPPED"
 fi
 
-mkdir -p "$REQ_DIR" 2>/dev/null || true
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
 TEMP_FILE="${REQ_FILE}.tmp"
 
@@ -137,10 +160,14 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$DRY_RUN" -eq 0 ]; then
+  mkdir -p "$REQ_DIR" 2>/dev/null || true
+fi
+
 LABELS_JSON="$(printf '%s\n' "${LABELS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number = sys.argv[1:10]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run = sys.argv[1:11]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
@@ -161,10 +188,19 @@ else:
     # Always present (even empty) — the original shim contract, pinned by
     # bin/test_hive_open_issue.sh; the watcher accepts both shapes.
     req["labels"] = labels
+if dry_run == "1":
+    # Honour --dry-run: show exactly what would be queued, write nothing.
+    print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
+    print(json.dumps(req, indent=2))
+    sys.exit(0)
 with open(temporary, "w") as fh:
     json.dump(req, fh)
 os.replace(temporary, path)
 PY
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  exit 0
+fi
 
 if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"

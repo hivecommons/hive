@@ -310,6 +310,62 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- hivecommons/hive#7400: --dry-run is honoured, unknown flags are refused ---
+echo ""
+echo "--- dry-run and unknown flags (#7400) ---"
+
+# The incident shape: an access probe with --dry-run must create NOTHING.
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+DRY_EXIT=0
+DRY_OUT="$(env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo "hivecommons/hive" --title "probe" --body "placeholder" --dry-run 2>&1)" || DRY_EXIT=$?
+check "dry-run create exits 0" "0" "$DRY_EXIT"
+check "dry-run create writes no request" "" "$(find_req probebot)"
+case "$DRY_OUT" in *"DRY RUN"*"nothing will be created"*) check "dry-run says nothing will be created" "yes" "yes";; *) check "dry-run says nothing will be created" "yes" "no: $DRY_OUT";; esac
+case "$DRY_OUT" in *'"title": "probe"'*) check "dry-run prints the request it would have written" "yes" "yes";; *) check "dry-run prints the request it would have written" "yes" "no: $DRY_OUT";; esac
+case "$DRY_OUT" in *'"body": "placeholder"'*) check "dry-run shows the body" "yes" "yes";; *) check "dry-run shows the body" "yes" "no";; esac
+
+# Short form, and the flag may come first (gh puts it anywhere).
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+check_exit "-n short form exits 0" 0 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" -n --repo org/repo --title t --body b
+check "-n writes no request" "" "$(find_req probebot)"
+
+# Dry run still validates: a malformed request is reported, not previewed.
+check_exit "dry-run without --body still exits 2" 2 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --dry-run --repo org/repo --title t
+
+# Every shape honours it.
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+check_exit "dry-run comment exits 0" 0 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --dry-run --repo org/repo 5 --body "hi"
+check_exit "dry-run claim exits 0" 0 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" claim --dry-run --repo org/repo 5
+check_exit "dry-run close exits 0" 0 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" close --dry-run --repo org/repo 5
+check "dry-run comment/claim/close write no request" "" "$(find_req probebot)"
+
+# Unknown flags are refused, never swallowed on the way to a write.
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+UNK_EXIT=0
+UNK_OUT="$(env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b --edit-last 2>&1)" || UNK_EXIT=$?
+check "unknown flag exits 2" "2" "$UNK_EXIT"
+check "unknown flag writes no request" "" "$(find_req probebot)"
+case "$UNK_OUT" in *"unsupported flag: --edit-last"*"nothing was created"*) check "unknown flag is named in the error" "yes" "yes";; *) check "unknown flag is named in the error" "yes" "no: $UNK_OUT";; esac
+check_exit "unknown flag on comment exits 2" 2 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --repo org/repo 5 --body b --create-if-none
+check_exit "unknown short flag exits 2" 2 \
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b -x
+
+# The documented gh no-op flags stay tolerated (value-taking and =-form).
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+run_script "tolbot" --repo org/repo --title t --body b --assignee @me --web --milestone=v1
+REQ_FILE="$(find_req tolbot)"
+if [ -n "$REQ_FILE" ]; then
+  check "tolerated gh flags still create" "t" "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['title'])" "$REQ_FILE")"
+else
+  echo "  FAIL: tolerated gh flags blocked the request"; FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

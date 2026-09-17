@@ -53,12 +53,25 @@ hive-open-issue claim   --repo <owner/repo> <number|url>
 | `--body-file` | `-F` | issue, comment | reads body from a file; `-` reads stdin |
 | `--label` | `-l` | issue | repeatable |
 | `--number` | — | comment, claim | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
+| `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
 Both `--flag value` and `--flag=value` forms work. Flags `gh` accepts but this
 path does not need — `--assignee`/`-a`, `--milestone`/`-m`, `--project`/`-p`,
 `--template`/`-T`, `--web`/`-w`, `--editor`/`-e` — are **accepted and
 ignored** (the value-taking ones correctly consume their following argument so
-it isn't misread as the issue number).
+it isn't misread as the issue number). **Every other flag is refused** with
+exit `2` and an `unsupported flag` error naming it; nothing is written. The
+shim used to drop unknown flags silently, and an agent probing its access with
+`gh issue create --dry-run` filed a real issue whose body was `placeholder` —
+which its create-only token could not then edit, comment on, or close
+([#7400](https://github.com/hivecommons/hive/issues/7400)). A flag whose whole
+purpose may be to *prevent* a write must never be ignored on the way to a
+write the agent cannot undo, so the parser now fails closed on anything it
+does not understand.
+
+To retract an issue you filed by mistake, use `hive-open-issue close --repo
+<owner/repo> <number>` — it goes through the watcher with the App token, so it
+works even when the agent's own scoped token cannot edit or comment.
 
 ### `issue` (default)
 
