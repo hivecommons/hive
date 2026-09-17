@@ -178,7 +178,7 @@ func newHivesTestServer(t *testing.T) *Server {
 // ownerGatedF22F25Handlers maps each handler this fix gated to its file.
 var ownerGatedF22F25Handlers = map[string]string{
 	"handleGovernorFeatures": "api_governor_features.go",
-	"handleHivesDelete":      "api_contribute.go",
+	"handleHivesDelete":      "contribute_federation.go",
 }
 
 // TestF22F25HandlersAreOwnerGated is the source-level regression, mirroring
@@ -260,12 +260,14 @@ func TestF22AllGovernorConfigWritersAreOwnerGated(t *testing.T) {
 func TestF22F25OwnerGateCountFloor(t *testing.T) {
 	// Minimum requireOwnerRole call sites per file after F22/F25.
 	// api_governor_features.go: features (this fix).
-	// api_contribute.go: the four F14 contributor-management gates + hives delete.
+	// contribute_admin.go: the four F14 contributor-management gates.
+	// contribute_federation.go: hives delete.
 	// api_governor.go: the nine governor writers moved out of api.go.
 	// api_trajectory.go: trajectory.
 	want := map[string]int{
 		"api_governor_features.go": 1,
-		"api_contribute.go":        5,
+		"contribute_admin.go":      4,
+		"contribute_federation.go": 1,
 		"api_governor.go":          9,
 		"api_trajectory.go":        1,
 	}
@@ -293,7 +295,7 @@ func TestF22F25OwnerGateCountFloor(t *testing.T) {
 // owner in a browser, so owner-gating them would break federation entirely.
 // Only delete, which acts on ANOTHER hive's entry, is owner-tier.
 func TestF25HivesSelfServiceRoutesStayUngated(t *testing.T) {
-	src := f16ReadSource(t, "api_contribute.go")
+	src := f16ReadSource(t, "contribute_federation.go")
 	for _, name := range []string{
 		"handleHivesRegister",
 		"handleHivesHeartbeat",

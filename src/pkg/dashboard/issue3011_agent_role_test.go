@@ -216,7 +216,7 @@ func TestIssue3011UnprivilegedRolesNeedNoGrant(t *testing.T) {
 // level. The grants half was already fixed by F16 and regressing it would
 // re-open this issue's other half, so both are asserted together.
 func TestIssue3011AgentRoleHandlersAreOwnerGated(t *testing.T) {
-	src := f16ReadSource(t, "api_contribute.go")
+	src := f16ReadSource(t, "contribute_admin.go")
 	for _, name := range []string{
 		"handleContributorAgentRole",
 		"handleContributorAgentRoleGrants",
@@ -239,7 +239,7 @@ func TestIssue3011AgentRoleHandlersAreOwnerGated(t *testing.T) {
 // today's version, this catches a re-introduction that a refactor makes
 // reachable again.
 func TestIssue3011ProbeIsNotPreSeededWithTheGrant(t *testing.T) {
-	body := f16HandlerBody(t, f16ReadSource(t, "api_contribute.go"), "handleContributorAgentRole")
+	body := f16HandlerBody(t, f16ReadSource(t, "contribute_admin.go"), "handleContributorAgentRole")
 
 	if strings.Contains(body, "probeProfile") {
 		t.Error("handleContributorAgentRole reconstructs a probeProfile — the #3011 bypass " +
@@ -259,7 +259,7 @@ func TestIssue3011ProbeIsNotPreSeededWithTheGrant(t *testing.T) {
 // supposed to write grants, so "no handler may ever write a grant" cannot be
 // the reading of the rule.
 func TestIssue3011GrantIssuanceStaysWithTheGrantsHandler(t *testing.T) {
-	body := f16HandlerBody(t, f16ReadSource(t, "api_contribute.go"), "handleContributorAgentRoleGrants")
+	body := f16HandlerBody(t, f16ReadSource(t, "contribute_admin.go"), "handleContributorAgentRoleGrants")
 	if !strings.Contains(body, "p.AgentRoleGrants = grants") {
 		t.Error("handleContributorAgentRoleGrants no longer writes grants — grant issuance must " +
 			"still exist as an explicit owner action, otherwise privileged roles become " +

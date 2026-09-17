@@ -45,9 +45,9 @@ func handlerBody(t *testing.T, src, name string) string {
 
 // TestContributorManagementHandlersAreOwnerGated is the F14 regression.
 func TestContributorManagementHandlersAreOwnerGated(t *testing.T) {
-	raw, err := os.ReadFile("api_contribute.go")
+	raw, err := os.ReadFile("contribute_admin.go")
 	if err != nil {
-		t.Fatalf("read api_contribute.go: %v", err)
+		t.Fatalf("read contribute_admin.go: %v", err)
 	}
 	src := string(raw)
 
@@ -69,9 +69,9 @@ func TestContributorManagementHandlersAreOwnerGated(t *testing.T) {
 // this case, "add requireOwnerRole everywhere in the file" would satisfy the
 // test above while breaking a legitimate workflow.
 func TestContributorRequeueStaysContributorWrite(t *testing.T) {
-	raw, err := os.ReadFile("api_contribute.go")
+	raw, err := os.ReadFile("contribute_admin.go")
 	if err != nil {
-		t.Fatalf("read api_contribute.go: %v", err)
+		t.Fatalf("read contribute_admin.go: %v", err)
 	}
 	body := handlerBody(t, string(raw), "handleContributorRequeue")
 	if !strings.Contains(body, "s.requireContributorWrite(w, r)") {
@@ -87,13 +87,13 @@ func TestContributorRequeueStaysContributorWrite(t *testing.T) {
 // count ever drops below the number of owner-gated handlers, something removed
 // a gate. Cheap, and it is exactly the signal a sync merge would trip.
 func TestOwnerGateCountFloor(t *testing.T) {
-	raw, err := os.ReadFile("api_contribute.go")
+	raw, err := os.ReadFile("contribute_admin.go")
 	if err != nil {
-		t.Fatalf("read api_contribute.go: %v", err)
+		t.Fatalf("read contribute_admin.go: %v", err)
 	}
 	got := len(regexp.MustCompile(`requireOwnerRole\(w, r\)`).FindAllString(string(raw), -1))
 	if want := len(ownerGatedContributorHandlers); got < want {
-		t.Errorf("api_contribute.go has %d requireOwnerRole gates, want at least %d — "+
+		t.Errorf("contribute_admin.go has %d requireOwnerRole gates, want at least %d — "+
 			"a gate was removed (audit F14 regressed exactly this way)", got, want)
 	}
 }

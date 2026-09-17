@@ -1,0 +1,1 @@
+- Split `pkg/dashboard/api_contribute.go` god file: move the contributor profile store/invite tokens, contributor-management handlers, federation registry, and leaderboard verbatim into `contribute_profiles.go`, `contribute_admin.go`, `contribute_federation.go`, and `contribute_leaderboard.go` (#7435 god-file split; no behavior change).
