@@ -985,19 +985,13 @@ func main() {
 		os.Exit(runConfigCheck(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	startTime := time.Now()
-	defaultConfig := "/etc/hive/hive.yaml"
-	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {
-		defaultConfig = envCfg
-	}
-	configPath := flag.String("config", defaultConfig, "path to hive.yaml config file")
+	configPath := flag.String("config", resolveDefaultConfigPath(os.Getenv(hiveConfigEnv)), "path to hive.yaml config file")
 	flag.Parse()
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
 	// compares against. The Dockerfile builds it with `--short=7`, but git can
 	// still return more chars when 7 isn't unique; trim so what we report to the
 	// hub is always the same length it stores (no short-vs-full mismatch).
-	if len(gitShort) > 7 {
-		gitShort = gitShort[:7]
-	}
+	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
 	dashboard.SetFleetReportBuildInfo(reportedVersion(), gitShort)
 	dashboard.SetGitBranch(gitBranch)
@@ -1147,7 +1141,7 @@ func main() {
 	// vantage point: /api/config/provenance reads HIVE_CONFIG directly, so it
 	// reports the file the entrypoint chose while the process runs on the one
 	// it did not, and the two disagree with no way to tell from the outside.
-	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" && envCfg != *configPath {
+	if envCfg := os.Getenv(hiveConfigEnv); configPathDisagrees(envCfg, *configPath) {
 		logger.Warn("config path disagreement: HIVE_CONFIG names a different file than the one loaded — an explicit -config (the image CMD) outranked the entrypoint's redirect; persisted state in HIVE_CONFIG may be overwritten by the next save",
 			"hive_config_env", envCfg,
 			"loaded_config", *configPath,
@@ -3034,65 +3028,48 @@ func main() {
 		go inceptionWatcher.Run(ctx)
 	}
 
-	if saved == nil {
-		if levelStr := os.Getenv("HIVE_LEVEL"); levelStr != "" {
-			const maxACMMLevel = 6
-			level, err := strconv.Atoi(levelStr)
-			if err != nil || level < 1 || level > maxACMMLevel {
-				logger.Warn("invalid HIVE_LEVEL, skipping auto-apply", "value", levelStr)
-			} else {
-				logger.Info("first start detected, auto-applying ACMM pack", "level", level)
-				result, err := dashSrv.ApplyPack(level)
-				if err != nil {
-					logger.Error("failed to auto-apply ACMM pack", "level", level, "error", err)
-				} else {
-					logger.Info("ACMM pack auto-applied",
-						"level", level,
-						"name", result.Name,
-						"created", result.Created,
-						"skipped", result.Skipped,
-						"paused", result.Paused,
-						"resumed", result.Resumed,
-					)
-				}
-			}
+	// The ACMM pack decision (config vs persisted vs HIVE_LEVEL, and whether
+	// this is a merge or a re-apply) lives in planACMMBoot (#7232); only the
+	// ApplyPack effect and its audit lines stay here.
+	var savedACMMLevel *int
+	if saved != nil {
+		savedACMMLevel = saved.ACMMLevel
+	}
+	acmmPlan := planACMMBoot(saved == nil, cfg.ACMMLevel, savedACMMLevel, os.Getenv(hiveLevelEnv))
+	if acmmPlan.invalidEnv != "" {
+		logger.Warn("invalid HIVE_LEVEL, skipping auto-apply", "value", acmmPlan.invalidEnv)
+	}
+	if acmmPlan.level > 0 {
+		if saved == nil {
+			logger.Info("first start detected, auto-applying ACMM pack", "level", acmmPlan.level)
+		} else {
+			logger.Info("audit: "+acmmPlan.action, "level", acmmPlan.level, "saved_level", saved.ACMMLevel, "trigger", "startup")
 		}
-	} else {
-		// Config file is authoritative on restarts; HIVE_LEVEL env var is
-		// only a fallback for initial provisioning when no level is persisted.
-		const maxACMMLevel = 6
-		level := 0
-		if cfg.ACMMLevel != nil && *cfg.ACMMLevel >= 1 && *cfg.ACMMLevel <= maxACMMLevel {
-			level = *cfg.ACMMLevel
-		} else if saved.ACMMLevel != nil && *saved.ACMMLevel >= 1 && *saved.ACMMLevel <= maxACMMLevel {
-			level = *saved.ACMMLevel
-		} else if levelStr := os.Getenv("HIVE_LEVEL"); levelStr != "" {
-			if parsed, err := strconv.Atoi(levelStr); err == nil && parsed >= 1 && parsed <= maxACMMLevel {
-				level = parsed
-			} else {
-				logger.Warn("invalid HIVE_LEVEL, skipping auto-apply", "value", levelStr)
-			}
-		}
-		if level > 0 {
-			action := "merging pack updates"
-			if saved.ACMMLevel == nil || *saved.ACMMLevel != level {
-				action = "re-applying pack (level changed)"
-			}
-			logger.Info("audit: "+action, "level", level, "saved_level", saved.ACMMLevel, "trigger", "startup")
-			result, err := dashSrv.ApplyPack(level)
-			if err != nil {
-				logger.Error("failed to apply ACMM pack", "level", level, "error", err)
-			} else {
-				logger.Info("ACMM pack applied on startup",
-					"level", level,
-					"name", result.Name,
-					"created", result.Created,
-					"updated", result.Updated,
-					"skipped", result.Skipped,
-					"paused", result.Paused,
-					"resumed", result.Resumed,
-				)
-			}
+		result, err := dashSrv.ApplyPack(acmmPlan.level)
+		switch {
+		case err != nil && saved == nil:
+			logger.Error("failed to auto-apply ACMM pack", "level", acmmPlan.level, "error", err)
+		case err != nil:
+			logger.Error("failed to apply ACMM pack", "level", acmmPlan.level, "error", err)
+		case saved == nil:
+			logger.Info("ACMM pack auto-applied",
+				"level", acmmPlan.level,
+				"name", result.Name,
+				"created", result.Created,
+				"skipped", result.Skipped,
+				"paused", result.Paused,
+				"resumed", result.Resumed,
+			)
+		default:
+			logger.Info("ACMM pack applied on startup",
+				"level", acmmPlan.level,
+				"name", result.Name,
+				"created", result.Created,
+				"updated", result.Updated,
+				"skipped", result.Skipped,
+				"paused", result.Paused,
+				"resumed", result.Resumed,
+			)
 		}
 	}
 
@@ -3692,16 +3669,10 @@ func main() {
 	}()
 
 	// Start hub heartbeat push if configured (env var or config)
-	hubURL := cfg.Hub.URL
-	if envHub := os.Getenv("HIVE_HUB_URL"); envHub != "" {
-		hubURL = envHub
-		cfg.Hub.Enabled = true
-		cfg.Hub.URL = envHub
-	}
-	if envCluster := os.Getenv("HIVE_CLUSTER_ID"); envCluster != "" {
-		cfg.Hub.ClusterID = envCluster
-	}
-	if cfg.Hub.Enabled && hubURL != "" {
+	hubTgt := resolveHubTarget(cfg.Hub, os.Getenv("HIVE_HUB_URL"), os.Getenv("HIVE_CLUSTER_ID"))
+	hubURL := hubTgt.url
+	cfg.Hub.Enabled, cfg.Hub.URL, cfg.Hub.ClusterID = hubTgt.enabled, hubTgt.url, hubTgt.clusterID
+	if hubTgt.heartbeatsToHub() {
 		// Heartbeat cadence is INDEPENDENT of the governor eval interval. It was
 		// previously tied to cfg.Governor.EvalIntervalS, so a low-ACMM hive
 		// (which evaluates infrequently by design — e.g. ~10 min at L2) beat the

@@ -1,0 +1,1 @@
+- Boot-time decisions in `main()` — default config path, HIVE_CONFIG disagreement, short-SHA canonicalization, hub target from `HIVE_HUB_URL`/`HIVE_CLUSTER_ID`, and the ACMM pack plan (config vs persisted vs `HIVE_LEVEL`, merge vs re-apply) — now live in `cmd/hive/boot_seams.go` as pure, fully tested helpers; `main()` keeps only the effects (refs #7232).
