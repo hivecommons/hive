@@ -14733,6 +14733,75 @@
         }
       }
     },
+    "/api/plans": {
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "List plans (decomposed epics) across all bead stores",
+        "description": "Returns every plan the dashboard's plan view lists before drilling into GET /api/plan/{epicID}. Ordered so human-action-required plans surface first: drafts awaiting review, then epics queued for the architect, then approved (executing) plans. Read-only and not owner-gated; approving or rejecting a plan is.",
+        "responses": {
+          "200": {
+            "description": "Plan summaries, drafts first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "plans": {
+                      "type": "array",
+                      "description": "planning.PlanSummary list, ordered drafts first; empty array when no plans exist",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "epicId": {
+                            "type": "string"
+                          },
+                          "epicTitle": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "bead store holding the plan"
+                          },
+                          "planStatus": {
+                            "type": "string",
+                            "description": "\"draft\" / \"approved\", or \"\" for an accepted-but-not-yet-decomposed epic"
+                          },
+                          "pendingDecompose": {
+                            "type": "boolean",
+                            "description": "queued for the architect; children not yet materialized"
+                          },
+                          "issueRepo": {
+                            "type": "string"
+                          },
+                          "issueNumber": {
+                            "type": "string"
+                          },
+                          "issueUrl": {
+                            "type": "string"
+                          },
+                          "childrenTotal": {
+                            "type": "integer"
+                          },
+                          "childrenOpen": {
+                            "type": "integer",
+                            "description": "children with status open or in_progress"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/plan/from-issue": {
       "post": {
         "tags": [

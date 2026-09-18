@@ -216,3 +216,51 @@ func TestStaticTerminalHostedApexWiring(t *testing.T) {
 		t.Fatal("isHostedHiveHost still hardcodes a single hosted apex; assertion renewal no-ops on every other apex")
 	}
 }
+
+// TestStaticPlanReviewWiring pins the plan-review view the governor PLANNING
+// tile promises (#7537).
+//
+// The bug this guards against is specifically a DANGLING REFERENCE, not a
+// missing feature: index.html already called openPlanReview(epic_id) from the
+// ⧉ Plan flow, but the function was never defined anywhere, so the tooltip's
+// instruction to "approve them in the plan view" was impossible to follow. A
+// typeof guard at that call site means the dangling reference fails SILENTLY —
+// and .github/scripts/check-inline-js.js deliberately exempts typeof-guarded
+// no-undef hits (it uses openPlanReview as its own example), so the inline-JS
+// linter cannot catch a regression here. Nothing else in the suite reads this
+// markup, so without this test the entire frontend half of the feature can be
+// deleted with every gate still green.
+func TestStaticPlanReviewWiring(t *testing.T) {
+	body, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		// The listing and the drill-in must both be DEFINED, not just called.
+		"async function openPlanList()",
+		"async function openPlanReview(",
+		"const res = await fetch('/api/plans');",
+		// Approve/reject/retag are what make the gate more than decorative.
+		"async function planGateAction(epicID, verb)",
+		"function planApprove(epicID)",
+		"function planReject(epicID)",
+		"function planChildRemove(epicID, childID)",
+		"function planCloseModal()",
+		// The PLANNING tile must actually navigate somewhere.
+		`data-action="openPlanList"`,
+		`data-action="openPlanReview"`,
+		`data-action="planApprove"`,
+		`data-action="planReject"`,
+		`data-action="planCloseModal"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("plan-review wiring missing %q — the PLANNING tile promises a plan view that would not exist", want)
+		}
+	}
+	// The pre-existing call site must keep working: it is guarded by typeof, so
+	// if the definition disappears again the flow silently does nothing.
+	if !strings.Contains(html, "openPlanReview(data.epic_id)") {
+		t.Fatal("the ⧉ Plan flow no longer calls openPlanReview(data.epic_id)")
+	}
+}
