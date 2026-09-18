@@ -13,7 +13,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:latest")
-hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
+hive_hub := env("HIVE_HUB", "wss://hive.hivecommons.dev/contribute")
 config_dir := env("HOME") + "/.config/hive"
 # Container runtime for containerized mode. Empty = auto-detect (docker, then
 # podman — Docker wins on discovery order, not isolation posture; see the
@@ -281,13 +281,13 @@ backend-smoke backends="claude codex":
 contribute-setup backend="claude": check-version (contribute-check-backend backend)
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ "{{hive_hub}}" == "wss://hive.kubestellar.io/contribute" ]]; then
+    if [[ "{{hive_hub}}" == "wss://hive.hivecommons.dev/contribute" ]]; then
       echo "HIVE_HUB not set — looking up your hives..."
       echo ""
       _TOKEN=$(gh auth token 2>/dev/null || echo "")
       HIVE_LIST=""
       if [[ -n "$_TOKEN" ]]; then
-        MY_HIVES=$(curl -sf -H "Authorization: Bearer ${_TOKEN}" "https://hive.kubestellar.io/api/saas/my-hives" 2>/dev/null || echo "")
+        MY_HIVES=$(curl -sf -H "Authorization: Bearer ${_TOKEN}" "https://hive.hivecommons.dev/api/saas/my-hives" 2>/dev/null || echo "")
         if [[ -n "$MY_HIVES" ]]; then
           # /api/saas/my-hives answers with "hives": null for an account that
           # owns no SaaS-hosted hive — the normal case for a contributor who
@@ -307,8 +307,8 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
         fi
       fi
       if [[ -z "$HIVE_LIST" ]]; then
-        HIVES_JSON=$(curl -sf "https://hive.kubestellar.io/api/registry" 2>/dev/null) || {
-          echo "ERROR: Could not reach hive.kubestellar.io"
+        HIVES_JSON=$(curl -sf "https://hive.hivecommons.dev/api/registry" 2>/dev/null) || {
+          echo "ERROR: Could not reach hive.hivecommons.dev"
           echo "Set HIVE_HUB manually: export HIVE_HUB=wss://<hive>/contribute"
           exit 1
         }
@@ -317,7 +317,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
         HIVE_LIST=$(echo "$HIVES_JSON" | jq -r '(.hives // empty) | select(type == "array") | .[] | select(type == "object" and .online == true) | "\(.id)|\(.name // .id)"' 2>/dev/null || true)
       fi
       if [[ -z "$HIVE_LIST" ]]; then
-        echo "No hives available. Check https://hive.kubestellar.io"
+        echo "No hives available. Check https://hive.hivecommons.dev"
         echo "Or set the hub directly: export HIVE_HUB=wss://<hive>/contribute"
         exit 1
       fi
@@ -338,14 +338,14 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       fi
       SELECTED="${HIVE_IDS[$((CHOICE-1))]}"
       if [[ "$SELECTED" == hosted-* ]]; then
-        export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
+        export HIVE_HUB="wss://${SELECTED}.hive.hivecommons.dev/contribute"
       else
         DASH_URL=$(echo "$HIVES_JSON" | jq -r --arg id "$SELECTED" '.hives[] | select(.id==$id) | .dashboardUrl' 2>/dev/null || echo "")
         if [[ -n "$DASH_URL" ]]; then
           DASH_URL=$(echo "$DASH_URL" | sed 's|^http://|ws://|;s|^https://|wss://|')
           export HIVE_HUB="${DASH_URL}/contribute"
         else
-          export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
+          export HIVE_HUB="wss://${SELECTED}.hive.hivecommons.dev/contribute"
         fi
       fi
       echo ""

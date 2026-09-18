@@ -3132,8 +3132,8 @@ volumes:
       '3. Save the private key as /etc/hive/gh-app-key.pem on your server',
       '4. Save the hive-project.yaml as /etc/hive/hive-project.yaml',
       '5. Save the docker-compose.yaml and run: docker compose up -d',
-      '6. Register your hive: curl -X POST https://hive.kubestellar.io/api/hives/register -d \'{"project_name":"...", "org":"...", "hub_url":"wss://your-server:3001/contribute"}\'',
-      '7. Contributors can now find your hive at https://hive.kubestellar.io and run: just contribute-hive',
+      '6. Register your hive: curl -X POST https://hive.hivecommons.dev/api/hives/register -d \'{"project_name":"...", "org":"...", "hub_url":"wss://your-server:3001/contribute"}\'',
+      '7. Contributors can now find your hive at https://hive.hivecommons.dev and run: just contribute-hive',
     ],
   });
 });
