@@ -28,7 +28,7 @@ that apply regardless of which runtime you are moving.
 
 | What | Object | Path / key | Citation |
 |---|---|---|---|
-| Hive ID | PVC `hive-data` | `/data/hive-id` | `src/pkg/dashboard/api.go:6193` (`hiveIDFilePath = "/data/hive-id"`) |
+| Hive ID | PVC `hive-data` | `/data/hive-id` | `src/pkg/dashboard/api.go:6218` (`hiveIDFilePath = "/data/hive-id"`) |
 | GitHub App private key (or PAT) | Secret `hive-secrets` | key `gh-app-key.pem` (or `HIVE_GITHUB_TOKEN`), mounted read-only at `/secrets` | `src/deploy/k8s/secret.yaml`, `src/deploy/k8s/deployment.yaml` (volume `secrets`, `defaultMode: 0440`) |
 | Base config | ConfigMap `hive-config` | key `hive.yaml`, mounted at `/etc/hive/hive.yaml` | `src/deploy/k8s/configmap.yaml`, `src/deploy/k8s/kustomization.yaml` |
 | Dashboard-saved config overlay | PVC `hive-data` | `/data/hive.yaml.dashboard` (merged over the ConfigMap seed at boot) | `src/deploy/entrypoint.sh:533,550` |

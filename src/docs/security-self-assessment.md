@@ -812,7 +812,7 @@ because a self-assessment that only lists strengths is not credible:
 A secondary, narrower point worth surfacing alongside the three above: the
 **audit log's retention is size-triggered, not time-triggered** — rotation
 occurs at 5 MB with 3 backups retained
-(`src/pkg/dashboard/audit.go:23-24`, `auditMaxSizeMB = 5`,
+(`src/pkg/dashboard/audit.go:25-26`, `auditMaxSizeMB = 5`,
 `auditMaxBackups = 3`; a 90-day `auditMaxAgeDays` cap also applies but only
 prunes files already past the size-based rotation). On a busy hive with many
 audited actions per day, the effective lookback window this provides an

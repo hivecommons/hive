@@ -58,7 +58,7 @@ Its one exclusive field, `hub.is_public`, is owned by a component that
   `deployments` and `secrets`. `configmaps` appears in no rule.
 
 The hub also re-asserts `is_public` over the heartbeat
-(`server.go:1271` pushes on disagreement; `server.go:1077` keeps a hub-set
+(`server.go:1285` pushes on disagreement; `server.go:1091` keeps a hub-set
 public flag from being reverted), so the seed's win survives at most one beat.
 
 **Consequence:** editing the ConfigMap and restarting usually changes nothing.

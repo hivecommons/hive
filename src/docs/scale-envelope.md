@@ -34,7 +34,7 @@ ones to:
 2. **Truncation must drop the least important tail, not an arbitrary one.**
    This holds today and is easy to assume backwards:
    - Issues are sorted **oldest first** before any cap is applied
-     (`src/pkg/github/client.go:656-658`, descending `AgeMinutes`).
+     (`src/pkg/github/client.go:669-671`, descending `AgeMinutes`).
    - PRs are sorted by **review class then oldest-first within class**
      (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:176-192`;
      fixes → refactors/docs → tests).
@@ -50,7 +50,7 @@ enumeration-side.**
 
 Enumeration is deliberately complete. `fetchIssues` and `fetchPRs` page through
 every open item in every watched repo with no page ceiling
-(`src/pkg/github/client.go:704-724` and `775-795`, `PerPage: 100` looping until
+(`src/pkg/github/client.go:718-738` and `788-808`, `PerPage: 100` looping until
 `resp.NextPage == 0`). The governor therefore always sees true queue depth —
 which is what makes `governor-thresholds.md` scaling meaningful — and the caps
 below only decide how much of that is *rendered into a kick prompt*.
@@ -93,13 +93,13 @@ operator can change it without rebuilding.
 | Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1321` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
 | Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1137` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
 | Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/scheduler.go:1353-1355` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
-| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/scheduler.go:1138` | 400 runes | **No** | Truncate with "…" |
-| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/scheduler.go:2115` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
+| CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/scheduler.go:1280` | 400 runes | **No** | Truncate with "…" |
+| Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/scheduler.go:2257` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
 | Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/scheduler.go:2008` | 5 | **No** | Truncate |
 | Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:19` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:680-700`, `775-795` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:693-713`, `775-795` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 

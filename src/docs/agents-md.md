@@ -160,8 +160,8 @@ loses some of the time.
 ## Parsing is tolerant
 
 Everything about the *parser* is designed to fail safe: a missing file yields
-an empty, non-nil config (`agentsmd.go:171-174`); an unreadable file logs and
-returns empty (`agentsmd.go:175-178`); malformed front-matter logs and falls
+an empty, non-nil config (`agentsmd.go:203-206`); an unreadable file logs and
+returns empty (`agentsmd.go:207-209`); malformed front-matter logs and falls
 back to using the body alone. Combined with the guarded call site — which
 prepends only non-empty text — a bad `AGENTS.md` degrades to no injection
 rather than a failed kick.

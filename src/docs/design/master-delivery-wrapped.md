@@ -149,7 +149,7 @@ already persists private key material on the same PVC at the same mode:
 `spokeAppKeyDir = "/data"` (`:212`), with `spokeAppKeyFileMode = 0o600`
 (`:224`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:222-223`). `/data` is the PVC mount in the spoke template
-(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7232`)
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7254`)
 already establishes that identity-critical state persists there across
 restarts.
 
@@ -218,7 +218,7 @@ function's banner states the invariant: "identity-bound under EVERY generation
 ... There is deliberately no code path here that derives without hiveID; if one
 ever appears, F2 is re-opened" (`:322-327`). `handleHeartbeat` verifies the
 bearer against the *claimed* `hive_id` after parsing the body
-(`src/pkg/hub/server.go:1649`; the N1 comment at `:1395-1405` explains why the check must
+(`src/pkg/hub/server.go:1712`; the N1 comment at `:1661-1668` explains why the check must
 follow the parse — the per-hive bearer is derived from the claimed ID, so the
 ID must be parsed and validated first).
 
@@ -551,8 +551,8 @@ SafeToRetirePrevious = hasPrevious
 
 This preserves the pattern every existing clause already uses — a `== 0` floor
 or a `> 0` liveness check, never an equality between two separately-sourced
-totals (`src/pkg/hub/perhive_env_reconcile.go:792-797`, and `FleetFullyObserved
-= out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:673`). It cannot go
+totals (`src/pkg/hub/perhive_env_reconcile.go:791-796`, and `FleetFullyObserved
+= out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:719`). It cannot go
 true on a zero sweep, and a hive present in the registry with no pin is
 *counted* rather than silently absent.
 

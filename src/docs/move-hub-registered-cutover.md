@@ -29,7 +29,7 @@ A hub-registered hive's identity is three pieces of state, none of which the
 move procedures in the other guides should regenerate:
 
 - **`hive-id`** — the stable identifier (`/data/hive-id` on Kubernetes,
-  `hiveIDFilePath` in `src/pkg/dashboard/api.go:6193`). Passed through to
+  `hiveIDFilePath` in `src/pkg/dashboard/api.go:6218`). Passed through to
   launched agents and used to name the hive's namespace/registry entry.
 - **The GitHub App private key** (or PAT) — what lets the hive act as itself
   on GitHub. Kept in the `hive-secrets` Secret on Kubernetes
@@ -59,9 +59,9 @@ move procedures in the other guides should regenerate:
 - The spoke sends a heartbeat payload including `dashboard_url` (JSON field
   `dashboard_url`, `src/pkg/hub/heartbeat.go:736`,
   `DashboardURL string json:"dashboard_url"`).
-- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1744`,
+- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1749`,
   must start with `http://` or `https://`) and writes it straight into the
-  registry entry for that hive (`src/pkg/hub/server.go:1811`,
+  registry entry for that hive (`src/pkg/hub/server.go:1816`,
   `DashboardURL: payload.DashboardURL`). **The heartbeat is the only writer.**
   Nothing else — not a hand-edit of the hub's registry file, not a hub API
   call — durably sets it, because the next heartbeat overwrites whatever was
@@ -117,7 +117,7 @@ deployment").
 
 The duplicate-PR guard (`src/pkg/github/prclaims.go`) exists precisely
 because independent agent processes filing PRs against the same issue
-produced duplicates (`prclaims.go:18-27`, "a restart storm... made a quality
+produced duplicates (`prclaims.go:19-30`, "a restart storm... made a quality
 agent open nine near-identical PRs overnight"). Its ledger,
 `ClaimLedgerPath = "/data/pr-claims.json"` (`prclaims.go:73-76`), is **local
 to each pod's own PVC** and is reconciled against live GitHub API state on

@@ -61,7 +61,7 @@ subdirectory of one) as a knowledge source, so agents get facts from an
 external repo — a runbook repo, an upstream docs repo, a shared pattern
 library — primed into their kicks the same way wiki-layer facts are. This is
 implemented and live, unlike curator scheduling above: `pkg/knowledge/gitsource.go`
-does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2650-2694`
+does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2656-2700`
 wires configured entries at startup.
 
 ```yaml
@@ -75,7 +75,7 @@ knowledge:
       layer: project                 # optional — default "project"
 ```
 
-Config fields (`GitSourceConfigYAML`, `pkg/config/config.go:562-568`, mirrored
+Config fields (`GitSourceConfigYAML`, `pkg/config/config.go:566-572`, mirrored
 by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 
 | YAML key | Required | Default | Notes |
@@ -84,7 +84,7 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
 | `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |
-| `layer` | No | `project` when set via the API (`api.go:8115-8117`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
+| `layer` | No | `project` when set via the API (`api_knowledge.go:937-939`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
 
 ### What "indexed" means
 
@@ -156,22 +156,22 @@ source is `Ready` and its current page count.
 ### Static config vs. the runtime API
 
 `GET/POST/DELETE /api/knowledge/git-sources` (owner-role only,
-`pkg/dashboard/api.go:8068,8090-8153,8155-8192`) manage sources at runtime
+`pkg/dashboard/api.go:290-292; handlers pkg/dashboard/api_knowledge.go:885,893-975,977-1019`) manage sources at runtime
 and are the *same* underlying list as `knowledge.git_sources` in
 `hive.yaml` — not a separate system:
 
 - `POST` connects a source immediately and, if it isn't already present
   (matched by `url`+`subpath`), appends it to `Config.Knowledge.GitSources`
-  and persists the config (`api.go:8131-8149`). A `POST` for a source that
+  and persists the config (`api_knowledge.go:961-971`). A `POST` for a source that
   is only in `hive.yaml` but not yet connected in the running process (e.g.
   right after editing the file without restarting) will add a duplicate
   config entry once reconnected, since the dedup check is by URL+subpath
   against what's already in `Config`, not against what main.go loaded at
   boot.
 - `DELETE` disconnects the live source and removes matching entries from
-  `Config.Knowledge.GitSources`, then persists (`api.go:8155-8192`).
+  `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:977-1019`).
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
-  process restart (main.go's startup loop at `cmd/hive/main.go:2650-2694`);
+  process restart (main.go's startup loop at `cmd/hive/main.go:2656-2700`);
   it does not hot-reload while the process is running. Use the API for a
   live change without a restart.
 
@@ -180,11 +180,11 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - **Never appears / `knowledge not enabled`**: if `knowledge.enabled` is
   `false` but `git_sources` is non-empty, startup auto-enables a minimal
   knowledge API (`engine: file`) just to host the git sources
-  (`main.go:2651-2658`) — so a git source can work even with `knowledge.enabled: false`.
+  (`main.go:2657-2664`) — so a git source can work even with `knowledge.enabled: false`.
   If you still get "knowledge not enabled" from the API, no source has
   triggered that auto-enable yet (empty `git_sources` list).
 - **Connect fails immediately**: check the hive log for `failed to connect
-  git source` with the URL and error (`main.go:2667`) — most often an
+  git source` with the URL and error (`main.go:2673`) — most often an
   SSRF-validation rejection, a bad branch name, or (for private repos) an
   authentication failure from git itself.
 - **Connects but `subpath` errors**: `subpath "<x>" not found after clone` —
@@ -192,7 +192,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - **Facts never show up in kicks**: confirm the source reached `Ready: true`
   (`GET /api/knowledge/git-sources`) — the primer only registers a source's
   `FileStore` for priming after it reports ready
-  (`main.go:2680-2693`).
+  (`main.go:2686-2699`).
 
 ## Open questions
 

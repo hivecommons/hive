@@ -5,7 +5,7 @@ of the governor loop — see [Architecture](architecture.md)). It accepts four
 `type` values: `github` (default), `github_projects`, `linear`, and `jira`.
 Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
-(`pkg/config/config.go:1332-1344`, `pkg/worksource/factory.go:15-89`).
+(`pkg/config/config.go:1336-1348`, `pkg/worksource/factory.go:15-89`).
 
 This page documents all four. Linear has its own deeper guide —
 [Linear agent integration](linear-agent.md) — for the two-way agent-session
@@ -38,7 +38,7 @@ governor:
       default_repo: your-org/repo  # optional — used when an item's own repo can't be determined
 ```
 
-Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1347-1354`):
+Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1351-1358`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|
@@ -121,7 +121,7 @@ governor:
       hold_labels: [hold, blocked]                # optional — Jira labels that gate an issue
 ```
 
-Config fields (`JiraSourceConfig`, `pkg/config/config.go:1389-1397`):
+Config fields (`JiraSourceConfig`, `pkg/config/config.go:1393-1401`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|

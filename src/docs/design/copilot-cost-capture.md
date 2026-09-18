@@ -66,7 +66,7 @@ moment. That is the per-request grain phase 4 wants, and it already exists.
 
 `liveCaptureSinceMs` comes from exactly one production writer:
 `tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())` at
-`src/cmd/hive/main.go:3734`, called immediately after `SetTokenSink`. The
+`src/cmd/hive/main.go:3740`, called immediately after `SetTokenSink`. The
 collector stores it (`src/pkg/tokens/collector.go:273`) and passes it to
 `ScanCopilotSessions` (`collector.go:212`), which zeroes shutdown tokens for
 sessions whose `LastActive` is at or after that moment
@@ -88,7 +88,7 @@ That design is correct for its purpose and was hard-won: `restoreFromDisk`
 (`inference_sink.go:79`) exists because an in-memory-only sink restarted every
 counter at zero and overwrote the persisted file with a lower value — the
 "$18k→$394 regression" the `SetCopilotLiveCapture` comment names
-(`collector.go:150-160`).
+(`collector.go:261-271`).
 
 **So the epic's table row "Inference sink (proxy): cumulative per-agent, no
 timestamps — ❌ impossible" is accurate about the sink, but misattributes the
@@ -281,7 +281,7 @@ settle them:
    recorded` log lines at `github_proxy.go:2332`, which already carry agent,
    model, and token counts at a known time.
 3. **Would a second file in the metrics dir disturb the collector's scan?** The
-   sink writes into `cfg.Data.MetricsDir` (`main.go:3706`) and the collector
+   sink writes into `cfg.Data.MetricsDir` (`main.go:3712`) and the collector
    globs `*.jsonl` there (`inference_sink.go:15-18`). Whether an append-only
    per-request log can coexist with the cumulative file without being
    double-counted depends on the collector's dedup-by-session-ID behaviour,

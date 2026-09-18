@@ -75,7 +75,7 @@ Workspace "confinement" is a `cd`, not a boundary:
   directory only; nothing stops the CLI process — running as the contributor's
   own uid — from reading or writing any path that uid can reach.
 - Hub-pod agents: `launchInTmux` starts the session with `new-session -d -s
-  session -c dir` (`src/pkg/agent/manager.go:1952`), then, when the agent has a
+  session -c dir` (`src/pkg/agent/manager_tmux.go:165`), then, when the agent has a
   UID assigned, runs the tmux command through `su-exec`/an exec-user spec
   (`agentExecUserSpec`, `src/pkg/agent/manager_tmux.go:178-186`,
   `src/pkg/agent/manager_tmux.go:207-212`) so the CLI runs as `hive-<agent>` or a
@@ -106,7 +106,7 @@ Bash(rpm-ostree:*), Bash(bootc:*), Bash(ostree:*),
 Bash(grubby:*), Bash(bootctl:*), Bash(efibootmgr:*)
 ```
 
-(`src/pkg/agent/manager.go:6212-6218`, shell mirror at
+(`src/pkg/agent/manager_pause.go:176-182`, shell mirror at
 `config/backends.conf:63`, parity enforced by
 `src/pkg/agent/host_state_deny_test.go:88-95` `TestShellAndGoDenyListsAgree`,
 which sources `config/backends.conf` and diffs the two lists byte-for-byte).
@@ -224,14 +224,14 @@ boundary with confidence.
 `src/pkg/sandbox/sandbox.go` and `src/pkg/agent/sandbox_executor.go` implement
 a working rootless-Podman path: `PodmanArgs` builds `run --rm --userns=keep-id
 -v <workspace>:<mount>:Z --network=<mode>` with an explicit env allowlist that
-filters credential-shaped names (`src/pkg/sandbox/sandbox.go:80-116`,
+filters credential-shaped names (`src/pkg/sandbox/sandbox.go:123-146`,
 `isCredentialName` at `:150-152`). This is real workspace confinement: the
 container only has the one bind-mounted workspace directory, not the host
 filesystem.
 
 It is double-gated off: `AgentConfig.SandboxEnabled` requires both the global
 `agent_sandbox.enabled` bool and a per-agent `sandbox.enabled` pointer to be
-true (`src/pkg/config/config.go:1172-1178`); both default to their zero value
+true (`src/pkg/config/config.go:1176-1182`); both default to their zero value
 (`false`/`nil`), so an agent is on the sandbox path only if an operator finds
 and sets both knobs. `sandbox-isolation.md` confirms this is deliberate:
 "Sandbox execution is opt-in and the tmux path remains unchanged for all
@@ -316,7 +316,7 @@ estimated from reading the code, not measured.
   without necessarily restricting file writes elsewhere — and is normally
   layered with, not instead of, a namespace/container boundary; the existing
   Podman path does not currently set an explicit seccomp profile beyond
-  Podman's own default (`src/pkg/sandbox/sandbox.go:80-116` sets no
+  Podman's own default (`src/pkg/sandbox/sandbox.go:123-146` sets no
   `--security-opt seccomp=`). Cost: profile authorship and maintenance as agent
   tool use evolves; a too-strict profile silently breaks legitimate git/build
   tooling in ways that are hard to diagnose from an agent transcript.
@@ -364,9 +364,9 @@ containerized and, especially, `local` mode), with the current denylist
 (#4938) kept as the floor for hosts where the sandbox genuinely cannot run.**
 The sandbox is already built, already does real workspace confinement via a
 bind mount and `--userns=keep-id`
-(`src/pkg/sandbox/sandbox.go:80-116`), and is exactly the shape the Codex
+(`src/pkg/sandbox/sandbox.go:123-146`), and is exactly the shape the Codex
 comparison in the original issue argues for. The double gate
-(`src/pkg/config/config.go:1172-1178`) is a configuration default, not a
+(`src/pkg/config/config.go:1176-1182`) is a configuration default, not a
 missing capability — closing it is materially cheaper than any option in
 category B that requires new code (bwrap/seccomp/VM), and it directly answers
 the mode where the incident actually happened (`local`, no container, no
