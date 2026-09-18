@@ -1,0 +1,1 @@
+- Add severity-routed escalation fan-out with SMTP email, daily digest, and ntfy/Pushover/PagerDuty push sinks.

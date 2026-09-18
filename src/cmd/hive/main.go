@@ -3584,6 +3584,7 @@ func main() {
 			// honest rather than failing on every firing.
 			Approvals: newHookApprovalAdapter(approvalInbox, toolapprove.ACMMLevelOf(cfg)),
 		}, logger)
+		configureEscalationDispatcher(ctx, cfg, notifier, dashSrv.AgentAuditSink(), logger)
 
 		// Re-apply live agent definitions (definition_source) on reload so an
 		// operator's edit to a linked repo propagates. Merges only operator-safe
@@ -3704,6 +3705,7 @@ func main() {
 	// did not support failed at every launch for a day, visible only as a WARN
 	// line inside the pod.
 	agentMgr.SetAuditSink(dashSrv.AgentAuditSink())
+	configureEscalationDispatcher(ctx, cfg, notifier, dashSrv.AgentAuditSink(), logger)
 
 	// Compile the operator's state-triggered hooks (RFC #4001). Every sink the
 	// vetted actions act through exists by this point: the notifier, the agent
@@ -6347,6 +6349,7 @@ func runEvalCycle(
 
 	sched.SetLastActionable(kickActionable)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, logger)
+	emitReviewHumanEscalations(reviewPlan)
 	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {

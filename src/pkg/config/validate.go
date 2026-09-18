@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (c *Config) Validate() error {
@@ -70,6 +71,9 @@ func (c *Config) Validate() error {
 	if !ValidateACMMIssueTracker(strings.TrimSpace(c.Governor.ACMM.IssueTracker)) {
 		return fmt.Errorf("governor: invalid acmm.issue_tracker %q (must be %s or %s, or empty for %s)", c.Governor.ACMM.IssueTracker, ACMMIssueTrackerGitHub, ACMMIssueTrackerWorkSource, ACMMIssueTrackerGitHub)
 	}
+	if err := c.Escalation.ValidateSurfaces(); err != nil {
+		return err
+	}
 	if c.Notifications.Slack != nil && c.Notifications.Slack.Enabled {
 		if strings.TrimSpace(c.Notifications.Slack.AppToken) == "" {
 			return fmt.Errorf("notifications.slack.app_token is required when slack.enabled is true")
@@ -135,4 +139,62 @@ func validateAgentSpecRef(agentName, ref string) error {
 		return fmt.Errorf("agent %s: agent_spec contains a NUL byte", agentName)
 	}
 	return nil
+}
+
+func (e EscalationConfig) ValidateSurfaces() error {
+	if e.Email.Enabled {
+		if strings.TrimSpace(e.Email.SMTP.Host) == "" {
+			return fmt.Errorf("escalation.email.smtp.host is required when escalation.email.enabled is true")
+		}
+		if e.Email.SMTP.Port < 0 || e.Email.SMTP.Port > 65535 {
+			return fmt.Errorf("escalation.email.smtp.port must be a valid TCP port")
+		}
+		if strings.TrimSpace(e.Email.From) == "" {
+			return fmt.Errorf("escalation.email.from is required when escalation.email.enabled is true")
+		}
+		if countNonEmpty(e.Email.To) == 0 {
+			return fmt.Errorf("escalation.email.to is required when escalation.email.enabled is true")
+		}
+		if e.Email.Digest.At != "" {
+			if _, err := time.Parse("15:04", strings.TrimSpace(e.Email.Digest.At)); err != nil {
+				return fmt.Errorf("escalation.email.digest.at must be HH:MM")
+			}
+		}
+	}
+	if e.Push.Enabled {
+		min := strings.TrimSpace(e.Push.MinSeverity)
+		if min == "" {
+			min = "page"
+		}
+		if min != "decision" && min != "page" {
+			return fmt.Errorf("escalation.push.min_severity must be decision or page")
+		}
+		providers := 0
+		if strings.TrimSpace(e.Push.Ntfy.URL) != "" {
+			providers++
+		}
+		if strings.TrimSpace(e.Push.Pushover.AppToken) != "" || strings.TrimSpace(e.Push.Pushover.UserKey) != "" {
+			if strings.TrimSpace(e.Push.Pushover.AppToken) == "" || strings.TrimSpace(e.Push.Pushover.UserKey) == "" {
+				return fmt.Errorf("escalation.push.pushover.app_token and user_key are required together")
+			}
+			providers++
+		}
+		if strings.TrimSpace(e.Push.PagerDuty.RoutingKey) != "" {
+			providers++
+		}
+		if providers == 0 {
+			return fmt.Errorf("escalation.push requires at least one provider when enabled")
+		}
+	}
+	return nil
+}
+
+func countNonEmpty(in []string) int {
+	count := 0
+	for _, v := range in {
+		if strings.TrimSpace(v) != "" {
+			count++
+		}
+	}
+	return count
 }

@@ -99,6 +99,7 @@ type DispatchKick struct {
 type DispatchPlan struct {
 	ReviewKicks []DispatchKick
 	FixKicks    []DispatchKick
+	NewHuman    []HumanReviewHold
 	State       DispatchState
 }
 
@@ -159,6 +160,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		}
 		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
 			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+			if agg.Verdict == VerdictRequiresHuman {
+				plan.addHuman(pr, humanReason(agg), now)
+			}
 			if agg.Verdict == VerdictChangesRequested {
 				plan.dispatchFix(pr, agg, opts, now)
 			}
@@ -203,18 +207,33 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	}
 	attempts := maxFixAttemptsForPR(p.State.Fixes, pr.Repo, pr.Number)
 	if attempts >= escalation.MaxReEngagements {
-		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: fmt.Sprintf("review fix cap reached (%d/%d)", attempts, escalation.MaxReEngagements), UpdatedAt: now})
+		p.addHuman(pr, fmt.Sprintf("review fix cap reached (%d/%d)", attempts, escalation.MaxReEngagements), now)
 		return
 	}
 	agent := selectFixerAgent(pr, opts)
 	if agent == "" {
-		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: "no enabled kick-capable fixer agent is available", UpdatedAt: now})
+		p.addHuman(pr, "no enabled kick-capable fixer agent is available", now)
 		return
 	}
 	attempts++
 	msg := BuildFixPrompt(pr, agg, attempts, escalation.MaxReEngagements)
 	p.FixKicks = append(p.FixKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "fix", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA})
 	p.State.Fixes = append(p.State.Fixes, PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now})
+}
+
+func (p *DispatchPlan) addHuman(pr PullRequest, reason string, now time.Time) {
+	hold := HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason, UpdatedAt: now}
+	if !hasHuman(p.State.Human, hold) {
+		p.NewHuman = append(p.NewHuman, hold)
+	}
+	p.State.Human = upsertHuman(p.State.Human, hold)
+}
+
+func humanReason(agg Aggregate) string {
+	if len(agg.Reasons) > 0 {
+		return strings.Join(agg.Reasons, "; ")
+	}
+	return "review verdict requires_human"
 }
 
 func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
@@ -454,6 +473,15 @@ func upsertHuman(items []HumanReviewHold, item HumanReviewHold) []HumanReviewHol
 		}
 	}
 	return append(items, item)
+}
+
+func hasHuman(items []HumanReviewHold, item HumanReviewHold) bool {
+	for i := range items {
+		if samePRHead(items[i].Repo, items[i].Number, items[i].HeadSHA, item.Repo, item.Number, item.HeadSHA) {
+			return true
+		}
+	}
+	return false
 }
 
 func dispatchKickKey(k DispatchKick) string {
