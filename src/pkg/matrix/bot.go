@@ -35,7 +35,9 @@ const (
 	matrixMessageLimit     = 4000
 	matrixDefaultSendPace  = 1200 * time.Millisecond
 	maxResponseBodyBytes   = 1 << 20
+	maxSyncResponseBytes   = 20 << 20
 	dedupeEventIDCacheSize = 1024
+	syncTimelineLimit      = 20
 )
 
 type AgentIdentity = chat.AgentIdentity
@@ -234,7 +236,7 @@ func (b *matrixBackend) Listen(ctx context.Context, deliver func(chat.Message)) 
 			wait := delay
 			var apiErr matrixAPIError
 			if errors.As(err, &apiErr) && apiErr.RetryAfterMS > 0 {
-				wait = time.Duration(apiErr.RetryAfterMS) * time.Millisecond
+				wait = b.retryAfterDelay(apiErr.RetryAfterMS)
 			} else {
 				if delay < maxDelay {
 					delay = min(delay*2, maxDelay)
@@ -272,6 +274,7 @@ func (b *matrixBackend) Listen(ctx context.Context, deliver func(chat.Message)) 
 
 func (b *matrixBackend) sync(ctx context.Context, since string) (syncResponse, error) {
 	values := url.Values{"timeout": {fmt.Sprintf("%d", syncTimeoutMS)}}
+	values.Set("filter", b.syncFilter())
 	if since != "" {
 		values.Set("since", since)
 	}
@@ -291,7 +294,7 @@ func (b *matrixBackend) doJSON(ctx context.Context, method, path string, payload
 		if !errors.As(err, &apiErr) || apiErr.RetryAfterMS <= 0 || attempt == 1 {
 			return err
 		}
-		if !sleepWithContext(ctx, b.sleep, time.Duration(apiErr.RetryAfterMS)*time.Millisecond) {
+		if !sleepWithContext(ctx, b.sleep, b.retryAfterDelay(apiErr.RetryAfterMS)) {
 			return ctx.Err()
 		}
 	}
@@ -316,7 +319,7 @@ func (b *matrixBackend) doJSONOnce(ctx context.Context, method, path string, bod
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, b.responseBodyLimit(path)))
 	if resp.StatusCode >= 400 {
 		return parseMatrixError(resp.StatusCode, respBody)
 	}
@@ -326,6 +329,41 @@ func (b *matrixBackend) doJSONOnce(ctx context.Context, method, path string, bod
 		}
 	}
 	return nil
+}
+
+func (b *matrixBackend) syncFilter() string {
+	filter := map[string]any{
+		"room": map[string]any{
+			"rooms": []string{b.roomID},
+			"state": map[string]any{
+				"lazy_load_members": true,
+			},
+			"timeline": map[string]any{
+				"limit": syncTimelineLimit,
+			},
+		},
+	}
+	data, err := json.Marshal(filter)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (b *matrixBackend) responseBodyLimit(path string) int64 {
+	if path == "/sync" || strings.HasPrefix(path, "/sync?") {
+		return maxSyncResponseBytes
+	}
+	return maxResponseBodyBytes
+}
+
+func (b *matrixBackend) retryAfterDelay(retryAfterMS int64) time.Duration {
+	delay := time.Duration(retryAfterMS) * time.Millisecond
+	maxDelay := defaultDuration(b.reconnectMax, matrixReconnectMax)
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
 }
 
 func marshalBody(payload any) ([]byte, error) {

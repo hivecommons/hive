@@ -84,6 +84,7 @@ func TestSendPostsMatrixHTMLAndHonorsRateLimit(t *testing.T) {
 	defer server.Close()
 
 	backend := testBackend(server.URL)
+	backend.reconnectMax = time.Second
 	backend.sleep = func(d time.Duration) { slept = d }
 	if err := backend.Send("**hi** `x` [link](https://example.test)"); err != nil {
 		t.Fatalf("Send error = %v", err)
@@ -120,6 +121,7 @@ func TestListenDiscardsFirstSyncFiltersDedupesAndMarksBot(t *testing.T) {
 		if r.URL.Query().Get("timeout") != fmt.Sprintf("%d", syncTimeoutMS) {
 			t.Fatalf("timeout query = %q", r.URL.RawQuery)
 		}
+		assertSyncFilter(t, r.URL.Query().Get("filter"), "!room:example")
 		requests++
 		switch requests {
 		case 1:
@@ -172,6 +174,7 @@ func TestListenHonorsLimitExceededRetryAfter(t *testing.T) {
 			_, _ = w.Write([]byte(`{"errcode":"M_LIMIT_EXCEEDED","retry_after_ms":1}`))
 			return
 		}
+
 		_, _ = w.Write([]byte(`{"next_batch":"s0"}`))
 	}))
 	defer server.Close()
@@ -203,6 +206,58 @@ func TestListenHonorsLimitExceededRetryAfter(t *testing.T) {
 	}
 }
 
+func TestSyncSendsFilterAndParsesOversizedBodyUnderRaisedCap(t *testing.T) {
+	large := strings.Repeat("x", maxResponseBodyBytes+1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != matrixAPIPath+"/sync" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("since") != "s0" {
+			t.Fatalf("since = %q", r.URL.Query().Get("since"))
+		}
+		assertSyncFilter(t, r.URL.Query().Get("filter"), "!room:example")
+		_, _ = fmt.Fprintf(w, `{"next_batch":"s1","account_data":{"events":[{"content":{"blob":%q}}]}}`, large)
+	}))
+	defer server.Close()
+
+	resp, err := testBackend(server.URL).sync(context.Background(), "s0")
+	if err != nil {
+		t.Fatalf("sync error = %v", err)
+	}
+	if resp.NextBatch != "s1" {
+		t.Fatalf("NextBatch = %q", resp.NextBatch)
+	}
+}
+
+func assertSyncFilter(t *testing.T, rawFilter, roomID string) {
+	t.Helper()
+	if rawFilter == "" {
+		t.Fatal("missing sync filter")
+	}
+	var filter struct {
+		Room struct {
+			Rooms []string `json:"rooms"`
+			State struct {
+				LazyLoadMembers bool `json:"lazy_load_members"`
+			} `json:"state"`
+			Timeline struct {
+				Limit int `json:"limit"`
+			} `json:"timeline"`
+		} `json:"room"`
+	}
+	if err := json.Unmarshal([]byte(rawFilter), &filter); err != nil {
+		t.Fatalf("invalid sync filter %q: %v", rawFilter, err)
+	}
+	if len(filter.Room.Rooms) != 1 || filter.Room.Rooms[0] != roomID {
+		t.Fatalf("filter rooms = %#v", filter.Room.Rooms)
+	}
+	if !filter.Room.State.LazyLoadMembers {
+		t.Fatal("filter lazy_load_members is false")
+	}
+	if filter.Room.Timeline.Limit != syncTimelineLimit {
+		t.Fatalf("filter timeline limit = %d", filter.Room.Timeline.Limit)
+	}
+}
 func TestMarkdownToMatrixHTML(t *testing.T) {
 	in := "**bold** `<tag>`\n```\ncode & more\n```"
 	got := markdownToMatrixHTML(in)
@@ -412,8 +467,18 @@ func TestDoJSONRateLimitCanceledContext(t *testing.T) {
 	if err := backend.doJSON(ctx, http.MethodGet, "/sync", nil, nil); err == nil {
 		t.Fatal("doJSON returned nil for canceled retry sleep")
 	}
+
 }
 
+func TestRetryAfterDelayIsCapped(t *testing.T) {
+	backend := testBackend("http://127.0.0.1:1")
+	if got := backend.retryAfterDelay(int64(time.Hour / time.Millisecond)); got != backend.reconnectMax {
+		t.Fatalf("retryAfterDelay large = %v want %v", got, backend.reconnectMax)
+	}
+	if got := backend.retryAfterDelay(1); got != time.Millisecond {
+		t.Fatalf("retryAfterDelay small = %v", got)
+	}
+}
 func TestMarkdownEdgeCases(t *testing.T) {
 	if got := markdownToMatrixHTML("`open"); got != "<code>open</code>" {
 		t.Fatalf("open inline code = %q", got)
