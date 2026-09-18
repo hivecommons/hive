@@ -1,0 +1,1 @@
+- Added the Slack integration design (`src/docs/design/slack-integration.md`): Socket Mode transport as the second backend on the v6 chat spine, mrkdwn translation, fail-closed allowlist, and the shared guard invariant (#7563 Track 3).
