@@ -93,3 +93,37 @@ func TestKickObserverArchiveDetailCarriesSource(t *testing.T) {
 		t.Fatalf("empty source detail = %q", got)
 	}
 }
+
+func TestDeferredStartupMentionOverwriteNotifiesDropped(t *testing.T) {
+	m := &Manager{agents: map[string]*AgentProcess{}, logger: discardLogger()}
+	agent := &AgentProcess{
+		Name:                 "scanner",
+		startupLaunchQueued:  true,
+		pendingStartupKick:   "first",
+		pendingStartupSource: "mention:first",
+	}
+	m.agents[agent.Name] = agent
+	got := make(chan [3]string, 1)
+	m.SetKickObserver(func(agentName, event, detail string) {
+		got <- [3]string{agentName, event, detail}
+	})
+
+	m.mu.Lock()
+	if !m.deferStartupKickLocked(agent, "second", "mention:second") {
+		t.Fatal("deferred startup kick was not accepted")
+	}
+	m.mu.Unlock()
+
+	select {
+	case ev := <-got:
+		want := [3]string{"scanner", "kick-dropped", "mention:first"}
+		if ev != want {
+			t.Fatalf("event = %v, want %v", ev, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("overwrite did not notify dropped mention source")
+	}
+	if agent.pendingStartupKick != "second" || agent.pendingStartupSource != "mention:second" {
+		t.Fatalf("pending startup = (%q,%q)", agent.pendingStartupKick, agent.pendingStartupSource)
+	}
+}

@@ -42,6 +42,15 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 		}
 		return
 	}
+	if event == "kick-dropped" {
+		source := strings.TrimSpace(detail)
+		if mentionSource(source) {
+			if err := r.store.DropSource(agentName, source); err != nil {
+				r.logger.Warn("mention: dropping pending mention failed", "agent", agentName, "error", err)
+			}
+		}
+		return
+	}
 	source := kickObserverDetailSource(detail)
 	if event != "kick-log-archived" || !mentionSource(source) {
 		return
@@ -65,8 +74,10 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 	if r.github != nil {
 		gh = r.github()
 	}
+	// Agent lifecycle events are not re-driven after this archive callback. If
+	// GitHub reply prerequisites fail, fail closed and drop the claimed context
+	// rather than leaving a permanent Active entry that can never be retried.
 	if gh == nil {
-		r.requeue(agentName, ctx)
 		return
 	}
 	unlock := r.lockThread(ctx.Repo, ctx.Number)
@@ -74,7 +85,6 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 	count, err := gh.CountAppAuthoredComments(context.Background(), ctx.Repo, ctx.Number)
 	if err != nil {
 		r.logger.Warn("mention: completion reply thread count failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
-		r.requeue(agentName, ctx)
 		return
 	}
 	if r.reviewBots != nil && count >= r.reviewBots.MaxAttempts() {
@@ -82,7 +92,6 @@ func (r *Responder) HandleAgentEvent(agentName, event, detail string) {
 	}
 	if err := gh.CreateIssueComment(context.Background(), ctx.Repo, ctx.Number, completionReply(agentName, kickObserverDetailReason(detail))); err != nil {
 		r.logger.Warn("mention: completion reply failed", "agent", agentName, "repo", ctx.Repo, "number", ctx.Number, "error", err)
-		r.requeue(agentName, ctx)
 		return
 	}
 }
@@ -134,10 +143,4 @@ func completionReply(agentName, detail string) string {
 		return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard. (%s)", agentName, detail)
 	}
 	return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard.", agentName)
-}
-
-func (r *Responder) requeue(agentName string, ctx Context) {
-	if err := r.store.RequeueActiveFront(agentName, ctx); err != nil {
-		r.logger.Warn("mention: requeueing active mention failed", "agent", agentName, "error", err)
-	}
 }

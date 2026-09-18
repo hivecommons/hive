@@ -1,7 +1,10 @@
 package mention
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +68,31 @@ func TestResponderPromotesOnlyDeliveredMentionKicks(t *testing.T) {
 	}
 }
 
+func TestResponderDroppedEventClearsPendingAndActiveContext(t *testing.T) {
+	store := mustStore(t)
+	pending := Event{Repo: "org/repo", Number: 1, NodeID: "pending"}
+	active := Event{Repo: "org/repo", Number: 2, NodeID: "active"}
+	if err := store.RecordPending("scanner", pending, mentionKickSource(pending), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordActive("scanner", active, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	r := NewResponder(store, nil, nil, nil, nil)
+	r.HandleAgentEvent("scanner", "kick-dropped", "governor")
+	if ctx, ok := store.ActiveForAgent("scanner"); !ok || ctx.NodeID != "active" {
+		t.Fatalf("non-mention drop changed active context: %+v ok=%v", ctx, ok)
+	}
+	r.HandleAgentEvent("scanner", "kick-dropped", mentionKickSource(pending))
+	if ctx, ok, err := store.PromotePending("scanner", mentionKickSource(pending)); err != nil || ok {
+		t.Fatalf("dropped pending promoted: %+v ok=%v err=%v", ctx, ok, err)
+	}
+	r.HandleAgentEvent("scanner", "kick-dropped", mentionKickSource(active))
+	if _, ok := store.ActiveForAgent("scanner"); ok {
+		t.Fatal("dropped active context remained")
+	}
+}
+
 func TestResponderArchiveBeforeDeliveryPromotesMatchingPending(t *testing.T) {
 	store := mustStore(t)
 	ev := Event{Repo: "org/repo", Number: 1, NodeID: "A"}
@@ -83,6 +111,42 @@ func TestResponderArchiveBeforeDeliveryPromotesMatchingPending(t *testing.T) {
 	if _, ok := store.ActiveForAgent("scanner"); ok {
 		t.Fatal("matching context was not claimed")
 	}
+}
+
+func TestResponderDropEventWithPersistentStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.json")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := Event{Repo: "org/repo", Number: 1, NodeID: "N"}
+	source := mentionKickSource(ev)
+	if err := store.RecordPending("scanner", ev, source, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	r := NewResponder(store, nil, nil, nil, nil)
+	r.HandleAgentEvent("scanner", "kick-dropped", source)
+	loaded, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := loaded.PromotePending("scanner", source); err != nil || ok {
+		t.Fatalf("dropped pending survived reload ok=%v err=%v", ok, err)
+	}
+}
+
+func TestResponderPromotionStoreErrorDoesNotPanic(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "missing", "store.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(store.path)), "missing"), []byte("not dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := NewResponder(store, nil, nil, nil, nil)
+	r.HandleAgentEvent("scanner", "kick-delivered", SourceMention)
+	r.HandleAgentEvent("scanner", "kick-dropped", SourceMention)
+	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+SourceMention)
 }
 
 func TestResponderRepliesFIFOWhenAgentRekickedBeforeArchiveObserverRuns(t *testing.T) {
@@ -135,7 +199,7 @@ func TestResponderSilentWithoutKnownContextOrConverse(t *testing.T) {
 	}
 }
 
-func TestResponderNilGitHubRequeuesAndNilAgentsDrop(t *testing.T) {
+func TestResponderNilGitHubAndNilAgentsDropClaimedContext(t *testing.T) {
 	store := mustStore(t)
 	ev := Event{Repo: "org/repo", Number: 1, NodeID: "N"}
 	source := mentionKickSource(ev)
@@ -146,10 +210,13 @@ func TestResponderNilGitHubRequeuesAndNilAgentsDrop(t *testing.T) {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true}}
 	}, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
-	if ctx, ok := store.ActiveForAgent("scanner"); !ok || ctx.NodeID != "N" {
-		t.Fatalf("nil github did not requeue context: %+v ok=%v", ctx, ok)
+	if _, ok := store.ActiveForAgent("scanner"); ok {
+		t.Fatal("nil github left a permanent active context")
 	}
 
+	if err := store.RecordActive("scanner", ev, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	r = NewResponder(store, func() GitHub { return &fakeGH{app: "hive[bot]"} }, nil, config.ReviewBotsConfig{MaxAttemptsPerThread: 2}, nil)
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
 	if _, ok := store.ActiveForAgent("scanner"); ok {
@@ -191,14 +258,17 @@ func TestResponderRateLimitAndTransientErrors(t *testing.T) {
 	gh.count = 0
 	gh.countErr = errors.New("temporary count")
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
-	if _, ok := store.ActiveForAgent("scanner"); !ok {
-		t.Fatal("count error cleared active mention")
+	if _, ok := store.ActiveForAgent("scanner"); ok {
+		t.Fatal("count error left a permanent active mention")
+	}
+	if err := store.RecordActive("scanner", ev, time.Now()); err != nil {
+		t.Fatal(err)
 	}
 	gh.countErr = nil
 	gh.commentErr = errors.New("temporary post")
 	r.HandleAgentEvent("scanner", "kick-log-archived", "archive source="+source)
-	if _, ok := store.ActiveForAgent("scanner"); !ok {
-		t.Fatal("post error cleared active mention")
+	if _, ok := store.ActiveForAgent("scanner"); ok {
+		t.Fatal("post error left a permanent active mention")
 	}
 }
 
@@ -276,6 +346,58 @@ func TestStorePendingClearAndPromoteBySource(t *testing.T) {
 	ctx, ok, err := store.PromotePending("scanner", firstSource)
 	if err != nil || !ok || ctx.NodeID != "A" {
 		t.Fatalf("remaining pending context = (%+v,%v,%v)", ctx, ok, err)
+	}
+}
+
+func TestStoreExpiresContextsOnLoadAndMutation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mention-store.json")
+	old := time.Now().Add(-contextTTL - time.Hour)
+	fresh := time.Now()
+	state := storeState{
+		Watermarks: map[string]time.Time{},
+		Seen:       map[string]bool{},
+		Pending: map[string][]Context{"scanner": {
+			{Agent: "scanner", KickSource: "mention:old-pending", Repo: "org/repo", Number: 1, Accepted: old},
+			{Agent: "scanner", KickSource: "mention:fresh-pending", Repo: "org/repo", Number: 2, Accepted: fresh},
+		}},
+		Active: map[string][]Context{"scanner": {
+			{Agent: "scanner", KickSource: "mention:old-active", Repo: "org/repo", Number: 3, Accepted: old},
+			{Agent: "scanner", KickSource: "mention:fresh-active", Repo: "org/repo", Number: 4, Accepted: fresh},
+		}},
+	}
+	b, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.PromotePending("scanner", "mention:old-pending"); err != nil || ok {
+		t.Fatalf("expired pending promoted ok=%v err=%v", ok, err)
+	}
+	if ctx, ok, err := store.PromotePending("scanner", "mention:fresh-pending"); err != nil || !ok || ctx.Number != 2 {
+		t.Fatalf("fresh pending = (%+v,%v,%v)", ctx, ok, err)
+	}
+	if _, ok, err := store.ClaimActiveSource("scanner", "mention:old-active"); err != nil || ok {
+		t.Fatalf("expired active claimed ok=%v err=%v", ok, err)
+	}
+	if ctx, ok, err := store.ClaimActiveSource("scanner", "mention:fresh-active"); err != nil || !ok || ctx.Number != 4 {
+		t.Fatalf("fresh active = (%+v,%v,%v)", ctx, ok, err)
+	}
+
+	if err := store.RecordActive("scanner", Event{Repo: "org/repo", Number: 5, NodeID: "old"}, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Advance("org/repo", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.ClaimActiveSource("scanner", "mention:old"); err != nil || ok {
+		t.Fatalf("expired mutation active claimed ok=%v err=%v", ok, err)
 	}
 }
 

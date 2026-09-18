@@ -2,12 +2,15 @@ package mention
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+const contextTTL = 24 * time.Hour
 
 type Store struct {
 	mu    sync.Mutex
@@ -64,6 +67,11 @@ func NewStore(path string) (*Store, error) {
 	if s.state.Active == nil {
 		s.state.Active = map[string][]Context{}
 	}
+	if s.pruneExpiredLocked(time.Now(), "load") {
+		if err := s.saveLocked(); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -82,6 +90,7 @@ func (s *Store) Seen(id string) bool {
 func (s *Store) Mark(repo, id string, t time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	if id != "" {
 		s.state.Seen[id] = true
 	}
@@ -102,6 +111,7 @@ func (s *Store) RecordPending(agent string, ev Event, source string, accepted ti
 func (s *Store) recordContext(agent string, ev Event, source string, accepted time.Time, pending bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	if agent == "" {
 		return s.saveLocked()
 	}
@@ -134,6 +144,7 @@ func (s *Store) recordContext(agent string, ev Event, source string, accepted ti
 func (s *Store) PromotePending(agent, source string) (Context, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	queue := s.state.Pending[agent]
 	idx := contextIndex(queue, source)
 	if idx < 0 {
@@ -157,6 +168,7 @@ func (s *Store) PromotePending(agent, source string) (Context, bool, error) {
 func (s *Store) ClearPending(agent, source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	queue := s.state.Pending[agent]
 	idx := contextIndex(queue, source)
 	if idx < 0 {
@@ -189,6 +201,7 @@ func (s *Store) ClaimActive(agent string) (Context, bool, error) {
 func (s *Store) ClaimActiveSource(agent, source string) (Context, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	queue := s.state.Active[agent]
 	idx := contextIndex(queue, source)
 	if idx < 0 {
@@ -208,6 +221,15 @@ func (s *Store) ClaimActiveSource(agent, source string) (Context, bool, error) {
 	return ctx, true, nil
 }
 
+func (s *Store) DropSource(agent, source string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
+	s.state.Pending = dropFromQueue(s.state.Pending, agent, source)
+	s.state.Active = dropFromQueue(s.state.Active, agent, source)
+	return s.saveLocked()
+}
+
 func contextIndex(queue []Context, source string) int {
 	source = strings.TrimSpace(source)
 	for i, ctx := range queue {
@@ -218,9 +240,26 @@ func contextIndex(queue []Context, source string) int {
 	return -1
 }
 
+func dropFromQueue(queues map[string][]Context, agent, source string) map[string][]Context {
+	queue := queues[agent]
+	idx := contextIndex(queue, source)
+	if idx < 0 {
+		return queues
+	}
+	if len(queue) == 1 {
+		delete(queues, agent)
+		return queues
+	}
+	next := append([]Context(nil), queue[:idx]...)
+	next = append(next, queue[idx+1:]...)
+	queues[agent] = next
+	return queues
+}
+
 func (s *Store) RequeueActiveFront(agent string, ctx Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	queue := s.state.Active[agent]
 	s.state.Active[agent] = append([]Context{ctx}, queue...)
 	return s.saveLocked()
@@ -229,6 +268,7 @@ func (s *Store) RequeueActiveFront(agent string, ctx Context) error {
 func (s *Store) ClearActive(agent string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	queue := s.state.Active[agent]
 	if len(queue) <= 1 {
 		delete(s.state.Active, agent)
@@ -241,10 +281,38 @@ func (s *Store) ClearActive(agent string) error {
 func (s *Store) Advance(repo string, t time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now(), "mutation")
 	if t.After(s.state.Watermarks[repo]) {
 		s.state.Watermarks[repo] = t
 	}
 	return s.saveLocked()
+}
+
+func (s *Store) pruneExpiredLocked(now time.Time, reason string) bool {
+	changed := false
+	s.state.Pending, changed = pruneContextQueues(s.state.Pending, now, reason, changed)
+	s.state.Active, changed = pruneContextQueues(s.state.Active, now, reason, changed)
+	return changed
+}
+
+func pruneContextQueues(queues map[string][]Context, now time.Time, reason string, changed bool) (map[string][]Context, bool) {
+	for agent, queue := range queues {
+		kept := queue[:0]
+		for _, ctx := range queue {
+			if !ctx.Accepted.IsZero() && now.Sub(ctx.Accepted) > contextTTL {
+				slog.Default().Debug("audit: mention context expired", "agent", agent, "source", ctx.KickSource, "repo", ctx.Repo, "number", ctx.Number, "reason", reason)
+				changed = true
+				continue
+			}
+			kept = append(kept, ctx)
+		}
+		if len(kept) == 0 {
+			delete(queues, agent)
+			continue
+		}
+		queues[agent] = append([]Context(nil), kept...)
+	}
+	return queues, changed
 }
 
 func (s *Store) saveLocked() error {

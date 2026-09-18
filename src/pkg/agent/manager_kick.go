@@ -1111,6 +1111,9 @@ func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message, trigger s
 	if !agent.startupLaunchQueued && !startupKickInFlight {
 		return false
 	}
+	if mentionKickSource(agent.pendingStartupSource) {
+		m.notifyKickObserver(agent.Name, "kick-dropped", agent.pendingStartupSource)
+	}
 	agent.pendingStartupKick = message
 	agent.pendingStartupSource = trigger
 	agent.KickRefused = true
@@ -1122,6 +1125,11 @@ func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message, trigger s
 		"startup_kick_in_flight", startupKickInFlight,
 	)
 	return true
+}
+
+func mentionKickSource(source string) bool {
+	source = strings.TrimSpace(source)
+	return source == "mention" || strings.HasPrefix(source, "mention:")
 }
 
 func (m *Manager) clearStartupKickInFlight(agent *AgentProcess, gen int) {
