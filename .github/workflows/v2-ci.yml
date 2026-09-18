@@ -145,6 +145,15 @@ jobs:
       - name: Entrypoint /data ownership invariant (#5369)
         run: bash deploy/test_entrypoint_data_ownership.sh
 
+      # #6287: the token-access audit log (GET /api/token-access) was
+      # dev:node 0664 while every agent UID is in group node, so the audited
+      # agents could truncate or forge their own trail. Fixed on v5 by #6303
+      # and backported here by #7523. Pins the invariant on the shipped
+      # entrypoint and wrappers: the log is dev-owned 0600, the wrappers write
+      # only to the drop-box spool, and no chmod loosens it.
+      - name: Entrypoint token-access audit log not agent-writable (#6287)
+        run: bash deploy/test_entrypoint_token_access_audit.sh
+
       # #5370: the arm64 lane probed the PUBLISHED image, so on a PR it
       # validated code already on v4 rather than the change proposed — a PR
       # fixing a startup bug stayed red, one introducing a startup bug went

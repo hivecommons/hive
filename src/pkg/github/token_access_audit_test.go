@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // #6287: the token-access audit log must not be writable by the agents it
@@ -226,16 +228,10 @@ func TestTokenAccessAudit_WatcherIngestsAndStops(t *testing.T) {
 	done := StartTokenAccessAuditWatcher(ctx, quietLogger())
 	dropTokenAccessEvent(t, spool, "1-evt.json", `{"op":"gh","cmd":"gh issue list"}`)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if data, err := os.ReadFile(logPath); err == nil && strings.Contains(string(data), "gh issue list") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("watcher never ingested the event")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		data, err := os.ReadFile(logPath)
+		return err == nil && strings.Contains(string(data), "gh issue list")
+	}, "watcher never ingested the event")
 	cancel()
 	select {
 	case <-done:
