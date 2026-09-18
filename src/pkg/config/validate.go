@@ -81,6 +81,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("notifications.slack.channel_id is required when slack.enabled is true")
 		}
 	}
+	if c.Notifications.Telegram != nil && c.Notifications.Telegram.Enabled {
+		if strings.TrimSpace(c.Notifications.Telegram.BotToken) == "" {
+			return fmt.Errorf("notifications.telegram.bot_token is required when telegram.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.Telegram.ChatID) == "" {
+			return fmt.Errorf("notifications.telegram.chat_id is required when telegram.enabled is true")
+		}
+	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config
 		// save) and agreeing with what the launcher can actually dispatch. A

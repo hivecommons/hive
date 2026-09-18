@@ -3916,9 +3916,10 @@ func (g GitHubConfig) AppInstallURL() string {
 }
 
 type NotificationsConfig struct {
-	Ntfy    *NtfyConfig    `yaml:"ntfy,omitempty"`
-	Slack   *SlackConfig   `yaml:"slack,omitempty"`
-	Discord *DiscordConfig `yaml:"discord,omitempty"`
+	Ntfy     *NtfyConfig     `yaml:"ntfy,omitempty"`
+	Slack    *SlackConfig    `yaml:"slack,omitempty"`
+	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 }
 
 type NtfyConfig struct {
@@ -3935,6 +3936,19 @@ type SlackConfig struct {
 	// AllowedUsers is an allowlist of Slack user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the channel who can post in the channel
+	// can inject prompts into the agents. When empty, command handling is
+	// DISABLED (fail closed) — the bot still posts status but accepts no
+	// commands — so an operator must opt in by listing the trusted user IDs.
+	AllowedUsers []string `yaml:"allowed_users,omitempty"`
+}
+
+type TelegramConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	BotToken string `yaml:"bot_token"`
+	ChatID   string `yaml:"chat_id"`
+	// AllowedUsers is an allowlist of Telegram user IDs permitted to issue bot
+	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
+	// SECURITY: without it, any member of the chat who can post in the channel
 	// can inject prompts into the agents. When empty, command handling is
 	// DISABLED (fail closed) — the bot still posts status but accepts no
 	// commands — so an operator must opt in by listing the trusted user IDs.

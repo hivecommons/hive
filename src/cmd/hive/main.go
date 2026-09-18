@@ -69,6 +69,7 @@ import (
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
+	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/toolapprove"
@@ -4068,6 +4069,26 @@ func main() {
 			logger.Warn("slack bot failed to start", "error", err)
 		} else {
 			logger.Info("slack bot started", "channel", cfg.Notifications.Slack.ChannelID)
+		}
+	}
+
+	if cfg.Notifications.Telegram != nil && cfg.Notifications.Telegram.Enabled {
+		telegramBot := telegram.NewBot(telegram.Config{
+			BotToken:       cfg.Notifications.Telegram.BotToken,
+			ChatID:         cfg.Notifications.Telegram.ChatID,
+			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
+			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   cfg.Notifications.Telegram.AllowedUsers,
+		}, logger)
+		var agentNameList []string
+		for name := range cfg.EnabledAgents() {
+			agentNameList = append(agentNameList, name)
+		}
+		telegramBot.SetAgentNames(agentNameList)
+		if err := telegramBot.Start(ctx); err != nil {
+			logger.Warn("telegram bot failed to start", "error", err)
+		} else {
+			logger.Info("telegram bot started", "chat", cfg.Notifications.Telegram.ChatID)
 		}
 	}
 
@@ -8422,9 +8443,11 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	}
 	discord.SetAgentIdentities(discordIdentities)
 	slack.SetAgentIdentities(discordIdentities)
+	telegram.SetAgentIdentities(discordIdentities)
 	if len(discordAliases) > 0 {
 		discord.SetAgentAliases(discordAliases)
 		slack.SetAgentAliases(discordAliases)
+		telegram.SetAgentAliases(discordAliases)
 	}
 }
 
