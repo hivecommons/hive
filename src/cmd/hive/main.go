@@ -9000,19 +9000,23 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// blockedOrOutstanding is the verdict for a PR the sweep will not take
 	// for a reason of its own: the state still depends on what GitHub says,
 	// because a conflicting PR is blocked whatever else is outstanding, and
-	// one whose mergeability was never fetched is unknown, not amber.
+	// one whose mergeability was never fetched is unknown, not amber. The
+	// sweep's reason is kept in every state (hivecommons/hive#7515): on a
+	// protected branch a red required check or a missing review is exactly
+	// what makes GitHub say "blocked", so dropping it for the bare enum sent
+	// the operator to GitHub to learn what this function already knew.
 	blockedOrOutstanding := func(reason string) github.MergeVerdict {
 		switch pr.Mergeable {
 		case github.MergeableNo:
-			return github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr)}
+			return github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, reason)}
 		case github.MergeableUnknown:
-			return github.MergeVerdict{State: github.MergeVerdictUnknown, Reason: "mergeability not yet known; " + reason}
+			return github.MergeVerdict{State: github.MergeVerdictUnknown, Reason: mergeabilityUnknownReason + "; " + reason}
 		}
 		return github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: reason}
 	}
 
 	if pr.Draft {
-		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft"}, ""
+		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft — mark ready for review to enter the sweep"}, ""
 	}
 	if g.enforceIntent {
 		if v, ok := g.intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && v.AgentPR && !v.MergeAllowed() {
@@ -9084,17 +9088,10 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		return mergeBucketSkip, blockedOrOutstanding("CI pending"), ""
 	}
 
-	if pr.Mergeable == github.MergeableNo {
-		// A conflicting PR cannot merge no matter how green its checks
-		// are. Listing it as merge-eligible left the eligible count stuck
-		// at N forever while nothing could actually merge (console
-		// #23002/#23003, 2026-08-31: the only two build-gate-green PRs
-		// were DIRTY go.mod dependabot bumps). Conflicts are the
-		// rebase/needs-human path's job, not the sweep's — keep them out
-		// of the eligible bucket.
-		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr)}, ""
-	}
-
+	// The review gate runs BEFORE the GitHub-says-no return below so that a
+	// PR GitHub calls "blocked" for want of a review carries that reason
+	// (hivecommons/hive#7515). Both paths file a MergeableNo PR in the skip
+	// bucket, so the order changes only the verdict's wording.
 	if g.requireReviewApproval {
 		if !g.reviewLoaded {
 			return mergeBucketSkip, blockedOrOutstanding("review approval required, but review-verdicts.json is unavailable"), ""
@@ -9102,6 +9099,20 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		if !g.reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA) {
 			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
 		}
+	}
+
+	if pr.Mergeable == github.MergeableNo {
+		// A conflicting PR cannot merge no matter how green its checks
+		// are. Listing it as merge-eligible left the eligible count stuck
+		// at N forever while nothing could actually merge (console
+		// #23002/#23003, 2026-08-31: the only two build-gate-green PRs
+		// were DIRTY go.mod dependabot bumps). Conflicts are the
+		// rebase/needs-human path's job, not the sweep's — keep them out
+		// of the eligible bucket. No sweep gate explains this one: for
+		// "blocked" that means a branch-protection rule we do not read yet
+		// (a review GitHub requires, a required check that never reported);
+		// notMergeableReason says so rather than the bare enum.
+		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
 	}
 
 	// Eligible. The reason names what GitHub still shows outstanding that
@@ -9121,14 +9132,49 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
 }
 
-// notMergeableReason names GitHub's own state (dirty, blocked, behind, ...)
-// for a PR it reports as not mergeable; the state is what the operator has
-// to resolve.
-func notMergeableReason(pr github.PullRequest) string {
-	if pr.MergeableState != "" {
-		return "not mergeable on GitHub (" + pr.MergeableState + ")"
+// mergeabilityUnknownReason is the verdict prefix for a PR whose
+// mergeability GitHub has not computed yet (or the fetch failed); the
+// classifier appends the sweep's own reason after it.
+const mergeabilityUnknownReason = "mergeability not yet computed by GitHub — re-checked next tick"
+
+// notMergeableReason explains, in words an operator can act on, why GitHub
+// reports a PR as not mergeable — what to do, not the API enum
+// (hivecommons/hive#7515). sweepReason is the gate the sweep itself failed
+// the PR on, or "" when every sweep gate passed:
+//
+//   - "blocked" folds every unsatisfied branch-protection rule into one
+//     word. When the sweep has a reason it is almost always the rule
+//     ("blocked — CI failing: build"); without one, say that a rule we do
+//     not read is unsatisfied rather than nothing at all.
+//   - "dirty" and "behind" name the base branch and the fix (rebase /
+//     update); a sweep reason is appended, since it still stands once the
+//     branch is fixed.
+//   - Any other state falls back to naming it.
+func notMergeableReason(pr github.PullRequest, sweepReason string) string {
+	base, from := pr.BaseRef, "the base branch"
+	if base == "" {
+		base, from = "the base branch", "it"
 	}
-	return "not mergeable on GitHub"
+	var msg string
+	switch pr.MergeableState {
+	case "blocked":
+		if sweepReason == "" {
+			return "blocked — all sweep gates pass; a branch-protection rule is unsatisfied"
+		}
+		return "blocked — " + sweepReason
+	case "dirty":
+		msg = "has merge conflicts with " + base + " — needs a rebase"
+	case "behind":
+		msg = "behind " + base + " — needs an update from " + from
+	case "":
+		msg = "not mergeable on GitHub"
+	default:
+		msg = "not mergeable on GitHub (" + pr.MergeableState + ")"
+	}
+	if sweepReason != "" {
+		msg += "; also " + sweepReason
+	}
+	return msg
 }
 
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, logger *slog.Logger) map[string]github.MergeVerdict {

@@ -355,6 +355,13 @@ type PullRequest struct {
 	HeadRef  string `json:"head_ref,omitempty"`
 	HeadRepo string `json:"head_repo,omitempty"`
 	FromFork bool   `json:"from_fork,omitempty"`
+	// BaseRef is the branch the PR targets. Display only: the merge-verdict
+	// reason names it ("has merge conflicts with v4 — needs a rebase") so a
+	// blocked pill says what to do rather than GitHub's enum
+	// (hivecommons/hive#7515). It comes from the list payload — no extra
+	// fetch — and stays empty on an abbreviated payload, where the wording
+	// falls back to "the base branch".
+	BaseRef string `json:"base_ref,omitempty"`
 	// FailingChecks names the completed check runs whose conclusion was
 	// failure/action_required. CIFailureExcerpt carries the raw error lines
 	// pulled from those runs' annotations — the evidence a fix agent (or an
@@ -805,6 +812,14 @@ func prHeadSHA(pr *gh.PullRequest) string {
 	return pr.GetHead().GetSHA()
 }
 
+// prBaseRef is the branch a PR targets, or "" on an abbreviated payload.
+func prBaseRef(pr *gh.PullRequest) string {
+	if pr.GetBase() == nil {
+		return ""
+	}
+	return pr.GetBase().GetRef()
+}
+
 func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, totalPRs int, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
@@ -857,6 +872,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 					HeadRef:   headRef,
 					HeadRepo:  headRepo,
 					FromFork:  fromFork,
+					BaseRef:   prBaseRef(pr),
 				})
 			}
 			continue
@@ -907,6 +923,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			HeadRef:  headRef,
 			HeadRepo: headRepo,
 			FromFork: fromFork,
+			BaseRef:  prBaseRef(pr),
 		})
 	}
 

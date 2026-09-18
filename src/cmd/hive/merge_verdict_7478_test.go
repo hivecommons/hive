@@ -88,32 +88,36 @@ func TestClassifyMergeEligibility_VerdictTracksBucket(t *testing.T) {
 			wantReason: []string{"pending", "unstable"},
 		},
 		{
-			name:       "pending with mergeability unknown is unknown, not amber",
+			name:       "pending with mergeability unknown is unknown, not amber, and keeps the sweep reason",
 			pr:         github.PullRequest{Number: 6, CIStatus: "pending"},
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictUnknown,
-			wantReason: []string{"not yet known"},
+			wantReason: []string{"not yet computed by GitHub", "re-checked next tick", "CI pending"},
 		},
 		{
-			name:       "dirty is blocked and names the GitHub state",
-			pr:         github.PullRequest{Number: 1259, Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "failure", FailingChecks: []string{"build"}},
+			// Conflicts read as what to do, name the base branch, and keep
+			// the sweep's own reason — it still stands after the rebase.
+			name:       "dirty is blocked, names the base branch and the fix, and keeps the sweep reason",
+			pr:         github.PullRequest{Number: 1259, Mergeable: github.MergeableNo, MergeableState: "dirty", BaseRef: "v4", CIStatus: "failure", FailingChecks: []string{"build"}},
 			wantBucket: mergeBucketFailing,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"not mergeable", "dirty"},
+			wantReason: []string{"merge conflicts with v4", "needs a rebase", "CI failing: build"},
 		},
 		{
-			name:       "blocked with green CI is blocked",
+			// GitHub "blocked" with every sweep gate green: the sweep cannot
+			// name the rule yet, but must say that, not just "blocked".
+			name:       "blocked with green CI is blocked and says a branch-protection rule is unsatisfied",
 			pr:         github.PullRequest{Number: 603, Mergeable: github.MergeableNo, MergeableState: "blocked", CIStatus: "success"},
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"blocked"},
+			wantReason: []string{"blocked — all sweep gates pass", "branch-protection rule"},
 		},
 		{
-			name:       "a draft is blocked",
+			name:       "a draft is blocked and says how to enter the sweep",
 			pr:         github.PullRequest{Number: 7, Draft: true, Mergeable: yes, CIStatus: "success"},
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"draft"},
+			wantReason: []string{"draft — mark ready for review"},
 		},
 		{
 			name:       "review approval required and missing is outstanding",
@@ -143,13 +147,14 @@ func TestClassifyMergeEligibility_VerdictTracksBucket(t *testing.T) {
 		},
 		{
 			// A conflicting PR the sweep also refuses for another reason is
-			// still BLOCKED: the conflict is what the operator resolves first.
-			name:       "held AND dirty is blocked, not amber",
+			// still BLOCKED: the conflict is what the operator resolves first
+			// — and the hold is still named, since it outlives the rebase.
+			name:       "held AND dirty is blocked, not amber, and still names the hold",
 			pr:         github.PullRequest{Number: 11, Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "success"},
 			held:       true,
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"dirty"},
+			wantReason: []string{"merge conflicts with the base branch", "held"},
 		},
 	}
 	for _, tc := range cases {
