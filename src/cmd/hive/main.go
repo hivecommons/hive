@@ -5338,6 +5338,7 @@ func main() {
 	defer ticker.Stop()
 	var lastAutoMergeSweep time.Time
 	var lastTaskListSweep time.Time
+	var lastDuplicateSweep time.Time
 
 	var agentTicker *time.Ticker
 	if cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -5381,6 +5382,7 @@ func main() {
 	}
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	runTaskListSweepIfDue(ctx, ghClient, dashSrv, &lastTaskListSweep, logger)
+	runDuplicateSweepIfDue(ctx, cfg, ghClient, dashSrv, &lastDuplicateSweep, logger)
 	persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 
 	agentTickCh := func() <-chan time.Time {
@@ -5458,6 +5460,7 @@ func main() {
 			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			runTaskListSweepIfDue(ctx, ghClient, dashSrv, &lastTaskListSweep, logger)
+			runDuplicateSweepIfDue(ctx, cfg, ghClient, dashSrv, &lastDuplicateSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -8089,6 +8092,16 @@ const autoMergeSweepInterval = time.Minute
 // epics on the same day the last box gets ticked.
 const taskListSweepInterval = 15 * time.Minute
 
+// duplicateSweepInterval is the minimum spacing between duplicate sweeps. It
+// is an hour rather than the task-list sweep's fifteen minutes for two
+// reasons. Cost: the sweep fingerprints the changed-file set of every open PR,
+// which on a large queue is the heaviest read the hive performs (the head-SHA
+// cache makes steady-state passes nearly free, but a cold pass is not).
+// Signal: duplicates accumulate at human-PR-opening cadence, so nothing is
+// lost by noticing one an hour later, while a tighter loop only multiplies the
+// chance of editing a suggestion under a reader's cursor.
+const duplicateSweepInterval = time.Hour
+
 // trustedMergerFunc resolves a GitHub login against the hive's authorized-users
 // allowlist and reports whether it holds at least config.RoleMerger — the same
 // bar requireMergerOrOwnerRole enforces on the dashboard queue endpoint (audit
@@ -8272,7 +8285,70 @@ func runTaskListSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv
 	})
 }
 
-// mergeEligiblePath is a var (not a const) only so tests can point
+// runDuplicateSweepIfDue clusters open PRs by changed-file set and suggests
+// which one to keep, at most once per duplicateSweepInterval
+// (hivecommons/hive#7469 capability B).
+//
+// Fail-closed and opt-in at both levels. `duplicate_sweep.enabled` is off by
+// default, so a hive that has not asked for this performs no extra API calls
+// at all; `duplicate_sweep.post_comments` is a SECOND, separately-off grant
+// for the write, so the natural first configuration is a report-only pass an
+// operator can read in the log before the hive says anything on a
+// contributor's PR.
+//
+// The sweep only ever comments. It does not close, label, approve or merge,
+// and the reviewer gains no permission from its existence: the write is the
+// hive's own App token going through the same canary-gated, scrubbed comment
+// path every other hive-authored comment uses.
+func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil || !cfg.DuplicateSweep.Enabled {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < duplicateSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepDuplicatePRs(ctx, github.DuplicateSweepOptions{
+		PostComments:  cfg.DuplicateSweep.PostComments,
+		MaxComments:   cfg.DuplicateSweep.MaxComments,
+		MaxPRsPerRepo: cfg.DuplicateSweep.MaxPRsPerRepo,
+		BotAuthors:    cfg.DuplicateSweep.BotAuthors,
+		Audit: func(event github.DuplicateSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, survivor=%d, superseded=%d, confidence=%s, commented=%d",
+				event.Repo, event.Survivor, len(event.Superseded), event.Confidence, len(event.Commented))
+			dashSrv.AuditLog("system", "duplicate-sweep-suggested", detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("duplicate sweep reported a problem", "error", err)
+	}
+	if result == nil {
+		return
+	}
+	if len(result.Clusters) > 0 || result.Scanned > 0 {
+		logger.Info("duplicate sweep complete",
+			"scanned", result.Scanned,
+			"skipped", result.Skipped,
+			"clusters", len(result.Clusters),
+			"commented", result.Commented,
+			"post_comments", cfg.DuplicateSweep.PostComments)
+	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "duplicate sweep complete",
+		Attrs: map[string]string{
+			"scanned":   strconv.Itoa(result.Scanned),
+			"clusters":  strconv.Itoa(len(result.Clusters)),
+			"commented": strconv.Itoa(result.Commented),
+		},
+	})
+} // mergeEligiblePath is a var (not a const) only so tests can point
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 
