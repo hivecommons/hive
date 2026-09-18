@@ -83,6 +83,55 @@ func makeMsg(id, content string, isBot bool) Message {
 	}
 }
 
+func TestStart_NilBackendReturnsError(t *testing.T) {
+	s := NewService(nil, Config{}, discardLogger())
+	if err := s.Start(context.Background()); err == nil {
+		t.Fatal("expected error for nil backend")
+	}
+}
+
+func TestStart_WithBackendRegistersAndQueuesOnlineMessage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	backend := &recordingBackend{}
+	s := NewService(backend, Config{}, discardLogger())
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+
+	s.mu.RLock()
+	_, hasStatus := s.commands["status"]
+	s.mu.RUnlock()
+	if !hasStatus {
+		t.Fatal("Start did not register builtin commands")
+	}
+
+	var sent []string
+	drainQueue(s, &sent)
+	if len(sent) != 1 || !strings.Contains(sent[0], "Discord bot online") {
+		t.Fatalf("online message = %v", sent)
+	}
+}
+
+func TestDeliver_RoutesMessage(t *testing.T) {
+	s, sent := makeBotWithSendCapture(t)
+	s.RegisterCommand("ping", func(_ context.Context, args string) (string, error) {
+		return "pong " + args, nil
+	})
+	s.Deliver(context.Background(), makeMsg("1", "!ping via-deliver", false))
+	drainQueue(s, sent)
+	if len(*sent) != 1 || (*sent)[0] != "pong via-deliver" {
+		t.Fatalf("Deliver reply = %v", *sent)
+	}
+}
+
+func TestDrainLoop_WrapperStopsOnCancel(t *testing.T) {
+	s := NewService(&recordingBackend{}, Config{}, discardLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.DrainLoop(ctx)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // NewBot
 // ──────────────────────────────────────────────────────────────────────────────

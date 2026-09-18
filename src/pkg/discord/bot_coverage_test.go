@@ -12,6 +12,44 @@ import (
 // SetAgentNames
 // ---------------------------------------------------------------------------
 
+func TestFacadeSettersDelegateToChatService(t *testing.T) {
+	b := NewBot(Config{Token: "t", ChannelID: "c"}, discardLogger())
+
+	SetAgentIdentities(map[string]AgentIdentity{"scanner": {Emoji: "🔎", Color: 0x123456}})
+	SetAgentAliases(map[string]string{"scan": "scanner"})
+	b.SetAgentNames([]string{"scanner"})
+}
+
+func TestSetTopic_DelegatesThroughFacadeAndBackend(t *testing.T) {
+	var patchCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		patchCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	b := newTestBot(ts, "ch")
+	if err := b.SetTopic("facade topic"); err != nil {
+		t.Fatalf("Bot.SetTopic error: %v", err)
+	}
+	if err := b.discordBackend.SetTopic("backend topic"); err != nil {
+		t.Fatalf("discordBackend.SetTopic error: %v", err)
+	}
+	if patchCount != 2 {
+		t.Fatalf("topic PATCH count = %d, want 2", patchCount)
+	}
+}
+
+func TestSetChannelTopic_NewRequestError(t *testing.T) {
+	b := NewBot(Config{Token: "tok", ChannelID: "\x00"}, discardLogger())
+	if err := b.setChannelTopic("topic"); err == nil {
+		t.Fatal("expected error for invalid channel ID")
+	}
+}
+
 func TestSetChannelTopic_CorrectRequest(t *testing.T) {
 	var gotMethod string
 	var gotPath string
