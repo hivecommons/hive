@@ -219,9 +219,11 @@ func TestSelectionPathsDoNotReadFailureKind(t *testing.T) {
 // If it did, a relay could keep an issue permanently hot by tagging every
 // failure "environment" — a fleet-level symptom that presents as a hub bug.
 func TestRecordTaskFailure_IgnoresFailureKind(t *testing.T) {
-	raw, err := os.ReadFile("contribute_ws.go")
+	// recordTaskFailure moved to contribute_cooldowns.go in the #7491 god-file
+	// split; this scan follows it there rather than passing vacuously.
+	raw, err := os.ReadFile("contribute_cooldowns.go")
 	if err != nil {
-		t.Fatalf("read contribute_ws.go: %v", err)
+		t.Fatalf("read contribute_cooldowns.go: %v", err)
 	}
 	body := selectionFuncBody(t, string(raw), "recordTaskFailure")
 	lower := strings.ToLower(body)
