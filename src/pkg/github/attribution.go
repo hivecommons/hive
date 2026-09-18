@@ -229,6 +229,19 @@ func AppendTrailer(body string, m InvocationMeta) string {
 	return body + "\n\n" + t
 }
 
+// HasAttributionTrailer reports whether body carries the visible `— hive:`
+// trailer, i.e. whether the artifact was hive-mediated: opened through the
+// PR-request watcher, stamped by ReconcilePRAttribution, or opened by a
+// contributor relay running on a person's own credentials (whose PRs GitHub
+// shows under that person's login, not a bot's). It is the same test
+// isHiveFiledIssue applies before closing an issue, and the one
+// CollectReviewThreads applies before routing a review-bot thread
+// (hivecommons/hive#7638). Author login alone cannot make this call: a relay
+// PR has a human author, and a human's hand-written PR has the same one.
+func HasAttributionTrailer(body string) bool {
+	return strings.Contains(body, AttributionTrailerPrefix)
+}
+
 // RequestedModel normalizes the model recorded in the trail: bob has no model
 // catalog and always self-selects, so an empty model on the bob backend is
 // honestly "auto" rather than unknown. Every other backend passes through

@@ -31,6 +31,11 @@ type gqlThread struct {
 	RepoName   string
 	HeadRef    string
 	DatabaseID int64
+	// PRAuthor is the login GitHub shows as the PR's author. Rendered in the
+	// node re-fetch so a fixture can state that a PR is human-authored (a
+	// relay PR, #7638); the guard must not read it — the thread's FIRST
+	// comment author is what decides.
+	PRAuthor string
 }
 
 type gqlComment struct {
@@ -84,6 +89,7 @@ func (m *gqlMock) renderThread(t *gqlThread) map[string]any {
 		"comments": map[string]any{"nodes": comments},
 		"pullRequest": map[string]any{
 			"number":     t.PRNumber,
+			"author":     map[string]any{"login": t.PRAuthor},
 			"repository": map[string]any{"nameWithOwner": t.RepoOwner + "/" + t.RepoName},
 		},
 	}
@@ -306,6 +312,12 @@ func TestCollectReviewThreads(t *testing.T) {
 	mock.add(&gqlThread{ID: "PRRT_4", Comments: []gqlComment{bot}, PRNumber: 4, RepoOwner: "o", RepoName: "r", HeadRef: "human/branch", DatabaseID: 50})
 	mock.add(&gqlThread{ID: "PRRT_5", Comments: []gqlComment{bot}, PRNumber: 5, RepoOwner: "o", RepoName: "r", HeadRef: "hive/held", DatabaseID: 60})
 	mock.add(&gqlThread{ID: "PRRT_7", Comments: []gqlComment{bot}, PRNumber: 7, RepoOwner: "o", RepoName: "r", HeadRef: "hive/blocked", DatabaseID: 70})
+	// PR 8 is the hivecommons/hive#7638 case: a hive agent opened it on the
+	// operator's own credentials, so GitHub shows a human author, but the body
+	// carries the `— hive:` trailer. Its bot thread must be listed; the human
+	// thread beside it must not. PR 4 (same author, no trailer) stays dropped.
+	mock.add(&gqlThread{ID: "PRRT_8", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{{Author: "chatgpt-codex-connector[bot]", Body: "Update the permission note"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 80})
+	mock.add(&gqlThread{ID: "PRRT_8h", Path: "docs/perm.md", Line: 30, Comments: []gqlComment{{Author: "dave", Body: "typo"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 90})
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 	c := reviewThreadTestClient(t, srv.URL, testBots)
@@ -318,31 +330,62 @@ func TestCollectReviewThreads(t *testing.T) {
 		{Repo: "r", Number: 5, Title: "held", Author: "hive[bot]", Labels: []string{"hold"}},
 		{Repo: "r", Number: 6, Title: "draft", Author: "hive[bot]", Draft: true},
 		{Repo: "r", Number: 7, Title: "blocked", Author: "hive[bot]", Labels: []string{"Blocked"}},
+		{Repo: "r", Number: 8, Title: "relay PR", Author: "carol", HiveAttributed: true},
 	}
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	report := c.CollectReviewThreads(context.Background(), prs, now)
 	if !report.Enabled || report.GeneratedAt != "2026-09-17T12:00:00Z" {
 		t.Errorf("header wrong: %+v", report)
 	}
-	if report.TotalThreads != 1 || len(report.PRs) != 2 {
-		t.Fatalf("expected 2 listed PRs / 1 thread, got %d PRs / %d threads: %+v", len(report.PRs), report.TotalThreads, report.PRs)
+	if report.TotalThreads != 2 || len(report.PRs) != 3 {
+		t.Fatalf("expected 3 listed PRs / 2 threads, got %d PRs / %d threads: %+v", len(report.PRs), report.TotalThreads, report.PRs)
 	}
-	one, two := report.PRs[0], report.PRs[1]
+	one, two, eight := report.PRs[0], report.PRs[1], report.PRs[2]
 	if one.Repo != "o/r" || one.Number != 1 || one.HeadRef != "hive/fix-1" || len(one.Threads) != 1 || one.Threads[0].ThreadID != "PRRT_1" || one.Title != "fix one" {
 		t.Errorf("PR 1 wrong: %+v", one)
 	}
 	if two.Number != 2 || len(two.Threads) != 0 || two.HeadRef != "hive/fix-2" {
 		t.Errorf("PR 2 (all resolved) must be listed with zero threads: %+v", two)
 	}
+	if eight.Number != 8 || eight.HeadRef != "relay/fix-8" || len(eight.Threads) != 1 || eight.Threads[0].ThreadID != "PRRT_8" || eight.Agent != "" {
+		t.Errorf("PR 8 (human author, hive trailer) must be listed with its bot thread and no agent: %+v", eight)
+	}
 	raw, _ := json.Marshal(report)
-	for _, human := range []string{"PRRT_1h", "PRRT_3", "alice", "bob", "PRRT_4", "PRRT_5", "PRRT_7"} {
+	for _, human := range []string{"PRRT_1h", "PRRT_3", "alice", "bob", "PRRT_4", "PRRT_5", "PRRT_7", "PRRT_8h", "dave"} {
 		if strings.Contains(string(raw), human) {
 			t.Errorf("report leaks %q (human thread / non-hive PR / held or blocked PR):\n%s", human, raw)
 		}
 	}
-	// Only the hive-authored, non-held, non-draft PRs (1, 2, 3) cost a query.
-	if got := mock.queryCount(); got != 3 {
-		t.Errorf("expected 3 GraphQL queries, got %d", got)
+	// Only the hive-mediated, non-held, non-draft PRs (1, 2, 3, 8) cost a
+	// query; the trailer-less human PR (4) never reaches GraphQL.
+	if got := mock.queryCount(); got != 4 {
+		t.Errorf("expected 4 GraphQL queries, got %d", got)
+	}
+}
+
+// isHiveMediatedPR: a hive login as author OR the attribution trailer in the
+// body qualifies; a human author with no trailer does not, and neither does an
+// empty author (hivecommons/hive#7638).
+func TestIsHiveMediatedPR(t *testing.T) {
+	c := reviewThreadTestClient(t, "http://127.0.0.1:0/", testBots)
+	cases := []struct {
+		name string
+		pr   PullRequest
+		want bool
+	}{
+		{"App bot author", PullRequest{Author: "hive[bot]"}, true},
+		{"App bot author, different case", PullRequest{Author: "HIVE[BOT]"}, true},
+		{"human author, trailer in body", PullRequest{Author: "carol", HiveAttributed: true}, true},
+		{"human author, no trailer", PullRequest{Author: "carol"}, false},
+		{"no author, no trailer", PullRequest{}, false},
+		{"no author, trailer", PullRequest{HiveAttributed: true}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.isHiveMediatedPR(tc.pr); got != tc.want {
+				t.Errorf("isHiveMediatedPR(%+v) = %v, want %v", tc.pr, got, tc.want)
+			}
+		})
 	}
 }
 

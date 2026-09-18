@@ -354,7 +354,7 @@ func IsHumanFiledBugReport(issue *gh.Issue) bool {
 	if !hasBug {
 		return false
 	}
-	if strings.Contains(issue.GetBody(), AttributionTrailerPrefix) {
+	if HasAttributionTrailer(issue.GetBody()) {
 		return false
 	}
 	if issue.User != nil && strings.EqualFold(issue.User.GetType(), "Bot") {

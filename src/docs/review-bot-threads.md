@@ -1,4 +1,4 @@
-# Review-bot threads on hive-authored PRs
+# Review-bot threads on hive-mediated PRs
 
 When a hive agent opens a PR on a repository that has an external review bot
 installed — Copilot code review, `chatgpt-codex-connector[bot]`, CodeRabbit —
@@ -11,6 +11,48 @@ conversations by hand.
 
 The hive now reconciles those threads itself, for every PR it opened, with no
 per-agent prompt rule. Three pieces, and one config key that turns them on.
+
+## Which PRs qualify
+
+A PR is the hive's to follow up on — *hive-mediated* — when **either** of two
+things is true:
+
+- its **author is a hive login**: the App bot, or `project.ai_author` when
+  configured. These are the PRs the PR-request watcher opens; or
+- its **body carries the `— hive:` attribution trailer**
+  (`github.HasAttributionTrailer`). These are the PRs a hive agent opened on a
+  *person's* credentials — a contributor relay, or an operator running agents
+  under their own GitHub auth. GitHub shows the person as the author, so the
+  login rule alone can never recognise them.
+
+The second rule exists because of
+[#7638](https://github.com/hivecommons/hive/issues/7638): the reconciler
+originally keyed on the author login only, and every relay-run PR was dropped
+before its threads were even fetched. Those are precisely the PRs external
+review bots review — Codex skips bot-authored PRs — so the only PRs getting
+Codex threads were the ones the hive could not follow up on. The trailer is
+the same rule the task-list sweep already uses to decide an issue is the
+hive's to close.
+
+Do **not** fix this by setting `project.ai_author` to the operator's own
+login: that would make every PR they write by hand "hive-authored" too, and
+agents would be told to fix and resolve review threads on the operator's own
+work. `ai_author` is for a dedicated bot login.
+
+A relay-run PR's trailer usually has no `agent=` (the relay does not know a
+hive-side agent name), and there is no App-bot audit entry for a PR the hive
+did not open itself, so it is listed with an empty `agent` and reaches the
+**scanner**, exactly as any other unattributed PR does.
+
+**On spoofing.** The trailer is a line of text; anyone can paste `— hive:`
+into a hand-written PR and have the hive answer that PR's review-bot threads.
+This is accepted, as it was for the task-list sweep closing issues, because
+the consequence is bounded: the hive will only ever reply in and resolve
+threads that a *configured review bot* opened on that PR — the watcher-side
+guard (§3) still refuses a human's thread, and it keys on the thread's first
+author, never on the PR's author — which is something the PR's own author
+could already do by hand. Nothing about the trailer lets a PR merge, be
+approved, or have its human conversations touched.
 
 ## Configuration: `classification.review_bots`
 
@@ -48,10 +90,12 @@ key the Go side reads from the project file
 
 The governor's eval tick (`writeReviewThreads`, throttled to once per five
 minutes) runs `Client.CollectReviewThreads` over the enumerated actionable
-PRs. It keeps only PRs authored by the App bot or `project.ai_author`, skips
-drafts and anything carrying a hold / `do-not-merge` / exempt label (the same
-exclusions as every other kick input), and for each remaining PR runs one
-GraphQL `pullRequest.reviewThreads` query. A thread is listed when it is
+PRs. It keeps only hive-mediated PRs (see [Which PRs qualify](#which-prs-qualify):
+a hive login as author, or the `— hive:` trailer in the body — the trailer
+test is computed from the PR list payload at enumeration time, so it costs no
+extra call), skips drafts and anything carrying a hold / `do-not-merge` /
+exempt label (the same exclusions as every other kick input), and for each
+remaining PR runs one GraphQL `pullRequest.reviewThreads` query. A thread is listed when it is
 **unresolved**, **not outdated**, its **first comment is from a configured
 bot**, and it has **fewer than `max_attempts_per_thread` replies from the
 hive**. Threads a human opened never appear.
@@ -80,7 +124,8 @@ hive**. Threads a human opened never appear.
 
 `agent` is the hive agent whose relay request opened the PR, resolved from the
 audit trail exactly as `ci-failing.json` does; empty means unattributed and the
-kick builder defaults it to `scanner`. `escalated: true` marks a PR the
+kick builder defaults it to `scanner` (a PR opened on a person's credentials
+is always in this state — see [Which PRs qualify](#which-prs-qualify)). `escalated: true` marks a PR the
 escalation sweep has handed to a human. A PR whose bot threads are all
 resolved (or all at the attempt cap) is listed with an empty `threads` array,
 so the file shows the reconciler has nothing left to do there rather than
@@ -143,4 +188,6 @@ failed review.
   more attempt, and then stops: an open bot thread with one hive reply
   explaining what it tried.
 - A human's thread on the same PR is never listed, never replied to by this
-  path, and never resolved.
+  path, and never resolved — including on a PR whose *author* is a human
+  because a hive agent opened it on their credentials: the guard looks at who
+  opened the thread, not who opened the PR.

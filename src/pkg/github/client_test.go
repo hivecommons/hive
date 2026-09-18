@@ -50,6 +50,9 @@ type wirePR struct {
 	CreatedAt string      `json:"created_at"`
 	HTMLURL   string      `json:"html_url"`
 	Mergeable *bool       `json:"mergeable"`
+	// Body is the PR description; the `— hive:` attribution trailer, when
+	// present, lives at its end (#7638).
+	Body string `json:"body,omitempty"`
 	// Head / Base carry the branch origin (#7386); nil = absent from the
 	// payload, as older fixtures leave them.
 	Head *wireBranch `json:"head,omitempty"`

@@ -14,8 +14,8 @@ import (
 )
 
 // ReviewThreadsPath is the pre-kick artifact listing every unresolved
-// external-review-bot thread on an open hive-authored PR
-// (hivecommons/hive#7360). The scheduler reads it to prepend a
+// external-review-bot thread on an open hive-mediated PR (isHiveMediatedPR;
+// hivecommons/hive#7360, #7638). The scheduler reads it to prepend a
 // fix-before-new block to the kick of the agent that opened each PR, the
 // same way ci-failing.json drives the red-CI block. It is a var only so tests
 // can redirect it.
@@ -31,7 +31,7 @@ type ReviewThreadsReport struct {
 	PRs          []ReviewThreadPR `json:"prs"`
 }
 
-// ReviewThreadPR is one open hive-authored PR that has (or had) review-bot
+// ReviewThreadPR is one open hive-mediated PR that has (or had) review-bot
 // threads. Threads holds only the ones still needing a hive pass; a PR whose
 // bot threads are all resolved or already at the attempt cap is listed with
 // zero threads so the file shows the reconciler has nothing left to do there.
@@ -43,6 +43,8 @@ type ReviewThreadPR struct {
 	// Agent is the hive agent whose relay request opened this PR (from the
 	// audit trail, resolved by the caller). Empty means unattributed; the kick
 	// builder defaults it to scanner, exactly as it does for ci-failing.json.
+	// A PR opened on a person's credentials has no App-bot audit entry, so it
+	// lands here empty and reaches the scanner that way (#7638).
 	Agent string `json:"agent,omitempty"`
 	// Escalated marks a PR handed to a human (needs-human). The kick builder
 	// never lists escalated PRs, same as the red-CI block.
@@ -258,15 +260,40 @@ func (c *Client) fetchReviewThreads(ctx context.Context, owner, repo string, num
 	}
 }
 
+// isHiveMediatedPR is the "this PR is the hive's to follow up on" test for the
+// review-thread reconciler. Either signal suffices:
+//
+//  1. the author is a hive login (App bot or project.ai_author) — the PRs the
+//     PR-request watcher opens; or
+//  2. the body carries the `— hive:` attribution trailer — the PRs a hive
+//     agent opened on a PERSON's credentials (a contributor relay, or an
+//     operator running agents under their own GitHub auth). GitHub shows the
+//     person as author, so rule 1 alone dropped every one of them before the
+//     thread query ran (hivecommons/hive#7638) — and those are precisely the
+//     PRs external review bots review, since Codex skips bot authors.
+//
+// The trailer is the same rule the task-list sweep (isHiveFiledIssue) uses to
+// decide an issue is the hive's to close. It is spoofable — a person can paste
+// a `— hive:` line into a hand-written PR — and that is accepted here as it was
+// there: the consequence is bounded to the hive replying in and resolving
+// threads a CONFIGURED REVIEW BOT opened on that PR (the watcher-side guard
+// still refuses a human's thread, and still keys on the thread's first
+// author, not the PR's), which the PR's own author could do by hand anyway.
+// Setting project.ai_author to the person's login is NOT the answer: that
+// would make every PR they write by hand hive-authored too.
+func (c *Client) isHiveMediatedPR(pr PullRequest) bool {
+	return c.isHiveLogin(pr.Author) || pr.HiveAttributed
+}
+
 // CollectReviewThreads builds the review-threads report for the given open
 // PRs. Callers pass the governor's already-enumerated actionable PR list, so
 // the hold / do-not-merge / exempt-label and draft exclusions are exactly the
 // ones every other kick input already has (fetchPRs applies them). This
-// function additionally keeps only HIVE-AUTHORED PRs — the App bot's, or
-// project.ai_author's — and skips the GraphQL round trip entirely when
-// review_bots is off. A PR whose thread fetch fails is logged and omitted
-// (omission means "no attempt this pass", the safe direction); it is not an
-// error for the report as a whole.
+// function additionally keeps only HIVE-MEDIATED PRs (isHiveMediatedPR: a
+// hive login as author, or the attribution trailer in the body) and skips the
+// GraphQL round trip entirely when review_bots is off. A PR whose thread
+// fetch fails is logged and omitted (omission means "no attempt this pass",
+// the safe direction); it is not an error for the report as a whole.
 func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, now time.Time) ReviewThreadsReport {
 	report := ReviewThreadsReport{GeneratedAt: now.UTC().Format(time.RFC3339), PRs: []ReviewThreadPR{}}
 	if c == nil {
@@ -278,7 +305,7 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 		return report
 	}
 	for _, pr := range prs {
-		if pr.Draft || !c.isHiveLogin(pr.Author) {
+		if pr.Draft || !c.isHiveMediatedPR(pr) {
 			continue
 		}
 		if isHeld(pr.Labels) || c.isExempt(pr.Labels) || hasBlockedLabel(pr.Labels) {

@@ -188,6 +188,52 @@ func TestReviewRequestWatcher_ThreadGuardDenials(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#7638: the guard keys on the THREAD's first author, never
+// the PR's. On a PR a hive agent opened on the operator's own credentials —
+// GitHub shows a human as author — a resolve on the Codex thread goes through,
+// while a resolve on the human's thread beside it is still refused. If the
+// guard ever grew a PR-author check, every relay PR the monitor now lists
+// would be routed to an agent whose requests are all denied.
+func TestReviewRequestWatcher_ThreadGuardIgnoresPRAuthor(t *testing.T) {
+	mock := newGQLMock()
+	codex := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "Update the permission note for the newly refused options"}
+	mock.add(&gqlThread{ID: "PRRT_relay_bot", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{codex}, PRNumber: 195, RepoOwner: "o", RepoName: "r", PRAuthor: "danathar"})
+	mock.add(&gqlThread{ID: "PRRT_relay_human", Path: "docs/perm.md", Line: 30, Comments: []gqlComment{{Author: "danathar", Body: "leave this"}}, PRNumber: 195, RepoOwner: "o", RepoName: "r", PRAuthor: "danathar"})
+	srv := httptest.NewServer(mock.handler(t))
+	t.Cleanup(srv.Close)
+	c := reviewTestClient(t, srv.URL)
+	c.SetAppBotLogin("hive[bot]")
+	c.SetReviewBots(testBots)
+	dir := withReviewDir(t)
+
+	botReq, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 195, Event: "resolve_thread", ThreadID: "PRRT_relay_bot", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if len(mock.resolved) != 1 || mock.resolved[0] != "PRRT_relay_bot" {
+		t.Fatalf("bot thread on a human-authored relay PR must resolve, got %v", mock.resolved)
+	}
+	if resp := readReviewResult(t, botReq); !resp.OK || resp.State != "thread_resolved" {
+		t.Errorf("result wrong: %+v", resp)
+	}
+
+	humanReq, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 195, Event: "resolve_thread", ThreadID: "PRRT_relay_human", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if _, err := os.Stat(humanReq + ".denied"); err != nil {
+		t.Fatalf("the PR author's own thread must still be denied: %v", err)
+	}
+	if len(mock.resolved) != 1 {
+		t.Errorf("human thread must stay open, resolved=%v", mock.resolved)
+	}
+	if resp := readReviewResult(t, humanReq); resp.OK || !strings.Contains(resp.Error, "opened by danathar") {
+		t.Errorf("denial should name the human author, got %+v", resp)
+	}
+}
+
 // A thread request still goes through the per-agent authorizer: a nil
 // authorizer (fail closed) denies before the guard is even consulted.
 func TestReviewRequestWatcher_ThreadRequestFailsClosedWithoutAuthz(t *testing.T) {
