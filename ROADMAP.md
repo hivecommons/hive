@@ -16,6 +16,7 @@ plan (Now / Next / Later, item by item), see the
 | --- | --- | --- | --- |
 | v4 | `v4` (default) | Supported stable line | `stable`, `candidate` |
 | v5 | `v5` | Active development, RFC-gated | `edge` |
+| v6 | `v6` | Open line, early development, tracks v5 (see [v6 section](#v6--dashboard-optional-operation-line-open)) | none yet |
 
 Operators select a line by pointing a hive at a
 [release channel](src/docs/release-channels.md) rather than a branch tag.
