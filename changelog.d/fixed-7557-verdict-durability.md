@@ -1,0 +1,1 @@
+- Review verdicts now persist on durable storage and merge across refreshes, so a restart no longer makes the hive forget what it already reviewed and post duplicate comments on the same pull requests.

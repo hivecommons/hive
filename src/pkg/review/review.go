@@ -4,6 +4,7 @@ package review
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -55,9 +56,30 @@ const (
 	ReviewReportFilePrefix = "review-report-"
 	ReviewReportFileSuffix = ".json"
 	ReviewVerdictsFile     = "review-verdicts.json"
+	// DefaultVerdictsDir is the durable data dir, matching the dispatch state.
+	DefaultVerdictsDir = DefaultDispatchStateDir
 )
 
-var ReviewVerdictsPath = filepath.Join(outputschema.AgentReportDir, ReviewVerdictsFile)
+// ReviewVerdictsPath is the other half of the reviewer's memory: the recorded
+// verdicts that make PlanDispatch treat a (PR, head SHA) as already judged. If
+// it is missing, AggregateFor reports "never reviewed" and the PR is dispatched
+// again from scratch — the same PR, the same perspectives, another round of
+// comments.
+//
+// It therefore lives on the durable data dir for the same reason the dispatch
+// state does. Under AgentReportDir (/var/run/hive-metrics) it sat on the
+// container's ephemeral writable layer, so every restart erased the record of
+// what had already been judged. Observed on a bluefin spoke: nine restarts in
+// one day, and one PR accumulated six reviews in seventy-seven minutes while
+// fourteen of the hive's sixteen repositories were never reached at all.
+//
+// A var (not const) so tests can point it at a temp dir.
+var ReviewVerdictsPath = filepath.Join(DefaultVerdictsDir, ReviewVerdictsFile)
+
+// LegacyReviewVerdictsPath is the pre-migration location. LoadArtifact falls
+// back to it once so an upgrading hive keeps the verdicts it already recorded
+// instead of re-reviewing everything it had already judged.
+var LegacyReviewVerdictsPath = filepath.Join(outputschema.AgentReportDir, ReviewVerdictsFile)
 
 type PerspectiveReport struct {
 	outputschema.AgentReport
@@ -89,6 +111,10 @@ type Aggregate struct {
 	Reasons          []string                `json:"reasons,omitempty"`
 	Findings         []PerspectiveFinding    `json:"findings,omitempty"`
 	Perspectives     map[Perspective]Verdict `json:"perspectives"`
+	// RecordedAt is when this verdict was last merged into the durable
+	// artifact. It exists so stale entries (PRs long since merged or closed)
+	// can be pruned instead of accumulating forever.
+	RecordedAt time.Time `json:"recorded_at,omitempty"`
 }
 
 type PerspectiveFinding struct {
@@ -264,13 +290,83 @@ func CollectAndWrite(dir, path string, opts AggregateOptions) (Artifact, error) 
 	return artifact, WriteArtifact(path, artifact)
 }
 
+// VerdictRetention bounds how long a verdict stays in the durable artifact
+// after it was last seen. Long enough to outlive any realistic review cycle,
+// short enough that the file does not grow without bound as PRs close.
+const VerdictRetention = 30 * 24 * time.Hour
+
+// CollectAndMerge refreshes the durable verdict artifact without losing
+// verdicts whose per-perspective reports have aged out of the report dir.
+//
+// Collect rebuilds from review-report-*.json files, which live on the
+// container's ephemeral layer. A plain collect-and-replace therefore shrinks
+// the artifact every time that layer is reset: the hive forgets what it had
+// already judged and re-reviews those PRs, posting a second (and sixth) round
+// of comments on work it had already handled.
+//
+// Merging keeps the union. Freshly collected verdicts win for a given
+// repo/number/head-SHA, previously recorded ones survive, and anything not
+// re-confirmed within VerdictRetention is dropped.
+func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Artifact, error) {
+	fresh, err := Collect(dir, opts)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	// A missing or unreadable prior artifact is not fatal: this may be the
+	// first run, in which case the fresh collect is the whole truth.
+	merged := map[string]Aggregate{}
+	order := []string{}
+	if existing, loadErr := LoadArtifact(path); loadErr == nil {
+		for _, item := range existing.Items {
+			if now.Sub(item.RecordedAt) > VerdictRetention && !item.RecordedAt.IsZero() {
+				continue
+			}
+			key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+			if _, seen := merged[key]; !seen {
+				order = append(order, key)
+			}
+			merged[key] = item
+		}
+	}
+
+	for _, item := range fresh.Items {
+		item.RecordedAt = now
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		if _, seen := merged[key]; !seen {
+			order = append(order, key)
+		}
+		merged[key] = item
+	}
+
+	artifact := Artifact{GeneratedAt: now, Items: make([]Aggregate, 0, len(order))}
+	for _, key := range order {
+		artifact.Items = append(artifact.Items, merged[key])
+	}
+	return artifact, WriteArtifact(path, artifact)
+}
+
 func LoadArtifact(path string) (Artifact, error) {
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		path = ReviewVerdictsPath
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Artifact{}, err
+		// Only the default path migrates. An explicit path is a caller's
+		// deliberate choice and must not silently read some other file.
+		if !explicit && errors.Is(err, os.ErrNotExist) && LegacyReviewVerdictsPath != ReviewVerdictsPath {
+			legacy, legacyErr := os.ReadFile(LegacyReviewVerdictsPath)
+			if legacyErr != nil {
+				return Artifact{}, err
+			}
+			data = legacy
+		} else {
+			return Artifact{}, err
+		}
 	}
 	var artifact Artifact
 	if err := json.Unmarshal(data, &artifact); err != nil {

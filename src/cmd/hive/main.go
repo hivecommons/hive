@@ -7805,7 +7805,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 	if cfg == nil || !cfg.Review.RequireApproval {
 		return
 	}
-	artifact, err := review.CollectAndWrite("", "", review.AggregateOptions{})
+	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {
 			logger.Warn("failed to refresh review verdicts", "error", err)
