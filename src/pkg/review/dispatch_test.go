@@ -166,8 +166,12 @@ func TestDispatchSpendsSlotsDepthFirstByDefault(t *testing.T) {
 
 // TestMaxPerspectivesPerPRSpreadsAcrossPRs is the point of the cap: the same
 // budget, spent breadth-first, reviews every PR in the queue once instead of
-// one PR three times. No coverage is lost — the perspectives skipped here are
-// still missing next cycle and get dispatched then.
+// one PR three times.
+//
+// Coverage is traded away on purpose. Each perspective is a separate review
+// comment, so letting the skipped ones through on later cycles produces the
+// same pile of comments on one PR, merely spread over an hour. A hive that
+// wants every perspective leaves the cap unset, which is the default.
 func TestMaxPerspectivesPerPRSpreadsAcrossPRs(t *testing.T) {
 	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2"), dispatchPRNum(3, "sha3")}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
