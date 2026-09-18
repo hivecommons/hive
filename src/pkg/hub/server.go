@@ -1076,6 +1076,11 @@ type HubServer struct {
 	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
 	// both are poller-loop-only state.
 	lastPerHiveEnvReconcile time.Time
+	// lastContributeIngressReconcile throttles the hive-contribute Ingress
+	// auth-url reconcile (contribute_ingress_reconcile.go), which puts the
+	// #7457 annotations onto spokes provisioned before that fix (#7517).
+	// Same rationale and same guarding mutex as the two above.
+	lastContributeIngressReconcile time.Time
 	// lastOrphanedPodReap throttles the orphaned Terminating-pod reaper
 	// (orphaned_pod_reaper.go), which force-deletes hive-namespace pods left
 	// behind when a node disappears without draining (#5328). Same rationale
