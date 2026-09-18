@@ -56,6 +56,10 @@ type ReviewRequest struct {
 	Body     string `json:"body,omitempty"`
 	Agent    string `json:"agent,omitempty"`
 	ThreadID string `json:"thread_id,omitempty"`
+	// Report carries the reviewer's structured verdict alongside the comment it
+	// is posting. The relay writes it server-side for review.Collect; see
+	// recordReviewVerdict for why the agent cannot write it itself.
+	Report string `json:"report,omitempty"`
 }
 
 // ReviewResponse is written next to a consumed request as <name>.result.json.
@@ -219,6 +223,12 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 
 	apiEvent, state, okEvent := reviewEventToAPI(req.Event)
 	resolveThread := isResolveThreadEvent(req.Event)
+	// record_verdict posts nothing. It exists because the verdict rides the
+	// review relay, and a perspective that honestly has no comment to make must
+	// still be able to record that it judged the PR — an unrecorded approve
+	// reads downstream as "never reviewed", so the PR is dispatched again from
+	// scratch, forever.
+	recordOnly := strings.EqualFold(strings.TrimSpace(req.Event), ReviewEventRecordVerdict)
 	threadID := strings.TrimSpace(req.ThreadID)
 	// A "comment" that names a thread is an in-thread reply, not a PR review.
 	threadReply := okEvent && apiEvent == "COMMENT" && threadID != ""
@@ -230,8 +240,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		shapeErr = "review request requires repo and number"
 	case resolveThread && threadID == "":
 		shapeErr = "resolve_thread requires thread_id"
-	case !okEvent && !resolveThread:
-		shapeErr = "review request event must be approve|request_changes|comment|resolve_thread"
+	case recordOnly && strings.TrimSpace(req.Report) == "":
+		shapeErr = "record_verdict requires a verdict report"
+	case !okEvent && !resolveThread && !recordOnly:
+		shapeErr = "review request event must be approve|request_changes|comment|resolve_thread|record_verdict"
 	case okEvent && threadID != "" && apiEvent != "COMMENT":
 		shapeErr = "thread_id is only valid with event comment (reply) or resolve_thread"
 	case okEvent && apiEvent != "APPROVE" && strings.TrimSpace(req.Body) == "":
@@ -260,6 +272,19 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 
 	if resolveThread || threadReply {
 		c.handleReviewThreadRequest(ctx, path, req, threadID, resolveThread, nowFn)
+		return
+	}
+
+	// Authorized and well-formed, but nothing to post: record and finish
+	// without touching the GitHub API.
+	if recordOnly {
+		c.recordReviewVerdict(req, "")
+		c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, At: nowFn().UTC().Format(time.RFC3339)})
+		_ = os.Remove(path)
+		c.reviewRetries.clear(path)
+		c.logger.Info("review-request watcher: verdict recorded without a comment",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("agent", req.Agent))
 		return
 	}
 
@@ -325,6 +350,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 				slog.String("error", err.Error()))
 		}
 	}
+
+	// Persist the structured verdict now that the comment is posted. The two
+	// artifacts are recorded together so a verdict can never be attributed to a
+	// review that never actually landed.
+	c.recordReviewVerdict(req, "")
 
 	c.recordCreationAudit(AuditActionPRReviewed, meta,
 		"repo", req.Repo,

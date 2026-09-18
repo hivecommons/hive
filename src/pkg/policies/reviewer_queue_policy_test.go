@@ -61,6 +61,23 @@ func TestReviewerQueuePolicyShips(t *testing.T) {
 		}
 	}
 
+	// Naming the verdict is not enough — the policy must say how to DELIVER it.
+	// The original text said the verdict was "returned in your kick output",
+	// which is nowhere: the agent cannot write the hive's metrics dir, so a
+	// verdict that is merely printed is discarded. Measured on a live spoke:
+	// 117 reviews posted, review-verdicts.json still empty, zero PRs routed.
+	for _, want := range []string{
+		"--verdict-file",
+		"--record-verdict",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reviewer-queue.md never tells the agent to deliver its verdict with %q; printing it delivers nothing", want)
+		}
+	}
+	if strings.Contains(body, "returned in your kick output") {
+		t.Error("reviewer-queue.md still claims the verdict is delivered by returning it in kick output; it is not read from there")
+	}
+
 	// It must not re-acquire the contradictions of the advisory copy.
 	for _, banned := range []string{
 		"no GitHub write access",

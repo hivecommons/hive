@@ -123,8 +123,10 @@ func buildReadInstruction(pr PullRequest) string {
 func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool) string {
 	var b strings.Builder
 	b.WriteString("\nPUBLISH YOUR VERDICT.\n")
-	b.WriteString("After you produce the JSON, post your findings as a PR comment so a human sees them:\n")
-	fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <file>\n", pr.Number, pr.Repo)
+	b.WriteString("You produce TWO artifacts and both must be delivered: the comment a human reads, and the JSON verdict the hive routes on.\n")
+	b.WriteString("Write the JSON to a file, then post the comment and hand over the verdict in the same call:\n")
+	fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict>\n", pr.Number, pr.Repo)
+	b.WriteString("Printing the JSON to your terminal does not deliver it, and you cannot write it into the metrics dir yourself — the relay is the only path. Omit --verdict-file and your judgement is lost: nothing is routed, nothing is escalated, and this PR is dispatched to you again from scratch.\n")
 	b.WriteString("Use hive-review, never `gh pr review` — it is submitted with the App token and recorded on the audit trail.\n")
 	b.WriteString("Only --comment. Do NOT approve, request changes, merge, close, or label; a human decides those.\n")
 	b.WriteString("Every claim in the comment must cite file:line you actually read. A finding you cannot point at is a false positive, and it now costs a contributor their time to refute.\n")
@@ -134,7 +136,8 @@ func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool) string 
 		b.WriteString("  **Reviewed** — no findings from this perspective.\n")
 		b.WriteString("That line is the WHOLE comment. Do not append praise, a summary of the diff, a list of what you checked, or nits you just talked yourself out of; padding it is what makes an acknowledgement into noise.\n")
 	} else {
-		b.WriteString("If this perspective found nothing a human needs, skip the comment entirely and just return the JSON.\n")
+		b.WriteString("If this perspective found nothing a human needs, skip the comment entirely — but still record the verdict, or this PR is dispatched to you again from scratch:\n")
+		fmt.Fprintf(&b, "  hive-review %d --repo %s --record-verdict --verdict-file <verdict>\n", pr.Number, pr.Repo)
 	}
 	b.WriteString("If the PR body claims behavior the diff does not implement, say so with file:line — that gap is one of the most useful things you can report.\n")
 	b.WriteString("Be brief and specific. One comment, at most a few findings, worst first.\n")

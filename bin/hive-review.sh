@@ -18,6 +18,18 @@
 #   hive-review [<number>|<url>] --repo <owner/repo> --request-changes --body "<b>"
 #   hive-review [<number>|<url>] --repo <owner/repo> --comment --body "<b>"
 #
+# Structured verdict (hivecommons/hive: the reviewer's second artifact) —
+#   hive-review <number> --repo <owner/repo> --comment --body-file <c> --verdict-file <v>
+# <v> holds the single JSON verdict object. The relay validates it, checks it
+# names the PR you just reviewed, and writes it where the routing chain reads
+# it. You cannot write that file yourself: /var/run/hive-metrics is owned by the
+# hive, not by any agent uid. Post the comment WITHOUT a verdict and the comment
+# is all that survives — nothing is routed, nothing is labeled.
+#
+# Nothing worth commenting on? Record the verdict anyway — an unrecorded
+# judgement reads downstream as "never reviewed", so the PR comes back forever:
+#   hive-review <number> --repo <owner/repo> --record-verdict --verdict-file <v>
+#
 # Review-bot threads (hivecommons/hive#7360) — the thread ids come from
 # /var/run/hive-metrics/review-threads.json, which the kick lists for you:
 #   hive-review <number> --repo <owner/repo> --comment --thread <PRRT_id> --body "<one line>"
@@ -35,7 +47,7 @@ set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/review-requests"
 
-REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""
+REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -44,9 +56,12 @@ while [ $# -gt 0 ]; do
     --body=*) BODY="${1#*=}"; shift;;
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
+    --verdict-file) VERDICT_FILE="$2"; shift 2;;
+    --verdict-file=*) VERDICT_FILE="${1#*=}"; shift;;
     --approve|-a) EVENT="approve"; shift;;
     --request-changes|-r) EVENT="request_changes"; shift;;
     --comment|-c) EVENT="comment"; shift;;
+    --record-verdict) EVENT="record_verdict"; shift;;
     --thread|-t) THREAD="$2"; shift 2;;
     --thread=*) THREAD="${1#*=}"; shift;;
     --resolve-thread) EVENT="resolve_thread"; THREAD="$2"; shift 2;;
@@ -74,8 +89,23 @@ if [ -n "$BODY_FILE" ]; then
   fi
 fi
 
+if [ -n "$VERDICT_FILE" ]; then
+  if [ "$VERDICT_FILE" = "-" ]; then
+    VERDICT="$(cat)"
+  elif [ -f "$VERDICT_FILE" ]; then
+    VERDICT="$(cat "$VERDICT_FILE")"
+  else
+    echo "hive-review: verdict file not found: $VERDICT_FILE" >&2
+    exit 2
+  fi
+fi
+
 if [ -z "$REPO" ] || [ -z "$NUMBER" ] || [ -z "$EVENT" ]; then
-  echo "hive-review: --repo, a PR number (or URL), and one of --approve/--request-changes/--comment/--resolve-thread are required" >&2
+  echo "hive-review: --repo, a PR number (or URL), and one of --approve/--request-changes/--comment/--resolve-thread/--record-verdict are required" >&2
+  exit 2
+fi
+if [ "$EVENT" = "record_verdict" ] && [ -z "$VERDICT" ]; then
+  echo "hive-review: --record-verdict requires --verdict-file" >&2
   exit 2
 fi
 if [ "$EVENT" = "resolve_thread" ] && [ -z "$THREAD" ]; then
@@ -86,7 +116,7 @@ if [ -n "$THREAD" ] && [ "$EVENT" != "comment" ] && [ "$EVENT" != "resolve_threa
   echo "hive-review: --thread only applies to --comment (in-thread reply) or --resolve-thread" >&2
   exit 2
 fi
-if [ "$EVENT" != "approve" ] && [ "$EVENT" != "resolve_thread" ] && [ -z "$BODY" ]; then
+if [ "$EVENT" != "approve" ] && [ "$EVENT" != "resolve_thread" ] && [ "$EVENT" != "record_verdict" ] && [ -z "$BODY" ]; then
   echo "hive-review: --request-changes and --comment require --body" >&2
   exit 2
 fi
@@ -115,20 +145,32 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" "$VERDICT" <<'PY'
 import json, os, sys
-temporary, path, repo, number, event, body, agent, thread = sys.argv[1:9]
+temporary, path, repo, number, event, body, agent, thread, verdict = sys.argv[1:10]
 req = {"repo": repo, "number": int(number), "event": event, "agent": agent}
 if body:
     req["body"] = body
 if thread:
     req["thread_id"] = thread
+if verdict.strip():
+    # Fail here, in the agent's own shell, rather than letting the relay discard
+    # it: a verdict silently dropped server-side is exactly the failure mode
+    # this flag exists to end.
+    try:
+        json.loads(verdict)
+    except ValueError as exc:
+        sys.stderr.write("hive-review: --verdict-file is not valid JSON: %s\n" % exc)
+        raise SystemExit(2)
+    req["report"] = verdict
 with open(temporary, "w") as fh:
     json.dump(req, fh)
 os.replace(temporary, path)
 PY
 
-if [ -n "$THREAD" ]; then
+if [ "$EVENT" = "record_verdict" ]; then
+  echo "hive-review: recorded verdict for $REPO#$NUMBER (no comment posted)"
+elif [ -n "$THREAD" ]; then
   echo "hive-review: requested $EVENT on thread $THREAD of $REPO#$NUMBER as the App bot"
 else
   echo "hive-review: requested $EVENT review on $REPO#$NUMBER as the App bot"
