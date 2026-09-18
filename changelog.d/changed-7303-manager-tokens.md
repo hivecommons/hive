@@ -1,0 +1,1 @@
+- `pkg/agent`: extracted the token-accounting domain (context-window tracking, token estimates, usage rollups) from `manager.go` into `manager_tokens.go` — a verbatim move matching the v5 file boundaries, no behavior change. Part of [#7303](https://github.com/hivecommons/hive/issues/7303).
