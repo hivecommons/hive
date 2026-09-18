@@ -33,6 +33,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		FixerAgent         *string   `json:"fixer_agent"`
 		AllAuthors         *bool     `json:"all_authors"`
 		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
+		HumanDecisionLabel *string   `json:"human_decision_label"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -71,6 +72,14 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AcknowledgeNoFind != nil {
 		cfg.Review.AcknowledgeNoFindings = *body.AcknowledgeNoFind
+	}
+	// Deliberately not validated against the repos' label sets: the hive
+	// governs many repos and a label present in one may be absent in another,
+	// so rejecting the name here would block a setting that is correct
+	// elsewhere. An unusable name degrades to "no label applied" at review
+	// time, where the review marker still carries the signal.
+	if body.HumanDecisionLabel != nil {
+		cfg.Review.HumanDecisionLabel = strings.TrimSpace(*body.HumanDecisionLabel)
 	}
 
 	if err := s.saveConfig(); err != nil {

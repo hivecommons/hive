@@ -1,0 +1,1 @@
+- Review swarm can now mark PRs it holds for a human with an existing repo label (`review.human_decision_label`, e.g. `3-human-queue`), making the human queue filterable from the PR list. The label is never created and never required: if it is unset, misspelled, or absent from the repo, labeling is skipped and the review comment's in-body marker still carries the signal.

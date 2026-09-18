@@ -6320,6 +6320,24 @@ type ReviewConfig struct {
 	// coverage itself is the thing being demonstrated, a reviewed-and-clean
 	// PR should say so. Requires PostComments.
 	AcknowledgeNoFindings bool `yaml:"acknowledge_no_findings,omitempty" json:"acknowledge_no_findings,omitempty"`
+	// HumanDecisionLabel names an EXISTING repo label to apply when the review
+	// swarm holds a PR for a human. The review comment's in-body marker is
+	// always the primary signal and never depends on this: a label makes the
+	// holds filterable from the PR list, which a comment buried in a thread
+	// cannot do, but a queue is triaged by people reading comments.
+	//
+	// The label is never created. A hive reviews other people's repos, so
+	// inventing a label there would edit someone else's taxonomy uninvited.
+	// If the name is empty, misspelled, or absent from the repo, labeling is
+	// skipped and the marker still lands — a typo must degrade to today's
+	// behaviour, never suppress a review.
+	//
+	// There is deliberately NO default and no built-in name. Label taxonomies
+	// are per-project: the name that means "a person must decide" in one org
+	// does not exist in another, so shipping a default would be a name that
+	// resolves nowhere for most hives while looking configured. Each hive
+	// names a label its own governed repos already maintain.
+	HumanDecisionLabel string `yaml:"human_decision_label,omitempty" json:"human_decision_label,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep
