@@ -608,6 +608,24 @@ A `kick_template` that names a file which exists nowhere in that chain is a **da
 
 Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
+### Writing guide: how issues and PRs should read (`project.writing_guide`)
+
+Every default template that files an issue or PR carries the variable `${WRITING_GUIDE}` immediately before the body template it tells the agent to fill in (`--body "## Finding …"`, `--body "## Test Improvement …"`). It expands to the text of `project.writing_guide`, wrapped in a short header that says who set it and that it governs how the body *reads*, not what the policy requires it to contain. It is **empty by default**, and an empty guide renders nothing — a hive that never sets it gets byte-identical prompts.
+
+```yaml
+project:
+  writing_guide: |
+    A person who was not in your head will read this. Write for them.
+    Open with two or three short sentences: what changed, why, and what
+    to look at. Short sentences. One idea per bullet. Use the project's
+    own words. Put evidence under a <details> block and keep it to about
+    300 words outside that block.
+```
+
+Why a setting and not `AGENTS.md` ([#7667](https://github.com/hivecommons/hive/issues/7667)): a style rule in a repo's `AGENTS.md` reaches the agent as background knowledge, lower in the prompt than the policy's own body template, and when the two disagree the agent follows the template. The variable puts the owner's rule *next to* the template, which is the only position that changed anything when tried. The alternative — editing each template in the prompt editor — saves a full copy of that policy to `/data/policies/` that then shadows every upstream update to it, per agent, for a style preference.
+
+Where you will see it: the agent's Prompt Template tab renders the guide where the kick will place it, so you can confirm the setting took. Templates whose prompts are built in Go rather than from a policy file (the review swarm, the contributor relay's task prompt) do not carry the variable yet. Review comments (`reviewer-queue.md`) are deliberately outside it: the guide is about issue and PR bodies.
+
 ## Label policy: which issues agents may work
 
 There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:

@@ -29,6 +29,8 @@ must be something a later reader can verify, not a judgement buried in prose. A 
 
 When you find a testing gap worth addressing, open a GitHub issue:
 
+${WRITING_GUIDE}
+
 ```bash
 gh issue create --repo "$HIVE_REPO" \
   --title "[quality] Short description of the testing gap" \

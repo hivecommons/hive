@@ -19,6 +19,17 @@ project:
   # keep no clones, so without this AGENTS.md injection stays a no-op — which is
   # the default. An absent directory or a repo with no AGENTS.md is also a no-op.
   # checkouts_dir: /data/checkouts
+  # Optional: how the issues and PRs your agents file should read. Rendered as
+  # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
+  # before the body template the agent fills in — next to the template, which
+  # is where a style rule has to sit to be followed (a rule in AGENTS.md
+  # arrives as background and loses to the template). Empty (the default)
+  # renders nothing. See src/docs/agent-configuration.md.
+  # writing_guide: |
+  #   A person who was not in your head will read this. Write for them.
+  #   Open with two or three short sentences: what changed, why, and what
+  #   to look at. Short sentences. One idea per bullet. Put evidence under a
+  #   <details> block and keep it to about 300 words outside that block.
 
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks

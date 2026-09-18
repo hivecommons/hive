@@ -462,6 +462,11 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 	// variables configured, Expand reproduces the previous strings.NewReplacer
 	// output exactly (unknown ${VAR} left literal; no env fallback in template
 	// scope).
+	//
+	// WRITING_GUIDE is the owner's project.writing_guide, or "" when unset
+	// (hivecommons/hive#7667). Every default template that files an issue or
+	// PR carries ${WRITING_GUIDE} ahead of its body template; pkg/policies
+	// pins that, and the dashboard preview renders the same section.
 	lit := func(v string) func() string { return func() string { return v } }
 	rt := &resolve.RuntimeContext{Vars: map[string]func() string{
 		"AGENT_NAME":            lit(agentName),
@@ -484,6 +489,7 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
 		"PROJECT_OBSERVABILITY": lit(s.cfg.Governor.ProjectObservability.PromptSection()),
+		"WRITING_GUIDE":         lit(s.cfg.Project.WritingGuideSection()),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
 		"HIVE_ID":               lit(s.cfg.HiveID),
 		"AGENT_LIST":            lit(agentList),

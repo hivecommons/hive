@@ -29,6 +29,8 @@ must be something a later reader can verify, not a judgement buried in prose. A 
 
 When you identify a real bug or problem:
 
+${WRITING_GUIDE}
+
 ```bash
 gh issue create --repo "$HIVE_REPO" \
   --title "[scanner] <specific description of the finding>" \

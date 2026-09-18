@@ -3950,6 +3950,10 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 		"PROJECT_REPOS_LIST":   lit(reposList),
 		"HIVE_REPO":            lit(fmt.Sprintf("%s/hive", org)),
 		"HIVE_ID":              lit(cfg.HiveID),
+		// project.writing_guide is config-only, so the prompt editor's preview
+		// can show it exactly where a kick will place it — which is how an
+		// owner sees that the setting took (hivecommons/hive#7667).
+		"WRITING_GUIDE": lit(cfg.Project.WritingGuideSection()),
 	}}
 	return cfg.ResolveRegistry(s.deps.Logger).Expand(context.Background(), template, resolve.ScopeTemplate, rt)
 }
