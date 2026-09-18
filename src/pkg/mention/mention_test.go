@@ -11,14 +11,17 @@ import (
 )
 
 type fakeGH struct {
-	app      string
-	ack      int64
-	count    int
-	countErr error
-	ackErr   error
-	listErr  error
-	events   []Event
-	listed   bool
+	app           string
+	ack           int64
+	count         int
+	countErr      error
+	ackErr        error
+	listErr       error
+	comment       string
+	commentErr    error
+	commentNumber int
+	events        []Event
+	listed        bool
 }
 
 func (f *fakeGH) AppBotLogin() string { return f.app }
@@ -41,6 +44,14 @@ func (f *fakeGH) CountAppAuthoredComments(ctx context.Context, repo string, numb
 		return 0, f.countErr
 	}
 	return f.count, nil
+}
+func (f *fakeGH) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	if f.commentErr != nil {
+		return f.commentErr
+	}
+	f.comment = body
+	f.commentNumber = number
+	return nil
 }
 
 func TestParseGrammar(t *testing.T) {
@@ -78,7 +89,7 @@ func baseHandler(t *testing.T, gh *fakeGH, audit *[]string, kick *[]string) *Han
 		return "", false
 	}, Agents: func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: conv, Mention: true, GovernorKick: true}}
-	}, GitHub: gh, Store: store, Kick: func(agent, msg string) error { *kick = append(*kick, agent+":"+msg); return nil }, Audit: func(action, detail, agent string) { *audit = append(*audit, action+":"+detail) }})
+	}, GitHub: gh, Store: store, Kick: func(agent, msg, source string) error { *kick = append(*kick, agent+":"+source+":"+msg); return nil }, Audit: func(action, detail, agent string) { *audit = append(*audit, action+":"+detail) }})
 }
 
 func TestHandleGuardsAndAckKick(t *testing.T) {
@@ -152,7 +163,7 @@ func TestHandlerUsesDynamicGitHubForBotLogin(t *testing.T) {
 			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
 		},
 		Store: mustStore(t),
-		Kick:  func(agent, msg string) error { kick = append(kick, agent+":"+msg); return nil },
+		Kick:  func(agent, msg, source string) error { kick = append(kick, agent+":"+source+":"+msg); return nil },
 		Audit: func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
 	})
 	current = newGH
@@ -256,7 +267,7 @@ func TestKickErrorDoesNotMarkSeen(t *testing.T) {
 	off := ""
 	h := NewHandler(Options{Config: config.GitHubMentionsConfig{Enabled: true, AckReaction: &off}, Roles: func(string) (string, bool) { return config.RoleReadWrite, true }, Agents: func() []AgentInfo {
 		return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
-	}, GitHub: gh, Store: store, Kick: func(agent, msg string) error { return errors.New("boom") }})
+	}, GitHub: gh, Store: store, Kick: func(agent, msg, source string) error { return errors.New("boom") }})
 	err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "N", Author: "alice", Body: "@hive[bot] hi", CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	if err == nil || store.Seen("N") {
 		t.Fatalf("err=%v seen=%v", err, store.Seen("N"))
@@ -280,7 +291,7 @@ func TestPollerDoesNotWatermarkPastFailedMention(t *testing.T) {
 		},
 		GitHub: gh,
 		Store:  store,
-		Kick:   func(agent, msg string) error { return errors.New("boom") },
+		Kick:   func(agent, msg, source string) error { return errors.New("boom") },
 	})
 	p := NewPoller(gh, func() []string { return []string{"org/repo"} }, store, h, time.Minute, nil)
 	p.Poll(context.Background())

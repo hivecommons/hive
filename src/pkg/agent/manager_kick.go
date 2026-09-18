@@ -119,17 +119,22 @@ func (m *Manager) SendKickWithSource(name string, message string, source string)
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	trigger := "send-kick"
+	if strings.TrimSpace(source) != "" {
+		trigger = strings.TrimSpace(source)
+	}
+
 	if m.agentSandboxEnabledLocked(agent) {
-		return m.startSandboxKickLocked(agent, message)
+		return m.startSandboxKickLocked(agent, message, trigger)
 	}
 
 	if agent.State != StateRunning {
-		if m.deferStartupKickLocked(agent, message) {
+		if m.deferStartupKickLocked(agent, message, trigger) {
 			return nil
 		}
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
-	if m.deferStartupKickLocked(agent, message) {
+	if m.deferStartupKickLocked(agent, message, trigger) {
 		return nil
 	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
@@ -204,11 +209,9 @@ func (m *Manager) SendKickWithSource(name string, message string, source string)
 		return err
 	}
 
-	trigger := "send-kick"
-	if strings.TrimSpace(source) != "" {
-		trigger = strings.TrimSpace(source)
+	if !m.deliverKickLocked(agent, message, trigger) {
+		return fmt.Errorf("agent %s kick delivery skipped", name)
 	}
-	m.deliverKickLocked(agent, message, trigger)
 
 	return nil
 }
@@ -247,7 +250,7 @@ func (m *Manager) kickChunkPauseUnlocked(agent *AgentProcess, epoch int, d time.
 	return agent.kickEpoch == epoch
 }
 
-func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
+func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) bool {
 	// Claim the pane for the whole of delivery so the pane poller does not
 	// mistake a kick-in-progress for a hung CLI and restart the session out
 	// from under the typist. See AgentProcess.kickDelivering.
@@ -260,7 +263,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
 		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
 			"agent", agent.Name, "trigger", trigger)
-		return
+		return false
 	}
 	defer agent.kickDelivering.Store(false)
 
@@ -332,7 +335,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 				m.logger.Warn("kick delivery abandoned: agent restarted mid-send",
 					"agent", agent.Name, "trigger", trigger,
 					"sent_runes", end, "total_runes", len(runes))
-				return
+				return false
 			}
 		}
 	}
@@ -344,6 +347,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	now := time.Now()
 	agent.LastKick = &now
 	agent.LastKickMessage = message
+	agent.LastKickSource = trigger
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
 	// The session now holds this kick's output; the next rotation point
@@ -395,6 +399,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	m.recordPrompt(agent.Name, trigger, message)
 
 	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, trigger)
+	return true
 }
 
 // deliverStartupKick delivers a bootstrap prompt to a freshly launched agent
@@ -459,8 +464,13 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	trigger := "startup"
 	if agent.pendingStartupKick != "" {
 		prompt = agent.pendingStartupKick
+		if agent.pendingStartupSource != "" {
+			trigger = agent.pendingStartupSource
+		} else {
+			trigger = "send-kick"
+		}
 		agent.pendingStartupKick = ""
-		trigger = "send-kick"
+		agent.pendingStartupSource = ""
 	}
 	if prompt == "" {
 		return
@@ -1090,7 +1100,7 @@ func (m *Manager) MarkStartupLaunchQueued(names []string) {
 // actionable queue message is the fresher, more specific instruction.
 //
 // Caller holds m.mu.
-func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message string) bool {
+func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message, trigger string) bool {
 	if agent.Paused || agent.State == StatePaused || agent.State == StateFailed {
 		return false
 	}
@@ -1102,6 +1112,7 @@ func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message string) bo
 		return false
 	}
 	agent.pendingStartupKick = message
+	agent.pendingStartupSource = trigger
 	agent.KickRefused = true
 	agent.KickRefusalReason = "deferred until startup completes"
 	m.logger.Info("agent kick deferred until startup completes",

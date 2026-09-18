@@ -238,6 +238,7 @@ type AgentProcess struct {
 	paneMu            sync.RWMutex
 	KickHistory       []KickRecord
 	LastKickMessage   string
+	LastKickSource    string
 	KickRefused       bool
 	KickRefusalReason string
 	LaunchedMode      AgentMode
@@ -256,13 +257,14 @@ type AgentProcess struct {
 	// solely to serialize concurrent Start(sameName): with m.mu no longer held
 	// across the launch, a second Start would otherwise race the first one's
 	// tmux launch and its guarded-field writes. Guarded by m.mu.
-	launching           bool
-	startupLaunchQueued bool
-	startupKickInFlight bool
-	startupKickGen      int
-	pendingStartupKick  string
-	BootstrapOverride   string // when set, replaces buildBootstrapPrompt output
-	LastError           string // captured from bare copilot diagnostic launch
+	launching            bool
+	startupLaunchQueued  bool
+	startupKickInFlight  bool
+	startupKickGen       int
+	pendingStartupKick   string
+	pendingStartupSource string
+	BootstrapOverride    string // when set, replaces buildBootstrapPrompt output
+	LastError            string // captured from bare copilot diagnostic launch
 	// kickDelivering is true for exactly as long as deliverKickLocked is
 	// typing a kick into this agent's pane. Delivery is NOT instantaneous: a
 	// kick is typed as 400-rune chunks with a pause between them, so a 37KB

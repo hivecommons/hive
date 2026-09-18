@@ -35,9 +35,10 @@ type GitHub interface {
 	ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error)
 	CreateMentionAck(ctx context.Context, repo string, commentID int64, reaction string) error
 	CountAppAuthoredComments(ctx context.Context, repo string, number int) (int, error)
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
-type KickFunc func(agent, message string) error
+type KickFunc func(agent, message, source string) error
 type AuditFunc func(action, detail, agent string)
 type RoleFunc func(login string) (role string, ok bool)
 
@@ -135,11 +136,27 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "no-kick", "")
 		return h.mark(ev)
 	}
-	if err := h.opts.Kick(agent, buildKickMessage(ev, text)); err != nil {
+	source := mentionKickSource(ev)
+	if h.opts.Store != nil {
+		if err := h.opts.Store.RecordPending(agent, ev, source, h.opts.Now()); err != nil {
+			return err
+		}
+	}
+	if err := h.opts.Kick(agent, buildKickMessage(ev, text), source); err != nil {
+		if h.opts.Store != nil {
+			_ = h.opts.Store.ClearPending(agent, source)
+		}
 		return err
 	}
 	h.audit(AuditKicked, ev, agent, "")
 	return h.mark(ev)
+}
+
+func mentionKickSource(ev Event) string {
+	if strings.TrimSpace(ev.NodeID) == "" {
+		return SourceMention
+	}
+	return SourceMention + ":" + strings.TrimSpace(ev.NodeID)
 }
 
 func (h *Handler) github() GitHub {

@@ -208,7 +208,7 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	m.logger.Info("archived kick log", "name", agent.Name, "reason", reason, "file", fname, "bytes", len(header)+len(content))
 
 	m.pruneKickLogs(dir)
-	m.notifyKickObserver(agent.Name, KickObserverEventArchived, reason)
+	m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail(reason, agent.LastKickSource))
 	// The content length, not the file length: the header is hive's own
 	// framing, and counting it would credit every interruption with a constant
 	// few hundred bytes of work that the agent never produced.

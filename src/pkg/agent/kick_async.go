@@ -181,7 +181,7 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 	// Sandbox kicks start a container, not a pane wait. They are already fast
 	// and fully synchronous, so run them inline and report the real result.
 	if m.agentSandboxEnabledLocked(agent) {
-		sErr := m.startSandboxKickLocked(agent, message)
+		sErr := m.startSandboxKickLocked(agent, message, "sandbox-kick")
 		m.mu.Unlock()
 		if sErr != nil {
 			return false, sErr

@@ -57,7 +57,7 @@ func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {
 	return agent != nil && agent.Config.SandboxEnabled(m.sandboxConfig)
 }
 
-func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) error {
+func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source string) error {
 	if agent.Paused || agent.State == StatePaused {
 		return fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
 	}
@@ -94,6 +94,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	agent.StartedAt = &now
 	agent.LastKick = &now
 	agent.LastKickMessage = message
+	agent.LastKickSource = source
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
 	agent.LastError = ""
@@ -103,11 +104,15 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	if len(agent.KickHistory) >= kickHistoryCapacity {
 		agent.KickHistory = agent.KickHistory[1:]
 	}
-	agent.KickHistory = append(agent.KickHistory, KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet})
+	record := KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet}
+	if source != "" {
+		record.Source = source
+	}
+	agent.KickHistory = append(agent.KickHistory, record)
 	if agent.OutputBuffer != nil {
 		agent.OutputBuffer.Write("sandbox kick started (runtime=" + runtime + ")")
 	}
-	m.recordPrompt(agent.Name, "sandbox-kick", message)
+	m.recordPrompt(agent.Name, source, message)
 	m.logger.Info("audit: sandbox agent kicked", "name", agent.Name, "repo", repo, "runtime", runtime)
 
 	spec := SandboxKickSpec{
@@ -140,6 +145,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		pushEnabled = true
 	}
 	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
+	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, source)
 	return nil
 }
 
@@ -186,6 +192,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		return
 	}
 	agent.cancel = nil
+	kickSource := agent.LastKickSource
 	if err != nil {
 		if agent.sandboxResumeAfterCancel {
 			agent.sandboxResumeAfterCancel = false
@@ -195,6 +202,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 				agent.OutputBuffer.Write("sandbox kick cancelled during resume")
 			}
 			m.auditSandbox(name, "sandbox_cancelled", "sandbox kick cancelled while resuming")
+			m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail("sandbox-cancelled", kickSource))
 			return
 		}
 		if agent.Paused || agent.State == StatePaused {
@@ -210,6 +218,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		if res.Broker != nil && res.Broker.Error != "" {
 			m.auditSandbox(name, "sandbox_broker_rejected", res.Broker.Error)
 		}
+		m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail("sandbox-failed", kickSource))
 		return
 	}
 	agent.sandboxResumeAfterCancel = false
@@ -231,6 +240,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		detail += " pr=" + res.PR.URL
 	}
 	m.auditSandbox(name, "sandbox_complete", detail)
+	m.notifyKickObserver(agent.Name, KickObserverEventArchived, kickObserverArchiveDetail("sandbox-complete", kickSource))
 }
 
 func (m *Manager) auditSandbox(agent, action, detail string) {

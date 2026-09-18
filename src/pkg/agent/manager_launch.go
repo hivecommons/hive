@@ -187,6 +187,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		now := time.Now()
 		agent.LastKick = &now
 		agent.LastKickMessage = bootstrapPrompt
+		agent.LastKickSource = "startup"
 		agent.kickLogPending = true
 		snippet := bootstrapPrompt
 		const maxBootstrapSnippet = 200

@@ -45,3 +45,51 @@ func TestKickObserver_NotifyAndRemove(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+func TestKickObserver_ChainsObservers(t *testing.T) {
+	m := &Manager{}
+	got := make(chan string, 2)
+	m.SetKickObserver(func(agentName, event, detail string) {
+		got <- "first:" + event
+	})
+	m.SetKickObserver(func(agentName, event, detail string) {
+		got <- "second:" + event
+	})
+	m.notifyKickObserver("scanner", KickObserverEventArchived, "archive")
+	want := map[string]bool{
+		"first:" + KickObserverEventArchived:  false,
+		"second:" + KickObserverEventArchived: false,
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case ev := <-got:
+			if _, ok := want[ev]; !ok {
+				t.Fatalf("unexpected event %q", ev)
+			}
+			want[ev] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("observer chain did not fire")
+		}
+	}
+	for ev, seen := range want {
+		if !seen {
+			t.Fatalf("observer %q did not fire", ev)
+		}
+	}
+}
+
+func TestKickObserverArchiveDetailCarriesSource(t *testing.T) {
+	detail := kickObserverArchiveDetail("kick", "mention")
+	if detail != "kick source=mention" {
+		t.Fatalf("detail = %q", detail)
+	}
+	if got := KickObserverDetailReason(detail); got != "kick" {
+		t.Fatalf("reason = %q", got)
+	}
+	if got := KickObserverDetailSource(detail); got != "mention" {
+		t.Fatalf("source = %q", got)
+	}
+	if got := kickObserverArchiveDetail("kick", ""); got != "kick" {
+		t.Fatalf("empty source detail = %q", got)
+	}
+}

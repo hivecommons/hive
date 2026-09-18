@@ -2475,29 +2475,30 @@ func main() {
 		if err != nil {
 			logger.Warn("mention trigger store unavailable; poller not started", "error", err)
 		} else {
+			mentionAgents := func() []mention.AgentInfo {
+				out := make([]mention.AgentInfo, 0, len(cfg.Agents))
+				for name, ac := range cfg.Agents {
+					out = append(out, mention.AgentInfo{
+						Name:         name,
+						Enabled:      ac.Enabled,
+						Converse:     ac.Converse != nil && *ac.Converse,
+						Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
+						GovernorKick: ac.UsesGovernorKick(),
+					})
+				}
+				return out
+			}
 			handler := mention.NewHandler(mention.Options{
 				Config:     cfg.GitHub.Mentions,
 				ReviewBots: cfg.Classification.ReviewBots,
 				Roles: func(login string) (string, bool) {
 					return cfg.Dashboard.AuthorizedRole(login)
 				},
-				Agents: func() []mention.AgentInfo {
-					out := make([]mention.AgentInfo, 0, len(cfg.Agents))
-					for name, ac := range cfg.Agents {
-						out = append(out, mention.AgentInfo{
-							Name:         name,
-							Enabled:      ac.Enabled,
-							Converse:     ac.Converse != nil && *ac.Converse,
-							Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
-							GovernorKick: ac.UsesGovernorKick(),
-						})
-					}
-					return out
-				},
+				Agents:     mentionAgents,
 				GitHubFunc: func() mention.GitHub { return ghClient },
 				Store:      store,
-				Kick: func(agentName, message string) error {
-					return agentMgr.SendKickWithSource(agentName, message, mention.SourceMention)
+				Kick: func(agentName, message, source string) error {
+					return agentMgr.SendKickWithSource(agentName, message, source)
 				},
 				Audit: func(action, detail, agentName string) {
 					dashSrv.AuditLog("system", action, detail, agentName)
@@ -2512,6 +2513,8 @@ func main() {
 			}, store, handler, cfg.GitHub.Mentions.PollIntervalEffective(), logger)
 			poller.SetGitHubGetter(func() mention.GitHub { return ghClient })
 			go poller.Run(ctx)
+			responder := mention.NewResponder(store, func() mention.GitHub { return ghClient }, mentionAgents, cfg.Classification.ReviewBots, logger)
+			agentMgr.SetKickObserver(responder.HandleAgentEvent)
 			logger.Info("GitHub mention trigger poller started", "interval", cfg.GitHub.Mentions.PollIntervalEffective())
 		}
 	}

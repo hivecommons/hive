@@ -97,7 +97,7 @@ func TestStoreReadAndSaveErrors(t *testing.T) {
 
 func TestHandlerDisabledNoopAndAuthorizationVariants(t *testing.T) {
 	var kicked bool
-	h := NewHandler(Options{Config: config.GitHubMentionsConfig{Enabled: false}, GitHub: &fakeGH{app: "hive[bot]"}, Kick: func(agent, msg string) error { kicked = true; return nil }})
+	h := NewHandler(Options{Config: config.GitHubMentionsConfig{Enabled: false}, GitHub: &fakeGH{app: "hive[bot]"}, Kick: func(agent, msg, source string) error { kicked = true; return nil }})
 	if err := h.Handle(context.Background(), Event{Body: "@hive hi"}); err != nil || kicked {
 		t.Fatalf("disabled handle err=%v kicked=%v", err, kicked)
 	}
@@ -163,7 +163,7 @@ func TestHandleAckAndNoKickFailures(t *testing.T) {
 			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
 		},
 		Store: mustStore(t),
-		Kick:  func(agent, msg string) error { return nil },
+		Kick:  func(agent, msg, source string) error { return nil },
 	})
 	err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "ack", CommentID: 1, Author: "alice", Body: "@hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	if !errors.Is(err, ackErr) {
