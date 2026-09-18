@@ -201,7 +201,7 @@ func TestSelectionPathsDoNotReadFailureKind(t *testing.T) {
 	}
 
 	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
-		body := selectionFuncBody(t, src, name)
+		body := selectionFuncBody(t, selectionSources(t), name)
 		lower := strings.ToLower(body)
 		for _, forbidden := range []string{"lastfailure", "failurekind", "failure_kind"} {
 			if strings.Contains(lower, forbidden) {
