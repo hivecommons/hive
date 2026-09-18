@@ -1,0 +1,1 @@
+- CI: cap the O(n³) dedup reference oracle at 128 lines under `-short` — the full 500-line differential took 166s under `-race` and single-handedly set the agent test lane's wall clock (1.75s now; full-size oracle still runs unshortened, and the optimized path stays covered at full size in every mode)

@@ -71,7 +71,18 @@ func TestDeduplicateBlocksMatchesReference(t *testing.T) {
 			t.Fatalf("iter %d: input %q\n got %q\nwant %q", iter, lines, got, want)
 		}
 	}
-	for _, in := range [][]string{nearRepeatPane(64), nearRepeatPane(outputBufferCapacity)} {
+	// The O(n³) oracle on a full 500-line buffer costs ~166s under -race —
+	// it was the single slowest test in the sharded CI lane and set that
+	// lane's wall clock by itself. Under -short (what CI runs) the
+	// differential check is capped at 128 lines, which still exercises the
+	// same near-repeat shape; the full-size oracle runs in unshortened local
+	// and nightly runs, and TestDeduplicateBlocksFullBufferIsFast keeps the
+	// optimized implementation honest at full size in every mode.
+	fullSize := outputBufferCapacity
+	if testing.Short() {
+		fullSize = 128
+	}
+	for _, in := range [][]string{nearRepeatPane(64), nearRepeatPane(fullSize)} {
 		got := DeduplicateBlocks(in)
 		want := referenceDeduplicateBlocks(in)
 		if !reflect.DeepEqual(got, want) {
