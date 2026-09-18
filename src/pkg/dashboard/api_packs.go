@@ -402,7 +402,12 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	}
 
 	s.deps.AgentMgr.SetACMMLevel(level)
-	s.deps.AgentMgr.ClearAllModeOverrides()
+	// Only pack-managed agents have their mode re-derived from the level. An
+	// agent no pack has ever listed (a dashboard-created `reviewer`, say) has
+	// a mode that only the operator ever set, and this apply runs on every
+	// restart — clearing it here silently promoted `mode: ADVISORY` to the L5
+	// default ISSUES_AND_PRS on the projectbluefin spoke (#7503).
+	s.deps.AgentMgr.ClearModeOverrides(config.ACMMPackManagedAgentNames())
 	paused, resumed := s.syncAgentVisibility(level)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
@@ -587,27 +592,33 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	defer s.levelMu.Unlock()
 
 	level := body.Level
+	packAgents := config.ACMMPackManagedAgentNames()
 	prevLevel := detectACMMLevel(s.deps.Config)
 	s.deps.Config.ACMMLevel = &level
-	// Clear per-agent mode from the persisted config so the fsnotify watcher
-	// does not re-apply stale pack modes when it reloads the file. Without
-	// this, Config.Save → fsnotify reload → old mode restored → governor
-	// kick writes wrong mode file.
+	// Clear pack-managed agents' mode from the persisted config so the
+	// fsnotify watcher does not re-apply stale pack modes when it reloads the
+	// file. Without this, Config.Save → fsnotify reload → old mode restored →
+	// governor kick writes wrong mode file.
 	//
-	// Only Mode is cleared. Converse (#4492) is deliberately left alone: it is
-	// an orthogonal, level-independent operator choice, not a pack-seeded tier,
-	// so clearing it here would silently revoke an opt-in every time the level
-	// moved.
-	for name, ac := range s.deps.Config.Agents {
-		ac.Mode = ""
-		s.deps.Config.Agents[name] = ac
+	// Only pack-managed agents, and only Mode. An agent no pack has ever
+	// listed has a mode that only the operator ever set — there is no stale
+	// pack value to clear, and wiping it persisted the loss across every later
+	// reload (#7503). Converse (#4492) is deliberately left alone on every
+	// agent: it is an orthogonal, level-independent operator choice, not a
+	// pack-seeded tier, so clearing it here would silently revoke an opt-in
+	// every time the level moved.
+	for _, name := range packAgents {
+		if ac, ok := s.deps.Config.Agents[name]; ok {
+			ac.Mode = ""
+			s.deps.Config.Agents[name] = ac
+		}
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to save ACMM level to hive.yaml", "error", err)
 	}
 
 	s.deps.AgentMgr.SetACMMLevel(level)
-	s.deps.AgentMgr.ClearAllModeOverrides()
+	s.deps.AgentMgr.ClearModeOverrides(packAgents)
 
 	// ApplyPack cascades pack-defined agent fields (mode, kick_template,
 	// description, etc.) into the live config AND reconciles the roster —

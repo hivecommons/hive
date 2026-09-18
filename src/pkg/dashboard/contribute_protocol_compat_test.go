@@ -239,18 +239,20 @@ func funcSourceJS(t *testing.T, src, name string) string {
 // failure #2547 names ("routing on a value the client controls").
 func TestProtocolCompatIsNotReadBySelection(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile("contribute_ws.go")
+	// The only caller of the comparison is the fleet/ops snapshot, which moved
+	// to contribute_fleet.go in the #7491 god-file split. peerProtocolCompat is
+	// package-level, so a selection body could still call it from anywhere —
+	// this control only asserts the derivation still exists under that name, so
+	// the scan below cannot pass vacuously because it was renamed away.
+	raw, err := os.ReadFile("contribute_fleet.go")
 	if err != nil {
-		t.Fatalf("read contribute_ws.go: %v", err)
+		t.Fatalf("read contribute_fleet.go: %v", err)
 	}
-	src := string(raw)
-	// Positive control: the comparison genuinely lives in this file, so a read
-	// inside a selection body would be visible to the scan below.
-	if !strings.Contains(src, "peerProtocolCompat(") {
-		t.Fatal("contribute_ws.go no longer derives the protocol comparison — if it moved, re-point this test rather than deleting it")
+	if !strings.Contains(string(raw), "peerProtocolCompat(") {
+		t.Fatal("the hub no longer derives the protocol comparison — if it moved, re-point this test rather than deleting it")
 	}
 	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
-		body := selectionFuncBody(t, src, name)
+		body := selectionFuncBody(t, selectionSources(t), name)
 		if name == "selectTask" && !strings.Contains(body, "candidates") {
 			t.Fatal("extracted selectTask body has no candidate collection — extraction is wrong; fix the test")
 		}

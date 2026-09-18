@@ -266,6 +266,10 @@ type Server struct {
 	cachedLatestMessage string
 	cachedLatestAt      time.Time
 	commitBehindCache   map[string]int
+	// commitBehindFailedAt remembers when a compare for a base...head pair
+	// last FAILED, so the status builder does not retry it on every tick
+	// (#7430: ~1/s against an exhausted quota). Guarded by versionMu.
+	commitBehindFailedAt map[string]time.Time
 	// hubUpgradePolicy is the hub's upgrade posture for this spoke as last
 	// delivered on the heartbeat (#7262); nil until the first beat carrying
 	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.

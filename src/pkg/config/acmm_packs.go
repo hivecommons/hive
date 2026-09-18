@@ -149,3 +149,39 @@ func ACMMPackByLevel(level int) (ACMMPack, error) {
 	}
 	return ACMMPack{}, fmt.Errorf("ACMM pack level %d not found", level)
 }
+
+// AgentNames returns the names of every agent in the pack's roster, in pack
+// order.
+func (p ACMMPack) AgentNames() []string {
+	names := make([]string, 0, len(p.Agents))
+	for _, a := range p.Agents {
+		names = append(names, a.Name)
+	}
+	return names
+}
+
+// ACMMPackManagedAgentNames returns the union of every pack's roster across
+// all levels, sorted and deduplicated. This is the set of agents whose
+// pack-behavior fields (mode, kick template, …) a pack apply is entitled to
+// re-derive from the level; an agent outside it was defined by the operator
+// alone and a pack apply must leave its fields alone (#7503).
+//
+// The union, not just the target level's roster: on a downgrade an agent from
+// the higher pack (strategist, architect at L5) stays in the config carrying
+// that pack's mode, and it must still be re-derived — the visibility sweep
+// pauses it, but an operator resume would otherwise run it at the old level's
+// authority.
+func ACMMPackManagedAgentNames() []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, p := range ACMMPacks() {
+		for _, a := range p.Agents {
+			if !seen[a.Name] {
+				seen[a.Name] = true
+				names = append(names, a.Name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}

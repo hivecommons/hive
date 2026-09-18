@@ -44,7 +44,7 @@ func TestProxyTrustingHTTPClient_SharesTransport(t *testing.T) {
 	if !ok1 || !ok2 {
 		t.Fatalf("transport types = %T / %T, want *slowStartTransport wrappers", c1.Transport, c2.Transport)
 	}
-	if s1.inner != s2.inner {
+	if socketTransportOf(t, c1.Transport) != socketTransportOf(t, c2.Transport) {
 		t.Fatal("mint clients must share ONE inner transport — a transport per call orphans a socket per call (#3875)")
 	}
 	if s1.state != s2.state {

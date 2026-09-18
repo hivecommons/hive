@@ -231,9 +231,11 @@ func (t *proxyTrustPool) sharedTransport() *http.Transport {
 // underneath — the part that owns sockets — is shared and reaped, see
 // sharedTransport.
 func proxyTrustingHTTPClient(timeout time.Duration) *http.Client {
-	// slowStartWrap paces requests globally after a secondary-rate-limit 403
-	// so the post-reset retry wave cannot re-trip the limit (see slowstart.go).
-	return &http.Client{Transport: slowStartWrap(sharedProxyTrust.sharedTransport()), Timeout: timeout}
+	// githubTransportChain paces requests globally after a rate-limit 403 so
+	// the post-reset retry wave cannot re-trip the limit (slowstart.go), and
+	// makes repeat GETs conditional so unchanged lists cost no quota
+	// (etagcache.go, #7430).
+	return &http.Client{Transport: githubTransportChain(sharedProxyTrust.sharedTransport()), Timeout: timeout}
 }
 
 // newJWTClient builds a go-github client authenticated with an App JWT whose

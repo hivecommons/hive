@@ -1336,17 +1336,17 @@ func TestDefaultAgentMode_AllLevels(t *testing.T) {
 // AgentMode booleans and ParseAgentMode are tested in mode_test.go.
 
 // ---------------------------------------------------------------------------
-// ClearAllModeOverrides — verify modes cleared
+// ClearModeOverrides — verify named modes cleared
 // ---------------------------------------------------------------------------
 
-func TestClearAllModeOverrides_ClearsAll(t *testing.T) {
+func TestClearModeOverrides_ClearsNamed(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"a": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
 		"b": {Backend: "claude", Mode: "ISSUES_PRS_MERGE"},
 		"c": {Backend: "claude"},
 	}, discardLogger(), ProjectContext{})
 
-	m.ClearAllModeOverrides()
+	m.ClearModeOverrides([]string{"a", "b", "c"})
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()

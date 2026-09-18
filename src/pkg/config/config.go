@@ -75,6 +75,10 @@ type Config struct {
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	// DuplicateSweep gates the cross-PR duplicate suggestion pass
+	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
+	// change and no GitHub traffic.
+	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
@@ -4404,6 +4408,27 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 		return cfg, nil
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
+	//
+	// `converse` is not one of those fields, and a dashboard entry that is
+	// SILENT on it must not revoke it (#7503). Converse is a pointer precisely
+	// so "unset" and "explicitly false" stay distinguishable across this
+	// overlay; no pack seeds it, and the dashboard API writes it to BOTH this
+	// overlay and the per-agent file, so an explicit value here is always a
+	// real decision. A nil here means the dashboard never had an opinion —
+	// yet MergeAgentOverrides replaces the whole entry, so the per-agent
+	// file's `converse: true` (the documented layer for agent fields, and the
+	// one that outranks this overlay) was dropped on every boot and reload.
+	// Carry the lower layer's value forward when, and only when, the overlay
+	// says nothing; an explicit false still wins.
+	for name, oa := range overlay.Agents {
+		if oa.Converse != nil {
+			continue
+		}
+		if base, ok := cfg.Agents[name]; ok && base.Converse != nil {
+			oa.Converse = base.Converse
+			overlay.Agents[name] = oa
+		}
+	}
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {
 		cfg.ApplyAgentDefaults(name)
@@ -6269,6 +6294,39 @@ type ReviewConfig struct {
 	// aggregate has no consumer and the reviewer is silent by construction.
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+}
+
+// DuplicateSweepConfig gates the cross-PR duplicate sweep
+// (hivecommons/hive#7469, capability B): a periodic pass that clusters open
+// PRs by changed-file set and suggests which one to keep.
+//
+// TWO knobs, both zero-valued off, because they authorize different things.
+// Enabled turns the clustering on — that alone only reads, logs and audits,
+// which is the dry run an operator should read before the hive speaks on
+// contributors' PRs. PostComments is the separate grant that lets it write.
+// Neither one ever closes, labels, approves or merges: changed-file identity
+// is a candidate generator whose false positives (three dependency bumps
+// sharing one manifest; three unrelated fixes to one busy file) are
+// indistinguishable from true positives at this layer, so the product is a
+// suggestion a human acts on, and there is no code path that acts on it here.
+type DuplicateSweepConfig struct {
+	// Enabled turns the sweep on in report-only mode.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// PostComments additionally authorizes the suggestion comment. It has no
+	// effect unless Enabled is also set — a hive that has not opted into the
+	// scan cannot be made to comment by this key alone.
+	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+	// MaxComments caps comments written per pass. Zero means
+	// github.DefaultDuplicateSweepMaxComments.
+	MaxComments int `yaml:"max_comments,omitempty" json:"max_comments,omitempty"`
+	// MaxPRsPerRepo caps how many open PRs are fingerprinted per repo per
+	// pass — the sweep's API budget. Zero means
+	// github.DefaultDuplicateSweepMaxPRsPerRepo.
+	MaxPRsPerRepo int `yaml:"max_prs_per_repo,omitempty" json:"max_prs_per_repo,omitempty"`
+	// BotAuthors are extra logins to treat as a regenerating bot in addition
+	// to accounts whose login ends in "[bot]". A bot series gets one summary
+	// comment on the newest PR instead of one comment per PR.
+	BotAuthors []string `yaml:"bot_authors,omitempty" json:"bot_authors,omitempty"`
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).

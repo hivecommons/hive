@@ -61,7 +61,7 @@ func TestSummarizeStuckPodsCountsRealPredicateMatches(t *testing.T) {
 
 	got := summarizeStuckPods(candidates, fixedVisNow, orphanedPodMinAge)
 
-	const wantTotal = 4          // 3 in nsA + 1 in nsB, and nothing else
+	const wantTotal = 4 // 3 in nsA + 1 in nsB, and nothing else
 	const wantNamespacesAffected = 2
 
 	if got.Total != wantTotal {

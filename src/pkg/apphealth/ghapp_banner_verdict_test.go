@@ -110,6 +110,9 @@ func TestClassifyGitHubAppFailure_UnknownDoesNotRaiseBanner(t *testing.T) {
 // rate limit with 403, the same status a wrong installation returns. It is
 // transient and must never latch a credential banner.
 func TestClassifyGitHubAppFailure_RateLimitDoesNotRaiseBanner(t *testing.T) {
+	// The exhausted-quota 403 engages the shared post-reset pacing (#7430);
+	// release it so the rest of the package is not paced.
+	t.Cleanup(github.ResetRateLimitPacingForTest)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RateLimit-Remaining", "0")
 		w.Header().Set("X-RateLimit-Limit", "60")

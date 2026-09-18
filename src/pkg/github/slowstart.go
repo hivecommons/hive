@@ -91,6 +91,17 @@ func slowStartWrap(inner http.RoundTripper) http.RoundTripper {
 	return &slowStartTransport{inner: inner, state: sharedSlowStartState}
 }
 
+// ResetRateLimitPacingForTest clears the process-wide pacing ledger. A test
+// that deliberately answers a real client with a rate-limit 403 engages the
+// caution window for the whole test binary (every later request through the
+// shared chain is spaced ~2s apart); call this in that test's Cleanup.
+func ResetRateLimitPacingForTest() {
+	sharedSlowStartState.mu.Lock()
+	sharedSlowStartState.cautiousUntil = time.Time{}
+	sharedSlowStartState.nextSlot = time.Time{}
+	sharedSlowStartState.mu.Unlock()
+}
+
 func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Pacing: while cautious, hand each request the next free slot and sleep
 	// until it. Slots are claimed under the lock; the sleep happens outside it
@@ -129,10 +140,21 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// reset-boundary stampede fired anyway), so match the way go-github itself
 	// does: the documented "secondary rate limit" phrase in the 403 body. The
 	// body is peeked and restored so downstream error decoding still sees it.
-	if err == nil && resp != nil && resp.StatusCode == http.StatusForbidden {
-		after, secondary := secondaryLimitBackoff(resp)
-		if secondary {
-			until := time.Now().Add(after + st.window)
+	//
+	// The PRIMARY (hourly) limit gets the same treatment (#7430): go-github
+	// refuses pre-emptively until X-RateLimit-Reset, and at that instant every
+	// queued caller fires at once — the projectbluefin spoke re-exhausted a
+	// 6650/hr installation quota within ONE SECOND of every reset ("rate limit
+	// was reset 1s ago"). Pacing the first slowStartWindow after the reset
+	// turns that stampede into a trickle the new window can absorb.
+	if err == nil && resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
+		var until time.Time
+		if after, secondary := secondaryLimitBackoff(resp); secondary {
+			until = time.Now().Add(after + st.window)
+		} else if reset, primary := primaryLimitReset(resp, time.Now()); primary {
+			until = reset.Add(st.window)
+		}
+		if !until.IsZero() {
 			st.mu.Lock()
 			if until.After(st.cautiousUntil) {
 				st.cautiousUntil = until
@@ -141,6 +163,32 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 		}
 	}
 	return resp, err
+}
+
+// primaryLimitMaxReset caps how far ahead a primary-limit reset is believed.
+// GitHub's primary windows are hourly; a reset further out than that is a
+// clock problem or a bad header, and pacing until it would idle the hive.
+const primaryLimitMaxReset = time.Hour
+
+// primaryLimitReset reports whether resp is a PRIMARY rate-limit refusal —
+// GitHub answers 403 (or 429) with X-RateLimit-Remaining: 0 — and when the
+// window resets, read from X-RateLimit-Reset (Unix seconds) and capped at
+// primaryLimitMaxReset ahead. A refusal that carries no usable reset is
+// treated as resetting now: the caution window still engages, it just starts
+// immediately.
+func primaryLimitReset(resp *http.Response, now time.Time) (time.Time, bool) {
+	if resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		return time.Time{}, false
+	}
+	if secs, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil && secs > 0 {
+		if reset := time.Unix(secs, 0); reset.After(now) {
+			if reset.After(now.Add(primaryLimitMaxReset)) {
+				reset = now.Add(primaryLimitMaxReset)
+			}
+			return reset, true
+		}
+	}
+	return now, true
 }
 
 // secondaryLimitSniffBytes bounds how much of a 403 body is peeked for the
