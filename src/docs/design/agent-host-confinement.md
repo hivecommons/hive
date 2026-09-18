@@ -107,16 +107,16 @@ Bash(grubby:*), Bash(bootctl:*), Bash(efibootmgr:*)
 ```
 
 (`src/pkg/agent/manager_pause.go:176-182`, shell mirror at
-`config/backends.conf:63`, parity enforced by
+`config/backends.conf:86`, parity enforced by
 `src/pkg/agent/host_state_deny_test.go:88-95` `TestShellAndGoDenyListsAgree`,
 which sources `config/backends.conf` and diffs the two lists byte-for-byte).
 
-Applied on both launch paths: relay (`config/backends.conf:69-77`
+Applied on both launch paths: relay (`config/backends.conf:88-100`
 `claude_family_perm_flag`) and hub-pod (`src/pkg/agent/manager_launch.go:865`, `base +
 claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()`). An escape hatch,
 `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE`, drops the deny fragment entirely on
 either path when set truthy (`src/pkg/agent/manager_launch.go:668-673`,
-`config/backends.conf:71-76`).
+`config/backends.conf:92-99`).
 
 The PR body documents that this was verified against a real CLI (Claude Code
 2.1.231) before merge: a deny does survive

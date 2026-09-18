@@ -38,7 +38,7 @@ governor:
       default_repo: your-org/repo  # optional — used when an item's own repo can't be determined
 ```
 
-Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1351-1358`):
+Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1664-1671`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|
@@ -121,7 +121,7 @@ governor:
       hold_labels: [hold, blocked]                # optional — Jira labels that gate an issue
 ```
 
-Config fields (`JiraSourceConfig`, `pkg/config/config.go:1393-1401`):
+Config fields (`JiraSourceConfig`, `pkg/config/config.go:1706-1714`):
 
 | YAML key | Go field | Required | Notes |
 |---|---|---|---|

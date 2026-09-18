@@ -66,7 +66,7 @@ than as a stale paragraph nobody re-reads.
   on the issue, which listed atomic persistence as assumed rather than done.
 - **The motivating problem now has an instrument.** `TurnLoss`
   (`src/pkg/agent/turn_loss.go:96`), recorded by `noteTurnInterruptedLocked`
-  (`:117`) through the single teardown funnel `tearDownTurnLocked` (`:178`).
+  (`:117`) through the single teardown funnel `tearDownTurnLocked` (`:185`).
 
 What steps 1 and 2 explicitly did **not** settle is concurrency: the stage-2
 report's residual item 5 says the journal makes re-entry safe, not concurrency

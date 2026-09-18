@@ -420,7 +420,7 @@ initiate a connection to a spoke.**
 Step 1 is the only one needing a spoke image roll, and it needs **no hub
 action at all** — which is precisely why it works for pull-only clusters. The
 spoke's image is updated by its existing self-upgrade path
-(`HeartbeatResponse.SwitchToTag`, `src/pkg/hub/heartbeat.go:2049-2053` (field at `:1698`)), whose doc comment
+(`HeartbeatResponse.SwitchToTag`, `src/pkg/hub/heartbeat.go:2355-2359` (applied at `:1175`)), whose doc comment
 records that this exists for exactly this reason: "Used for branch switches on
 clusters the hub can't reach over kubectl — the spoke has in-cluster RBAC
 (hive-self-upgrade role) to patch its own deployment." The delivery mechanism
@@ -501,7 +501,7 @@ func perHiveEnvSweepEligible(status string) bool {
 It is incremented only after that filter passes
 (`src/pkg/hub/perhive_env_reconcile.go:851-856`) and published as
 `out.ConsideredHives = s.perHiveEnvConsidered`
-(`src/pkg/hub/perhive_env_reconcile.go:705`). A hive in `provisioning` is
+(`src/pkg/hub/perhive_env_reconcile.go:467-474`). A hive in `provisioning` is
 therefore absent from **both** sides of the equality, and `0 == 0` is true.
 That is exactly the paused-spoke-leaves-the-denominator failure that
 `master-key-rotation.md:216-227` warns about and that this section claimed to
@@ -592,11 +592,11 @@ Trace what reads `HIVE_HUB_SECRET` on a spoke at boot:
 
 | Reader | Location | Still needed once a wrapped master arrives? |
 |---|---|---|
-| `spokeDomainKey` (session key) | `src/pkg/hub/hub_keys.go:418-423` | No — dedicated var, or the delivered master |
+| `spokeDomainKey` (session key) | `src/pkg/hub/hub_keys.go:462,519` | No — dedicated var, or the delivered master |
 | `SpokeHeartbeatKey` lane 2 | `src/pkg/hub/hub_keys.go:459-465` | **Yes at first boot** — see below |
-| `SpokeInviteKey` lane 2 | `src/pkg/hub/hub_keys.go:509-513` | No |
-| `SpokeSSOPublicKey` lane 2 | `src/pkg/hub/hub_keys.go:537` | No |
-| `provisionMasterSecret` | `src/pkg/hub/hub_keys.go:554-562` | Hub-side only; not a spoke reader |
+| `SpokeInviteKey` lane 2 | `src/pkg/hub/hub_keys.go:554-563` | No |
+| `SpokeSSOPublicKey` lane 2 | `src/pkg/hub/hub_keys.go:582` | No |
+| `provisionMasterSecret` | `src/pkg/hub/hub_keys.go:604-612` | Hub-side only; not a spoke reader |
 
 The blocker is the second row and it is circular in exactly the way the brief
 anticipates:

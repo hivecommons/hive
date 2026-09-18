@@ -66,7 +66,7 @@ moment. That is the per-request grain phase 4 wants, and it already exists.
 
 `liveCaptureSinceMs` comes from exactly one production writer:
 `tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())` at
-`src/cmd/hive/main.go:3387`, called immediately after `SetTokenSink`. The
+`src/cmd/hive/main.go:3354`, called immediately after `SetTokenSink`. The
 collector stores it (`src/pkg/tokens/collector.go:273`) and passes it to
 `ScanCopilotSessions` (`collector.go:212`), which zeroes shutdown tokens for
 sessions whose `LastActive` is at or after that moment
@@ -281,7 +281,7 @@ settle them:
    recorded` log lines at `github_proxy.go:2332`, which already carry agent,
    model, and token counts at a known time.
 3. **Would a second file in the metrics dir disturb the collector's scan?** The
-   sink writes into `cfg.Data.MetricsDir` (`main.go:3706`) and the collector
+   sink writes into `cfg.Data.MetricsDir` (`main.go:3341`) and the collector
    globs `*.jsonl` there (`inference_sink.go:15-18`). Whether an append-only
    per-request log can coexist with the cumulative file without being
    double-counted depends on the collector's dedup-by-session-ID behaviour,

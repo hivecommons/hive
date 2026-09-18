@@ -29,7 +29,7 @@ ones to:
 
 1. **A truncated list must say it is truncated.** Every kick list that is cut
    ends with an explicit "… and N more" line
-   (`prListOverflowLine`, `src/pkg/scheduler/scheduler.go:782`). A silent slice
+   (`prListOverflowLine`, `src/pkg/scheduler/scheduler.go:915`). A silent slice
    reads to the agent as "this is the complete list".
 2. **Truncation must drop the least important tail, not an arbitrary one.**
    This holds today and is easy to assume backwards:
@@ -87,15 +87,15 @@ operator can change it without rebuilding.
 
 | Cap | Where | Default | Tunable | Behaviour when exceeded |
 | --- | --- | --- | --- | --- |
-| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:765-770` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Truncate oldest-first; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:397`) and with an explicit note in the scanner/work lists |
-| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/scheduler.go:775-780` | 50 | **Yes** (same block/UI) | Truncate in review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
+| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:895-900` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Truncate oldest-first; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:397`) and with an explicit note in the scanner/work lists |
+| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/scheduler.go:905-910` | 50 | **Yes** (same block/UI) | Truncate in review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
 | Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:31-32` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-47`). Non-positive means "use the default"; there is deliberately **no uncapped setting** |
-| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1321` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
-| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1137` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
+| Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1545` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
+| Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1279` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
 | Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/scheduler.go:1353-1355` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
 | CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/scheduler.go:1280` | 400 runes | **No** | Truncate with "…" |
 | Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/scheduler.go:2257` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
-| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/scheduler.go:2008` | 5 | **No** | Truncate |
+| Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/scheduler.go:2150` | 5 | **No** | Truncate |
 | Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:19` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |

@@ -16,10 +16,10 @@ Every code reference below was checked against `v4` unless explicitly marked
 ## Problem
 
 Hive can rotate across many agentic CLI backends, but token and cost metering is
-narrower than backend selection. `CLIBackends` lists eleven CLI backends on `v4`:
+narrower than backend selection. `CLIBackends` lists thirteen CLI backends on `v4`:
 `claude`, `copilot`, `goose`, `codex`, `pi`, `bob`, `aider`, `gemini`, `agy`,
-`opencode`, and `kilo` (`src/pkg/config/config.go:5050`,
-`src/pkg/config/config.go:5052`). The token collector currently merges native
+`opencode`, `kilo`, `muse`, and `omp` (`src/pkg/config/config.go:5233`,
+`src/pkg/config/config.go:5236`). The token collector currently merges native
 session scans for Claude, Copilot, and Bob only
 (`src/pkg/tokens/collector.go:319`, `src/pkg/tokens/collector.go:329`,
 `src/pkg/tokens/collector.go:339`). Those scanners are
@@ -60,7 +60,7 @@ agent detector, not the deleted enhanced detector. On `v4`, `AgentFromTmuxEnv`
 parses Claude project paths containing `-data-agents-<name>`
 (`src/pkg/tokens/claude_scanner.go:396`), and `HiveAgentDetector` tries that
 path-based detector before falling back to message keywords
-(`src/pkg/tokens/claude_scanner.go:421`). ccusage session JSON includes a
+(`src/pkg/tokens/claude_scanner.go:422`). ccusage session JSON includes a
 project path, so the ccusage implementation should feed that path into the same
 Hive attribution function.
 

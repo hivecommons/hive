@@ -75,7 +75,7 @@ knowledge:
       layer: project                 # optional — default "project"
 ```
 
-Config fields (`GitSourceConfigYAML`, `pkg/config/config.go:562-568`, mirrored
+Config fields (`GitSourceConfigYAML`, `pkg/config/knowledge_config.go:58-65`, mirrored
 by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 
 | YAML key | Required | Default | Notes |
@@ -156,7 +156,7 @@ source is `Ready` and its current page count.
 ### Static config vs. the runtime API
 
 `GET/POST/DELETE /api/knowledge/git-sources` (owner-role only,
-`pkg/dashboard/api.go:8068,8090-8153,8155-8192`) manage sources at runtime
+`pkg/dashboard/api_knowledge.go:885-891,893-975,977-1019`) manage sources at runtime
 and are the *same* underlying list as `knowledge.git_sources` in
 `hive.yaml` — not a separate system:
 

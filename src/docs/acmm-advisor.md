@@ -34,7 +34,7 @@ All of the above is nil-safe: a freshly-booted hive with no config, no status sn
 
 ## Thresholds by target level
 
-The advisor computes the checklist for advancing to the level **one above** the current one. Coverage floors rise monotonically and are anchored on the project's own enforced 90% coverage gate (`coverageGate = 90.0`, `src/pkg/acmmadvisor/acmmadvisor.go:47-62`):
+The advisor computes the checklist for advancing to the level **one above** the current one. Coverage floors rise monotonically and are anchored on the project's own enforced 90% coverage gate (`coverageGate = 90.0`, `src/pkg/acmmadvisor/acmmadvisor.go:52-63`):
 
 | Target level | Quality agent | Coverage floor | Green-CI streak | Merge success rate | Actionable-issue ceiling | Open-holds ceiling |
 |---|---|---|---|---|---|---|
@@ -44,7 +44,7 @@ The advisor computes the checklist for advancing to the level **one above** the 
 | L5 (Semi-Automated) | required | ≥ 75% | ≥ 8 | ≥ 85% | ≤ 25 | ≤ 15 |
 | L6 (Fully Autonomous) | required | ≥ 90% | ≥ 12 | ≥ 95% | ≤ 10 | ≤ 5 |
 
-Source: `criteriaForTarget` and the threshold constants in `src/pkg/acmmadvisor/acmmadvisor.go:47-97,257-330`. All thresholds are compile-time constants; there is no config field or environment variable that overrides them (see [What this does NOT do](#what-this-does-not-do)).
+Source: `criteriaForTarget` and the threshold constants in `src/pkg/acmmadvisor/acmmadvisor.go:32-104,259-338`. All thresholds are compile-time constants; there is no config field or environment variable that overrides them (see [What this does NOT do](#what-this-does-not-do)).
 
 If a hive is already at L6, the advisor reports `stay` with `Ready: true` and a rationale stating there is nothing higher to propose (`Recommend`, `src/pkg/acmmadvisor/acmmadvisor.go:206-217`).
 

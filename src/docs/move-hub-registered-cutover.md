@@ -29,7 +29,7 @@ A hub-registered hive's identity is three pieces of state, none of which the
 move procedures in the other guides should regenerate:
 
 - **`hive-id`** — the stable identifier (`/data/hive-id` on Kubernetes,
-  `hiveIDFilePath` in `src/pkg/dashboard/api.go:6218`). Passed through to
+  `hiveIDFilePath` in `src/pkg/dashboard/api.go:6249`). Passed through to
   launched agents and used to name the hive's namespace/registry entry.
 - **The GitHub App private key** (or PAT) — what lets the hive act as itself
   on GitHub. Kept in the `hive-secrets` Secret on Kubernetes
