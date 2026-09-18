@@ -2493,8 +2493,8 @@ func main() {
 					}
 					return out
 				},
-				GitHub: ghClient,
-				Store:  store,
+				GitHubFunc: func() mention.GitHub { return ghClient },
+				Store:      store,
 				Kick: func(agentName, message string) error {
 					return agentMgr.SendKickWithSource(agentName, message, mention.SourceMention)
 				},
@@ -2503,7 +2503,13 @@ func main() {
 					recordLifecycleFromAudit(dashSrv, cfg.Project.Org, action, detail, agentName)
 				},
 			})
-			poller := mention.NewPoller(ghClient, ghClient.ActiveRepositories, store, handler, cfg.GitHub.Mentions.PollIntervalEffective(), logger)
+			poller := mention.NewPoller(nil, func() []string {
+				if ghClient == nil {
+					return nil
+				}
+				return ghClient.ActiveRepositories()
+			}, store, handler, cfg.GitHub.Mentions.PollIntervalEffective(), logger)
+			poller.SetGitHubGetter(func() mention.GitHub { return ghClient })
 			go poller.Run(ctx)
 			logger.Info("GitHub mention trigger poller started", "interval", cfg.GitHub.Mentions.PollIntervalEffective())
 		}

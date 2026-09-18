@@ -19,17 +19,9 @@ func Parse(body, appBotLogin string) Parsed {
 		return Parsed{}
 	}
 	lowerBody := strings.ToLower(body)
-	needle := "@" + strings.ToLower(strings.TrimPrefix(login, "@"))
-	idx := strings.Index(lowerBody, needle)
-	if idx < 0 {
+	idx, end := findMention(lowerBody, login)
+	if idx < 0 || end < 0 {
 		return Parsed{}
-	}
-	end := idx + len(needle)
-	if end < len(body) {
-		next := body[end]
-		if (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') || next == '-' || next == '_' || next == '[' || next == ']' {
-			return Parsed{}
-		}
 	}
 	rest := strings.TrimSpace(body[end:])
 	p := Parsed{Mentioned: true, Text: rest}
@@ -38,4 +30,37 @@ func Parse(body, appBotLogin string) Parsed {
 		p.Text = strings.TrimSpace(m[2])
 	}
 	return p
+}
+
+func findMention(lowerBody, appBotLogin string) (int, int) {
+	login := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(appBotLogin)), "@")
+	base := strings.TrimSuffix(login, "[bot]")
+	candidates := []string{"@" + login}
+	if base != "" && base != login {
+		candidates = append(candidates, "@"+base)
+	}
+	for _, needle := range candidates {
+		searchAt := 0
+		for {
+			idx := strings.Index(lowerBody[searchAt:], needle)
+			if idx < 0 {
+				break
+			}
+			idx += searchAt
+			end := idx + len(needle)
+			if mentionBoundary(lowerBody, end) {
+				return idx, end
+			}
+			searchAt = end
+		}
+	}
+	return -1, -1
+}
+
+func mentionBoundary(s string, end int) bool {
+	if end >= len(s) {
+		return true
+	}
+	next := s[end]
+	return !((next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') || next == '-' || next == '_' || next == '[' || next == ']')
 }

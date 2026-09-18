@@ -533,7 +533,8 @@ func TestValidateChannels(t *testing.T) {
 	}{
 		{"empty is valid", nil, false},
 		{"valid kick", []ChannelConfig{{Type: ChannelTypeKick}}, false},
-		{"valid mention", []ChannelConfig{{Type: ChannelTypeMention}}, false},
+		{"valid mention with kick", []ChannelConfig{{Type: ChannelTypeKick}, {Type: ChannelTypeMention}}, false},
+		{"mention without kick fails", []ChannelConfig{{Type: ChannelTypeMention}}, true},
 		{"invalid type", []ChannelConfig{{Type: "carrier-pigeon"}}, true},
 		// The webhook/discord/schedule/bead trigger runtime (pkg/channels)
 		// was removed in #5591; declaring those types must fail fast instead

@@ -29,10 +29,14 @@ func TestGitHubMentionsConfigDefaultsAndValidation(t *testing.T) {
 }
 
 func TestValidateChannelsAcceptsMentionRuntime(t *testing.T) {
-	if err := ValidateChannels("scanner", []ChannelConfig{{Type: ChannelTypeMention}}); err != nil {
-		t.Fatalf("mention channel rejected: %v", err)
+	if err := ValidateChannels("scanner", []ChannelConfig{{Type: ChannelTypeKick}, {Type: ChannelTypeMention}}); err != nil {
+		t.Fatalf("mention+kick channel rejected: %v", err)
 	}
-	err := ValidateChannels("scanner", []ChannelConfig{{Type: "discord"}})
+	err := ValidateChannels("scanner", []ChannelConfig{{Type: ChannelTypeMention}})
+	if err == nil || !strings.Contains(err.Error(), "must be paired") {
+		t.Fatalf("mention-only error = %v, want paired error", err)
+	}
+	err = ValidateChannels("scanner", []ChannelConfig{{Type: "discord"}})
 	if err == nil || !strings.Contains(err.Error(), ChannelTypeMention) {
 		t.Fatalf("error = %v, want mention named as supported", err)
 	}

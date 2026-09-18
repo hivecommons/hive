@@ -9,6 +9,7 @@ import (
 
 type Poller struct {
 	gh       GitHub
+	ghFunc   func() GitHub
 	repos    func() []string
 	store    *Store
 	handler  *Handler
@@ -25,6 +26,17 @@ func NewPoller(gh GitHub, repos func() []string, store *Store, handler *Handler,
 	}
 	return &Poller{gh: gh, repos: repos, store: store, handler: handler, interval: interval, logger: logger}
 }
+
+func (p *Poller) SetGitHubGetter(fn func() GitHub) {
+	p.ghFunc = fn
+}
+
+func (p *Poller) github() GitHub {
+	if p.ghFunc != nil {
+		return p.ghFunc()
+	}
+	return p.gh
+}
 func (p *Poller) Run(ctx context.Context) {
 	p.Poll(ctx)
 	t := time.NewTicker(p.interval)
@@ -39,7 +51,11 @@ func (p *Poller) Run(ctx context.Context) {
 	}
 }
 func (p *Poller) Poll(ctx context.Context) {
-	if p == nil || p.gh == nil || p.handler == nil || p.repos == nil {
+	if p == nil || p.handler == nil || p.repos == nil {
+		return
+	}
+	gh := p.github()
+	if gh == nil {
 		return
 	}
 	for _, repo := range p.repos() {
@@ -51,7 +67,7 @@ func (p *Poller) Poll(ctx context.Context) {
 				_ = p.store.Advance(repo, since)
 			}
 		}
-		events, err := p.gh.ListMentionComments(ctx, repo, since)
+		events, err := gh.ListMentionComments(ctx, repo, since)
 		if err != nil {
 			p.logger.Warn("mention: poll failed", "repo", repo, "error", err)
 			continue
@@ -61,7 +77,7 @@ func (p *Poller) Poll(ctx context.Context) {
 		})
 		safeWatermark := since
 		for _, ev := range events {
-			if ev.CreatedAt.IsZero() || (!since.IsZero() && !ev.CreatedAt.After(since)) {
+			if ev.CreatedAt.IsZero() || (!since.IsZero() && ev.CreatedAt.Before(since)) {
 				if ev.UpdatedAt.After(safeWatermark) {
 					safeWatermark = ev.UpdatedAt
 				}

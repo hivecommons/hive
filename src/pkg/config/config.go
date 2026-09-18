@@ -700,12 +700,11 @@ type StatsDisplayEntry struct {
 
 // ChannelConfig declares a trigger channel for an agent.
 //
-// Only ChannelTypeKick (governor timer kicks) has a runtime. The former
-// webhook/discord/schedule/bead trigger types were declarative-only: the
-// pkg/channels runtime meant to serve them was never wired into the binary
-// and was removed (#5591). Declaring one of those types used to validate
-// cleanly while suppressing governor kicks, leaving the agent permanently
-// dormant with no diagnostics; ValidateChannels now rejects them instead.
+// ChannelTypeKick has the governor runtime; ChannelTypeMention has the GitHub
+// @-mention runtime, but must be paired with kick so an agent never becomes
+// mention-only dormant. The former webhook/discord/schedule/bead trigger types
+// were declarative-only: the pkg/channels runtime meant to serve them was never
+// wired into the binary and was removed (#5591). ValidateChannels rejects them.
 type ChannelConfig struct {
 	Type    string `yaml:"type" json:"type"`
 	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -1095,10 +1094,10 @@ type AgentConfig struct {
 	// global turn.reentrant.enabled rollout gate is also true.
 	ReentrantTurn *bool `yaml:"reentrant_turn,omitempty" json:"reentrant_turn,omitempty"`
 
-	// Channels declares how this agent gets triggered. Only "kick" (governor
-	// timer kicks) is a valid type; when nil/empty, the agent uses governor
-	// timer kicks by default (implicit kick channel). See ChannelConfig for
-	// why the former webhook/discord/schedule/bead types are rejected.
+	// Channels declares how this agent gets triggered. "kick" is the governor
+	// runtime; "mention" is valid only alongside "kick". When nil/empty, the
+	// agent uses governor timer kicks by default (implicit kick channel).
+	// See ChannelConfig for why former webhook/discord/schedule/bead types are rejected.
 	Channels []ChannelConfig `yaml:"channels,omitempty" json:"channels,omitempty"`
 
 	// Tools declares what tools this agent can use. When nil, the existing Mode field governs.
@@ -5575,16 +5574,23 @@ func validateChannels(agentName string, channels []ChannelConfig) error {
 }
 
 // ValidateChannels rejects any channel declaration whose type has no trigger
-// runtime. Only ChannelTypeKick is valid: the webhook/discord/schedule/bead
-// runtime (pkg/channels) was never wired into the binary and was removed
-// (#5591). Accepting those types would silently suppress governor kicks (see
-// UsesGovernorKick) with no runtime left to fire the declared trigger,
-// leaving the agent permanently dormant. Exported so config writers such as
-// the dashboard channels endpoint can fail fast before persisting.
+// runtime, and rejects mention-only configs that would suppress governor kicks
+// while waiting for an inbound mention. Exported so config writers such as the
+// dashboard channels endpoint can fail fast before persisting.
 func ValidateChannels(agentName string, channels []ChannelConfig) error {
+	hasKick := false
+	for _, ch := range channels {
+		if ch.Type == ChannelTypeKick {
+			hasKick = true
+			break
+		}
+	}
 	for i, ch := range channels {
 		if ch.Type != ChannelTypeKick && ch.Type != ChannelTypeMention {
 			return fmt.Errorf("agent %s: channel[%d]: type %q has no trigger runtime (only %q and %q are supported; the webhook/discord/schedule/bead runtime was removed, see #5591) — declaring it would leave the agent permanently unkicked", agentName, i, ch.Type, ChannelTypeKick, ChannelTypeMention)
+		}
+		if ch.Type == ChannelTypeMention && !hasKick {
+			return fmt.Errorf("agent %s: channel[%d]: type %q must be paired with a %q channel; mention-only agents have no governor kick runtime and would remain permanently dormant", agentName, i, ch.Type, ChannelTypeKick)
 		}
 	}
 	return nil

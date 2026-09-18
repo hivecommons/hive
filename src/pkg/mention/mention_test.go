@@ -16,10 +16,12 @@ type fakeGH struct {
 	count    int
 	countErr error
 	events   []Event
+	listed   bool
 }
 
 func (f *fakeGH) AppBotLogin() string { return f.app }
 func (f *fakeGH) ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error) {
+	f.listed = true
 	return f.events, nil
 }
 func (f *fakeGH) CreateMentionAck(ctx context.Context, repo string, commentID int64, reaction string) error {
@@ -38,9 +40,10 @@ func TestParseGrammar(t *testing.T) {
 		name, body, agent, text string
 		mentioned               bool
 	}{
-		{"plain", "hello @hive[bot] review this", "", "review this", true},
-		{"ask", "@hive[bot] ask scanner is this duplicate?", "scanner", "is this duplicate?", true},
-		{"bare verb", "@hive[bot] review this", "", "review this", true},
+		{"plain bare app slug", "hello @hive review this", "", "review this", true},
+		{"ask bare app slug", "@hive ask scanner is this duplicate?", "scanner", "is this duplicate?", true},
+		{"bot suffix still accepted", "@hive[bot] review this", "", "review this", true},
+		{"slug boundary", "@hivekeeper review this", "", "", false},
 		{"no mention", "@other hi", "", "", false},
 	}
 	for _, tt := range tests {
@@ -71,7 +74,7 @@ func baseHandler(t *testing.T, gh *fakeGH, audit *[]string, kick *[]string) *Han
 }
 
 func TestHandleGuardsAndAckKick(t *testing.T) {
-	base := Event{Repo: "org/repo", Number: 7, NodeID: "N1", CommentID: 11, HTMLURL: "https://github.com/org/repo/issues/7#issuecomment-11", Author: "alice", Body: "@hive[bot] ask scanner please help", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	base := Event{Repo: "org/repo", Number: 7, NodeID: "N1", CommentID: 11, HTMLURL: "https://github.com/org/repo/issues/7#issuecomment-11", Author: "alice", Body: "@hive ask scanner please help", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	tests := []struct {
 		name              string
 		mutate            func(*Event, *fakeGH)
@@ -128,6 +131,32 @@ func TestDedupePreventsReplay(t *testing.T) {
 	}
 }
 
+func TestHandlerUsesDynamicGitHubForBotLogin(t *testing.T) {
+	oldGH := &fakeGH{app: "old-hive[bot]"}
+	newGH := &fakeGH{app: "new-hive[bot]"}
+	current := GitHub(oldGH)
+	var audit, kick []string
+	h := NewHandler(Options{
+		Config:     config.GitHubMentionsConfig{Enabled: true},
+		GitHubFunc: func() GitHub { return current },
+		Roles:      func(string) (string, bool) { return config.RoleReadWrite, true },
+		Agents: func() []AgentInfo {
+			return []AgentInfo{{Name: "scanner", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
+		},
+		Store: mustStore(t),
+		Kick:  func(agent, msg string) error { kick = append(kick, agent+":"+msg); return nil },
+		Audit: func(action, detail, agent string) { audit = append(audit, action+":"+detail) },
+	})
+	current = newGH
+	err := h.Handle(context.Background(), Event{Repo: "org/repo", Number: 1, NodeID: "N", CommentID: 1, Author: "alice", Body: "@new-hive hi", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kick) != 1 || newGH.ack != 1 {
+		t.Fatalf("dynamic client not used: kick=%d oldAck=%d newAck=%d audit=%v", len(kick), oldGH.ack, newGH.ack, audit)
+	}
+}
+
 func TestRateLimitPerUserAndRepo(t *testing.T) {
 	gh := &fakeGH{app: "hive[bot]"}
 	var audit, kick []string
@@ -157,6 +186,40 @@ func TestPollerWatermarkCreatedOnly(t *testing.T) {
 	}
 	if !store.Watermark("org/repo").Equal(fresh.UpdatedAt) {
 		t.Fatalf("watermark=%v", store.Watermark("org/repo"))
+	}
+}
+
+func TestPollerProcessesEqualTimestampBoundary(t *testing.T) {
+	store, _ := NewStore("")
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = store.Advance("org/repo", since)
+	gh := &fakeGH{app: "hive[bot]", events: []Event{{
+		Repo: "org/repo", Number: 1, NodeID: "equal", CommentID: 1, Author: "alice",
+		Body: "@hive hi", CreatedAt: since, UpdatedAt: since,
+	}}}
+	var audit, kick []string
+	h := baseHandler(t, gh, &audit, &kick)
+	p := NewPoller(gh, func() []string { return []string{"org/repo"} }, store, h, time.Minute, nil)
+	p.Poll(context.Background())
+	if len(kick) != 1 {
+		t.Fatalf("equal timestamp mention was skipped: kicks=%d audit=%v", len(kick), audit)
+	}
+}
+
+func TestPollerUsesDynamicGitHubGetter(t *testing.T) {
+	oldGH := &fakeGH{app: "old-hive[bot]"}
+	newGH := &fakeGH{app: "new-hive[bot]"}
+	current := GitHub(oldGH)
+	store, _ := NewStore("")
+	_ = store.Advance("org/repo", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var audit, kick []string
+	h := baseHandler(t, newGH, &audit, &kick)
+	p := NewPoller(nil, func() []string { return []string{"org/repo"} }, store, h, time.Minute, nil)
+	p.SetGitHubGetter(func() GitHub { return current })
+	current = newGH
+	p.Poll(context.Background())
+	if oldGH.listed || !newGH.listed {
+		t.Fatalf("poller did not use dynamic getter: old listed=%v new listed=%v", oldGH.listed, newGH.listed)
 	}
 }
 
@@ -239,4 +302,13 @@ func containsAudit(a []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+func mustStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }

@@ -57,6 +57,7 @@ type Options struct {
 	Roles      RoleFunc
 	Agents     AgentFunc
 	GitHub     GitHub
+	GitHubFunc func() GitHub
 	Store      *Store
 	Kick       KickFunc
 	Audit      AuditFunc
@@ -81,8 +82,9 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		return nil
 	}
 	app := ""
-	if h.opts.GitHub != nil {
-		app = h.opts.GitHub.AppBotLogin()
+	gh := h.github()
+	if gh != nil {
+		app = gh.AppBotLogin()
 	}
 	p := Parse(ev.Body, app)
 	if !p.Mentioned {
@@ -104,8 +106,8 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "rate-limited", "")
 		return h.mark(ev)
 	}
-	if h.opts.GitHub != nil && cfg.PerThreadMaxAttemptsEffective() > 0 {
-		count, err := h.opts.GitHub.CountAppAuthoredComments(ctx, ev.Repo, ev.Number)
+	if gh != nil && cfg.PerThreadMaxAttemptsEffective() > 0 {
+		count, err := gh.CountAppAuthoredComments(ctx, ev.Repo, ev.Number)
 		if err != nil {
 			h.decline(ev, "rate-limited", "thread-count-error")
 			return err
@@ -124,8 +126,8 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	if verdict.Blocked {
 		h.decline(ev, "ioscan", ioscanRules(verdict))
 	}
-	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && h.opts.GitHub != nil {
-		if err := h.opts.GitHub.CreateMentionAck(ctx, ev.Repo, ev.CommentID, reaction); err != nil {
+	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && gh != nil {
+		if err := gh.CreateMentionAck(ctx, ev.Repo, ev.CommentID, reaction); err != nil {
 			return err
 		}
 	}
@@ -138,6 +140,13 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 	}
 	h.audit(AuditKicked, ev, agent, "")
 	return h.mark(ev)
+}
+
+func (h *Handler) github() GitHub {
+	if h.opts.GitHubFunc != nil {
+		return h.opts.GitHubFunc()
+	}
+	return h.opts.GitHub
 }
 
 func (h *Handler) authorized(login string, cfg config.GitHubMentionsConfig) bool {
