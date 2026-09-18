@@ -16,11 +16,35 @@ import (
 const (
 	DefaultMaxParallelReviews = 5
 	ReviewDispatchStateFile   = "review-dispatch-state.json"
-	DefaultFixerAgent         = "scanner"
-	reviewRoleToken           = "review"
+	// DefaultDispatchStateDir is the durable data dir. It matches the path the
+	// knowledge engine and the dashboard config overlay already persist to,
+	// which on a hosted spoke is the PersistentVolumeClaim.
+	DefaultDispatchStateDir = "/data"
+	DefaultFixerAgent       = "scanner"
+	reviewRoleToken         = "review"
 )
 
-var ReviewDispatchStatePath = filepath.Join(outputschema.AgentReportDir, ReviewDispatchStateFile)
+// ReviewDispatchStatePath is where the review swarm records which
+// (repo, number, headSHA, perspective) tuples it has already dispatched. It is
+// NOT a cache: it is the reviewer's only memory of what it has already looked
+// at. PlanDispatch keeps no cursor — it re-walks the actionable PR list from
+// the top every cycle and relies on this file to skip the PRs it already
+// dispatched, so the parallel budget lands on the NEXT PRs in the queue.
+//
+// It therefore lives on the durable data dir, not under AgentReportDir
+// (/var/run/hive-metrics), which is scratch space for regenerable per-cycle
+// artifacts — actionable.json, tokens.json, github-cache.json — on the
+// container's ephemeral writable layer. Storing dispatch state there meant
+// every pod restart wiped the reviewer's memory: it re-walked the queue from
+// the top, re-reviewed the same first PRs, and never advanced to the rest of
+// the queue. Once reviewers publish comments, that also re-posts on those same
+// PRs. A var (not const) so tests can point it at a temp dir.
+var ReviewDispatchStatePath = filepath.Join(DefaultDispatchStateDir, ReviewDispatchStateFile)
+
+// LegacyReviewDispatchStatePath is the pre-migration location. LoadDispatchState
+// falls back to it so a hive upgrading in place keeps the state it already has
+// instead of restarting its sweep of the queue from the top.
+var LegacyReviewDispatchStatePath = filepath.Join(outputschema.AgentReportDir, ReviewDispatchStateFile)
 
 type AgentCapability struct {
 	Name           string
@@ -109,12 +133,27 @@ type DispatchPlan struct {
 }
 
 func LoadDispatchState(path string) (DispatchState, error) {
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		path = ReviewDispatchStatePath
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return DispatchState{}, err
+		// One-time migration: a hive that ran before the state moved to the
+		// durable dir still has its dispatch record at the legacy scratch
+		// path. Read it so the upgrade does not look like amnesia and re-walk
+		// the queue from the top. The next WriteDispatchState lands on the
+		// durable path, so this fallback stops firing on its own. Only for the
+		// default path — an explicit path means a caller (or a test) asked for
+		// exactly that file.
+		if explicit || !os.IsNotExist(err) || LegacyReviewDispatchStatePath == path {
+			return DispatchState{}, err
+		}
+		legacy, legacyErr := os.ReadFile(LegacyReviewDispatchStatePath)
+		if legacyErr != nil {
+			return DispatchState{}, err
+		}
+		data = legacy
 	}
 	var state DispatchState
 	if err := json.Unmarshal(data, &state); err != nil {
