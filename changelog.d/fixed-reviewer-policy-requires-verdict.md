@@ -1,0 +1,1 @@
+- Stop the reviewer policy from telling the agent its structured verdict is obsolete. The kick requires a JSON verdict in the same context, and the verdict is what feeds the fix dispatch and the `requires_human` holds that become a triage label — so the claim suppressed the artifact the whole routing chain runs on.
