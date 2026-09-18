@@ -42,8 +42,11 @@ type DispatchOptions struct {
 	FixerAgent         string
 	ProjectOrg         string
 	AIAuthor           string
-	Agents             []AgentCapability
-	Now                time.Time
+	// PostComments carries config.ReviewConfig.PostComments into the prompt
+	// builder, so reviewers are told to publish their verdict on the PR.
+	PostComments bool
+	Agents       []AgentCapability
+	Now          time.Time
 }
 
 type DispatchState struct {
@@ -175,7 +178,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		for i := 0; i < limit; i++ {
 			agent := reviewers[i%len(reviewers)].Name
 			perspective := missing[i]
-			msg := BuildPerspectivePrompt(perspective, pr)
+			msg := BuildPerspectivePromptOpts(perspective, pr, opts.PostComments)
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, Dispatched: now})
 			availableSlots--
