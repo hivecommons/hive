@@ -128,11 +128,11 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
 - `Governor.Evaluate` (`src/pkg/governor/governor.go:323`) calls it at
   `src/pkg/governor/governor.go:420` and returns the due list.
 - The driving loop is a single ticker in `main`:
-  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5332`, loop at
-  `src/cmd/hive/main.go:5388`, evaluation at `src/cmd/hive/main.go:6156`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6277`
+  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:4985`, loop at
+  `src/cmd/hive/main.go:5041`, evaluation at `src/cmd/hive/main.go:5802`,
+  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:5923`
   (`src/pkg/scheduler/scheduler.go:658`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:6367`.
+  `agentMgr.SendKick` at `src/cmd/hive/main.go:6013`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -150,11 +150,11 @@ CLI subprocess.
 | State | Where | Citation |
 |---|---|---|
 | Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:921`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5736` |
-| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/main.go:2162` |
+| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/main.go:1815` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:41`; `watchdog.PersistedAgent` `src/pkg/watchdog/reconciler.go:205` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:49` |
 | Governor budget/spend/eval history, cadence overrides, ACMM level | same file | `src/pkg/snapshot/state.go:16-42` |
-| **Full text of every delivered prompt** | `/data/prompt-history.jsonl` (lumberjack-rotated JSONL) | `src/pkg/dashboard/prompt_history.go:44`; writer `Server.RecordPrompt` `src/pkg/dashboard/prompt_history.go:371`, wired at `src/cmd/hive/main.go:3625` |
+| **Full text of every delivered prompt** | `/data/prompt-history.jsonl` (lumberjack-rotated JSONL) | `src/pkg/dashboard/prompt_history.go:44`; writer `Server.RecordPrompt` `src/pkg/dashboard/prompt_history.go:371`, wired at `src/cmd/hive/main.go:3278` |
 | **Rendered terminal scrollback, per kick** | `/data/logs/kicks/<agent>/<ts>-<reason>.log` | `src/pkg/agent/kick_logs.go:43` (`defaultKickLogDir`); writer `archiveKickLogLocked` `src/pkg/agent/kick_logs.go:180` |
 | Token-usage summary | `/data/metrics/token-summary.json` | `src/pkg/tokens/collector.go:194`, `:121` |
 | Structured audit trail | `/data/audit.jsonl`, reloaded into a ring at boot | `src/pkg/dashboard/audit.go:22`, `loadFromDisk` `:88` |
@@ -235,7 +235,7 @@ Three things about this are worth stating precisely:
   (`src/pkg/agent/manager.go:2170-2172`) — a surviving session is reused, not
   recreated. Boot reaches both: `main` unconditionally calls
   `agentMgr.Start(ctx, name)` for every enabled agent
-  (`src/cmd/hive/main.go:4020`) and the reuse-vs-relaunch decision is taken
+  (`src/cmd/hive/main.go:3673`) and the reuse-vs-relaunch decision is taken
   inside. There is no `Adopt`, `Reattach`, or `RecoverAgents` function;
   searching for one finds only `RestoreBreaker`
   (`src/pkg/agent/manager.go:6367`), which restores control metadata and is

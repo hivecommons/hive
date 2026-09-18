@@ -197,7 +197,7 @@ mechanism that already exists; none is new policy.
    the hive already trusts, using the dashboard's own role list
    (`DashboardConfig.AuthorizedRole`, `src/pkg/config/config.go:4182`) at
    `read-write` or above by default — the same lookup `trustedMergerFunc`
-   uses for the merge queue (`src/cmd/hive/main.go:8076`). An explicit
+   uses for the merge queue (`src/cmd/hive/merge_eligibility.go:51`). An explicit
    `github.mentions.summoners` list widens it. No configuration means the
    feature is **off**, never "any commenter"; that is the rule the Discord
    design already set for its channel list.
@@ -337,5 +337,5 @@ From the issue, restated as boundaries this design must not cross:
 - `src/pkg/hub/webhook.go:53` — the fail-closed GitHub webhook verifier.
 - `src/pkg/ioscan/enforce.go:24`, `src/pkg/scheduler/ioscan_enforce.go:122`,
   [ADR-0008](../adr/0008-ioscan-untrusted-input.md) — untrusted kick input.
-- `src/cmd/hive/main.go:8076` — `trustedMergerFunc`, the role-list lookup to
+- `src/cmd/hive/merge_eligibility.go:51` — `trustedMergerFunc`, the role-list lookup to
   reuse for summoners.

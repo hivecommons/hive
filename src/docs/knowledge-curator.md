@@ -61,7 +61,7 @@ subdirectory of one) as a knowledge source, so agents get facts from an
 external repo — a runbook repo, an upstream docs repo, a shared pattern
 library — primed into their kicks the same way wiki-layer facts are. This is
 implemented and live, unlike curator scheduling above: `pkg/knowledge/gitsource.go`
-does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2650-2694`
+does the cloning, indexing, and periodic sync; `cmd/hive/main.go:2303-2347`
 wires configured entries at startup.
 
 ```yaml
@@ -171,7 +171,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - `DELETE` disconnects the live source and removes matching entries from
   `Config.Knowledge.GitSources`, then persists (`api.go:8155-8192`).
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
-  process restart (main.go's startup loop at `cmd/hive/main.go:2650-2694`);
+  process restart (main.go's startup loop at `cmd/hive/main.go:2303-2347`);
   it does not hot-reload while the process is running. Use the API for a
   live change without a restart.
 

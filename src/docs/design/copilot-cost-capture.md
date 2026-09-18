@@ -66,7 +66,7 @@ moment. That is the per-request grain phase 4 wants, and it already exists.
 
 `liveCaptureSinceMs` comes from exactly one production writer:
 `tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())` at
-`src/cmd/hive/main.go:3734`, called immediately after `SetTokenSink`. The
+`src/cmd/hive/main.go:3387`, called immediately after `SetTokenSink`. The
 collector stores it (`src/pkg/tokens/collector.go:273`) and passes it to
 `ScanCopilotSessions` (`collector.go:212`), which zeroes shutdown tokens for
 sessions whose `LastActive` is at or after that moment
