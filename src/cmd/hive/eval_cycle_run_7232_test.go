@@ -31,6 +31,8 @@ func newEvalCycleAPI(t *testing.T, hits *[]string) *httptest.Server {
 		switch {
 		case r.URL.Path == "/rate_limit":
 			_, _ = w.Write([]byte(`{"resources":{"core":{"limit":5000,"remaining":4999,"reset":1700000000},"search":{"limit":30,"remaining":30,"reset":1700000000}}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`{"id":101,"body":"posted"}`))
 		case strings.HasPrefix(r.URL.Path, "/search/"):
 			_, _ = w.Write([]byte(`{"total_count":0,"incomplete_results":false,"items":[]}`))
 		case strings.HasSuffix(r.URL.Path, "/repos/testorg/widget"):
@@ -59,6 +61,9 @@ type evalCycleFixture struct {
 	dashSrv  *dashboard.Server
 	last     *atomic.Pointer[github.ActionableResult]
 	hits     []string
+
+	beadStores     map[string]*beads.Store
+	advisoryIssues map[string]int
 }
 
 func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
@@ -72,6 +77,8 @@ func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 	f.cfg.Project.Org = "testorg"
 	f.cfg.Project.Repos = []string{"widget"}
 	f.cfg.Agents = map[string]config.AgentConfig{}
+	f.beadStores = map[string]*beads.Store{}
+	f.advisoryIssues = map[string]int{}
 
 	f.gh = github.NewClientForTest(api.URL, "testorg", []string{"widget"}, logger)
 	f.gov = governor.New(f.cfg.Governor, f.cfg.Agents, logger)
@@ -87,13 +94,13 @@ func (f *evalCycleFixture) run(t *testing.T) {
 	defer cancel()
 	runEvalCycle(ctx, f.cfg, f.gh, f.gov, f.sched, f.agentMgr, f.dashSrv,
 		nil, // notifier
-		map[string]*beads.Store{},
+		f.beadStores,
 		nil, // tokenCollector
 		nil, // metricsCollector
 		nil, // nousState
 		f.last,
 		nil, // advisoryStore
-		map[string]int{},
+		f.advisoryIssues,
 		nil, // restartedAgents
 		restoreTestLogger())
 }
@@ -142,5 +149,47 @@ func TestRunEvalCycle_SecondCycleAdvancesStatusSeq(t *testing.T) {
 
 	if second <= first {
 		t.Fatalf("statusSeq did not advance across cycles: %v -> %v", first, second)
+	}
+}
+
+// TestRunEvalCycle_PostsAdvisoryDigestAndHealsAppAuthFinding drives the
+// digest path end to end: a bead store holding one App-permission finding and
+// a pre-resolved pinned advisory issue make the cycle build, pin, render and
+// POST the digest; the successful App write is then the proof that retires the
+// permission finding (#2575) and clears the App banner.
+func TestRunEvalCycle_PostsAdvisoryDigestAndHealsAppAuthFinding(t *testing.T) {
+	f := newEvalCycleFixture(t)
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding, err := store.Create("Insufficient repo permissions for the GitHub App", beads.TypeAdvisory, beads.PriorityHigh, "auditor", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.beadStores["auditor"] = store
+	f.advisoryIssues["widget"] = 4
+
+	f.run(t)
+
+	var posted bool
+	for _, h := range f.hits {
+		if h == "POST /repos/testorg/widget/issues/4/comments" {
+			posted = true
+		}
+	}
+	if !posted {
+		t.Fatalf("digest was never posted to the pinned issue; hits=%v", f.hits)
+	}
+	healed, err := store.Get(finding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healed.Status != beads.StatusClosed && healed.Status != beads.StatusDone {
+		t.Fatalf("App-auth finding must be retired by a successful App digest post; status=%s", healed.Status)
+	}
+	st := f.status(t)
+	if v, _ := st["githubAppRequired"].(bool); v {
+		t.Fatalf("a successful App write must clear the App-required banner: %v", st["githubAppRequired"])
 	}
 }

@@ -1,0 +1,1 @@
+- The `runEvalCycle` test harness now drives the advisory digest end to end (bead store → pinned issue → rendered digest → App comment POST → healed App-permission finding, cleared App banner); `runEvalCycle` coverage 32.9% → 49.0%, `cmd/hive` 54.7% → 55.9% (refs #7232).
