@@ -1323,6 +1323,12 @@
        invisible to the operator for a week without this. */
     .repo-pr-pill.needs-human { --pill-c: var(--orange); }
     .pill-needs-human-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
+    /* The hive's own review on a PR. Deliberately muted and NOT one of the
+       merge-state tints: it reports that the hive looked, which is evidence
+       of coverage rather than a signal about mergeability, and a green-ish
+       "reviewed" chip beside a blocked PR would read as approval. */
+    .repo-pr-pill.pill-reviewed { --pill-c: var(--muted); flex: 0 0 auto; font-weight: 600; white-space: nowrap; opacity: 0.85; }
+    .repo-pr-pill.pill-reviewed:hover { opacity: 1; }
     /* Section-header counter: "· N need human review" next to the host badge. */
     .repos-needs-human-count { display: none; font-size: 0.62em; font-weight: 600; vertical-align: middle; margin-left: 6px; color: var(--orange); }
 
@@ -8268,6 +8274,14 @@
           // offers the action — "" means not fetched yet, never "no".
           const notMergeable = p.mergeable === 'no';
           const notMergeableTip = 'Not mergeable on GitHub' + (p.mergeable_state ? ' (' + String(p.mergeable_state) + ')' : '') + ' — resolve that before queueing for auto-merge';
+          // The hive's OWN review on this PR, from the review-links ledger.
+          // It is evidence the hive looked, not a merge signal — so it never
+          // tints the PR pill and never gates anything. Absent means "no
+          // review recorded", which is not the same as "not reviewed": the
+          // ledger only reaches back as far as its retention window.
+          const reviewPill = p.review_url
+            ? `<a class="repo-pr-pill pill-reviewed" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewPillTip(p))}">💬 reviewed${p.review_count > 1 ? ' ×' + p.review_count : ''}</a>`
+            : '';
           const queueBtn = needsHuman
             ? '<span class="repo-pr-pill needs-human pill-needs-human-badge" title="Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.">⚠ needs human</span>'
             : (canQueue
@@ -8280,7 +8294,7 @@
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see.
-          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
+          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}`;
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
@@ -8385,6 +8399,20 @@
       if (ms < MS_PER_HOUR) return Math.floor(ms / MS_PER_MIN) + 'm ago';
       if (ms < MS_PER_DAY) return Math.floor(ms / MS_PER_HOUR) + 'h ago';
       return Math.floor(ms / MS_PER_DAY) + 'd ago';
+    }
+
+    // reviewPillTip explains the 💬 pill: which review it links to and when.
+    // A count above 1 is named explicitly — that is the duplicate-review
+    // symptom, and an operator should see it rather than have it hidden
+    // behind a pill that looks identical either way.
+    function reviewPillTip(p) {
+      const state = p.review_state ? String(p.review_state).replace(/_/g, ' ') : 'commented';
+      const when = pillAge(p.reviewed_at);
+      let tip = 'Hive reviewed this PR (' + state + ')' + (when ? ' ' + when : '') + ' — click to open the review';
+      if (p.review_count > 1) {
+        tip += '. The hive has posted ' + p.review_count + ' reviews on this PR; the link goes to the most recent.';
+      }
+      return tip;
     }
 
     let budgetIgnored = false;

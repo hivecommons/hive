@@ -380,6 +380,18 @@ type PullRequest struct {
 	// determined, and BranchProtectionBlockReason then declines to guess
 	// (hivecommons/hive#7515). Display only: no merge gate reads it.
 	Protection *ProtectionFacts `json:"protection,omitempty"`
+	// ReviewURL links the most recent review the HIVE posted on this PR, and
+	// ReviewCount is how many it has posted in total. Both come from the
+	// review-links ledger (review_links.go) rather than from GitHub, so they
+	// cost no API call on a queue of hundreds of PRs and say nothing about
+	// reviews by anyone else.
+	//
+	// Display only. Merge eligibility reads review VERDICTS, never this: a
+	// posted review is evidence the hive looked, not evidence it approved.
+	ReviewURL   string     `json:"review_url,omitempty"`
+	ReviewState string     `json:"review_state,omitempty"`
+	ReviewCount int        `json:"review_count,omitempty"`
+	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`
 }
 
 // HasFailingRequiredCheck reports whether this PR has a completed, non-meta

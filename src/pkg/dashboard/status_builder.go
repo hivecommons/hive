@@ -1361,6 +1361,46 @@ func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.Merg
 	}
 }
 
+// AttachReviewLinks stamps each snapshot PR with the hive's own most recent
+// review on it, read from the durable review-links ledger
+// (github.LoadReviewLinks). It mirrors AttachMergeVerdicts: the snapshot is
+// already built, and this adds display-only evidence beside each PR.
+//
+// The point is to answer "has the hive looked at this one?" directly in the
+// queue view. Without it, a maintainer scanning a repo card cannot tell a PR
+// the hive reviewed from one it has never reached — and on a queue of
+// hundreds, that is the difference between the hive's work being visible and
+// being invisible.
+//
+// A PR with no entry is left untouched: absent means "no review recorded",
+// which the frontend renders as no pill rather than as "not reviewed", since
+// the ledger only goes back as far as its retention window.
+func AttachReviewLinks(payload *StatusPayload, links map[string]github.ReviewLink) {
+	if payload == nil || len(links) == 0 {
+		return
+	}
+	for ri := range payload.Repos {
+		for pi, entry := range payload.Repos[ri].OpenPrs {
+			fp, ok := entry.(FrontendPR)
+			if !ok {
+				continue
+			}
+			link, ok := links[github.ReviewLinkKey(fp.Repo, fp.Number)]
+			if !ok || link.URL == "" {
+				continue
+			}
+			fp.ReviewURL = link.URL
+			fp.ReviewState = link.State
+			fp.ReviewCount = link.Count
+			if !link.At.IsZero() {
+				at := link.At
+				fp.ReviewedAt = &at
+			}
+			payload.Repos[ri].OpenPrs[pi] = fp
+		}
+	}
+}
+
 func CollectAgentStats(payload *StatusPayload) map[string]map[string]any {
 	result := make(map[string]map[string]any)
 	for _, a := range payload.Agents {

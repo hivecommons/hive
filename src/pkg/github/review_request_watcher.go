@@ -280,10 +280,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// straight to GitHub, the same exfiltration shape as an issue or comment,
 	// so it must honor the same fail-closed contract and flow through the same
 	// error/retry handling as a real CreateReview failure below.
+	var created *gh.PullRequestReview
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else {
-		_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+		created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon
@@ -307,6 +308,23 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	resp.OK = true
 	resp.Number = req.Number
 	resp.State = state
+
+	// Record where the review landed so the queue views can link to it. A
+	// failure here is logged and swallowed: the review is already posted, and
+	// losing its address must never turn a successful review into a retry
+	// that posts it a second time.
+	if created != nil {
+		if err := RecordReviewLink("", req.Repo, req.Number, ReviewLink{
+			URL:     created.GetHTMLURL(),
+			State:   state,
+			HeadSHA: reviewReq.GetCommitID(),
+			At:      nowFn().UTC(),
+		}); err != nil {
+			c.logger.Warn("review-request watcher: could not record review link",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number),
+				slog.String("error", err.Error()))
+		}
+	}
 
 	c.recordCreationAudit(AuditActionPRReviewed, meta,
 		"repo", req.Repo,

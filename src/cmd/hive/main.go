@@ -6092,6 +6092,15 @@ func runEvalCycle(
 	// verdict writeMergeEligible reached for this same actionable set a
 	// few lines up, not a re-derivation from mergeable_state (#7478).
 	dashboard.AttachMergeVerdicts(statusPayload, mergeVerdicts)
+	// A PR pill also carries the hive's OWN review on that PR, so the queue
+	// view shows where the hive has already spoken. Read from the durable
+	// ledger, so this costs no GitHub call per PR; a missing or unreadable
+	// ledger simply means no review pills this cycle.
+	if reviewLinks, err := github.LoadReviewLinks(""); err != nil {
+		logger.Warn("could not load review links for the status snapshot", "error", err)
+	} else {
+		dashboard.AttachReviewLinks(statusPayload, reviewLinks)
+	}
 	statusPublished := false
 	// Ingest any JSONL findings agents wrote and persist them as beads.
 	if advisoryStore != nil {

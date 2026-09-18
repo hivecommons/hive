@@ -1,0 +1,1 @@
+- Added a "reviewed" pill to the PR listings on the dashboard repo cards, linking straight to the review the hive posted. Reviews are recorded in a durable ledger as they are submitted, so the pill costs no extra GitHub calls, and a repeat count is shown when the hive has reviewed the same PR more than once.
