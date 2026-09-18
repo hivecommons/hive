@@ -35,6 +35,7 @@ type recServer struct {
 	createBodies []map[string]any
 	editCalls    int
 	editBodies   []map[string]any
+	editPaths    []string
 }
 
 func newRecServer(t *testing.T, org, repo string) *recServer {
@@ -64,6 +65,7 @@ func newRecServer(t *testing.T, org, repo string) *recServer {
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			s.editCalls++
+			s.editPaths = append(s.editPaths, r.URL.Path)
 			payload := map[string]any{}
 			b, _ := io.ReadAll(r.Body)
 			json.Unmarshal(b, &payload)
@@ -232,5 +234,113 @@ func TestPostRecommendations_NilClient(t *testing.T) {
 	_, err := c.PostRecommendations(context.Background(), "r", recTestTitle, "b", nil, true)
 	if !errors.Is(err, ErrNoGitHubClient) {
 		t.Fatalf("want ErrNoGitHubClient, got %v", err)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Title-squat defense (#7598). The recommendations title is a public constant
+// in repositories where anyone can open issues, so the lookup must never
+// adopt an issue this hive did not author: the squatter keeps permanent
+// author edit rights over a body whose footer tells the maintainer the merge
+// commands in it "are yours to run".
+// --------------------------------------------------------------------------
+
+// An App client must not adopt a human-authored issue that squats the title.
+// It creates the hive's own issue instead and never edits the squatter's.
+func TestPostRecommendations_AppClientSkipsSquattedIssue(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	srv := newRecServer(t, org, repo)
+	srv.existing = []map[string]any{
+		{"number": 13, "title": recTestTitle, "body": "attacker content",
+			"user": map[string]any{"login": "mallory", "type": "User"}},
+	}
+	c := newAppTestClient(t, srv.Server, org, repo, "hive-app[bot]")
+
+	res, err := c.PostRecommendations(context.Background(), repo, recTestTitle,
+		"**1 ready.**", nil, true)
+	if err != nil {
+		t.Fatalf("PostRecommendations: %v", err)
+	}
+	if srv.editCalls != 0 {
+		t.Fatalf("edited the squatter's issue: %v", srv.editPaths)
+	}
+	if !res.Created || srv.createCalls != 1 {
+		t.Fatalf("want the hive's own issue created instead, got %+v (creates=%d)", res, srv.createCalls)
+	}
+}
+
+// With a squat and the hive's own issue both open, the App edits its own.
+func TestPostRecommendations_AppClientEditsOwnIssueNotSquat(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	srv := newRecServer(t, org, repo)
+	// Newest first, as GitHub returns them: the squat is newer.
+	srv.existing = []map[string]any{
+		{"number": 90, "title": recTestTitle, "body": "attacker content",
+			"user": map[string]any{"login": "mallory", "type": "User"}},
+		{"number": 42, "title": recTestTitle, "body": "old content",
+			"user": map[string]any{"login": "hive-app[bot]", "type": "Bot"}},
+	}
+	c := newAppTestClient(t, srv.Server, org, repo, "hive-app[bot]")
+
+	res, err := c.PostRecommendations(context.Background(), repo, recTestTitle,
+		"new content", nil, true)
+	if err != nil {
+		t.Fatalf("PostRecommendations: %v", err)
+	}
+	if !res.Updated || srv.editCalls != 1 || !strings.HasSuffix(srv.editPaths[0], "/issues/42") {
+		t.Fatalf("want exactly one edit of the hive's own #42, got %+v paths=%v", res, srv.editPaths)
+	}
+	if srv.createCalls != 0 {
+		t.Fatalf("created a duplicate despite owning an issue: creates=%d", srv.createCalls)
+	}
+}
+
+// Bot login unknown (older config): a bot-authored issue is adopted only when
+// its body carries the recommendations marker — a foreign bot squatting the
+// title without the marker is skipped.
+func TestPostRecommendations_BotFallbackRequiresMarker(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	srv := newRecServer(t, org, repo)
+	srv.existing = []map[string]any{
+		{"number": 90, "title": recTestTitle, "body": "no marker here",
+			"user": map[string]any{"login": "foreign-app[bot]", "type": "Bot"}},
+		{"number": 42, "title": recTestTitle,
+			"body": recommendationsMarkerPrefix + "v1 -->\n\nold content",
+			"user": map[string]any{"login": "some-app[bot]", "type": "Bot"}},
+	}
+	c := newAppTestClient(t, srv.Server, org, repo, "")
+
+	res, err := c.PostRecommendations(context.Background(), repo, recTestTitle,
+		"new content", nil, true)
+	if err != nil {
+		t.Fatalf("PostRecommendations: %v", err)
+	}
+	if !res.Updated || srv.editCalls != 1 || !strings.HasSuffix(srv.editPaths[0], "/issues/42") {
+		t.Fatalf("want the marker-bearing bot issue #42 edited, got %+v paths=%v", res, srv.editPaths)
+	}
+}
+
+// The lookup is exact-title only: the fuzzy canonicalIssueSubject fallback of
+// findOpenIssueByTitle must not pull in a maintainer's own issue whose title
+// merely normalizes to the same subject — that would overwrite their body.
+func TestPostRecommendations_NoFuzzyTitleAdoption(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	srv := newRecServer(t, org, repo)
+	srv.existing = []map[string]any{
+		{"number": 7, "title": strings.ToUpper(recTestTitle), "body": "a maintainer's own notes",
+			"user": map[string]any{"login": "maintainer", "type": "User"}},
+	}
+	c := newTestClient(t, srv.Server, org, []string{repo})
+
+	res, err := c.PostRecommendations(context.Background(), repo, recTestTitle,
+		"**1 ready.**", nil, true)
+	if err != nil {
+		t.Fatalf("PostRecommendations: %v", err)
+	}
+	if srv.editCalls != 0 {
+		t.Fatalf("fuzzy match overwrote a foreign issue: %v", srv.editPaths)
+	}
+	if !res.Created {
+		t.Fatalf("want a fresh issue created, got %+v", res)
 	}
 }
