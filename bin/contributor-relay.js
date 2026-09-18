@@ -2070,9 +2070,16 @@ function tmuxSendKeys(text) {
     // HIVE_VERDICT line as this task's completion (#5650). Captured here rather
     // than at assignment because this is the moment the transcript stops being
     // "whatever was there" and starts being this task's own.
+    //
+    // #7662: the baseline is read from the SAME deep window progressTick()
+    // scans for the verdict (PR_SCAN_LINES), not the 15-row display tail.
+    // The two must move together: a previous task's verdict that sits 20
+    // rows up is inside the tick's scan window, so it has to be inside the
+    // baseline too, or the next task would be completed off it on its first
+    // tick.
     const deliveryBaselineLines = captureTmuxLines(PR_SCAN_LINES);
     resetTaskAgentActivity(deliveryBaselineLines);
-    const priorVerdict = detectCompletionVerdict(deliveryBaselineLines.slice(-TMUX_TAIL_LINES));
+    const priorVerdict = detectCompletionVerdict(deliveryBaselineLines);
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
@@ -2913,6 +2920,13 @@ function recordChromeIdleTick(idleWithoutVerdict, currentFingerprint) {
       // said about either frame. Restart the count with this frame as the new
       // baseline: the pane may still settle, but nothing so far has held long
       // enough to be trusted.
+      //
+      // #7662: say WHAT moved. A backend whose idle chrome repaints every
+      // tick — a clock, a token meter, a toast — restarts this count forever,
+      // and the log then shows `1/3` on every tick with no way to tell a
+      // clock from work. The differing rows are what makes that one look to
+      // diagnose and one small change to mask for that backend.
+      logChromeIdleRestart(chromeIdleFingerprint, currentFingerprint);
       chromeIdleTicks = 1;
       chromeIdleFingerprint = currentFingerprint;
       return chromeIdleTicks >= CHROME_IDLE_GRACE_TICKS;
@@ -2926,6 +2940,45 @@ function recordChromeIdleTick(idleWithoutVerdict, currentFingerprint) {
 function resetChromeIdleGrace() {
   chromeIdleTicks = 0;
   chromeIdleFingerprint = null;
+}
+
+// How many differing rows per side logChromeIdleRestart quotes. Enough to see
+// a clock or a meter; a whole-frame repaint is summarised by count instead.
+const CHROME_IDLE_DIFF_MAX_LINES = 3;
+
+// paneFrameDiff returns the rows present in one fingerprint but not the other,
+// each side capped at CHROME_IDLE_DIFF_MAX_LINES, plus the uncapped counts.
+// Set difference rather than a positional diff on purpose: a single new row
+// shifts every row below it, and a positional diff would then report the whole
+// frame as changed — which is exactly the case this exists to see through.
+function paneFrameDiff(previousFingerprint, currentFingerprint) {
+  const prev = String(previousFingerprint || '').split('\n');
+  const cur = String(currentFingerprint || '').split('\n');
+  const prevSet = new Set(prev);
+  const curSet = new Set(cur);
+  const removed = prev.filter(l => !curSet.has(l));
+  const added = cur.filter(l => !prevSet.has(l));
+  return {
+    removed: removed.slice(0, CHROME_IDLE_DIFF_MAX_LINES),
+    added: added.slice(0, CHROME_IDLE_DIFF_MAX_LINES),
+    removedCount: removed.length,
+    addedCount: added.length,
+  };
+}
+
+// logChromeIdleRestart (#7662) names the rows that differed between two
+// consecutive idle-looking frames, so an operator reading `1/3` tick after
+// tick can tell a repainting status line from real output without attaching
+// to the pane. Rows are JSON-quoted so a change in trailing chrome or
+// whitespace is visible rather than invisible.
+function logChromeIdleRestart(previousFingerprint, currentFingerprint) {
+  const diff = paneFrameDiff(previousFingerprint, currentFingerprint);
+  const quote = (rows) => rows.map(r => JSON.stringify(r)).join(' ');
+  const taskLabel = currentTask ? `Task ${currentTask.task_id}: ` : '';
+  const parts = [];
+  if (diff.addedCount) parts.push(`+${diff.addedCount} row(s): ${quote(diff.added)}${diff.addedCount > diff.added.length ? ' …' : ''}`);
+  if (diff.removedCount) parts.push(`-${diff.removedCount} row(s): ${quote(diff.removed)}${diff.removedCount > diff.removed.length ? ' …' : ''}`);
+  console.log(`${taskLabel}idle-grace counter restarted at 1/${CHROME_IDLE_GRACE_TICKS} — the pane changed between two idle-looking checks (${parts.join('; ') || 'rows reordered'}). A row that changes every check with no work behind it is chrome to mask for ${BACKEND}, not progress (#7662).`);
 }
 
 let lastPaneFingerprint = null;
@@ -3373,6 +3426,121 @@ function failCurrentTask(reason, opts) {
   }
 }
 
+// finishCurrentTask is the completion counterpart of failCurrentTask: it stops
+// the agent, reports task_complete, clears the per-task state, and either
+// starts the periodic PR-review cycle or advertises `ready`. The caller has
+// already decided the task is complete and with what evidence; this owns
+// everything that must happen the same way whichever signal decided it.
+//
+// Extracted from progressTick() for #7662 so the progress-lease expiry can
+// complete a task it can prove finished (a PR this task opened is on the pane)
+// through exactly the same path as the tick loop, rather than a second copy of
+// the bookkeeping that would drift.
+//
+//   completionSignal — 'verdict' or 'chrome_idle' (the hub's vocabulary).
+//   summary          — one line for the hub's activity feed.
+//   tmuxLines        — the display tail captured BEFORE the agent is stopped,
+//                      so the hub's evidence is the agent's output and not
+//                      launch chrome.
+//   prURL            — the PR resolveTaskPR() attributed to this task, or ''.
+//   noWork           — the no_work_needed verdict object, or null.
+function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork }) {
+  if (!currentTask) return;
+  // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
+  // chrome, and it is wrong often enough to have produced thirteen separate
+  // issues. When it is wrong, the agent is still mid-turn — and reporting
+  // task_complete makes the hub revoke the lease, book the cooldown, and
+  // offer the issue to somebody else while that turn keeps running in this
+  // pane on this token. Stopping the CLI and dropping the credential here
+  // makes the misread cost a retry instead of a duplicate PR.
+  //
+  // Note the ordering against `send` below: the agent is stopped BEFORE the
+  // hub is told, so at the instant the hub acts on the completion the claim
+  // is already true. tmuxLines was captured by the caller, so the evidence the
+  // hub receives is still the agent's own output and not launch chrome.
+  //
+  // bob is exempt from the quit half: it is not a persistent REPL and has
+  // already exited at the end of its turn, so the pane is a bare shell and
+  // there is nothing to interrupt — sending Ctrl-C at that shell and then
+  // racing the bob-specific relaunch below is how a pane ends up with two
+  // launches in flight. Its credential is still dropped.
+  const bobAlreadyExited = BACKEND === 'bob' && !bobIsRunning();
+  stopAgentForTaskExit({ skipCLI: bobAlreadyExited });
+  send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
+  // bob exits after each turn, so the pane is now a bare shell. Bring it
+  // back up before the next task, or the prompt would be typed into bash
+  // ("-bash: <prompt>: command not found") and silently lost.
+  if (bobAlreadyExited) {
+    try {
+      // relaunchCLI() clears cliReady and re-arms the readiness callback,
+      // which flushes any queued prompt once the CLI is confirmed up.
+      console.log(`Relaunching bob for the next task: ${relaunchCLI()}`);
+    } catch (e) {
+      console.error('Failed to relaunch bob:', e.message);
+    }
+  }
+  const completedRepo = currentTask.repo;
+  // #6664: a review cycle's own completion must not count as having shipped.
+  // A review pushes fixes to PRs that already exist, so any PR URL on its
+  // pane is one it was READING, and counting it would let each cycle re-arm
+  // the next off its own output — a review loop with no new work behind it.
+  const completedWasReviewCycle = isLocalOnlyTask(currentTask);
+  currentTask = null;
+  taskAssignedAt = 0;
+  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
+  tasksCompletedCount++;
+  // #6664: record what this completion actually SHIPPED, which is the thing
+  // the review cycle exists to follow up on. A completion is not a PR: the
+  // counter used to conflate the two, so five consecutive no_work_needed
+  // verdicts scheduled a review of a repo with nothing in it.
+  if (prURL && !completedWasReviewCycle) {
+    prsShippedSinceReview++;
+    if (completedRepo && !reposShippedSinceReview.includes(completedRepo)) {
+      reposShippedSinceReview.push(completedRepo);
+    }
+  }
+  const reviewPrompt = (tasksCompletedCount % PR_REVIEW_EVERY_N === 0 && prsShippedSinceReview > 0)
+    ? buildReviewPrompt(reposShippedSinceReview, authorizedRepos, CONTRIBUTOR_LOGIN)
+    : '';
+  if (reviewPrompt) {
+    const shippedRepos = reposShippedSinceReview.slice();
+    console.log(`PR review cycle (${tasksCompletedCount} tasks completed, ` +
+      `${prsShippedSinceReview} PR(s) shipped since the last review in ${shippedRepos.join(', ') || 'no repo'}) — ` +
+      `checking open PRs in ${authorizedRepos.size} authorized repo(s): ${Array.from(authorizedRepos).join(', ')}`);
+    prsShippedSinceReview = 0;
+    reposShippedSinceReview = [];
+    // `synthetic: true` is the explicit half of isLocalOnlyTask() (#5715):
+    // this object is built HERE, by us, and no hub holds a lease for it. The
+    // `pr-review-` id prefix says the same thing and is what survives a
+    // round-trip through HIVE_TASK_FILE, but stating it on the object is what
+    // makes the property legible at the one place it becomes true.
+    //
+    // `repo` is the most recent repo we actually shipped to (#6664) rather
+    // than "whichever repo the fifth task happened to be in". It is local
+    // bookkeeping — taskKey() and the log line — and the review itself is not
+    // scoped to it.
+    const reviewRepo = shippedRepos[shippedRepos.length - 1] || completedRepo;
+    currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: reviewRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
+    taskAssignedAt = Date.now();
+    tmuxSendKeys(reviewPrompt);
+    startProgressReporting();
+  } else {
+    if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
+      // Say why the cycle did not run. Silence here reads as "the review
+      // cadence is broken"; it is doing exactly what it should. Name the
+      // actual reason: "no PRs shipped" and "no repo authorized" are
+      // different states and an operator debugging a quiet cycle needs to
+      // know which one they are in.
+      const reason = prsShippedSinceReview > 0
+        ? `no hub has assigned work for any repository in this session, so there is no authorized scope to review (#6908)`
+        : `no PRs shipped since the last review, so there is nothing new to follow up on (#6664)`;
+      console.log(`Skipping the PR review cycle at ${tasksCompletedCount} completions — ${reason}`);
+    }
+    send({ type: 'ready', seq: nextSeq() });
+  }
+}
+
 function startProgressReporting() {
   if (progressInterval) clearInterval(progressInterval);
   if (taskTimeoutHandle) clearTimeout(taskTimeoutHandle);
@@ -3450,8 +3618,80 @@ function onTaskProgressLeaseExpired() {
     return;
   }
 
+  // #7662: look at the pane before calling the silence a failure. A pane that
+  // has not changed for the whole lease window is silent for one of two
+  // reasons — the agent hung, or the agent FINISHED and nothing in the tick
+  // loop credited it. Observed live on OMP: the agent printed
+  // `HIVE_VERDICT: complete` and opened a PR, the sentinel scrolled out of the
+  // tick's window under OMP's post-turn chrome, the chrome-idle counter never
+  // accrued because that chrome repaints, and this path handed the finished
+  // task back as an `environment` failure half an hour later — the #4127/#4182
+  // shape the chrome-idle branch's own comment says it exists to avoid.
+  //
+  // The two pieces of evidence the tick loop itself accepts are checked here,
+  // from one deep capture, in the same order and with the same guards:
+  //
+  //   1. the agent's own sentinel, attributed to THIS task by the #5650
+  //      baseline exactly as progressTick() attributes it. Reaching this path
+  //      with a fresh verdict on the pane means the tick loop is not running
+  //      (this timer exists for that case); the verdict is still the agent's
+  //      statement and still ends the task.
+  //   2. a PR resolveTaskPR() CONFIRMED as this task's own — opened by this
+  //      contributor after the task started, in the assigned repo. A CONFIRMED
+  //      PR is the one finding strong enough to outrank a verdict on the
+  //      completion path (#6662); it is more than strong enough to outrank
+  //      "nothing visibly happened". An UNVERIFIED candidate (gh offline,
+  //      rate-limited) is not: the task still fails, but the URL rides in the
+  //      reason so the Operations feed shows what to look at instead of a bare
+  //      "not visibly working".
+  //
+  // The completion goes through finishCurrentTask(), so the hub sees the same
+  // task_complete the tick loop would have sent — pr_url for it to verify and
+  // link, completion_signal so the run log records that no verdict ended it.
+  const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
+  const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
+  // Same exclusion the tick loop applies: a pane parked on an API error has
+  // not completed, whatever verdict line sits above the error. classifyTmuxPane
+  // is the pure classifier; checkTmuxPaneState() is not used here because it
+  // re-captures the pane and can type into it (the goose retry).
+  const leasePaneState = classifyTmuxPane(paneScanLines.join('\n'));
+  const leaseApiErrorState = leasePaneState === PANE_STATE_TRANSIENT_API_ERROR ||
+    leasePaneState === PANE_STATE_UNKNOWN_API_ERROR ||
+    leasePaneState === PANE_STATE_FATAL_API_ERROR;
+  const paneVerdict = leaseApiErrorState ? null : detectCompletionVerdict(paneScanLines);
+  const completionVerdict = paneVerdict && paneVerdict.line !== deliveredVerdictBaseline ? paneVerdict : null;
+  const prFinding = resolveTaskPR(paneScanLines, {
+    repo: currentTask.repo,
+    taskId: currentTask.task_id,
+    taskStartedAt: taskAssignedAt,
+    contributorLogin: CONTRIBUTOR_LOGIN,
+  });
+  const prConfirmed = !!(prFinding.url && prFinding.evidence && prFinding.evidence.status === PR_ATTRIBUTION_CONFIRMED);
+  if (completionVerdict || prConfirmed) {
+    const evidence = completionVerdict
+      ? `HIVE_VERDICT: ${completionVerdict.verdict} is on the pane`
+      : `PR ${prFinding.url} was opened by this task`;
+    console.warn(`Task ${currentTask.task_id}: no pane change for ${MAX_TASK_DURATION_MS / 60000}min, but ${evidence} — the agent finished and the tick loop never credited it. Completing it instead of handing it back as an environment failure (#7662).`);
+    resetChromeIdleGrace();
+    cliRestartCounts.delete(taskKey(currentTask));
+    const noWork = !completionVerdict || prFinding.suppressesVerdict || completionVerdict.verdict !== HIVE_VERDICT_NO_WORK
+      ? null
+      : completionVerdict;
+    finishCurrentTask({
+      completionSignal: completionVerdict ? 'verdict' : 'chrome_idle',
+      summary: completionVerdict
+        ? 'Agent reported the task complete (HIVE_VERDICT; credited at progress-lease expiry)'
+        : `Agent went quiet with its PR open (no verdict emitted; ${prFinding.url} opened by this task; credited at progress-lease expiry)`,
+      tmuxLines,
+      prURL: prFinding.url,
+      noWork,
+    });
+    return;
+  }
+
   failCurrentTask(
-    `no observed progress for ${MAX_TASK_DURATION_MS / 60000}min — the agent CLI is not visibly working`,
+    `no observed progress for ${MAX_TASK_DURATION_MS / 60000}min — the agent CLI is not visibly working` +
+      (prFinding.url ? ` (a PR is visible in the pane but could not be attributed to this task: ${prFinding.url})` : ''),
     { kind: 'environment' }
   );
 }
@@ -3746,9 +3986,21 @@ function progressTick() {
   // consulted, because it — not the chrome — is what now decides the task is
   // done. Both HIVE_VERDICT: complete and HIVE_VERDICT: no_work_needed count.
   //
-  // Read from the already-captured tmuxLines: no second pane read, so the
+  // Read from the already-captured deep scan: no second pane read, so the
   // destructive paneStalled() fingerprint (#5333) is untouched.
-  const paneVerdict = detectCompletionVerdict(tmuxLines);
+  //
+  // #7662: the DEEP window (PR_SCAN_LINES), not the 15-row display tail. The
+  // sentinel is the agent's last line, but it is not the pane's last line: a
+  // backend draws its own chrome under it — OMP renders its Advisor notes, a
+  // clipboard toast and the input box, thirteen-plus rows — and the sentinel
+  // is out of a 15-row window before the next tick. Observed live: an OMP
+  // agent printed `HIVE_VERDICT: complete` and opened a PR, the relay logged
+  // "no HIVE_VERDICT yet" on every tick, and the progress lease handed the
+  // finished task back as an environment failure 30 minutes later. The PR
+  // scan has used this window since #6667 for the same reason. The #5650
+  // baseline is captured from the same window at dispatch, so a previous
+  // task's line deeper in scrollback is still recognised as stale.
+  const paneVerdict = detectCompletionVerdict(paneScanLines);
 
   // #5650: a verdict has to belong to THIS task. The relay drives one
   // long-lived CLI, so a task begins against a pane still showing the previous
@@ -3914,92 +4166,12 @@ function progressTick() {
     // is already true. tmuxLines was captured above, so the evidence the hub
     // receives is still the agent's own output and not launch chrome.
     //
-    // bob is exempt from the quit half: it is not a persistent REPL and has
-    // already exited at the end of its turn, so the pane is a bare shell and
-    // there is nothing to interrupt — sending Ctrl-C at that shell and then
-    // racing the bob-specific relaunch below is how a pane ends up with two
-    // launches in flight. Its credential is still dropped.
-    const bobAlreadyExited = BACKEND === 'bob' && !bobIsRunning();
-    stopAgentForTaskExit({ skipCLI: bobAlreadyExited });
     const completionSummary = noWork
       ? 'Agent returned to idle (reported no_work_needed)'
       : (verdictCompletes
         ? 'Agent reported the task complete (HIVE_VERDICT)'
         : `Agent returned to idle (no verdict emitted; pane idle for ${CHROME_IDLE_GRACE_TICKS} consecutive checks)`);
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: completionSummary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
-    // bob exits after each turn, so the pane is now a bare shell. Bring it
-    // back up before the next task, or the prompt would be typed into bash
-    // ("-bash: <prompt>: command not found") and silently lost.
-    if (bobAlreadyExited) {
-      try {
-        // relaunchCLI() clears cliReady and re-arms the readiness callback,
-        // which flushes any queued prompt once the CLI is confirmed up.
-        console.log(`Relaunching bob for the next task: ${relaunchCLI()}`);
-      } catch (e) {
-        console.error('Failed to relaunch bob:', e.message);
-      }
-    }
-    const completedRepo = currentTask.repo;
-    // #6664: a review cycle's own completion must not count as having shipped.
-    // A review pushes fixes to PRs that already exist, so any PR URL on its
-    // pane is one it was READING, and counting it would let each cycle re-arm
-    // the next off its own output — a review loop with no new work behind it.
-    const completedWasReviewCycle = isLocalOnlyTask(currentTask);
-    currentTask = null;
-    taskAssignedAt = 0;
-    clearInterval(progressInterval);
-    progressInterval = null;
-    if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
-    tasksCompletedCount++;
-    // #6664: record what this completion actually SHIPPED, which is the thing
-    // the review cycle exists to follow up on. A completion is not a PR: the
-    // counter used to conflate the two, so five consecutive no_work_needed
-    // verdicts scheduled a review of a repo with nothing in it.
-    if (prURL && !completedWasReviewCycle) {
-      prsShippedSinceReview++;
-      if (completedRepo && !reposShippedSinceReview.includes(completedRepo)) {
-        reposShippedSinceReview.push(completedRepo);
-      }
-    }
-    const reviewPrompt = (tasksCompletedCount % PR_REVIEW_EVERY_N === 0 && prsShippedSinceReview > 0)
-      ? buildReviewPrompt(reposShippedSinceReview, authorizedRepos, CONTRIBUTOR_LOGIN)
-      : '';
-    if (reviewPrompt) {
-      const shippedRepos = reposShippedSinceReview.slice();
-      console.log(`PR review cycle (${tasksCompletedCount} tasks completed, ` +
-        `${prsShippedSinceReview} PR(s) shipped since the last review in ${shippedRepos.join(', ') || 'no repo'}) — ` +
-        `checking open PRs in ${authorizedRepos.size} authorized repo(s): ${Array.from(authorizedRepos).join(', ')}`);
-      prsShippedSinceReview = 0;
-      reposShippedSinceReview = [];
-      // `synthetic: true` is the explicit half of isLocalOnlyTask() (#5715):
-      // this object is built HERE, by us, and no hub holds a lease for it. The
-      // `pr-review-` id prefix says the same thing and is what survives a
-      // round-trip through HIVE_TASK_FILE, but stating it on the object is what
-      // makes the property legible at the one place it becomes true.
-      //
-      // `repo` is the most recent repo we actually shipped to (#6664) rather
-      // than "whichever repo the fifth task happened to be in". It is local
-      // bookkeeping — taskKey() and the log line — and the review itself is not
-      // scoped to it.
-      const reviewRepo = shippedRepos[shippedRepos.length - 1] || completedRepo;
-      currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: reviewRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
-      taskAssignedAt = Date.now();
-      tmuxSendKeys(reviewPrompt);
-      startProgressReporting();
-    } else {
-      if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
-        // Say why the cycle did not run. Silence here reads as "the review
-        // cadence is broken"; it is doing exactly what it should. Name the
-        // actual reason: "no PRs shipped" and "no repo authorized" are
-        // different states and an operator debugging a quiet cycle needs to
-        // know which one they are in.
-        const reason = prsShippedSinceReview > 0
-          ? `no hub has assigned work for any repository in this session, so there is no authorized scope to review (#6908)`
-          : `no PRs shipped since the last review, so there is nothing new to follow up on (#6664)`;
-        console.log(`Skipping the PR review cycle at ${tasksCompletedCount} completions — ${reason}`);
-      }
-      send({ type: 'ready', seq: nextSeq() });
-    }
+    finishCurrentTask({ completionSignal, summary: completionSummary, tmuxLines, prURL, noWork });
   } else if (paneState === PANE_STATE_IDLE_COMPLETE) {
     // Idle chrome, no verdict, grace not yet elapsed (#5376). Report progress
     // and wait — this is the tick or two in which a momentary misread (a

@@ -6994,6 +6994,234 @@ test('#5650 a stale verdict does not block the chrome-idle fallback either', () 
 });
 
 // ---------------------------------------------------------------------------
+// hivecommons/hive#7662 — the sentinel is the agent's LAST line, not the
+// pane's. OMP renders its Advisor notes, a clipboard toast and the input box
+// under the agent's final message; the verdict was 13+ rows up before the
+// relay's next tick, outside the 15-row window it scanned, and the chrome-idle
+// counter could not accrue either because that chrome repaints. Thirty minutes
+// later the progress lease handed a finished task — PR open — back to the hub
+// as an environment failure. Three fixes, each pinned below.
+
+// The pane from the issue, as OMP renders it: the agent's summary and
+// sentinel, then OMP's own post-turn chrome (Advisor notes, the clipboard
+// toast) and its idle footer/input box. The sentinel is 17 rows from the
+// bottom — outside a 15-row tail, inside PR_SCAN_LINES. The footer's "─3%─"
+// meter and "╰─" corner are what classifyPane reads as omp's idle prompt.
+const OMP_POST_TURN_CHROME = [
+  '',
+  '@ Advisor 1 note',
+  '  [concern] docs/skills/ci-tooling/references/workflow-structure.md:41-44 still says',
+  '  the catalog workflow ignores README changes.',
+  '  (4 lines)',
+  '',
+  '@ Advisor 1 note',
+  '  [concern] PR #293 is already open implementing #292\'s README edits; this may',
+  '  duplicate it.',
+  '  (3 lines)',
+  '',
+  'Advisor history copied to clipboard',
+  '',
+  '────────────────────────────────────────────────────────────────────────────',
+  '\u{e0b6} \u{f0d57} \u{e0b1} \u{f0aa3} Sonnet 5 \u{e0b1} \u{f014} /home/dev \u{e0b1} \u{f067a} 0.31 \u{2605} 6 \u{e0b0}─────3%───────────',
+  '╰─',
+];
+const OMP_FINISHED_PANE = [
+  ' Implemented and delivered PR #295: https://github.com/foo/bar/pull/295',
+  ' - Added README.md to both pull_request and push path filters in',
+  '   .github/workflows/image-catalog.yml.',
+  'HIVE_VERDICT: complete — PR #295 open against main with README path filters fixed',
+  ...OMP_POST_TURN_CHROME,
+].join('\n');
+
+test('#7662 a verdict buried under a backend\'s post-turn chrome still completes the task', () => {
+  // The exact capture from the issue. On the pre-fix relay the sentinel is
+  // outside the 15-row window on the very first tick, the pane is read as idle
+  // chrome with "no HIVE_VERDICT yet", and nothing ends the task.
+  const relay = loadRelay({ backend: 'omp', paneText: OMP_FINISHED_PANE, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-omp-buried-verdict', 294);
+    assert.ok(OMP_FINISHED_PANE.split('\n').slice(-relay.TMUX_TAIL_LINES).every(l => !/HIVE_VERDICT/.test(l)),
+      'setup: the sentinel must sit OUTSIDE the display tail for this test to mean anything');
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1,
+      'the agent printed HIVE_VERDICT: complete; the relay must read it however much chrome the CLI drew under it');
+    assert.strictEqual(completed[0].completion_signal, 'verdict',
+      'this is the agent\'s own statement, not a chrome inference');
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/295',
+      'the PR the agent opened is reported alongside the verdict');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+    assert.ok(completed[0].tmux_output.length <= relay.TMUX_TAIL_LINES,
+      'widening the scan must not widen the protocol payload the hub stores');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7662 the #5650 baseline is read from the same deep window, so a previous task\'s buried verdict stays stale', () => {
+  // Both sides of the window move together. If the tick scanned 400 rows but
+  // the dispatch baseline still sliced 15, the previous task's verdict 17 rows
+  // up would be invisible at dispatch and visible on the first tick — and the
+  // next task would be completed off it before it ran.
+  const relay = loadRelay({ backend: 'omp', paneText: OMP_FINISHED_PANE, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 'ct-omp-next-task', 300);
+    assert.strictEqual(relay.getDeliveredVerdictBaseline(),
+      'HIVE_VERDICT: complete — PR #295 open against main with README path filters fixed',
+      'the verdict already on the pane at dispatch must be captured as the baseline even though it is outside the 15-row tail');
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      "the previous task's verdict must not complete this one just because the scan window grew");
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7662 an idle-grace restart names the rows that changed between the two frames', () => {
+  // `1/3` on every tick with nothing happening is unreadable: it cannot be
+  // told from real work. The restart has to say what moved, so a repainting
+  // clock or meter is one look to diagnose.
+  const relay = loadRelay({ backend: 'omp' });
+  const lines = [];
+  const log = console.log; console.log = (...args) => { lines.push(args.join(' ')); };
+  try {
+    const frameA = ['agent output', 'footer 0.31 ★ 6 ─────3%───', '╰─'].join('\n');
+    const frameB = ['agent output', 'footer 0.32 ★ 6 ─────3%───', '╰─'].join('\n');
+    relay.resetChromeIdleGrace();
+    assert.strictEqual(relay.recordChromeIdleTick(true, frameA), false);
+    assert.strictEqual(relay.recordChromeIdleTick(true, frameB), false, 'a changed frame restarts the count');
+    assert.strictEqual(relay.getChromeIdleTicks(), 1);
+    const restart = lines.find(l => /idle-grace counter restarted/.test(l));
+    assert.ok(restart, `the restart must be logged with a reason; got:\n${lines.join('\n')}`);
+    assert.ok(restart.includes('footer 0.32 ★ 6'), `the row that appeared must be quoted; got: ${restart}`);
+    assert.ok(restart.includes('footer 0.31 ★ 6'), `the row it replaced must be quoted; got: ${restart}`);
+    assert.ok(!restart.includes('"agent output"'), 'rows that did not change must not be quoted as the difference');
+    // A stable frame says nothing — the log line is for restarts only.
+    lines.length = 0;
+    relay.recordChromeIdleTick(true, frameB);
+    assert.ok(!lines.some(l => /idle-grace counter restarted/.test(l)), 'an unchanged frame must not log a restart');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7662 lease expiry with a PR this task opened completes the task instead of failing it', () => {
+  // The 30-minute silence in the issue: verdict scrolled away, idle counter
+  // stuck, and the lease fires. A PR resolveTaskPR() CONFIRMS as this task's
+  // own is proof the work shipped; handing that back as "not visibly working"
+  // is the #4127/#4182 shape. No verdict on this pane, so the only evidence
+  // is the PR.
+  const PANE = [
+    ' Opened https://github.com/foo/bar/pull/295 for the README path filters.',
+    ...OMP_POST_TURN_CHROME,
+  ].join('\n');
+  const relay = loadRelay({
+    backend: 'omp',
+    paneText: PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'Danathar' },
+    prMeta: {
+      url: 'https://github.com/foo/bar/pull/295',
+      author: { login: 'Danathar' },
+      createdAt: new Date().toISOString(),
+      mergedAt: null,
+      state: 'OPEN',
+    },
+  });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = () => {};
+  try {
+    dispatchTask(relay, 'ct-omp-lease-pr', 294);
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'a task whose PR is open must not be handed back as an environment failure');
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the task is credited as complete');
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/295', 'with the PR linked for the hub to verify');
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle',
+      'no verdict ended this task, and the run log must say so — it is not labelled as the agent\'s own statement');
+    assert.match(completed[0].summary, /progress-lease expiry/, 'the summary says how it was credited');
+    assert.strictEqual(relay.getCurrentTask(), null, 'the task is over');
+    assert.ok(relay.__sent.some(m => m.type === 'ready'), 'and the relay advertises for the next one');
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('#7662 lease expiry with a fresh verdict deep in the pane completes on the verdict', () => {
+  // The lease timer exists for the case where the tick loop itself has died.
+  // If it fires with the agent's own sentinel on the pane, that sentinel is
+  // still the agent's statement and still ends the task — as a verdict.
+  const relay = loadRelay({ backend: 'omp', paneText: OMP_FINISHED_PANE, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 'ct-omp-lease-verdict', 294);
+    // The verdict belongs to THIS task: the baseline says the pane had none at
+    // dispatch (the harness serves one static pane, see dispatchTask).
+    relay.setDeliveredVerdictBaseline(null);
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('#7662 lease expiry with an UNVERIFIED PR still fails, but names the URL', () => {
+  // gh offline: the URL is a regex hit on scrollback, which is not proof it
+  // is this task's PR. The task is still handed back — but the Operations
+  // feed must show what to look at, not a bare "not visibly working".
+  const PANE = [
+    ' Opened https://github.com/foo/bar/pull/296 for the README path filters.',
+    ...OMP_POST_TURN_CHROME,
+  ].join('\n');
+  const relay = loadRelay({ backend: 'omp', paneText: PANE, prMeta: new Error('gh: command not found') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-omp-lease-unverified', 294);
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'an unverifiable scrape is not enough to credit a silent task');
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1);
+    assert.strictEqual(failures[0].failure_kind, 'environment');
+    assert.ok(failures[0].reason.includes('https://github.com/foo/bar/pull/296'),
+      `the reason must carry the URL a human should look at; got: ${failures[0].reason}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7662 lease expiry with a PR another author opened still fails as before', () => {
+  // The negative control for the completion above: a PR the agent merely
+  // READ (refuted by author) proves nothing about this task.
+  const PANE = [
+    ' Looked at https://github.com/foo/bar/pull/12 for context.',
+    ...OMP_POST_TURN_CHROME,
+  ].join('\n');
+  const relay = loadRelay({
+    backend: 'omp',
+    paneText: PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'Danathar' },
+    prMeta: { url: 'https://github.com/foo/bar/pull/12', author: { login: 'someone-else' }, createdAt: '2026-01-01T00:00:00Z', mergedAt: null, state: 'OPEN' },
+  });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-omp-lease-refuted', 294);
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1);
+    assert.strictEqual(failures[0].failure_kind, 'environment');
+    assert.ok(!failures[0].reason.includes('pull/12'), 'a refuted PR is not offered to the operator as this task\'s');
+  } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // Shared golden pane fixtures (kubestellar/hive#6427).
 //
 // bin/testdata/pane-fixtures/ holds realistic, full-height (50-row) padded
