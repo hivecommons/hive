@@ -122,36 +122,63 @@ operation during the transition, is part of the
 [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
 (live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)).
 
-## v6 — Future Line (not open)
+## v6 — Dashboard-Optional Operation (line open)
 
-There is no v6 branch, milestone, or release channel, and none is planned
-until v5 reaches GA. "v6" is a **designation, not a line**: a label for
-proposals that deliberately target the horizon after the current one, so
-they can be written down without pretending they are scheduled.
+The `v6` branch was opened by maintainer decision on 2026-09-18, cut from
+v5 at `c66a944bd`. This supersedes the earlier "designation, not a line"
+policy for this section: v6-targeted implementation PRs are in scope **on
+the `v6` branch only** — they remain out of scope on v4 and v5, and v6
+tracks v5 through the same forward-merge convention v5 uses for v4.
+The epic tracking the whole line is
+[#7563](https://github.com/hivecommons/hive/issues/7563).
 
-Policy for v6-designated work:
+**Priority relative to v5 GA.** Opening the v6 line does not change what
+ships next: the next stable release is v5, and the remaining GA distance
+is the open evidence rows on the
+[v5 GA bar tracker](https://github.com/hivecommons/hive/issues/6016).
+Until the GA bar's **Release train** rows are green, those evidence rows
+outrank v6 tracks whenever the two compete for maintainer or agent
+attention — this matches the intent of the accepted v4 feature-freeze
+policy ([#6346](https://github.com/hivecommons/hive/issues/6346)), whose
+calendar backstop is **2026-10-15**. v6 work proceeds in the gaps, not
+instead. (Decision context: [#7577](https://github.com/hivecommons/hive/issues/7577).)
 
-- **Design-only.** A v6-designated proposal may land as a design document
-  under [`src/docs/design/`](src/docs/design/) after normal review.
-  Implementation PRs for v6-designated work are out of scope on every
-  current branch and should be closed with a pointer to this section.
-- **The line opens after v5 GA.** Opening a v6 line is blocked on the
-  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
-  closing (live tracker:
-  [#6016](https://github.com/hivecommons/hive/issues/6016)). When it opens,
-  it opens the same way v5 did — public RFC issues gate each workstream,
-  per [GOVERNANCE.md](GOVERNANCE.md) — and designs parked here re-enter
-  through that gate rather than being grandfathered in.
-- **Designation is cheap and non-binding.** Marking a design "v6" records
-  intent and preserves the work; it is not acceptance, priority, or a
-  commitment that a v6 line will include it.
+**Theme.** Every operator interaction the dashboard offers should be
+reachable from the places humans already are — a GitHub thread, a chat
+workspace, an inbox, a phone. The dashboard remains the richest surface,
+never the only one.
 
-v6-designated designs to date:
+**Guard invariant (non-negotiable).** Every non-dashboard surface routes
+through the *same* authorization and safety machinery: the dashboard role
+floor, the mode ladder and capabilities checked at the proxy, `Converse`
+for replies, `ioscan` enforcement on all inbound text, and canary/secret
+scrubbing on all outbound text. No surface grows its own authz.
 
+Workstreams (details and sequencing in
+[#7563](https://github.com/hivecommons/hive/issues/7563)):
+
+- **`pkg/chat` spine** — extract the transport-agnostic core of the
+  Discord bot (command router, dashboard REST/SSE client, notification
+  fan-out) so every chat backend shares one implementation.
+- **Discord fix** — reconnect/backoff contract, heartbeat watchdog, and
+  parity with the operator surfaces the bot predates.
+- **Slack** — Socket Mode first (works from pull-only clusters with no
+  public URL), Events API as a later accelerator.
 - **GitHub @-mention triggers** — a human summons an agent by mentioning
   the App on an issue or PR, mirroring the existing Linear inbound-mention
   path ([#7483](https://github.com/hivecommons/hive/issues/7483),
-  [design doc](src/docs/design/github-mention-triggers.md)).
+  [design doc](src/docs/design/github-mention-triggers.md)). Lands in the
+  three phases the design names; GitHub Mobile becomes a hive remote for
+  free when phase 1 ships.
+- **More chat backends** — Microsoft Teams, Matrix, Telegram, as
+  `chat.Backend` implementations once the spine merges.
+- **Escalation surfaces** — email (outbound digest and HUMAN DECISION
+  NEEDED escalation; allowlisted inbound reply-to-act) and push/on-call
+  (ntfy / Pushover / PagerDuty) so a `requires_human` verdict pages a
+  person instead of waiting in a queue.
+- Named for later, not scheduled: Jira (mirroring the Linear agent), an
+  IDE extension over the dashboard API, a subscribable calendar feed of
+  scheduled kicks.
 
 ## Hosted Hive Hub
 
