@@ -67,6 +67,17 @@ func (c *Config) Validate() error {
 	if !ValidateACMMIssueTracker(strings.TrimSpace(c.Governor.ACMM.IssueTracker)) {
 		return fmt.Errorf("governor: invalid acmm.issue_tracker %q (must be %s or %s, or empty for %s)", c.Governor.ACMM.IssueTracker, ACMMIssueTrackerGitHub, ACMMIssueTrackerWorkSource, ACMMIssueTrackerGitHub)
 	}
+	if c.Notifications.Slack != nil && c.Notifications.Slack.Enabled {
+		if strings.TrimSpace(c.Notifications.Slack.AppToken) == "" {
+			return fmt.Errorf("notifications.slack.app_token is required when slack.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.Slack.BotToken) == "" {
+			return fmt.Errorf("notifications.slack.bot_token is required when slack.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.Slack.ChannelID) == "" {
+			return fmt.Errorf("notifications.slack.channel_id is required when slack.enabled is true")
+		}
+	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config
 		// save) and agreeing with what the launcher can actually dispatch. A

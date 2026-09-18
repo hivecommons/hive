@@ -65,6 +65,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/sessionprune"
+	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -3996,6 +3997,27 @@ func main() {
 			logger.Warn("discord bot failed to start", "error", err)
 		} else {
 			logger.Info("discord bot started", "channel", cfg.Notifications.Discord.ChannelID)
+		}
+	}
+
+	if cfg.Notifications.Slack != nil && cfg.Notifications.Slack.Enabled {
+		slackBot := slack.NewBot(slack.Config{
+			AppToken:       cfg.Notifications.Slack.AppToken,
+			BotToken:       cfg.Notifications.Slack.BotToken,
+			ChannelID:      cfg.Notifications.Slack.ChannelID,
+			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
+			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   cfg.Notifications.Slack.AllowedUsers,
+		}, logger)
+		var agentNameList []string
+		for name := range cfg.EnabledAgents() {
+			agentNameList = append(agentNameList, name)
+		}
+		slackBot.SetAgentNames(agentNameList)
+		if err := slackBot.Start(ctx); err != nil {
+			logger.Warn("slack bot failed to start", "error", err)
+		} else {
+			logger.Info("slack bot started", "channel", cfg.Notifications.Slack.ChannelID)
 		}
 	}
 
@@ -8349,8 +8371,10 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 		tokens.SetDetectKeywords(detectKeywords)
 	}
 	discord.SetAgentIdentities(discordIdentities)
+	slack.SetAgentIdentities(discordIdentities)
 	if len(discordAliases) > 0 {
 		discord.SetAgentAliases(discordAliases)
+		slack.SetAgentAliases(discordAliases)
 	}
 }
 

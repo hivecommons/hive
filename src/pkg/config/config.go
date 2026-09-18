@@ -3844,7 +3844,18 @@ type NtfyConfig struct {
 }
 
 type SlackConfig struct {
-	Webhook string `yaml:"webhook"`
+	Webhook   string `yaml:"webhook"`
+	Enabled   bool   `yaml:"enabled"`
+	AppToken  string `yaml:"app_token"`
+	BotToken  string `yaml:"bot_token"`
+	ChannelID string `yaml:"channel_id"`
+	// AllowedUsers is an allowlist of Slack user IDs permitted to issue bot
+	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
+	// SECURITY: without it, any member of the channel who can post in the channel
+	// can inject prompts into the agents. When empty, command handling is
+	// DISABLED (fail closed) — the bot still posts status but accepts no
+	// commands — so an operator must opt in by listing the trusted user IDs.
+	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
 type DiscordConfig struct {

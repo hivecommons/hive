@@ -1,0 +1,1 @@
+- Add a Slack Socket Mode backend on the shared chat spine.
