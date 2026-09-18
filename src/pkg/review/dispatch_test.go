@@ -133,3 +133,84 @@ func TestConfigReviewDefaults(t *testing.T) {
 		t.Fatalf("configured max parallel = %d, want 2", got)
 	}
 }
+
+func dispatchPRNum(n int, sha string) PullRequest {
+	pr := dispatchPR(sha)
+	pr.Number = n
+	return pr
+}
+
+// TestDispatchSpendsSlotsDepthFirstByDefault documents the status quo the cap
+// exists to change: the parallel budget is spent in PR order, so the head of
+// the queue absorbs every slot for its own perspectives and the PRs behind it
+// get nothing this cycle. That is the right behavior when the queue is short.
+func TestDispatchSpendsSlotsDepthFirstByDefault(t *testing.T) {
+	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2"), dispatchPRNum(3, "sha3")}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval:    true,
+		FanOut:             true,
+		MaxParallelReviews: 3,
+		ProjectOrg:         "acme",
+		Agents:             []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")},
+	})
+
+	if len(plan.ReviewKicks) != 3 {
+		t.Fatalf("got %d kicks, want 3 (the full slot budget)", len(plan.ReviewKicks))
+	}
+	for _, k := range plan.ReviewKicks {
+		if k.Number != 1 {
+			t.Fatalf("uncapped dispatch should concentrate on the first PR, got a kick for #%d", k.Number)
+		}
+	}
+}
+
+// TestMaxPerspectivesPerPRSpreadsAcrossPRs is the point of the cap: the same
+// budget, spent breadth-first, reviews every PR in the queue once instead of
+// one PR three times. No coverage is lost — the perspectives skipped here are
+// still missing next cycle and get dispatched then.
+func TestMaxPerspectivesPerPRSpreadsAcrossPRs(t *testing.T) {
+	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2"), dispatchPRNum(3, "sha3")}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval:      true,
+		FanOut:               true,
+		MaxParallelReviews:   3,
+		MaxPerspectivesPerPR: 1,
+		ProjectOrg:           "acme",
+		Agents:               []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")},
+	})
+
+	if len(plan.ReviewKicks) != 3 {
+		t.Fatalf("got %d kicks, want 3", len(plan.ReviewKicks))
+	}
+	seen := map[int]int{}
+	for _, k := range plan.ReviewKicks {
+		seen[k.Number]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("capped dispatch covered %d distinct PRs, want 3: %+v", len(seen), seen)
+	}
+	for num, n := range seen {
+		if n != 1 {
+			t.Errorf("PR #%d got %d perspectives, want 1 under the cap", num, n)
+		}
+	}
+}
+
+// TestMaxPerspectivesPerPRNeverExceedsSlotBudget keeps the cap subordinate to
+// the parallel budget: raising it must not let dispatch run more reviews at
+// once than the hive allows.
+func TestMaxPerspectivesPerPRNeverExceedsSlotBudget(t *testing.T) {
+	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2")}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval:      true,
+		FanOut:               true,
+		MaxParallelReviews:   2,
+		MaxPerspectivesPerPR: 4,
+		ProjectOrg:           "acme",
+		Agents:               []AgentCapability{reviewer("r1"), reviewer("r2")},
+	})
+
+	if len(plan.ReviewKicks) != 2 {
+		t.Fatalf("got %d kicks, want 2 (the slot budget, not the per-PR cap)", len(plan.ReviewKicks))
+	}
+}
