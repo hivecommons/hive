@@ -41,7 +41,7 @@ name: changelog-fragment-guard
 
 on:
   pull_request:
-    branches: [v4, v6]
+    branches: [v4, v5, v6]
     # Default types plus labeled/unlabeled: adding or removing `no-changelog`
     # must re-evaluate the verdict without waiting for a push.
     types: [opened, reopened, synchronize, labeled, unlabeled]

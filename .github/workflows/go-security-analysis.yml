@@ -47,10 +47,10 @@ name: Go Security Analysis
 # filter excluded it.
 on:
   push:
-    branches: [v2, v4, v6]
+    branches: [v2, v4, v5, v6]
     paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   pull_request:
-    branches: [v2, v4, v6]
+    branches: [v2, v4, v5, v6]
     paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still

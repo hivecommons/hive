@@ -28,7 +28,7 @@ on:
   # to bypass missing green evidence. The paths filter mirrors pull_request, so
   # this adds a run only where the suite is relevant.
   push:
-    branches: [v2, v4, v6]
+    branches: [v2, v4, v5, v6]
     paths:
       - 'src/**'
       - 'bin/**'
@@ -40,7 +40,7 @@ on:
       - '.github/scripts/ci-install-tool.sh'
       - '.github/scripts/test-ci-install-tool-apt-cache.sh'
   pull_request:
-    branches: [v2, v4, v6]
+    branches: [v2, v4, v5, v6]
     # Several package tests police shipped files outside src/: contributor
     # scripts under bin/, the shared shell backend config, and Justfile recipes.
     # Those files must trigger the tests that guard them; otherwise a change to
