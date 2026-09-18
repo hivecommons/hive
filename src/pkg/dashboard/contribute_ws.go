@@ -125,7 +125,18 @@ type ContributorConnection struct {
 	// via the resume path without a fresh assignment.
 	taskAssignedAt time.Time
 	lastPong       time.Time
+	// tmuxOutput is the last pane snapshot the relay reported, and
+	// tmuxOutputTask is the task_id that report named (#7605). Every
+	// task_progress and task_complete frame overwrites both, so the pane on
+	// disk is never older than the newest report — but it can belong to a
+	// DIFFERENT task than the one this connection holds now: the previous
+	// task's task_complete leaves its final screen here, and a socket that
+	// drops seconds into the next assignment would otherwise attach that
+	// finished run's terminal to the new task's abandoned row. Readers go
+	// through paneTailFor, which hands out the pane only for the task it was
+	// reported for.
 	tmuxOutput     []string
+	tmuxOutputTask string
 	// tokenMintedAt is when the scoped GitHub token for currentTask was last
 	// minted. The heartbeat loop uses it to re-mint and push a token_refresh
 	// once wsTokenRefreshPeriod has elapsed, before the token expires. Zero when
@@ -1181,14 +1192,30 @@ func (h *ContributeWSHub) appendAbandonedRun(c *ContributorConnection, task *WST
 	}
 	// #7317 item 3: the last pane the relay reported before it gave the task
 	// back or dropped off — for a stall this is the frozen screen itself, the
-	// thing the operator most wants to see. Unlike the fields above, tmuxOutput
-	// IS written under contributor.mu (by the task_progress handler), so the
-	// copy takes the lock; both callers have released it by the time they get
-	// here.
+	// thing the operator most wants to see. Only a pane reported FOR this task
+	// qualifies (#7605): a socket that drops two seconds into a fresh
+	// assignment has usually seen no progress frame yet, and the pane on hand
+	// is the previous task's task_complete screen — a clean finish that would
+	// send the operator hunting for a dropped completion instead of a flapped
+	// socket. With no pane of its own the row simply carries none. Unlike the
+	// fields above, tmuxOutput IS written under contributor.mu (by the
+	// task_progress handler), so the copy takes the lock; both callers have
+	// released it by the time they get here.
 	c.mu.Lock()
-	rec.PaneTail = boundPaneTail(c.tmuxOutput)
+	rec.PaneTail = c.paneTailFor(task.TaskID)
 	c.mu.Unlock()
 	h.appendTaskRun(rec)
+}
+
+// paneTailFor returns a bounded, redacted copy of the relay's last pane
+// snapshot if the relay reported it for taskID, and nil when the snapshot
+// belongs to another task (or there is none) — see tmuxOutputTask. The
+// caller holds c.mu.
+func (c *ContributorConnection) paneTailFor(taskID string) []string {
+	if taskID == "" || c.tmuxOutputTask != taskID {
+		return nil
+	}
+	return boundPaneTail(c.tmuxOutput)
 }
 
 // The operator YANK (the repurposed manual requeue, kubestellar/hive#2568 + follow-up)
@@ -2318,6 +2345,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			s.contributor.currentTaskGen = lease.gen
 			s.contributor.lastLeaseRenew = time.Now()
 			s.contributor.tmuxOutput = msg.TmuxOutput
+			s.contributor.tmuxOutputTask = lease.taskID
 			s.contributor.mu.Unlock()
 
 			// #4260: a resume is itself proof of life, so restart the lease
@@ -2373,6 +2401,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			return
 		}
 		s.contributor.tmuxOutput = msg.TmuxOutput
+		s.contributor.tmuxOutputTask = msg.TaskID
 		// #4117: the relay re-detects the running model from the CLI's own
 		// session transcript on every progress tick and piggybacks it here, so
 		// a mid-session model switch (claude `/model`) is reflected instead of
@@ -2487,8 +2516,11 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		}
 		// tmuxOutput is diagnostic only and carries no authority, so it is
 		// recorded either way — it is often the only evidence of what a
-		// confused relay was doing when it reported the wrong task.
+		// confused relay was doing when it reported the wrong task. Tagged
+		// with the task the relay NAMED, so a completion's final screen is
+		// never mistaken for the next assignment's (#7605).
 		s.contributor.tmuxOutput = msg.TmuxOutput
+		s.contributor.tmuxOutputTask = msg.TaskID
 		s.contributor.mu.Unlock()
 
 		if hasTask {

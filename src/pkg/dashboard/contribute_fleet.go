@@ -284,8 +284,10 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			}
 			// #7317 item 3: and the pane the agent is showing for it. A bounded,
 			// redacted copy — never the live slice — for the same aliasing reason
-			// as every other field on this snapshot.
-			fc.PaneTail = boundPaneTail(c.tmuxOutput)
+			// as every other field on this snapshot. Only a pane the relay
+			// reported for THIS task (#7605): until its first progress frame the
+			// stored pane is still the previous task's final screen.
+			fc.PaneTail = c.paneTailFor(task.TaskID)
 		}
 		// #2546: when the clanker is NOT actively working, expose why it is idle so
 		// the operator sees "idle: no_matching_work" etc. Suppressed while a task is
@@ -436,6 +438,7 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 			connectedAt:     c.connectedAt,
 			currentTask:     c.currentTask,
 			tmuxOutput:      append([]string{}, c.tmuxOutput...),
+			tmuxOutputTask:  c.tmuxOutputTask,
 		})
 		c.mu.Unlock()
 	}

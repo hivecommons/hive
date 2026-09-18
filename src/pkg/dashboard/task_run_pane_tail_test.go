@@ -309,3 +309,79 @@ func TestTaskRunLog_PaneTailOnHandbackAndFailure(t *testing.T) {
 		t.Errorf("anonymous runs read lost the reason: %s", rr.Body.String())
 	}
 }
+
+// #7605: the pane attached to an abandoned row must be one the relay reported
+// FOR that task. The sequence from the report: the relay finishes task A and
+// its task_complete leaves A's final screen in tmuxOutput; the hub assigns
+// task B on the same socket; the socket drops two seconds later, before any
+// progress frame for B. The abandoned row for B must not carry A's clean
+// "HIVE_VERDICT: complete" screen as "terminal when it stopped".
+func TestAppendAbandonedRun_PaneOnlyWhenReportedForThisTask(t *testing.T) {
+	prevScreen := []string{"PR opened: org/other#1301", "HIVE_VERDICT: complete", ">"}
+	for _, tc := range []struct {
+		name     string
+		paneTask string
+		wantPane bool
+	}{
+		{"pane is the previous task's final screen", "ct-prev", false},
+		{"no pane reported yet", "", false},
+		{"pane reported for this task", "ct-this", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := scratchRunLog(t)
+			var hub *ContributeWSHub
+			conn := &ContributorConnection{
+				profile:        &ContributorProfile{GitHubUsername: "pane-user"},
+				cliBackend:     "pi",
+				model:          "deepseek/deepseek-v4-flash-0731",
+				role:           "contributor",
+				tmuxOutput:     prevScreen,
+				tmuxOutputTask: tc.paneTask,
+			}
+			hub.appendAbandonedRun(conn, &WSTaskAssign{TaskID: "ct-this", Repo: "org/server", Number: 175},
+				abandonCauseDisconnect, time.Now().Add(-2*time.Second))
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read run log: %v", err)
+			}
+			var rec TaskRunRecord
+			if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &rec); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if rec.Outcome != outcomeAbandoned || rec.Repo != "org/server" {
+				t.Fatalf("record = %+v", rec)
+			}
+			if tc.wantPane {
+				if len(rec.PaneTail) != len(prevScreen) {
+					t.Fatalf("pane_tail = %v, want the reported pane", rec.PaneTail)
+				}
+				return
+			}
+			if rec.PaneTail != nil {
+				t.Fatalf("pane_tail = %v, want none: it was reported for %q, not for this task", rec.PaneTail, tc.paneTask)
+			}
+			if strings.Contains(string(data), "pane_tail") {
+				t.Fatalf("an unattributable pane must be omitted, not serialized empty: %s", data)
+			}
+		})
+	}
+}
+
+// The live fleet card has the same window: between task_assign and the first
+// task_progress frame the stored pane is still the previous task's ending.
+func TestFleetSnapshot_PaneOnlyWhenReportedForCurrentTask(t *testing.T) {
+	hub, conn := failureTestHub(t)
+	conn.currentTask = &WSTaskAssign{TaskID: "ct-this", Repo: "org/server", Number: 175}
+	conn.tmuxOutput = []string{"HIVE_VERDICT: complete", ">"}
+
+	conn.tmuxOutputTask = "ct-prev"
+	if got := hub.FleetSnapshot().Clankers[0].PaneTail; got != nil {
+		t.Fatalf("pane_tail = %v on the new task's card, but it was reported for the previous task", got)
+	}
+
+	conn.tmuxOutputTask = "ct-this"
+	if got := hub.FleetSnapshot().Clankers[0].PaneTail; len(got) != 2 {
+		t.Fatalf("pane_tail = %v, want the pane reported for the current task", got)
+	}
+}
