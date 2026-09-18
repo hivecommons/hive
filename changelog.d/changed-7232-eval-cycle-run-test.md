@@ -1,0 +1,1 @@
+- `runEvalCycle` now has an end-to-end test harness (`cmd/hive/eval_cycle_run_7232_test.go`) that drives a full cycle against a fake GitHub API with the real governor, scheduler, agent manager and dashboard server; function coverage rises from 1.7% to 32.9% and `cmd/hive` from 52.3% to 54.7% (refs #7232).
