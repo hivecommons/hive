@@ -143,12 +143,6 @@ func (fg *fakeGraph) set(path string, status int, body string) {
 	fg.bodyByPath[path] = body
 }
 
-func (fg *fakeGraph) calls() []string {
-	fg.mu.Lock()
-	defer fg.mu.Unlock()
-	return append([]string(nil), fg.graphCalls...)
-}
-
 func (fg *fakeGraph) sentBodies() []string {
 	fg.mu.Lock()
 	defer fg.mu.Unlock()
