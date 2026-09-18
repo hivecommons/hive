@@ -1941,6 +1941,14 @@
     .config-toggle-switch.on::before { transform: translateX(16px); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
 
+    /* A heading INSIDE a settings section, for a feature with several distinct
+       concerns. It groups by whitespace and a quiet label rather than a rule:
+       a section that rules off every few controls reads as several small
+       features instead of one feature with parts, so the rule stays reserved
+       for the section boundary and keeps meaning what it means. */
+    .config-subgroup { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; opacity: 0.75; margin: 20px 0 8px; }
+    .config-subgroup:first-of-type { margin-top: 4px; }
+
     .config-stat-row { padding: 6px 0; border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: 6px; flex-wrap: wrap; }
     .config-stat-row .config-field { min-width: 0; }
@@ -23568,6 +23576,7 @@ function burnAreaChart() {
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Review Gate <span class="config-info">i<span class="config-tooltip">The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.</span></span></div>
+          <div class="config-subgroup">Merge gate</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.require_approval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="require_approval"></div>
             <span class="config-toggle-label">Require review-swarm approval before merge <span class="config-info">i<span class="config-tooltip">When on, a PR is not merge-eligible until the reviewer agents record an aggregate approval. Off by default, which preserves the existing behaviour of not consulting review verdicts at all. Typically used at ACMM L4 and above.</span></span></span>
@@ -23584,7 +23593,8 @@ function burnAreaChart() {
             <label>Max perspectives per PR <span class="config-info">i<span class="config-tooltip">Caps how many review perspectives ONE PR may be given in a single cycle. Parallel review slots are a fixed budget spent in PR order, so without a cap the first PR in a deep queue absorbs every slot for its own perspectives &mdash; more opinions on one PR instead of coverage across many. Capping spends the same budget breadth-first. No coverage is lost: perspectives skipped this cycle are still missing next cycle and get dispatched then, so this schedules depth rather than dropping it. It also bounds how many comments one PR can collect at once, which matters once reviewers publish. 0 or empty means no cap (the default).</span></span></label>
             <input type="number" min="0" step="1" value="${rv.max_perspectives_per_pr || ''}" placeholder="0 — no cap" data-change-action="gh81">
           </div>
-          <div class="config-field" style="margin-top:10px">
+          <div class="config-subgroup">Reviewers</div>
+          <div class="config-field">
             <label>Reviewer agents <span class="config-info">i<span class="config-tooltip">Comma-separated agent names that review each PR, e.g. reviewer, security-reviewer.</span></span></label>
             <input type="text" value="${esc(rvAgents.join(', '))}" placeholder="reviewer, security-reviewer" data-change-action="gh74">
           </div>
@@ -23604,7 +23614,11 @@ function burnAreaChart() {
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
-          <div class="config-toggle" style="margin-top:14px">
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Merge Recommendations <span class="config-info">i<span class="config-tooltip">A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.</span></span></div>
+          <div class="config-toggle">
             <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
             <span class="config-toggle-label">Open a &quot;what to merge next&quot; issue <span class="config-info">i<span class="config-tooltip">For a queue nobody can read top to bottom. The hive reads every open PR it already tracks, works out which ones are genuinely mergeable right now, and writes the answer into ONE issue per repository titled &quot;🐝 Hive recommendations&quot;. That issue is rewritten in place on each cycle, so it stays current without ever sending a second notification. It recommends only &mdash; nothing is merged, approved, closed or labelled, and PRs a maintainer put on hold are left out entirely. Off by default: opening an issue in someone&apos;s repository is not something to do uninvited.</span></span></span>
           </div>
