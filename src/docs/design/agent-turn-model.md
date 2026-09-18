@@ -129,10 +129,10 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
   `src/pkg/governor/governor.go:420` and returns the due list.
 - The driving loop is a single ticker in `main`:
   `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:4951`, loop at
-  `src/cmd/hive/main.go:5009`, evaluation at `src/cmd/hive/main.go:5778`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:5922`
+  `src/cmd/hive/main.go:5009`, evaluation at `src/cmd/hive/main.go:5784`,
+  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:5928`
   (`src/pkg/scheduler/scheduler.go:658`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:5999`.
+  `agentMgr.SendKick` at `src/cmd/hive/main.go:6005`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -156,8 +156,8 @@ CLI subprocess.
 | Governor budget/spend/eval history, cadence overrides, ACMM level | same file | `src/pkg/snapshot/state.go:16-42` |
 | **Full text of every delivered prompt** | `/data/prompt-history.jsonl` (lumberjack-rotated JSONL) | `src/pkg/dashboard/prompt_history.go:45`; writer `Server.RecordPrompt` `src/pkg/dashboard/prompt_history.go:374`, wired at `src/cmd/hive/main.go:3252` |
 | **Rendered terminal scrollback, per kick** | `/data/logs/kicks/<agent>/<ts>-<reason>.log` | `src/pkg/agent/kick_logs.go:43` (`defaultKickLogDir`); writer `archiveKickLogLocked` `src/pkg/agent/kick_logs.go:180` |
-| Token-usage summary | `/data/metrics/token-summary.json` | `src/pkg/tokens/collector.go:194`, `:121` |
-| Structured audit trail | `/data/audit.jsonl`, reloaded into a ring at boot | `src/pkg/dashboard/audit.go:23`, `loadFromDisk` `:94` |
+| Token-usage summary | `/data/token-summary.json` | `src/pkg/tokens/collector.go:194`, `:112-116` |
+| Structured audit trail | `/data/audit.jsonl`, reloaded into a ring at boot | `src/pkg/dashboard/audit.go:22`, `loadFromDisk` `:94` |
 | Agent-name → UID allocation | `/var/run/hive/uid-map.json` | `UIDMapPath` `src/pkg/agent/uidmap.go:17`; load `src/pkg/agent/manager.go:670` |
 | Backend CLI's own session/credential files | the CLI's own `HOME` / `CODEX_HOME`, rooted at `/data/home` | per-agent `CODEX_HOME` `src/pkg/agent/manager_env.go:400`, helper `src/pkg/agent/manager_homes.go:56`; per-agent HOME `src/pkg/agent/interactive_home.go:59`; shared `.claude` bridged by symlink `interactive_home.go:74` |
 
@@ -317,10 +317,10 @@ It classifies each pane into one `PaneClass`
 `Dead()` (`src/pkg/watchdog/classify.go:37`) returns true for `shell-prompt`,
 `stuck-overlay`, `no-output`, and `no-session`. `auth-required` is deliberately
 excluded, because restarting into a dead credential produces a restart loop
-(`src/pkg/watchdog/classify.go:33-35`). The pattern tables it matches against are
+(`src/pkg/watchdog/classify.go:34-36`). The pattern tables it matches against are
 literal CLI UI chrome — `"Login expired"`, `"Please run /login"`
-(`src/pkg/watchdog/classify.go:98-103`), `"[Next]"`, `"Choose an accent"`
-(`src/pkg/watchdog/classify.go:108-118`).
+(`src/pkg/watchdog/classify.go:99-104`), `"[Next]"`, `"Choose an accent"`
+(`src/pkg/watchdog/classify.go:110-119`).
 
 Its action is `r.fleet.Restart(ctx, name)` (`src/pkg/watchdog/reconciler.go:650`,
 via `planRestartLocked` at `:565` and `restartDetached` at `:646`) — i.e.
@@ -328,9 +328,9 @@ exactly the destructive path in §3.
 
 **What the watchdog does about lost in-process state: nothing, and by design it
 cannot.** It restores its *own* ladder across restarts
-(`Snapshot`/`Restore`, `src/pkg/watchdog/reconciler.go:363` and `:379`), so it
+(`Snapshot`/`Restore`, `src/pkg/watchdog/reconciler.go:363` and `:397`), so it
 "neither forgets a crash-loop nor re-runs a backoff ladder from the top"
-(`src/pkg/watchdog/reconciler.go:391-392`). It has no mechanism to restore the
+(`src/pkg/watchdog/reconciler.go:389-390`). It has no mechanism to restore the
 agent's conversation, because none exists to call. From the watchdog's point of
 view a restarted agent is a fresh agent that happens to keep its name and its
 failure count.
@@ -415,8 +415,8 @@ rather than a new one to invent.
 
 This is the load-bearing constraint behind all of the above and is worth
 isolating. Turn completion (§1.3), liveness classification (§4), stall
-detection (`src/pkg/agent/manager_kick.go:744`), auth failure
-(`src/pkg/watchdog/classify.go:98`), quota exhaustion
+detection (`src/pkg/agent/manager_kick.go:805`), auth failure
+(`src/pkg/watchdog/classify.go:99-104`), quota exhaustion
 (`src/pkg/agent/manager.go:295`), and even whether a surviving CLI can be
 adopted (`src/pkg/agent/manager_tmux.go:397`) are all decided by matching substrings
 against rendered terminal output.
@@ -543,7 +543,7 @@ Things this spike did not establish, and what would settle each.
    `transientNudgesThisKick` (`src/pkg/agent/manager.go:324`), and
    `stallNudgeSent` (`src/pkg/agent/manager.go:310`) are loop-breakers that
    reset to zero on restart, while the watchdog's equivalent ladder is
-   deliberately persisted (`src/pkg/watchdog/reconciler.go:391`). Whether the
+   deliberately persisted (`src/pkg/watchdog/reconciler.go:389-390`). Whether the
    difference is intentional (these counters are per-launch by design, and a
    fresh launch legitimately deserves a fresh budget) or an oversight is not
    determinable from the code alone and was not raised as a defect by this
