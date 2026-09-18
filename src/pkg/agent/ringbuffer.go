@@ -51,7 +51,6 @@ func (r *RingBuffer) Last(n int) []string {
 	return result
 }
 
-
 func (r *RingBuffer) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

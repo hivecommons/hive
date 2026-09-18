@@ -1,0 +1,1 @@
+- Split six more domains out of `pkg/agent/manager.go` (consent, copilot auth, env, modes, routing, thrash) into per-domain files matching the v5 layout; manager.go shrinks from 4,321 to 1,793 lines. No behavior change — verbatim block moves.

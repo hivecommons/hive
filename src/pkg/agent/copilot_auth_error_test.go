@@ -23,7 +23,7 @@ func TestMatchesAuthError_DefinitiveRejectionsOnly(t *testing.T) {
 	// These must NOT purge — they are login prompts / benign output that can
 	// appear during a normal cold start with a valid token on disk.
 	noPurge := []string{
-		"Please re-authenticate to continue",              // the removed over-broad pattern
+		"Please re-authenticate to continue", // the removed over-broad pattern
 		"To sign in, use a web browser to open the page https://github.com/login/device",
 		"Copilot CLI ready",
 		"Enter the code below to authenticate",

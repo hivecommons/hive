@@ -79,9 +79,9 @@ func TestNormalizeModelNameCopilotDrift(t *testing.T) {
 		{"claude-opus-4.6", "claude-opus-4.6"},     // legitimate dot unchanged
 		{"gpt-5.5", "gpt-5.5"},
 		{"gemini-2.5-pro", "gemini-2.5-pro"},
-		{"auto", "auto"},           // auto-select sentinel flows through
-		{"gpt-next", "gpt-next"},   // unknown id passthrough
-		{"custom-7", "custom-7"},   // unknown id: no blind dot-rewrite anymore
+		{"auto", "auto"},         // auto-select sentinel flows through
+		{"gpt-next", "gpt-next"}, // unknown id passthrough
+		{"custom-7", "custom-7"}, // unknown id: no blind dot-rewrite anymore
 	}
 	for _, tt := range tests {
 		if got := normalizeModelName(tt.in, "copilot"); got != tt.want {
