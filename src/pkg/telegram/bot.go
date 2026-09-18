@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ const (
 	longPollTimeoutSeconds    = 50
 	pollReconnectBase         = 5 * time.Second
 	pollReconnectMax          = 60 * time.Second
+	maxRetryAfter             = 60 * time.Second
 )
 
 type AgentIdentity = chat.AgentIdentity
@@ -50,7 +52,7 @@ type telegramBackend struct {
 	apiBase     string
 	logger      *slog.Logger
 	client      *http.Client
-	sleep       func(time.Duration)
+	sleep       func(context.Context, time.Duration) error
 	backoffBase time.Duration
 	backoffMax  time.Duration
 }
@@ -93,7 +95,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		apiBase:     telegramAPIBase,
 		logger:      logger,
 		client:      &http.Client{Timeout: httpTimeoutS * time.Second},
-		sleep:       time.Sleep,
+		sleep:       sleepContext,
 		backoffBase: pollReconnectBase,
 		backoffMax:  pollReconnectMax,
 	}
@@ -219,12 +221,15 @@ func (b *telegramBackend) callTelegram(ctx context.Context, method string, paylo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.apiBase+"/bot"+b.botToken+"/"+method, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return b.redactError(fmt.Errorf("telegram %s: %w", method, err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.client.Do(req)
 	if err != nil {
-		return err
+		if urlErr, ok := err.(*url.Error); ok {
+			return b.redactError(fmt.Errorf("telegram %s: %w", method, urlErr.Err))
+		}
+		return b.redactError(fmt.Errorf("telegram %s: %w", method, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -236,18 +241,21 @@ func (b *telegramBackend) callTelegram(ctx context.Context, method string, paylo
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if parsed.Parameters.RetryAfter > 0 {
-			b.sleep(time.Duration(parsed.Parameters.RetryAfter) * time.Second)
+			wait := min(time.Duration(parsed.Parameters.RetryAfter)*time.Second, maxRetryAfter)
+			if err := b.sleep(ctx, wait); err != nil {
+				return b.redactError(fmt.Errorf("telegram %s retry wait: %w", method, err))
+			}
 		}
-		return fmt.Errorf("telegram API 429: %s", parsed.Description)
+		return b.redactError(fmt.Errorf("telegram API 429: %s", parsed.Description))
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("telegram API %d: %s", resp.StatusCode, string(body))
+		return b.redactError(fmt.Errorf("telegram API %d: %s", resp.StatusCode, string(body)))
 	}
 	if !parsed.OK {
 		if parsed.Description == "" {
 			parsed.Description = "not ok"
 		}
-		return fmt.Errorf("telegram API error: %s", parsed.Description)
+		return b.redactError(fmt.Errorf("telegram API error: %s", parsed.Description))
 	}
 	if result != nil && len(parsed.Result) > 0 {
 		if err := json.Unmarshal(parsed.Result, result); err != nil {
@@ -255,6 +263,28 @@ func (b *telegramBackend) callTelegram(ctx context.Context, method string, paylo
 		}
 	}
 	return nil
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (b *telegramBackend) redactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if b.botToken != "" {
+		msg = strings.ReplaceAll(msg, b.botToken, "<redacted>")
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 func markdownToHTML(s string) string {
@@ -332,83 +362,122 @@ func splitFencedMessage(s string, limit int) []string {
 		return []string{s}
 	}
 	var parts []string
-	current := ""
-	inFence := false
+	var current strings.Builder
+	var openTags []htmlTag
 
-	emit := func() {
-		if current == "" {
+	emit := func(force bool) {
+		if !force && current.Len() == 0 {
 			return
 		}
-		part := current
-		if inFence {
-			part += "\n</pre>"
+		part := current.String() + closeTags(openTags)
+		if part != "" {
+			parts = append(parts, part)
 		}
-		parts = append(parts, part)
-		current = ""
+		current.Reset()
+		current.WriteString(reopenTags(openTags))
 	}
 
-	appendSegment := func(segment string) {
-		for segment != "" {
-			if current == "" && strings.HasPrefix(segment, "\n\n") {
-				segment = strings.TrimPrefix(segment, "\n\n")
+	for pos := 0; pos < len(s); {
+		token, width := nextHTMLToken(s[pos:])
+		nextOpen := updateOpenTags(openTags, token)
+		if current.Len() > 0 && len([]rune(current.String()+token+closeTags(nextOpen))) > limit {
+			emit(false)
+			if current.Len() > 0 && len([]rune(current.String()+token+closeTags(nextOpen))) > limit {
+				parts = append(parts, current.String()+closeTags(openTags))
+				current.Reset()
+				current.WriteString(reopenTags(openTags))
 			}
-			if current == "" && inFence {
-				current = "<pre>\n"
-			}
-			reserve := 0
-			if inFence || strings.Count(current, "<pre>") > strings.Count(current, "</pre>") || strings.Contains(segment, "<pre>") {
-				reserve = len([]rune("\n</pre>"))
-			}
-			available := limit - reserve - len([]rune(current))
-			if available <= 0 {
-				emit()
-				continue
-			}
-			if len([]rune(segment)) <= available {
-				current += segment
-				inFence = updateFenceState(inFence, segment)
-				return
-			}
-			chunk := takeRunes(segment, available)
-			current += chunk
-			inFence = updateFenceState(inFence, chunk)
-			segment = strings.TrimPrefix(segment, chunk)
-			emit()
 		}
+		current.WriteString(token)
+		openTags = nextOpen
+		pos += width
 	}
-
-	for i, para := range strings.Split(s, "\n\n") {
-		if i > 0 {
-			para = "\n\n" + para
-		}
-		if current == "" && inFence {
-			appendSegment(para)
-			continue
-		}
-		reserve := 0
-		if inFence || strings.Contains(para, "<pre>") {
-			reserve = len([]rune("\n</pre>"))
-		}
-		if len([]rune(current+para)) <= limit-reserve {
-			current += para
-			inFence = updateFenceState(inFence, para)
-		} else {
-			emit()
-			appendSegment(para)
-		}
+	if current.Len() > 0 {
+		emit(false)
 	}
-	emit()
 	if len(parts) == 0 {
 		return []string{""}
 	}
 	return parts
 }
 
-func updateFenceState(inFence bool, s string) bool {
-	if (strings.Count(s, "<pre>")-strings.Count(s, "</pre>"))%2 != 0 {
-		return !inFence
+type htmlTag struct {
+	name string
+	open string
+}
+
+func nextHTMLToken(s string) (string, int) {
+	if s == "" {
+		return "", 0
 	}
-	return inFence
+	if s[0] == '<' {
+		if end := strings.IndexByte(s, '>'); end >= 0 {
+			return s[:end+1], end + 1
+		}
+	}
+	if s[0] == '&' {
+		if end := strings.IndexByte(s, ';'); end >= 0 {
+			return s[:end+1], end + 1
+		}
+	}
+	_, size := utf8.DecodeRuneInString(s)
+	return s[:size], size
+}
+
+func updateOpenTags(tags []htmlTag, token string) []htmlTag {
+	name, closing, ok := telegramHTMLTag(token)
+	if !ok {
+		return tags
+	}
+	next := append([]htmlTag(nil), tags...)
+	if closing {
+		for i := len(next) - 1; i >= 0; i-- {
+			if next[i].name == name {
+				return append(next[:i], next[i+1:]...)
+			}
+		}
+		return next
+	}
+	return append(next, htmlTag{name: name, open: token})
+}
+
+func telegramHTMLTag(token string) (name string, closing bool, ok bool) {
+	if !strings.HasPrefix(token, "<") || !strings.HasSuffix(token, ">") {
+		return "", false, false
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(token, "<"), ">"))
+	if inner == "" {
+		return "", false, false
+	}
+	if strings.HasPrefix(inner, "/") {
+		closing = true
+		inner = strings.TrimSpace(strings.TrimPrefix(inner, "/"))
+	}
+	name = strings.Fields(inner)[0]
+	switch name {
+	case "b", "i", "code", "a", "pre":
+		return name, closing, true
+	default:
+		return "", false, false
+	}
+}
+
+func closeTags(tags []htmlTag) string {
+	var out strings.Builder
+	for i := len(tags) - 1; i >= 0; i-- {
+		out.WriteString("</")
+		out.WriteString(tags[i].name)
+		out.WriteString(">")
+	}
+	return out.String()
+}
+
+func reopenTags(tags []htmlTag) string {
+	var out strings.Builder
+	for _, tag := range tags {
+		out.WriteString(tag.open)
+	}
+	return out.String()
 }
 
 func takeRunes(s string, n int) string {

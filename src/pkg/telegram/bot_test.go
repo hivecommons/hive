@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/chat"
 )
@@ -24,7 +26,7 @@ func newTestBot(apiBase string) *Bot {
 	b.apiBase = apiBase
 	b.backoffBase = time.Millisecond
 	b.backoffMax = time.Millisecond
-	b.sleep = func(time.Duration) {}
+	b.sleep = func(context.Context, time.Duration) error { return nil }
 	return b
 }
 
@@ -63,6 +65,26 @@ func TestSendMessageSuccessHTMLAndSplit(t *testing.T) {
 	want := `<b>bold</b> and <code>code</code> <a href="https://example.com?a=1&amp;b=2">docs</a> &lt;unsafe&gt;`
 	if posts[1]["text"] != want {
 		t.Fatalf("translated = %q, want %q", posts[1]["text"], want)
+	}
+}
+
+func TestSendMessageStopsOnPartError(t *testing.T) {
+	var calls atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"boom"}`))
+			return
+		}
+		writeTelegramOK(w, map[string]any{"message_id": 1})
+	}))
+	defer ts.Close()
+	long := strings.Repeat("a", telegramMessageLimit) + "\n\nsecond"
+	if err := newTestBot(ts.URL).Send(long); err == nil {
+		t.Fatal("expected second send error")
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2", calls.Load())
 	}
 }
 
@@ -112,7 +134,10 @@ func TestCallTelegramErrorsAndRetryAfter(t *testing.T) {
 			defer ts.Close()
 			b := newTestBot(ts.URL)
 			var slept time.Duration
-			b.sleep = func(d time.Duration) { slept = d }
+			b.sleep = func(_ context.Context, d time.Duration) error {
+				slept = d
+				return nil
+			}
 			if err := b.callTelegram(context.Background(), "sendMessage", map[string]string{"x": "y"}, nil); err == nil {
 				t.Fatal("expected error")
 			}
@@ -120,6 +145,88 @@ func TestCallTelegramErrorsAndRetryAfter(t *testing.T) {
 				t.Fatalf("slept = %v, want %v", slept, tt.wantSleep)
 			}
 		})
+	}
+}
+
+func TestCallTelegramTransportErrorRedactsBotToken(t *testing.T) {
+	token := "123:secret-token"
+	b := NewBot(Config{BotToken: token, ChatID: "42"}, discardLogger())
+	b.apiBase = "http://127.0.0.1:1"
+	err := b.callTelegram(context.Background(), "sendMessage", map[string]string{"x": "y"}, nil)
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "/bot"+token) {
+		t.Fatalf("transport error leaked token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "telegram sendMessage") {
+		t.Fatalf("transport error = %v, want method context", err)
+	}
+}
+
+func TestRetryAfterIsClampedAndCancellable(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"ok":false,"description":"retry","parameters":{"retry_after":999}}`))
+	}))
+	defer ts.Close()
+	b := newTestBot(ts.URL)
+	waiting := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	b.sleep = func(ctx context.Context, d time.Duration) error {
+		waiting <- d
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			return nil
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- b.callTelegram(ctx, "sendMessage", map[string]string{"x": "y"}, nil)
+	}()
+	select {
+	case d := <-waiting:
+		if d != maxRetryAfter {
+			t.Fatalf("retry_after wait = %v, want %v", d, maxRetryAfter)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for retry_after sleep")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), context.Canceled.Error()) {
+			t.Fatalf("error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retry_after sleep did not unblock on context cancellation")
+	}
+	close(release)
+}
+
+func TestSleepContextAndRedactError(t *testing.T) {
+	if err := sleepContext(context.Background(), time.Nanosecond); err != nil {
+		t.Fatalf("sleepContext completed with error: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleepContext(ctx, time.Hour); err == nil {
+		t.Fatal("expected canceled sleep error")
+	}
+	b := NewBot(Config{BotToken: "secret", ChatID: "42"}, discardLogger())
+	if err := b.redactError(nil); err != nil {
+		t.Fatalf("redact nil = %v", err)
+	}
+	err := b.redactError(io.ErrUnexpectedEOF)
+	if err == nil || err.Error() != io.ErrUnexpectedEOF.Error() {
+		t.Fatalf("redact no-token error = %v", err)
+	}
+	err = b.redactError(fmt.Errorf("url /botsecret/sendMessage failed"))
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("redacted error = %v", err)
 	}
 }
 
@@ -295,6 +402,97 @@ func TestSplitTelegramMessageBalancesFences(t *testing.T) {
 				t.Fatalf("part %d has unbalanced fences: %q", i, part[:min(len(part), 80)])
 			}
 		}
+	}
+}
+
+func TestSplitTelegramMessageAvoidsPartialHTMLAndBalancesInlineTags(t *testing.T) {
+	inputs := map[string]string{
+		"bold boundary":   strings.Repeat("a", telegramMessageLimit-6) + markdownToHTML("**bold text**"),
+		"code boundary":   strings.Repeat("a", telegramMessageLimit-8) + markdownToHTML("`code text`"),
+		"entity boundary": strings.Repeat("a", telegramMessageLimit-1) + markdownToHTML("<unsafe>"),
+		"link boundary":   strings.Repeat("a", telegramMessageLimit-14) + markdownToHTML("[docs](https://example.com)"),
+	}
+	for name, input := range inputs {
+		t.Run(name, func(t *testing.T) {
+			parts := splitTelegramMessage(input)
+			if len(parts) < 2 {
+				t.Fatalf("expected split, got %d part(s)", len(parts))
+			}
+			for i, part := range parts {
+				if len([]rune(part)) > telegramMessageLimit {
+					t.Fatalf("part %d length = %d", i, len([]rune(part)))
+				}
+				assertTelegramHTMLPart(t, part)
+			}
+		})
+	}
+}
+
+func TestHTMLTokenAndTagHelpers(t *testing.T) {
+	tests := []struct {
+		in        string
+		wantToken string
+		wantWidth int
+	}{
+		{in: "<b>rest", wantToken: "<b>", wantWidth: 3},
+		{in: "<broken", wantToken: "<", wantWidth: 1},
+		{in: "&lt;rest", wantToken: "&lt;", wantWidth: 4},
+		{in: "&broken", wantToken: "&", wantWidth: 1},
+		{in: "界abc", wantToken: "界", wantWidth: len("界")},
+	}
+	for _, tt := range tests {
+		token, width := nextHTMLToken(tt.in)
+		if token != tt.wantToken || width != tt.wantWidth {
+			t.Fatalf("nextHTMLToken(%q) = %q, %d; want %q, %d", tt.in, token, width, tt.wantToken, tt.wantWidth)
+		}
+	}
+	for _, token := range []string{"", "<>", "<br>", "plain"} {
+		if _, _, ok := telegramHTMLTag(token); ok {
+			t.Fatalf("telegramHTMLTag(%q) ok, want false", token)
+		}
+	}
+	tags := []htmlTag{{name: "b", open: "<b>"}}
+	if got := updateOpenTags(tags, "</code>"); len(got) != 1 || got[0].name != "b" {
+		t.Fatalf("mismatched close changed tags: %#v", got)
+	}
+}
+
+func assertTelegramHTMLPart(t *testing.T, part string) {
+	t.Helper()
+	var stack []string
+	for pos := 0; pos < len(part); {
+		switch part[pos] {
+		case '<':
+			end := strings.IndexByte(part[pos:], '>')
+			if end < 0 {
+				t.Fatalf("partial HTML tag in %q", part[max(0, pos-10):])
+			}
+			token := part[pos : pos+end+1]
+			name, closing, ok := telegramHTMLTag(token)
+			if ok {
+				if closing {
+					if len(stack) == 0 || stack[len(stack)-1] != name {
+						t.Fatalf("unbalanced closing tag %s in %q", token, part)
+					}
+					stack = stack[:len(stack)-1]
+				} else {
+					stack = append(stack, name)
+				}
+			}
+			pos += end + 1
+		case '&':
+			end := strings.IndexByte(part[pos:], ';')
+			if end < 0 {
+				t.Fatalf("partial HTML entity in %q", part[max(0, pos-10):])
+			}
+			pos += end + 1
+		default:
+			_, size := utf8.DecodeRuneInString(part[pos:])
+			pos += size
+		}
+	}
+	if len(stack) != 0 {
+		t.Fatalf("unclosed tags %v in %q", stack, part)
 	}
 }
 
