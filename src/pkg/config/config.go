@@ -4404,6 +4404,27 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 		return cfg, nil
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
+	//
+	// `converse` is not one of those fields, and a dashboard entry that is
+	// SILENT on it must not revoke it (#7503). Converse is a pointer precisely
+	// so "unset" and "explicitly false" stay distinguishable across this
+	// overlay; no pack seeds it, and the dashboard API writes it to BOTH this
+	// overlay and the per-agent file, so an explicit value here is always a
+	// real decision. A nil here means the dashboard never had an opinion —
+	// yet MergeAgentOverrides replaces the whole entry, so the per-agent
+	// file's `converse: true` (the documented layer for agent fields, and the
+	// one that outranks this overlay) was dropped on every boot and reload.
+	// Carry the lower layer's value forward when, and only when, the overlay
+	// says nothing; an explicit false still wins.
+	for name, oa := range overlay.Agents {
+		if oa.Converse != nil {
+			continue
+		}
+		if base, ok := cfg.Agents[name]; ok && base.Converse != nil {
+			oa.Converse = base.Converse
+			overlay.Agents[name] = oa
+		}
+	}
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {
 		cfg.ApplyAgentDefaults(name)

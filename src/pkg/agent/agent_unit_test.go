@@ -445,21 +445,28 @@ func TestSetBackendOverrideUnit(t *testing.T) {
 	}
 }
 
-func TestClearAllModeOverridesUnit(t *testing.T) {
+func TestClearModeOverridesUnit(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
-		"scanner": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
-		"quality": {Backend: "claude", Mode: "ADVISORY"},
+		"scanner":  {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+		"quality":  {Backend: "claude", Mode: "ADVISORY"},
+		"reviewer": {Backend: "claude", Mode: "ADVISORY"},
 	}, slog.Default(), ProjectContext{})
 
-	m.ClearAllModeOverrides()
+	// Names outside the process table are ignored, not an error.
+	m.ClearModeOverrides([]string{"scanner", "quality", "not-an-agent"})
 
 	m.mu.RLock()
 	scanMode := m.agents["scanner"].Config.Mode
 	qualMode := m.agents["quality"].Config.Mode
+	revMode := m.agents["reviewer"].Config.Mode
 	m.mu.RUnlock()
 
 	if scanMode != "" || qualMode != "" {
-		t.Error("mode overrides should be cleared")
+		t.Error("named mode overrides should be cleared")
+	}
+	// The agent NOT named keeps its operator-configured mode (#7503).
+	if revMode != "ADVISORY" {
+		t.Errorf("unnamed agent's mode = %q, want ADVISORY untouched", revMode)
 	}
 }
 

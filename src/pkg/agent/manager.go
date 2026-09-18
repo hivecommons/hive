@@ -4385,16 +4385,28 @@ func normalizeModelName(model, backend string) string {
 	return normalizeModelNameForBackend(model, backend, IsInferenceBackend(backend))
 }
 
-// ClearAllModeOverrides clears the per-agent Config.Mode for all agents so that
-// DefaultAgentMode determines the mode based on the ACMM level. This should be
-// called before SyncModeFiles when switching levels, because Config.Mode may
-// have been set by the initial config or a previous pack and would otherwise
-// override the new level's expected default.
-func (m *Manager) ClearAllModeOverrides() {
+// ClearModeOverrides clears Config.Mode for the NAMED agents so that
+// DefaultAgentMode determines their mode from the ACMM level. Call it before
+// SyncModeFiles when applying a pack, because a pack agent's Config.Mode may
+// have been set by a previous level's pack and would otherwise override the
+// new level's expected default.
+//
+// Scoped to a name list — the pack's roster — on purpose (#7503). The previous
+// ClearAllModeOverrides wiped every agent in the process table, including
+// agents no pack manages. Their Mode was never pack-seeded, so there is no
+// stale pack value to clear: what got cleared was the OPERATOR's setting. On
+// the projectbluefin spoke `reviewer` was `mode: ADVISORY` in every config
+// layer and ran as ISSUES_AND_PRS, the L5 default — two rungs more authority
+// than anything on disk granted it — because the startup pack apply cleared it
+// here and SyncModeFiles then wrote the default. Names not in the process
+// table are ignored.
+func (m *Manager) ClearModeOverrides(names []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, agent := range m.agents {
-		agent.Config.Mode = ""
+	for _, name := range names {
+		if agent, ok := m.agents[name]; ok {
+			agent.Config.Mode = ""
+		}
 	}
 }
 
@@ -4711,14 +4723,33 @@ func (m *Manager) SyncModeFiles(level int) {
 			continue
 		}
 		mode := DefaultAgentMode(name, level)
+		// converseConfigured is logged on both branches below so one grep by
+		// agent name shows whether the capability came from config or fell
+		// back to the default alongside the mode decision (#7503).
+		converseConfigured := agent.Config.Converse != nil
 		if modeStr := agent.Config.Mode; modeStr != "" {
 			if parsed, ok := ParseAgentMode(modeStr); ok {
 				m.logger.Info("SyncModeFiles: Config.Mode override",
 					"agent", name, "level", level,
 					"default", DefaultAgentMode(name, level).String(),
-					"override", modeStr)
+					"override", modeStr,
+					"converse_configured", converseConfigured)
 				mode = parsed
 			}
+		} else {
+			// Log the fallback too, not only the override (#7503). Before this,
+			// an agent whose configured mode had been dropped on the way to the
+			// process table was indistinguishable from one that never set a
+			// mode: the only signal was reading /tmp/.hive-mode-<agent> and
+			// comparing by hand. One line saying "config said nothing, using
+			// the level default" turns that into a grep. `overlay_file` names
+			// the per-agent file when the entry came from one, so an operator
+			// can check what it says against what is being used.
+			m.logger.Info("SyncModeFiles: no Config.Mode, using level default",
+				"agent", name, "level", level,
+				"default", mode.String(),
+				"converse_configured", converseConfigured,
+				"overlay_file", agent.Config.SourceFile())
 		}
 		modeFile := filepath.Join(agentStateDir, ".hive-mode-"+name)
 		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
