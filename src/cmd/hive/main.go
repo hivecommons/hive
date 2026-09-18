@@ -1039,7 +1039,7 @@ func main() {
 	const upgradeMarkerStartupPath = "/data/upgrade-requested"
 	if markerData, err := os.ReadFile(upgradeMarkerStartupPath); err == nil {
 		m := parseUpgradeMarker(markerData)
-		if m.CurrentSHA != gitShort {
+		if judgeUpgradeMarker(m, gitShort) == upgradeLanded {
 			// We booted on a different SHA than the one that requested the
 			// upgrade: it landed. Drop the marker so the attempt budget resets.
 			if err := os.Remove(upgradeMarkerStartupPath); err != nil && !os.IsNotExist(err) {
@@ -2128,14 +2128,8 @@ func main() {
 	go tokenCollector.Start(tokenStop)
 	defer close(tokenStop)
 
-	badgeURL := os.Getenv("HIVE_COVERAGE_BADGE_URL")
-	if badgeURL == "" {
-		badgeURL = "https://gist.githubusercontent.com/clubanderson/b9a9ae8469f1897a22d5a40629bc1e82/raw/coverage-badge.json"
-	}
-	primaryRepo := cfg.Project.PrimaryRepo
-	if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
-		primaryRepo = cfg.Project.Repos[0]
-	}
+	badgeURL := resolveCoverageBadgeURL(os.Getenv(coverageBadgeURLEnv))
+	primaryRepo := metricsPrimaryRepo(cfg.Project)
 	metricsCollector := dashboard.NewMetricsCollector(ghClient, cfg.Project.Org, primaryRepo, badgeURL, cfg.Project.AIAuthor, cfg.Project.Name, logger)
 	go metricsCollector.Start(ctx)
 
@@ -2159,23 +2153,25 @@ func main() {
 	// could not rescue it either: those hives authenticate as a GitHub App and
 	// have github.token empty, so there was no token to identify. The result
 	// was a fleet where essentially no spoke ever attempted a collect.
-	fleetStatsAuthor := cfg.EffectiveAIAuthor()
-	fleetStatsToken := cfg.GitHub.Token
-	if fleetStatsToken == "" {
-		fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	fleetID := resolveFleetStatsIdentity(cfg.EffectiveAIAuthor(), cfg.GitHub.Token, os.Getenv("HIVE_GITHUB_TOKEN"),
+		func(token string) (string, error) {
+			botUser, err := github.ValidateToken(token, cfg.GitHub.ResolvedAPIURL())
+			if err != nil {
+				return "", err
+			}
+			return botUser.Login, nil
+		})
+	fleetStatsAuthor := fleetID.author
+	if fleetID.fromToken {
+		logger.Info("fleet stats: ai_author unset, using bot token identity",
+			"author", fleetStatsAuthor)
 	}
-	if fleetStatsAuthor == "" && fleetStatsToken != "" {
-		if botUser, err := github.ValidateToken(fleetStatsToken, cfg.GitHub.ResolvedAPIURL()); err == nil && botUser.Login != "" {
-			fleetStatsAuthor = botUser.Login
-			logger.Info("fleet stats: ai_author unset, using bot token identity",
-				"author", fleetStatsAuthor)
-		} else if err != nil {
-			logger.Warn("fleet stats: ai_author unset and bot identity lookup failed; "+
-				"this hive will not contribute to the public fleet-stats total",
-				"error", err)
-		}
+	if fleetID.lookupErr != nil {
+		logger.Warn("fleet stats: ai_author unset and bot identity lookup failed; "+
+			"this hive will not contribute to the public fleet-stats total",
+			"error", fleetID.lookupErr)
 	}
-	if fleetStatsAuthor == "" || cfg.Project.Org == "" {
+	if !fleetID.enabled(cfg.Project.Org) {
 		logger.Warn("fleet stats collector disabled: author or org is empty; "+
 			"set project.ai_author in hive.yaml so this hive contributes to the fleet total",
 			"author", fleetStatsAuthor, "org", cfg.Project.Org)

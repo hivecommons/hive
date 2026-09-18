@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -82,6 +83,8 @@ func TestResolveHubTarget(t *testing.T) {
 
 func intp(n int) *int { return &n }
 
+var errTest = errors.New("test error")
+
 func TestPlanACMMBoot_FirstStart(t *testing.T) {
 	if got := planACMMBoot(true, intp(4), intp(4), ""); got != (acmmBootPlan{}) {
 		t.Fatalf("first start ignores config/saved and applies nothing without HIVE_LEVEL: %+v", got)
@@ -137,4 +140,94 @@ func TestParseACMMLevel_Bounds(t *testing.T) {
 			t.Errorf("%q must be invalid", bad)
 		}
 	}
+}
+
+func TestJudgeUpgradeMarker(t *testing.T) {
+	m := upgradeMarker{CurrentSHA: "aaaaaaa", TargetSHA: "bbbbbbb"}
+	if got := judgeUpgradeMarker(m, "bbbbbbb"); got != upgradeLanded {
+		t.Fatalf("booted on a different SHA: got %v, want landed", got)
+	}
+	if got := judgeUpgradeMarker(m, "aaaaaaa"); got != upgradeDidNotLand {
+		t.Fatalf("booted on the same SHA: got %v, want did-not-land", got)
+	}
+	if got := judgeUpgradeMarker(upgradeMarker{}, "aaaaaaa"); got != upgradeLanded {
+		t.Fatalf("unparseable marker (empty current) must read as landed so it is cleared: got %v", got)
+	}
+}
+
+func TestResolveCoverageBadgeURL(t *testing.T) {
+	if got := resolveCoverageBadgeURL(""); got != "https://gist.githubusercontent.com/clubanderson/b9a9ae8469f1897a22d5a40629bc1e82/raw/coverage-badge.json" {
+		t.Fatalf("default: %q", got)
+	}
+	if got := resolveCoverageBadgeURL("https://x/badge.json"); got != "https://x/badge.json" {
+		t.Fatalf("override: %q", got)
+	}
+}
+
+func TestMetricsPrimaryRepo(t *testing.T) {
+	if got := metricsPrimaryRepo(config.ProjectConfig{PrimaryRepo: "core", Repos: []string{"a", "b"}}); got != "core" {
+		t.Fatalf("explicit primary: %q", got)
+	}
+	if got := metricsPrimaryRepo(config.ProjectConfig{Repos: []string{"a", "b"}}); got != "a" {
+		t.Fatalf("first repo: %q", got)
+	}
+	if got := metricsPrimaryRepo(config.ProjectConfig{}); got != "" {
+		t.Fatalf("nothing: %q", got)
+	}
+}
+
+func TestResolveFleetStatsIdentity(t *testing.T) {
+	lookups := 0
+	lookup := func(want string, login string, err error) func(string) (string, error) {
+		return func(token string) (string, error) {
+			lookups++
+			if token != want {
+				t.Fatalf("lookup got token %q, want %q", token, want)
+			}
+			return login, err
+		}
+	}
+
+	t.Run("configured author never looks up", func(t *testing.T) {
+		lookups = 0
+		id := resolveFleetStatsIdentity("bot[bot]", "tok", "envtok", lookup("", "", nil))
+		if id.author != "bot[bot]" || id.fromToken || id.lookupErr != nil || lookups != 0 {
+			t.Fatalf("id=%+v lookups=%d", id, lookups)
+		}
+		if !id.enabled("acme") || id.enabled("") {
+			t.Fatal("enabled must require both author and org")
+		}
+	})
+	t.Run("config token beats env token", func(t *testing.T) {
+		lookups = 0
+		id := resolveFleetStatsIdentity("", "cfgtok", "envtok", lookup("cfgtok", "hive-bot", nil))
+		if id.author != "hive-bot" || !id.fromToken || lookups != 1 {
+			t.Fatalf("id=%+v lookups=%d", id, lookups)
+		}
+	})
+	t.Run("env token is the fallback", func(t *testing.T) {
+		id := resolveFleetStatsIdentity("", "", "envtok", lookup("envtok", "hive-bot", nil))
+		if id.author != "hive-bot" || !id.fromToken {
+			t.Fatalf("id=%+v", id)
+		}
+	})
+	t.Run("lookup failure leaves author empty and is reported", func(t *testing.T) {
+		id := resolveFleetStatsIdentity("", "tok", "", lookup("tok", "ghost", errTest))
+		if id.author != "" || id.fromToken || id.lookupErr != errTest || id.enabled("acme") {
+			t.Fatalf("id=%+v", id)
+		}
+	})
+	t.Run("empty login is not an author", func(t *testing.T) {
+		id := resolveFleetStatsIdentity("", "tok", "", lookup("tok", "", nil))
+		if id.author != "" || id.fromToken || id.lookupErr != nil {
+			t.Fatalf("id=%+v", id)
+		}
+	})
+	t.Run("no token no lookup", func(t *testing.T) {
+		lookups = 0
+		id := resolveFleetStatsIdentity("", "", "", lookup("", "x", nil))
+		if id.author != "" || lookups != 0 {
+			t.Fatalf("id=%+v lookups=%d", id, lookups)
+		}
+	})
 }
