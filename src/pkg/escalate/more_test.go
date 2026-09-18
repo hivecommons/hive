@@ -41,7 +41,7 @@ func TestDispatcherFailureAuditAndRegisterNoops(t *testing.T) {
 	waitFor(t, func() bool { return audits.Load() > 0 })
 	d.Stop()
 	d.Register(&fakeSink{name: "late"}, SeverityInfo, 0)
-	other := NewDispatcher(nil, nil, nil)
+	other := NewDispatcher(context.Background(), nil, nil)
 	if other.Context() == nil {
 		t.Fatal("dispatcher context nil")
 	}

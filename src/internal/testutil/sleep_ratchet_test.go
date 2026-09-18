@@ -21,7 +21,7 @@ import (
 // channel / WaitGroup when a goroutine you own can signal directly); a fixed
 // sleep is only acceptable for a deliberate "nothing happens during this
 // window" negative wait, and that still needs a comment saying so.
-const sleepBaseline = 198
+const sleepBaseline = 197
 
 // sleepCall is the literal the ratchet counts. Kept as a constant so the
 // message and the count cannot drift apart.

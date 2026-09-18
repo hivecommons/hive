@@ -71,12 +71,18 @@ func TestDispatcherInvalidAndStoppedAreNoops(t *testing.T) {
 
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-timer.C:
+			t.Fatal("condition not met")
+		case <-ticker.C:
+			if ok() {
+				return
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("condition not met")
 }
