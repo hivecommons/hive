@@ -1,1 +1,0 @@
-- Split `pkg/dashboard/contribute_ws.go` god file: move the task-lease persistence, cooldown/failure bookkeeping, completed/failed/no-work ledger and token/credential-lifecycle domains verbatim into `contribute_leases.go`, `contribute_cooldowns.go`, `contribute_ledgers.go` and `contribute_tokens.go` (#7491 god-file split; no behavior change).

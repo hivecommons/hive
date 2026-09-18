@@ -1,1 +1,0 @@
-- `pkg/hub`: extracted the auto-upgrade domain (debounce, pin, bulk-roll trigger paths) from `saas.go` into `saas_upgrade.go` — a verbatim move matching the v5 file boundaries, no behavior change. `saas.go` drops from 15,187 to 13,762 lines. Part of [#7278](https://github.com/hivecommons/hive/issues/7278).

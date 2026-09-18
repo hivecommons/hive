@@ -156,7 +156,7 @@ function check(name, cond) {
 // Green only on the sweep's verdict.
 check('eligible is green', prMergeState({ mergeable: 'yes', merge_verdict: { state: 'eligible' } }) === 'eligible');
 check('outstanding is amber', prMergeState({ mergeable: 'yes', merge_verdict: { state: 'outstanding', reason: 'CI failing: build' } }) === 'outstanding');
-check('blocked lights nothing', prMergeState({ mergeable: 'no', merge_verdict: { state: 'blocked', reason: 'not mergeable on GitHub (dirty)' } }) === '');
+check('blocked lights nothing', prMergeState({ mergeable: 'no', merge_verdict: { state: 'blocked', reason: 'has merge conflicts with v4 — needs a rebase' } }) === '');
 check('unknown lights nothing', prMergeState({ mergeable: '', merge_verdict: { state: 'unknown' } }) === '');
 check('an unrecognised state lights nothing', prMergeState({ mergeable: 'yes', merge_verdict: { state: 'someday' } }) === '');
 
@@ -186,11 +186,20 @@ check('eligible tooltip carries the reason', prMergeNote(green).includes('would 
 const greenOptionalRed = { mergeable: 'yes', mergeable_state: 'unstable', merge_verdict: { state: 'eligible', reason: 'the sweep would merge this now — only non-required checks are red (playwright)' } };
 check('eligible beside a red optional check names it', prMergeNote(greenOptionalRed).includes('playwright'));
 check('eligible without a reason still reads sensibly', prMergeNote({ mergeable: 'yes', merge_verdict: { state: 'eligible' } }).includes('would merge this now'));
-const dirty = { mergeable: 'no', mergeable_state: 'dirty', merge_verdict: { state: 'blocked', reason: 'not mergeable on GitHub (dirty)' } };
-check('blocked tooltip carries the reason', prMergeNote(dirty).includes('dirty'));
+const dirty = { mergeable: 'no', mergeable_state: 'dirty', merge_verdict: { state: 'blocked', reason: 'has merge conflicts with v4 — needs a rebase' } };
+check('blocked tooltip carries the reason', prMergeNote(dirty).includes('merge conflicts with v4'));
 check('blocked tooltip does not say eligible', !prMergeNote(dirty).includes('eligible'));
-check('unknown tooltip says not yet known', prMergeNote({ mergeable: '', merge_verdict: { state: 'unknown', reason: 'mergeability not yet known; CI pending' } }).includes('not yet known'));
-check('no undefined anywhere', ![green, bluefin1253, dirty, { mergeable: 'yes' }, {}, { merge_verdict: {} }].some(p => prMergeNote(p).includes('undefined')));
+// hivecommons/hive#7515: a "blocked" verdict now carries the sweep's own
+// reason (the red required check, the missing review) and the tooltip shows
+// it verbatim — GitHub's raw state is not appended on top.
+const blocked = { mergeable: 'no', mergeable_state: 'blocked', merge_verdict: { state: 'blocked', reason: 'blocked — CI failing: build, lint' } };
+check('blocked tooltip names the failing required checks', prMergeNote(blocked).includes('blocked — CI failing: build, lint'));
+check('blocked tooltip does not repeat the raw GitHub state', !prMergeNote(blocked).includes('GitHub state'));
+const blockedReview = { mergeable: 'no', mergeable_state: 'blocked', merge_verdict: { state: 'blocked', reason: 'blocked — awaiting review approval' } };
+check('blocked tooltip names the missing review', prMergeNote(blockedReview).includes('awaiting review approval'));
+check('draft tooltip says what to do', prMergeNote({ mergeable: 'yes', merge_verdict: { state: 'blocked', reason: 'draft — mark ready for review to enter the sweep' } }).includes('mark ready for review'));
+check('unknown tooltip says not yet computed', prMergeNote({ mergeable: '', merge_verdict: { state: 'unknown', reason: 'mergeability not yet computed by GitHub — re-checked next tick; CI pending' } }).includes('not yet computed'));
+check('no undefined anywhere', ![green, bluefin1253, dirty, blocked, { mergeable: 'yes' }, {}, { merge_verdict: {} }].some(p => prMergeNote(p).includes('undefined')));
 
 if (fails) { console.log(fails + ' check(s) failed'); process.exit(1); }
 `

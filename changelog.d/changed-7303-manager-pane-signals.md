@@ -1,1 +1,0 @@
-- `pkg/agent`: extracted the pane-signal marker domain (per-CLI readiness/context markers and pane-scan helpers) from `manager.go` into `manager_pane_signals.go` — a verbatim move matching the v5 file boundaries, no behavior change. `manager.go` drops from 6,735 to 6,049 lines. Part of [#7303](https://github.com/hivecommons/hive/issues/7303).

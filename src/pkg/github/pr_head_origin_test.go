@@ -89,4 +89,20 @@ func TestFetchPRs_PopulatesForkOrigin(t *testing.T) {
 	if pr := byNum[841]; !pr.FromFork || pr.HeadRepo != "" {
 		t.Errorf("deleted-fork PR must be unpushable: %+v", pr)
 	}
+	// The base branch rides along from the same payload so the merge
+	// verdict can say "has merge conflicts with main" (hivecommons/hive#7515).
+	for _, n := range []int{839, 840, 841} {
+		if pr := byNum[n]; pr.BaseRef != "main" {
+			t.Errorf("#%d: BaseRef = %q, want %q", n, pr.BaseRef, "main")
+		}
+	}
+}
+
+func TestPRBaseRef(t *testing.T) {
+	if got := prBaseRef(&gh.PullRequest{Base: &gh.PullRequestBranch{Ref: gh.Ptr("v4")}}); got != "v4" {
+		t.Errorf("prBaseRef = %q, want v4", got)
+	}
+	if got := prBaseRef(&gh.PullRequest{}); got != "" {
+		t.Errorf("prBaseRef with no base = %q, want empty", got)
+	}
 }

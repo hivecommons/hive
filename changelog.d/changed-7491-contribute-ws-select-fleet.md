@@ -1,1 +1,0 @@
-- Split `pkg/dashboard/contribute_ws.go` god file further: move the task-selection domain (`selectTask` and its gating helpers) and the fleet/ops snapshot domain verbatim into `contribute_select.go` and `contribute_fleet.go` (#7491 god-file split; no behavior change).
