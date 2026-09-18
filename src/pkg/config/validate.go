@@ -104,6 +104,26 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("notifications.matrix.room_id is required when matrix.enabled is true")
 		}
 	}
+	if c.Notifications.MSTeams != nil && c.Notifications.MSTeams.Enabled {
+		if strings.TrimSpace(c.Notifications.MSTeams.TenantID) == "" {
+			return fmt.Errorf("notifications.msteams.tenant_id is required when msteams.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.MSTeams.ClientID) == "" {
+			return fmt.Errorf("notifications.msteams.client_id is required when msteams.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.MSTeams.ClientSecret) == "" {
+			return fmt.Errorf("notifications.msteams.client_secret is required when msteams.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.MSTeams.TeamID) == "" {
+			return fmt.Errorf("notifications.msteams.team_id is required when msteams.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.MSTeams.ChannelID) == "" {
+			return fmt.Errorf("notifications.msteams.channel_id is required when msteams.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.MSTeams.WebhookURL) == "" {
+			return fmt.Errorf("notifications.msteams.webhook_url is required when msteams.enabled is true")
+		}
+	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config
 		// save) and agreeing with what the launcher can actually dispatch. A

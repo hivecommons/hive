@@ -82,10 +82,61 @@ func TestMatrixConfigValidation(t *testing.T) {
 	}
 }
 
+func TestMSTeamsConfigValidation(t *testing.T) {
+	complete := &MSTeamsConfig{
+		Enabled:      true,
+		TenantID:     "tenant",
+		ClientID:     "client",
+		ClientSecret: "secret",
+		TeamID:       "team",
+		ChannelID:    "channel",
+		WebhookURL:   "https://example.com/webhook",
+		AllowedUsers: []string{"aad-object-id"},
+	}
+	tests := []struct {
+		name    string
+		msteams *MSTeamsConfig
+		want    string
+	}{
+		{name: "disabled empty ok", msteams: &MSTeamsConfig{}},
+		{name: "enabled tenant required", msteams: &MSTeamsConfig{Enabled: true, ClientID: "client", ClientSecret: "secret", TeamID: "team", ChannelID: "channel", WebhookURL: "https://example.com/webhook"}, want: "tenant_id"},
+		{name: "enabled client required", msteams: &MSTeamsConfig{Enabled: true, TenantID: "tenant", ClientSecret: "secret", TeamID: "team", ChannelID: "channel", WebhookURL: "https://example.com/webhook"}, want: "client_id"},
+		{name: "enabled secret required", msteams: &MSTeamsConfig{Enabled: true, TenantID: "tenant", ClientID: "client", TeamID: "team", ChannelID: "channel", WebhookURL: "https://example.com/webhook"}, want: "client_secret"},
+		{name: "enabled team required", msteams: &MSTeamsConfig{Enabled: true, TenantID: "tenant", ClientID: "client", ClientSecret: "secret", ChannelID: "channel", WebhookURL: "https://example.com/webhook"}, want: "team_id"},
+		{name: "enabled channel required", msteams: &MSTeamsConfig{Enabled: true, TenantID: "tenant", ClientID: "client", ClientSecret: "secret", TeamID: "team", WebhookURL: "https://example.com/webhook"}, want: "channel_id"},
+		{name: "enabled webhook required", msteams: &MSTeamsConfig{Enabled: true, TenantID: "tenant", ClientID: "client", ClientSecret: "secret", TeamID: "team", ChannelID: "channel"}, want: "webhook_url"},
+		{name: "enabled complete ok", msteams: complete},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validSlackConfig()
+			cfg.Notifications.MSTeams = tt.msteams
+			err := cfg.Validate()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("Validate error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatrixTokenEnvExpansion(t *testing.T) {
 	t.Setenv("MATRIX_ACCESS_TOKEN_TEST", "matrix-expanded")
 	got := expandEnvVars("access_token: ${MATRIX_ACCESS_TOKEN_TEST}")
 	if !strings.Contains(got, "matrix-expanded") {
 		t.Fatalf("expanded matrix token = %q", got)
+	}
+}
+
+func TestMSTeamsTokenEnvExpansion(t *testing.T) {
+	t.Setenv("MSTEAMS_CLIENT_SECRET_TEST", "secret-expanded")
+	got := expandEnvVars("msteams:\n  client_secret: ${MSTEAMS_CLIENT_SECRET_TEST}")
+	if !strings.Contains(got, "secret-expanded") {
+		t.Fatalf("expanded msteams secret = %q", got)
 	}
 }

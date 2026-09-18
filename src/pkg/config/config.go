@@ -3920,6 +3920,7 @@ type NotificationsConfig struct {
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
 	Matrix   *MatrixConfig   `yaml:"matrix,omitempty"`
 	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
+	MSTeams  *MSTeamsConfig  `yaml:"msteams,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 }
 
@@ -3967,6 +3968,23 @@ type MatrixConfig struct {
 	// inject prompts into the agents. When empty, command handling is DISABLED
 	// (fail closed) by the chat spine, so an operator must opt in by listing the
 	// trusted MXIDs.
+	AllowedUsers []string `yaml:"allowed_users,omitempty"`
+}
+
+type MSTeamsConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	TenantID     string `yaml:"tenant_id"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	TeamID       string `yaml:"team_id"`
+	ChannelID    string `yaml:"channel_id"`
+	WebhookURL   string `yaml:"webhook_url"`
+	// AllowedUsers is an allowlist of Azure AD user object IDs permitted to issue
+	// bot COMMANDS (!kick, !pause, agent actions — anything that drives an
+	// agent). SECURITY: without it, any channel member who can post in the channel
+	// can inject prompts into the agents. When empty, command handling is
+	// DISABLED (fail closed) — the bot still posts status but accepts no commands
+	// — so an operator must opt in by listing the trusted AAD object IDs.
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 

@@ -55,6 +55,7 @@ import (
 	"github.com/hivecommons/hive/pkg/matrix"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mint"
+	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
@@ -4113,6 +4114,30 @@ func main() {
 			logger.Warn("matrix bot failed to start", "error", err)
 		} else {
 			logger.Info("matrix bot started", "room", cfg.Notifications.Matrix.RoomID)
+		}
+	}
+
+	if cfg.Notifications.MSTeams != nil && cfg.Notifications.MSTeams.Enabled {
+		teamsBot := msteams.NewBot(msteams.Config{
+			TenantID:       cfg.Notifications.MSTeams.TenantID,
+			ClientID:       cfg.Notifications.MSTeams.ClientID,
+			ClientSecret:   cfg.Notifications.MSTeams.ClientSecret,
+			TeamID:         cfg.Notifications.MSTeams.TeamID,
+			ChannelID:      cfg.Notifications.MSTeams.ChannelID,
+			WebhookURL:     cfg.Notifications.MSTeams.WebhookURL,
+			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
+			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   cfg.Notifications.MSTeams.AllowedUsers,
+		}, logger)
+		var agentNameList []string
+		for name := range cfg.EnabledAgents() {
+			agentNameList = append(agentNameList, name)
+		}
+		teamsBot.SetAgentNames(agentNameList)
+		if err := teamsBot.Start(ctx); err != nil {
+			logger.Warn("msteams bot failed to start", "error", err)
+		} else {
+			logger.Info("msteams bot started", "team", cfg.Notifications.MSTeams.TeamID, "channel", cfg.Notifications.MSTeams.ChannelID)
 		}
 	}
 
@@ -8471,11 +8496,13 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	slack.SetAgentIdentities(discordIdentities)
 	matrix.SetAgentIdentities(discordIdentities)
 	telegram.SetAgentIdentities(discordIdentities)
+	msteams.SetAgentIdentities(discordIdentities)
 	if len(discordAliases) > 0 {
 		discord.SetAgentAliases(discordAliases)
 		slack.SetAgentAliases(discordAliases)
 		matrix.SetAgentAliases(discordAliases)
 		telegram.SetAgentAliases(discordAliases)
+		msteams.SetAgentAliases(discordAliases)
 	}
 }
 
