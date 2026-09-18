@@ -261,3 +261,25 @@ func resolveFleetStatsIdentity(configuredAuthor, cfgToken, envToken string, look
 	}
 	return id
 }
+
+// defaultPoliciesLocalDir is where policy files are checked out when
+// policies.local_dir is unset.
+const defaultPoliciesLocalDir = "/data/policies"
+
+// policiesLocalDir is the checkout root the policies watcher syncs into.
+func policiesLocalDir(p config.PoliciesConfig) string {
+	if p.LocalDir != "" {
+		return p.LocalDir
+	}
+	return defaultPoliciesLocalDir
+}
+
+// policyDir is where agents look for policy files: the checkout root plus
+// policies.path when one is configured. It is never empty.
+func policyDir(p config.PoliciesConfig) string {
+	dir := policiesLocalDir(p)
+	if p.Path != "" {
+		dir += "/" + p.Path
+	}
+	return dir
+}

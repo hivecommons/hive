@@ -1496,20 +1496,11 @@ func main() {
 
 	advisoryStore := advisory.NewStore()
 
-	policyDir := cfg.Policies.LocalDir
-	if policyDir == "" {
-		policyDir = "/data/policies"
-	}
-	if cfg.Policies.Path != "" {
-		policyDir = policyDir + "/" + cfg.Policies.Path
-	}
+	policyDirPath := policyDir(cfg.Policies)
 
 	// Write brainstorm policy to disk so the agent can find it.
 	// The policy is embedded in the binary but the agent searches the filesystem.
-	brainstormPolicyDir := policyDir
-	if brainstormPolicyDir == "" {
-		brainstormPolicyDir = "/data/policies/examples/kubestellar/agents"
-	}
+	brainstormPolicyDir := policyDirPath
 	if err := os.MkdirAll(brainstormPolicyDir, 0o755); err != nil {
 		logger.Warn("failed to create brainstorm policy dir", "path", brainstormPolicyDir, "error", err)
 	}
@@ -1530,7 +1521,7 @@ func main() {
 		PrimaryRepoName: cfg.Project.PrimaryRepo,
 		ACMMLevel:       acmmLevel,
 		PRsAllowed:      cfg.Project.PRsAllowed(),
-		PolicyDir:       policyDir,
+		PolicyDir:       policyDirPath,
 		AppAuthoredPRs:  cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	if cfg.GitHub.IsGHE() {
@@ -3070,10 +3061,7 @@ func main() {
 	}
 
 	if cfg.Policies.Repo != "" {
-		localDir := cfg.Policies.LocalDir
-		if localDir == "" {
-			localDir = "/data/policies"
-		}
+		localDir := policiesLocalDir(cfg.Policies)
 		watcher := policies.NewWatcher(
 			cfg.Policies.Repo,
 			cfg.Policies.Branch,

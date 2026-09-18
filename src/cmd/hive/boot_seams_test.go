@@ -231,3 +231,26 @@ func TestResolveFleetStatsIdentity(t *testing.T) {
 		}
 	})
 }
+
+func TestPolicyDirs(t *testing.T) {
+	cases := []struct {
+		name            string
+		p               config.PoliciesConfig
+		wantLocal, want string
+	}{
+		{"defaults", config.PoliciesConfig{}, "/data/policies", "/data/policies"},
+		{"path only", config.PoliciesConfig{Path: "examples/agents"}, "/data/policies", "/data/policies/examples/agents"},
+		{"local only", config.PoliciesConfig{LocalDir: "/srv/pol"}, "/srv/pol", "/srv/pol"},
+		{"both", config.PoliciesConfig{LocalDir: "/srv/pol", Path: "team"}, "/srv/pol", "/srv/pol/team"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := policiesLocalDir(tc.p); got != tc.wantLocal {
+				t.Errorf("policiesLocalDir = %q, want %q", got, tc.wantLocal)
+			}
+			if got := policyDir(tc.p); got != tc.want {
+				t.Errorf("policyDir = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
