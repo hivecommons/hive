@@ -1,0 +1,1 @@
+- Fixed a non-hermetic dashboard test: the prompt-template tests now pin the scheduler's policy roots at temp directories via the new `scheduler.SetPolicyDirsForTest` seam, so a populated `/data/policies` on a live-hive host can no longer shadow the embedded default and fail the suite. Template precedence (user-saved copy over embedded default) is now asserted explicitly.
