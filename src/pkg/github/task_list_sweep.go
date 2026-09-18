@@ -403,9 +403,10 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 }
 
 type refsRemainderMeta struct {
-	Reference  bool
-	Remainder  string
-	NeedsHuman bool
+	Reference          bool
+	Remainder          string
+	NeedsHuman         bool
+	ExplicitNeedsHuman bool
 }
 
 var explicitNeedsHumanRefRE = regexp.MustCompile(`(?i)\b(?:refs|ref|references|referencing)\b[^\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)\s*\(\s*needs-human\s*:\s*([^)]+)\)`)
@@ -415,11 +416,12 @@ var explicitNeedsHumanRefRE = regexp.MustCompile(`(?i)\b(?:refs|ref|references|r
 // counts when it appears in a deliberately named remainder section.
 func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMeta {
 	out := map[string]refsRemainderMeta{}
+	refsByKey := map[string]ClaimedRef{}
 	section := extractRemainderSection(body)
-	sectionNeedsHuman := remainderSectionNeedsHuman(section)
 	for _, line := range strings.Split(body, "\n") {
 		for _, ref := range ParseReferencedIssues(line, defaultRepo) {
 			key := claimKey(strings.ToLower(ref.Repo), ref.Issue)
+			refsByKey[key] = ref
 			meta := out[key]
 			meta.Reference = true
 			if meta.Remainder == "" {
@@ -441,9 +443,11 @@ func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMet
 			repo = defaultRepo
 		}
 		key := claimKey(strings.ToLower(repo), issue)
+		refsByKey[key] = ClaimedRef{Repo: repo, Issue: issue}
 		meta := out[key]
 		meta.Reference = true
 		meta.NeedsHuman = true
+		meta.ExplicitNeedsHuman = true
 		if reason := strings.TrimSpace(match[3]); reason != "" {
 			meta.Remainder = reason
 		}
@@ -451,12 +455,76 @@ func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMet
 	}
 	if strings.TrimSpace(section) != "" {
 		for key, meta := range out {
-			meta.Remainder = strings.TrimSpace(section)
-			meta.NeedsHuman = meta.NeedsHuman || sectionNeedsHuman
+			sectionForRef := ""
+			if sectionHasIssueScopedBullets(section) {
+				if ref, ok := refsByKey[key]; ok {
+					sectionForRef = issueScopedRemainderSection(section, ref, defaultRepo)
+				}
+			} else if len(out) == 1 {
+				sectionForRef = strings.TrimSpace(section)
+			}
+			if sectionForRef != "" {
+				meta.Remainder = sectionForRef
+				meta.NeedsHuman = meta.NeedsHuman || remainderSectionNeedsHuman(sectionForRef)
+			}
 			out[key] = meta
 		}
 	}
 	return out
+}
+
+func sectionHasIssueScopedBullets(section string) bool {
+	for _, line := range strings.Split(section, "\n") {
+		if isMarkdownBullet(line) && issueMentionRE.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func issueScopedRemainderSection(section string, ref ClaimedRef, defaultRepo string) string {
+	var scoped []string
+	lines := strings.Split(section, "\n")
+	for i := 0; i < len(lines); i++ {
+		if !isMarkdownBullet(lines[i]) || !lineMentionsIssue(lines[i], ref, defaultRepo) {
+			continue
+		}
+		scoped = append(scoped, lines[i])
+		for j := i + 1; j < len(lines); j++ {
+			if isMarkdownBullet(lines[j]) {
+				break
+			}
+			scoped = append(scoped, lines[j])
+		}
+	}
+	return strings.TrimSpace(strings.Join(scoped, "\n"))
+}
+
+func isMarkdownBullet(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "+")
+}
+
+var issueMentionRE = regexp.MustCompile(`(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+
+func lineMentionsIssue(line string, ref ClaimedRef, defaultRepo string) bool {
+	for _, match := range issueMentionRE.FindAllStringSubmatch(line, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		issue, err := strconv.Atoi(match[2])
+		if err != nil || issue != ref.Issue {
+			continue
+		}
+		repo := match[1]
+		if repo == "" {
+			repo = defaultRepo
+		}
+		if strings.EqualFold(repo, ref.Repo) {
+			return true
+		}
+	}
+	return false
 }
 
 func refsLineReason(line string, ref ClaimedRef, defaultRepo string) string {
@@ -525,10 +593,10 @@ func remainderSectionNeedsHuman(section string) bool {
 		"need a human",
 		"requires a human",
 		"human-only",
-		"for a human",
-		"by a human",
 		"human must",
-		"applied by hand",
+		"must be applied by hand",
+		"must be done by a human",
+		"must be made by a human",
 	} {
 		if containsAffirmativeHumanOnlyPhrase(lower, phrase) {
 			return true
@@ -544,18 +612,21 @@ func containsAffirmativeHumanOnlyPhrase(text, phrase string) bool {
 			return false
 		}
 		abs := start + idx
-		prefixStart := abs - 24
-		if prefixStart < 0 {
-			prefixStart = 0
-		}
-		prefix := text[prefixStart:abs]
-		if !strings.Contains(prefix, "not ") && !strings.Contains(prefix, "no ") &&
-			!strings.Contains(prefix, "does not ") && !strings.Contains(prefix, "doesn't ") &&
-			!strings.Contains(prefix, "without ") && !strings.Contains(prefix, "never ") {
+		if !directlyNegatesHumanPhrase(text[:abs]) {
 			return true
 		}
 		start = abs + len(phrase)
 	}
+}
+
+func directlyNegatesHumanPhrase(prefix string) bool {
+	prefix = strings.TrimSpace(prefix)
+	for _, negation := range []string{"does not", "doesn't", "do not", "don't", "not", "no", "never"} {
+		if strings.HasSuffix(prefix, negation) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasIssueNeedsHumanLabel(labels []string) bool {
@@ -580,7 +651,7 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 	if len(refs) == 0 {
 		return nil
 	}
-	if err := c.ensureSweepComment(ctx, owner, repo, number, renderRefsRemainderComment(refs)); err != nil {
+	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs)); err != nil {
 		return err
 	}
 	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
@@ -590,6 +661,119 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 		}
 	}
 	return nil
+}
+
+func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo string, number int, desiredBody string) error {
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return err
+	}
+	desiredPRs := sweepCommentPRNumbers(desiredBody)
+	for _, cm := range comments {
+		if cm == nil || !strings.Contains(cm.GetBody(), taskListSweepMarker) {
+			continue
+		}
+		if cm.GetBody() == desiredBody {
+			return nil
+		}
+		currentPRs := sweepCommentPRNumbers(cm.GetBody())
+		if hasPRsOutsideSet(currentPRs, desiredPRs) {
+			desiredBody = mergeRefsRemainderCommentBodies(cm.GetBody(), desiredBody)
+			if cm.GetBody() == desiredBody {
+				return nil
+			}
+		}
+		_, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(desiredBody)})
+		if err != nil {
+			return fmt.Errorf("editing Refs remainder comment on %s/%s#%d: %w", owner, repo, number, err)
+		}
+		return nil
+	}
+	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desiredBody)})
+	if err != nil {
+		return fmt.Errorf("creating Refs remainder comment on %s/%s#%d: %w", owner, repo, number, err)
+	}
+	return nil
+}
+
+var sweepCommentPRLineRE = regexp.MustCompile(`(?m)^- #(\d+)\b.*https?://\S+/pull/\d+`)
+
+func sweepCommentPRNumbers(body string) map[int]bool {
+	out := map[int]bool{}
+	for _, match := range sweepCommentPRLineRE.FindAllStringSubmatch(body, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		n, err := strconv.Atoi(match[1])
+		if err == nil && n > 0 {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+func hasPRsOutsideSet(have, want map[int]bool) bool {
+	for n := range have {
+		if !want[n] {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeRefsRemainderCommentBodies(existingBody, desiredBody string) string {
+	existingBlocks := sweepCommentPRBlocks(existingBody)
+	desiredPRs := sweepCommentPRNumbers(desiredBody)
+	var agedOut []int
+	for n := range existingBlocks {
+		if !desiredPRs[n] {
+			agedOut = append(agedOut, n)
+		}
+	}
+	if len(agedOut) == 0 {
+		return desiredBody
+	}
+	sort.Ints(agedOut)
+	footer := "_This comment is edited in place by the task-list sweep on every cycle; it is not duplicated._"
+	insertAt := strings.Index(desiredBody, footer)
+	if insertAt < 0 {
+		insertAt = len(desiredBody)
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(desiredBody[:insertAt], "\n"))
+	b.WriteString("\n")
+	for _, n := range agedOut {
+		b.WriteString("\n")
+		b.WriteString(strings.TrimRight(existingBlocks[n], "\n"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(desiredBody[insertAt:])
+	return b.String()
+}
+
+func sweepCommentPRBlocks(body string) map[int]string {
+	blocks := map[int]string{}
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		match := sweepCommentPRLineRE.FindStringSubmatch(lines[i])
+		if len(match) < 2 {
+			continue
+		}
+		n, err := strconv.Atoi(match[1])
+		if err != nil || n <= 0 {
+			continue
+		}
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if sweepCommentPRLineRE.MatchString(lines[j]) || strings.HasPrefix(lines[j], "_This comment is edited in place") {
+				end = j
+				break
+			}
+		}
+		blocks[n] = strings.Join(lines[i:end], "\n")
+	}
+	return blocks
 }
 
 func renderRefsRemainderComment(merged []mergedPRRef) string {
