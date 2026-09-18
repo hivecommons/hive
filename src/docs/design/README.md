@@ -20,6 +20,17 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [Escalation surfaces: email and push](escalation-surfaces.md) — **design
+  only / proposed.** Track 6 of the v6 epic (#7563): a severity-routed
+  `pkg/escalate` fan-out feeding SMTP mail (immediate escalations + daily
+  digest) and push/on-call sinks (ntfy, Pushover, PagerDuty), with inbound
+  reply-to-act email deliberately last and defaulting off.
+
+- [Slack integration on the chat spine](slack-integration.md) — **shipped
+  (v6).** Track 3 of the v6 epic (#7563): Socket Mode transport as a pure
+  `chat.Backend`, mrkdwn translation at `Send`, fail-closed allowlist kept in
+  the spine. Phase PR A landed; Events API accelerator remains future work.
+
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
 - [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **declined** (RFC #6235 closed; #6111 on hold).
   Design for per-repo ACMM targets, gap-to-work reconciliation, explicit
