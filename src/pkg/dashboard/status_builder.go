@@ -1385,7 +1385,7 @@ func AttachReviewLinks(payload *StatusPayload, links map[string]github.ReviewLin
 			if !ok {
 				continue
 			}
-			link, ok := links[github.ReviewLinkKey(fp.Repo, fp.Number)]
+			link, ok := lookupReviewLink(links, payload.Repos[ri].Full, fp.Repo, fp.Number)
 			if !ok || link.URL == "" {
 				continue
 			}
@@ -1399,6 +1399,33 @@ func AttachReviewLinks(payload *StatusPayload, links map[string]github.ReviewLin
 			payload.Repos[ri].OpenPrs[pi] = fp
 		}
 	}
+}
+
+// lookupReviewLink resolves a snapshot PR against the review-links ledger,
+// tolerating the two spellings of a repository that meet here.
+//
+// The ledger is written by the review relay, which records the full
+// "owner/repo" it submitted against. A snapshot PR's Repo, by contrast, is
+// the BARE repository name ("common", not "projectbluefin/common"), because
+// the repo card already carries the owner in FrontendRepo.Full. Keying the
+// lookup on FrontendPR.Repo alone therefore asked for "common#1121" against a
+// ledger holding "projectbluefin/common#1121" and missed every time, so no PR
+// in the queue ever received a review pill even when the hive had reviewed it
+// minutes earlier. The unit tests did not catch it because they built the
+// payload with full names on the PRs, which production never does.
+//
+// The full name is tried first: it is what the relay records, and it is
+// unambiguous when two configured repos share a bare name across owners.
+func lookupReviewLink(links map[string]github.ReviewLink, full, repo string, number int) (github.ReviewLink, bool) {
+	for _, name := range []string{full, repo} {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		if link, ok := links[github.ReviewLinkKey(name, number)]; ok {
+			return link, true
+		}
+	}
+	return github.ReviewLink{}, false
 }
 
 func CollectAgentStats(payload *StatusPayload) map[string]map[string]any {

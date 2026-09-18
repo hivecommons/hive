@@ -1,0 +1,1 @@
+- Fix the PR review pill never appearing on repo cards. The review-links ledger is keyed by the full `owner/repo` the review relay recorded, but each PR in the status snapshot carries only the bare repository name, so every lookup missed and no reviewed PR was ever marked — on one hive, 194 open PRs and a populated ledger produced zero pills.
