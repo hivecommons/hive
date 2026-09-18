@@ -15,6 +15,8 @@ type fakeGH struct {
 	ack      int64
 	count    int
 	countErr error
+	ackErr   error
+	listErr  error
 	events   []Event
 	listed   bool
 }
@@ -22,9 +24,15 @@ type fakeGH struct {
 func (f *fakeGH) AppBotLogin() string { return f.app }
 func (f *fakeGH) ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error) {
 	f.listed = true
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return f.events, nil
 }
 func (f *fakeGH) CreateMentionAck(ctx context.Context, repo string, commentID int64, reaction string) error {
+	if f.ackErr != nil {
+		return f.ackErr
+	}
 	f.ack = commentID
 	return nil
 }
