@@ -68,7 +68,7 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 hive-open-pr --repo "$HIVE_REPO" \
   --base "<target-branch>" \
   --title "fix: <short description>" \
-  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why)\n\n---\n*Filed by sec-check agent (ACMM L6 — full mode)*" \
+  --body "## Security Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by sec-check agent (ACMM L6 — full mode)*" \
   --issues <issue-number> \
   --label "security"
 ```

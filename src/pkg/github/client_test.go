@@ -145,6 +145,7 @@ func TestEnumerateActionable_BasicCounts(t *testing.T) {
 		{Number: 2, Title: "bug two", User: wireUser{"bob"}, Labels: []wireLabel{{Name: "enhancement"}}, CreatedAt: hoursAgo(1)},
 		{Number: 3, Title: "held issue", User: wireUser{"carol"}, Labels: []wireLabel{{Name: "hold"}}, CreatedAt: hoursAgo(1)},
 		{Number: 4, Title: "exempt issue", User: wireUser{"dave"}, Labels: []wireLabel{{Name: "LFX mentorship"}}, CreatedAt: hoursAgo(1)},
+		{Number: 6, Title: "needs human issue", User: wireUser{"fran"}, Labels: []wireLabel{{Name: issueNeedsHumanLabel}}, CreatedAt: hoursAgo(1)},
 		// This entry has pull_request set so it should be skipped by fetchIssues.
 		// Must have a valid CreatedAt or go-github fails to parse the whole response.
 		{Number: 5, Title: "a PR returned in issues", User: wireUser{"eve"}, CreatedAt: hoursAgo(1), PullRequest: &struct{}{}},
@@ -166,7 +167,7 @@ func TestEnumerateActionable_BasicCounts(t *testing.T) {
 		t.Fatalf("EnumerateActionable: %v", err)
 	}
 
-	// 2 actionable issues (1 held, 1 exempt, 1 PR-in-issues skipped)
+	// 2 actionable issues (1 held, 1 exempt, 1 needs-human, 1 PR-in-issues skipped)
 	if result.Issues.Count != 2 {
 		t.Errorf("Issues.Count = %d, want 2", result.Issues.Count)
 	}

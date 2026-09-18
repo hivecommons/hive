@@ -131,9 +131,9 @@ func (c *Client) validatePRRequestBody(req PRRequest) string {
 	}
 	if len(missing) > 0 {
 		return fmt.Sprintf("request declares originating issue(s) %s but the PR body never references them — "+
-			"the body must carry a \"Closes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open). "+
+			"the body must carry a \"Closes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open; use \"Refs %s (needs-human: <reason>)\" when the remainder requires a human). "+
 			"A missing line usually means the body was truncated or replaced; re-run hive-open-pr with the full body",
-			strings.Join(missing, ", "), missing[0], missing[0])
+			strings.Join(missing, ", "), missing[0], missing[0], missing[0])
 	}
 	return ""
 }

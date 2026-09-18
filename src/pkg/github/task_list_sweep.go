@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,6 +75,8 @@ type TaskListSweepResult struct {
 // unticked, "x" (case-insensitive) means ticked. Bullet markers `-`, `*` and
 // `+` are all valid GFM task-list bullets.
 var taskListCheckboxRE = regexp.MustCompile(`^[ \t]*[-*+] \[( |[xX])\](?:\s|$)`)
+
+const issueNeedsHumanLabel = "needs-human"
 
 // fenceOpenRE recognises fenced code blocks. A run of THREE OR MORE backticks
 // (or tildes) at the start of a line opens a fence; the same character with
@@ -220,18 +223,18 @@ func issueLabelNames(labels []*gh.Label) []string {
 // bodies are fully ticked AND for which at least one merged PR references the
 // issue. Matches the acceptance criteria in #7071:
 //
-//  - only closes when 100% of checkboxes are checked AND ≥1 referencing PR is
-//    merged (a pre-ticked task list with no work landed does NOT close);
-//  - closure comment names the merged PRs that satisfied it;
-//  - partial completion posts an idempotent progress comment (updated in
-//    place on later cycles via the taskListSweepMarker) listing the
-//    outstanding items and the PRs that landed so far — never a duplicate;
-//  - respects the existing exempt/hold mechanism (Client.isExempt) rather
-//    than adding a second one; does not touch or fight the 72h weak-claim
-//    ledger in prclaims.go — that ledger governs AGENT DISPATCH, this sweep
-//    governs ISSUE CLOSURE. When this sweep closes an issue the ledger's
-//    72h deferral becomes moot naturally (the issue is closed, no dispatch
-//    can happen), which is the intended interaction — see #6867.
+//   - only closes when 100% of checkboxes are checked AND ≥1 referencing PR is
+//     merged (a pre-ticked task list with no work landed does NOT close);
+//   - closure comment names the merged PRs that satisfied it;
+//   - partial completion posts an idempotent progress comment (updated in
+//     place on later cycles via the taskListSweepMarker) listing the
+//     outstanding items and the PRs that landed so far — never a duplicate;
+//   - respects the existing exempt/hold mechanism (Client.isExempt) rather
+//     than adding a second one; does not touch or fight the 72h weak-claim
+//     ledger in prclaims.go — that ledger governs AGENT DISPATCH, this sweep
+//     governs ISSUE CLOSURE. When this sweep closes an issue the ledger's
+//     72h deferral becomes moot naturally (the issue is closed, no dispatch
+//     can happen), which is the intended interaction — see #6867.
 //
 // Cap MaxCloses per tick (mirrors DefaultAutoMergeSweepMaxMerges).
 func (c *Client) SweepCompletedTaskListIssues(ctx context.Context, opts TaskListSweepOptions) (*TaskListSweepResult, error) {
@@ -321,10 +324,13 @@ func (c *Client) listOpenIssuesForTaskListSweep(ctx context.Context, owner, repo
 // gate: #7071 is explicit that a merged `Refs #N` is exactly the case the
 // sweep exists to remediate.
 type mergedPRRef struct {
-	Number   int
-	Title    string
-	URL      string
-	MergedAt time.Time
+	Number     int
+	Title      string
+	URL        string
+	MergedAt   time.Time
+	Reference  bool
+	Remainder  string
+	NeedsHuman bool
 }
 
 // collectMergedReferencingPRs walks the repo's closed-PR list once per tick
@@ -362,6 +368,7 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 				continue
 			}
 			text := pr.GetTitle() + "\n" + pr.GetBody()
+			bodyRefs := refsRemainderMetadata(pr.GetBody(), displayRepo)
 			// Both closing refs (Fixes/Closes) and non-closing refs (Refs)
 			// count. #7071 exists precisely because a merged `Refs #N`
 			// leaves the issue open; the sweep must therefore accept it.
@@ -375,11 +382,15 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 					continue
 				}
 				seen[ref.Issue] = true
+				meta := bodyRefs[claimKey(strings.ToLower(ref.Repo), ref.Issue)]
 				out[ref.Issue] = append(out[ref.Issue], mergedPRRef{
-					Number:   pr.GetNumber(),
-					Title:    pr.GetTitle(),
-					URL:      pr.GetHTMLURL(),
-					MergedAt: mergedAt,
+					Number:     pr.GetNumber(),
+					Title:      pr.GetTitle(),
+					URL:        pr.GetHTMLURL(),
+					MergedAt:   mergedAt,
+					Reference:  meta.Reference,
+					Remainder:  meta.Remainder,
+					NeedsHuman: meta.NeedsHuman,
 				})
 			}
 		}
@@ -389,6 +400,232 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+type refsRemainderMeta struct {
+	Reference  bool
+	Remainder  string
+	NeedsHuman bool
+}
+
+var explicitNeedsHumanRefRE = regexp.MustCompile(`(?i)\b(?:refs|ref|references|referencing)\b[^\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)\s*\(\s*needs-human\s*:\s*([^)]+)\)`)
+
+// refsRemainderMetadata extracts the auditable remainder text for non-closing
+// Refs lines. The explicit needs-human marker is authoritative; prose only
+// counts when it appears in a deliberately named remainder section.
+func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMeta {
+	out := map[string]refsRemainderMeta{}
+	section := extractRemainderSection(body)
+	sectionNeedsHuman := remainderSectionNeedsHuman(section)
+	for _, line := range strings.Split(body, "\n") {
+		for _, ref := range ParseReferencedIssues(line, defaultRepo) {
+			key := claimKey(strings.ToLower(ref.Repo), ref.Issue)
+			meta := out[key]
+			meta.Reference = true
+			if meta.Remainder == "" {
+				meta.Remainder = refsLineReason(line, ref, defaultRepo)
+			}
+			out[key] = meta
+		}
+	}
+	for _, match := range explicitNeedsHumanRefRE.FindAllStringSubmatch(body, -1) {
+		if len(match) < 4 {
+			continue
+		}
+		issue, err := strconv.Atoi(match[2])
+		if err != nil || issue <= 0 {
+			continue
+		}
+		repo := match[1]
+		if repo == "" {
+			repo = defaultRepo
+		}
+		key := claimKey(strings.ToLower(repo), issue)
+		meta := out[key]
+		meta.Reference = true
+		meta.NeedsHuman = true
+		if reason := strings.TrimSpace(match[3]); reason != "" {
+			meta.Remainder = reason
+		}
+		out[key] = meta
+	}
+	if strings.TrimSpace(section) != "" {
+		for key, meta := range out {
+			meta.Remainder = strings.TrimSpace(section)
+			meta.NeedsHuman = meta.NeedsHuman || sectionNeedsHuman
+			out[key] = meta
+		}
+	}
+	return out
+}
+
+func refsLineReason(line string, ref ClaimedRef, defaultRepo string) string {
+	matches := referenceRefPattern.FindAllStringSubmatchIndex(line, -1)
+	for _, idx := range matches {
+		if len(idx) < 8 {
+			continue
+		}
+		issue, err := strconv.Atoi(line[idx[6]:idx[7]])
+		if err != nil || issue != ref.Issue {
+			continue
+		}
+		repo := defaultRepo
+		if idx[4] >= 0 {
+			repo = line[idx[4]:idx[5]]
+		}
+		if !strings.EqualFold(repo, ref.Repo) {
+			continue
+		}
+		return cleanRemainderReason(line[idx[1]:])
+	}
+	return ""
+}
+
+func cleanRemainderReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	reason = explicitNeedsHumanRefRE.ReplaceAllString(reason, "")
+	reason = strings.TrimSpace(reason)
+	reason = strings.TrimLeft(reason, "—-:;., \t")
+	return strings.TrimSpace(reason)
+}
+
+func extractRemainderSection(body string) string {
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		heading = strings.TrimSpace(strings.Trim(heading, "*:"))
+		lower := strings.ToLower(heading)
+		if strings.Contains(lower, "what remains") || strings.Contains(lower, "what this deliberately leaves undone") {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+			end = i
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+}
+
+func remainderSectionNeedsHuman(section string) bool {
+	lower := strings.ToLower(section)
+	for _, phrase := range []string{
+		"needs a human",
+		"need a human",
+		"requires a human",
+		"human-only",
+		"for a human",
+		"by a human",
+		"human must",
+		"applied by hand",
+	} {
+		if containsAffirmativeHumanOnlyPhrase(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAffirmativeHumanOnlyPhrase(text, phrase string) bool {
+	for start := 0; ; {
+		idx := strings.Index(text[start:], phrase)
+		if idx < 0 {
+			return false
+		}
+		abs := start + idx
+		prefixStart := abs - 24
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:abs]
+		if !strings.Contains(prefix, "not ") && !strings.Contains(prefix, "no ") &&
+			!strings.Contains(prefix, "does not ") && !strings.Contains(prefix, "doesn't ") &&
+			!strings.Contains(prefix, "without ") && !strings.Contains(prefix, "never ") {
+			return true
+		}
+		start = abs + len(phrase)
+	}
+}
+
+func hasIssueNeedsHumanLabel(labels []string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), issueNeedsHumanLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef) error {
+	refs := make([]mergedPRRef, 0, len(mergedRefs))
+	needsHuman := false
+	for _, ref := range mergedRefs {
+		if !ref.Reference {
+			continue
+		}
+		refs = append(refs, ref)
+		needsHuman = needsHuman || ref.NeedsHuman
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	if err := c.ensureSweepComment(ctx, owner, repo, number, renderRefsRemainderComment(refs)); err != nil {
+		return err
+	}
+	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
+		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueNeedsHumanLabel})
+		if err != nil {
+			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
+		}
+	}
+	return nil
+}
+
+func renderRefsRemainderComment(merged []mergedPRRef) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, taskListSweepMarker)
+	fmt.Fprintln(&b, "A merged PR referenced this issue without closing it. Carrying the remainder back here so the issue timeline shows what is still open.")
+	fmt.Fprintln(&b)
+	for _, ref := range sortedMergedRefs(merged) {
+		title := strings.TrimSpace(ref.Title)
+		fmt.Fprintf(&b, "- #%d", ref.Number)
+		if title != "" {
+			fmt.Fprintf(&b, " — %s", title)
+		}
+		if ref.URL != "" {
+			fmt.Fprintf(&b, " (%s)", ref.URL)
+		}
+		if ref.NeedsHuman {
+			fmt.Fprint(&b, " — needs human")
+		}
+		fmt.Fprintln(&b)
+		if strings.TrimSpace(ref.Remainder) != "" {
+			fmt.Fprintln(&b)
+			fmt.Fprintln(&b, "Remainder from the PR body:")
+			fmt.Fprintln(&b)
+			fmt.Fprintln(&b, strings.TrimSpace(ref.Remainder))
+			fmt.Fprintln(&b)
+		}
+	}
+	fmt.Fprintln(&b, "_This comment is edited in place by the task-list sweep on every cycle; it is not duplicated._")
+	return b.String()
+}
+
+func sortedMergedRefs(merged []mergedPRRef) []mergedPRRef {
+	sorted := append([]mergedPRRef(nil), merged...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Number < sorted[j].Number })
+	return sorted
 }
 
 // trySweepTaskListIssue evaluates one issue against every gate in order. reason
@@ -401,17 +638,21 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 	if !isHiveFiledIssue(issue) {
 		return TaskListSweepEvent{}, taskListReasonNotHiveFiled, nil
 	}
-	if c.isExempt(issueLabelNames(issue.Labels)) {
+	labels := issueLabelNames(issue.Labels)
+	if c.isExempt(labels) || hasIssueNeedsHumanLabel(labels) {
 		return TaskListSweepEvent{}, taskListReasonExempt, nil
 	}
 	body := issue.GetBody()
 	checked, unchecked := countTaskListBoxes(body)
-	if checked+unchecked == 0 {
-		return TaskListSweepEvent{}, taskListReasonNoBoxes, nil
-	}
 	number := issue.GetNumber()
 
 	mergedRefs := mergedByIssue[number]
+	if checked+unchecked == 0 {
+		if err := c.tryAnnotateNonTaskListRefs(ctx, owner, repo, number, issueLabelNames(issue.Labels), mergedRefs); err != nil {
+			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("Refs remainder comment on %s#%d: %w", displayRepo, number, err)
+		}
+		return TaskListSweepEvent{}, taskListReasonNoBoxes, nil
+	}
 	if len(mergedRefs) == 0 {
 		// #7071 gate: no merged referencing PR ⇒ the task list has not been
 		// answered by anything landed on main yet. A pre-ticked list with no
@@ -513,9 +754,7 @@ func renderClosureComment(boxes int, merged []mergedPRRef) string {
 // two ticks whose merged set is unchanged produce byte-identical bodies — the
 // property ensureSweepComment relies on to elide no-op edits.
 func writeMergedList(b *strings.Builder, merged []mergedPRRef) {
-	sorted := append([]mergedPRRef(nil), merged...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Number < sorted[j].Number })
-	for _, r := range sorted {
+	for _, r := range sortedMergedRefs(merged) {
 		title := strings.TrimSpace(r.Title)
 		if r.URL != "" {
 			fmt.Fprintf(b, "- #%d — %s\n", r.Number, title)

@@ -1673,7 +1673,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: ask does merging this PR leave anything for that issue to track? If nothing, write `Closes #<issue>` — the default, auto-closes on merge. Use `Refs #<issue>` or `Part of #<issue>` (non-closing) only for an epic/multi-phase tracker or a deliberately partial fix, and say on the same line what remains and why. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: ask does merging this PR leave anything for that issue to track? If nothing, write `Closes #<issue>` — the default, auto-closes on merge. Use `Refs #<issue>` or `Part of #<issue>` (non-closing) only for an epic/multi-phase tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder needs a human, write `Refs #<issue> (needs-human: <reason>)`. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 
@@ -1916,7 +1916,8 @@ func (s *Scheduler) ghAuthInstructions() string {
   merge. An issue the PR fixed but never closes stays open as standing noise
   for the maintainers. Write ` + "`Refs #N`" + ` (non-closing) ONLY when part of
   issue N is deliberately left open — an epic/multi-phase tracker, or a
-  partial fix — and say on the SAME line what is left and why. Never use Refs
+  partial fix — and say on the SAME line what is left and why. If the
+  remainder requires a human, write ` + "`Refs #N (needs-human: <reason>)`" + `. Never use Refs
   as the cautious default.
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
   or raw 'gh pr create' — those author the PR as the Copilot login user. 'gh pr create'
