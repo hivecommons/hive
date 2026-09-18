@@ -300,6 +300,81 @@ if [[ "$omp_detect_output" != "UNVERIFIED" ]]; then
 fi
 echo "contributor-agent OMP knowledge and preflight tests passed"
 
+# ── NOT_INSTALLED names the image, not auth (#7661) ─────────────────────
+#
+# `just contribute-hive omp` (container mode) died with `omp CLI not found.
+# Install it and try again.` because the image did not ship omp; the host
+# copy `contribute-setup` had probed is not mounted. "Install it" is not
+# something the operator can do inside the image, so inside the container
+# the entrypoint must name the image as the cause and print the one command
+# that does run — local mode with the backend's unconfined opt-in. Outside
+# the container (a derived image's host-side reuse, k8s pods built from
+# another base) the plain message stays. The container predicate is stubbed
+# through the same HIVE_PRE_AGENT_HOOK seam the codex sandbox probe uses.
+run_missing_cli_startup() {
+  # $1: stub for codex_inside_contributor_container's return
+  local in_container="$1"
+  env -i \
+    PATH="${CORE_PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_PRE_AGENT_HOOK="codex_inside_contributor_container(){ return ${in_container}; }" \
+    AGENT_BACKEND=omp \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+}
+
+missing_in_container_rc=0
+missing_in_container_output="$(run_missing_cli_startup 0)" || missing_in_container_rc=$?
+if [[ "$missing_in_container_rc" -ne 1 ]]; then
+  echo "expected a missing omp binary to exit 1 at startup; got rc=${missing_in_container_rc}:" >&2
+  echo "$missing_in_container_output" >&2
+  exit 1
+fi
+for want in \
+  "ERROR: omp CLI not found." \
+  "omp is not in the contributor image" \
+  "HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1 just contribute-hive omp local"; do
+  case "$missing_in_container_output" in
+    *"$want"* ) ;;
+    *)
+      echo "expected the in-container missing-CLI error to say '${want}'; got:" >&2
+      echo "$missing_in_container_output" >&2
+      exit 1
+      ;;
+  esac
+done
+case "$missing_in_container_output" in
+  *"Install it and try again."* )
+    echo "in-container missing-CLI error must not tell the operator to install into the image; got:" >&2
+    echo "$missing_in_container_output" >&2
+    exit 1
+    ;;
+esac
+
+missing_on_host_rc=0
+missing_on_host_output="$(run_missing_cli_startup 1)" || missing_on_host_rc=$?
+if [[ "$missing_on_host_rc" -ne 1 ]]; then
+  echo "expected a missing omp binary outside the container to exit 1; got rc=${missing_on_host_rc}" >&2
+  exit 1
+fi
+case "$missing_on_host_output" in
+  *"Install it and try again."* ) ;;
+  *)
+    echo "expected the outside-container missing-CLI error to keep 'Install it and try again.'; got:" >&2
+    echo "$missing_on_host_output" >&2
+    exit 1
+    ;;
+esac
+case "$missing_on_host_output" in
+  *"not in the contributor image"* )
+    echo "outside the container the error must not blame the image; got:" >&2
+    echo "$missing_on_host_output" >&2
+    exit 1
+    ;;
+esac
+echo "contributor-agent missing-CLI cause tests passed"
+
 # The codex --sandbox VALUE is PROBED at launch (kubestellar/hive#6653; see
 # codex_default_sandbox_mode in config/backends.conf), so a bare assertion of
 # "workspace-write" would silently mean "whatever the machine running this

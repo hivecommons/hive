@@ -509,7 +509,29 @@ STATUS=$(detect_cli "$AGENT_BACKEND")
 case "$STATUS" in
   NOT_INSTALLED)
     echo "ERROR: $AGENT_BACKEND CLI not found."
-    echo "Install it and try again."
+    # Inside the contributor image "install it" is not something the operator
+    # can do — the image is what ships the CLI, and the host copy that
+    # `just contribute-setup` probed is not mounted. Say so, and print the
+    # command that does run: local mode uses the host CLI (#7661). The
+    # predicate is the root-owned marker src/Dockerfile.contributor bakes in,
+    # the same one the codex sandbox probe keys off.
+    if declare -F codex_inside_contributor_container >/dev/null 2>&1 \
+        && codex_inside_contributor_container; then
+      echo "$AGENT_BACKEND is not in the contributor image, so container mode cannot run it."
+      echo "(Your host's $AGENT_BACKEND, if any, is not what the container sees.)"
+      _UNCONFINED_VAR=""
+      if declare -F unconfined_local_backend_env_var >/dev/null 2>&1; then
+        _UNCONFINED_VAR="$(unconfined_local_backend_env_var "$AGENT_BACKEND")"
+      fi
+      if [[ -n "$_UNCONFINED_VAR" ]]; then
+        echo "To run it with the host CLI instead (no sandbox — see docs/backend-setup.md):"
+        echo "  ${_UNCONFINED_VAR}=1 just contribute-hive $AGENT_BACKEND local"
+      else
+        echo "To run it with the host CLI instead: just contribute-hive $AGENT_BACKEND local"
+      fi
+    else
+      echo "Install it and try again."
+    fi
     exit 1
     ;;
   NOT_AUTHED)

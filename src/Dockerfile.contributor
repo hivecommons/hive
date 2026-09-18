@@ -259,6 +259,57 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        echo "agy install skipped"; \
      fi
 
+# Install OMP (Oh My Pi, backend: omp). Until this layer existed the image did
+# not ship omp at all, so `just contribute-hive omp` — container mode, the
+# default — pulled the image and died at detect_cli with `omp CLI not found`
+# while `just contribute-setup omp` had just said the (host) CLI was ready
+# (#7661). Container mode is the documented boundary for omp (it has no
+# sandbox of its own to wire in local mode), so the image has to carry it.
+#
+# Upstream's documented install is a curl-pipe-to-shell script from omp.sh,
+# which resolves the release at run time and pins nothing. Not used. Every release
+# on github.com/can1357/oh-my-pi ships per-platform standalone binaries plus
+# a SHA256SUMS.txt; the pins below are that file's entries for the glibc
+# Linux builds (the installer picks `omp-linux-<arch>` on glibc and the
+# `-musl-` variants only on Alpine; this image is Debian). Verified against a
+# real download of both binaries before landing. Bump OMP_VERSION and both
+# digests together.
+#
+# ~250 MB (amd64) / ~210 MB (arm64) uncompressed — a Bun single-file
+# executable, the same size class as muse and agy. Its own layer for the same
+# reason agy is.
+#
+# Download failures are tolerated, matching Goose and agy: omp is an optional
+# contributor backend and a GitHub Releases outage must not block every other
+# backend's image. Absence stays loud, not silent — detect_cli's `command -v`
+# gate returns NOT_INSTALLED and bin/contributor-agent.sh now names the image
+# as the cause. Checksum mismatches are never tolerated: the `if` covers only
+# the curl step, never the verify/install steps.
+#
+# No credential is baked in: omp reads the selected model's provider
+# credential from its documented environment variables (ANTHROPIC_API_KEY,
+# OPENAI_API_KEY, …), which the Justfile's container arm already forwards.
+ARG OMP_VERSION=18.2.6
+ARG OMP_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
+ARG OMP_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
+       arm64) OMP_ASSET=omp-linux-arm64; OMP_SHA256="$OMP_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for omp: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 600 \
+       "https://github.com/can1357/oh-my-pi/releases/download/v${OMP_VERSION}/${OMP_ASSET}" \
+       -o /tmp/omp; then \
+       echo "${OMP_SHA256}  /tmp/omp" | sha256sum -c - \
+       && install -m 0755 /tmp/omp /usr/local/bin/omp \
+       && rm -f /tmp/omp \
+       && omp --version; \
+     else \
+       echo "WARN: omp download failed — skipping (backend: omp will be unavailable)"; \
+     fi
+
 # Install Pi CLI (pi.dev coding agent). Do not use pi.dev's curl-pipe-to-shell
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
