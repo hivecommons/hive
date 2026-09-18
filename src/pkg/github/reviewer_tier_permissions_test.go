@@ -9,14 +9,18 @@ import (
 	"time"
 )
 
-// Regression tests for #7469. The reviewer runs in ADVISORY mode, and the
-// advisor tier is read-only on pull requests — so a reviewer could compute a
-// verdict but never say it out loud. Its only consumer was the merge
-// eligibility gate, which on a spoke that does not auto-merge means the review
-// was computed and discarded.
+// Regression tests for #7469 and #7487. #7469 gave the reviewer tier
+// pull_requests:write so an ADVISORY reviewer could say its verdict out loud.
+// #7487 narrowed it back to read: hive already had a sanctioned route to the
+// same outcome — the review-request relay in review_request_watcher.go, where
+// the GOVERNOR submits the review with the App token, so it is authored by the
+// App bot, lands on the audit/activity trail, and passes through the
+// fail-closed canary scan. A direct-token review does none of those things.
 //
-// The reviewer tier upgrades exactly one permission. The tests below pin both
-// halves: that it gained the ability to speak, and that it gained nothing else.
+// The tests below pin that the reviewer tier is read-only on pull requests and
+// that it gained nothing else. The pull_requests assertion pins the VALUE, not
+// merely the key's presence: an assertion that only checked presence is what
+// would let a silent re-widening back to write slip through.
 
 // mintTierPermissions captures the permission set a tier asks GitHub for.
 func mintTierPermissions(t *testing.T, tier string) map[string]string {
@@ -40,19 +44,36 @@ func mintTierPermissions(t *testing.T, tier string) map[string]string {
 	return got
 }
 
-// The capability the reviewer exists to use: pull_requests:write is what lets
-// it submit a PR review carrying a body, and request reviewers to route work
-// to the right human.
-func TestScopedToken_ReviewerTierCanWritePullRequests(t *testing.T) {
+// #7487: the reviewer reads the pull request and routes its verdict through
+// the audited relay; it does not write to the PR with its own token. Pinning
+// the exact value — not the key's presence — is the point of this test.
+func TestScopedToken_ReviewerTierPullRequestsIsReadOnly(t *testing.T) {
 	perms := mintTierPermissions(t, "reviewer")
 
-	if got := perms["pull_requests"]; got != "write" {
-		t.Errorf("reviewer tier requested pull_requests=%q, want %q — without it the reviewer cannot post the verdict it just computed", got, "write")
+	if got := perms["pull_requests"]; got != "read" {
+		t.Errorf("reviewer tier requested pull_requests=%q, want %q — the reviewer posts its verdict through the review-request relay, which is authored by the App bot, recorded on the audit trail, and canary-scanned; a direct-token write bypasses all three", got, "read")
 	}
 	// Reviewing is grounded in reading the tree at the merge base; without
 	// contents:read every tarball fetch 403s (#4289).
 	if got := perms["contents"]; got != "read" {
 		t.Errorf("reviewer tier requested contents=%q, want %q", got, "read")
+	}
+	if got := perms["metadata"]; got != "read" {
+		t.Errorf("reviewer tier requested metadata=%q, want %q", got, "read")
+	}
+}
+
+// The reviewer tier must stay permission-identical to the advisor tier it is
+// named apart from. The role plumbing (agentmode.TokenTierForRole) is what the
+// distinct tier name exists for; the permission level is not part of it.
+func TestScopedToken_ReviewerTierMatchesAdvisorPermissions(t *testing.T) {
+	reviewer := mintTierPermissions(t, "reviewer")
+	advisor := mintTierPermissions(t, "advisor")
+
+	for _, key := range []string{"pull_requests", "contents", "metadata", "issues", "workflows", "administration", "checks"} {
+		if reviewer[key] != advisor[key] {
+			t.Errorf("reviewer tier %s=%q but advisor tier %s=%q — the reviewer tier must not widen beyond the advisor tier (#7487)", key, reviewer[key], key, advisor[key])
+		}
 	}
 }
 
@@ -70,6 +91,11 @@ func TestScopedToken_ReviewerTierGainsNothingElse(t *testing.T) {
 	// Merging and pushing both require contents:write.
 	if got := perms["contents"]; got == "write" {
 		t.Error("reviewer tier requested contents=write; merging and pushing must stay impossible")
+	}
+	// #7487: no direct write on the pull request either. The governor
+	// performs the write, not the agent.
+	if got := perms["pull_requests"]; got == "write" {
+		t.Error("reviewer tier requested pull_requests=write; the review must go through the audited relay so it is App-authored, observable, and canary-scanned")
 	}
 	if got, ok := perms["workflows"]; ok {
 		t.Errorf("reviewer tier requested workflows=%q; it must be absent", got)

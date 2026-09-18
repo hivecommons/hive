@@ -322,40 +322,48 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Workflows: gh.Ptr("write"),
 		}
 	case "reviewer":
-		// The reviewer tier is the advisor tier plus the ability to SAY
-		// something on the pull request it just judged.
+		// The reviewer tier is the advisor tier under a distinct name: the
+		// role plumbing (agentmode.TokenTierForRole) stays, the permission
+		// level does not widen.
 		//
-		// A spoke that does not auto-merge gets nothing from an advisor-tier
-		// reviewer: its verdict's only consumer is the merge-eligibility gate
-		// (cmd/hive/main.go, HasAggregateApproval), so on a hive that never
-		// runs a merge sweep the review is computed and then discarded. The
-		// humans whose queue it was meant to help never see it. Giving the
-		// reviewer PullRequests:write turns the verdict into a posted review.
+		// #7469 briefly gave this tier PullRequests:write so an ADVISORY
+		// reviewer could post the verdict it computed rather than write it to
+		// a merge-eligibility file nobody reads on a spoke that never runs a
+		// merge sweep. That grant was narrowed again in #7487, because hive
+		// already had a sanctioned route to the same outcome and it is a
+		// better one: the review-request relay (review_request_watcher.go).
 		//
-		// PullRequests:write — not Issues:write — is deliberate and is what
-		// keeps this tier honest:
+		// Everywhere else in hive the GOVERNOR performs the write, not the
+		// agent — issue_request_watcher.go, pr_request_watcher.go and
+		// merge_request_watcher.go all take a request file from an agent and
+		// execute it with the App token. The review watcher is the review
+		// analogue, and routing through it is not merely equivalent to a
+		// direct `gh pr review`; it is strictly better on three axes:
 		//
-		//   - A PR review with a COMMENT event carries a body and appears on
-		//     the conversation, which is the whole requirement. It also allows
-		//     requesting reviewers, so the reviewer can route a PR to the
-		//     person who should look at it.
-		//   - GitHub has no comment-only permission. Issue comments require
-		//     Issues:write, which ALSO grants issue creation — exactly what
-		//     the advisor tier above refuses on purpose. Staying on
-		//     PullRequests:write preserves that property unchanged: this tier
-		//     still cannot open an issue.
-		//   - Merging requires Contents:write, which is absent here. So the
-		//     reviewer's safety asymmetry survives intact: it can withhold,
-		//     annotate, and route, but there is no call it can make that
-		//     merges anything.
+		//   - Attribution. The relayed review is authored by the App bot. A
+		//     direct-token review is authored by the agent's own identity,
+		//     outside the App's activity trail.
+		//   - Observability. Hive never sees a direct `gh pr review`, so it
+		//     lands on no audit trail and counts toward no activity or SLA
+		//     accounting. The relay records it.
+		//   - Canary / exfiltration. The relay runs review bodies through
+		//     scanCanaryText under a fail-closed contract. A direct-token
+		//     review skips that scan entirely.
+		//
+		// Leaving both routes open would mean the easier one wins, and the
+		// easier one is the one that cannot be observed. So PullRequests
+		// stays at read: the reviewer reads the PR, computes the verdict, and
+		// drops a request file for the governor to submit.
 		//
 		// Contents:read is required for the same reason as the advisor tier:
 		// reading the repository at the merge-base is what makes the review
-		// worth posting (#4289).
+		// worth writing (#4289). Issues is absent on purpose — GitHub cannot
+		// separate commenting on an issue from creating one — and
+		// Contents:write is absent, so merging and pushing stay impossible.
 		perms = &gh.InstallationPermissions{
 			Contents:     gh.Ptr("read"),
 			Metadata:     gh.Ptr("read"),
-			PullRequests: gh.Ptr("write"),
+			PullRequests: gh.Ptr("read"),
 		}
 	case "advisor":
 		// Advisors review agent PRs and audit repo contents — their core
