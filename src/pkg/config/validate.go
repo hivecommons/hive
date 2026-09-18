@@ -89,6 +89,17 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("notifications.telegram.chat_id is required when telegram.enabled is true")
 		}
 	}
+	if c.Notifications.Matrix != nil && c.Notifications.Matrix.Enabled {
+		if strings.TrimSpace(c.Notifications.Matrix.HomeserverURL) == "" {
+			return fmt.Errorf("notifications.matrix.homeserver_url is required when matrix.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.Matrix.AccessToken) == "" {
+			return fmt.Errorf("notifications.matrix.access_token is required when matrix.enabled is true")
+		}
+		if strings.TrimSpace(c.Notifications.Matrix.RoomID) == "" {
+			return fmt.Errorf("notifications.matrix.room_id is required when matrix.enabled is true")
+		}
+	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config
 		// save) and agreeing with what the launcher can actually dispatch. A

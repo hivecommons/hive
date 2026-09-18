@@ -52,6 +52,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/loginscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/matrix"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/notify"
@@ -4089,6 +4090,27 @@ func main() {
 			logger.Warn("telegram bot failed to start", "error", err)
 		} else {
 			logger.Info("telegram bot started", "chat", cfg.Notifications.Telegram.ChatID)
+		}
+	}
+
+	if cfg.Notifications.Matrix != nil && cfg.Notifications.Matrix.Enabled {
+		matrixBot := matrix.NewBot(matrix.Config{
+			HomeserverURL:  cfg.Notifications.Matrix.HomeserverURL,
+			AccessToken:    cfg.Notifications.Matrix.AccessToken,
+			RoomID:         cfg.Notifications.Matrix.RoomID,
+			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
+			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   cfg.Notifications.Matrix.AllowedUsers,
+		}, logger)
+		var agentNameList []string
+		for name := range cfg.EnabledAgents() {
+			agentNameList = append(agentNameList, name)
+		}
+		matrixBot.SetAgentNames(agentNameList)
+		if err := matrixBot.Start(ctx); err != nil {
+			logger.Warn("matrix bot failed to start", "error", err)
+		} else {
+			logger.Info("matrix bot started", "room", cfg.Notifications.Matrix.RoomID)
 		}
 	}
 
@@ -8443,10 +8465,12 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	}
 	discord.SetAgentIdentities(discordIdentities)
 	slack.SetAgentIdentities(discordIdentities)
+	matrix.SetAgentIdentities(discordIdentities)
 	telegram.SetAgentIdentities(discordIdentities)
 	if len(discordAliases) > 0 {
 		discord.SetAgentAliases(discordAliases)
 		slack.SetAgentAliases(discordAliases)
+		matrix.SetAgentAliases(discordAliases)
 		telegram.SetAgentAliases(discordAliases)
 	}
 }

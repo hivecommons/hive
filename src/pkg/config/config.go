@@ -3918,6 +3918,7 @@ func (g GitHubConfig) AppInstallURL() string {
 type NotificationsConfig struct {
 	Ntfy     *NtfyConfig     `yaml:"ntfy,omitempty"`
 	Slack    *SlackConfig    `yaml:"slack,omitempty"`
+	Matrix   *MatrixConfig   `yaml:"matrix,omitempty"`
 	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
 }
@@ -3952,6 +3953,20 @@ type TelegramConfig struct {
 	// can inject prompts into the agents. When empty, command handling is
 	// DISABLED (fail closed) — the bot still posts status but accepts no
 	// commands — so an operator must opt in by listing the trusted user IDs.
+	AllowedUsers []string `yaml:"allowed_users,omitempty"`
+}
+
+type MatrixConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	HomeserverURL string `yaml:"homeserver_url"`
+	AccessToken   string `yaml:"access_token"`
+	RoomID        string `yaml:"room_id"`
+	// AllowedUsers is an allowlist of full Matrix user IDs permitted to issue bot
+	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
+	// SECURITY: without it, any member of the room who can post in the room can
+	// inject prompts into the agents. When empty, command handling is DISABLED
+	// (fail closed) by the chat spine, so an operator must opt in by listing the
+	// trusted MXIDs.
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
