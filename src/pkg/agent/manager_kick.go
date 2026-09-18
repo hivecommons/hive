@@ -99,6 +99,10 @@ func notRunningReason(agent *AgentProcess) string {
 }
 
 func (m *Manager) SendKick(name string, message string) error {
+	return m.SendKickWithSource(name, message, "")
+}
+
+func (m *Manager) SendKickWithSource(name string, message string, source string) error {
 	// Agent-kick span. No-op with zero export cost when tracing is disabled
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
@@ -200,7 +204,11 @@ func (m *Manager) SendKick(name string, message string) error {
 		return err
 	}
 
-	m.deliverKickLocked(agent, message, "send-kick")
+	trigger := "send-kick"
+	if strings.TrimSpace(source) != "" {
+		trigger = strings.TrimSpace(source)
+	}
+	m.deliverKickLocked(agent, message, trigger)
 
 	return nil
 }
@@ -361,6 +369,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	const maxSnippetLen = 120
 	snippet = truncateStr(snippet, maxSnippetLen)
 	record := KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet}
+	if trigger != "send-kick" {
+		record.Source = trigger
+	}
 	if len(agent.KickHistory) >= kickHistoryCapacity {
 		agent.KickHistory = agent.KickHistory[1:]
 	}

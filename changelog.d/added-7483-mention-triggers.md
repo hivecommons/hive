@@ -1,0 +1,1 @@
+- Added poll-based GitHub @-mention triggers so authorized humans can summon one mention-capable agent from issue and PR comments.

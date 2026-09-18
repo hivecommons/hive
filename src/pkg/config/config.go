@@ -711,9 +711,12 @@ type ChannelConfig struct {
 	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
-// ChannelTypeKick is the only channel type with a live trigger runtime:
-// ordinary governor timer kicks.
-const ChannelTypeKick = "kick"
+const (
+	// ChannelTypeKick is ordinary governor timer kicks.
+	ChannelTypeKick = "kick"
+	// ChannelTypeMention is the GitHub @-mention trigger runtime.
+	ChannelTypeMention = "mention"
+)
 
 // IsEnabled returns whether this channel is active (defaults to true).
 func (c *ChannelConfig) IsEnabled() bool {
@@ -1166,6 +1169,15 @@ func (a AgentConfig) BaseName() string {
 func (a *AgentConfig) HasChannel(t string) bool {
 	for _, ch := range a.Channels {
 		if ch.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *AgentConfig) HasEnabledChannel(t string) bool {
+	for _, ch := range a.Channels {
+		if ch.Type == t && ch.IsEnabled() {
 			return true
 		}
 	}
@@ -1726,6 +1738,77 @@ func (r RotationConfig) EffectiveHighVolumeCadenceS() int {
 		return r.HighVolumeCadenceS
 	}
 	return defaultHighVolumeCadenceS
+}
+
+type GitHubMentionsConfig struct {
+	Enabled        bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	PollInterval   time.Duration `yaml:"poll_interval,omitempty" json:"poll_interval,omitempty"`
+	DefaultAgent   string        `yaml:"default_agent,omitempty" json:"default_agent,omitempty"`
+	Summoners      []string      `yaml:"summoners,omitempty" json:"summoners,omitempty"`
+	MinRole        string        `yaml:"min_role,omitempty" json:"min_role,omitempty"`
+	PerUserPerHour int           `yaml:"per_user_per_hour,omitempty" json:"per_user_per_hour,omitempty"`
+	PerRepoPerHour int           `yaml:"per_repo_per_hour,omitempty" json:"per_repo_per_hour,omitempty"`
+	AckReaction    *string       `yaml:"ack_reaction,omitempty" json:"ack_reaction,omitempty"`
+}
+
+const (
+	DefaultMentionPollInterval   = 5 * time.Minute
+	DefaultMentionMinRole        = RoleReadWrite
+	DefaultMentionPerUserPerHour = 6
+	DefaultMentionPerRepoPerHour = 30
+	DefaultMentionAckReaction    = "eyes"
+)
+
+func (m GitHubMentionsConfig) PollIntervalEffective() time.Duration {
+	if m.PollInterval > 0 {
+		return m.PollInterval
+	}
+	return DefaultMentionPollInterval
+}
+
+func (m GitHubMentionsConfig) MinRoleEffective() string {
+	if strings.TrimSpace(m.MinRole) != "" {
+		return strings.TrimSpace(m.MinRole)
+	}
+	return DefaultMentionMinRole
+}
+
+func (m GitHubMentionsConfig) PerUserPerHourEffective() int {
+	if m.PerUserPerHour > 0 {
+		return m.PerUserPerHour
+	}
+	return DefaultMentionPerUserPerHour
+}
+
+func (m GitHubMentionsConfig) PerRepoPerHourEffective() int {
+	if m.PerRepoPerHour > 0 {
+		return m.PerRepoPerHour
+	}
+	return DefaultMentionPerRepoPerHour
+}
+
+func (m GitHubMentionsConfig) PerThreadMaxAttemptsEffective() int {
+	return DefaultReviewBotMaxAttempts
+}
+
+func (m GitHubMentionsConfig) AckReactionEffective() string {
+	if m.AckReaction == nil {
+		return DefaultMentionAckReaction
+	}
+	return strings.TrimSpace(*m.AckReaction)
+}
+
+func (m GitHubMentionsConfig) Validate() error {
+	if !ValidRole(m.MinRoleEffective()) {
+		return fmt.Errorf("github.mentions.min_role %q is invalid (must be read, read-write, merger, or owner)", m.MinRole)
+	}
+	if m.PollInterval < 0 {
+		return fmt.Errorf("github.mentions.poll_interval must be non-negative")
+	}
+	if m.PerUserPerHour < 0 || m.PerRepoPerHour < 0 {
+		return fmt.Errorf("github.mentions rate limits must be non-negative")
+	}
+	return nil
 }
 
 // WorkSourceConfig selects where hive reads work items (Step 01 of the loop).
@@ -3199,12 +3282,13 @@ func (m ModeConfig) MarshalYAML() (interface{}, error) {
 }
 
 type GitHubConfig struct {
-	AppID              int64  `yaml:"app_id"`
-	InstallationID     int64  `yaml:"installation_id"`
-	DocsInstallationID int64  `yaml:"docs_installation_id"`
-	KeyFile            string `yaml:"key_file"`
-	Token              string `yaml:"token"`
-	OAuthClientID      string `yaml:"oauth_client_id"`
+	AppID              int64                `yaml:"app_id"`
+	InstallationID     int64                `yaml:"installation_id"`
+	DocsInstallationID int64                `yaml:"docs_installation_id"`
+	KeyFile            string               `yaml:"key_file"`
+	Token              string               `yaml:"token"`
+	OAuthClientID      string               `yaml:"oauth_client_id"`
+	Mentions           GitHubMentionsConfig `yaml:"mentions,omitempty" json:"mentions,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -5499,8 +5583,8 @@ func validateChannels(agentName string, channels []ChannelConfig) error {
 // the dashboard channels endpoint can fail fast before persisting.
 func ValidateChannels(agentName string, channels []ChannelConfig) error {
 	for i, ch := range channels {
-		if ch.Type != ChannelTypeKick {
-			return fmt.Errorf("agent %s: channel[%d]: type %q has no trigger runtime (only %q is supported; the webhook/discord/schedule/bead runtime was removed, see #5591) — declaring it would leave the agent permanently unkicked", agentName, i, ch.Type, ChannelTypeKick)
+		if ch.Type != ChannelTypeKick && ch.Type != ChannelTypeMention {
+			return fmt.Errorf("agent %s: channel[%d]: type %q has no trigger runtime (only %q and %q are supported; the webhook/discord/schedule/bead runtime was removed, see #5591) — declaring it would leave the agent permanently unkicked", agentName, i, ch.Type, ChannelTypeKick, ChannelTypeMention)
 		}
 	}
 	return nil

@@ -31,6 +31,9 @@ func (c *Config) Validate() error {
 		(strings.TrimSpace(c.GitHub.Forge_) == "" || c.GitHub.ResolvedAppID() == 0) {
 		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
+	if err := c.GitHub.Mentions.Validate(); err != nil {
+		return err
+	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}

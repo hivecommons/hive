@@ -32,6 +32,7 @@ type KickRecord struct {
 	Timestamp time.Time `json:"timestamp"`
 	Agent     string    `json:"agent"`
 	Snippet   string    `json:"snippet"`
+	Source    string    `json:"source,omitempty"`
 }
 
 const (

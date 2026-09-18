@@ -52,6 +52,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/loginscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -2466,6 +2467,46 @@ func main() {
 			dashSrv.AuditLog("system", action, detail, agent)
 			recordLifecycleFromAudit(dashSrv, cfg.Project.Org, action, detail, agent)
 		})
+	}
+
+	if ghClient != nil && cfg.GitHub.HasUsableApp() && cfg.GitHub.Mentions.Enabled {
+		store, err := mention.NewStore("/data/github-mention-triggers.json")
+		if err != nil {
+			logger.Warn("mention trigger store unavailable; poller not started", "error", err)
+		} else {
+			handler := mention.NewHandler(mention.Options{
+				Config:     cfg.GitHub.Mentions,
+				ReviewBots: cfg.Classification.ReviewBots,
+				Roles: func(login string) (string, bool) {
+					return cfg.Dashboard.AuthorizedRole(login)
+				},
+				Agents: func() []mention.AgentInfo {
+					out := make([]mention.AgentInfo, 0, len(cfg.Agents))
+					for name, ac := range cfg.Agents {
+						out = append(out, mention.AgentInfo{
+							Name:         name,
+							Enabled:      ac.Enabled,
+							Converse:     ac.Converse != nil && *ac.Converse,
+							Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
+							GovernorKick: ac.UsesGovernorKick(),
+						})
+					}
+					return out
+				},
+				GitHub: ghClient,
+				Store:  store,
+				Kick: func(agentName, message string) error {
+					return agentMgr.SendKickWithSource(agentName, message, mention.SourceMention)
+				},
+				Audit: func(action, detail, agentName string) {
+					dashSrv.AuditLog("system", action, detail, agentName)
+					recordLifecycleFromAudit(dashSrv, cfg.Project.Org, action, detail, agentName)
+				},
+			})
+			poller := mention.NewPoller(ghClient, ghClient.ActiveRepositories, store, handler, cfg.GitHub.Mentions.PollIntervalEffective(), logger)
+			go poller.Run(ctx)
+			logger.Info("GitHub mention trigger poller started", "interval", cfg.GitHub.Mentions.PollIntervalEffective())
+		}
 	}
 
 	// Seed token sparkline history now that the dashboard server exists
