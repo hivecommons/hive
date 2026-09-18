@@ -1641,9 +1641,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// until this function returns, whether it upgrades, authenticates, times
 	// out, or errors. Released exactly once so no early return can leak a slot
 	// and permanently shrink the cap.
-	pendingReleased := false
+	s := &wsSession{h: h}
 	defer func() {
-		if !pendingReleased {
+		if !s.pendingReleased {
 			h.pendingConns.Add(-1)
 		}
 	}()
@@ -1654,17 +1654,21 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(wsMaxMessageSize)
+	s.conn = conn
 
 	connID := randomHex(8)
+	s.connID = connID
 	h.logger.Info("[contribute-ws] new connection", "id", connID)
 
 	nonce := randomHex(16)
+	s.nonce = nonce
 	if err := sendJSON(conn, WSMessage{Type: "auth_challenge", Seq: 1, Nonce: nonce}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send challenge", "id", connID, "error", err)
 		return
 	}
 
 	authDone := make(chan *ContributorConnection, 1)
+	s.authDone = authDone
 	go func() {
 		select {
 		case <-time.After(wsAuthTimeout):
@@ -1674,126 +1678,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	var contributor *ContributorConnection
-	defer func() {
-		if contributor != nil && contributor.profile != nil {
-			contributor.mu.Lock()
-			abandonedTask := contributor.currentTask
-			// #7317: see the `ready` path — captured under the same lock so the
-			// run record can carry how long the task was held before the socket
-			// died.
-			abandonedTaskAt := contributor.taskAssignedAt
-			contributor.currentTask = nil
-			// #2568: bump the generation on release so any late message from this
-			// now-defunct socket carrying the old generation is fenced.
-			contributor.currentTaskGen = h.nextTaskGen()
-			contributor.lastLeaseRenew = time.Time{}
-			contributor.tokenMintedAt = time.Time{}
-			// #2537: clear any pending/delivered credential state with the task.
-			contributor.pendingToken = ""
-			contributor.credentialDelivered = false
-			contributor.mu.Unlock()
-
-			// #5322: deregister THIS socket before deciding whether its task is
-			// really abandoned. The check below asks "is some OTHER live
-			// connection for this identity already holding this task?", and the
-			// answer must not be able to include the connection being torn down.
-			// Moved up from the tail of this defer for exactly that reason; it is
-			// the same single delete of the same key, just ordered ahead of the
-			// release so the two cannot observe each other.
-			h.mu.Lock()
-			delete(h.connections, connID)
-			h.mu.Unlock()
-
-			// #5322: a socket that dies WITHOUT a close frame (an L7 proxy cutting
-			// the tunnel — the 1006 flap #5090/#5310 measured) leaves this read
-			// loop parked in ReadMessage, so this defer does not run when the
-			// socket dies; it runs whenever the next read finally errors. The
-			// relay meanwhile redials in ~1s and re-asserts its task over a NEW
-			// connection, which the lease-bound resume in task_progress legitimately
-			// adopts. h.connections is keyed by a random per-socket connID and the
-			// hub has no notion of "this contributor's current socket", so when this
-			// defer eventually fires it releases BY ISSUE a task that a live
-			// connection is demonstrably still working: it books a release cooldown
-			// on an in-flight issue and writes "released: connection lost" for work
-			// nobody released. That is the silent drop — the hub's own record of the
-			// assignment contradicted by the ghost of a socket that no longer
-			// represents the contributor.
-			//
-			// So: release only what is still ours to release. If another LIVE
-			// connection for this same identity already holds this exact task, the
-			// reconnect has already reconciled and this socket is a ghost — skip the
-			// release entirely. This changes nothing about a genuine departure (no
-			// other connection holds the task, so the release runs exactly as
-			// before, booking the same cooldown and writing the same rows —
-			// deliberately leaving kubestellar/hive#5151's accounting untouched).
-			if abandonedTask != nil && h.taskReadoptedByLiveConnection(contributor, abandonedTask) {
-				h.logger.Info("[contribute-ws] disconnect release skipped: task already re-adopted on a live connection",
-					"username", contributor.profile.GitHubUsername,
-					"task", abandonedTask.TaskID,
-					"repo", abandonedTask.Repo,
-					"number", abandonedTask.Number,
-				)
-				abandonedTask = nil
-			}
-
-			if abandonedTask != nil {
-				h.logger.Warn("[contribute-ws] task released on disconnect",
-					"username", contributor.profile.GitHubUsername,
-					"task", abandonedTask.TaskID,
-				)
-				// #2356: a disconnect drops the issue out of activeIssues (the only
-				// double-assign guard) WITHOUT recording any cooldown, so selectTask
-				// could hand the SAME issue to another session in the brief reconnect
-				// window (BASE_RECONNECT_DELAY_MS..MAX_RECONNECT_DELAY_MS, i.e. 1s–60s)
-				// while the original relay — which keeps currentTask locally and
-				// re-asserts it via task_progress on reconnect — is still working it.
-				// Both sessions then reach "open a PR" and file duplicates. Book the
-				// SHORT cooldown so the issue is not instantly re-admissible. The short
-				// window comfortably outlasts the reconnect backoff, so the returning
-				// session re-asserts and resumes (repopulating activeIssues) before the
-				// cooldown lapses — which is the contract #4260 restored by renewing
-				// the lease on every progress report, so a task alive longer than
-				// leaseTTL is still re-adoptable. Only real issue tasks are booked —
-				// synthetic pr-review tasks carry Number == 0 and must not poison an
-				// issue key.
-				//
-				// #4260: bookReleaseCooldown rather than recordTaskFailure. The window
-				// is identical; what is dropped is the consecutive-failure increment,
-				// which turned three dropped sockets on one issue into a
-				// quarantineCooldownHours quarantine of an issue nobody had failed.
-				// The #2356 duplicate-PR guarantee lives entirely in the timestamp and
-				// is unaffected.
-				if abandonedTask.Number > 0 {
-					h.bookReleaseCooldown(abandonedTask.Repo, abandonedTask.Number)
-				}
-				// #5097: make the abandonment VISIBLE. Until now this path recorded
-				// nothing an operator could see — the issue showed a "picked up" with
-				// no terminal event ever following it, which is indistinguishable in
-				// the feed from an issue nobody touched. Four issues were opened and
-				// dropped in ten minutes on a flapping session and the hub's own
-				// history showed only that they were picked up.
-				//
-				// Deliberately NOT the "failed" verb: #4260 established that a dropped
-				// socket is not a failure of the work, and booking it as one is what
-				// turned three dropped sockets into a quarantine of an issue nobody had
-				// failed. This is a release, and it says so.
-				h.addActivity(contributor.profile.GitHubUsername, "released: connection lost",
-					contributor.role, contributor.cliBackend, contributor.model,
-					contributor.reasoningEffort, taskDescOf(abandonedTask))
-				// #7317: the durable half of the same visibility argument #5097
-				// makes above. The activity rail is capped and drops off; the run
-				// log is what an operator reads an hour later. Note this runs only
-				// on a REAL abandonment — the #5322 re-adoption check above has
-				// already set abandonedTask to nil for a ghost socket, so a
-				// reconnect that resumed its task writes no abandonment row.
-				h.appendAbandonedRun(contributor, abandonedTask, abandonCauseDisconnect, abandonedTaskAt)
-			}
-			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
-			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
-		}
-		_ = conn.Close()
-	}()
+	defer s.releaseOnDisconnect()
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -1811,940 +1696,26 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 		switch msg.Type {
 		case "auth_response":
-			if msg.RegistrationToken == "" {
-				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: "Missing registration token"})
-				closeWithReason(conn, websocket.ClosePolicyViolation, "missing registration token")
+			if s.handleAuthResponse(msg) {
 				return
 			}
-
-			profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
-
-			if profile == nil {
-				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
-				closeWithReason(conn, websocket.ClosePolicyViolation, "invalid registration token")
-				return
-			}
-
-			if profile.TrustTier == "revoked" {
-				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: "Access has been revoked"})
-				closeWithReason(conn, websocket.ClosePolicyViolation, "access has been revoked")
-				return
-			}
-
-			if allowed, acceptedModels := h.checkModelAllowed(msg.Model); !allowed {
-				reason := fmt.Sprintf("Model %q is not accepted by this hive", msg.Model)
-				if msg.Model == "" {
-					reason = "No model specified — this hive requires an accepted model"
-				}
-				_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: reason, AcceptedModels: acceptedModels})
-				h.logger.Info("[contribute-ws] model rejected", "username", profile.GitHubUsername, "model", msg.Model)
-				closeWithReason(conn, websocket.ClosePolicyViolation, "model not accepted by this hive")
-				return
-			}
-
-			clientRole := normalizeAgentRole(msg.Role)
-			assignedRole := normalizeAgentRole(profile.AssignedAgentRole)
-			requestedRole := clientRole
-			if hasOwnerAgentRoleAssignment(profile) {
-				requestedRole = effectiveAssignedAgentRole(assignedRole)
-			}
-			probeContributor := &ContributorConnection{profile: profile}
-			if requestedRole != "" {
-				if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
-					_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: reason, Role: requestedRole})
-					h.logger.Warn("[contribute-ws] agent role claim rejected",
-						"username", profile.GitHubUsername, "tier", profile.TrustTier,
-						"role", requestedRole, "reason", reason)
-					closeWithReason(conn, websocket.ClosePolicyViolation, "agent role claim rejected")
-					return
-				}
-			}
-
-			profile.LastActive = time.Now().UTC().Format(time.RFC3339)
-			if msg.CLIBackend != "" {
-				profile.CLIBackend = msg.CLIBackend
-			}
-			if msg.Model != "" {
-				profile.Model = msg.Model
-			}
-			if msg.ReasoningEffort != "" {
-				profile.ReasoningEffort = msg.ReasoningEffort
-			}
-			if profile.AvatarURL == "" {
-				profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
-			}
-			if clientRole != "" {
-				profile.PreferredRole = clientRole
-			}
-			_ = saveContributorProfile(profile)
-
-			// #2547 declare half: capture the client-declared capabilities, if any.
-			// A relay may report its runtime posture either as a nested
-			// "capabilities" object or (for a version-only client) just a top-level
-			// protocol_version; fold the latter in so it is surfaced consistently.
-			// Entirely optional — a client that sends neither leaves caps nil and is
-			// treated exactly as an unversioned client. Never routed/gated on.
-			var caps *ContributorCapabilities
-			declared := ContributorCapabilities{}
-			if msg.Capabilities != nil {
-				declared = *msg.Capabilities
-			}
-			if declared.RelayProtocolVersion == "" && msg.ProtocolVersion != "" {
-				declared.RelayProtocolVersion = msg.ProtocolVersion
-			}
-			// Bound and clean it before it is stored: a declaration is unverified
-			// client text that lives for the connection, is re-serialized into
-			// every fleet poll, and lands in an operator row. Sanitizing cannot
-			// reject — an over-long or messy declaration still authenticates, it
-			// just cannot spill past its field. Checked AFTER sanitizing so a
-			// declaration made entirely of whitespace reads as "declared nothing"
-			// rather than as an empty-stringed capability set.
-			declared = declared.Sanitized()
-			if !declared.IsZero() {
-				c := declared
-				caps = &c
-			}
-
-			// #2547 (peer-compatibility criterion): compare the declared version
-			// with ours and say so ONCE, at the log level the verdict deserves, so
-			// "an old relay against a new hub" is legible in the hub log instead of
-			// only discoverable by watching it misbehave. This is a REPORT, not a
-			// gate — admission continues unchanged for every verdict, including
-			// protoPeerIncompatible, because compatibility here has to be carried by
-			// the defaults (there is no negotiation to carry it) and rejecting on a
-			// client-declared string would strand relays written before any change.
-			switch verdict := classifyPeerProtocol(declared.RelayProtocolVersion); verdict {
-			case protoPeerIncompatible, protoPeerMalformed:
-				h.logger.Warn("[contribute-ws] contributor protocol mismatch (advisory; client still served)",
-					"contributor", profile.ContributorID, "verdict", verdict,
-					"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
-			case protoPeerOlder, protoPeerNewer:
-				h.logger.Info("[contribute-ws] contributor protocol drift (advisory; client still served)",
-					"contributor", profile.ContributorID, "verdict", verdict,
-					"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
-			}
-
-			contributor = &ContributorConnection{
-				ws:              conn,
-				profile:         profile,
-				cliBackend:      msg.CLIBackend,
-				session:         sanitizeSessionLabel(msg.Session),
-				model:           msg.Model,
-				reasoningEffort: msg.ReasoningEffort,
-				role:            requestedRole,
-				clientRole:      clientRole,
-				assignedRole:    assignedRole,
-				connectedAt:     time.Now(),
-				lastPong:        time.Now(),
-				capabilities:    caps,
-			}
-
-			// Hand the slot over from the pending counter to h.connections
-			// under the same lock, so the connection is counted exactly once
-			// and the total never dips (which would briefly let the cap be
-			// exceeded) nor double-counts (which would halve it). The deferred
-			// Add(-1) in HandleWS is disarmed by this flag.
-			h.mu.Lock()
-			h.connections[connID] = contributor
-			h.mu.Unlock()
-			if !pendingReleased {
-				pendingReleased = true
-				h.pendingConns.Add(-1)
-			}
-
-			var perms []string
-			switch profile.TrustTier {
-			case "newcomer":
-				perms = []string{"issues:write"}
-			case "contributor":
-				perms = []string{"issues:write", "contents:write", "pulls:write"}
-			case "trusted":
-				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
-			case "merger":
-				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
-			case "advisor":
-				perms = []string{"metadata:read", "pulls:read"}
-			default:
-				perms = []string{"metadata:read"}
-			}
-
-			if err := contributor.send(WSMessage{
-				Type:          "auth_ok",
-				Seq:           h.nextSeq(),
-				ContributorID: profile.ContributorID,
-				TrustTier:     profile.TrustTier,
-				Permissions:   perms,
-				Role:          requestedRole,
-				// #2567: advertise the protocol version and the server capability
-				// set so a client can learn what this deployed hub supports without
-				// probing. Additive — an existing client ignores these unknown fields.
-				ProtocolVersion:    contributorProtocolVersion,
-				ServerCapabilities: serverCapabilities(),
-			}); err != nil {
-				h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
-				return
-			}
-
-			h.logger.Info("[contribute-ws] authenticated",
-				"username", profile.GitHubUsername,
-				"tier", profile.TrustTier,
-				"cli", msg.CLIBackend,
-				"role", requestedRole,
-			)
-			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "")
-
-			select {
-			case authDone <- contributor:
-			default:
-			}
-
-			// Count a PROTOCOL-level Pong as liveness, exactly as the JSON
-			// "pong" case below does (kubestellar/hive#5090). Now that the hub
-			// emits real Ping control frames, a relay that answers only those —
-			// which is what any conforming WebSocket client does automatically,
-			// with no relay code at all — must not be false-timed-out by the
-			// heartbeat sweep. gorilla invokes this handler from ReadMessage on
-			// the read goroutine, which holds neither mu nor writeMu here, so
-			// taking mu introduces no re-entrancy.
-			contributor.ws.SetPongHandler(func(string) error {
-				contributor.mu.Lock()
-				contributor.lastPong = time.Now()
-				contributor.mu.Unlock()
-				return nil
-			})
-
-			go h.heartbeatLoop(contributor)
-
 		case "ready":
-			if contributor == nil {
-				continue
+			if s.handleReady(msg) {
+				return
 			}
-			contributor.mu.Lock()
-			abandoned := contributor.currentTask
-			// #7317: captured under the same lock as currentTask so the run record
-			// below can report the task's real wall-clock duration. On the session
-			// that prompted the issue these land on the relay's own timeouts —
-			// ~26 min is PANE_STALL_TIMEOUT_MS, ~10 min is CLI_READY_TIMEOUT_MS —
-			// which is the most diagnostic number in the record, and it was being
-			// discarded along with the rest of the abandonment.
-			abandonedAt := contributor.taskAssignedAt
-			contributor.currentTask = nil
-			// #2568: bump the generation on release so a re-`ready` abandon fences any
-			// later message echoing the old generation for the just-abandoned task.
-			contributor.currentTaskGen = h.nextTaskGen()
-			contributor.lastLeaseRenew = time.Time{}
-			contributor.tokenMintedAt = time.Time{}
-			// #2537: clear any pending/delivered credential state with the task.
-			contributor.pendingToken = ""
-			contributor.credentialDelivered = false
-			contributor.mu.Unlock()
-			if abandoned != nil {
-				// C4: the relay explicitly gave up this task, so revoke its
-				// server-issued lease — a later task_progress for it must not resurrect
-				// ownership.
-				h.revokeLease(identityOf(contributor), abandoned.TaskID)
-				// #5097: same visibility gap as the disconnect path above — the
-				// relay giving a task back by asking for new work left no trace in
-				// the activity feed either.
-				h.addActivity(contributor.profile.GitHubUsername, "released: gave the task back",
-					contributor.role, contributor.cliBackend, contributor.model,
-					contributor.reasoningEffort, taskDescOf(abandoned))
-				h.logger.Warn("[contribute-ws] task abandoned without completion",
-					"username", contributor.profile.GitHubUsername,
-					"abandoned_task", abandoned.TaskID,
-				)
-				h.recordTaskDecision(contributor.profile.GitHubUsername, decisionAbandoned, abandoned,
-					"relay asked for new work while still holding this task")
-				// kubestellar/hive#2545: a contributor that sends "ready" while
-				// still holding a task (e.g. the relay's own MAX_TASK_DURATION_MS
-				// watchdog gives up and requeues, or an agent that never actually
-				// started work asks for something new) used to leave currentTask
-				// set and booked no cooldown at all — worse than the disconnect
-				// path immediately above (#2356/#2435), which does both. That left
-				// the abandoned issue permanently out of activeIssues circulation
-				// for the life of the connection: no PR, no failure record, no
-				// re-offer, just a silently held slot. Clear currentTask (above)
-				// so selectTask's activeIssues scan releases the issue, and mirror
-				// the disconnect/task_failed paths by booking the SAME short
-				// non-permanent failure cooldown, so the just-abandoned issue is
-				// not instantly handed straight back to the same contributor in
-				// the very selectTask call below. Synthetic pr-review tasks carry
-				// Number == 0 and must not poison an issue key.
-				if abandoned.Number > 0 {
-					h.recordTaskFailureForTask(abandoned, false)
-				}
-				// #7317: and leave a durable trace. Everything above this line is
-				// about ROUTING the abandoned issue (lease, cooldown, activity rail);
-				// none of it survives for an operator to read later. The run log is
-				// the only per-run record that does, and this path never wrote one —
-				// so a contributor that handed eleven tasks back in two hours showed
-				// a single row, and run-stats reported one failure for the session.
-				h.appendAbandonedRun(contributor, abandoned, abandonCauseHandback, abandonedAt)
-			}
-			h.logger.Info("[contribute-ws] ready for work",
-				"username", contributor.profile.GitHubUsername,
-				"role", contributor.role,
-			)
-			task := h.selectTask(contributor)
-			switch {
-			case task == nil:
-				// Defensive backstop only: after #2436 and #2546 every selectTask
-				// path returns an explicit message, so this should not be reached.
-				// Kept so an unforeseen nil still fails safe (no send) rather than
-				// panicking.
-				h.logger.Info("[contribute-ws] no tasks available",
-					"username", contributor.profile.GitHubUsername,
-				)
-			case task.Type == "task_unavailable":
-				// An explicit negative-ack rather than silence. #2436 finding 1/2/3
-				// covers the enforced refusals (mint failure, disabled tier,
-				// concurrency limit); #2546 adds the three formerly-silent
-				// no-work-right-now reasons (contribution_suspended, hub_not_ready,
-				// no_matching_work). Record the reason on the connection so the ops
-				// tab can show WHY this clanker is idle, then send it.
-				contributor.mu.Lock()
-				contributor.lastIdleReason = task.Reason
-				contributor.mu.Unlock()
-				if err := contributor.send(*task); err != nil {
-					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
-					return
-				}
-				h.logger.Info("[contribute-ws] task unavailable",
-					"username", contributor.profile.GitHubUsername,
-					"reason", task.Reason,
-				)
-			default:
-				if err := contributor.send(*task); err != nil {
-					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
-					return
-				}
-				pickupKey := task.TaskKey
-				if pickupKey == "" {
-					pickupKey = worksource.Ref{Repo: task.Repo, Number: task.Number}.Key()
-				}
-				taskDesc := assignDesc(task.Kind, pickupKey, task.Title, task.TaskID)
-				if task.Role != "" {
-					taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
-				}
-				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, taskDesc)
-				h.logger.Info("[contribute-ws] task assigned",
-					"username", contributor.profile.GitHubUsername,
-					"task", task.TaskID,
-					"repo", task.Repo,
-					"number", task.Number,
-				)
-				// #2537: the credential was withheld from the task_assign above and is
-				// delivered only AFTER acceptance. In the DEFAULT trusted-source
-				// auto-accept mode, the task already cleared admission and the per-tier
-				// trust gate in selectTask, so acceptance is automatic HERE — after the
-				// assignment is committed and sent — and the scoped credential is
-				// delivered immediately. This preserves an unattended fleet's timing
-				// (credential arrives right after task_assign) while making the ordering
-				// provable: the credential leaves the hub only once acceptance is
-				// recorded, never bundled with the metadata. In EXPLICIT-accept mode the
-				// hub withholds here and waits for a task_accepted (handled below).
-				if !h.requireExplicitAccept() {
-					h.deliverTaskCredential(contributor, "auto_accept")
-				} else {
-					h.logger.Info("[contribute-ws] credential withheld pending explicit acceptance",
-						"username", contributor.profile.GitHubUsername, "task", task.TaskID)
-				}
-			}
-
 		case "task_accepted":
-			// #2537: a task_accepted is the client's explicit acceptance of the
-			// assigned task. In EXPLICIT-accept mode the hub withheld the scoped
-			// credential from task_assign and waits for exactly this message before
-			// delivering it — so a task that is never accepted (declined, timed out,
-			// or reconnected away) never receives a credential. acceptTaskCredential
-			// delivers only when the acceptance is for the task this connection
-			// currently holds; a stale/mismatched task_id is ignored. It is idempotent
-			// via deliverTaskCredential, so in auto-accept mode (where the credential
-			// already went out) this is a no-op, and a relay that re-asserts
-			// task_accepted on reconnect cannot re-deliver.
-			if contributor != nil {
-				h.acceptTaskCredential(contributor, msg.TaskID)
-			}
-
+			s.handleTaskAccepted(msg)
 		case "task_progress":
-			if contributor != nil {
-				contributor.mu.Lock()
-				// C4 (CWE-862/639): a task_progress that arrives while this connection
-				// holds NO task is a RESUME claim. The hub must NOT rebuild ownership
-				// from the client's own task_id/repo/number fields — doing so let a
-				// client assert ANY task and be minted a scoped GitHub credential for
-				// work the server never assigned. A resume is honored ONLY when it
-				// matches a server-issued lease (lookupLease) EXACTLY on
-				// {identity, task_id, repo, number, generation} and is unexpired, and
-				// only after the same admission gates a fresh assignment must pass
-				// (suspension, disabled tier, revocation) still hold. Anything else is
-				// rejected: the relay is told to re-`ready` for fresh work.
-				if contributor.currentTask == nil {
-					if msg.TaskID == "" {
-						contributor.mu.Unlock()
-						continue
-					}
-					identity := identityOf(contributor)
-					canonRepo := h.canonicalRepoKey(msg.Repo)
-					contributor.mu.Unlock()
-
-					lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
-					if lease == nil {
-						h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
-							"username", contributor.profile.GitHubUsername,
-							"task", msg.TaskID,
-							"repo", canonRepo,
-							"client_gen", msg.TaskGen,
-						)
-						h.recordDecision(contributor.profile.GitHubUsername, decisionResumeRejected,
-							msg.TaskID, canonRepo, msg.Number,
-							"no matching server-issued lease; task_revoke sent")
-						// Tell the relay this task is not (or no longer) its to hold, so
-						// it stops reporting and re-asks for work rather than silently
-						// believing it owns something the hub has no record of.
-						_ = sendJSON(conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "no active lease for this task"})
-						continue
-					}
-					// C4: re-run the same admission gates a fresh selectTask assignment
-					// must pass. A task assigned before the operator suspended the queue,
-					// disabled the tier, or revoked the contributor must NOT silently
-					// resume (and re-mint a credential) after the gate closed.
-					if reason := h.resumeGateReason(contributor); reason != "" {
-						h.recordDecision(contributor.profile.GitHubUsername, decisionResumeRejected,
-							msg.TaskID, canonRepo, msg.Number,
-							"refused by the admission gate: "+reason)
-						h.logger.Warn("[contribute-ws] task_progress resume refused by admission gate",
-							"username", contributor.profile.GitHubUsername,
-							"task", msg.TaskID,
-							"reason", reason,
-						)
-						h.revokeLease(identity, msg.TaskID)
-						_ = sendJSON(conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
-						continue
-					}
-					// Adopt the task from the AUTHORITATIVE lease record, not the client
-					// fields: repo/number/tier are the server's, and the task keeps its
-					// ORIGINAL generation so it stays fenced against any older-generation
-					// straggler. lastLeaseRenew starts the wedged-task clock.
-					contributor.mu.Lock()
-					contributor.currentTask = &WSTaskAssign{
-						TaskID: lease.taskID,
-						Kind:   msg.Kind,
-						Repo:   lease.repo,
-						Number: lease.number,
-						Title:  msg.Title,
-					}
-					contributor.currentTaskGen = lease.gen
-					contributor.lastLeaseRenew = time.Now()
-					contributor.tmuxOutput = msg.TmuxOutput
-					contributor.mu.Unlock()
-
-					// #4260: a resume is itself proof of life, so restart the lease
-					// window alongside lastLeaseRenew. Without this a relay that
-					// reconnected twice inside one lease window would be refused the
-					// second time even though it never stopped working.
-					h.renewLease(identity, lease.taskID, time.Now())
-
-					// #5322: the disconnect that preceded this resume booked a
-					// speculative release cooldown on the issue (#2356's
-					// duplicate-assign hedge). This resume proves the release never
-					// happened — the original relay is back, on the original task,
-					// under the original generation — so withdraw the hedge rather
-					// than leave a live, in-flight issue stamped "recently released"
-					// in the failure ledger for the rest of the window. Narrow by
-					// construction: clearReleaseCooldown refuses to touch an issue
-					// that carries a real consecutive-failure count.
-					if lease.number > 0 {
-						h.clearReleaseCooldown(lease.repo, lease.number)
-					}
-
-					h.logger.Info("[contribute-ws] task resumed from server-issued lease",
-						"username", contributor.profile.GitHubUsername,
-						"task", lease.taskID, "repo", lease.repo, "number", lease.number)
-
-					// #2610 finding 3: re-mint and push a fresh token_refresh so the
-					// resumed session holds a valid token and re-arms the #2393 refresh
-					// cycle. The credential is minted for the LEASE's tier (server-owned),
-					// repository-scoped to the lease's repo (C4).
-					h.resumeTaskToken(contributor, lease)
-					continue
-				}
-
-				// A routine progress ping for a task the hub already tracks on THIS
-				// connection. #2568 (the Gate): reject a STALE generation — a worker
-				// whose task was revoked/reassigned (currentTaskGen bumped past what it
-				// echoes) must not renew a lease it no longer owns. An unversioned relay
-				// echoes 0 and is accepted (generationAccepted falls back to TaskID).
-				if msg.TaskGen != 0 {
-					contributor.sawTaskGen = true
-				}
-				if !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
-					staleGen := msg.TaskGen
-					contributor.mu.Unlock()
-					h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-						"client_gen", staleGen,
-					)
-					h.recordDecision(contributor.profile.GitHubUsername, decisionStaleGenRejected,
-						msg.TaskID, "", 0,
-						"task_progress fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
-					continue
-				}
-				contributor.tmuxOutput = msg.TmuxOutput
-				// #4117: the relay re-detects the running model from the CLI's own
-				// session transcript on every progress tick and piggybacks it here, so
-				// a mid-session model switch (claude `/model`) is reflected instead of
-				// staying stuck at the connect-time value. Same pattern as the
-				// auth-time handler: only non-empty values overwrite — an older relay
-				// omits both fields and nothing changes. Advisory display metadata,
-				// exactly like the auth_response values it refreshes.
-				if msg.Model != "" {
-					contributor.model = msg.Model
-					if contributor.profile != nil {
-						contributor.profile.Model = msg.Model
-					}
-				}
-				if msg.ReasoningEffort != "" {
-					contributor.reasoningEffort = msg.ReasoningEffort
-					if contributor.profile != nil {
-						contributor.profile.ReasoningEffort = msg.ReasoningEffort
-					}
-				}
-				// SECURITY (v4, kept over v2 #3153): v4 deliberately has NO
-				// client-driven resume path here. A task_progress for a task the hub
-				// does not already track is resumed ONLY through the authoritative
-				// server lease (lookupLease) above; a relay may not rebuild currentTask
-				// from its own self-reported msg.Repo/Number/Role and thereby self-mint
-				// a scoped credential (C4). v2's client-asserted resume block was NOT
-				// grafted — see the PR body "Consider porting to v4 separately".
-				// #2568: renew the hub-owned lease on every progress report. This is
-				// what distinguishes "working slowly but alive" (lease keeps renewing,
-				// never reclaimed) from "connected but wedged" (lease goes stale and
-				// cleanupLoop reclaims it after wsTaskTimeout).
-				contributor.lastLeaseRenew = time.Now()
-				// #4260: the task id is taken from the hub's OWN record of what this
-				// connection holds, never from msg.TaskID, so the renewal cannot be
-				// pointed at a task the client merely names. Captured here under the
-				// connection lock and applied below without it, matching how the other
-				// release paths call into the lease registry.
-				heldTaskID := ""
-				if contributor.currentTask != nil {
-					heldTaskID = contributor.currentTask.TaskID
-				}
-				contributor.mu.Unlock()
-				// #4260: keep the lease registry's expiry on the same clock as
-				// lastLeaseRenew above. Stamping it only at assignment meant a task
-				// still healthily reporting progress past leaseTTL was never reclaimed
-				// yet could no longer be re-adopted, so the next socket drop cost the
-				// relay its in-flight work.
-				h.renewLease(identityOf(contributor), heldTaskID, time.Now())
-			}
-
+			s.handleTaskProgress(msg)
 		case "task_complete":
-			if contributor != nil {
-				contributor.mu.Lock()
-				// #2568 (the Gate, critical guarantee): a worker whose task was revoked
-				// and reassigned — but that later wakes and reports completion carrying
-				// the OLD generation — must NOT overwrite the new owner's state. Its
-				// currentTaskGen was bumped past what it echoes, so reject the message
-				// WITHOUT clearing currentTask (which may now hold the NEW owner's task).
-				// An unversioned relay echoes 0 and is accepted, falling back to the
-				// TaskID identity match below. Checked before any mutation.
-				if msg.TaskGen != 0 {
-					contributor.sawTaskGen = true
-				}
-				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
-					staleGen := msg.TaskGen
-					contributor.mu.Unlock()
-					h.logger.Warn("[contribute-ws] stale-generation task_complete rejected",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-						"client_gen", staleGen,
-					)
-					h.recordDecision(contributor.profile.GitHubUsername, decisionStaleGenRejected,
-						msg.TaskID, "", 0,
-						"task_complete fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
-					continue
-				}
-				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
-				completedTask := contributor.currentTask
-				// Captured before the clear below so the run log can record the
-				// task's wall-clock duration. Zero when the task was adopted
-				// without a fresh assignment; the record then omits duration.
-				taskAssignedAt := contributor.taskAssignedAt
-				// SECURITY (audit N9, CWE-862/639): clear ONLY when the reported
-				// task_id actually matches the held assignment.
-				//
-				// This block used to run unconditionally, while revokeLease and
-				// markTaskCompleted below run only `if hasTask`. So a completion
-				// naming ANY other task released the assignment without revoking the
-				// lease or booking a cooldown: the contributor went `ready` and was
-				// minted a SECOND live repo credential under max_concurrent=1, and
-				// the "unassigned task ignored" warning below said otherwise while
-				// the state had in fact already been mutated.
-				//
-				// The #2568 Gate does not cover this: generationAccepted() returns
-				// true whenever clientGen == 0, and omitting task_gen yields 0, so
-				// the guard is opt-in from the client.
-				if hasTask {
-					contributor.currentTask = nil
-					// #2539: drop the previewable prompt with the task it belonged to
-					// so the ops tab does not show a stale instruction after completion.
-					contributor.currentPrompt = ""
-					contributor.currentLabels = nil
-					contributor.tokenMintedAt = time.Time{}
-					contributor.taskAssignedAt = time.Time{}
-					// #2537: clear any pending/delivered credential state with the task.
-					contributor.pendingToken = ""
-					contributor.credentialDelivered = false
-				}
-				// tmuxOutput is diagnostic only and carries no authority, so it is
-				// recorded either way — it is often the only evidence of what a
-				// confused relay was doing when it reported the wrong task.
-				contributor.tmuxOutput = msg.TmuxOutput
-				contributor.mu.Unlock()
-
-				if hasTask {
-					// #2565: the reported PR URL is client-supplied (tmux-scraped by
-					// the relay), so before it drives the LONG cooldown OR trust credit
-					// we verify it server-side against GitHub — it must exist, have a
-					// base repo matching THIS assignment, and be authored by this
-					// contributor. Anything else (no URL, wrong repo/author, API error)
-					// downgrades to an unverified/no-PR completion: the short cooldown
-					// and no trust credit. This closes the hole #2437 left open (the
-					// bar was "a PR was reported", still trusting an unverified field).
-					// verifiedPR is the ONLY value allowed to unlock the PR-gated
-					// rewards below; the raw msg.PRURL is never trusted directly again.
-					// C4: a completion is terminal — revoke the server-issued lease so a
-					// later task_progress for this task cannot resurrect ownership and be
-					// re-minted a credential.
-					if completedTask != nil {
-						h.revokeLease(identityOf(contributor), completedTask.TaskID)
-					}
-					verifiedPR := ""
-					var prDetail ghpkg.PRVerification
-					if completedTask != nil {
-						prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername)
-					}
-					if prDetail.Verified {
-						verifiedPR = msg.PRURL
-						// Off the read loop, deliberately. This is cosmetic
-						// best-effort work that gates NOTHING — unlike
-						// verifyReportedPR above, whose result decides the cooldown
-						// and trust credit and so must be awaited. Inline it would
-						// add up to two GitHub round trips (bounded by the App
-						// client's 30s timeout, so ~60s worst case) to this
-						// contributor's message loop, during which its pongs are not
-						// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
-						// push a perfectly healthy contributor to `Stale` in the
-						// fleet view for the sake of a PR-body edit.
-						go h.reconcilePRAttribution(msg.PRURL, contributor)
-						// A MERGED fix retires the finding it addresses, so the
-						// digest stops carrying work that is already done. Gated
-						// on prDetail.Merged, not on verification alone: a PR
-						// that merely exists is a fix in review, and closing
-						// findings on it would retire them before anything
-						// landed. The PR's OWN title is matched — the
-						// assignment's issue title would match the finding it
-						// was minted from on the mere existence of a PR.
-						if prDetail.Merged {
-							h.closeAdvisoryForMergedPR(prDetail.Title)
-						}
-					}
-					// #3987: normalize the completion's verdict. A verified PR always
-					// wins (shipped); with none, only an explicit no_work_needed is
-					// honoured and everything else — including the absent field every
-					// pre-#3987 relay sends — is idle, i.e. today's exact semantics.
-					verdict := normalizeCompletionVerdict(msg.Verdict, verifiedPR)
-					if completedTask != nil {
-						// #2393 item 7 + #2565: the full week-long cooldown is applied
-						// only for a VERIFIED PR; an unverified or no-PR completion gets
-						// the short cooldown so the issue is not locked for a week (and,
-						// per #2492/#2557, still gets a non-zero cooldown so it is not
-						// instantly re-offered in a tight loop). #3987: a no_work_needed
-						// verdict additionally books the durable offer-suppression
-						// verdict (see markTaskCompletedVerdict).
-						h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
-							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
-							msg.CompletionSignal)
-					}
-					completedDesc := msg.TaskID
-					if completedTask != nil {
-						completedDesc = assignDesc(completedTask.Kind, completedTask.identityKey(), completedTask.Title, msg.TaskID)
-					}
-					provider := ""
-					if contributor.cliBackend == "pi" {
-						provider, _, _ = strings.Cut(contributor.model, "/")
-					}
-					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, completedDesc)
-					h.logger.Info("[contribute-ws] task complete",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-						"task_gen", msg.TaskGen,
-						"backend", contributor.cliBackend,
-						// Provider is derived from Pi's one canonical provider/model input;
-						// this evidence is not a second authority or routing signal.
-						"provider", provider,
-						"model", contributor.model,
-						"result", msg.Result,
-						"pr_verified", verifiedPR != "",
-						"verdict", verdict,
-						"verdict_reason", strings.TrimSpace(msg.VerdictReason),
-						// #5376: which signal ended the task. Diagnostic only —
-						// normalized to a closed vocabulary so a client cannot
-						// inject arbitrary text into the hub's structured logs.
-						"completion_signal", normalizeCompletionSignal(msg.CompletionSignal),
-					)
-					// Durable per-run record (task_run_log.go) — the same
-					// normalized fields the slog line above carries, plus the
-					// duration nothing recorded before. DECLARE only.
-					runRec := TaskRunRecord{
-						TaskID:           msg.TaskID,
-						TaskGen:          msg.TaskGen,
-						Username:         contributor.profile.GitHubUsername,
-						Backend:          contributor.cliBackend,
-						Provider:         provider,
-						Model:            contributor.model,
-						Effort:           contributor.reasoningEffort,
-						Role:             contributor.role,
-						Outcome:          "completed",
-						CompletionSignal: normalizeCompletionSignal(msg.CompletionSignal),
-						Verdict:          verdict,
-						VerdictReason:    strings.TrimSpace(msg.VerdictReason),
-						PRURL:            verifiedPR,
-						PRVerified:       verifiedPR != "",
-					}
-					if completedTask != nil {
-						runRec.Repo = completedTask.Repo
-						runRec.Number = completedTask.Number
-					}
-					if !taskAssignedAt.IsZero() {
-						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
-					}
-					h.appendTaskRun(runRec)
-					// #6450: a genuine completion proves the runtime works — clear
-					// the contributor's fast-failure streak.
-					h.resetContributorFailureStreak(identityOf(contributor))
-					contributor.mu.Lock()
-					contributor.profile.TasksCompleted++
-					// Trust credit is gated on the VERIFIED PR, not the reported one:
-					// counting the raw self-reported field would hand out
-					// contents:write / pulls:write for a PR that was never shown to
-					// exist, belongs to another repo, or was authored by someone else.
-					if verifiedPR != "" {
-						contributor.profile.TasksWithPR++
-					}
-					contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
-					if completedTask != nil {
-						contributor.profile.LastCompletedTask = completedTask
-					}
-					// Promote on completions that produced a VERIFIED pull request.
-					// Completion is self-reported, so counting bare task_complete
-					// messages — or unverified PR URLs — would hand out contents:write
-					// and pulls:write for work that was never shown to exist.
-					promoted := false
-					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
-						contributor.profile.TrustTier = "contributor"
-						promoted = true
-						h.logger.Info("[contribute-ws] auto-promoted", "username", contributor.profile.GitHubUsername)
-					}
-					promotedUser := contributor.profile.GitHubUsername
-					promotedCLI := contributor.cliBackend
-					promotedModel := contributor.model
-					promotedEffort := contributor.reasoningEffort
-					contributor.mu.Unlock()
-					// #2390-era command center: narrate the promotion as its own
-					// activity event so the Operations dev-log and achievement pops
-					// (contribute_sse.go broadcast) surface "promoted to contributor".
-					// Read-only signalling — it changes no control behaviour and is
-					// emitted only on the real newcomer -> contributor transition.
-					if promoted {
-						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
-					}
-					_ = saveContributorProfile(contributor.profile)
-				} else {
-					// N9: this is now literally true. It previously logged "ignored"
-					// after the handler had already cleared currentTask and the
-					// credential state, which made the bypass look like a no-op in the
-					// logs.
-					h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored (assignment left intact)",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-					)
-					h.recordDecision(contributor.profile.GitHubUsername, decisionUnassignedIgnored,
-						msg.TaskID, "", 0,
-						"task_complete ignored: this connection does not hold that task")
-				}
-			}
-
+			s.handleTaskComplete(msg)
 		case "task_failed":
-			if contributor != nil {
-				contributor.mu.Lock()
-				// #2568 (the Gate): reject a STALE worker's failure the same way as its
-				// completion — its currentTaskGen was bumped past the generation it
-				// echoes. Left unguarded, a revoked worker's late task_failed would book
-				// a spurious failure cooldown against the NEW owner's issue. Do not clear
-				// currentTask (it may now be the new owner's task). Unversioned relays
-				// echo 0 and fall back to the TaskID match below.
-				if msg.TaskGen != 0 {
-					contributor.sawTaskGen = true
-				}
-				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen, contributor.sawTaskGen) {
-					staleGen := msg.TaskGen
-					contributor.mu.Unlock()
-					h.logger.Warn("[contribute-ws] stale-generation task_failed rejected",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-						"client_gen", staleGen,
-					)
-					// #7330: THE event the issue was filed for. A relay whose
-					// up-front rejection paths send task_failed with no task_gen
-					// gets fenced here once the connection has sent a non-zero
-					// one — the relay believes it reported a failure, the hub
-					// believes it never did, and until now the disagreement was
-					// visible only in the hub's stdout.
-					h.recordDecision(contributor.profile.GitHubUsername, decisionStaleGenRejected,
-						msg.TaskID, "", 0,
-						"task_failed fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
-					continue
-				}
-				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
-				failedTask := contributor.currentTask
-				// Duration anchor for the run log, captured before the clear —
-				// same shape as task_complete above.
-				taskAssignedAt := contributor.taskAssignedAt
-				// SECURITY (audit N9, CWE-862/639): same hole as task_complete —
-				// clear only on a genuine TaskID match. Unconditionally, a failure
-				// naming any other task released the assignment while revokeLease
-				// and recordTaskFailure below stayed inside `if hasTask`, so no
-				// cooldown was booked and the abandoned issue became instantly
-				// re-admissible while the credential stayed live.
-				if hasTask {
-					contributor.currentTask = nil
-					contributor.tokenMintedAt = time.Time{}
-					contributor.taskAssignedAt = time.Time{}
-					// #2537: clear any pending/delivered credential state with the task.
-					contributor.pendingToken = ""
-					contributor.credentialDelivered = false
-				}
-				contributor.mu.Unlock()
-
-				if hasTask {
-					// C4: a failure is terminal — revoke the server-issued lease so a
-					// later task_progress for this task cannot resurrect ownership.
-					if failedTask != nil {
-						h.revokeLease(identityOf(contributor), failedTask.TaskID)
-					}
-					if failedTask != nil {
-						// #2435: record a short failure cooldown (and advance the
-						// consecutive-failure/quarantine counter) so a just-failed
-						// issue is not immediately re-admissible and handed straight
-						// back out ahead of the rest of the queue. A permanent failure
-						// counts more toward the quarantine threshold.
-						h.recordTaskFailureForTask(failedTask, msg.Permanent)
-					}
-					// #2547: keep the failure reason instead of only logging it, so an
-					// operator can tell a work item that failed on its merits from one
-					// that landed on a client whose environment could not run it. The
-					// kind is self-reported and advisory — recorded and displayed, never
-					// acted on. Note this is stored AFTER recordTaskFailure above and
-					// deliberately does not influence it: the cooldown must not depend
-					// on a client-controlled value (that is ROUTE, still undecided).
-					failureKind := NormalizeTaskFailureKind(msg.FailureKind)
-					contributor.mu.Lock()
-					contributor.lastFailure = &ContributorFailure{
-						TaskID:    msg.TaskID,
-						Kind:      failureKind,
-						Reason:    msg.Reason,
-						Permanent: msg.Permanent,
-						At:        time.Now().UTC().Format(time.RFC3339),
-					}
-					if failedTask != nil {
-						contributor.lastFailure.Repo = failedTask.Repo
-						contributor.lastFailure.Number = failedTask.Number
-					}
-					contributor.mu.Unlock()
-
-					failedDesc := msg.TaskID
-					if failedTask != nil {
-						failedDesc = assignDesc(failedTask.Kind, failedTask.identityKey(), failedTask.Title, msg.TaskID)
-					}
-					provider := ""
-					if contributor.cliBackend == "pi" {
-						provider, _, _ = strings.Cut(contributor.model, "/")
-					}
-					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, failedDesc)
-					h.logger.Info("[contribute-ws] task failed",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-						"task_gen", msg.TaskGen,
-						"backend", contributor.cliBackend,
-						"provider", provider,
-						"model", contributor.model,
-						"result", "failed",
-						"reason", msg.Reason,
-						"failure_kind", failureKind,
-						"permanent", msg.Permanent,
-					)
-					// Durable per-run record (task_run_log.go). The reason is
-					// the same bounded, fleet-view-displayed text stored on
-					// lastFailure above; failure_kind is already normalized.
-					runRec := TaskRunRecord{
-						TaskID:      msg.TaskID,
-						TaskGen:     msg.TaskGen,
-						Username:    contributor.profile.GitHubUsername,
-						Backend:     contributor.cliBackend,
-						Provider:    provider,
-						Model:       contributor.model,
-						Effort:      contributor.reasoningEffort,
-						Role:        contributor.role,
-						Outcome:     "failed",
-						FailureKind: failureKind,
-						Reason:      msg.Reason,
-						Permanent:   msg.Permanent,
-						// #7317 item 3: the pane at the moment of failure. The relay
-						// captures it BEFORE stopping the agent precisely so this
-						// report carries the evidence (see failCurrentTask); until now
-						// the hub read it and kept nothing.
-						PaneTail: boundPaneTail(msg.TmuxOutput),
-					}
-					if failedTask != nil {
-						runRec.Repo = failedTask.Repo
-						runRec.Number = failedTask.Number
-					}
-					if !taskAssignedAt.IsZero() {
-						runRec.DurationS = time.Since(taskAssignedAt).Seconds()
-					}
-					h.appendTaskRun(runRec)
-					// #6450: book this failure against the CONTRIBUTOR's fast-failure
-					// streak (hub-measured duration; an unknown/adopted-task duration
-					// is not counted). Separate from the per-issue cooldown above:
-					// same failure, two ledgers, two questions ("is this issue
-					// poisoned?" vs "is this contributor's runtime dying?").
-					if !taskAssignedAt.IsZero() {
-						h.recordContributorFastFailure(identityOf(contributor), time.Since(taskAssignedAt), msg.Reason)
-					}
-					contributor.mu.Lock()
-					contributor.profile.TasksFailed++
-					contributor.mu.Unlock()
-					_ = saveContributorProfile(contributor.profile)
-				} else {
-					h.recordDecision(contributor.profile.GitHubUsername, decisionUnassignedIgnored,
-						msg.TaskID, "", 0,
-						"task_failed ignored: this connection does not hold that task")
-					h.logger.Warn("[contribute-ws] task_failed for unassigned task ignored",
-						"username", contributor.profile.GitHubUsername,
-						"task", msg.TaskID,
-					)
-				}
-			}
-
+			s.handleTaskFailed(msg)
 		case "pong":
-			if contributor != nil {
-				contributor.mu.Lock()
-				contributor.lastPong = time.Now()
-				contributor.mu.Unlock()
+			if s.contributor != nil {
+				s.contributor.mu.Lock()
+				s.contributor.lastPong = time.Now()
+				s.contributor.mu.Unlock()
 			}
 
 		case "ping":
@@ -2752,13 +1723,1114 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			// loop and the operator paths, so it MUST take the write lock; a ping that
 			// somehow arrives pre-registration has no ContributorConnection and is
 			// still single-writer on the bare conn.
-			if contributor != nil {
-				_ = contributor.send(WSMessage{Type: "pong", Seq: msg.Seq})
+			if s.contributor != nil {
+				_ = s.contributor.send(WSMessage{Type: "pong", Seq: msg.Seq})
 			} else {
-				_ = sendJSON(conn, WSMessage{Type: "pong", Seq: msg.Seq})
+				_ = sendJSON(s.conn, WSMessage{Type: "pong", Seq: msg.Seq})
 			}
 		}
 	}
+}
+
+// wsSession is the per-socket state HandleWS threads through its phases: the
+// upgraded connection, its identifiers, the auth handshake channel, the
+// contributor once authenticated, and whether the pending-connection slot has
+// already been handed over to h.connections (#7546).
+type wsSession struct {
+	h               *ContributeWSHub
+	conn            *websocket.Conn
+	connID          string
+	nonce           string
+	authDone        chan *ContributorConnection
+	contributor     *ContributorConnection
+	pendingReleased bool
+}
+
+// releaseOnDisconnect is the teardown phase of HandleWS: it runs exactly once
+// when the read loop exits, releases any task this socket still holds (unless a
+// live reconnect has already re-adopted it, #5322), records the abandonment, and
+// closes the socket.
+func (s *wsSession) releaseOnDisconnect() {
+	h := s.h
+	if s.contributor != nil && s.contributor.profile != nil {
+		s.contributor.mu.Lock()
+		abandonedTask := s.contributor.currentTask
+		// #7317: see the `ready` path — captured under the same lock so the
+		// run record can carry how long the task was held before the socket
+		// died.
+		abandonedTaskAt := s.contributor.taskAssignedAt
+		s.contributor.currentTask = nil
+		// #2568: bump the generation on release so any late message from this
+		// now-defunct socket carrying the old generation is fenced.
+		s.contributor.currentTaskGen = h.nextTaskGen()
+		s.contributor.lastLeaseRenew = time.Time{}
+		s.contributor.tokenMintedAt = time.Time{}
+		// #2537: clear any pending/delivered credential state with the task.
+		s.contributor.pendingToken = ""
+		s.contributor.credentialDelivered = false
+		s.contributor.mu.Unlock()
+
+		// #5322: deregister THIS socket before deciding whether its task is
+		// really abandoned. The check below asks "is some OTHER live
+		// connection for this identity already holding this task?", and the
+		// answer must not be able to include the connection being torn down.
+		// Moved up from the tail of this defer for exactly that reason; it is
+		// the same single delete of the same key, just ordered ahead of the
+		// release so the two cannot observe each other.
+		h.mu.Lock()
+		delete(h.connections, s.connID)
+		h.mu.Unlock()
+
+		// #5322: a socket that dies WITHOUT a close frame (an L7 proxy cutting
+		// the tunnel — the 1006 flap #5090/#5310 measured) leaves this read
+		// loop parked in ReadMessage, so this defer does not run when the
+		// socket dies; it runs whenever the next read finally errors. The
+		// relay meanwhile redials in ~1s and re-asserts its task over a NEW
+		// connection, which the lease-bound resume in task_progress legitimately
+		// adopts. h.connections is keyed by a random per-socket connID and the
+		// hub has no notion of "this contributor's current socket", so when this
+		// defer eventually fires it releases BY ISSUE a task that a live
+		// connection is demonstrably still working: it books a release cooldown
+		// on an in-flight issue and writes "released: connection lost" for work
+		// nobody released. That is the silent drop — the hub's own record of the
+		// assignment contradicted by the ghost of a socket that no longer
+		// represents the contributor.
+		//
+		// So: release only what is still ours to release. If another LIVE
+		// connection for this same identity already holds this exact task, the
+		// reconnect has already reconciled and this socket is a ghost — skip the
+		// release entirely. This changes nothing about a genuine departure (no
+		// other connection holds the task, so the release runs exactly as
+		// before, booking the same cooldown and writing the same rows —
+		// deliberately leaving kubestellar/hive#5151's accounting untouched).
+		if abandonedTask != nil && h.taskReadoptedByLiveConnection(s.contributor, abandonedTask) {
+			h.logger.Info("[contribute-ws] disconnect release skipped: task already re-adopted on a live connection",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", abandonedTask.TaskID,
+				"repo", abandonedTask.Repo,
+				"number", abandonedTask.Number,
+			)
+			abandonedTask = nil
+		}
+
+		if abandonedTask != nil {
+			h.logger.Warn("[contribute-ws] task released on disconnect",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", abandonedTask.TaskID,
+			)
+			// #2356: a disconnect drops the issue out of activeIssues (the only
+			// double-assign guard) WITHOUT recording any cooldown, so selectTask
+			// could hand the SAME issue to another session in the brief reconnect
+			// window (BASE_RECONNECT_DELAY_MS..MAX_RECONNECT_DELAY_MS, i.e. 1s–60s)
+			// while the original relay — which keeps currentTask locally and
+			// re-asserts it via task_progress on reconnect — is still working it.
+			// Both sessions then reach "open a PR" and file duplicates. Book the
+			// SHORT cooldown so the issue is not instantly re-admissible. The short
+			// window comfortably outlasts the reconnect backoff, so the returning
+			// session re-asserts and resumes (repopulating activeIssues) before the
+			// cooldown lapses — which is the contract #4260 restored by renewing
+			// the lease on every progress report, so a task alive longer than
+			// leaseTTL is still re-adoptable. Only real issue tasks are booked —
+			// synthetic pr-review tasks carry Number == 0 and must not poison an
+			// issue key.
+			//
+			// #4260: bookReleaseCooldown rather than recordTaskFailure. The window
+			// is identical; what is dropped is the consecutive-failure increment,
+			// which turned three dropped sockets on one issue into a
+			// quarantineCooldownHours quarantine of an issue nobody had failed.
+			// The #2356 duplicate-PR guarantee lives entirely in the timestamp and
+			// is unaffected.
+			if abandonedTask.Number > 0 {
+				h.bookReleaseCooldown(abandonedTask.Repo, abandonedTask.Number)
+			}
+			// #5097: make the abandonment VISIBLE. Until now this path recorded
+			// nothing an operator could see — the issue showed a "picked up" with
+			// no terminal event ever following it, which is indistinguishable in
+			// the feed from an issue nobody touched. Four issues were opened and
+			// dropped in ten minutes on a flapping session and the hub's own
+			// history showed only that they were picked up.
+			//
+			// Deliberately NOT the "failed" verb: #4260 established that a dropped
+			// socket is not a failure of the work, and booking it as one is what
+			// turned three dropped sockets into a quarantine of an issue nobody had
+			// failed. This is a release, and it says so.
+			h.addActivity(s.contributor.profile.GitHubUsername, "released: connection lost",
+				s.contributor.role, s.contributor.cliBackend, s.contributor.model,
+				s.contributor.reasoningEffort, taskDescOf(abandonedTask))
+			// #7317: the durable half of the same visibility argument #5097
+			// makes above. The activity rail is capped and drops off; the run
+			// log is what an operator reads an hour later. Note this runs only
+			// on a REAL abandonment — the #5322 re-adoption check above has
+			// already set abandonedTask to nil for a ghost socket, so a
+			// reconnect that resumed its task writes no abandonment row.
+			h.appendAbandonedRun(s.contributor, abandonedTask, abandonCauseDisconnect, abandonedTaskAt)
+		}
+		h.logger.Info("[contribute-ws] disconnected", "username", s.contributor.profile.GitHubUsername)
+		h.addActivity(s.contributor.profile.GitHubUsername, "left", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, "")
+	}
+	_ = s.conn.Close()
+}
+
+// handleAuthResponse is the handshake phase: it verifies the registration token
+// and challenge signature, admits or refuses the contributor, and registers the
+// connection. It reports stop=true when the socket must close.
+func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
+	h := s.h
+	if msg.RegistrationToken == "" {
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Missing registration token"})
+		closeWithReason(s.conn, websocket.ClosePolicyViolation, "missing registration token")
+		return true
+	}
+
+	profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
+
+	if profile == nil {
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
+		closeWithReason(s.conn, websocket.ClosePolicyViolation, "invalid registration token")
+		return true
+	}
+
+	if profile.TrustTier == "revoked" {
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Access has been revoked"})
+		closeWithReason(s.conn, websocket.ClosePolicyViolation, "access has been revoked")
+		return true
+	}
+
+	if allowed, acceptedModels := h.checkModelAllowed(msg.Model); !allowed {
+		reason := fmt.Sprintf("Model %q is not accepted by this hive", msg.Model)
+		if msg.Model == "" {
+			reason = "No model specified — this hive requires an accepted model"
+		}
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, AcceptedModels: acceptedModels})
+		h.logger.Info("[contribute-ws] model rejected", "username", profile.GitHubUsername, "model", msg.Model)
+		closeWithReason(s.conn, websocket.ClosePolicyViolation, "model not accepted by this hive")
+		return true
+	}
+
+	clientRole := normalizeAgentRole(msg.Role)
+	assignedRole := normalizeAgentRole(profile.AssignedAgentRole)
+	requestedRole := clientRole
+	if hasOwnerAgentRoleAssignment(profile) {
+		requestedRole = effectiveAssignedAgentRole(assignedRole)
+	}
+	probeContributor := &ContributorConnection{profile: profile}
+	if requestedRole != "" {
+		if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
+			_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: reason, Role: requestedRole})
+			h.logger.Warn("[contribute-ws] agent role claim rejected",
+				"username", profile.GitHubUsername, "tier", profile.TrustTier,
+				"role", requestedRole, "reason", reason)
+			closeWithReason(s.conn, websocket.ClosePolicyViolation, "agent role claim rejected")
+			return true
+		}
+	}
+
+	profile.LastActive = time.Now().UTC().Format(time.RFC3339)
+	if msg.CLIBackend != "" {
+		profile.CLIBackend = msg.CLIBackend
+	}
+	if msg.Model != "" {
+		profile.Model = msg.Model
+	}
+	if msg.ReasoningEffort != "" {
+		profile.ReasoningEffort = msg.ReasoningEffort
+	}
+	if profile.AvatarURL == "" {
+		profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
+	}
+	if clientRole != "" {
+		profile.PreferredRole = clientRole
+	}
+	_ = saveContributorProfile(profile)
+
+	// #2547 declare half: capture the client-declared capabilities, if any.
+	// A relay may report its runtime posture either as a nested
+	// "capabilities" object or (for a version-only client) just a top-level
+	// protocol_version; fold the latter in so it is surfaced consistently.
+	// Entirely optional — a client that sends neither leaves caps nil and is
+	// treated exactly as an unversioned client. Never routed/gated on.
+	var caps *ContributorCapabilities
+	declared := ContributorCapabilities{}
+	if msg.Capabilities != nil {
+		declared = *msg.Capabilities
+	}
+	if declared.RelayProtocolVersion == "" && msg.ProtocolVersion != "" {
+		declared.RelayProtocolVersion = msg.ProtocolVersion
+	}
+	// Bound and clean it before it is stored: a declaration is unverified
+	// client text that lives for the connection, is re-serialized into
+	// every fleet poll, and lands in an operator row. Sanitizing cannot
+	// reject — an over-long or messy declaration still authenticates, it
+	// just cannot spill past its field. Checked AFTER sanitizing so a
+	// declaration made entirely of whitespace reads as "declared nothing"
+	// rather than as an empty-stringed capability set.
+	declared = declared.Sanitized()
+	if !declared.IsZero() {
+		c := declared
+		caps = &c
+	}
+
+	// #2547 (peer-compatibility criterion): compare the declared version
+	// with ours and say so ONCE, at the log level the verdict deserves, so
+	// "an old relay against a new hub" is legible in the hub log instead of
+	// only discoverable by watching it misbehave. This is a REPORT, not a
+	// gate — admission continues unchanged for every verdict, including
+	// protoPeerIncompatible, because compatibility here has to be carried by
+	// the defaults (there is no negotiation to carry it) and rejecting on a
+	// client-declared string would strand relays written before any change.
+	switch verdict := classifyPeerProtocol(declared.RelayProtocolVersion); verdict {
+	case protoPeerIncompatible, protoPeerMalformed:
+		h.logger.Warn("[contribute-ws] contributor protocol mismatch (advisory; client still served)",
+			"contributor", profile.ContributorID, "verdict", verdict,
+			"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
+	case protoPeerOlder, protoPeerNewer:
+		h.logger.Info("[contribute-ws] contributor protocol drift (advisory; client still served)",
+			"contributor", profile.ContributorID, "verdict", verdict,
+			"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
+	}
+
+	s.contributor = &ContributorConnection{
+		ws:              s.conn,
+		profile:         profile,
+		cliBackend:      msg.CLIBackend,
+		session:         sanitizeSessionLabel(msg.Session),
+		model:           msg.Model,
+		reasoningEffort: msg.ReasoningEffort,
+		role:            requestedRole,
+		clientRole:      clientRole,
+		assignedRole:    assignedRole,
+		connectedAt:     time.Now(),
+		lastPong:        time.Now(),
+		capabilities:    caps,
+	}
+
+	// Hand the slot over from the pending counter to h.connections
+	// under the same lock, so the connection is counted exactly once
+	// and the total never dips (which would briefly let the cap be
+	// exceeded) nor double-counts (which would halve it). The deferred
+	// Add(-1) in HandleWS is disarmed by this flag.
+	h.mu.Lock()
+	h.connections[s.connID] = s.contributor
+	h.mu.Unlock()
+	if !s.pendingReleased {
+		s.pendingReleased = true
+		h.pendingConns.Add(-1)
+	}
+
+	var perms []string
+	switch profile.TrustTier {
+	case "newcomer":
+		perms = []string{"issues:write"}
+	case "contributor":
+		perms = []string{"issues:write", "contents:write", "pulls:write"}
+	case "trusted":
+		perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
+	case "merger":
+		perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
+	case "advisor":
+		perms = []string{"metadata:read", "pulls:read"}
+	default:
+		perms = []string{"metadata:read"}
+	}
+
+	if err := s.contributor.send(WSMessage{
+		Type:          "auth_ok",
+		Seq:           h.nextSeq(),
+		ContributorID: profile.ContributorID,
+		TrustTier:     profile.TrustTier,
+		Permissions:   perms,
+		Role:          requestedRole,
+		// #2567: advertise the protocol version and the server capability
+		// set so a client can learn what this deployed hub supports without
+		// probing. Additive — an existing client ignores these unknown fields.
+		ProtocolVersion:    contributorProtocolVersion,
+		ServerCapabilities: serverCapabilities(),
+	}); err != nil {
+		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
+		return true
+	}
+
+	h.logger.Info("[contribute-ws] authenticated",
+		"username", profile.GitHubUsername,
+		"tier", profile.TrustTier,
+		"cli", msg.CLIBackend,
+		"role", requestedRole,
+	)
+	h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "")
+
+	select {
+	case s.authDone <- s.contributor:
+	default:
+	}
+
+	// Count a PROTOCOL-level Pong as liveness, exactly as the JSON
+	// "pong" case below does (kubestellar/hive#5090). Now that the hub
+	// emits real Ping control frames, a relay that answers only those —
+	// which is what any conforming WebSocket client does automatically,
+	// with no relay code at all — must not be false-timed-out by the
+	// heartbeat sweep. gorilla invokes this handler from ReadMessage on
+	// the read goroutine, which holds neither mu nor writeMu here, so
+	// taking mu introduces no re-entrancy.
+	s.contributor.ws.SetPongHandler(func(string) error {
+		s.contributor.mu.Lock()
+		s.contributor.lastPong = time.Now()
+		s.contributor.mu.Unlock()
+		return nil
+	})
+
+	go h.heartbeatLoop(s.contributor)
+
+	return false
+}
+
+// handleReady is the dispatch phase: a contributor with no task asks for work
+// and receives a selected task (or a no-work notice). stop=true closes the socket.
+func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
+	h := s.h
+	if s.contributor == nil {
+		return false
+	}
+	s.contributor.mu.Lock()
+	abandoned := s.contributor.currentTask
+	// #7317: captured under the same lock as currentTask so the run record
+	// below can report the task's real wall-clock duration. On the session
+	// that prompted the issue these land on the relay's own timeouts —
+	// ~26 min is PANE_STALL_TIMEOUT_MS, ~10 min is CLI_READY_TIMEOUT_MS —
+	// which is the most diagnostic number in the record, and it was being
+	// discarded along with the rest of the abandonment.
+	abandonedAt := s.contributor.taskAssignedAt
+	s.contributor.currentTask = nil
+	// #2568: bump the generation on release so a re-`ready` abandon fences any
+	// later message echoing the old generation for the just-abandoned task.
+	s.contributor.currentTaskGen = h.nextTaskGen()
+	s.contributor.lastLeaseRenew = time.Time{}
+	s.contributor.tokenMintedAt = time.Time{}
+	// #2537: clear any pending/delivered credential state with the task.
+	s.contributor.pendingToken = ""
+	s.contributor.credentialDelivered = false
+	s.contributor.mu.Unlock()
+	if abandoned != nil {
+		// C4: the relay explicitly gave up this task, so revoke its
+		// server-issued lease — a later task_progress for it must not resurrect
+		// ownership.
+		h.revokeLease(identityOf(s.contributor), abandoned.TaskID)
+		// #5097: same visibility gap as the disconnect path above — the
+		// relay giving a task back by asking for new work left no trace in
+		// the activity feed either.
+		h.addActivity(s.contributor.profile.GitHubUsername, "released: gave the task back",
+			s.contributor.role, s.contributor.cliBackend, s.contributor.model,
+			s.contributor.reasoningEffort, taskDescOf(abandoned))
+		h.logger.Warn("[contribute-ws] task abandoned without completion",
+			"username", s.contributor.profile.GitHubUsername,
+			"abandoned_task", abandoned.TaskID,
+		)
+		h.recordTaskDecision(s.contributor.profile.GitHubUsername, decisionAbandoned, abandoned,
+			"relay asked for new work while still holding this task")
+		// kubestellar/hive#2545: a contributor that sends "ready" while
+		// still holding a task (e.g. the relay's own MAX_TASK_DURATION_MS
+		// watchdog gives up and requeues, or an agent that never actually
+		// started work asks for something new) used to leave currentTask
+		// set and booked no cooldown at all — worse than the disconnect
+		// path immediately above (#2356/#2435), which does both. That left
+		// the abandoned issue permanently out of activeIssues circulation
+		// for the life of the connection: no PR, no failure record, no
+		// re-offer, just a silently held slot. Clear currentTask (above)
+		// so selectTask's activeIssues scan releases the issue, and mirror
+		// the disconnect/task_failed paths by booking the SAME short
+		// non-permanent failure cooldown, so the just-abandoned issue is
+		// not instantly handed straight back to the same contributor in
+		// the very selectTask call below. Synthetic pr-review tasks carry
+		// Number == 0 and must not poison an issue key.
+		if abandoned.Number > 0 {
+			h.recordTaskFailureForTask(abandoned, false)
+		}
+		// #7317: and leave a durable trace. Everything above this line is
+		// about ROUTING the abandoned issue (lease, cooldown, activity rail);
+		// none of it survives for an operator to read later. The run log is
+		// the only per-run record that does, and this path never wrote one —
+		// so a contributor that handed eleven tasks back in two hours showed
+		// a single row, and run-stats reported one failure for the session.
+		h.appendAbandonedRun(s.contributor, abandoned, abandonCauseHandback, abandonedAt)
+	}
+	h.logger.Info("[contribute-ws] ready for work",
+		"username", s.contributor.profile.GitHubUsername,
+		"role", s.contributor.role,
+	)
+	task := h.selectTask(s.contributor)
+	switch {
+	case task == nil:
+		// Defensive backstop only: after #2436 and #2546 every selectTask
+		// path returns an explicit message, so this should not be reached.
+		// Kept so an unforeseen nil still fails safe (no send) rather than
+		// panicking.
+		h.logger.Info("[contribute-ws] no tasks available",
+			"username", s.contributor.profile.GitHubUsername,
+		)
+	case task.Type == "task_unavailable":
+		// An explicit negative-ack rather than silence. #2436 finding 1/2/3
+		// covers the enforced refusals (mint failure, disabled tier,
+		// concurrency limit); #2546 adds the three formerly-silent
+		// no-work-right-now reasons (contribution_suspended, hub_not_ready,
+		// no_matching_work). Record the reason on the connection so the ops
+		// tab can show WHY this clanker is idle, then send it.
+		s.contributor.mu.Lock()
+		s.contributor.lastIdleReason = task.Reason
+		s.contributor.mu.Unlock()
+		if err := s.contributor.send(*task); err != nil {
+			h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
+			return true
+		}
+		h.logger.Info("[contribute-ws] task unavailable",
+			"username", s.contributor.profile.GitHubUsername,
+			"reason", task.Reason,
+		)
+	default:
+		if err := s.contributor.send(*task); err != nil {
+			h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
+			return true
+		}
+		pickupKey := task.TaskKey
+		if pickupKey == "" {
+			pickupKey = worksource.Ref{Repo: task.Repo, Number: task.Number}.Key()
+		}
+		taskDesc := assignDesc(task.Kind, pickupKey, task.Title, task.TaskID)
+		if task.Role != "" {
+			taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
+		}
+		h.addActivity(s.contributor.profile.GitHubUsername, "picked up", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, taskDesc)
+		h.logger.Info("[contribute-ws] task assigned",
+			"username", s.contributor.profile.GitHubUsername,
+			"task", task.TaskID,
+			"repo", task.Repo,
+			"number", task.Number,
+		)
+		// #2537: the credential was withheld from the task_assign above and is
+		// delivered only AFTER acceptance. In the DEFAULT trusted-source
+		// auto-accept mode, the task already cleared admission and the per-tier
+		// trust gate in selectTask, so acceptance is automatic HERE — after the
+		// assignment is committed and sent — and the scoped credential is
+		// delivered immediately. This preserves an unattended fleet's timing
+		// (credential arrives right after task_assign) while making the ordering
+		// provable: the credential leaves the hub only once acceptance is
+		// recorded, never bundled with the metadata. In EXPLICIT-accept mode the
+		// hub withholds here and waits for a task_accepted (handled below).
+		if !h.requireExplicitAccept() {
+			h.deliverTaskCredential(s.contributor, "auto_accept")
+		} else {
+			h.logger.Info("[contribute-ws] credential withheld pending explicit acceptance",
+				"username", s.contributor.profile.GitHubUsername, "task", task.TaskID)
+		}
+	}
+
+	return false
+}
+
+// handleTaskAccepted records that the contributor acknowledged its assignment.
+func (s *wsSession) handleTaskAccepted(msg WSMessage) {
+	h := s.h
+	// #2537: a task_accepted is the client's explicit acceptance of the
+	// assigned task. In EXPLICIT-accept mode the hub withheld the scoped
+	// credential from task_assign and waits for exactly this message before
+	// delivering it — so a task that is never accepted (declined, timed out,
+	// or reconnected away) never receives a credential. acceptTaskCredential
+	// delivers only when the acceptance is for the task this connection
+	// currently holds; a stale/mismatched task_id is ignored. It is idempotent
+	// via deliverTaskCredential, so in auto-accept mode (where the credential
+	// already went out) this is a no-op, and a relay that re-asserts
+	// task_accepted on reconnect cannot re-deliver.
+	if s.contributor != nil {
+		h.acceptTaskCredential(s.contributor, msg.TaskID)
+	}
+
+}
+
+// handleTaskProgress is the lease phase: progress reports renew the lease and
+// let a reconnecting relay re-assert the task it already holds.
+func (s *wsSession) handleTaskProgress(msg WSMessage) {
+	h := s.h
+	if s.contributor != nil {
+		s.contributor.mu.Lock()
+		// C4 (CWE-862/639): a task_progress that arrives while this connection
+		// holds NO task is a RESUME claim. The hub must NOT rebuild ownership
+		// from the client's own task_id/repo/number fields — doing so let a
+		// client assert ANY task and be minted a scoped GitHub credential for
+		// work the server never assigned. A resume is honored ONLY when it
+		// matches a server-issued lease (lookupLease) EXACTLY on
+		// {identity, task_id, repo, number, generation} and is unexpired, and
+		// only after the same admission gates a fresh assignment must pass
+		// (suspension, disabled tier, revocation) still hold. Anything else is
+		// rejected: the relay is told to re-`ready` for fresh work.
+		if s.contributor.currentTask == nil {
+			if msg.TaskID == "" {
+				s.contributor.mu.Unlock()
+				return
+			}
+			identity := identityOf(s.contributor)
+			canonRepo := h.canonicalRepoKey(msg.Repo)
+			s.contributor.mu.Unlock()
+
+			lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
+			if lease == nil {
+				h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID,
+					"repo", canonRepo,
+					"client_gen", msg.TaskGen,
+				)
+				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
+					msg.TaskID, canonRepo, msg.Number,
+					"no matching server-issued lease; task_revoke sent")
+				// Tell the relay this task is not (or no longer) its to hold, so
+				// it stops reporting and re-asks for work rather than silently
+				// believing it owns something the hub has no record of.
+				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "no active lease for this task"})
+				return
+			}
+			// C4: re-run the same admission gates a fresh selectTask assignment
+			// must pass. A task assigned before the operator suspended the queue,
+			// disabled the tier, or revoked the contributor must NOT silently
+			// resume (and re-mint a credential) after the gate closed.
+			if reason := h.resumeGateReason(s.contributor); reason != "" {
+				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
+					msg.TaskID, canonRepo, msg.Number,
+					"refused by the admission gate: "+reason)
+				h.logger.Warn("[contribute-ws] task_progress resume refused by admission gate",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID,
+					"reason", reason,
+				)
+				h.revokeLease(identity, msg.TaskID)
+				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
+				return
+			}
+			// Adopt the task from the AUTHORITATIVE lease record, not the client
+			// fields: repo/number/tier are the server's, and the task keeps its
+			// ORIGINAL generation so it stays fenced against any older-generation
+			// straggler. lastLeaseRenew starts the wedged-task clock.
+			s.contributor.mu.Lock()
+			s.contributor.currentTask = &WSTaskAssign{
+				TaskID: lease.taskID,
+				Kind:   msg.Kind,
+				Repo:   lease.repo,
+				Number: lease.number,
+				Title:  msg.Title,
+			}
+			s.contributor.currentTaskGen = lease.gen
+			s.contributor.lastLeaseRenew = time.Now()
+			s.contributor.tmuxOutput = msg.TmuxOutput
+			s.contributor.mu.Unlock()
+
+			// #4260: a resume is itself proof of life, so restart the lease
+			// window alongside lastLeaseRenew. Without this a relay that
+			// reconnected twice inside one lease window would be refused the
+			// second time even though it never stopped working.
+			h.renewLease(identity, lease.taskID, time.Now())
+
+			// #5322: the disconnect that preceded this resume booked a
+			// speculative release cooldown on the issue (#2356's
+			// duplicate-assign hedge). This resume proves the release never
+			// happened — the original relay is back, on the original task,
+			// under the original generation — so withdraw the hedge rather
+			// than leave a live, in-flight issue stamped "recently released"
+			// in the failure ledger for the rest of the window. Narrow by
+			// construction: clearReleaseCooldown refuses to touch an issue
+			// that carries a real consecutive-failure count.
+			if lease.number > 0 {
+				h.clearReleaseCooldown(lease.repo, lease.number)
+			}
+
+			h.logger.Info("[contribute-ws] task resumed from server-issued lease",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", lease.taskID, "repo", lease.repo, "number", lease.number)
+
+			// #2610 finding 3: re-mint and push a fresh token_refresh so the
+			// resumed session holds a valid token and re-arms the #2393 refresh
+			// cycle. The credential is minted for the LEASE's tier (server-owned),
+			// repository-scoped to the lease's repo (C4).
+			h.resumeTaskToken(s.contributor, lease)
+			return
+		}
+
+		// A routine progress ping for a task the hub already tracks on THIS
+		// connection. #2568 (the Gate): reject a STALE generation — a worker
+		// whose task was revoked/reassigned (currentTaskGen bumped past what it
+		// echoes) must not renew a lease it no longer owns. An unversioned relay
+		// echoes 0 and is accepted (generationAccepted falls back to TaskID).
+		if msg.TaskGen != 0 {
+			s.contributor.sawTaskGen = true
+		}
+		if !generationAccepted(msg.TaskGen, s.contributor.currentTaskGen, s.contributor.sawTaskGen) {
+			staleGen := msg.TaskGen
+			s.contributor.mu.Unlock()
+			h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+				"client_gen", staleGen,
+			)
+			h.recordDecision(s.contributor.profile.GitHubUsername, decisionStaleGenRejected,
+				msg.TaskID, "", 0,
+				"task_progress fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
+			return
+		}
+		s.contributor.tmuxOutput = msg.TmuxOutput
+		// #4117: the relay re-detects the running model from the CLI's own
+		// session transcript on every progress tick and piggybacks it here, so
+		// a mid-session model switch (claude `/model`) is reflected instead of
+		// staying stuck at the connect-time value. Same pattern as the
+		// auth-time handler: only non-empty values overwrite — an older relay
+		// omits both fields and nothing changes. Advisory display metadata,
+		// exactly like the auth_response values it refreshes.
+		if msg.Model != "" {
+			s.contributor.model = msg.Model
+			if s.contributor.profile != nil {
+				s.contributor.profile.Model = msg.Model
+			}
+		}
+		if msg.ReasoningEffort != "" {
+			s.contributor.reasoningEffort = msg.ReasoningEffort
+			if s.contributor.profile != nil {
+				s.contributor.profile.ReasoningEffort = msg.ReasoningEffort
+			}
+		}
+		// SECURITY (v4, kept over v2 #3153): v4 deliberately has NO
+		// client-driven resume path here. A task_progress for a task the hub
+		// does not already track is resumed ONLY through the authoritative
+		// server lease (lookupLease) above; a relay may not rebuild currentTask
+		// from its own self-reported msg.Repo/Number/Role and thereby self-mint
+		// a scoped credential (C4). v2's client-asserted resume block was NOT
+		// grafted — see the PR body "Consider porting to v4 separately".
+		// #2568: renew the hub-owned lease on every progress report. This is
+		// what distinguishes "working slowly but alive" (lease keeps renewing,
+		// never reclaimed) from "connected but wedged" (lease goes stale and
+		// cleanupLoop reclaims it after wsTaskTimeout).
+		s.contributor.lastLeaseRenew = time.Now()
+		// #4260: the task id is taken from the hub's OWN record of what this
+		// connection holds, never from msg.TaskID, so the renewal cannot be
+		// pointed at a task the client merely names. Captured here under the
+		// connection lock and applied below without it, matching how the other
+		// release paths call into the lease registry.
+		heldTaskID := ""
+		if s.contributor.currentTask != nil {
+			heldTaskID = s.contributor.currentTask.TaskID
+		}
+		s.contributor.mu.Unlock()
+		// #4260: keep the lease registry's expiry on the same clock as
+		// lastLeaseRenew above. Stamping it only at assignment meant a task
+		// still healthily reporting progress past leaseTTL was never reclaimed
+		// yet could no longer be re-adopted, so the next socket drop cost the
+		// relay its in-flight work.
+		h.renewLease(identityOf(s.contributor), heldTaskID, time.Now())
+	}
+
+}
+
+// handleTaskComplete is the settlement phase for successful work: PR linkage,
+// ledgers, rewards, and releasing the task.
+func (s *wsSession) handleTaskComplete(msg WSMessage) {
+	h := s.h
+	if s.contributor != nil {
+		s.contributor.mu.Lock()
+		// #2568 (the Gate, critical guarantee): a worker whose task was revoked
+		// and reassigned — but that later wakes and reports completion carrying
+		// the OLD generation — must NOT overwrite the new owner's state. Its
+		// currentTaskGen was bumped past what it echoes, so reject the message
+		// WITHOUT clearing currentTask (which may now hold the NEW owner's task).
+		// An unversioned relay echoes 0 and is accepted, falling back to the
+		// TaskID identity match below. Checked before any mutation.
+		if msg.TaskGen != 0 {
+			s.contributor.sawTaskGen = true
+		}
+		if s.contributor.currentTask != nil && !generationAccepted(msg.TaskGen, s.contributor.currentTaskGen, s.contributor.sawTaskGen) {
+			staleGen := msg.TaskGen
+			s.contributor.mu.Unlock()
+			h.logger.Warn("[contribute-ws] stale-generation task_complete rejected",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+				"client_gen", staleGen,
+			)
+			h.recordDecision(s.contributor.profile.GitHubUsername, decisionStaleGenRejected,
+				msg.TaskID, "", 0,
+				"task_complete fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
+			return
+		}
+		hasTask := s.contributor.currentTask != nil && s.contributor.currentTask.TaskID == msg.TaskID
+		completedTask := s.contributor.currentTask
+		// Captured before the clear below so the run log can record the
+		// task's wall-clock duration. Zero when the task was adopted
+		// without a fresh assignment; the record then omits duration.
+		taskAssignedAt := s.contributor.taskAssignedAt
+		// SECURITY (audit N9, CWE-862/639): clear ONLY when the reported
+		// task_id actually matches the held assignment.
+		//
+		// This block used to run unconditionally, while revokeLease and
+		// markTaskCompleted below run only `if hasTask`. So a completion
+		// naming ANY other task released the assignment without revoking the
+		// lease or booking a cooldown: the contributor went `ready` and was
+		// minted a SECOND live repo credential under max_concurrent=1, and
+		// the "unassigned task ignored" warning below said otherwise while
+		// the state had in fact already been mutated.
+		//
+		// The #2568 Gate does not cover this: generationAccepted() returns
+		// true whenever clientGen == 0, and omitting task_gen yields 0, so
+		// the guard is opt-in from the client.
+		if hasTask {
+			s.contributor.currentTask = nil
+			// #2539: drop the previewable prompt with the task it belonged to
+			// so the ops tab does not show a stale instruction after completion.
+			s.contributor.currentPrompt = ""
+			s.contributor.currentLabels = nil
+			s.contributor.tokenMintedAt = time.Time{}
+			s.contributor.taskAssignedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			s.contributor.pendingToken = ""
+			s.contributor.credentialDelivered = false
+		}
+		// tmuxOutput is diagnostic only and carries no authority, so it is
+		// recorded either way — it is often the only evidence of what a
+		// confused relay was doing when it reported the wrong task.
+		s.contributor.tmuxOutput = msg.TmuxOutput
+		s.contributor.mu.Unlock()
+
+		if hasTask {
+			// #2565: the reported PR URL is client-supplied (tmux-scraped by
+			// the relay), so before it drives the LONG cooldown OR trust credit
+			// we verify it server-side against GitHub — it must exist, have a
+			// base repo matching THIS assignment, and be authored by this
+			// contributor. Anything else (no URL, wrong repo/author, API error)
+			// downgrades to an unverified/no-PR completion: the short cooldown
+			// and no trust credit. This closes the hole #2437 left open (the
+			// bar was "a PR was reported", still trusting an unverified field).
+			// verifiedPR is the ONLY value allowed to unlock the PR-gated
+			// rewards below; the raw msg.PRURL is never trusted directly again.
+			// C4: a completion is terminal — revoke the server-issued lease so a
+			// later task_progress for this task cannot resurrect ownership and be
+			// re-minted a credential.
+			if completedTask != nil {
+				h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
+			}
+			verifiedPR := ""
+			var prDetail ghpkg.PRVerification
+			if completedTask != nil {
+				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
+			}
+			if prDetail.Verified {
+				verifiedPR = msg.PRURL
+				// Off the read loop, deliberately. This is cosmetic
+				// best-effort work that gates NOTHING — unlike
+				// verifyReportedPR above, whose result decides the cooldown
+				// and trust credit and so must be awaited. Inline it would
+				// add up to two GitHub round trips (bounded by the App
+				// client's 30s timeout, so ~60s worst case) to this
+				// contributor's message loop, during which its pongs are not
+				// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
+				// push a perfectly healthy contributor to `Stale` in the
+				// fleet view for the sake of a PR-body edit.
+				go h.reconcilePRAttribution(msg.PRURL, s.contributor)
+				// A MERGED fix retires the finding it addresses, so the
+				// digest stops carrying work that is already done. Gated
+				// on prDetail.Merged, not on verification alone: a PR
+				// that merely exists is a fix in review, and closing
+				// findings on it would retire them before anything
+				// landed. The PR's OWN title is matched — the
+				// assignment's issue title would match the finding it
+				// was minted from on the mere existence of a PR.
+				if prDetail.Merged {
+					h.closeAdvisoryForMergedPR(prDetail.Title)
+				}
+			}
+			// #3987: normalize the completion's verdict. A verified PR always
+			// wins (shipped); with none, only an explicit no_work_needed is
+			// honoured and everything else — including the absent field every
+			// pre-#3987 relay sends — is idle, i.e. today's exact semantics.
+			verdict := normalizeCompletionVerdict(msg.Verdict, verifiedPR)
+			if completedTask != nil {
+				// #2393 item 7 + #2565: the full week-long cooldown is applied
+				// only for a VERIFIED PR; an unverified or no-PR completion gets
+				// the short cooldown so the issue is not locked for a week (and,
+				// per #2492/#2557, still gets a non-zero cooldown so it is not
+				// instantly re-offered in a tight loop). #3987: a no_work_needed
+				// verdict additionally books the durable offer-suppression
+				// verdict (see markTaskCompletedVerdict).
+				h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
+					verdict, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
+					msg.CompletionSignal)
+			}
+			completedDesc := msg.TaskID
+			if completedTask != nil {
+				completedDesc = assignDesc(completedTask.Kind, completedTask.identityKey(), completedTask.Title, msg.TaskID)
+			}
+			provider := ""
+			if s.contributor.cliBackend == "pi" {
+				provider, _, _ = strings.Cut(s.contributor.model, "/")
+			}
+			h.addActivity(s.contributor.profile.GitHubUsername, "completed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, completedDesc)
+			h.logger.Info("[contribute-ws] task complete",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+				"task_gen", msg.TaskGen,
+				"backend", s.contributor.cliBackend,
+				// Provider is derived from Pi's one canonical provider/model input;
+				// this evidence is not a second authority or routing signal.
+				"provider", provider,
+				"model", s.contributor.model,
+				"result", msg.Result,
+				"pr_verified", verifiedPR != "",
+				"verdict", verdict,
+				"verdict_reason", strings.TrimSpace(msg.VerdictReason),
+				// #5376: which signal ended the task. Diagnostic only —
+				// normalized to a closed vocabulary so a client cannot
+				// inject arbitrary text into the hub's structured logs.
+				"completion_signal", normalizeCompletionSignal(msg.CompletionSignal),
+			)
+			// Durable per-run record (task_run_log.go) — the same
+			// normalized fields the slog line above carries, plus the
+			// duration nothing recorded before. DECLARE only.
+			runRec := TaskRunRecord{
+				TaskID:           msg.TaskID,
+				TaskGen:          msg.TaskGen,
+				Username:         s.contributor.profile.GitHubUsername,
+				Backend:          s.contributor.cliBackend,
+				Provider:         provider,
+				Model:            s.contributor.model,
+				Effort:           s.contributor.reasoningEffort,
+				Role:             s.contributor.role,
+				Outcome:          "completed",
+				CompletionSignal: normalizeCompletionSignal(msg.CompletionSignal),
+				Verdict:          verdict,
+				VerdictReason:    strings.TrimSpace(msg.VerdictReason),
+				PRURL:            verifiedPR,
+				PRVerified:       verifiedPR != "",
+			}
+			if completedTask != nil {
+				runRec.Repo = completedTask.Repo
+				runRec.Number = completedTask.Number
+			}
+			if !taskAssignedAt.IsZero() {
+				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
+			}
+			h.appendTaskRun(runRec)
+			// #6450: a genuine completion proves the runtime works — clear
+			// the contributor's fast-failure streak.
+			h.resetContributorFailureStreak(identityOf(s.contributor))
+			s.contributor.mu.Lock()
+			s.contributor.profile.TasksCompleted++
+			// Trust credit is gated on the VERIFIED PR, not the reported one:
+			// counting the raw self-reported field would hand out
+			// contents:write / pulls:write for a PR that was never shown to
+			// exist, belongs to another repo, or was authored by someone else.
+			if verifiedPR != "" {
+				s.contributor.profile.TasksWithPR++
+			}
+			s.contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
+			if completedTask != nil {
+				s.contributor.profile.LastCompletedTask = completedTask
+			}
+			// Promote on completions that produced a VERIFIED pull request.
+			// Completion is self-reported, so counting bare task_complete
+			// messages — or unverified PR URLs — would hand out contents:write
+			// and pulls:write for work that was never shown to exist.
+			promoted := false
+			if s.contributor.profile.TrustTier == "newcomer" && s.contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
+				s.contributor.profile.TrustTier = "contributor"
+				promoted = true
+				h.logger.Info("[contribute-ws] auto-promoted", "username", s.contributor.profile.GitHubUsername)
+			}
+			promotedUser := s.contributor.profile.GitHubUsername
+			promotedCLI := s.contributor.cliBackend
+			promotedModel := s.contributor.model
+			promotedEffort := s.contributor.reasoningEffort
+			s.contributor.mu.Unlock()
+			// #2390-era command center: narrate the promotion as its own
+			// activity event so the Operations dev-log and achievement pops
+			// (contribute_sse.go broadcast) surface "promoted to contributor".
+			// Read-only signalling — it changes no control behaviour and is
+			// emitted only on the real newcomer -> contributor transition.
+			if promoted {
+				h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
+			}
+			_ = saveContributorProfile(s.contributor.profile)
+		} else {
+			// N9: this is now literally true. It previously logged "ignored"
+			// after the handler had already cleared currentTask and the
+			// credential state, which made the bypass look like a no-op in the
+			// logs.
+			h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored (assignment left intact)",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+			)
+			h.recordDecision(s.contributor.profile.GitHubUsername, decisionUnassignedIgnored,
+				msg.TaskID, "", 0,
+				"task_complete ignored: this connection does not hold that task")
+		}
+	}
+
+}
+
+// handleTaskFailed is the settlement phase for failed work: failure streaks,
+// cooldowns, and releasing the task.
+func (s *wsSession) handleTaskFailed(msg WSMessage) {
+	h := s.h
+	if s.contributor != nil {
+		s.contributor.mu.Lock()
+		// #2568 (the Gate): reject a STALE worker's failure the same way as its
+		// completion — its currentTaskGen was bumped past the generation it
+		// echoes. Left unguarded, a revoked worker's late task_failed would book
+		// a spurious failure cooldown against the NEW owner's issue. Do not clear
+		// currentTask (it may now be the new owner's task). Unversioned relays
+		// echo 0 and fall back to the TaskID match below.
+		if msg.TaskGen != 0 {
+			s.contributor.sawTaskGen = true
+		}
+		if s.contributor.currentTask != nil && !generationAccepted(msg.TaskGen, s.contributor.currentTaskGen, s.contributor.sawTaskGen) {
+			staleGen := msg.TaskGen
+			s.contributor.mu.Unlock()
+			h.logger.Warn("[contribute-ws] stale-generation task_failed rejected",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+				"client_gen", staleGen,
+			)
+			// #7330: THE event the issue was filed for. A relay whose
+			// up-front rejection paths send task_failed with no task_gen
+			// gets fenced here once the connection has sent a non-zero
+			// one — the relay believes it reported a failure, the hub
+			// believes it never did, and until now the disagreement was
+			// visible only in the hub's stdout.
+			h.recordDecision(s.contributor.profile.GitHubUsername, decisionStaleGenRejected,
+				msg.TaskID, "", 0,
+				"task_failed fenced: client_gen "+strconv.FormatUint(staleGen, 10)+" no longer matches the assignment")
+			return
+		}
+		hasTask := s.contributor.currentTask != nil && s.contributor.currentTask.TaskID == msg.TaskID
+		failedTask := s.contributor.currentTask
+		// Duration anchor for the run log, captured before the clear —
+		// same shape as task_complete above.
+		taskAssignedAt := s.contributor.taskAssignedAt
+		// SECURITY (audit N9, CWE-862/639): same hole as task_complete —
+		// clear only on a genuine TaskID match. Unconditionally, a failure
+		// naming any other task released the assignment while revokeLease
+		// and recordTaskFailure below stayed inside `if hasTask`, so no
+		// cooldown was booked and the abandoned issue became instantly
+		// re-admissible while the credential stayed live.
+		if hasTask {
+			s.contributor.currentTask = nil
+			s.contributor.tokenMintedAt = time.Time{}
+			s.contributor.taskAssignedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			s.contributor.pendingToken = ""
+			s.contributor.credentialDelivered = false
+		}
+		s.contributor.mu.Unlock()
+
+		if hasTask {
+			// C4: a failure is terminal — revoke the server-issued lease so a
+			// later task_progress for this task cannot resurrect ownership.
+			if failedTask != nil {
+				h.revokeLease(identityOf(s.contributor), failedTask.TaskID)
+			}
+			if failedTask != nil {
+				// #2435: record a short failure cooldown (and advance the
+				// consecutive-failure/quarantine counter) so a just-failed
+				// issue is not immediately re-admissible and handed straight
+				// back out ahead of the rest of the queue. A permanent failure
+				// counts more toward the quarantine threshold.
+				h.recordTaskFailureForTask(failedTask, msg.Permanent)
+			}
+			// #2547: keep the failure reason instead of only logging it, so an
+			// operator can tell a work item that failed on its merits from one
+			// that landed on a client whose environment could not run it. The
+			// kind is self-reported and advisory — recorded and displayed, never
+			// acted on. Note this is stored AFTER recordTaskFailure above and
+			// deliberately does not influence it: the cooldown must not depend
+			// on a client-controlled value (that is ROUTE, still undecided).
+			failureKind := NormalizeTaskFailureKind(msg.FailureKind)
+			s.contributor.mu.Lock()
+			s.contributor.lastFailure = &ContributorFailure{
+				TaskID:    msg.TaskID,
+				Kind:      failureKind,
+				Reason:    msg.Reason,
+				Permanent: msg.Permanent,
+				At:        time.Now().UTC().Format(time.RFC3339),
+			}
+			if failedTask != nil {
+				s.contributor.lastFailure.Repo = failedTask.Repo
+				s.contributor.lastFailure.Number = failedTask.Number
+			}
+			s.contributor.mu.Unlock()
+
+			failedDesc := msg.TaskID
+			if failedTask != nil {
+				failedDesc = assignDesc(failedTask.Kind, failedTask.identityKey(), failedTask.Title, msg.TaskID)
+			}
+			provider := ""
+			if s.contributor.cliBackend == "pi" {
+				provider, _, _ = strings.Cut(s.contributor.model, "/")
+			}
+			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc)
+			h.logger.Info("[contribute-ws] task failed",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+				"task_gen", msg.TaskGen,
+				"backend", s.contributor.cliBackend,
+				"provider", provider,
+				"model", s.contributor.model,
+				"result", "failed",
+				"reason", msg.Reason,
+				"failure_kind", failureKind,
+				"permanent", msg.Permanent,
+			)
+			// Durable per-run record (task_run_log.go). The reason is
+			// the same bounded, fleet-view-displayed text stored on
+			// lastFailure above; failure_kind is already normalized.
+			runRec := TaskRunRecord{
+				TaskID:      msg.TaskID,
+				TaskGen:     msg.TaskGen,
+				Username:    s.contributor.profile.GitHubUsername,
+				Backend:     s.contributor.cliBackend,
+				Provider:    provider,
+				Model:       s.contributor.model,
+				Effort:      s.contributor.reasoningEffort,
+				Role:        s.contributor.role,
+				Outcome:     "failed",
+				FailureKind: failureKind,
+				Reason:      msg.Reason,
+				Permanent:   msg.Permanent,
+				// #7317 item 3: the pane at the moment of failure. The relay
+				// captures it BEFORE stopping the agent precisely so this
+				// report carries the evidence (see failCurrentTask); until now
+				// the hub read it and kept nothing.
+				PaneTail: boundPaneTail(msg.TmuxOutput),
+			}
+			if failedTask != nil {
+				runRec.Repo = failedTask.Repo
+				runRec.Number = failedTask.Number
+			}
+			if !taskAssignedAt.IsZero() {
+				runRec.DurationS = time.Since(taskAssignedAt).Seconds()
+			}
+			h.appendTaskRun(runRec)
+			// #6450: book this failure against the CONTRIBUTOR's fast-failure
+			// streak (hub-measured duration; an unknown/adopted-task duration
+			// is not counted). Separate from the per-issue cooldown above:
+			// same failure, two ledgers, two questions ("is this issue
+			// poisoned?" vs "is this contributor's runtime dying?").
+			if !taskAssignedAt.IsZero() {
+				h.recordContributorFastFailure(identityOf(s.contributor), time.Since(taskAssignedAt), msg.Reason)
+			}
+			s.contributor.mu.Lock()
+			s.contributor.profile.TasksFailed++
+			s.contributor.mu.Unlock()
+			_ = saveContributorProfile(s.contributor.profile)
+		} else {
+			h.recordDecision(s.contributor.profile.GitHubUsername, decisionUnassignedIgnored,
+				msg.TaskID, "", 0,
+				"task_failed ignored: this connection does not hold that task")
+			h.logger.Warn("[contribute-ws] task_failed for unassigned task ignored",
+				"username", s.contributor.profile.GitHubUsername,
+				"task", msg.TaskID,
+			)
+		}
+	}
+
 }
 
 func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
