@@ -84,6 +84,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
+	b.WriteString(buildReadInstruction(pr))
 	b.WriteString("Return exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString("Allowed verdicts: approve, changes_requested, requires_human, reject. Finding severities: info, low, medium, high, critical.\n")
@@ -91,6 +92,29 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings))
 	}
+	return b.String()
+}
+
+// buildReadInstruction is the read half of the kick. The prompt has always
+// demanded file:line citations, but never said how to obtain the diff — so
+// whether the reviewer actually read the change was left to chance, and an
+// agent that skipped it could still produce confident, ungrounded prose. That
+// is the single worst thing this hive can put in front of a maintainer: a
+// review that costs them time to refute. Name the commands, pin them to the
+// dispatched head, and make "I could not read it" an explicit, honest outcome
+// rather than a reason to guess.
+func buildReadInstruction(pr PullRequest) string {
+	var b strings.Builder
+	b.WriteString("READ THE PR BEFORE YOU JUDGE IT.\n")
+	fmt.Fprintf(&b, "  gh pr view %d --repo %s --json title,body,author,files,baseRefName\n", pr.Number, pr.Repo)
+	fmt.Fprintf(&b, "  gh pr diff %d --repo %s\n", pr.Number, pr.Repo)
+	b.WriteString("The body states what the author INTENDED; the diff is what they actually did. You need both — most of the findings worth reporting live in the gap between them.\n")
+	b.WriteString("Reading is read-only and unrestricted: use gh freely here.\n")
+	b.WriteString("Judge the diff, not the surrounding code. Pre-existing problems this PR does not touch are out of scope; raising them reads as an obstacle, not a review.\n")
+	if pr.HeadSHA != "" {
+		fmt.Fprintf(&b, "Your citations must come from that diff at head %s. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
+	}
+	b.WriteString("If you cannot read the diff — fetch failed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
 	return b.String()
 }
 
