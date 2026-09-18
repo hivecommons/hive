@@ -27,6 +27,7 @@ type WebhookPoller interface {
 
 type WebhookReceiver struct {
 	secret      func() string
+	repos       func() []string
 	poller      WebhookPoller
 	minInterval time.Duration
 	logger      *slog.Logger
@@ -43,6 +44,9 @@ func NewWebhookReceiver(secret func() string, poller WebhookPoller, minInterval 
 	if minInterval <= 0 {
 		minInterval = webhookDefaultMinGap
 	}
+	if secret == nil || strings.TrimSpace(secret()) == "" {
+		logger.Warn("mention: webhook accelerator secret is not configured; deliveries will be ignored")
+	}
 	return &WebhookReceiver{
 		secret:      secret,
 		poller:      poller,
@@ -51,6 +55,10 @@ func NewWebhookReceiver(secret func() string, poller WebhookPoller, minInterval 
 		now:         time.Now,
 		lastPoll:    map[string]time.Time{},
 	}
+}
+
+func (w *WebhookReceiver) SetReposFunc(f func() []string) {
+	w.repos = f
 }
 
 func (w *WebhookReceiver) SetClock(f func() time.Time) {
@@ -72,10 +80,26 @@ func (w *WebhookReceiver) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo, ok := webhookRepo(r.Header.Get(githubEventHeader), body)
+	if ok {
+		repo, ok = w.configuredRepo(repo)
+	}
 	if ok && w.admit(repo) && w.poller != nil {
 		go w.poller.PollRepo(context.Background(), repo)
 	}
 	rw.WriteHeader(http.StatusNoContent)
+}
+
+func (w *WebhookReceiver) configuredRepo(repo string) (string, bool) {
+	if w == nil || w.repos == nil {
+		return repo, strings.TrimSpace(repo) != ""
+	}
+	want := strings.TrimSpace(repo)
+	for _, configured := range w.repos() {
+		if strings.EqualFold(strings.TrimSpace(configured), want) {
+			return strings.TrimSpace(configured), strings.TrimSpace(configured) != ""
+		}
+	}
+	return "", false
 }
 
 func (w *WebhookReceiver) verify(body []byte, signature string) bool {

@@ -1828,6 +1828,9 @@ func (m GitHubMentionsConfig) Validate() error {
 	if m.WebhookEnabled && strings.TrimSpace(m.WebhookSecretEnv) == "" {
 		return fmt.Errorf("github.mentions.webhook_secret_env must be set when webhook_enabled is true")
 	}
+	if m.WebhookEnabled && m.WebhookSecretEffective() == "" {
+		return fmt.Errorf("github.mentions.webhook_secret_env %q is empty or unset", strings.TrimSpace(m.WebhookSecretEnv))
+	}
 	if m.WebhookEnabled && !m.Enabled {
 		return fmt.Errorf("github.mentions.webhook_enabled requires github.mentions.enabled")
 	}

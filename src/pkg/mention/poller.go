@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,6 +68,11 @@ func (p *Poller) PollRepo(ctx context.Context, repo string) {
 	if p == nil || p.handler == nil || repo == "" {
 		return
 	}
+	repo, ok := p.configuredRepo(repo)
+	if !ok {
+		p.logger.Debug("mention: repo poll ignored for unconfigured repo", "repo", repo)
+		return
+	}
 	if !p.claimRepo(repo) {
 		p.logger.Debug("mention: repo poll coalesced", "repo", repo)
 		return
@@ -77,6 +83,23 @@ func (p *Poller) PollRepo(ctx context.Context, repo string) {
 			return
 		}
 	}
+}
+
+func (p *Poller) configuredRepo(repo string) (string, bool) {
+	if p == nil || p.repos == nil {
+		return "", false
+	}
+	want := strings.TrimSpace(repo)
+	if want == "" {
+		return "", false
+	}
+	for _, configured := range p.repos() {
+		candidate := strings.TrimSpace(configured)
+		if candidate != "" && strings.EqualFold(candidate, want) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func (p *Poller) pollRepoOnce(ctx context.Context, repo string) {

@@ -40,6 +40,10 @@ func TestGitHubMentionsConfigDefaultsAndValidation(t *testing.T) {
 	if err := (GitHubMentionsConfig{WebhookEnabled: true, WebhookSecretEnv: "MENTION_WEBHOOK_SECRET"}).Validate(); err == nil {
 		t.Fatal("webhook without poller accepted")
 	}
+	t.Setenv("EMPTY_MENTION_WEBHOOK_SECRET", "")
+	if err := (GitHubMentionsConfig{Enabled: true, WebhookEnabled: true, WebhookSecretEnv: "EMPTY_MENTION_WEBHOOK_SECRET"}).Validate(); err == nil {
+		t.Fatal("webhook with unset secret env accepted")
+	}
 	if err := (GitHubMentionsConfig{WebhookMinGap: -time.Second}).Validate(); err == nil {
 		t.Fatal("negative webhook min gap accepted")
 	}

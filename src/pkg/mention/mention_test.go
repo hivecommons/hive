@@ -294,6 +294,62 @@ func TestPollerCoalescesConcurrentRepoPolls(t *testing.T) {
 	}
 }
 
+func TestPollerRejectsUnconfiguredRepoWithoutStateGrowth(t *testing.T) {
+	store, _ := NewStore("")
+	gh := &fakeGH{app: "hive[bot]"}
+	var audit, kick []string
+	h := baseHandler(t, gh, &audit, &kick)
+	p := NewPoller(gh, func() []string { return []string{"org/repo"} }, store, h, time.Minute, nil)
+	p.PollRepo(context.Background(), "org/other")
+	if gh.listed {
+		t.Fatal("unconfigured repo called GitHub")
+	}
+	if !store.Watermark("org/other").IsZero() {
+		t.Fatal("unconfigured repo created a watermark")
+	}
+	if len(p.inFlight) != 0 || len(p.pending) != 0 {
+		t.Fatalf("unconfigured repo grew poll state: inFlight=%+v pending=%+v", p.inFlight, p.pending)
+	}
+}
+
+func TestPollerUsesConfiguredRepoCasingForDirectPoll(t *testing.T) {
+	store, _ := NewStore("")
+	gh := &fakeGH{app: "hive[bot]"}
+	var audit, kick []string
+	h := baseHandler(t, gh, &audit, &kick)
+	p := NewPoller(gh, func() []string { return []string{"Org/Repo"} }, store, h, time.Minute, nil)
+	p.PollRepo(context.Background(), "org/repo")
+	if !gh.listed {
+		t.Fatal("configured repo did not call GitHub")
+	}
+	if store.Watermark("Org/Repo").IsZero() {
+		t.Fatal("configured repo casing did not receive watermark")
+	}
+	if !store.Watermark("org/repo").IsZero() {
+		t.Fatal("payload repo casing created a separate watermark")
+	}
+}
+
+func TestPollerConfiguredRepoEdges(t *testing.T) {
+	if repo, ok := (*Poller)(nil).configuredRepo("org/repo"); ok || repo != "" {
+		t.Fatalf("nil poller configuredRepo = %q/%v", repo, ok)
+	}
+	p := &Poller{}
+	if repo, ok := p.configuredRepo("org/repo"); ok || repo != "" {
+		t.Fatalf("nil repos configuredRepo = %q/%v", repo, ok)
+	}
+	p.repos = func() []string { return []string{"", " Org/Repo "} }
+	if repo, ok := p.configuredRepo(" "); ok || repo != "" {
+		t.Fatalf("blank repo configuredRepo = %q/%v", repo, ok)
+	}
+	if repo, ok := p.configuredRepo("org/repo"); !ok || repo != "Org/Repo" {
+		t.Fatalf("trimmed case-insensitive configuredRepo = %q/%v", repo, ok)
+	}
+	if repo, ok := p.configuredRepo("org/other"); ok || repo != "" {
+		t.Fatalf("unmatched configuredRepo = %q/%v", repo, ok)
+	}
+}
+
 func TestPollerBootstrapsEmptyWatermarkWithoutReplay(t *testing.T) {
 	store, _ := NewStore("")
 	old := time.Now().Add(-time.Hour)
