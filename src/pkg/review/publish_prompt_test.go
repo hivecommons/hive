@@ -111,3 +111,81 @@ func TestPromptPublishAppliesToEveryPerspective(t *testing.T) {
 		}
 	}
 }
+
+// TestRoutingMarkerIsPinned pins the exact marker a maintainer filters on. The
+// value of the marker is entirely in its being identical across every repo and
+// every reviewer; a reworded variant is unsearchable and therefore useless.
+func TestRoutingMarkerIsPinned(t *testing.T) {
+	got := BuildPerspectivePromptOpts(PerspectiveCorrectness, testPR(), true)
+
+	if !strings.Contains(got, "**HUMAN DECISION NEEDED**") {
+		t.Error("publish prompt does not pin the HUMAN DECISION NEEDED marker")
+	}
+	if !strings.Contains(got, "requires_human or reject") {
+		t.Error("publish prompt does not tie the marker to the blocking verdicts")
+	}
+}
+
+// TestRoutingDoesNotMentionBotAuthors is the point of the author check: the
+// common case on a hive is an agent-authored PR, and mentioning the App that
+// opened it notifies nobody while looking like the review was routed.
+func TestRoutingDoesNotMentionBotAuthors(t *testing.T) {
+	for _, author := range []string{
+		"kubestellar-hive[bot]",
+		"app/kubestellar-hive",
+		"",
+	} {
+		pr := testPR()
+		pr.Author = author
+		got := BuildPerspectivePromptOpts(PerspectiveCorrectness, pr, true)
+
+		if strings.Contains(got, "(the PR author) so the person who can act") {
+			t.Errorf("author %q: prompt asks the reviewer to mention a non-human author", author)
+		}
+		if !strings.Contains(got, "Do NOT @-mention the PR author") {
+			t.Errorf("author %q: prompt omits the do-not-mention instruction", author)
+		}
+	}
+}
+
+// TestRoutingMentionsHumanAuthors is the converse: when a person opened the PR,
+// the mention is the fastest path from finding to decision.
+func TestRoutingMentionsHumanAuthors(t *testing.T) {
+	pr := testPR()
+	pr.Author = "@clubanderson"
+	got := BuildPerspectivePromptOpts(PerspectiveCorrectness, pr, true)
+
+	if !strings.Contains(got, "mention @clubanderson (the PR author)") {
+		t.Error("prompt does not ask the reviewer to mention the human PR author")
+	}
+	// The leading @ must not be doubled when the author already carries one.
+	if strings.Contains(got, "@@") {
+		t.Error("prompt double-prefixed the author handle with @")
+	}
+	if strings.Contains(got, "Do NOT @-mention the PR author") {
+		t.Error("prompt suppressed the mention for a human author")
+	}
+}
+
+// TestRoutingAsksForReviewLimits covers the capability-honesty half: a reviewer
+// that cannot judge something must say so rather than approve around it.
+func TestRoutingAsksForReviewLimits(t *testing.T) {
+	got := BuildPerspectivePromptOpts(PerspectiveCorrectness, testPR(), true)
+
+	if !strings.Contains(got, "Report the limits of your own review") {
+		t.Error("publish prompt does not ask the reviewer to report what it could not judge")
+	}
+}
+
+// TestRoutingIsOptInWithPublish keeps routing on the same switch as publishing:
+// a hive that has not opted into comments must not have its prompt changed.
+func TestRoutingIsOptInWithPublish(t *testing.T) {
+	got := BuildPerspectivePrompt(PerspectiveCorrectness, testPR())
+
+	if strings.Contains(got, "HUMAN DECISION NEEDED") {
+		t.Error("default prompt contains the routing marker; routing must be opt-in with publishing")
+	}
+	if strings.Contains(got, "ROUTING") {
+		t.Error("default prompt contains the routing block; routing must be opt-in with publishing")
+	}
+}

@@ -1,0 +1,1 @@
+- Review comments now route: a `requires_human` or `reject` verdict opens with a pinned `**HUMAN DECISION NEEDED**` marker maintainers can filter on, mentions the PR author when that author is a person (never an app/bot account, which notifies nobody), and asks the reviewer to state plainly what it could not judge instead of approving around it.
