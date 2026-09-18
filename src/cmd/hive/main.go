@@ -5732,6 +5732,12 @@ func runEvalCycle(
 	// reach the merge sweep, escalation or the queue counts.
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
 
+	// Publish the human-facing "what should I merge next?" digest. This reads
+	// the PR set enumerated and CI-enriched immediately above, so it must stay
+	// after those two calls: Mergeable and the failing-check names it sorts on
+	// are populated by EnrichCIStatus, not by EnumerateActionable.
+	postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
+
 	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
 	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
 	// (#2), and the stuck-PR reaper (#4) all key off a consistent, current

@@ -6295,17 +6295,25 @@ type ReviewConfig struct {
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
-	// given in a single dispatch cycle. It exists because parallel review
-	// slots are a fixed budget spent in PR order: without a cap, the first PR
-	// in a deep queue absorbs every slot for its own perspectives, so adding
-	// reviewers buys more opinions on one PR instead of coverage across many.
-	// Capping it spends the same budget breadth-first. No coverage is lost —
-	// the perspectives skipped this cycle are still "missing" next cycle and
-	// get dispatched then — so this schedules depth rather than dropping it.
-	// It also bounds how many comments a single PR can collect at once, which
-	// matters once reviewers publish. Zero means no cap — fanning every
-	// perspective out at once stays the default, so this only changes a hive
-	// that opts in because its queue is too deep to review in depth.
+	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
+	// exists because parallel review slots are a fixed budget spent in PR
+	// order: without a cap, the first PR in a deep queue absorbs every slot
+	// for its own perspectives, so adding reviewers buys more opinions on one
+	// PR instead of coverage across many. Capping it spends the same budget
+	// breadth-first.
+	//
+	// Coverage IS traded away deliberately, and that is the point. A
+	// per-cycle cap could not bound anything a publishing reviewer does to a
+	// PR: the perspectives skipped this cycle stayed "missing" next cycle and
+	// were dispatched then, so a 5-perspective default still arrived as 5
+	// separate comments on the same PR, one per cadence interval. Setting
+	// this to 1 is what makes "the hive left one review comment on this PR"
+	// true. See hivecommons/hive#7562.
+	//
+	// The budget is keyed on the head SHA, so pushing new commits earns a
+	// fresh budget — a rewritten PR is reviewed again, an untouched one is
+	// not. Zero means no cap, which stays the default, so this only changes
+	// a hive that opts in because its queue is too deep to review in depth.
 	MaxPerspectivesPerPR int `yaml:"max_perspectives_per_pr,omitempty" json:"max_perspectives_per_pr,omitempty"`
 	// AllAuthors makes every open PR eligible for review regardless of who
 	// opened it. By default the review swarm looks only at agent-authored
@@ -6338,6 +6346,10 @@ type ReviewConfig struct {
 	// resolves nowhere for most hives while looking configured. Each hive
 	// names a label its own governed repos already maintain.
 	HumanDecisionLabel string `yaml:"human_decision_label,omitempty" json:"human_decision_label,omitempty"`
+	// Recommendations maintains a single, continuously-updated issue per
+	// repository that answers "what should I merge next?" for a human working
+	// the queue by hand.
+	Recommendations RecommendationsConfig `yaml:"recommendations,omitempty" json:"recommendations,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep
@@ -6567,4 +6579,33 @@ func (e EscalationConfig) EffectiveThreshold() int {
 		return e.Threshold
 	}
 	return DefaultEscalationThreshold
+}
+
+// RecommendationsConfig controls the hive's "what should I merge next?" issue.
+//
+// This exists for a repository whose maintainers do NOT want the hive merging
+// anything — the common case when trust is still being earned. A hive that may
+// not merge can still do the expensive part of the work: read every open PR,
+// establish which ones are actually mergeable right now, and put that answer
+// somewhere a person can act on in one sitting. The issue is rewritten in
+// place on a cadence, so it is one notification, not a stream.
+type RecommendationsConfig struct {
+	// Enabled turns the recommendations issue on. Off by default: opening an
+	// issue in someone's repository is not something to do uninvited.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Repos limits which repositories get an issue. Empty means every
+	// repository the hive already watches that has open PRs.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// Labels are applied when the issue is first opened. They are never
+	// re-applied on an update, so a maintainer who removes one keeps it
+	// removed. The labels must already exist in the repository — a hive does
+	// not invent labels in someone else's taxonomy (the same rule
+	// HumanDecisionLabel follows).
+	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	// MinReadyToOpen is how many mergeable PRs must exist before the hive
+	// opens the issue for the first time. It defaults to 1: an issue that
+	// opens saying "nothing is ready" is noise. Once the issue exists it is
+	// kept current regardless, including when the answer becomes "nothing is
+	// ready right now" — that is a useful state to be able to read.
+	MinReadyToOpen int `yaml:"min_ready_to_open,omitempty" json:"min_ready_to_open,omitempty"`
 }
