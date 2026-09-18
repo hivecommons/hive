@@ -4762,7 +4762,7 @@
                 ? 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.'
                 : 'Planning needs ACMM level 5+ — the architect that decomposes plans is only scheduled at L5/L6. Raise the level to enable ⧉ Plan and the `plan` label.';
             }
-            return `<div class="gov-metric" title="${esc(planTitle)}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}${pending > 0 ? ` <span style="opacity:0.7;font-size:0.85em">+${pending} queued</span>` : ''}</span></div>`;
+            return `<div class="gov-metric" style="cursor:pointer" data-action="openPlanList" title="${esc(planTitle + ' — click to open the plan view')}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}${pending > 0 ? ` <span style="opacity:0.7;font-size:0.85em">+${pending} queued</span>` : ''}</span></div>`;
           })()}
           <div class="oc-gov-gauge">
             <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) 100%)">
@@ -7884,9 +7884,9 @@
             const planExplain = 'PLANNING — goals being decomposed into work.\n\nWHAT: The architect agent breaks high-level goals (epics) into a tree of child issues before other agents execute them. Available only at ACMM level 5–6, where the architect is scheduled.\n\nHOW: Counts plan-trees by state from the planning ledger — active (approved, in progress), awaiting review (need your approval before work starts), and decomposing (being broken down now). Amber means human action is required.\n\n';
             const tip = planExplain + (awaiting > 0
               ? `${awaiting} plan(s) awaiting your review — approve them in the plan view before agents start the work`
-              : `${active} active plan-tree(s)` + (pending ? `, ${pending} decomposing` : ''));
+              : `${active} active plan-tree(s)` + (pending ? `, ${pending} decomposing` : '')) + '\n\nClick to open the plan view.';
             const valTxt = awaiting > 0 ? `${awaiting} to review` : String(active);
-            return `<div class="gov-stat" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
+            return `<div class="gov-stat" style="cursor:pointer" data-action="openPlanList" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
           })()}
           <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the current mode's cadence schedule — the governor adds the mode's interval to the last run time. Faster modes (busy/surge) produce a nearer next run than idle/quiet."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
           <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
@@ -15814,6 +15814,140 @@ function burnAreaChart() {
         el.disabled = false;
       }
     }
+
+    // ── Plan review view (#7537) ─────────────────────────────────────────
+    // The governor PLANNING tile links here: openPlanList() enumerates every
+    // plan (GET /api/plans, drafts first) and openPlanReview(epicID) shows one
+    // plan's tree (GET /api/plan/{epicID}) with approve / reject / retag /
+    // remove controls wired to the existing owner-gated endpoints.
+
+    function planShowModal(title, bodyHtml) {
+      let overlay = document.getElementById('plan-modal-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'plan-modal-overlay';
+        overlay.className = 'nous-config-overlay';
+        document.body.appendChild(overlay);
+      }
+      overlay.style.display = 'flex';
+      overlay.innerHTML = `<div class="nous-config-dialog" style="width:680px">
+        <h2 style="font-size:1rem;margin:0;padding:24px 24px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+          ${title}
+          <button data-action="planCloseModal" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--muted)">✕</button>
+        </h2>
+        <div class="nous-config-body">${bodyHtml}</div>
+      </div>`;
+    }
+
+    function planCloseModal() {
+      const overlay = document.getElementById('plan-modal-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    function planStatusBadge(p) {
+      if (p.pendingDecompose) return '<span style="color:var(--blue)">⧗ queued for architect</span>';
+      if (p.planStatus === 'draft') return '<span style="color:var(--yellow)">● awaiting your review</span>';
+      if (p.planStatus === 'approved') return '<span style="color:var(--green)">✓ approved</span>';
+      return escapeHtml(p.planStatus || '—');
+    }
+
+    async function openPlanList() {
+      planShowModal('Plans', '<p class="muted-note">Loading plans…</p>');
+      try {
+        const res = await fetch('/api/plans');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        const plans = data.plans || [];
+        if (!plans.length) {
+          planShowModal('Plans', '<p class="muted-note">No plans yet. Click <strong>⧉ Plan</strong> on any issue pill, or add the <code>plan</code> label to an issue on GitHub, and the architect will decompose it into a reviewable plan.</p>');
+          return;
+        }
+        const rows = plans.map(p => {
+          const issue = p.issueRepo && p.issueNumber
+            ? ` <a href="${escapeHtml(p.issueUrl || '#')}" target="_blank" rel="noopener" style="color:var(--muted);font-size:.85em" data-stop="1">${escapeHtml(p.issueRepo)}#${escapeHtml(p.issueNumber)}</a>` : '';
+          const kids = p.childrenTotal ? ` · ${p.childrenOpen}/${p.childrenTotal} tasks open` : '';
+          return `<div data-action="openPlanReview" data-arg0="${escapeHtml(p.epicId)}" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline">
+              <strong>${escapeHtml(p.epicTitle || p.epicId)}</strong>
+              <span style="white-space:nowrap;font-size:.85em">${planStatusBadge(p)}</span>
+            </div>
+            <div class="muted-note" style="margin-top:2px">${escapeHtml(p.epicId)}${issue}${escapeHtml(kids)}</div>
+          </div>`;
+        }).join('');
+        planShowModal('Plans', rows);
+      } catch (e) {
+        planShowModal('Plans', `<p class="muted-note">Failed to load plans: ${escapeHtml(e.message)}</p>`);
+      }
+    }
+
+    async function openPlanReview(epicID) {
+      planShowModal('Plan review', '<p class="muted-note">Loading plan…</p>');
+      try {
+        const res = await fetch('/api/plan/' + encodeURIComponent(epicID));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        const plan = data.plan || {};
+        const draft = !plan.approved;
+        const children = (plan.children || []).map(c => {
+          const deps = (c.dependsOn || []).length ? `<span class="muted-note" style="font-size:.8em"> deps: ${(c.dependsOn || []).map(escapeHtml).join(', ')}</span>` : '';
+          const controls = draft ? `
+              <select data-change-action="planChildRetag" data-arg0="${escapeHtml(plan.epicId)}" data-arg1="${escapeHtml(c.id)}" data-arg-types="s,s,v" class="btn" title="Who should do this task — an agent, or a human?">
+                <option value="agent_suitable"${c.execution === 'agent_suitable' ? ' selected' : ''}>agent</option>
+                <option value="human_required"${c.execution === 'human_required' ? ' selected' : ''}>human</option>
+              </select>
+              <button class="btn" data-action="planChildRemove" data-arg0="${escapeHtml(plan.epicId)}" data-arg1="${escapeHtml(c.id)}" title="Remove this task from the plan">✕</button>`
+            : `<span class="muted-note" style="font-size:.85em">${escapeHtml(c.execution || '')}</span>`;
+          return `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
+            <div><span class="muted-note" style="font-size:.8em">${escapeHtml(c.planRef || '')}</span> ${escapeHtml(c.title)} <span class="muted-note" style="font-size:.8em">[${escapeHtml(String(c.status || ''))}]</span>${deps}</div>
+            <div style="display:flex;gap:6px;align-items:center;white-space:nowrap">${controls}</div>
+          </div>`;
+        }).join('') || '<p class="muted-note">No children yet — the architect has not decomposed this epic. Check back once the PLANNING tile stops counting it as queued.</p>';
+        const gate = draft
+          ? `<button class="btn" style="color:var(--green)" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
+          : `<button class="btn" style="color:var(--yellow)" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`;
+        planShowModal(`Plan: ${escapeHtml(plan.epicTitle || epicID)}`, `
+          <div class="muted-note" style="margin-bottom:10px">${escapeHtml(plan.epicId || '')} — status: <strong>${escapeHtml(plan.planStatus || 'pending')}</strong></div>
+          ${children}
+          <div style="display:flex;justify-content:space-between;margin-top:14px">
+            <button class="btn" data-action="openPlanList">← All plans</button>
+            ${gate}
+          </div>`);
+      } catch (e) {
+        planShowModal('Plan review', `<p class="muted-note">Failed to load plan: ${escapeHtml(e.message)}</p>`);
+      }
+    }
+
+    async function planGateAction(epicID, verb) {
+      const toast = showToast(`${verb === 'approve' ? 'Approving' : 'Rejecting'} plan…`, 'info', true);
+      try {
+        const res = await fetch(`/api/plan/${encodeURIComponent(epicID)}/${verb}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+        dismissToast(toast, verb === 'approve' ? 'Plan approved — tasks released to the fleet' : 'Plan returned to draft', 'success');
+        openPlanReview(epicID);
+      } catch (e) {
+        dismissToast(toast, `Plan ${verb} failed: ` + e.message, 'error');
+      }
+    }
+    function planApprove(epicID) { planGateAction(epicID, 'approve'); }
+    function planReject(epicID) { planGateAction(epicID, 'reject'); }
+
+    async function planChildEdit(epicID, childID, body, okMsg) {
+      const toast = showToast('Updating plan…', 'info', true);
+      try {
+        const res = await fetch(`/api/plan/${encodeURIComponent(epicID)}/child/${encodeURIComponent(childID)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+        dismissToast(toast, okMsg, 'success');
+        openPlanReview(epicID);
+      } catch (e) {
+        dismissToast(toast, 'Plan edit failed: ' + e.message, 'error');
+      }
+    }
+    function planChildRetag(epicID, childID, execution) { planChildEdit(epicID, childID, { action: 'retag', execution }, 'Task retagged'); }
+    function planChildRemove(epicID, childID) { planChildEdit(epicID, childID, { action: 'remove' }, 'Task removed from plan'); }
 
     /* setAgentEnabled flips the agent's master-power `enabled` flag.
 

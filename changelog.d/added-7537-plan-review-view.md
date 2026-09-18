@@ -1,0 +1,1 @@
+- The governor PLANNING tile is now clickable and opens the plan view it always pointed at: a list of every plan (drafts awaiting review first, backed by the new `GET /api/plans`) and a per-plan review modal with approve / reject / retag / remove controls — so plans can finally be approved from the dashboard instead of raw API calls (#7537).

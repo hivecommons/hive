@@ -398,3 +398,63 @@ func TestBuildPlanning_Empty(t *testing.T) {
 		t.Errorf("empty stores should yield zero planning metric, got %+v", fp)
 	}
 }
+
+// GET /api/plans is the plan view's listing endpoint (#7537): read-only, NOT
+// owner-gated (like handlePlanTree — see the note at the top of this file).
+func TestHandlePlanList(t *testing.T) {
+	srv, _, epic := planServer(t)
+
+	req := httptest.NewRequest("GET", "/api/plans", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK    bool                   `json:"ok"`
+		Plans []planning.PlanSummary `json:"plans"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || len(resp.Plans) != 1 {
+		t.Fatalf("want 1 plan, got %+v", resp)
+	}
+	p := resp.Plans[0]
+	if p.EpicID != epic.ID || p.Agent != "architect" || p.PlanStatus != planning.PlanStatusDraft {
+		t.Fatalf("unexpected summary: %+v", p)
+	}
+	if p.ChildrenTotal != 2 || p.ChildrenOpen != 2 {
+		t.Fatalf("want 2/2 children, got %d/%d", p.ChildrenOpen, p.ChildrenTotal)
+	}
+}
+
+// A server with no bead stores must return an empty list, not an error — the
+// tile only renders when planning is available, but the endpoint itself must
+// stay total.
+func TestHandlePlanList_NoStores(t *testing.T) {
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{
+		Config: &config.Config{Agents: map[string]config.AgentConfig{}},
+		Logger: slog.Default(),
+		Ctx:    context.Background(),
+	}
+	srv.RegisterAPI(srv.deps)
+
+	req := httptest.NewRequest("GET", "/api/plans", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK    bool                   `json:"ok"`
+		Plans []planning.PlanSummary `json:"plans"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || len(resp.Plans) != 0 {
+		t.Fatalf("want ok with 0 plans, got %+v", resp)
+	}
+}

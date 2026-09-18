@@ -216,6 +216,21 @@ func (s *Server) findEpicStore(epicID string) (*beads.Store, string) {
 	return nil, ""
 }
 
+// handlePlanList serves GET /api/plans: every plan across all bead stores,
+// drafts (awaiting human review) first. This is the listing the dashboard plan
+// view renders before drilling into GET /api/plan/{epicID} (#7537).
+func (s *Server) handlePlanList(w http.ResponseWriter, r *http.Request) {
+	var stores map[string]*beads.Store
+	if s.deps != nil {
+		stores = s.deps.BeadStores
+	}
+	plans := planning.ListPlans(stores)
+	if plans == nil {
+		plans = []planning.PlanSummary{}
+	}
+	jsonResponse(w, map[string]interface{}{"ok": true, "plans": plans})
+}
+
 // handlePlanTree serves GET /api/plan/{epicID}: the review view of a decomposed
 // epic (the epic + its children with execution tags and dependency edges).
 func (s *Server) handlePlanTree(w http.ResponseWriter, r *http.Request) {
