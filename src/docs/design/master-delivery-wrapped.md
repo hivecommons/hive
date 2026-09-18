@@ -145,7 +145,7 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/appkeyfile.go:52`) and
+`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/appkeyfile.go:51`) and
 `spokeAppKeyDir = "/data"` (`:212`), with `spokeAppKeyFileMode = 0o600`
 (`:224`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:222-223`). `/data` is the PVC mount in the spoke template
@@ -155,7 +155,7 @@ restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`src/cmd/hive/appkeyfile.go:48-49`.
+`src/cmd/hive/appkeyfile.go:47-48`.
 
 ### First boot, pod roll, PVC loss
 
@@ -364,7 +364,7 @@ context, not by the hub. The template already injects per-hive secret material
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
 (`src/pkg/hub/saas_provision.go:3473`) already carries private key material at provision
 time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`src/cmd/hive/appkeyfile.go:51`), which the spoke holds "from its very first boot —
+(`src/cmd/hive/appkeyfile.go:50`), which the spoke holds "from its very first boot —
 before any heartbeat has run" (`:216`).
 
 So there is an existing, precedented channel for giving a spoke a secret at
