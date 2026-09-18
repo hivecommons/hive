@@ -7850,7 +7850,12 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 	if cfg == nil || !cfg.Review.RequireApproval {
 		return
 	}
-	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{}, time.Now().UTC())
+	artifact, err := review.CollectAndMerge("", "", review.AggregateOptions{
+		// Unanimity is judged against what a PR was eligible to receive. Without
+		// this the cap makes approve unreachable and every PR aggregates to
+		// requires_human.
+		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
+	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {
 			logger.Warn("failed to refresh review verdicts", "error", err)
