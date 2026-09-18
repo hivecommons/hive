@@ -47,7 +47,13 @@ pinned:
   # sunset, and a PR targeting v2 runs the v2 merge-ref's workflows anyway,
   # where this file does not exist. Same excluded-not-backfilled reasoning as
   # docs-link-check.yml below.
-  changelog-fragment-guard.yml: [-v2]
+  # v6 is carried as an EXTRA on the workflows below rather than added to
+  # `release_lines`: it is a development line for the #7563 epic, not a
+  # supported release line — hives are not assigned to it and GHCR publishes no
+  # v6-latest. What it DOES need is the same PR gating as v4, because feature
+  # PRs target it directly (spine, mention triggers); without these extras a
+  # v6-base PR runs no Go build, test, or security lane at all.
+  changelog-fragment-guard.yml: [v6, -v2]
   # Static analysis and vulnerability scanning for the Go module. Pinned to the
   # release lines and nothing else: a feature branch gets the same gate through
   # `pull_request`, and running it on every pushed branch would burn runner
@@ -65,7 +71,7 @@ pinned:
   # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 the
   # sync target inheriting them; v2 is sunset and takes no pushes.
   dco-push-delta.yml: [v5, -v2]
-  go-security-analysis.yml: []
+  go-security-analysis.yml: [v6]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
@@ -94,9 +100,9 @@ pinned:
   # lines and nothing else: it is a pull_request-only path-gated check, and a
   # testutil regression can only reach a release line through a PR targeting
   # one.
-  testutil-guard.yml: []
-  v2-ci.yml: []
-  v2-tests.yml: []
+  testutil-guard.yml: [v6]
+  v2-ci.yml: [v6]
+  v2-tests.yml: [v6]
   # Automated v4 -> v5 forward-merge cadence (#7297). Its only branch filter is
   # the `workflow_run` trigger, which names the line whose RELEASES it reacts
   # to — v4, the source of every top-up. v2 is sunset and cuts no releases to
