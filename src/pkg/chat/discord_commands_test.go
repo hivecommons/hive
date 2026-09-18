@@ -1,4 +1,4 @@
-package discord
+package chat
 
 import (
 	"context"
@@ -145,8 +145,8 @@ func TestHeartbeatLoopCancelStops(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	b := NewBot(Config{Token: "test", ChannelID: "ch"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	b.client = &http.Client{Transport: &redirectTransport{target: ts.URL}, Timeout: 5 * time.Second}
+	b := NewService(&recordingBackend{}, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.dashboardURL = ts.URL
 	b.dashboardURL = ts.URL
 
 	ctx, cancel := context.WithCancel(context.Background())

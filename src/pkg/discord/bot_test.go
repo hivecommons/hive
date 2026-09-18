@@ -3,7 +3,6 @@ package discord
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/chat"
 )
 
 // redirectTransport rewrites every outgoing request so that requests targeting
@@ -83,8 +83,8 @@ func TestNewBot_FieldsSet(t *testing.T) {
 	if b.channelID != "chan" {
 		t.Errorf("channelID: got %q, want %q", b.channelID, "chan")
 	}
-	if b.commands == nil {
-		t.Error("commands map is nil")
+	if b.service == nil {
+		t.Error("chat service is nil")
 	}
 	if b.logger != logger {
 		t.Error("logger not stored correctly")
@@ -96,59 +96,6 @@ func TestNewBot_FieldsSet(t *testing.T) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // RegisterCommand
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestRegisterCommand_StoresHandler(t *testing.T) {
-	b := NewBot(Config{Token: "t", ChannelID: "c"}, discardLogger())
-
-	called := false
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
-		called = true
-		return "pong", nil
-	})
-
-	b.mu.RLock()
-	h, ok := b.commands["ping"]
-	b.mu.RUnlock()
-
-	if !ok {
-		t.Fatal("handler not found in commands map after RegisterCommand")
-	}
-
-	reply, err := h(context.Background(), "")
-	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if reply != "pong" {
-		t.Errorf("handler reply: got %q, want %q", reply, "pong")
-	}
-	if !called {
-		t.Error("handler was not actually invoked")
-	}
-}
-
-func TestRegisterCommand_OverwritesExisting(t *testing.T) {
-	b := NewBot(Config{Token: "t", ChannelID: "c"}, discardLogger())
-
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
-		return "first", nil
-	})
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
-		return "second", nil
-	})
-
-	b.mu.RLock()
-	h := b.commands["ping"]
-	b.mu.RUnlock()
-
-	reply, _ := h(context.Background(), "")
-	if reply != "second" {
-		t.Errorf("want second handler to win, got %q", reply)
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Start
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestStart_EmptyToken_ReturnsError(t *testing.T) {
@@ -163,7 +110,7 @@ func TestStart_EmptyToken_ReturnsError(t *testing.T) {
 }
 
 func TestStart_WithToken_ReturnsNilAndStartsLoop(t *testing.T) {
-	// We need a test server so pollLoop's HTTP calls don't fail fatally.
+	// We need a test server so Listen's HTTP calls don't fail fatally.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]discordMessage{})
@@ -450,226 +397,6 @@ func TestFetchMessages_NetworkError(t *testing.T) {
 // routeMessage enqueues replies onto b.msgQueue. drainQueue reads from the
 // channel without the production rate-limit sleep.
 
-func makeBotWithSendCapture(t *testing.T) (*Bot, *[]string) {
-	t.Helper()
-
-	var sent []string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(ts.Close)
-
-	b := newTestBot(ts, "ch")
-	return b, &sent
-}
-
-// drainQueue reads all pending messages from b.msgQueue (non-blocking) and
-// appends their content to sent.
-func drainQueue(b *Bot, sent *[]string) {
-	for {
-		select {
-		case item := <-b.msgQueue:
-			*sent = append(*sent, item.content)
-		default:
-			return
-		}
-	}
-}
-
-func makeMsg(id, content string, isBot bool) discordMessage {
-	return discordMessage{
-		ID:      id,
-		Content: content,
-		Author: struct {
-			ID  string `json:"id"`
-			Bot bool   `json:"bot"`
-		}{ID: "uid", Bot: isBot},
-	}
-}
-
-func TestRouteMessage_NonAllowlistedUserBlocked(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-	called := false
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
-		called = true
-		return "pong", nil
-	})
-	// A message from a user NOT in the allowlist must be ignored — the command
-	// handler never runs and nothing is sent.
-	msg := makeMsg("1", "!ping", false)
-	msg.Author.ID = "intruder"
-	b.routeMessage(context.Background(), msg)
-	drainQueue(b, sent)
-	if called {
-		t.Error("command handler ran for a non-allowlisted user")
-	}
-	if len(*sent) != 0 {
-		t.Errorf("expected no messages for blocked user, got %v", *sent)
-	}
-}
-
-func TestRouteMessage_EmptyAllowlistBlocksAll(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
-	t.Cleanup(ts.Close)
-	// SECURITY (F8, CWE-862): an empty AllowedUsers FAILS CLOSED — no one is
-	// authorized to drive commands, matching the documented contract ("Empty =
-	// commands disabled"). Commands reach dashboardKick with the privileged
-	// dashboard bearer, so an unconfigured allowlist must deny, not accept every
-	// channel member. Operators enable command control by populating allowed_users.
-	b := NewBot(Config{Token: "t", ChannelID: "c"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	b.client = &http.Client{Transport: &redirectTransport{target: ts.URL}, Timeout: httpTimeoutS * time.Second}
-	called := false
-	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { called = true; return "pong", nil })
-	b.routeMessage(context.Background(), makeMsg("1", "!ping", false))
-	if called {
-		t.Error("empty allowlist must block all commands (fail closed), but the handler ran")
-	}
-}
-
-func TestRouteMessage_IgnoresBotMessages(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.routeMessage(context.Background(), makeMsg("1", "!help", true))
-	drainQueue(b, sent)
-
-	if len(*sent) != 0 {
-		t.Errorf("expected no messages sent for bot author, got %d", len(*sent))
-	}
-}
-
-func TestRouteMessage_IgnoresNonCommandPrefix(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.routeMessage(context.Background(), makeMsg("1", "just chatting", false))
-	b.routeMessage(context.Background(), makeMsg("2", "hive status", false))
-	b.routeMessage(context.Background(), makeMsg("3", "no bang prefix", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 0 {
-		t.Errorf("expected no messages sent for non-command messages, got %d", len(*sent))
-	}
-}
-
-func TestRouteMessage_DispatchesRegisteredCommand(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.RegisterCommand("ping", func(_ context.Context, args string) (string, error) {
-		return "pong " + args, nil
-	})
-
-	b.routeMessage(context.Background(), makeMsg("1", "!ping world", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 message sent, got %d", len(*sent))
-	}
-	if (*sent)[0] != "pong world" {
-		t.Errorf("reply: got %q, want %q", (*sent)[0], "pong world")
-	}
-}
-
-func TestRouteMessage_CommandWithNoArgs(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.RegisterCommand("status", func(_ context.Context, args string) (string, error) {
-		if args != "" {
-			return "unexpected args: " + args, nil
-		}
-		return "all green", nil
-	})
-
-	b.routeMessage(context.Background(), makeMsg("1", "!status", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(*sent))
-	}
-	if (*sent)[0] != "all green" {
-		t.Errorf("reply: got %q, want %q", (*sent)[0], "all green")
-	}
-}
-
-func TestRouteMessage_UnknownCommandSendsError(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.routeMessage(context.Background(), makeMsg("1", "!notacommand", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 message sent for unknown command, got %d", len(*sent))
-	}
-	if !strings.Contains((*sent)[0], "Unknown command") {
-		t.Errorf("reply should mention Unknown command, got: %q", (*sent)[0])
-	}
-	if !strings.Contains((*sent)[0], "notacommand") {
-		t.Errorf("reply should mention the bad command name, got: %q", (*sent)[0])
-	}
-}
-
-func TestRouteMessage_HandlerErrorSendsErrorMessage(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.RegisterCommand("boom", func(_ context.Context, args string) (string, error) {
-		return "", errors.New("something went wrong")
-	})
-
-	b.routeMessage(context.Background(), makeMsg("1", "!boom", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(*sent))
-	}
-	if !strings.Contains((*sent)[0], "something went wrong") {
-		t.Errorf("reply should include the error text, got: %q", (*sent)[0])
-	}
-}
-
-func TestRouteMessage_LeadingWhitespaceIgnored(t *testing.T) {
-	b, sent := makeBotWithSendCapture(t)
-
-	b.RegisterCommand("trim", func(_ context.Context, _ string) (string, error) {
-		return "trimmed", nil
-	})
-
-	// Content has leading/trailing spaces — TrimSpace is applied in routeMessage.
-	b.routeMessage(context.Background(), makeMsg("1", "  !trim  ", false))
-	drainQueue(b, sent)
-
-	if len(*sent) != 1 || (*sent)[0] != "trimmed" {
-		t.Errorf("expected trimmed reply, got: %v", *sent)
-	}
-}
-
-// TestRouteMessage_EnqueueDoesNotPanic verifies that routeMessage does not
-// panic when the message queue is full (the "queue full" log path).
-func TestRouteMessage_EnqueueDoesNotPanic(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	b := newTestBot(ts, "ch")
-	b.RegisterCommand("ok", func(_ context.Context, _ string) (string, error) {
-		return "fine", nil
-	})
-
-	// Fill the message queue to capacity.
-	const queueCap = 100
-	for i := 0; i < queueCap; i++ {
-		b.routeMessage(context.Background(), makeMsg(fmt.Sprintf("%d", i), "!ok", false))
-	}
-
-	// One more should not panic — it takes the "queue full" default branch.
-	b.routeMessage(context.Background(), makeMsg("overflow", "!ok", false))
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SendMessage – error branches
-// ──────────────────────────────────────────────────────────────────────────────
-
-// TestSendMessage_NewRequestError covers the http.NewRequest error branch in
-// SendMessage by using a channelID containing a null byte, which makes the
-// constructed URL invalid.
 func TestSendMessage_NewRequestError(t *testing.T) {
 	// A null byte in the channel ID makes the URL unparseable by http.NewRequest.
 	b := NewBot(Config{Token: "tok", ChannelID: "\x00"}, discardLogger())
@@ -692,7 +419,7 @@ func TestFetchMessages_NewRequestError(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// pollLoop (integration-level: context cancellation)
+// Listen (integration-level: context cancellation)
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestPollLoop_StopsOnContextCancel(t *testing.T) {
@@ -711,11 +438,11 @@ func TestPollLoop_StopsOnContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Run pollLoop in a goroutine — it blocks until ctx is cancelled.
+	// Run Listen in a goroutine — it blocks until ctx is cancelled.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.pollLoop(ctx)
+		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 
 	// Give the loop a moment to start, then cancel.
@@ -726,7 +453,7 @@ func TestPollLoop_StopsOnContextCancel(t *testing.T) {
 	case <-done:
 		// good — loop exited
 	case <-time.After(3 * time.Second):
-		t.Fatal("pollLoop did not stop after context cancellation within timeout")
+		t.Fatal("Listen did not stop after context cancellation within timeout")
 	}
 }
 
@@ -749,7 +476,7 @@ func TestPollLoop_ContinuesOnFetchError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go b.pollLoop(ctx)
+	go b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 
 	// Wait long enough for at least 2 ticks (pollIntervalS=5s is too slow for a
 	// unit test, but we only need to verify it doesn't panic/exit on error).
@@ -762,7 +489,7 @@ func TestPollLoop_ContinuesOnFetchError(t *testing.T) {
 	cancel()
 }
 
-// TestPollLoop_TickerBranch waits for the 5-second ticker to fire so that the
+// TestListen_TickerBranch waits for the 5-second ticker to fire so that the
 // fetchMessages + routeMessage body inside the ticker.C case is exercised.
 // This test is intentionally slow (~5.5s) but is the only way to reach those
 // lines without modifying the production source.
@@ -774,7 +501,7 @@ func TestPollLoop_TickerBranch(t *testing.T) {
 	var fetchCount atomic.Int64
 	var sendCount atomic.Int64
 
-	// pollLoop skips messages on the first poll (firstPoll=true), so we serve
+	// Listen skips messages on the first poll (firstPoll=true), so we serve
 	// the message on the second fetch when routeMessage is actually called.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -810,10 +537,10 @@ func TestPollLoop_TickerBranch(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.pollLoop(ctx)
+		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 	// Start drainLoop so enqueued replies are sent via HTTP.
-	go b.drainLoop(ctx)
+	go b.service.DrainLoop(ctx)
 
 	// Wait for two ticks (pollIntervalS=5s each) so the second fetch is routed
 	// and its reply has gone out over HTTP, bounded at three ticks instead of a
@@ -826,7 +553,7 @@ func TestPollLoop_TickerBranch(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("pollLoop did not stop after context cancellation")
+		t.Fatal("Listen did not stop after context cancellation")
 	}
 
 	if fc := fetchCount.Load(); fc < 2 {
@@ -837,7 +564,7 @@ func TestPollLoop_TickerBranch(t *testing.T) {
 	}
 }
 
-// TestPollLoop_TickerBranch_FetchError exercises the error-continue path
+// TestListen_TickerBranch_FetchError exercises the error-continue path
 // inside the ticker.C case by making the server return 500 on the first tick.
 func TestPollLoop_TickerBranch_FetchError(t *testing.T) {
 	if testing.Short() {
@@ -859,7 +586,7 @@ func TestPollLoop_TickerBranch_FetchError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.pollLoop(ctx)
+		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 
 	// One ticker fetch (pollIntervalS=5s) is enough; bounded at two ticks
@@ -872,7 +599,7 @@ func TestPollLoop_TickerBranch_FetchError(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("pollLoop did not stop after context cancellation")
+		t.Fatal("Listen did not stop after context cancellation")
 	}
 
 	if fetchCount.Load() == 0 {
@@ -881,7 +608,7 @@ func TestPollLoop_TickerBranch_FetchError(t *testing.T) {
 }
 
 func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
-	// Discord returns newest-first; pollLoop reverses to process oldest-first.
+	// Discord returns newest-first; Listen reverses to process oldest-first.
 	// We verify that lastMessageID is updated correctly by checking the "after"
 	// query parameter on the second poll.
 
@@ -917,8 +644,8 @@ func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
 
 	// Run just two ticks by controlling context timing.
 	// Since pollIntervalS=5s we can't wait that long; instead we call
-	// fetchMessages and routeMessage directly to simulate what pollLoop does,
-	// and separately test that pollLoop updates lastMessageID correctly by
+	// fetchMessages and routeMessage directly to simulate what Listen does,
+	// and separately test that Listen updates lastMessageID correctly by
 	// exercising it for a short window.
 
 	// Direct unit test of the ordering logic via fetchMessages + routeMessage:
@@ -931,7 +658,7 @@ func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
 	}
 
 	// After processing in reverse order (oldest first), last processed is msgs[0] (id=2).
-	// Simulate what pollLoop does:
+	// Simulate what Listen does:
 	var lastID string
 	for i := len(msgs) - 1; i >= 0; i-- {
 		lastID = msgs[i].ID
@@ -943,19 +670,19 @@ func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// pollLoop – ticker.C branch coverage
+// Listen – ticker.C branch coverage
 //
 // The production ticker fires every 5 s.  The tests below wait just over that
-// interval so the ticker.C case in pollLoop is actually executed.  They are NOT
+// interval so the ticker.C case in Listen is actually executed.  They are NOT
 // guarded by testing.Short() because they are the only way to cover the
 // fetchMessages + routeMessage call sites inside the select-case without
 // modifying the production source.  Total extra wall-clock cost: ~5.1 s per
 // sub-test (run in parallel to keep the suite total near 5 s).
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TestPollLoop_TickerSuccessPath exercises the happy-path ticker branch:
+// TestListen_TickerSuccessPath exercises the happy-path ticker branch:
 // fetchMessages returns a non-bot !ping message and routeMessage dispatches it.
-// pollLoop skips messages on the first poll (firstPoll=true), so the message
+// Listen skips messages on the first poll (firstPoll=true), so the message
 // is served on the second fetch.
 func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	t.Parallel()
@@ -997,10 +724,10 @@ func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.pollLoop(ctx)
+		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 	// Start drainLoop so enqueued replies are sent via HTTP.
-	go b.drainLoop(ctx)
+	go b.service.DrainLoop(ctx)
 
 	// Wait for two ticks (pollIntervalS=5s each) so the second fetch is routed
 	// and its reply has gone out over HTTP, bounded at three ticks instead of a
@@ -1013,7 +740,7 @@ func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("pollLoop did not stop after context cancellation")
+		t.Fatal("Listen did not stop after context cancellation")
 	}
 
 	if fc := fetchCount.Load(); fc < 2 {
@@ -1024,7 +751,7 @@ func TestPollLoop_TickerSuccessPath(t *testing.T) {
 	}
 }
 
-// TestPollLoop_TickerFetchErrorPath exercises the error-continue branch inside
+// TestListen_TickerFetchErrorPath exercises the error-continue branch inside
 // the ticker.C case (bot.go:111-113): fetchMessages fails and the loop logs the
 // warning and continues rather than exiting.
 func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
@@ -1045,7 +772,7 @@ func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.pollLoop(ctx)
+		b.Listen(ctx, func(msg chat.Message) { b.service.Deliver(ctx, msg) })
 	}()
 
 	// One ticker fetch (pollIntervalS=5s) is enough; bounded at two ticks
@@ -1058,7 +785,7 @@ func TestPollLoop_TickerFetchErrorPath(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("pollLoop did not stop after context cancellation")
+		t.Fatal("Listen did not stop after context cancellation")
 	}
 
 	if fetchAttempts.Load() == 0 {

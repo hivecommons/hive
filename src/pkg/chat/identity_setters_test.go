@@ -1,4 +1,4 @@
-package discord
+package chat
 
 import "testing"
 
@@ -6,7 +6,7 @@ import "testing"
 // tests that mutate them can restore the originals afterwards.
 func snapshotIdentityState(t *testing.T) {
 	t.Helper()
-	discordMu.Lock()
+	chatMu.Lock()
 	savedIdentities := make(map[string]AgentIdentity, len(agentIdentities))
 	for k, v := range agentIdentities {
 		savedIdentities[k] = v
@@ -15,12 +15,12 @@ func snapshotIdentityState(t *testing.T) {
 	for k, v := range aliases {
 		savedAliases[k] = v
 	}
-	discordMu.Unlock()
+	chatMu.Unlock()
 	t.Cleanup(func() {
-		discordMu.Lock()
+		chatMu.Lock()
 		agentIdentities = savedIdentities
 		aliases = savedAliases
-		discordMu.Unlock()
+		chatMu.Unlock()
 	})
 }
 
