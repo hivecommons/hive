@@ -103,6 +103,13 @@ pinned:
   # carry forward, and v5 is the merge TARGET rather than a trigger, so it is
   # not a branch this workflow watches.
   v5-topup.yml: [-v2]
+  # Automated v5 -> v6 forward-merge cadence (#7563, Track 7). Its only branch
+  # filter is the `push` trigger naming the line whose MOVEMENT it reacts to —
+  # v5, the source of every v6 top-up. v2 and v4 are excluded for the same
+  # reason as v5-topup.yml's exclusions: they are not the branch this workflow
+  # watches (v4 reaches v6 through v5), and v6 is the merge TARGET, not a
+  # trigger.
+  v6-topup.yml: [v5, -v2, -v4]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard
