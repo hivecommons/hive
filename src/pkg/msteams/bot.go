@@ -41,6 +41,7 @@ const (
 	teamsDefaultPacing = 1200 * time.Millisecond
 	tokenRefreshSkew   = time.Minute
 	readLimit          = 1 << 20
+	deltaReadLimit     = 10 << 20
 )
 
 type AgentIdentity = chat.AgentIdentity
@@ -78,6 +79,7 @@ type Backend struct {
 	logger       *slog.Logger
 	client       *http.Client
 	sleep        func(time.Duration)
+	ctxSleep     func(context.Context, time.Duration) bool
 	now          func() time.Time
 
 	tokenMu    sync.Mutex
@@ -151,6 +153,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		logger:       logger,
 		client:       &http.Client{Timeout: httpTimeoutS * time.Second},
 		sleep:        time.Sleep,
+		ctxSleep:     sleepContext,
 		now:          time.Now,
 		seen:         make(map[string]struct{}),
 	}
@@ -195,7 +198,7 @@ func (b *Backend) Send(content string) error {
 	for _, part := range splitTeamsMessage(content) {
 		payload := map[string]string{"text": markdownToTeamsHTML(part)}
 		if err := b.postWebhook(context.Background(), payload); err != nil {
-			return err
+			return b.sanitizeWebhookError(err)
 		}
 	}
 	return nil
@@ -208,24 +211,34 @@ func (b *Backend) postWebhook(ctx context.Context, payload any) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.webhookURL, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return fmt.Errorf("msteams webhook request: %w", b.sanitizeWebhookError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusTooManyRequests {
-		after := retryAfter(resp.Header.Get("Retry-After"))
-		if after > 0 {
-			b.sleep(after)
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, b.webhookURL, bytes.NewReader(data))
+			if err != nil {
+				return fmt.Errorf("msteams webhook request: %w", b.sanitizeWebhookError(err))
+			}
+			req.Header.Set("Content-Type", "application/json")
 		}
-		return rateLimitError{after: after}
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, readLimit))
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("msteams webhook %d: %s", resp.StatusCode, string(respBody))
+		resp, err := b.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("msteams webhook send: %w", b.sanitizeWebhookError(err))
+		}
+		respBody, _, _ := readLimited(resp.Body, readLimit)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			after := cappedRetryAfter(resp.Header.Get("Retry-After"))
+			if attempt == 0 && after > 0 && b.ctxSleep(ctx, after) {
+				continue
+			}
+			return rateLimitError{after: after}
+		}
+		if resp.StatusCode >= 400 {
+			return b.sanitizeWebhookError(fmt.Errorf("msteams webhook %d: %s", resp.StatusCode, string(respBody)))
+		}
+		return nil
 	}
 	return nil
 }
@@ -254,13 +267,13 @@ func (b *Backend) Listen(ctx context.Context, deliver func(chat.Message)) {
 				return
 			}
 			if rl, ok := err.(rateLimitError); ok && rl.after > 0 {
-				if !sleepContext(ctx, rl.after) {
+				if !b.ctxSleep(ctx, minDuration(rl.after, pollBackoffMax)) {
 					return
 				}
 				continue
 			}
 			b.logger.Warn("msteams poll failed", "error", err)
-			if !sleepContext(ctx, delay) {
+			if !b.ctxSleep(ctx, delay) {
 				return
 			}
 			delay *= 2
@@ -273,7 +286,7 @@ func (b *Backend) Listen(ctx context.Context, deliver func(chat.Message)) {
 		if immediate {
 			continue
 		}
-		if !sleepContext(ctx, pollInterval) {
+		if !b.ctxSleep(ctx, pollInterval) {
 			return
 		}
 	}
@@ -318,15 +331,31 @@ func (b *Backend) callGraphJSON(ctx context.Context, method, path string, payloa
 		}
 		body = bytes.NewReader(data)
 	}
-	resp, err := b.doGraph(ctx, method, path, body, payload != nil)
+	_, isDelta := out.(*deltaResponse)
+	resp, err := b.doGraphWithPrefer(ctx, method, path, body, payload != nil, isDelta)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return rateLimitError{after: retryAfter(resp.Header.Get("Retry-After"))}
+		return rateLimitError{after: cappedRetryAfter(resp.Header.Get("Retry-After"))}
 	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, readLimit))
+	limit := int64(readLimit)
+	if isDelta {
+		limit = deltaReadLimit
+	}
+	respBody, truncated, err := readLimited(resp.Body, limit)
+	if err != nil {
+		return err
+	}
+	if truncated && isDelta {
+		b.logger.Warn("msteams delta response exceeded read limit; resetting delta baseline", "limit", limit)
+		b.resetDelta()
+		return nil
+	}
+	if truncated {
+		return fmt.Errorf("msteams API response exceeded %d bytes", limit)
+	}
 	if resp.StatusCode >= 400 {
 		return graphStatusError(resp.StatusCode, respBody)
 	}
@@ -339,6 +368,10 @@ func (b *Backend) callGraphJSON(ctx context.Context, method, path string, payloa
 }
 
 func (b *Backend) doGraph(ctx context.Context, method, path string, body io.Reader, jsonBody bool) (*http.Response, error) {
+	return b.doGraphWithPrefer(ctx, method, path, body, jsonBody, false)
+}
+
+func (b *Backend) doGraphWithPrefer(ctx context.Context, method, path string, body io.Reader, jsonBody, preferSmallPages bool) (*http.Response, error) {
 	token, err := b.getToken(ctx)
 	if err != nil {
 		return nil, err
@@ -354,6 +387,9 @@ func (b *Backend) doGraph(ctx context.Context, method, path string, body io.Read
 	req.Header.Set("Authorization", "Bearer "+token)
 	if jsonBody {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if preferSmallPages {
+		req.Header.Set("Prefer", "odata.maxpagesize=20")
 	}
 	return b.client.Do(req)
 }
@@ -416,6 +452,31 @@ func (b *Backend) markSeen(id string) {
 	b.seenMu.Lock()
 	b.seen[id] = struct{}{}
 	b.seenMu.Unlock()
+}
+
+func (b *Backend) resetDelta() {
+	b.seenMu.Lock()
+	b.deltaURL = ""
+	b.deltaReady = false
+	b.seen = make(map[string]struct{})
+	b.seenMu.Unlock()
+}
+
+func (b *Backend) sanitizeWebhookError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if urlErr, ok := err.(*url.Error); ok && urlErr.Err != nil {
+		err = urlErr.Err
+	}
+	msg := err.Error()
+	if b.webhookURL != "" {
+		msg = strings.ReplaceAll(msg, b.webhookURL, "[redacted]")
+		if escaped := url.QueryEscape(b.webhookURL); escaped != b.webhookURL {
+			msg = strings.ReplaceAll(msg, escaped, "[redacted]")
+		}
+	}
+	return errors.New(msg)
 }
 
 func authorID(msg graphMessage) string {
@@ -487,6 +548,28 @@ func retryAfter(s string) time.Duration {
 		return 0
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func cappedRetryAfter(s string) time.Duration {
+	return minDuration(retryAfter(s), pollBackoffMax)
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func readLimited(r io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return data[:limit], true, nil
+	}
+	return data, false, nil
 }
 
 func sleepContext(ctx context.Context, d time.Duration) bool {

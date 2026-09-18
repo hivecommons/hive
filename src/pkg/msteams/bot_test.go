@@ -3,6 +3,7 @@ package msteams
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,11 +27,20 @@ type fakeGraph struct {
 	graphCalls       []string
 	bodies           []string
 	methods          []string
+	preferHeaders    []string
 	statusByPath     map[string]int
 	bodyByPath       map[string]string
 	retryAfterByPath map[string]string
 	blockToken       chan struct{}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
@@ -54,6 +64,7 @@ func (fg *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 	fg.methods = append(fg.methods, r.Method)
 	fg.graphCalls = append(fg.graphCalls, r.URL.RequestURI())
 	fg.bodies = append(fg.bodies, string(body))
+	fg.preferHeaders = append(fg.preferHeaders, r.Header.Get("Prefer"))
 	fg.mu.Unlock()
 	if strings.HasSuffix(r.URL.Path, "/oauth2/v2.0/token") {
 		if fg.blockToken != nil {
@@ -144,6 +155,12 @@ func (fg *fakeGraph) sentBodies() []string {
 	return append([]string(nil), fg.bodies...)
 }
 
+func (fg *fakeGraph) prefers() []string {
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	return append([]string(nil), fg.preferHeaders...)
+}
+
 func testBackend(t *testing.T, fg *fakeGraph) *Backend {
 	t.Helper()
 	b := NewBot(Config{TenantID: "tenant", ClientID: "app", ClientSecret: "secret", TeamID: "team", ChannelID: "chan", WebhookURL: fg.server.URL + "/webhook"}, slog.New(slog.NewTextHandler(io.Discard, nil))).Backend
@@ -152,6 +169,7 @@ func testBackend(t *testing.T, fg *fakeGraph) *Backend {
 	b.client = fg.server.Client()
 	b.now = func() time.Time { return time.Unix(1000, 0) }
 	b.sleep = func(time.Duration) {}
+	b.ctxSleep = func(context.Context, time.Duration) bool { return true }
 	return b
 }
 
@@ -287,18 +305,84 @@ func TestWebhookRateLimitAndBadURL(t *testing.T) {
 	fg := newFakeGraph(t)
 	b := testBackend(t, fg)
 	var slept time.Duration
-	b.sleep = func(d time.Duration) { slept = d }
+	b.ctxSleep = func(_ context.Context, d time.Duration) bool {
+		slept = d
+		return true
+	}
 	fg.set("/webhook", http.StatusTooManyRequests, "")
 	fg.mu.Lock()
-	fg.retryAfterByPath["/webhook"] = "3"
+	fg.retryAfterByPath["/webhook"] = "90"
 	fg.mu.Unlock()
-	var rl rateLimitError
-	if err := b.Send("hello"); !errorsAs(err, &rl) || rl.after != 3*time.Second || slept != 3*time.Second {
+	if err := b.Send("hello"); err == nil || !strings.Contains(err.Error(), "1m0s") || slept != 60*time.Second {
 		t.Fatalf("webhook rate err=%#v slept=%s", err, slept)
 	}
 	b.webhookURL = "http://[::1"
 	if err := b.Send("hello"); err == nil {
 		t.Fatalf("bad webhook URL error was nil")
+	}
+}
+
+func TestWebhookRateLimitRetriesOnce(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	b := NewBot(Config{WebhookURL: srv.URL}, slog.New(slog.NewTextHandler(io.Discard, nil))).Backend
+	b.client = srv.Client()
+	var slept time.Duration
+	b.ctxSleep = func(_ context.Context, d time.Duration) bool {
+		slept = d
+		return true
+	}
+	if err := b.postWebhook(context.Background(), map[string]string{"text": "hello"}); err != nil {
+		t.Fatalf("postWebhook retry error = %v", err)
+	}
+	if calls != 2 || slept != time.Second {
+		t.Fatalf("calls=%d slept=%s, want one ctx-aware retry", calls, slept)
+	}
+}
+
+func TestWebhookErrorsRedactSecretURL(t *testing.T) {
+	secretURL := "https://example.invalid/webhook/secret-token?sig=abc"
+	b := NewBot(Config{WebhookURL: secretURL}, slog.New(slog.NewTextHandler(io.Discard, nil))).Backend
+	b.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Post", URL: secretURL, Err: errors.New("dial failed for " + secretURL)}
+	})}
+	err := b.Send("hello")
+	if err == nil {
+		t.Fatalf("Send error was nil")
+	}
+	if strings.Contains(err.Error(), secretURL) || strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "sig=abc") {
+		t.Fatalf("webhook secret leaked in error: %q", err.Error())
+	}
+	b.webhookURL = "http://[::1/secret-token"
+	err = b.Send("hello")
+	if err == nil || strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("bad URL error leaked secret or was nil: %v", err)
+	}
+}
+
+func TestWebhookMarshalAndCanceledRetry(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	if err := b.postWebhook(context.Background(), func() {}); err == nil {
+		t.Fatalf("marshal error was nil")
+	}
+	fg.set("/webhook", http.StatusTooManyRequests, "")
+	fg.mu.Lock()
+	fg.retryAfterByPath["/webhook"] = "5"
+	fg.mu.Unlock()
+	b.ctxSleep = func(context.Context, time.Duration) bool { return false }
+	var rl rateLimitError
+	if err := b.postWebhook(context.Background(), map[string]string{"text": "hello"}); !errorsAs(err, &rl) || rl.after != 5*time.Second {
+		t.Fatalf("canceled retry err=%#v", err)
 	}
 }
 
@@ -321,6 +405,9 @@ func TestPollOnceDeliversAfterProcessingAndDedupes(t *testing.T) {
 	}
 	if b.deltaURL != "/delta-token" {
 		t.Fatalf("deltaURL = %q", b.deltaURL)
+	}
+	if prefers := fg.prefers(); len(prefers) == 0 || prefers[len(prefers)-1] != "odata.maxpagesize=20" {
+		t.Fatalf("Prefer headers = %#v", prefers)
 	}
 	if len(got) != 3 || got[0].Text != "!status & more" || got[0].AuthorID != "user-a" || got[0].FromBot || !got[1].FromBot || !got[2].FromBot {
 		t.Fatalf("delivered = %#v", got)
@@ -375,6 +462,21 @@ func TestPollOnceBaselinesInitialDeltaWithoutDelivery(t *testing.T) {
 	}
 }
 
+func TestPollOnceOversizedDeltaResetsStream(t *testing.T) {
+	fg := newFakeGraph(t)
+	b := testBackend(t, fg)
+	b.deltaURL = "/stale-delta"
+	b.deltaReady = true
+	fg.set("/stale-delta", 0, strings.Repeat("x", deltaReadLimit+1))
+	immediate, err := b.pollOnce(context.Background(), func(chat.Message) { t.Fatalf("unexpected delivery") })
+	if err != nil || immediate {
+		t.Fatalf("pollOnce immediate=%v err=%v", immediate, err)
+	}
+	if b.deltaURL != "" || b.deltaReady {
+		t.Fatalf("delta not reset: url=%q ready=%v", b.deltaURL, b.deltaReady)
+	}
+}
+
 func TestListenDeliversAndStopsOnContext(t *testing.T) {
 	fg := newFakeGraph(t)
 	b := testBackend(t, fg)
@@ -411,11 +513,11 @@ func TestCallGraphReturnsRateLimitRetryAfter(t *testing.T) {
 	b := testBackend(t, fg)
 	fg.set("/teams/team/channels/chan/messages", http.StatusTooManyRequests, "")
 	fg.mu.Lock()
-	fg.retryAfterByPath["/teams/team/channels/chan/messages"] = "7"
+	fg.retryAfterByPath["/teams/team/channels/chan/messages"] = "90"
 	fg.mu.Unlock()
 	err := b.callGraphJSON(context.Background(), http.MethodPost, b.channelMessagesPath(), map[string]string{"x": "y"}, nil)
 	var rl rateLimitError
-	if !errorsAs(err, &rl) || rl.after != 7*time.Second {
+	if !errorsAs(err, &rl) || rl.after != 60*time.Second {
 		t.Fatalf("rate error = %#v", err)
 	}
 }
@@ -543,6 +645,12 @@ func TestHelpers(t *testing.T) {
 	}
 	if takeRunes("åßc", 2) != "åß" {
 		t.Fatalf("takeRunes unicode failed")
+	}
+	if takeRunes("abc", 0) != "" {
+		t.Fatalf("takeRunes zero failed")
+	}
+	if _, _, err := readLimited(errReader{}, 10); err == nil {
+		t.Fatalf("readLimited error was nil")
 	}
 	parts := splitTeamsMessage("")
 	if len(parts) != 1 || parts[0] != "" {
