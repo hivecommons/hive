@@ -2224,10 +2224,45 @@ func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// RefreshAgentSnapshot patches the agent block of the cached status snapshot
+// that /api/status (and the SSE replay frame a reconnecting tab receives)
+// serves, using the fast-tick agent-only payload.
+//
+// Without this, agent liveness on those two surfaces is only as fresh as the
+// last completed eval cycle, which enumerates every configured repo against
+// the GitHub API and can therefore run far past its nominal interval under
+// rate-limit backoff. A whole fleet that started seconds ago then reads
+// state=stopped — red "crashed" dots — for 10-15+ minutes (#7526). Agent state
+// is in-memory manager state that needs no GitHub call, so it is refreshed on
+// the 10s tick independently of the enumeration.
+//
+// Copy-on-write: handleStatus marshals the *StatusPayload it loaded outside
+// statusMu, so the cached payload must never be mutated in place.
+func (s *Server) RefreshAgentSnapshot(payload *AgentStatusPayload) {
+	if payload == nil {
+		return
+	}
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.status == nil {
+		return
+	}
+	patched := *s.status
+	patched.Agents = payload.Agents
+	patched.HiddenAgents = payload.HiddenAgents
+	patched.ConfiguredAgents = payload.ConfiguredAgents
+	s.status = &patched
+}
+
 // BroadcastAgentStatus sends a lightweight agent-only SSE event on a fast
 // cadence. Skipped if a full status was broadcast within the last 5 seconds
 // to avoid redundant renders on the frontend.
 func (s *Server) BroadcastAgentStatus(payload *AgentStatusPayload) {
+	// Refresh the cached snapshot FIRST, ahead of the skip below: even when the
+	// SSE frame is redundant, /api/status and the SSE replay frame must not be
+	// left serving eval-cycle-old liveness (#7526).
+	s.RefreshAgentSnapshot(payload)
+
 	s.statusMu.RLock()
 	recentFull := time.Since(s.lastFullBroadcast) < agentSkipAfterFullBroadcastS
 	s.statusMu.RUnlock()

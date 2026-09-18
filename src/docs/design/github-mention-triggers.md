@@ -60,7 +60,7 @@ The last row is the only inbound trigger in the system, and it is not GitHub.
   `responder.go:225`);
 - agent resolution is `SessionAgent`: the named agent, else the only
   configured agent, else an error activity naming the missing config
-  (`src/pkg/config/config.go:1685`).
+  (`src/pkg/config/config.go:1681`).
 
 **The reply half.** `AgentCapabilities.Converse` is documented in exactly the
 words this feature needs — "An ADVISORY agent with Converse can reply on a
@@ -71,7 +71,7 @@ additional grant beside the mode ladder (`proxy.AllowedByModeCaps`,
 `Kind: "comment"` request that posts a comment as the App bot
 (`src/pkg/github/issue_request_watcher.go:70`). Outbound comment text is
 canary-scanned and secret-scrubbed on the way out
-(`Client.CreateIssueComment`, `src/pkg/github/client.go:1167`).
+(`Client.CreateIssueComment`, `src/pkg/github/client.go:1118`).
 
 **A GitHub webhook receiver.** The hub verifies `X-Hub-Signature-256` fail-closed
 and dispatches on `X-GitHub-Event` (`src/pkg/hub/webhook.go:53`), today for
@@ -82,7 +82,7 @@ and dispatches on `X-GitHub-Event` (`src/pkg/hub/webhook.go:53`), today for
 `pkg/channels` runtime meant to serve them was never wired into the binary,
 declaring one validated cleanly while suppressing governor kicks, and the agent
 sat permanently dormant with no diagnostics. The types were removed and
-`ValidateChannels` now rejects them (`src/pkg/config/config.go:665`, #5591).
+`ValidateChannels` now rejects them (`src/pkg/config/config.go:660`, #5591).
 A mention trigger is a new channel type, and it must land with its runtime in
 the same PR — never as a config key first.
 
@@ -173,7 +173,7 @@ The agent replies the way it already can: by writing an issue-request file of
 `Kind: "comment"` (or a review-request with `Event: "comment"` on a PR), which
 the watchers post as the App bot — audited under `agent_comment_created`
 (`src/pkg/github/attribution.go:53`), canary-gated and secret-scrubbed
-(`src/pkg/github/client.go:1167`), gated by `Converse` at the proxy. **Nothing
+(`src/pkg/github/client.go:1118`), gated by `Converse` at the proxy. **Nothing
 new is added to the write path.** An ADVISORY agent with `Converse` can answer
 a mention; without `Converse` its kick still runs, but the only thing it can
 do with the answer is leave it in its own output — which is the correct,
@@ -195,9 +195,9 @@ mechanism that already exists; none is new policy.
 
 1. **Who may summon — fail closed.** A mention is honoured only from a login
    the hive already trusts, using the dashboard's own role list
-   (`DashboardConfig.AuthorizedRole`, `src/pkg/config/config.go:4186`) at
+   (`DashboardConfig.AuthorizedRole`, `src/pkg/config/config.go:4182`) at
    `read-write` or above by default — the same lookup `trustedMergerFunc`
-   uses for the merge queue (`src/cmd/hive/main.go:8098`). An explicit
+   uses for the merge queue (`src/cmd/hive/merge_eligibility.go:50`). An explicit
    `github.mentions.summoners` list widens it. No configuration means the
    feature is **off**, never "any commenter"; that is the rule the Discord
    design already set for its channel list.
@@ -326,16 +326,16 @@ From the issue, restated as boundaries this design must not cross:
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
 - `src/pkg/agent/capabilities.go:30` — `Converse`, documented for mentions.
 - `src/pkg/proxy/rules.go:249` — where `Converse` is enforced.
-- `src/pkg/config/config.go:1685` — `linear.session_agent` resolution rule.
-- `src/pkg/config/config.go:665` — the removed declarative channel types (#5591).
+- `src/pkg/config/config.go:1681` — `linear.session_agent` resolution rule.
+- `src/pkg/config/config.go:660` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
   list and the per-thread cap.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the
   App-authored in-thread reply path and its attempt counter.
 - `src/pkg/github/issue_request_watcher.go:70` — `Kind: "comment"`.
-- `src/pkg/github/client.go:1167` — canary-gated, scrubbed comment posting.
+- `src/pkg/github/client.go:1118` — canary-gated, scrubbed comment posting.
 - `src/pkg/hub/webhook.go:53` — the fail-closed GitHub webhook verifier.
 - `src/pkg/ioscan/enforce.go:24`, `src/pkg/scheduler/ioscan_enforce.go:122`,
   [ADR-0008](../adr/0008-ioscan-untrusted-input.md) — untrusted kick input.
-- `src/cmd/hive/main.go:8098` — `trustedMergerFunc`, the role-list lookup to
+- `src/cmd/hive/merge_eligibility.go:50` — `trustedMergerFunc`, the role-list lookup to
   reuse for summoners.

@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-18 (v4.55.1)
+
+### Changed
+
+- `cmd/hive`'s `main.go` shed five self-contained domains into their own files — GitHub App key-file resolution (`appkeyfile.go`), self-upgrade marker/outcome bookkeeping (`selfupgrade.go`), login-required scanning and its sighting debounce (`login_scan.go`), auto-merge eligibility classification (`merge_eligibility.go`), and PR/issue intent verdicts (`intent_verdicts.go`) ([#7238](https://github.com/hivecommons/hive/issues/7238)). `main.go` drops from 9,795 to 8,072 lines. This is pure code motion — every one of the 242 top-level declarations was moved byte-identically, verified by a structural declaration diff, so no operator-visible behaviour changes; it makes the merge, upgrade and App-key paths reviewable on their own instead of only as a slice of a 9.8K-line file.
+
+### Fixed
+
+- Agent dots no longer show red (down) for 10-15+ minutes while the fleet is healthy ([#7526](https://github.com/hivecommons/hive/issues/7526)). `/api/status` — and the replay frame a reconnecting dashboard tab gets on the SSE stream — served a snapshot that was only ever refreshed at the end of an eval cycle, and that cycle enumerates every configured repo against the GitHub API first. On a spoke with sixteen repos under rate-limit backoff the cycle ran far past its nominal `eval_interval_s`, so agents the manager had started (and whose tmux sessions were alive and posting PR reviews) still read `state=stopped` and the whole fleet rendered as crashed. The existing 10-second agent-only tick — in-memory manager state, no GitHub calls — now also patches the agent block of the served snapshot, so liveness on every dashboard surface is at most one tick old regardless of how long the GitHub enumeration takes.
+- Tests: the copilot SDK-helper probe tests in `pkg/dashboard` are now hermetic. `TestProbeCopilotModelsSDK_AbsentHelperYieldsSentinel` and `TestProbeCopilotModelsSDK_HelperNotInstalled` used to run whatever was installed at the production helper path, so on any host that ships `copilot-models.mjs` without stored copilot auth (every live agent host) the "absent helper" sentinel never fired and the whole `pkg/dashboard` suite went red with `Not authenticated`. The helper path is now a test-seam var (`setCopilotSDKHelperPathForTest`, mirroring the `knowledge.SetBaseDirForTest` convention) pointed at a temp path, and a new `TestProbeCopilotModelsSDK_FailingHelperIsNotAbsent` covers the previously untestable-on-CI third state — helper present but exiting nonzero (the #7365 case) — via a stub script instead of the real helper.
+
 ## 2026-09-18 (v4.55.0)
 
 ### Added

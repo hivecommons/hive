@@ -145,17 +145,17 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/main.go:207`) and
+`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/appkeyfile.go:51`) and
 `spokeAppKeyDir = "/data"` (`:212`), with `spokeAppKeyFileMode = 0o600`
 (`:224`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:222-223`). `/data` is the PVC mount in the spoke template
-(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7254`)
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:6550`)
 already establishes that identity-critical state persists there across
 restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`src/cmd/hive/main.go:203-204`.
+`src/cmd/hive/appkeyfile.go:47-48`.
 
 ### First boot, pod roll, PVC loss
 
@@ -218,7 +218,7 @@ function's banner states the invariant: "identity-bound under EVERY generation
 ... There is deliberately no code path here that derives without hiveID; if one
 ever appears, F2 is re-opened" (`:322-327`). `handleHeartbeat` verifies the
 bearer against the *claimed* `hive_id` after parsing the body
-(`src/pkg/hub/server.go:1712`; the N1 comment at `:1661-1668` explains why the check must
+(`src/pkg/hub/server.go:1649`; the N1 comment at `:1395-1405` explains why the check must
 follow the parse — the per-hive bearer is derived from the claimed ID, so the
 ID must be parsed and validated first).
 
@@ -364,7 +364,7 @@ context, not by the hub. The template already injects per-hive secret material
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
 (`src/pkg/hub/saas_provision.go:3473`) already carries private key material at provision
 time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`src/cmd/hive/main.go:206`), which the spoke holds "from its very first boot —
+(`src/cmd/hive/appkeyfile.go:50`), which the spoke holds "from its very first boot —
 before any heartbeat has run" (`:216`).
 
 So there is an existing, precedented channel for giving a spoke a secret at
@@ -551,8 +551,8 @@ SafeToRetirePrevious = hasPrevious
 
 This preserves the pattern every existing clause already uses — a `== 0` floor
 or a `> 0` liveness check, never an equality between two separately-sourced
-totals (`src/pkg/hub/perhive_env_reconcile.go:791-796`, and `FleetFullyObserved
-= out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:719`). It cannot go
+totals (`src/pkg/hub/perhive_env_reconcile.go:792-797`, and `FleetFullyObserved
+= out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:673`). It cannot go
 true on a zero sweep, and a hive present in the registry with no pin is
 *counted* rather than silently absent.
 
