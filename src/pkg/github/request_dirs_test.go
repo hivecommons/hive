@@ -172,7 +172,21 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 	}
 	gateIdx := gateLoc[0]
 
-	prepIdx := strings.Index(src, "github.PrepareRequestDirs(")
+	// Since #7571 step 2 the phase reaches these through bootAgentsDeps
+	// (deps.prepareRequestDirs / deps.startRequestRelays in main.go, bound to
+	// the real calls in boot_agents_deps.go). Either spelling satisfies the
+	// ordering check; the deps file is then checked for the real calls so
+	// the indirection cannot quietly drop a watcher.
+	firstIndex := func(needles ...string) (int, string) {
+		for _, n := range needles {
+			if i := strings.Index(src, n); i >= 0 {
+				return i, n
+			}
+		}
+		return -1, needles[0]
+	}
+
+	prepIdx, _ := firstIndex("github.PrepareRequestDirs(", "deps.prepareRequestDirs(")
 	if prepIdx < 0 {
 		t.Error("cmd/hive/main.go no longer calls github.PrepareRequestDirs — queues " +
 			"stop existing on App-less boots and agent findings are discarded again (#4713)")
@@ -181,8 +195,11 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 			"gate — inside it, queues stop existing on App-less boots (#4713)")
 	}
 
-	for _, call := range []string{"ghClient.StartPRRequestWatcher(", "ghClient.StartIssueRequestWatcher("} {
-		idx := strings.Index(src, call)
+	for _, calls := range [][]string{
+		{"ghClient.StartPRRequestWatcher(", "deps.startRequestRelays("},
+		{"ghClient.StartIssueRequestWatcher(", "deps.startRequestRelays("},
+	} {
+		idx, call := firstIndex(calls...)
 		if idx < 0 {
 			t.Errorf("cmd/hive/main.go no longer starts %s — queued requests would accumulate forever", call)
 			continue
@@ -190,6 +207,19 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 		if idx < gateIdx {
 			t.Errorf("%s appears before the usable-App gate — a watcher started without a "+
 				"usable App could act on GitHub without the bot identity", call)
+		}
+	}
+
+	if strings.Contains(src, "deps.startRequestRelays(") {
+		depsRaw, err := os.ReadFile("../../cmd/hive/boot_agents_deps.go")
+		if err != nil {
+			t.Fatalf("main.go delegates to bootAgentsDeps but boot_agents_deps.go is unreadable: %v", err)
+		}
+		depsSrc := string(depsRaw)
+		for _, call := range []string{"github.PrepareRequestDirs", ".StartPRRequestWatcher(", ".StartIssueRequestWatcher("} {
+			if !strings.Contains(depsSrc, call) {
+				t.Errorf("cmd/hive/boot_agents_deps.go no longer binds %s — the deps indirection dropped it", call)
+			}
 		}
 	}
 }

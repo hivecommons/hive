@@ -1579,7 +1579,13 @@ func (b *boot) bootAdvisory() {
 // bootAgents constructs the agent manager and everything that hangs off it
 // before any agent launches: shutdown archive hook, resolvers, token and
 // credential loops, the agent-facing GitHub request relays, and mint.
-func (b *boot) bootAgents() {
+func (b *boot) bootAgents() { b.bootAgentsWith(defaultBootAgentsDeps()) }
+
+// bootAgentsWith is bootAgents with its long-lived effects injected; see
+// bootAgentsDeps. The request relays are armed AFTER every setter on the
+// client (identity, re-engage hook, merger authorizer, required checks,
+// merge policy) so no watcher goroutine can observe a half-configured client.
+func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	ctx, cfg, logger, gov, acmmLevel := b.ctx, b.cfg, b.logger, b.gov, b.acmmLevel
 	policyDirPath := b.policyDirPath
 	projectCtx := agent.ProjectContext{
@@ -1680,20 +1686,18 @@ func (b *boot) bootAgents() {
 	// appAuth != nil at boot meant those hives never refreshed per-agent token
 	// caches: agent sessions outlived their scoped token, gh 401'd and printed
 	// "gh auth login", and the login-detector auto-paused the agent (#4072).
-	go agentMgr.StartAgentTokenRefresh(ctx)
 	// Start the credential watchdog UNCONDITIONALLY. It self-gates per backend
 	// on the presence of an agent using that backend each tick, so it is a
 	// no-op on gateway/inference-only hives. On Copilot/Claude hives it turns a
 	// missing or expired durable credential — the "stuck at login after an
 	// upgrade roll" outage — into an immediate Audit Log signal instead of a
 	// silent multi-hour stall.
-	go agentMgr.StartCredentialWatchdog(ctx)
 	// Keep the Copilot CLI's config.json copilotTokens populated from the
 	// durable user token, so agents never sit stuck at "Please use /login"
 	// while a valid token exists (CLI 1.0.78 does not re-populate the emptied
 	// store from the injected env token on its own). Self-gates on a copilot
 	// backend and only writes when the store is empty; never runs a login.
-	go agentMgr.StartCopilotSessionRefresh(ctx)
+	deps.startAgentLoops(ctx, agentMgr)
 	if b.ghClient != nil {
 		agentMgr.SetSandboxPRClient(b.ghClient)
 	}
@@ -1712,13 +1716,13 @@ func (b *boot) bootAgents() {
 	// queueing it. App setup routinely completes after boot (operator saves the
 	// installation ID, /gh-setup persists it, auto-discovery finds it later), so
 	// this gap silently disarms agent writes on a hive that looks healthy.
-	github.PrepareRequestDirs(logger)
+	deps.prepareRequestDirs(logger)
 	// Token-access audit ingest (#6287): the per-UID wrappers record every gh
 	// call and credential lookup as an event file, and this loop folds them
 	// into the hive-owned 0600 audit log that GET /api/token-access serves.
 	// Unconditional, like the request dirs: agents touch tokens whether or
 	// not the App is usable, and the trail must never depend on App state.
-	github.StartTokenAccessAuditWatcher(ctx, logger)
+	deps.startTokenAccessAudit(ctx, logger)
 
 	if b.ghClient != nil && cfg.GitHub.HasUsableApp() {
 		// Attribution resolver: effective backend/model from the manager
@@ -1771,43 +1775,7 @@ func (b *boot) bootAgents() {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(cfg))
-		b.ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, holdLabel, nil)
-		// Issue relay: agents request issue creation and comments by dropping a
-		// file (hive-open-issue via the gh wrapper) instead of calling GitHub
-		// from their own shell. The agent-side call used to ride the agent's
-		// shell tool — one GHE secondary-rate-limit stall or mangled multiline
-		// command and the finding was silently lost (root-caused live
-		// 2026-08-21: sec-check's creates timed out and survived only as
-		// beads). The watcher executes server-side with the App token, retries
-		// with backoff, dedupes by exact open-issue title, and enforces the
-		// same forge-resistance + CanCreateIssues mode gate the wrapper does.
-		b.ghClient.StartIssueRequestWatcher(ctx, agentMgr.AuthorizeIssueOpen, nil)
-		// Review relay: agents request PR reviews by dropping a file (hive-review)
-		// instead of running `gh pr review` in their own shell, which the hive
-		// never observes. The watcher submits the review with the App token and
-		// records it on the audit/activity trail, gated by the same
-		// forge-resistance + push-capability (CanPush) check as opening a PR —
-		// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
-		b.ghClient.StartReviewRequestWatcher(ctx, agentMgr.AuthorizeReviewRequest, nil)
-		// Merge relay: agents request merges by dropping a file (hive-merge)
-		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
-		// mutation GitHub rejects for App tokens ("Resource not accessible by
-		// integration"). The hive merges over REST with the App token, gated by
-		// the same forge-resistance + a CanMerge ACMM check.
-		// bindMergeAuthz layers the F4 target-binding (CWE-863) on top of the
-		// manager's agent/UID/CanMerge check: the merge must name a pinned head
-		// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
-		// must appear in the governor's current merge-eligible list — so an
-		// injected agent cannot land an arbitrary reachable PR of its choosing.
-		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
-		// re-engage the fix loop instead of abandoning the PR. The hook records a
-		// re-engagement under the escalation store's per-red-SHA cap (shared with
-		// the reaper so a PR is never double-dispatched beyond its budget) and
-		// returns whether the cap still allowed a dispatch. The PR is already
-		// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
-		// is the loop-safety authority that decides when to STOP nudging.
 		b.ghClient.SetMergeReEngageHook(mergeReEngageHook(cfg))
-		b.ghClient.StartMergeRequestWatcher(ctx, bindMergeAuthz(agentMgr.AuthorizeMerge), nil)
 
 		// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
 		// dashboard's queue endpoint gates on requireMergerOrOwnerRole, but the
@@ -1834,6 +1802,46 @@ func (b *boot) bootAgents() {
 		// unconditionally — nil sets mean "refuse everywhere" (fail closed).
 		b.ghClient.SetMergeRequestPolicy(cfg.AutoMerge.AllowUnprotectedBaseSet(), cfg.AutoMerge.NoCIOKSet())
 
+		// Issue relay: agents request issue creation and comments by dropping a
+		// file (hive-open-issue via the gh wrapper) instead of calling GitHub
+		// from their own shell. The agent-side call used to ride the agent's
+		// shell tool — one GHE secondary-rate-limit stall or mangled multiline
+		// command and the finding was silently lost (root-caused live
+		// 2026-08-21: sec-check's creates timed out and survived only as
+		// beads). The watcher executes server-side with the App token, retries
+		// with backoff, dedupes by exact open-issue title, and enforces the
+		// same forge-resistance + CanCreateIssues mode gate the wrapper does.
+		// Review relay: agents request PR reviews by dropping a file (hive-review)
+		// instead of running `gh pr review` in their own shell, which the hive
+		// never observes. The watcher submits the review with the App token and
+		// records it on the audit/activity trail, gated by the same
+		// forge-resistance + push-capability (CanPush) check as opening a PR —
+		// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
+		// Merge relay: agents request merges by dropping a file (hive-merge)
+		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
+		// mutation GitHub rejects for App tokens ("Resource not accessible by
+		// integration"). The hive merges over REST with the App token, gated by
+		// the same forge-resistance + a CanMerge ACMM check.
+		// bindMergeAuthz layers the F4 target-binding (CWE-863) on top of the
+		// manager's agent/UID/CanMerge check: the merge must name a pinned head
+		// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
+		// must appear in the governor's current merge-eligible list — so an
+		// injected agent cannot land an arbitrary reachable PR of its choosing.
+		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
+		// re-engage the fix loop instead of abandoning the PR. The hook records a
+		// re-engagement under the escalation store's per-red-SHA cap (shared with
+		// the reaper so a PR is never double-dispatched beyond its budget) and
+		// returns whether the cap still allowed a dispatch. The PR is already
+		// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
+		// is the loop-safety authority that decides when to STOP nudging.
+		deps.startRequestRelays(ctx, b.ghClient, requestRelays{
+			prOpen:    agentMgr.AuthorizePROpen,
+			holdLabel: holdLabel,
+			issueOpen: agentMgr.AuthorizeIssueOpen,
+			review:    agentMgr.AuthorizeReviewRequest,
+			merge:     bindMergeAuthz(agentMgr.AuthorizeMerge),
+		})
+
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
 		// directly over the REST API, without a human "Approved ... for Hive
 		// auto-merge" queue review and without waiting on tide. Prow forbids
@@ -1851,7 +1859,7 @@ func (b *boot) bootAgents() {
 		// never start this loop regardless of the flag above — see
 		// AutoMergeConfig.SelfAuthoredAutoMergeAllowed. StartSelfAuthoredAutoMergeSweep
 		// itself no-ops (with a one-time INFO log) when acmmAllowed is false.
-		b.ghClient.StartSelfAuthoredAutoMergeSweep(ctx, cfg.AutoMerge.MaxMerges, cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel), cfg.ACMMLevel)
+		deps.startSelfAuthoredSweep(ctx, b.ghClient, cfg.AutoMerge.MaxMerges, cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel), cfg.ACMMLevel)
 	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
@@ -1860,7 +1868,7 @@ func (b *boot) bootAgents() {
 	// Default off — an absent/disabled `mint:` block leaves the credential path
 	// byte-identical. Fail-safe: a mint setup error is logged, never fatal.
 	if cfg.Mint.Enabled {
-		if agentMinter, err := buildAgentMinter(cfg, logger); err != nil {
+		if agentMinter, err := deps.buildMinter(cfg, logger); err != nil {
 			logger.Warn("mint enabled but minter setup failed; agents keep App token only", "error", err)
 		} else {
 			agentMgr.SetAgentMint(agentMinter)
@@ -1868,7 +1876,7 @@ func (b *boot) bootAgents() {
 		}
 	}
 
-	go agent.StartPermissionsWatcher(logger)
+	deps.startPermissionsWatcher(logger)
 
 	b.agentMgr = agentMgr
 }
