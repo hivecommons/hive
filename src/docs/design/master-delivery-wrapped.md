@@ -149,7 +149,7 @@ already persists private key material on the same PVC at the same mode:
 `spokeAppKeyDir = "/data"` (`:212`), with `spokeAppKeyFileMode = 0o600`
 (`:224`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:222-223`). `/data` is the PVC mount in the spoke template
-(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7219`)
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:7232`)
 already establishes that identity-critical state persists there across
 restarts.
 
@@ -769,15 +769,15 @@ attacker holding master N retains, for **every hive in the fleet**:
 - **Heartbeat impersonation of any hive.**
   `verifyHeartbeatBearerAcrossGenerations` accepts any live generation
   (`src/pkg/hub/hub_keys.go:314-341`, loop at `:348`).
-- **Invite signing.** `SpokeInviteKey` (`src/pkg/hub/hub_keys.go:505-514`) is
+- **Invite signing.** `SpokeInviteKey` (`src/pkg/hub/hub_keys.go:554-563`) is
   symmetric and both minted and verified spoke-side.
 - **Session and terminal cookies.** `spokeDomainKey`
   (`src/pkg/hub/hub_keys.go:418-423`) is the verify key. Cookie lifetime is
   `cookieMaxAgeDays` = 7 days, which is exactly why `defaultVerifyWindow` is 7
   days (`src/pkg/hub/hub_generations.go:109-118`).
 - **Fleet-wide SSO minting.** The sharpest one.
-  `SSOSigningSeedFromMaster` (`src/pkg/hub/hub_keys.go:546-548`) yields the
-  Ed25519 **private** seed; its own doc comment at `:570-575` states "This is
+  `SSOSigningSeedFromMaster` (`src/pkg/hub/hub_keys.go:595-597`) yields the
+  Ed25519 **private** seed; its own doc comment at `:589-594` states "This is
   PRIVATE-key material: it can mint SSO tokens".
 
 So the honest statement is:

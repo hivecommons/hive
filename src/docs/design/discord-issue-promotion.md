@@ -39,9 +39,9 @@ fallback in `hive-project.yaml` (`discord/lib/config.js:6`,
 Labeling a GitHub issue is a privileged write. Hive already has GitHub App
 credentials and label-writing code: `QueuePRAutoMerge` audits a mediated action
 with `recordCreationAudit` and then calls `Issues.AddLabelsToIssue`
-(`src/pkg/github/client.go:1109`, `src/pkg/github/client.go:1112`). The reusable
+(`src/pkg/github/client.go:1162`, `src/pkg/github/client.go:1165`). The reusable
 `AddLabels` wrapper also calls `Issues.AddLabelsToIssue`
-(`src/pkg/github/client.go:1140`). `recordCreationAudit` is the existing audit
+(`src/pkg/github/client.go:1193`). `recordCreationAudit` is the existing audit
 convention for mediated creations and label-adjacent actions
 (`src/pkg/github/attribution.go:366`).
 

@@ -24,7 +24,7 @@ Levels run L1 (Assisted) through L6 (Fully Autonomous), matching the level pack 
 
 The dashboard assembles `Signals` for the running hive in `buildACMMStatusInputs` (`src/pkg/dashboard/api_acmm_recommendation.go:47-106`):
 
-- `CurrentLevel` and `HasQualityAgent` come from the live config (`detectACMMLevel`, presence of an agent named `quality` in `cfg.Agents`, via `hasQualityAgent` at `src/pkg/dashboard/api_acmm_recommendation.go:110-116`).
+- `CurrentLevel` and `HasQualityAgent` come from the live config (`detectACMMLevel`, presence of an agent named `quality` in `cfg.Agents`, via `hasQualityAgent` at `src/pkg/dashboard/api_acmm_recommendation.go:126-132`).
 - `MergeSuccessRate` is read from the fleet-stats collector's cached 90-day merged/rejected counts (`mergeSuccessRateFromFleetStats`, `src/pkg/dashboard/api_acmm_recommendation.go:135-141`) — no fresh GitHub call is made on the request path.
 - `ActionableIssues` and `HoldCount` come from the most recent published status snapshot (`status.Governor.Issues`, `status.Hold.Total`).
 - `CoveragePct` is read from `status.AgentMetrics["ci-maintainer"]["coverage"]`, the value the coverage badge collector populates (`coverageFromAgentMetrics`, `src/pkg/dashboard/api_acmm_recommendation.go:148-166`).

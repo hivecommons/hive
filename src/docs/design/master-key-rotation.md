@@ -361,7 +361,7 @@ empty master.
 It is not a bug. Those three sites are inside `spokeDomainKey`,
 `SpokeHeartbeatKey`, and `SpokeSSOPublicKey` — all SPOKE-side resolvers. The
 `hive` binary serves both roles but selects between them at startup:
-`runHub()` (`src/cmd/hive/main.go:9555`) is the only caller of
+`runHub()` (`src/cmd/hive/main.go:9608`) is the only caller of
 `hub.NewHubServer`, and it is a distinct mode from the spoke path. On a hub
 pod those three functions are never called, so the empty `HIVE_HUB_SECRET`
 they would read is never consulted.

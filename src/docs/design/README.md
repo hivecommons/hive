@@ -95,7 +95,7 @@ that status is the thing to check before treating a page as current behaviour:
   whether Copilot token usage can be captured per request with repo context and
   timestamps at the proxy. Its answer is a recommendation **against** building
   phase 4 as scoped: per-request usage is available and already captured
-  (`src/pkg/proxy/github_proxy.go:2331`), but per-request repo context is not
+  (`src/pkg/proxy/github_proxy.go:2662`), but per-request repo context is not
   available at the proxy in any form, and the nearest substitute — a "last
   `api.github.com` repo seen" from `ExtractRepo` — is an inference from read
   traffic, weaker than the audited `repo=` events phase 3 already joins against.
