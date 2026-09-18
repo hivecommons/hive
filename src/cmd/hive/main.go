@@ -6221,59 +6221,19 @@ func runEvalCycle(
 			MaxFindings: advCfg.MaxFindings,
 			ShowAll:     advCfg.ShowAll,
 		}
-		if ghClient != nil && org != "" && repoName != "" {
-			branch := cfg.Policies.Branch
-			if branch == "" {
-				if r, _, rerr := ghClient.GetRepo(ctx, org, repoName); rerr == nil {
-					branch = r.GetDefaultBranch()
-				} else {
-					logger.Warn("advisory: could not resolve default branch for snapshot", "repo", primaryRepo, "error", rerr)
-				}
-			}
-			if branch != "" {
-				if sha, serr := ghClient.LatestCommitHash(ctx, org, repoName, branch); serr == nil && sha != "" {
-					digestOpts.Snapshot = &advisory.Snapshot{
-						Owner:  org,
-						Repo:   repoName,
-						Branch: branch,
-						SHA:    sha,
+		if ghClient != nil {
+			pinDigestSnapshot(ctx, &digestOpts, org, repoName, primaryRepo, cfg.Policies.Branch, digestSnapshotDeps{
+				defaultBranch: func(ctx context.Context, owner, repo string) (string, error) {
+					r, _, err := ghClient.GetRepo(ctx, owner, repo)
+					if err != nil {
+						return "", err
 					}
-					digestOpts.VerifyPath = func(path string) bool {
-						exists, verr := ghClient.PathExistsAtRef(ctx, org, repoName, path, sha)
-						if verr != nil {
-							// Inconclusive check (network/rate-limit, not a 404):
-							// treat as existing so a transient error never
-							// mislabels a real path as outdated — and never
-							// costs a real finding its top-N slot.
-							logger.Warn("advisory: path existence check failed", "path", path, "repo", primaryRepo, "sha", sha, "error", verr)
-							return true
-						}
-						return exists
-					}
-					// #6080: a finding computed at an OLDER commit that names its
-					// own remediation ("Filed issue #208, hold-gated PR #209") can
-					// be settled without re-running its evidence -- ask whether that
-					// work closed. Scoped to the analyzed repo, consulted only for
-					// provenance-stale findings, and every failure keeps the finding
-					// open (the digest retires one only when EVERY reference it
-					// names is closed).
-					digestOpts.ResolveRef = func(refOwner, refRepo string, number int) (advisory.RefState, bool) {
-						closedAt, closed, rerr := ghClient.IssueClosedAt(ctx, refOwner, refRepo, number)
-						if rerr != nil {
-							// Inconclusive (network, rate limit): "cannot tell", so
-							// the finding stays open. Never treat a failed lookup as
-							// evidence that a finding healed.
-							logger.Warn("advisory: issue state lookup failed",
-								"ref", fmt.Sprintf("%s/%s#%d", refOwner, refRepo, number), "error", rerr)
-							return advisory.RefState{}, false
-						}
-						return advisory.RefState{Closed: closed, ClosedAt: closedAt}, true
-					}
-					logger.Info("advisory digest pinned to commit", "repo", primaryRepo, "branch", branch, "sha", sha)
-				} else if serr != nil {
-					logger.Warn("advisory: could not resolve latest commit for snapshot", "repo", primaryRepo, "branch", branch, "error", serr)
-				}
-			}
+					return r.GetDefaultBranch(), nil
+				},
+				latestCommit:  ghClient.LatestCommitHash,
+				pathExists:    ghClient.PathExistsAtRef,
+				issueClosedAt: ghClient.IssueClosedAt,
+			}, logger)
 		}
 		digest := advisory.BuildDigestFromBeads(beadStores, string(govState.Mode), digestOpts)
 		if advisoryStore != nil {
@@ -6315,22 +6275,14 @@ func runEvalCycle(
 			(advisoryTarget == config.AdvisoryTargetLinear && advisoryRouteErr == nil)
 		if shouldPostAdvisoryDigest(digest, ghClient, hasDigestHome) &&
 			advisoryPostDue(advCfg, primaryRepo, time.Now(), logger) {
-			// Log severity breakdown and contributing agents
-			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-			agentNames := make([]string, 0, len(digest.ByAgent))
-			for agentName, findings := range digest.ByAgent {
-				agentNames = append(agentNames, fmt.Sprintf("%s(%d)", agentName, len(findings)))
-				for _, f := range findings {
-					bySeverity[strings.ToLower(f.Severity)]++
-				}
-			}
+			bySeverity, agentNames := summarizeDigestForLog(digest)
 			logger.Info("advisory digest built",
 				"total_findings", digest.TotalCount,
 				"critical", bySeverity["critical"],
 				"high", bySeverity["high"],
 				"medium", bySeverity["medium"],
 				"low", bySeverity["low"],
-				"agents", strings.Join(agentNames, ", "),
+				"agents", agentNames,
 				"resolved_count", len(digest.RecentlyResolved),
 			)
 			if digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0 {
@@ -6346,182 +6298,113 @@ func runEvalCycle(
 				PrimaryRepo: repoName,
 				Advice:      hiveAdvice,
 			})
-			if md != "" {
-				if advisoryTarget != config.AdvisoryTargetGitHub {
-					// Non-GitHub route. A misconfiguration (Linear chosen with
-					// no linear_issue, or an unknown target) is recorded as a
-					// post FAILURE, never redirected to the GitHub issue: the
-					// operator opted out of it, and the hub's staleness pill is
-					// how they learn the digest has nowhere to go.
-					if advisoryRouteErr != nil {
-						dashSrv.RecordAdvisoryError(advisoryRouteErr.Error())
-						logger.Error("advisory digest not posted: target misconfigured",
-							"target", advisoryTarget, "error", advisoryRouteErr)
-					} else if err := postAdvisoryDigestToLinear(ctx, cfg, advisoryLinearIssue, md); err != nil {
-						dashSrv.RecordAdvisoryError(err.Error())
-						logger.Warn("failed to post advisory digest to linear", "issue", advisoryLinearIssue, "error", err)
-					} else {
-						logger.Info("posted advisory digest", "linear_issue", advisoryLinearIssue, "findings", digest.TotalCount, "via", "linear")
-						dashSrv.RecordAdvisoryPost(digest.TotalCount)
-						recordAdvisoryPostSuccess(primaryRepo, time.Now())
-						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
+			// The routing/classification decisions live in
+			// publishAdvisoryDigest (#7232); only the effects are wired here.
+			// The App is the sole advisory-digest writer (#1927): a user-token
+			// failure must never drive the App banner, so every banner hook
+			// below is fed exclusively by the App's own error.
+			publishAdvisoryDigest(ctx, md, digest, advisoryPublishRoute{
+				target:         advisoryTarget,
+				linearIssue:    advisoryLinearIssue,
+				routeErr:       advisoryRouteErr,
+				primaryRepo:    primaryRepo,
+				issueNum:       issueNum,
+				hasPinnedIssue: hasPinnedAdvisoryIssue,
+				ensureErr:      advisoryEnsureErr,
+			}, advisoryPublishDeps{
+				postGitHub: ghClient.PostAdvisoryDigest,
+				postLinear: func(ctx context.Context, linearIssue, md string) error {
+					return postAdvisoryDigestToLinear(ctx, cfg, linearIssue, md)
+				},
+				recordError: dashSrv.RecordAdvisoryError,
+				recordPosted: func(findings, overflow int) {
+					dashSrv.RecordAdvisoryPost(findings)
+					recordAdvisoryPostSuccess(primaryRepo, time.Now())
+					dashSrv.RecordAdvisoryOverflow(overflow)
+				},
+				onWriteForbidden: func(ctx context.Context) {
+					// App is installed (we found the issue) but a real WRITE
+					// was forbidden. #2353: attribute this honestly — surface
+					// a DISTINCT write-forbidden state naming the likeliest
+					// cause instead of faking a permission gap the diagnosis
+					// just disproved.
+					msg, state := classifyGitHubAppWriteForbidden(ctx, ghClient.AppAuth(), cfg.Project.Org, primaryRepo)
+					dashSrv.SetGitHubAppRequired(true)
+					dashSrv.SetGitHubAppPermIssue(msg)
+					dashSrv.SetGitHubAppState(state.String())
+					logger.Warn("GitHub App write failed — cannot write issue comments",
+						"repo", primaryRepo, "state", state.String(),
+						"operator_actionable", state.OperatorActionable(), "detail", msg)
+				},
+				onAuthFailure: func(ctx context.Context) {
+					// Same verdict function as boot and Re-check, so a healthy
+					// or unclassifiable probe cannot raise the banner here.
+					raise, msg, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+					if !raise {
+						return
 					}
-				} else if hasPinnedAdvisoryIssue {
-					// Prefer the App client as the PRIMARY poster. The App
-					// authored the advisory-digest comment and always holds
-					// issues:write, so it is the correct identity to edit it.
-					// The App banner must be driven ONLY by the App's own
-					// error — never by a user-token failure. Otherwise a
-					// user-token problem (kellyaa: expired token → 401;
-					// kalantar: valid token but not repo-admin → 403 editing
-					// the bot's own comment) would false-flag the App as "Not
-					// Installed" even though the App itself works fine.
-					if err := ghClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
-						// The App is the sole advisory-digest writer. The former
-						// user-token fallback was removed (issue #1927): it only
-						// existed to post the digest under the logged-in user's
-						// identity when the App failed, which is exactly the
-						// owner-attributed write path we no longer want — and it
-						// forced every dashboard login through the excessive "repo"
-						// scope. Record the App error so the hub flags the digest
-						// as stale with its specific cause. err.Error() is the same
-						// string logged just below — log-safe, never key material.
-						dashSrv.RecordAdvisoryError(err.Error())
-						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
-						switch classifyAdvisoryPostError(err) {
-						case advisoryPostWriteForbidden:
-							// App is installed (we found the issue) but a real
-							// WRITE was forbidden. #2353: attribute this honestly.
-							// apphealth.Diagnose only inspects installation-level
-							// PERMISSIONS, so when it comes back healthy (issues:write
-							// granted, right owner) the previous code hard-overrode
-							// that "OK" into a false "lacks Issues: Read & Write"
-							// banner — the exact misattribution #2353 reports. When
-							// the diagnosis is genuinely a permission/installation
-							// problem, use it; otherwise surface a DISTINCT
-							// write-forbidden state naming the likeliest real cause
-							// (the repo is not in the App installation's selected
-							// repos), instead of leaving health at None or faking a
-							// permission gap the diagnosis just disproved.
-							msg, state := classifyGitHubAppWriteForbidden(ctx, ghClient.AppAuth(), cfg.Project.Org, primaryRepo)
-							dashSrv.SetGitHubAppRequired(true)
-							dashSrv.SetGitHubAppPermIssue(msg)
-							dashSrv.SetGitHubAppState(state.String())
-							logger.Warn("GitHub App write failed — cannot write issue comments",
-								"repo", primaryRepo, "state", state.String(),
-								"operator_actionable", state.OperatorActionable(), "detail", msg)
-						case advisoryPostRateLimited:
-							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
-						default:
-							// Same verdict function as boot and Re-check, so a
-							// healthy or unclassifiable probe cannot raise the
-							// banner here either.
-							raise, msg, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
-							if raise {
-								dashSrv.SetGitHubAppRequired(true)
-								if msg != "" {
-									dashSrv.SetGitHubAppPermIssue(msg)
-								}
-								dashSrv.SetGitHubAppState(state.String())
-								logger.Warn("GitHub App authentication failed posting advisory digest",
-									"repo", primaryRepo, "state", state.String(),
-									"operator_actionable", state.OperatorActionable())
-							}
-						}
-					} else {
-						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
-						// Record the fresh, successful digest post so the hub's
-						// advisory-staleness gate stays satisfied for this hive.
-						dashSrv.RecordAdvisoryPost(digest.TotalCount)
-						recordAdvisoryPostSuccess(primaryRepo, time.Now())
-						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
-						// A successful write proves the app is installed AND has
-						// write access — clear BOTH the perm issue and the
-						// app-required banner flag. Previously only the perm
-						// issue was cleared, so githubAppRequired (set true at
-						// startup or on an early transient failure) stuck on
-						// forever and the "GitHub App Not Installed" banner
-						// never went away despite tokens working.
-						dashSrv.SetGitHubAppPermIssue("")
-						dashSrv.SetGitHubAppRequired(false)
-						dashSrv.ClearPendingGitHubAppInstall()
-						// The same proof retires stale ACCESS findings (#2575):
-						// an advisory bead like "Insufficient repo permissions"
-						// created while the App genuinely could not write was
-						// never re-validated, so it stayed in the digest forever
-						// after the App was correctly installed. A successful
-						// App-authenticated digest post is the strongest
-						// possible evidence the condition has healed, so close
-						// those beads now; the next cycle's digest moves them to
-						// "Recently Resolved" and rewrites the pinned comment.
-						if healed := advisory.CloseHealedAppAuthFindings(beadStores); len(healed) > 0 {
-							logger.Info("closed healed GitHub App access findings after successful App digest post",
-								"count", len(healed), "titles", strings.Join(healed, "; "))
-						}
-						// Repo-ACCESS findings ("no clone mechanism", "no
-						// repository access mechanism in L2 advisory mode",
-						// …) are the second #2575 family: true before #4291
-						// gave advisory tiers Contents:read and a working
-						// credential-helper fetch, but a digest post only
-						// proves issues:WRITE, so they need their own proof.
-						// Verify with a real advisor-scoped Contents read of
-						// the repo each finding names (or the primary repo
-						// when it names none), memoized per repo — a finding
-						// about a repo the hive genuinely cannot read stays
-						// open.
-						readVerified := map[string]bool{}
-						canRead := func(ownerRepo string) bool {
-							target := ownerRepo
-							if target == "" {
-								target = primaryRepo
-							}
-							owner, name := cfg.Project.Org, target
-							if i := strings.LastIndex(target, "/"); i > 0 {
-								owner, name = target[:i], target[i+1:]
-							}
-							if owner == "" || name == "" {
-								return false
-							}
-							key := owner + "/" + name
-							if v, ok := readVerified[key]; ok {
-								return v
-							}
-							appAuth := ghClient.AppAuth()
-							if appAuth == nil {
-								// Static-token client: no advisor-tier token
-								// can be minted, so the read path cannot be
-								// verified — leave the finding open.
-								return false
-							}
-							err := appAuth.VerifyRepoRead(ctx, owner, name)
-							if err != nil {
-								logger.Info("repo-access finding left open: advisor read probe failed",
-									"repo", key, "error", err)
-							}
-							readVerified[key] = err == nil
-							return readVerified[key]
-						}
-						if healed := advisory.CloseHealedRepoAccessFindings(beadStores, canRead); len(healed) > 0 {
-							logger.Info("closed healed repo-access findings after verified advisory read path",
-								"count", len(healed), "titles", strings.Join(healed, "; "))
-						}
+					dashSrv.SetGitHubAppRequired(true)
+					if msg != "" {
+						dashSrv.SetGitHubAppPermIssue(msg)
 					}
-				} else {
-					// No pinned advisory issue for this repo, yet there IS
-					// something to publish. This used to be a completely silent
-					// skip (#4167): the digest stopped updating, the spoke
-					// reported neither a post time nor an error, and the hub's
-					// staleness gate therefore read the hive as "not an advisory
-					// participant" and never raised the pill — a wedged digest
-					// that looked exactly like a healthy PR-only hive. Record it
-					// as a post FAILURE so the hub flags the hive stale with the
-					// real cause, and log it once per cycle for the operator.
-					msg := advisoryIssueMissingError(primaryRepo, advisoryEnsureErr)
-					dashSrv.RecordAdvisoryError(msg)
-					logger.Warn("advisory digest not posted: no pinned advisory issue",
-						"repo", primaryRepo, "findings", digest.TotalCount)
-				}
-			}
+					dashSrv.SetGitHubAppState(state.String())
+					logger.Warn("GitHub App authentication failed posting advisory digest",
+						"repo", primaryRepo, "state", state.String(),
+						"operator_actionable", state.OperatorActionable())
+				},
+				onWriteProven: func(ctx context.Context) {
+					// A successful write proves the app is installed AND has
+					// write access — clear BOTH the perm issue and the
+					// app-required flag, or the "Not Installed" banner sticks
+					// forever despite tokens working.
+					dashSrv.SetGitHubAppPermIssue("")
+					dashSrv.SetGitHubAppRequired(false)
+					dashSrv.ClearPendingGitHubAppInstall()
+					// The same proof retires stale ACCESS findings (#2575).
+					if healed := advisory.CloseHealedAppAuthFindings(beadStores); len(healed) > 0 {
+						logger.Info("closed healed GitHub App access findings after successful App digest post",
+							"count", len(healed), "titles", strings.Join(healed, "; "))
+					}
+					// Repo-ACCESS findings need their own proof: a digest post
+					// only proves issues:WRITE, so verify with a real
+					// advisor-scoped Contents read, memoized per repo.
+					readVerified := map[string]bool{}
+					canRead := func(ownerRepo string) bool {
+						target := ownerRepo
+						if target == "" {
+							target = primaryRepo
+						}
+						owner, name := cfg.Project.Org, target
+						if i := strings.LastIndex(target, "/"); i > 0 {
+							owner, name = target[:i], target[i+1:]
+						}
+						if owner == "" || name == "" {
+							return false
+						}
+						key := owner + "/" + name
+						if v, ok := readVerified[key]; ok {
+							return v
+						}
+						appAuth := ghClient.AppAuth()
+						if appAuth == nil {
+							// Static-token client: no advisor-tier token can be
+							// minted, so leave the finding open.
+							return false
+						}
+						err := appAuth.VerifyRepoRead(ctx, owner, name)
+						if err != nil {
+							logger.Info("repo-access finding left open: advisor read probe failed",
+								"repo", key, "error", err)
+						}
+						readVerified[key] = err == nil
+						return readVerified[key]
+					}
+					if healed := advisory.CloseHealedRepoAccessFindings(beadStores, canRead); len(healed) > 0 {
+						logger.Info("closed healed repo-access findings after verified advisory read path",
+							"count", len(healed), "titles", strings.Join(healed, "; "))
+					}
+				},
+			}, logger)
 		}
 	} else if d := dashSrv.GetAdvisoryDigest(); d != nil {
 		statusPayload.AdvisoryDigest = d

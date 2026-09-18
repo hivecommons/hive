@@ -1,0 +1,1 @@
+- `runEvalCycle` advisory digest pinning and posting now live behind two testable seams (`pinDigestSnapshot`, `publishAdvisoryDigest` in `cmd/hive/eval_cycle_advisory_seams.go`) with the GitHub/dashboard effects injected; `runEvalCycle` shrinks 902 → 785 lines and `cmd/hive` coverage rises 54.7% → 56.2% (refs #7232).
