@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -225,8 +226,15 @@ func (c *Client) ProcessMergeRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn func() time.Time) {
-	data, err := os.ReadFile(path)
+	data, _, err := readUntrustedFile(path, requestMaxBytes)
 	if err != nil {
+		if errors.Is(err, errDropBoxFileRejected) {
+			// A FIFO, symlink, or oversize drop can never become a valid
+			// request; move it aside so it stops being scanned every tick.
+			_ = os.Rename(path, path+".rejected")
+			c.logger.Warn("merge-request watcher: REJECTED (unsafe file)",
+				slog.String("path", path), slog.String("reason", err.Error()))
+		}
 		return // vanished between ReadDir and here — fine
 	}
 	var req MergeRequest
@@ -370,7 +378,7 @@ func (c *Client) denyMergeRequest(path string, req MergeRequest, reason string, 
 // prior result exists or it can't be read.
 func priorMergeAttempts(reqPath string) int {
 	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
-	b, err := os.ReadFile(out)
+	b, _, err := readUntrustedFile(out, requestMaxBytes)
 	if err != nil {
 		return 0
 	}
@@ -386,7 +394,7 @@ func priorMergeAttempts(reqPath string) int {
 // ticks. Returns 0 when no prior result exists or it can't be read.
 func priorMergeCIWaits(reqPath string) int {
 	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
-	b, err := os.ReadFile(out)
+	b, _, err := readUntrustedFile(out, requestMaxBytes)
 	if err != nil {
 		return 0
 	}

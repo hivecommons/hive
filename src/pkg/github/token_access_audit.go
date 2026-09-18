@@ -213,6 +213,14 @@ func IngestTokenAccessEventsOnce(logger *slog.Logger, spool, logPath string, now
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
+			// A FIFO, symlink, or other special file can never be a valid
+			// event and, left in place, would be rescanned forever; the hive
+			// owns the spool, so the sticky bit does not stop it unlinking.
+			_ = os.Remove(filepath.Join(spool, e.Name()))
+			if logger != nil {
+				logger.Warn("token-access audit: removed non-regular file from spool",
+					slog.String("event", e.Name()))
+			}
 			continue
 		}
 		name := e.Name()
@@ -270,27 +278,27 @@ func IngestTokenAccessEventsOnce(logger *slog.Logger, spool, logPath string, now
 const tokenAccessClaimedUIDKey = "claimed_uid"
 
 // readTokenAccessEvent validates one spool file and returns the compact JSON
-// line to append. The event's "uid" is replaced by the file's owning uid
-// where the platform reports one (Linux in production); a self-reported uid
-// that disagrees is preserved under "claimed_uid" so a forgery attempt is
-// itself on the record.
+// line to append. The file is read via readUntrustedFile (#7576): no symlink
+// following, no blocking on FIFOs, size capped on the open descriptor — the
+// old Lstat-then-ReadFile pair sized the symlink itself and then followed it,
+// so a link to /dev/zero bypassed the cap entirely. The event's "uid" is
+// replaced by the owning uid of the descriptor actually read, where the
+// platform reports one (Linux in production); a self-reported uid that
+// disagrees is preserved under "claimed_uid" so a forgery attempt is itself
+// on the record.
 func readTokenAccessEvent(logger *slog.Logger, path string) ([]byte, bool) {
-	fi, err := os.Lstat(path)
+	raw, fi, err := readUntrustedFile(path, tokenAccessMaxEventBytes)
 	if err != nil {
-		return nil, false
-	}
-	if fi.Size() == 0 || fi.Size() > tokenAccessMaxEventBytes {
-		if logger != nil {
-			logger.Warn("token-access audit: dropping event of unacceptable size",
-				slog.String("event", filepath.Base(path)), slog.Int64("bytes", fi.Size()))
+		if logger != nil && !os.IsNotExist(err) {
+			logger.Warn("token-access audit: dropping unreadable or unsafe event",
+				slog.String("event", filepath.Base(path)), slog.String("error", err.Error()))
 		}
 		return nil, false
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if len(raw) == 0 {
 		if logger != nil {
-			logger.Warn("token-access audit: cannot read event",
-				slog.String("event", filepath.Base(path)), slog.String("error", err.Error()))
+			logger.Warn("token-access audit: dropping empty event",
+				slog.String("event", filepath.Base(path)))
 		}
 		return nil, false
 	}

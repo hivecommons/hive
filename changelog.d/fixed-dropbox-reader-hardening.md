@@ -1,0 +1,1 @@
+- Hardened every hive-side drop-box reader (pr/issue/merge/review request queues and the token-access audit spool) against FIFO block and symlink follow: open with O_NOFOLLOW, verify a regular file, and read through a size-capped reader.

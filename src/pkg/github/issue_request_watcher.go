@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -242,8 +243,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if !c.issueBackoffAllows(path, nowFn) {
 		return
 	}
-	data, err := os.ReadFile(path)
+	data, _, err := readUntrustedFile(path, requestMaxBytes)
 	if err != nil {
+		if errors.Is(err, errDropBoxFileRejected) {
+			// A FIFO, symlink, or oversize drop can never become a valid
+			// request; move it aside so it stops being scanned every tick.
+			_ = os.Rename(path, path+".rejected")
+			c.logger.Warn("issue-request watcher: REJECTED (unsafe file)",
+				slog.String("path", path), slog.String("reason", err.Error()))
+		}
 		return // vanished between ReadDir and here
 	}
 	var req IssueRequest
