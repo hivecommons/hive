@@ -132,6 +132,17 @@ tracks v5 through the same forward-merge convention v5 uses for v4.
 The epic tracking the whole line is
 [#7563](https://github.com/hivecommons/hive/issues/7563).
 
+**Priority relative to v5 GA.** Opening the v6 line does not change what
+ships next: the next stable release is v5, and the remaining GA distance
+is the open evidence rows on the
+[v5 GA bar tracker](https://github.com/hivecommons/hive/issues/6016).
+Until the GA bar's **Release train** rows are green, those evidence rows
+outrank v6 tracks whenever the two compete for maintainer or agent
+attention — this matches the intent of the accepted v4 feature-freeze
+policy ([#6346](https://github.com/hivecommons/hive/issues/6346)), whose
+calendar backstop is **2026-10-15**. v6 work proceeds in the gaps, not
+instead. (Decision context: [#7577](https://github.com/hivecommons/hive/issues/7577).)
+
 **Theme.** Every operator interaction the dashboard offers should be
 reachable from the places humans already are — a GitHub thread, a chat
 workspace, an inbox, a phone. The dashboard remains the richest surface,
