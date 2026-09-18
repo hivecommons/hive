@@ -374,6 +374,12 @@ type PullRequest struct {
 	// src/docs/review-queue-triage.md (#6183). Derived from Title + Labels
 	// at enumeration time; never read by the governor or any agent.
 	ReviewClass ReviewClass `json:"review_class,omitempty"`
+	// Protection carries the branch-protection facts behind GitHub's
+	// one-word "blocked" state — which required checks are red or absent,
+	// and GitHub's own review decision. It is nil when none of it could be
+	// determined, and BranchProtectionBlockReason then declines to guess
+	// (hivecommons/hive#7515). Display only: no merge gate reads it.
+	Protection *ProtectionFacts `json:"protection,omitempty"`
 }
 
 // HasFailingRequiredCheck reports whether this PR has a completed, non-meta
@@ -933,81 +939,107 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit
 // and sets the CIStatus field to "success", "failure", or "pending".
 // The "tide" check is skipped — it reports Prow merge-bot state, not CI.
+//
+// It also collects the branch-protection facts behind a "blocked" PR
+// (hivecommons/hive#7515, step 2) — which required checks are red or have
+// never reported, and GitHub's own review decision — so that the dashboard
+// pill can name the unsatisfied rule instead of repeating the word
+// "blocked". Those facts are gathered from data this pass already walks
+// plus at most one GraphQL query per repository; nothing here is per-hover
+// and nothing here is per-PR beyond the calls that were already made.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	if c == nil {
 		return
 	}
+	facts := newProtectionCollector(c)
+	for i := range prs {
+		reported := c.enrichPRCI(ctx, &prs[i])
+		facts.attach(ctx, &prs[i], reported)
+	}
+}
+
+// enrichPRCI is EnrichCIStatus's per-PR body. It returns the names of every
+// check run observed on the PR's head SHA — meta checks included, because a
+// required status-check context may well be one of them — or nil when no
+// check-run listing was obtained at all. The caller distinguishes the two:
+// "no listing" must never be read as "the required check never reported".
+func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]bool {
 	const ciStatusSuccess = "success"
 	const ciStatusFailure = "failure"
 	const ciStatusPending = "pending"
 
-	for i := range prs {
-		if prs[i].HeadSHA == "" {
-			prs[i].CIStatus = ciStatusPending
-			continue
-		}
-		owner, repoName := c.splitRepo(prs[i].Repo)
+	if pr.HeadSHA == "" {
+		pr.CIStatus = ciStatusPending
+		return nil
+	}
+	owner, repoName := c.splitRepo(pr.Repo)
 
-		// Fetch the PR individually to learn its mergeability. The list
-		// endpoint that produced these PullRequests never populates
-		// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
-		// returns them only from this single-PR GET. On error we leave the
-		// field as MergeableUnknown rather than guessing.
-		if full, _, err := c.client.PullRequests.Get(ctx, owner, repoName, prs[i].Number); err != nil {
-			c.logger.Warn("failed to fetch PR mergeability", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
-		} else {
-			prs[i].Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
-			prs[i].MergeableState = full.GetMergeableState()
-		}
+	// Fetch the PR individually to learn its mergeability. The list
+	// endpoint that produced these PullRequests never populates
+	// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
+	// returns them only from this single-PR GET. On error we leave the
+	// field as MergeableUnknown rather than guessing.
+	if full, _, err := c.client.PullRequests.Get(ctx, owner, repoName, pr.Number); err != nil {
+		c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
+	} else {
+		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
+		pr.MergeableState = full.GetMergeableState()
+	}
 
-		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, prs[i].HeadSHA, &gh.ListCheckRunsOptions{
-			ListOptions: gh.ListOptions{PerPage: 100},
-		})
-		if err != nil {
-			c.logger.Warn("failed to fetch check runs", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
-			prs[i].CIStatus = ciStatusPending
-			continue
-		}
-		if checkRuns.GetTotal() == 0 {
-			prs[i].CIStatus = ciStatusPending
-			continue
-		}
-		hasFail := false
-		allDone := true
-		ciChecksFound := 0
-		var failingNames []string
-		var failingIDs []int64
-		for _, cr := range checkRuns.CheckRuns {
-			if isMetaCheck(cr.GetName()) {
-				continue
-			}
-			ciChecksFound++
-			if cr.GetStatus() != "completed" {
-				allDone = false
-				continue
-			}
-			conclusion := cr.GetConclusion()
-			if conclusion == "failure" || conclusion == "action_required" {
-				hasFail = true
-				failingNames = append(failingNames, cr.GetName())
-				failingIDs = append(failingIDs, cr.GetID())
-			}
-		}
-		if ciChecksFound == 0 {
-			prs[i].CIStatus = ciStatusPending
-			continue
-		}
-		switch {
-		case hasFail:
-			prs[i].CIStatus = ciStatusFailure
-			prs[i].FailingChecks = failingNames
-			prs[i].CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
-		case allDone:
-			prs[i].CIStatus = ciStatusSuccess
-		default:
-			prs[i].CIStatus = ciStatusPending
+	checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		pr.CIStatus = ciStatusPending
+		return nil
+	}
+	reported := make(map[string]bool, len(checkRuns.CheckRuns))
+	for _, cr := range checkRuns.CheckRuns {
+		if name := cr.GetName(); name != "" {
+			reported[name] = true
 		}
 	}
+	if checkRuns.GetTotal() == 0 {
+		pr.CIStatus = ciStatusPending
+		return reported
+	}
+	hasFail := false
+	allDone := true
+	ciChecksFound := 0
+	var failingNames []string
+	var failingIDs []int64
+	for _, cr := range checkRuns.CheckRuns {
+		if isMetaCheck(cr.GetName()) {
+			continue
+		}
+		ciChecksFound++
+		if cr.GetStatus() != "completed" {
+			allDone = false
+			continue
+		}
+		conclusion := cr.GetConclusion()
+		if conclusion == "failure" || conclusion == "action_required" {
+			hasFail = true
+			failingNames = append(failingNames, cr.GetName())
+			failingIDs = append(failingIDs, cr.GetID())
+		}
+	}
+	if ciChecksFound == 0 {
+		pr.CIStatus = ciStatusPending
+		return reported
+	}
+	switch {
+	case hasFail:
+		pr.CIStatus = ciStatusFailure
+		pr.FailingChecks = failingNames
+		pr.CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
+	case allDone:
+		pr.CIStatus = ciStatusSuccess
+	default:
+		pr.CIStatus = ciStatusPending
+	}
+	return reported
 }
 
 // isMetaCheck reports check runs that are merge-gates or deploy-status
