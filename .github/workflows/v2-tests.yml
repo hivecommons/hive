@@ -75,6 +75,11 @@ env:
   # Self-hosted runners sit inside OpenShift; keep these hermetic unit tests from auto-discovering that cluster.
   KUBERNETES_SERVICE_HOST: ''
   KUBERNETES_SERVICE_PORT: ''
+  # A slow cache-segment download must never cost more than a recompile.
+  # Some cluster nodes crawl when pulling from the Actions cache backend —
+  # observed 16-minute "Restore warm Go build cache" steps against a ~2-minute
+  # cold compile. Abort a segment after 1 minute and let the job build instead.
+  ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
 
 
 # Cancel superseded PR runs only (#4623). A new push to a PR makes the
