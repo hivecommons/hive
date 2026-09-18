@@ -63,13 +63,18 @@ func stubLitellm(t *testing.T, exitCode int) (argsFile string) {
 	return argsFile
 }
 
-// invocationCount returns how many times the stub has run so far.
+// invocationCount returns how many times the stub has run so far. Only
+// newline-terminated lines count: the shell creates argsFile via the `>>`
+// redirect before `echo` writes to it, so a poller that reads between those
+// two steps would otherwise see an empty (or partial) file and report a
+// finished invocation whose argument line is not yet durable — the race
+// behind the "litellm invoked without ..." flake seen under -test.shuffle.
 func invocationCount(argsFile string) int {
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		return 0
 	}
-	return len(strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"))
+	return strings.Count(string(data), "\n")
 }
 
 // waitForInvocations polls until the stub has run at least n times or the
