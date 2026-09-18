@@ -1624,6 +1624,11 @@ func isPublicPath(path string) bool {
 		// without LINEAR_WEBHOOK_SECRET and verifies the HMAC signature over
 		// the raw body plus the signed timestamp's replay window.
 		return true
+	case path == githubMentionWebhookPath:
+		// GitHub mention accelerator webhooks: GitHub's servers cannot hold a
+		// dashboard session. NOT actually open — pkg/mention verifies
+		// X-Hub-Signature-256 before triggering a poll cycle.
+		return true
 	case path == "/sso":
 		// SSO handoff exchange: the caller has no session yet, the signed hub
 		// token IS the credential. The handler itself verifies the token and

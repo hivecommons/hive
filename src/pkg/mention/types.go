@@ -33,7 +33,7 @@ type Event struct {
 type GitHub interface {
 	AppBotLogin() string
 	ListMentionComments(ctx context.Context, repo string, since time.Time) ([]Event, error)
-	CreateMentionAck(ctx context.Context, repo string, commentID int64, reaction string) error
+	CreateMentionAck(ctx context.Context, ev Event, reaction string) error
 	CountAppAuthoredComments(ctx context.Context, repo string, number int) (int, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
@@ -128,7 +128,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "ioscan", ioscanRules(verdict))
 	}
 	if reaction := cfg.AckReactionEffective(); reaction != "" && ev.CommentID != 0 && gh != nil {
-		if err := gh.CreateMentionAck(ctx, ev.Repo, ev.CommentID, reaction); err != nil {
+		if err := gh.CreateMentionAck(ctx, ev, reaction); err != nil {
 			return err
 		}
 	}

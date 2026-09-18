@@ -1740,14 +1740,17 @@ func (r RotationConfig) EffectiveHighVolumeCadenceS() int {
 }
 
 type GitHubMentionsConfig struct {
-	Enabled        bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	PollInterval   time.Duration `yaml:"poll_interval,omitempty" json:"poll_interval,omitempty"`
-	DefaultAgent   string        `yaml:"default_agent,omitempty" json:"default_agent,omitempty"`
-	Summoners      []string      `yaml:"summoners,omitempty" json:"summoners,omitempty"`
-	MinRole        string        `yaml:"min_role,omitempty" json:"min_role,omitempty"`
-	PerUserPerHour int           `yaml:"per_user_per_hour,omitempty" json:"per_user_per_hour,omitempty"`
-	PerRepoPerHour int           `yaml:"per_repo_per_hour,omitempty" json:"per_repo_per_hour,omitempty"`
-	AckReaction    *string       `yaml:"ack_reaction,omitempty" json:"ack_reaction,omitempty"`
+	Enabled          bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	PollInterval     time.Duration `yaml:"poll_interval,omitempty" json:"poll_interval,omitempty"`
+	DefaultAgent     string        `yaml:"default_agent,omitempty" json:"default_agent,omitempty"`
+	Summoners        []string      `yaml:"summoners,omitempty" json:"summoners,omitempty"`
+	MinRole          string        `yaml:"min_role,omitempty" json:"min_role,omitempty"`
+	PerUserPerHour   int           `yaml:"per_user_per_hour,omitempty" json:"per_user_per_hour,omitempty"`
+	PerRepoPerHour   int           `yaml:"per_repo_per_hour,omitempty" json:"per_repo_per_hour,omitempty"`
+	AckReaction      *string       `yaml:"ack_reaction,omitempty" json:"ack_reaction,omitempty"`
+	WebhookEnabled   bool          `yaml:"webhook_enabled,omitempty" json:"webhook_enabled,omitempty"`
+	WebhookSecretEnv string        `yaml:"webhook_secret_env,omitempty" json:"webhook_secret_env,omitempty"`
+	WebhookMinGap    time.Duration `yaml:"webhook_min_gap,omitempty" json:"webhook_min_gap,omitempty"`
 }
 
 const (
@@ -1756,6 +1759,7 @@ const (
 	DefaultMentionPerUserPerHour = 6
 	DefaultMentionPerRepoPerHour = 30
 	DefaultMentionAckReaction    = "eyes"
+	DefaultMentionWebhookMinGap  = 30 * time.Second
 )
 
 func (m GitHubMentionsConfig) PollIntervalEffective() time.Duration {
@@ -1797,6 +1801,20 @@ func (m GitHubMentionsConfig) AckReactionEffective() string {
 	return strings.TrimSpace(*m.AckReaction)
 }
 
+func (m GitHubMentionsConfig) WebhookSecretEffective() string {
+	if strings.TrimSpace(m.WebhookSecretEnv) == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(strings.TrimSpace(m.WebhookSecretEnv)))
+}
+
+func (m GitHubMentionsConfig) WebhookMinGapEffective() time.Duration {
+	if m.WebhookMinGap > 0 {
+		return m.WebhookMinGap
+	}
+	return DefaultMentionWebhookMinGap
+}
+
 func (m GitHubMentionsConfig) Validate() error {
 	if !ValidRole(m.MinRoleEffective()) {
 		return fmt.Errorf("github.mentions.min_role %q is invalid (must be read, read-write, merger, or owner)", m.MinRole)
@@ -1806,6 +1824,15 @@ func (m GitHubMentionsConfig) Validate() error {
 	}
 	if m.PerUserPerHour < 0 || m.PerRepoPerHour < 0 {
 		return fmt.Errorf("github.mentions rate limits must be non-negative")
+	}
+	if m.WebhookEnabled && strings.TrimSpace(m.WebhookSecretEnv) == "" {
+		return fmt.Errorf("github.mentions.webhook_secret_env must be set when webhook_enabled is true")
+	}
+	if m.WebhookEnabled && !m.Enabled {
+		return fmt.Errorf("github.mentions.webhook_enabled requires github.mentions.enabled")
+	}
+	if m.WebhookMinGap < 0 {
+		return fmt.Errorf("github.mentions.webhook_min_gap must be non-negative")
 	}
 	return nil
 }

@@ -20,11 +20,28 @@ func TestGitHubMentionsConfigDefaultsAndValidation(t *testing.T) {
 	if m.PollIntervalEffective() != 5*time.Minute {
 		t.Fatalf("poll = %v", m.PollIntervalEffective())
 	}
+	if m.WebhookMinGapEffective() != 30*time.Second {
+		t.Fatalf("webhook min gap = %v", m.WebhookMinGapEffective())
+	}
+	t.Setenv("MENTION_WEBHOOK_SECRET", "secret")
+	withWebhook := GitHubMentionsConfig{Enabled: true, WebhookEnabled: true, WebhookSecretEnv: "MENTION_WEBHOOK_SECRET", WebhookMinGap: time.Second}
+	if withWebhook.WebhookSecretEffective() != "secret" || withWebhook.WebhookMinGapEffective() != time.Second {
+		t.Fatalf("webhook effective values = %q/%v", withWebhook.WebhookSecretEffective(), withWebhook.WebhookMinGapEffective())
+	}
 	if err := (GitHubMentionsConfig{MinRole: "bogus"}).Validate(); err == nil {
 		t.Fatal("invalid min_role accepted")
 	}
 	if err := (GitHubMentionsConfig{PollInterval: -time.Second}).Validate(); err == nil {
 		t.Fatal("negative poll interval accepted")
+	}
+	if err := (GitHubMentionsConfig{WebhookEnabled: true}).Validate(); err == nil {
+		t.Fatal("webhook without secret accepted")
+	}
+	if err := (GitHubMentionsConfig{WebhookEnabled: true, WebhookSecretEnv: "MENTION_WEBHOOK_SECRET"}).Validate(); err == nil {
+		t.Fatal("webhook without poller accepted")
+	}
+	if err := (GitHubMentionsConfig{WebhookMinGap: -time.Second}).Validate(); err == nil {
+		t.Fatal("negative webhook min gap accepted")
 	}
 }
 

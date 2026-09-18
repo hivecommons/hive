@@ -72,9 +72,10 @@ func TestLinearAgentPublicPaths(t *testing.T) {
 	// The callback and webhook must bypass dashboard auth (Linear cannot
 	// authenticate); nothing else Linear-related may.
 	for path, want := range map[string]bool{
-		"/linear/callback":         true,
-		"/api/linear/webhook":      true,
-		"/api/linear/agent/status": false,
+		"/linear/callback":             true,
+		"/api/linear/webhook":          true,
+		"/api/github/mentions/webhook": true,
+		"/api/linear/agent/status":     false,
 	} {
 		if got := isPublicPath(path); got != want {
 			t.Errorf("isPublicPath(%q) = %v, want %v", path, got, want)

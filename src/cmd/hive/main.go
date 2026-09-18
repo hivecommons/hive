@@ -1015,6 +1015,7 @@ func main() {
 		beadStoreLoadFailures      int
 		tokenCollector             *tokens.Collector
 		metricsCollector           *dashboard.MetricsCollector
+		mentionWebhook             http.Handler
 		fleetStatsCollector        *collect.FleetStatsCollector
 		activityCollector          *collect.ActivityCollector
 		repoCostCollector          *collect.RepoCostCollector
@@ -1228,6 +1229,7 @@ func main() {
 			OpenRouter:           openRouterGateway{},
 			NewLinearAgent:       newLinearAgentGateway(logger),
 			LinearStoredViewerID: linearStoredViewerID,
+			MentionWebhook:       mentionWebhook,
 			Governor:             gov,
 			GHClient:             ghClient,
 			GHAppAuth:            appAuth,
@@ -2513,6 +2515,11 @@ func main() {
 				return ghClient.ActiveRepositories()
 			}, store, handler, cfg.GitHub.Mentions.PollIntervalEffective(), logger)
 			poller.SetGitHubGetter(func() mention.GitHub { return ghClient })
+			if cfg.GitHub.Mentions.WebhookEnabled {
+				mentionWebhook = mention.NewWebhookReceiver(func() string {
+					return cfg.GitHub.Mentions.WebhookSecretEffective()
+				}, poller, cfg.GitHub.Mentions.WebhookMinGapEffective(), logger)
+			}
 			go poller.Run(ctx)
 			responder := mention.NewResponder(store, func() mention.GitHub { return ghClient }, mentionAgents, cfg.Classification.ReviewBots, logger)
 			agentMgr.SetKickObserver(responder.HandleAgentEvent)

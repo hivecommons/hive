@@ -16012,6 +16012,23 @@
         }
       }
     },
+    "/api/github/mentions/webhook": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GitHub mention webhook accelerator",
+        "description": "Public GitHub webhook endpoint that verifies X-Hub-Signature-256 and coalesces created issue/comment events into immediate mention poll cycles. The webhook payload is not trusted as the source of mention events.",
+        "responses": {
+          "204": {
+            "description": "Accepted or silently ignored"
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        }
+      }
+    },
     "/api/openrouter/connect/start": {
       "get": {
         "tags": [

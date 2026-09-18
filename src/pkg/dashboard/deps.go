@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -119,6 +120,9 @@ type Dependencies struct {
 	// calls it lazily, once, passing its kick/session-agent callbacks. Nil
 	// means Linear integration is unavailable (bare test servers).
 	NewLinearAgent func(LinearAgentPorts) LinearAgentGateway
+	// MentionWebhook is the public GitHub mention webhook accelerator. It is
+	// HMAC-verified by pkg/mention and only triggers a poll cycle.
+	MentionWebhook http.Handler
 	// LinearStoredViewerID reports the persisted Linear install's viewer id
 	// ("" when none) plus the store path, for the assigned_only validation
 	// message. Nil disables the check's install probe.

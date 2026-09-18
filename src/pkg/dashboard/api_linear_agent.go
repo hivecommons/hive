@@ -21,6 +21,10 @@ const (
 	// AgentSessionEvent webhooks to.
 	linearAgentWebhookPath = "/api/linear/webhook"
 
+	// githubMentionWebhookPath is the PUBLIC path GitHub posts mention
+	// accelerator webhooks to. The handler verifies HMAC before acting.
+	githubMentionWebhookPath = "/api/github/mentions/webhook"
+
 	// linearAgentConnectedFlag / linearAgentErrorFlag are appended to the
 	// post-callback dashboard redirect so the UI can show the outcome.
 	linearAgentConnectedFlag = "?linear=connected"
@@ -217,6 +221,15 @@ func (s *Server) registerLinearAgentRoutes() {
 	s.mux.HandleFunc("POST /api/linear/agent/disconnect", s.handleLinearAgentDisconnect)
 	s.mux.HandleFunc("GET "+linearAgentCallbackPath, s.handleLinearAgentCallback)
 	s.mux.HandleFunc("POST "+linearAgentWebhookPath, s.handleLinearAgentWebhook)
+	s.mux.Handle("POST "+githubMentionWebhookPath, http.HandlerFunc(s.handleGitHubMentionWebhook))
+}
+
+func (s *Server) handleGitHubMentionWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.MentionWebhook == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.deps.MentionWebhook.ServeHTTP(w, r)
 }
 
 // linearAgentCallbackURL builds this hive's redirect_uri from an allowlisted

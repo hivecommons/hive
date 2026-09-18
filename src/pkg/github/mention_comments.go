@@ -12,12 +12,33 @@ import (
 	"github.com/hivecommons/hive/pkg/mention"
 )
 
-// ListMentionComments lists recently-created issue/PR comments across one repo.
+// ListMentionComments lists recently-created mention-bearing surfaces across
+// one repo: issue/PR comments, PR review comments, and opened issues.
 func (c *Client) ListMentionComments(ctx context.Context, repo string, since time.Time) ([]mention.Event, error) {
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
+	var out []mention.Event
+	issueComments, err := c.listMentionIssueComments(ctx, owner, repoName, since)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, issueComments...)
+	reviewComments, err := c.listMentionReviewComments(ctx, owner, repoName, since)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, reviewComments...)
+	issues, err := c.listMentionOpenedIssues(ctx, owner, repoName, since)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, issues...)
+	return out, nil
+}
+
+func (c *Client) listMentionIssueComments(ctx context.Context, owner, repoName string, since time.Time) ([]mention.Event, error) {
 	path := fmt.Sprintf("repos/%s/%s/issues/comments?per_page=100", url.PathEscape(owner), url.PathEscape(repoName))
 	if !since.IsZero() {
 		path += "&since=" + url.QueryEscape(since.UTC().Format(time.RFC3339))
@@ -54,6 +75,68 @@ func (c *Client) ListMentionComments(ctx context.Context, repo string, since tim
 	return out, nil
 }
 
+func (c *Client) listMentionReviewComments(ctx context.Context, owner, repoName string, since time.Time) ([]mention.Event, error) {
+	opts := &gh.PullRequestListCommentsOptions{Sort: "updated", Direction: "asc", Since: since, ListOptions: gh.ListOptions{PerPage: 100}}
+	var out []mention.Event
+	for {
+		comments, resp, err := c.client.PullRequests.ListComments(ctx, owner, repoName, 0, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing mention review comments for %s/%s: %w", owner, repoName, err)
+		}
+		for _, rc := range comments {
+			out = append(out, mention.Event{
+				Repo:      owner + "/" + repoName,
+				Kind:      "review_comment",
+				Number:    issueNumberFromURL(rc.GetPullRequestURL()),
+				NodeID:    rc.GetNodeID(),
+				CommentID: rc.GetID(),
+				HTMLURL:   rc.GetHTMLURL(),
+				Author:    safeGetLogin(rc.GetUser()),
+				Body:      rc.GetBody(),
+				CreatedAt: rc.GetCreatedAt().Time,
+				UpdatedAt: rc.GetUpdatedAt().Time,
+			})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+func (c *Client) listMentionOpenedIssues(ctx context.Context, owner, repoName string, since time.Time) ([]mention.Event, error) {
+	opts := &gh.IssueListByRepoOptions{State: "all", Sort: "updated", Direction: "asc", Since: since, ListOptions: gh.ListOptions{PerPage: 100}}
+	var out []mention.Event
+	for {
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing mention issues for %s/%s: %w", owner, repoName, err)
+		}
+		for _, issue := range issues {
+			if issue.IsPullRequest() {
+				continue
+			}
+			out = append(out, mention.Event{
+				Repo:      owner + "/" + repoName,
+				Kind:      "issue",
+				Number:    issue.GetNumber(),
+				NodeID:    issue.GetNodeID(),
+				HTMLURL:   issue.GetHTMLURL(),
+				Author:    safeGetLogin(issue.GetUser()),
+				Body:      strings.TrimSpace(issue.GetTitle() + "\n\n" + issue.GetBody()),
+				CreatedAt: issue.GetCreatedAt().Time,
+				UpdatedAt: issue.GetUpdatedAt().Time,
+			})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	return out, nil
+}
+
 func issueNumberFromURL(s string) int {
 	parts := strings.Split(strings.TrimRight(s, "/"), "/")
 	if len(parts) == 0 {
@@ -63,14 +146,19 @@ func issueNumberFromURL(s string) int {
 	return n
 }
 
-func (c *Client) CreateMentionAck(ctx context.Context, repo string, commentID int64, reaction string) error {
+func (c *Client) CreateMentionAck(ctx context.Context, ev mention.Event, reaction string) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
 	}
-	owner, repoName := c.splitRepo(repo)
-	_, _, err := c.client.Reactions.CreateIssueCommentReaction(ctx, owner, repoName, commentID, reaction)
+	owner, repoName := c.splitRepo(ev.Repo)
+	var err error
+	if ev.Kind == "review_comment" {
+		_, _, err = c.client.Reactions.CreatePullRequestCommentReaction(ctx, owner, repoName, ev.CommentID, reaction)
+	} else {
+		_, _, err = c.client.Reactions.CreateIssueCommentReaction(ctx, owner, repoName, ev.CommentID, reaction)
+	}
 	if err != nil {
-		return fmt.Errorf("creating mention ack reaction for %s comment %d: %w", owner+"/"+repoName, commentID, err)
+		return fmt.Errorf("creating mention ack reaction for %s comment %d: %w", owner+"/"+repoName, ev.CommentID, err)
 	}
 	return nil
 }

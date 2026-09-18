@@ -1,0 +1,1 @@
+- Added a signed GitHub webhook accelerator that coalesces comment and issue events into immediate mention poll cycles.

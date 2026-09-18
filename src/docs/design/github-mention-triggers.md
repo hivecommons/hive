@@ -250,6 +250,9 @@ github:
     per_user_per_hour: 6
     per_repo_per_hour: 30
     ack_reaction: eyes       # "" disables the acknowledgement reaction
+    webhook_enabled: false   # optional latency accelerator; polling remains authoritative
+    webhook_secret_env: GITHUB_MENTION_WEBHOOK_SECRET
+    webhook_min_gap: 30s     # per-repo coalescing floor for webhook-triggered polls
 ```
 
 `classification.review_bots.logins` and `.max_attempts_per_thread` are read
