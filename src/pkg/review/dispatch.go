@@ -48,8 +48,14 @@ type DispatchOptions struct {
 	// PostComments carries config.ReviewConfig.PostComments into the prompt
 	// builder, so reviewers are told to publish their verdict on the PR.
 	PostComments bool
-	Agents       []AgentCapability
-	Now          time.Time
+	// AllAuthors lifts the agent-authored restriction so every open PR is
+	// eligible for review, whoever opened it.
+	AllAuthors bool
+	// AcknowledgeNoFindings carries config.ReviewConfig.AcknowledgeNoFindings
+	// into the prompt builder, so a clean review still leaves a record.
+	AcknowledgeNoFindings bool
+	Agents                []AgentCapability
+	Now                   time.Time
 }
 
 type DispatchState struct {
@@ -154,7 +160,14 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	availableSlots := maxParallel
 	for _, pr := range prs {
 		pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
-		if pr.Number <= 0 || pr.Repo == "" || !isAgentAuthored(pr.Author, opts.AIAuthor) {
+		if pr.Number <= 0 || pr.Repo == "" {
+			continue
+		}
+		// Review is normally limited to the hive's own output, because that is
+		// the work the hive is answerable for. AllAuthors lifts that: on a repo
+		// where the queue is the problem, a human's PR waiting on a reviewer is
+		// no less stuck than an agent's.
+		if !opts.AllAuthors && !isAgentAuthored(pr.Author, opts.AIAuthor) {
 			continue
 		}
 		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
@@ -187,7 +200,10 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		for i := 0; i < limit; i++ {
 			agent := reviewers[i%len(reviewers)].Name
 			perspective := missing[i]
-			msg := BuildPerspectivePromptOpts(perspective, pr, opts.PostComments)
+			msg := BuildPerspectivePromptWith(perspective, pr, PromptOptions{
+				PostComments:          opts.PostComments,
+				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
+			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, Dispatched: now})
 			availableSlots--

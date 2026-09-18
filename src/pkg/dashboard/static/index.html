@@ -23420,6 +23420,14 @@ function burnAreaChart() {
             <label>Reviewer agents <span class="config-info">i<span class="config-tooltip">Comma-separated agent names that review each PR, e.g. reviewer, security-reviewer.</span></span></label>
             <input type="text" value="${esc(rvAgents.join(', '))}" placeholder="reviewer, security-reviewer" data-change-action="gh74">
           </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${rv.all_authors ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="all_authors"></div>
+            <span class="config-toggle-label">Review every PR, not just agent-authored <span class="config-info">i<span class="config-tooltip">By default the review swarm only looks at PRs the hive's own agents opened &mdash; the work the hive is answerable for. Turn this on to make EVERY open PR eligible regardless of who opened it, including contributors' and other bots'. Use it where the PR queue itself is the problem: a person's PR waiting on a review is no less stuck than an agent's, and it has someone waiting on the other end. Expect more reviews, and reviews on repositories where humans are the main authors.</span></span></span>
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>
+            <span class="config-toggle-label">Comment even when there are no findings <span class="config-info">i<span class="config-tooltip">A reviewer with nothing useful to say stays silent by default, which keeps PRs uncluttered but is indistinguishable from a reviewer that never ran. Turn this on to have a clean review leave one short line recording that it reviewed and found nothing, so review coverage is visible on the PR itself. The acknowledgement is capped at a single line &mdash; it is evidence, not a report. Requires &quot;post review comments&quot;.</span></span></span>
+          </div>
           <div class="config-field" style="margin-top:10px">
             <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review.</span></span></label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="fixer" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">

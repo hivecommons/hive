@@ -31,6 +31,8 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		MaxParallelReviews *int      `json:"max_parallel_reviews"`
 		ReviewerAgents     *[]string `json:"reviewer_agents"`
 		FixerAgent         *string   `json:"fixer_agent"`
+		AllAuthors         *bool     `json:"all_authors"`
+		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -63,6 +65,12 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.FixerAgent != nil {
 		cfg.Review.FixerAgent = strings.TrimSpace(*body.FixerAgent)
+	}
+	if body.AllAuthors != nil {
+		cfg.Review.AllAuthors = *body.AllAuthors
+	}
+	if body.AcknowledgeNoFind != nil {
+		cfg.Review.AcknowledgeNoFindings = *body.AcknowledgeNoFind
 	}
 
 	if err := s.saveConfig(); err != nil {

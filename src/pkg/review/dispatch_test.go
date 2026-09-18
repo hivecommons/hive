@@ -214,3 +214,63 @@ func TestMaxPerspectivesPerPRNeverExceedsSlotBudget(t *testing.T) {
 		t.Fatalf("got %d kicks, want 2 (the slot budget, not the per-PR cap)", len(plan.ReviewKicks))
 	}
 }
+
+func humanPR(sha string) PullRequest {
+	pr := dispatchPR(sha)
+	pr.Author = "clubanderson"
+	return pr
+}
+
+// TestDispatchSkipsHumanPRsByDefault pins the default: the review swarm looks
+// only at the hive's own output, which is the work the hive is answerable for.
+func TestDispatchSkipsHumanPRsByDefault(t *testing.T) {
+	plan := PlanDispatch([]PullRequest{humanPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval: true,
+		FanOut:          true,
+		ProjectOrg:      "acme",
+		AIAuthor:        "hive-bot[bot]",
+		Agents:          []AgentCapability{reviewer("r1")},
+	})
+
+	if len(plan.ReviewKicks) != 0 {
+		t.Fatalf("human-authored PR was dispatched by default: %+v", plan.ReviewKicks)
+	}
+}
+
+// TestAllAuthorsReviewsHumanPRs is the opt-in: where the queue itself is the
+// problem, a contributor's PR waiting on a review is no less stuck than an
+// agent's.
+func TestAllAuthorsReviewsHumanPRs(t *testing.T) {
+	plan := PlanDispatch([]PullRequest{humanPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval: true,
+		FanOut:          true,
+		AllAuthors:      true,
+		ProjectOrg:      "acme",
+		AIAuthor:        "hive-bot[bot]",
+		Agents:          []AgentCapability{reviewer("r1")},
+	})
+
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("got %d kicks for a human-authored PR with AllAuthors, want 1", len(plan.ReviewKicks))
+	}
+	if plan.ReviewKicks[0].Number != 7 {
+		t.Fatalf("dispatched the wrong PR: %+v", plan.ReviewKicks[0])
+	}
+}
+
+// TestAllAuthorsStillReviewsAgentPRs guards the obvious regression: lifting the
+// restriction must widen the set, not replace it.
+func TestAllAuthorsStillReviewsAgentPRs(t *testing.T) {
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval: true,
+		FanOut:          true,
+		AllAuthors:      true,
+		ProjectOrg:      "acme",
+		AIAuthor:        "hive-bot[bot]",
+		Agents:          []AgentCapability{reviewer("r1")},
+	})
+
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("agent-authored PR stopped being reviewed under AllAuthors: %+v", plan.ReviewKicks)
+	}
+}

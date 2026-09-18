@@ -189,3 +189,52 @@ func TestRoutingIsOptInWithPublish(t *testing.T) {
 		t.Error("default prompt contains the routing block; routing must be opt-in with publishing")
 	}
 }
+
+// TestAcknowledgeNoFindingsIsOptIn pins the default: a reviewer with nothing
+// useful to say stays silent, so no hive starts commenting on clean PRs
+// without asking for it.
+func TestAcknowledgeNoFindingsIsOptIn(t *testing.T) {
+	got := BuildPerspectivePromptOpts(PerspectiveCorrectness, testPR(), true)
+
+	if !strings.Contains(got, "skip the comment entirely") {
+		t.Error("default publish prompt lost the stay-silent instruction")
+	}
+	if strings.Contains(got, "**Reviewed**") {
+		t.Error("default publish prompt asks for a no-findings acknowledgement; it must be opt-in")
+	}
+}
+
+// TestAcknowledgeNoFindingsRecordsCleanReviews is the opt-in behaviour: silence
+// is indistinguishable from a reviewer that never ran, so a clean review has to
+// say so to count as evidence.
+func TestAcknowledgeNoFindingsRecordsCleanReviews(t *testing.T) {
+	got := BuildPerspectivePromptWith(PerspectiveCorrectness, testPR(), PromptOptions{
+		PostComments:          true,
+		AcknowledgeNoFindings: true,
+	})
+
+	if !strings.Contains(got, "**Reviewed**") {
+		t.Error("opted-in prompt does not ask for a no-findings acknowledgement")
+	}
+	if strings.Contains(got, "skip the comment entirely") {
+		t.Error("opted-in prompt still tells the reviewer to stay silent")
+	}
+	// The acknowledgement must stay one line, or it becomes the noise the
+	// stay-silent rule existed to prevent.
+	if !strings.Contains(got, "That line is the WHOLE comment") {
+		t.Error("opted-in prompt does not cap the acknowledgement at one line")
+	}
+}
+
+// TestAcknowledgeNeedsPublishing keeps the acknowledgement subordinate to
+// publishing: with no comment authority there is nothing to acknowledge with.
+func TestAcknowledgeNeedsPublishing(t *testing.T) {
+	got := BuildPerspectivePromptWith(PerspectiveCorrectness, testPR(), PromptOptions{
+		PostComments:          false,
+		AcknowledgeNoFindings: true,
+	})
+
+	if strings.Contains(got, "**Reviewed**") || strings.Contains(got, "PUBLISH YOUR VERDICT") {
+		t.Error("acknowledgement leaked into a prompt that has no publish authority")
+	}
+}

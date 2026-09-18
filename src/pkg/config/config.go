@@ -6307,6 +6307,19 @@ type ReviewConfig struct {
 	// perspective out at once stays the default, so this only changes a hive
 	// that opts in because its queue is too deep to review in depth.
 	MaxPerspectivesPerPR int `yaml:"max_perspectives_per_pr,omitempty" json:"max_perspectives_per_pr,omitempty"`
+	// AllAuthors makes every open PR eligible for review regardless of who
+	// opened it. By default the review swarm looks only at agent-authored
+	// PRs — the work the hive is answerable for. On a repo whose queue is the
+	// problem that restriction is backwards: a contributor's PR waiting on a
+	// reviewer is no less stuck than an agent's, and it is the one with a
+	// person waiting on the other end.
+	AllAuthors bool `yaml:"all_authors,omitempty" json:"all_authors,omitempty"`
+	// AcknowledgeNoFindings makes a clean review leave a one-line record
+	// instead of nothing. Silence keeps a PR uncluttered but is
+	// indistinguishable from a reviewer that never ran, so where review
+	// coverage itself is the thing being demonstrated, a reviewed-and-clean
+	// PR should say so. Requires PostComments.
+	AcknowledgeNoFindings bool `yaml:"acknowledge_no_findings,omitempty" json:"acknowledge_no_findings,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep

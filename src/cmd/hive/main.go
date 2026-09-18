@@ -9509,16 +9509,18 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		})
 	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
-		RequireApproval:      cfg.Review.RequireApproval,
-		FanOut:               cfg.Review.FanOut,
-		MaxParallelReviews:   cfg.Review.EffectiveMaxParallelReviews(),
-		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
-		ReviewerAgents:       cfg.Review.ReviewerAgents,
-		FixerAgent:           cfg.Review.FixerAgent,
-		PostComments:         cfg.Review.PostComments,
-		ProjectOrg:           cfg.Project.Org,
-		AIAuthor:             cfg.EffectiveAIAuthor(),
-		Agents:               agents,
+		RequireApproval:       cfg.Review.RequireApproval,
+		FanOut:                cfg.Review.FanOut,
+		MaxParallelReviews:    cfg.Review.EffectiveMaxParallelReviews(),
+		MaxPerspectivesPerPR:  cfg.Review.MaxPerspectivesPerPR,
+		ReviewerAgents:        cfg.Review.ReviewerAgents,
+		FixerAgent:            cfg.Review.FixerAgent,
+		PostComments:          cfg.Review.PostComments,
+		AllAuthors:            cfg.Review.AllAuthors,
+		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
+		ProjectOrg:            cfg.Project.Org,
+		AIAuthor:              cfg.EffectiveAIAuthor(),
+		Agents:                agents,
 	})
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
