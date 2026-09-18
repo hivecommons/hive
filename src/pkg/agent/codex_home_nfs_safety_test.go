@@ -57,7 +57,7 @@ var goTreeWalkers = map[string]string{
 // function responsible for repairing a wrong-owner CODEX_HOME calls a Go
 // stdlib tree walker.
 func TestCodexHomeHealUsesNFSSafeMechanisms(t *testing.T) {
-	const src = "manager.go"
+	const src = "manager_homes.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, src, nil, 0)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestCodexHomeHealUsesNFSSafeMechanisms(t *testing.T) {
 // re-owns the auth.json SYMLINK itself rather than following it into the
 // shared credential file.
 func TestCodexHomeHealShellsOutToChownAndRm(t *testing.T) {
-	const src = "manager.go"
+	const src = "manager_homes.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, src, nil, 0)
 	if err != nil {

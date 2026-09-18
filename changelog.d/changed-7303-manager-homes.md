@@ -1,0 +1,1 @@
+- `pkg/agent`: extracted the agent-home lifecycle domain (home provisioning, state files, codex-home ownership healing) from `manager.go` into `manager_homes.go` — a verbatim move matching the v5 file boundaries, no behavior change. Part of [#7303](https://github.com/hivecommons/hive/issues/7303).
