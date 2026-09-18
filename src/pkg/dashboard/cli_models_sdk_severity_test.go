@@ -15,6 +15,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,15 +42,45 @@ func TestCopilotSDKHelperAbsentIsASentinel(t *testing.T) {
 
 // The real exec path must produce the sentinel when the helper script is not
 // installed, otherwise the sentinel is dead code and every dev machine starts
-// emitting a WARN.
+// emitting a WARN. The helper path is repointed at a path that does not exist
+// so the assertion holds regardless of whether the host image ships the real
+// helper (on live agent hosts it exists but is unauthenticated, which used to
+// flip this test to a hard FAIL — the third state the old version, which ran
+// whatever was at the production path, never accounted for).
 func TestProbeCopilotModelsSDK_AbsentHelperYieldsSentinel(t *testing.T) {
-	if _, err := execCopilotSDKHelper(context.Background(), ""); err != nil {
-		if !errors.Is(err, errCopilotSDKHelperAbsent) {
-			t.Fatalf("helper absence did not yield the sentinel: %v", err)
-		}
-		return
+	setCopilotSDKHelperPathForTest(t, filepath.Join(t.TempDir(), "copilot-models.mjs"))
+	_, err := execCopilotSDKHelper(context.Background(), "")
+	if err == nil {
+		t.Fatal("exec of a nonexistent helper unexpectedly succeeded")
 	}
-	t.Skip("copilot SDK helper present on this machine; skipping absence check")
+	if !errors.Is(err, errCopilotSDKHelperAbsent) {
+		t.Fatalf("helper absence did not yield the sentinel: %v", err)
+	}
+}
+
+// The converse on the same exec path: a helper that EXISTS and fails (#7365 —
+// exits nonzero) must NOT match the absence sentinel, or the failure would be
+// logged at INFO and stay invisible. Uses a stub script so the assertion never
+// depends on the host's real helper or its auth state.
+func TestProbeCopilotModelsSDK_FailingHelperIsNotAbsent(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH; cannot exercise the helper exec path")
+	}
+	stub := filepath.Join(t.TempDir(), "copilot-models.mjs")
+	if err := os.WriteFile(stub, []byte("console.error('stub failure'); process.exit(1);\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setCopilotSDKHelperPathForTest(t, stub)
+	_, err := execCopilotSDKHelper(context.Background(), "")
+	if err == nil {
+		t.Fatal("failing stub helper unexpectedly succeeded")
+	}
+	if errors.Is(err, errCopilotSDKHelperAbsent) {
+		t.Fatalf("a real helper failure matched the absence sentinel: %v", err)
+	}
+	if !strings.Contains(err.Error(), "stub failure") {
+		t.Errorf("helper stderr not folded into the error: %v", err)
+	}
 }
 
 // The severity split itself, asserted on real emitted log records.

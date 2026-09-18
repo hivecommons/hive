@@ -114,17 +114,6 @@ const (
 	// require a plausible editor identifier.
 	copilotEditorVersion = "vscode/1.99.0"
 
-	// copilotSDKHelperPath is where the image installs the Node helper that
-	// lists Copilot models through the official @github/copilot-sdk (source:
-	// bin/copilot-models.mjs, COPYed by src/Dockerfile). The SDK spawns the
-	// pinned copilot CLI as a JSON-RPC server, so the probe rides the CLI's
-	// own stored auth and TLS handling — auth configurations the raw-HTTP
-	// probe below cannot reach (verified live against copilot CLI 1.0.59 in a
-	// hive pod: 25 models via stored device-flow auth behind the egress
-	// proxy). Absent outside the image, in which case the SDK probe is
-	// skipped instantly.
-	copilotSDKHelperPath = "/usr/local/bin/copilot-models.mjs"
-
 	// copilotSDKNodeBinary runs the helper. The helper is plain-Node ESM; it
 	// is invoked explicitly (not via shebang) so no exec bit is needed.
 	copilotSDKNodeBinary = "node"
@@ -268,6 +257,31 @@ const (
 // models host is discovered, never hardcoded. It is a var so tests can repoint
 // it at hermetic servers and exercise fallback branches without network.
 var copilotUserEndpointURL = "https://api.github.com/copilot_internal/user"
+
+// copilotSDKHelperPath is where the image installs the Node helper that
+// lists Copilot models through the official @github/copilot-sdk (source:
+// bin/copilot-models.mjs, COPYed by src/Dockerfile). The SDK spawns the
+// pinned copilot CLI as a JSON-RPC server, so the probe rides the CLI's
+// own stored auth and TLS handling — auth configurations the raw-HTTP
+// probe below cannot reach (verified live against copilot CLI 1.0.59 in a
+// hive pod: 25 models via stored device-flow auth behind the egress
+// proxy). Absent outside the image, in which case the SDK probe is
+// skipped instantly. A var (not const) only so tests can point it at a
+// hermetic path regardless of what the host has installed; production
+// never reassigns it.
+var copilotSDKHelperPath = "/usr/local/bin/copilot-models.mjs"
+
+// setCopilotSDKHelperPathForTest repoints the SDK helper script path for the
+// lifetime of t, mirroring the knowledge.SetBaseDirForTest convention.
+func setCopilotSDKHelperPathForTest(t interface {
+	Helper()
+	Cleanup(func())
+}, path string) {
+	t.Helper()
+	old := copilotSDKHelperPath
+	copilotSDKHelperPath = path
+	t.Cleanup(func() { copilotSDKHelperPath = old })
+}
 
 // --- Static fallback lists (kept CURRENT — July 2026) ---
 

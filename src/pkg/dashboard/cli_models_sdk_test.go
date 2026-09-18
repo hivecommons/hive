@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -145,13 +146,15 @@ func TestQueryCLIModels_SDKResultsFeedRetention(t *testing.T) {
 
 // TestProbeCopilotModelsSDK_HelperNotInstalled verifies the real exec path
 // degrades instantly (no hang, no panic) when the helper script is absent —
-// the situation on dev machines and CI runners.
+// the situation on dev machines and CI runners. The helper path is repointed
+// at a nonexistent file so the check is hermetic on hosts that DO ship the
+// helper (where the old version exec'd the real helper — a network-dependent
+// probe whose outcome tracked the host's copilot auth state).
 func TestProbeCopilotModelsSDK_HelperNotInstalled(t *testing.T) {
+	setCopilotSDKHelperPathForTest(t, filepath.Join(t.TempDir(), "copilot-models.mjs"))
 	s := &Server{logger: testLogger()}
 	if _, err := s.probeCopilotModelsSDK(""); err == nil {
-		// The helper is installed only inside the hive image; if this machine
-		// actually has it, the probe may legitimately succeed — skip then.
-		t.Skip("copilot SDK helper present on this machine; skipping absence check")
+		t.Fatal("probe with an absent helper unexpectedly succeeded")
 	}
 }
 
