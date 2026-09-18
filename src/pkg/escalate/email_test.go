@@ -3,7 +3,13 @@ package escalate
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -11,7 +17,8 @@ import (
 )
 
 func TestEmailSinkImmediateAndDigest(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	serverTLS, clientTLS := testTLSConfig(t)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +26,7 @@ func TestEmailSinkImmediateAndDigest(t *testing.T) {
 	messages := make(chan string, 4)
 	go func() { _ = ServeSMTPFake(context.Background(), ln, messages) }()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", To: []string{"ops@example.com"}, DigestTo: []string{"team@example.com"}, HiveName: "h1", Spoke: "org", Version: "1.2.3", Now: func() time.Time { return time.Date(2026, 9, 18, 8, 0, 0, 0, time.Local) }}
+	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", To: []string{"ops@example.com"}, DigestTo: []string{"team@example.com"}, HiveName: "h1", Spoke: "org", Version: "1.2.3", tlsConfig: clientTLS, Now: func() time.Time { return time.Date(2026, 9, 18, 8, 0, 0, 0, time.Local) }}
 	if _, err := fmtSscanf(port, &cfg.Port); err != nil {
 		t.Fatal(err)
 	}
@@ -56,20 +63,42 @@ func TestEmailHelpers(t *testing.T) {
 }
 
 func TestEmailSinkRecipientError(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	serverTLS, clientTLS := testTLSConfig(t)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 	go serveSMTPRejectRCPT(ln)
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", To: []string{"ops@example.com"}}
+	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", To: []string{"ops@example.com"}, tlsConfig: clientTLS}
 	if _, err := fmtSscanf(port, &cfg.Port); err != nil {
 		t.Fatal(err)
 	}
 	if err := NewEmailSink(cfg).Deliver(context.Background(), Event{Severity: SeverityPage, Title: "Page"}); err == nil {
 		t.Fatal("want rcpt error")
 	}
+}
+
+func testTLSConfig(t *testing.T) (*tls.Config, *tls.Config) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
 }
 
 func fmtSscanf(s string, p *int) (int, error) { return fmt.Sscanf(s, "%d", p) }

@@ -10,7 +10,6 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalate"
-	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/review"
@@ -52,8 +51,8 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 			Spoke:    cfg.Project.Org,
 			Version:  reportedVersion(),
 		})
-		s.StartDigest(ctx)
 		d.Register(s, escalate.SeverityInfo, 64)
+		s.StartDigest(d.Context())
 		registered = true
 	}
 	if cfg.Escalation.Push.Enabled {
@@ -116,16 +115,25 @@ func emitReviewHumanEscalations(plan review.DispatchPlan) {
 	}
 }
 
-func emitGovernorModeEscalation(change governor.ModeChange) {
-	to := strings.ToLower(string(change.To))
-	if to != "halted" && to != "halt" && to != "paused" && to != "pause" {
+func emitAgentPauseEscalation(event agent.PauseTransitionEvent) {
+	if !event.Paused {
 		return
 	}
 	d := currentEscalationDispatcher()
 	if d == nil {
 		return
 	}
-	title := logscrub.ScrubString(fmt.Sprintf("Governor mode change: %s → %s", change.From, change.To))
-	body := logscrub.ScrubString(change.Reason)
+	title := logscrub.ScrubString(fmt.Sprintf("Agent paused: %s", event.Agent))
+	body := logscrub.ScrubString(fmt.Sprintf("trigger=%s\nreason=%s\nby=%s", event.Trigger, event.Reason, event.By))
+	d.Dispatch(escalate.Event{Severity: escalate.SeverityPage, Title: title, Body: body})
+}
+
+func emitBudgetExhaustedEscalation(detail string) {
+	d := currentEscalationDispatcher()
+	if d == nil {
+		return
+	}
+	title := logscrub.ScrubString("Governor budget exhausted: kicks stopped")
+	body := logscrub.ScrubString(detail)
 	d.Dispatch(escalate.Event{Severity: escalate.SeverityPage, Title: title, Body: body})
 }

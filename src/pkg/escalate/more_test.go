@@ -3,8 +3,11 @@ package escalate
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,9 +41,16 @@ func TestDispatcherFailureAuditAndRegisterNoops(t *testing.T) {
 	waitFor(t, func() bool { return audits.Load() > 0 })
 	d.Stop()
 	d.Register(&fakeSink{name: "late"}, SeverityInfo, 0)
-	NewDispatcher(nil, nil, nil).Stop()
+	other := NewDispatcher(nil, nil, nil)
+	if other.Context() == nil {
+		t.Fatal("dispatcher context nil")
+	}
+	other.Stop()
 	var nilDispatcher *Dispatcher
 	nilDispatcher.Stop()
+	if nilDispatcher.Context() == nil {
+		t.Fatal("nil dispatcher context nil")
+	}
 }
 
 func TestEmailDigestStartAndEmptyCases(t *testing.T) {
@@ -65,6 +75,9 @@ func TestEmailDigestStartAndEmptyCases(t *testing.T) {
 	if err := bad.Deliver(context.Background(), Event{Severity: SeverityPage, Title: "page"}); err == nil {
 		t.Fatal("want smtp dial error")
 	}
+	if bad.tlsConfig().ServerName != "127.0.0.1" {
+		t.Fatal("default TLS server name not set")
+	}
 }
 
 func TestPushClientAndRequestErrors(t *testing.T) {
@@ -86,3 +99,54 @@ func TestPushClientAndRequestErrors(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestEmailDigestSpansMidnightAndCapsOldest(t *testing.T) {
+	current := time.Date(2026, 9, 18, 23, 59, 0, 0, time.Local)
+	s := NewEmailSink(EmailConfig{DigestTo: []string{"ops@example.com"}, Now: func() time.Time { return current }})
+	s.recordDigest(Event{Severity: SeverityInfo, Title: "before midnight"})
+	current = current.Add(2 * time.Minute)
+	s.recordDigest(Event{Severity: SeverityInfo, Title: "after midnight"})
+	if len(s.dig) != 2 {
+		t.Fatalf("midnight rollover dropped events: %d", len(s.dig))
+	}
+	for i := 0; i < maxDigestEvents+3; i++ {
+		s.recordDigest(Event{Severity: SeverityInfo, Title: fmt.Sprintf("event-%d", i)})
+	}
+	if len(s.dig) != maxDigestEvents {
+		t.Fatalf("digest cap len=%d", len(s.dig))
+	}
+	if s.dropped == 0 {
+		t.Fatal("expected dropped counter")
+	}
+}
+
+func TestEmailRequiresSTARTTLSOnSubmissionPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	messages := make(chan string, 1)
+	go func() { _ = ServeSMTPFake(context.Background(), ln, messages) }()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	cfg := EmailConfig{Host: "127.0.0.1", From: "hive@example.com", To: []string{"ops@example.com"}}
+	_, _ = fmt.Sscanf(port, "%d", &cfg.Port)
+	err = NewEmailSink(cfg).Deliver(context.Background(), Event{Severity: SeverityPage, Title: "page"})
+	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
+		t.Fatalf("error=%v, want STARTTLS refusal", err)
+	}
+}
+
+func TestEmailConcurrentDigestAndDeliverRace(t *testing.T) {
+	s := NewEmailSink(EmailConfig{DigestTo: []string{"ops@example.com"}})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.Deliver(context.Background(), Event{Severity: SeverityInfo, Title: "info"})
+		}()
+		go func() { defer wg.Done(); _ = s.SendDigest(context.Background()) }()
+	}
+	wg.Wait()
+}

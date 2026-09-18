@@ -68,6 +68,13 @@ func (d *Dispatcher) Stop() {
 	d.mu.Unlock()
 }
 
+func (d *Dispatcher) Context() context.Context {
+	if d == nil {
+		return context.Background()
+	}
+	return d.ctx
+}
+
 func (d *Dispatcher) Dispatch(ev Event) {
 	if d == nil || !ev.valid() {
 		return

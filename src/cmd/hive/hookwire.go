@@ -147,7 +147,6 @@ func installGovernorModeChangeEmitter(gov *governor.Governor) {
 		return
 	}
 	gov.SetModeChangeObserver(func(change governor.ModeChange) {
-		emitGovernorModeEscalation(change)
 		// hookDispatcher() may be nil (no hooks configured); Fire is nil-safe.
 		hookDispatcher().Fire(context.Background(), hooks.Payload{
 			Transition: hooks.TransitionGovernorModeChange,
@@ -165,6 +164,7 @@ func installAgentPauseEmitter(mgr *agent.Manager) {
 		return
 	}
 	mgr.SetPauseTransitionObserver(func(event agent.PauseTransitionEvent) {
+		emitAgentPauseEscalation(event)
 		transition := hooks.TransitionAgentResumed
 		if event.Paused {
 			transition = hooks.TransitionAgentPaused

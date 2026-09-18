@@ -13,27 +13,30 @@ import (
 )
 
 const defaultSMTPPort = 587
+const maxDigestEvents = 500
 
 type EmailConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
-	To       []string
-	DigestTo []string
-	DigestAt string
-	HiveName string
-	Spoke    string
-	Version  string
-	Now      func() time.Time
+	Host      string
+	Port      int
+	Username  string
+	Password  string
+	From      string
+	To        []string
+	DigestTo  []string
+	DigestAt  string
+	HiveName  string
+	Spoke     string
+	Version   string
+	Now       func() time.Time
+	tlsConfig *tls.Config
 }
 
 type EmailSink struct {
-	cfg EmailConfig
-	mu  sync.Mutex
-	day string
-	dig []Event
+	cfg     EmailConfig
+	mu      sync.Mutex
+	day     string
+	dig     []Event
+	dropped int
 }
 
 func NewEmailSink(cfg EmailConfig) *EmailSink {
@@ -80,14 +83,20 @@ func (s *EmailSink) StartDigest(ctx context.Context) {
 func (s *EmailSink) SendDigest(ctx context.Context) error {
 	s.mu.Lock()
 	events := append([]Event(nil), s.dig...)
+	dropped := s.dropped
 	s.dig = nil
-	s.day = s.cfg.Now().Format("2006-01-02")
+	s.dropped = 0
+	day := s.cfg.Now().Format("2006-01-02")
+	s.day = day
 	s.mu.Unlock()
 	if len(events) == 0 || len(s.cfg.DigestTo) == 0 {
 		return nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Hive escalation digest for %s\n\n", s.day)
+	fmt.Fprintf(&b, "Hive escalation digest for %s\n\n", day)
+	if dropped > 0 {
+		fmt.Fprintf(&b, "Dropped %d older digest event(s) because the digest buffer was full.\n\n", dropped)
+	}
 	for _, ev := range events {
 		fmt.Fprintf(&b, "- [%s] %s", ev.Severity, ev.Title)
 		if ev.Link != "" {
@@ -109,9 +118,11 @@ func (s *EmailSink) recordDigest(ev Event) {
 	if s.day == "" {
 		s.day = day
 	}
-	if s.day != day {
-		s.dig = nil
-		s.day = day
+	if len(s.dig) >= maxDigestEvents {
+		copy(s.dig, s.dig[1:])
+		s.dig[len(s.dig)-1] = Event{}
+		s.dig = s.dig[:len(s.dig)-1]
+		s.dropped++
 	}
 	s.dig = append(s.dig, ev)
 }
@@ -125,8 +136,8 @@ func (s *EmailSink) send(ctx context.Context, to []string, subject, body string)
 	var conn net.Conn
 	var err error
 	dialer := &net.Dialer{}
-	if s.cfg.Port == 465 {
-		conn, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12}}).DialContext(ctx, "tcp", addr)
+	if s.cfg.Port == 465 || s.cfg.tlsConfig != nil {
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: s.tlsConfig()}).DialContext(ctx, "tcp", addr)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
@@ -140,11 +151,12 @@ func (s *EmailSink) send(ctx context.Context, to []string, subject, body string)
 		return err
 	}
 	defer c.Close()
-	if s.cfg.Port != 465 {
-		if ok, _ := c.Extension("STARTTLS"); ok {
-			if err := c.StartTLS(&tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
-				return err
-			}
+	if s.cfg.Port != 465 && s.cfg.tlsConfig == nil {
+		if ok, _ := c.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("smtp server %s does not advertise STARTTLS", s.cfg.Host)
+		}
+		if err := c.StartTLS(s.tlsConfig()); err != nil {
+			return err
 		}
 	}
 	if s.cfg.Username != "" {
@@ -169,6 +181,13 @@ func (s *EmailSink) send(ctx context.Context, to []string, subject, body string)
 		return err
 	}
 	return w.Close()
+}
+
+func (s *EmailSink) tlsConfig() *tls.Config {
+	if s.cfg.tlsConfig != nil {
+		return s.cfg.tlsConfig.Clone()
+	}
+	return &tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12}
 }
 
 func buildMessage(from string, to []string, subject, body string) string {
