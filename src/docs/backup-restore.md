@@ -123,7 +123,7 @@ The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-11
 | `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
-The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,262-266,533-550`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:894-931`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api.go:6861`, `src/pkg/hub/cluster_app_key.go:393`).
+The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,262-266,533-550`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:894-931`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api.go:5318`, `src/pkg/hub/cluster_app_key.go:393`).
 
 ### Decrypting the archive — executed
 

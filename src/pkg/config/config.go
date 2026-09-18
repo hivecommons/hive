@@ -6262,6 +6262,13 @@ type ReviewConfig struct {
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
 	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+	// PostComments tells review-swarm reviewers to publish their verdict as a
+	// PR comment via the `hive-review` relay, in addition to returning the
+	// JSON aggregate. Opt-in: the zero value keeps the verdict internal, which
+	// is the only safe default because on a hive WITHOUT auto-merge the
+	// aggregate has no consumer and the reviewer is silent by construction.
+	// Turning this on is what makes a review reach the human who has to decide.
+	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).

@@ -29,7 +29,7 @@ A hub-registered hive's identity is three pieces of state, none of which the
 move procedures in the other guides should regenerate:
 
 - **`hive-id`** — the stable identifier (`/data/hive-id` on Kubernetes,
-  `hiveIDFilePath` in `src/pkg/dashboard/api.go:8884`). Passed through to
+  `hiveIDFilePath` in `src/pkg/dashboard/api.go:6193`). Passed through to
   launched agents and used to name the hive's namespace/registry entry.
 - **The GitHub App private key** (or PAT) — what lets the hive act as itself
   on GitHub. Kept in the `hive-secrets` Secret on Kubernetes
@@ -57,11 +57,11 @@ move procedures in the other guides should regenerate:
 ## How the hub sees heartbeat and `dashboard_url`
 
 - The spoke sends a heartbeat payload including `dashboard_url` (JSON field
-  `dashboard_url`, `src/pkg/hub/heartbeat.go:714`,
+  `dashboard_url`, `src/pkg/hub/heartbeat.go:736`,
   `DashboardURL string json:"dashboard_url"`).
-- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1733`,
+- The hub's heartbeat handler validates it (`src/pkg/hub/server.go:1744`,
   must start with `http://` or `https://`) and writes it straight into the
-  registry entry for that hive (`src/pkg/hub/server.go:1800`,
+  registry entry for that hive (`src/pkg/hub/server.go:1811`,
   `DashboardURL: payload.DashboardURL`). **The heartbeat is the only writer.**
   Nothing else — not a hand-edit of the hub's registry file, not a hub API
   call — durably sets it, because the next heartbeat overwrites whatever was
@@ -69,14 +69,14 @@ move procedures in the other guides should regenerate:
   `cross-cluster-migration.md` documents for the hub-hosted case, generalized
   here to any runtime).
 - If a spoke has no `hub.dashboard_url` configured, it falls back to reading
-  its own Ingress/Route (`SpokeServedHost`, `src/pkg/hub/heartbeat.go:1850`)
+  its own Ingress/Route (`SpokeServedHost`, `src/pkg/hub/heartbeat.go:1906`)
   — which is why the in-namespace `hive-dashboard-route-reader` RBAC
   (`src/deploy/k8s/dashboard-route-rbac.yaml` on the self-hosted manifest;
   the hub-hosted equivalent is `hive-route-reader`,
   `cross-cluster-migration.md`) matters on every runtime that self-discovers
   its host this way.
 - The "My Hives → Dashboard" button and any hub UI showing where to reach the
-  hive read `registry.Hives[i].DashboardURL` (`src/pkg/hub/saas.go:4418,7279-7280,10204`)
+  hive read `registry.Hives[i].DashboardURL` (`src/pkg/hub/saas_hives_api.go:1291,7279-7280,10204`)
   — i.e. exactly the value the last heartbeat wrote, never a value you set by
   hand anywhere else.
 
@@ -102,7 +102,7 @@ within a 15-minute window (`reporterConflictWindow`,
 **reappears** while a different reporter has been beating in between — the
 signature of two live instances alternating, not a rollout — the hub sets
 `ConflictingReporters` on the registry entry
-(`src/pkg/hub/server.go:290-294,1781`) after two such alternations
+(`src/pkg/hub/server.go:301-305,1781`) after two such alternations
 (`reporterFlipsToConfirm = 2`,
 `src/pkg/hub/spoke_restart.go:28`). This is surfaced as a real drift signal:
 `src/pkg/hub/drift.go:572-574` turns a non-empty `ConflictingReporters` into

@@ -269,6 +269,17 @@
                           "offByCadence": {
                             "type": "boolean"
                           },
+                          "unscheduledInMode": {
+                            "type": "boolean",
+                            "description": "Some governor mode names this agent in its cadence map, but the current mode does not (nor idle, which every mode inherits), so the governor will not kick it until the mode changes (#7474). Disjoint from offByCadence (an explicit pause/off entry) and noCadence (no entry in any mode)."
+                          },
+                          "cadenceModes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The governor modes whose cadence map names this agent, in threshold order. Present with unscheduledInMode so the card can say which modes do schedule it."
+                          },
                           "needsLogin": {
                             "type": "boolean"
                           },

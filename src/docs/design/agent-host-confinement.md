@@ -63,7 +63,7 @@ ask is done; see [Doc status](#doc-status-already-corrected-by-4938) below.
 
 The claude-family permission flags are `--dangerously-skip-permissions
 --permission-mode bypassPermissions` unconditionally
-(`config/backends.conf:69`, mirrored at `src/pkg/agent/manager.go:8628`, base
+(`config/backends.conf:69`, mirrored at `src/pkg/agent/manager_launch.go:861`, base
 string `--model %s --dangerously-skip-permissions%s`). Full tool-permission
 bypass is not gated by anything added in #4938 — it is the unconditional base.
 
@@ -77,8 +77,8 @@ Workspace "confinement" is a `cd`, not a boundary:
 - Hub-pod agents: `launchInTmux` starts the session with `new-session -d -s
   session -c dir` (`src/pkg/agent/manager.go:2213`), then, when the agent has a
   UID assigned, runs the tmux command through `su-exec`/an exec-user spec
-  (`agentExecUserSpec`, `src/pkg/agent/manager.go:2225-2233`,
-  `src/pkg/agent/manager.go:2254-2259`) so the CLI runs as `hive-<agent>` or a
+  (`agentExecUserSpec`, `src/pkg/agent/manager_tmux.go:178-186`,
+  `src/pkg/agent/manager_tmux.go:207-212`) so the CLI runs as `hive-<agent>` or a
   synthetic `uid:gid`, not as the same uid as every other agent. This is
   **process-identity separation between agents on the same pod**, not
   filesystem confinement to the workspace — there is no mount namespace, no
@@ -112,10 +112,10 @@ Bash(grubby:*), Bash(bootctl:*), Bash(efibootmgr:*)
 which sources `config/backends.conf` and diffs the two lists byte-for-byte).
 
 Applied on both launch paths: relay (`config/backends.conf:69-77`
-`claude_family_perm_flag`) and hub-pod (`src/pkg/agent/manager.go:8632`, `base +
+`claude_family_perm_flag`) and hub-pod (`src/pkg/agent/manager_launch.go:865`, `base +
 claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()`). An escape hatch,
 `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE`, drops the deny fragment entirely on
-either path when set truthy (`src/pkg/agent/manager.go:6234-6239`,
+either path when set truthy (`src/pkg/agent/manager_launch.go:668-673`,
 `config/backends.conf:71-76`).
 
 The PR body documents that this was verified against a real CLI (Claude Code
@@ -133,7 +133,7 @@ command's leading token, not a boundary enforced by the OS.** It has the shape
 of every denylist: it stops the literal named binaries when invoked as a bare
 command word through the `Bash` tool, and nothing establishes that it stops
 equivalent effects reached another way. None of the following are covered by
-anything in `src/pkg/agent/manager.go:6194-6250` or
+anything in `src/pkg/agent/manager_launch.go:628-684` or
 `config/backends.conf:41-77`, and no test in
 `src/pkg/agent/host_state_deny_test.go` exercises them:
 
@@ -187,7 +187,7 @@ The exposure is not uniform. Three shapes exist in this repo today:
    is the manager for this mode; the K8s manifest at `src/deploy/k8s/deployment.yaml`
    defines the pod's own security context. Agents on this path get per-agent
    uid separation via `agentExecUserSpec`/`su-exec`
-   (`src/pkg/agent/manager.go:2225-2233`) but no filesystem namespace scoping —
+   (`src/pkg/agent/manager_tmux.go:178-186`) but no filesystem namespace scoping —
    "the host" an agent can reach here is the container's filesystem view,
    bounded by whatever the pod's volumes and security context expose. This is
    the mode where "the operator's host" is a fungible pod, not a workstation;
@@ -324,7 +324,7 @@ estimated from reading the code, not measured.
   `contribute-hive local` / native case specifically.** Hive already has a
   precedent for per-agent UID separation on the hub-pod path
   (`src/pkg/agent/uidmap.go`, `agentExecUserSpec` at
-  `src/pkg/agent/manager.go:2225-2233`), but that map is scoped to hub-pod
+  `src/pkg/agent/manager_tmux.go:178-186`), but that map is scoped to hub-pod
   agents inside an already-containerized deployment (`UIDMapPath =
   "/var/run/hive/uid-map.json"`, `src/pkg/agent/uidmap.go:17`) — nothing
   currently wires an equivalent mechanism into `contribute-hive local`, which

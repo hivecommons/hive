@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,8 +21,16 @@ import (
 
 // promptServer is apiServer plus a scheduler (the resolution authority) and
 // an agent whose kick_template resolves nowhere.
+//
+// The scheduler's policy roots are pinned to empty temp dirs (#7477). They
+// default to /data/policies, which template resolution consults BEFORE the
+// embedded defaults; on a host running a live hive that directory is
+// populated, so without this seam these tests assert against whatever the
+// host happens to ship and "shipped template resolves to the embedded
+// default" fails for a reason that has nothing to do with the code.
 func promptServer(t *testing.T) (*Server, *Dependencies) {
 	t.Helper()
+	t.Cleanup(scheduler.SetPolicyDirsForTest(t.TempDir(), t.TempDir()))
 	s, deps := apiServer(t)
 	deps.Config.Agents["review"] = config.AgentConfig{Backend: "claude", Enabled: true, KickTemplate: "review.md"}
 	deps.Config.Agents["scanner"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true, KickTemplate: "scanner-holdgated.md"}
@@ -77,6 +86,39 @@ func TestHandleAgentPrompt_ShippedTemplateKeepsLink(t *testing.T) {
 	}
 	if p, _ := resp["prompt"].(string); p == "" {
 		t.Error("shipped template must render content")
+	}
+}
+
+// The precedence order itself, pinned hermetically (#7477). The same request
+// must report the embedded default when nothing is on disk and the on-disk
+// copy when one exists — which is only a statement about the code if the
+// roots are ours rather than the host's /data/policies.
+func TestHandleAgentPrompt_UserSavedTemplateShadowsEmbeddedDefault(t *testing.T) {
+	s, _ := promptServer(t)
+
+	resp := decodeJSON(t, doGet(s, "/api/config/agent/scanner/prompt"))
+	tpl, _ := resp["template"].(map[string]any)
+	if tpl == nil || tpl["source"] != scheduler.TemplateSourceEmbedded {
+		t.Fatalf("with an empty user-saved dir the embedded default must serve: %v", tpl)
+	}
+
+	// Now put a user-saved copy where the dashboard prompt editor writes one.
+	userSaved := t.TempDir()
+	t.Cleanup(scheduler.SetPolicyDirsForTest(userSaved, t.TempDir()))
+	override := filepath.Join(userSaved, "scanner-holdgated.md")
+	if err := os.WriteFile(override, []byte("# user-saved override"), 0o644); err != nil {
+		t.Fatalf("seed user-saved template: %v", err)
+	}
+
+	resp = decodeJSON(t, doGet(s, "/api/config/agent/scanner/prompt"))
+	tpl, _ = resp["template"].(map[string]any)
+	if tpl == nil || tpl["resolved"] != true || tpl["source"] != override {
+		t.Errorf("a user-saved template must shadow the embedded default, got %v (want source %q)", tpl, override)
+	}
+	// The embedded default still exists — the editor's repo link stays valid
+	// even though the on-disk copy is what a kick would render.
+	if tpl["embeddedDefaultExists"] != true {
+		t.Errorf("embeddedDefaultExists must still report the shipped file: %v", tpl)
 	}
 }
 

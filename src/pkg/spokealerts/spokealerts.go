@@ -48,6 +48,12 @@ type NoCadenceSource interface {
 	NoCadenceAgents() []string
 }
 
+// ModeUnscheduledSource is the subset of *governor.Governor
+// ApplyModeUnscheduled reads.
+type ModeUnscheduledSource interface {
+	ModeUnscheduledAgents() []governor.ModeUnscheduledAgent
+}
+
 // Dashboard system-alert IDs owned by this package. They are the stable
 // identity a banner is raised and cleared under, so they are exported: a
 // mismatch between the raise and the clear leaves a banner stuck on screen.
@@ -57,6 +63,10 @@ const (
 	// NoCadenceAlertID is the never-kicked cause+fix banner (#5577): enabled
 	// agents with no cadence in any mode and no kick ever.
 	NoCadenceAlertID = "agent-no-cadence"
+	// ModeUnscheduledAlertID is the configured-but-not-scheduled banner
+	// (#7474): enabled agents with a cadence in some mode but none the
+	// governor can resolve in the mode the fleet is in.
+	ModeUnscheduledAlertID = "agent-mode-unscheduled"
 )
 
 // ApplyBudget turns budget threshold crossings into dashboard system
@@ -110,4 +120,54 @@ func ApplyNoCadence(gov NoCadenceSource, alerts AlertSink) {
 func NoCadenceMessage(agents []string) string {
 	return fmt.Sprintf("agent(s) %s enabled but never kicked — no cadence configured; set cadences on the agent card",
 		strings.Join(agents, ", "))
+}
+
+// ApplyModeUnscheduled keeps the configured-but-not-scheduled banner (#7474)
+// in sync with the governor's view: raised (warning — the hive is not broken,
+// a cadence ladder has a hole in it) while any enabled, governor-kickable
+// agent has a cadence in some mode but none the governor resolves in the
+// mode the fleet is in; cleared the moment the mode changes to one that
+// schedules it or the operator fills the gap. This is the weaker sibling of
+// ApplyNoCadence: that one says "no mode ever kicks this agent", this one
+// says "the current mode does not, and here are the modes that do".
+//
+// The live shape is an agent whose only cadence is in surge — kicked while
+// the backlog holds the fleet in surge, silent the moment its own work drives
+// the backlog below the threshold. Every other signal calls that agent
+// healthy: enabled, running, has a cadence, not on-demand.
+func ApplyModeUnscheduled(gov ModeUnscheduledSource, alerts AlertSink) {
+	agents := gov.ModeUnscheduledAgents()
+	if len(agents) == 0 {
+		alerts.ClearSystemAlert(ModeUnscheduledAlertID)
+		return
+	}
+	alerts.AddSystemAlert(ModeUnscheduledAlertID, "warning", ModeUnscheduledMessage(agents))
+}
+
+// ModeUnscheduledMessage renders the banner line: which agents, which mode the
+// fleet is in, which modes DO schedule each one, and the fix — an entry for
+// the current mode, or an idle entry, which every mode inherits.
+func ModeUnscheduledMessage(agents []governor.ModeUnscheduledAgent) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(agents))
+	for _, a := range agents {
+		parts = append(parts, fmt.Sprintf("%s (cadence only in %s)", a.Agent, joinModes(a.CadenceModes)))
+	}
+	return fmt.Sprintf("agent(s) %s not scheduled in the current %s mode — the governor will not kick them until the mode changes; add a %s cadence on the agent card (an idle cadence is inherited by every mode)",
+		strings.Join(parts, ", "), agents[0].Mode, agents[0].Mode)
+}
+
+func joinModes(modes []string) string {
+	switch len(modes) {
+	case 0:
+		return "other modes"
+	case 1:
+		return modes[0]
+	case 2:
+		return modes[0] + " and " + modes[1]
+	default:
+		return strings.Join(modes[:len(modes)-1], ", ") + " and " + modes[len(modes)-1]
+	}
 }

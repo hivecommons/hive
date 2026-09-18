@@ -775,6 +775,15 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			!cfg.HasAnyCadence(name) &&
 			proc.LastKick == nil
 
+		// unscheduledInMode: SOME mode names this agent but the current one
+		// does not, and neither does idle (the fallback every mode inherits),
+		// so the governor will not kick it until the mode changes — the
+		// surge-only reviewer of #7474, which every other flag calls healthy.
+		// Same predicate as governor.ModeUnscheduledAgents, via the shared
+		// config.ModeSchedules, so the fleet banner and this card agree.
+		unscheduledInMode, cadenceModes := agentUnscheduledInMode(cfg, name, currentMode, agentEnabled,
+			proc.Config.OnDemand || onDemandSet[name], proc.Config.UsesGovernorKick())
+
 		pinnedCli := proc.PinnedCLI != "" || proc.Config.CLIPinned
 		pinnedModel := proc.PinnedModel != ""
 
@@ -857,6 +866,9 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			TransientNudges: proc.TransientNudges,
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
+
+			UnscheduledInMode: unscheduledInMode,
+			CadenceModes:      cadenceModes,
 		}
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
@@ -970,6 +982,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	}
 	onDemand := agentCfg.OnDemand || onDemandSet[name]
 	noCadence := !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
+	unscheduledInMode, cadenceModes := agentUnscheduledInMode(cfg, name, currentMode, agentCfg.Enabled, onDemand, agentCfg.UsesGovernorKick())
 
 	acmmLevel := 0
 	if cfg.ACMMLevel != nil {
@@ -1034,6 +1047,9 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		StatusEvidence:   evidence,
 		LastError:        evidence,
 		Enabled:          true,
+
+		UnscheduledInMode: unscheduledInMode,
+		CadenceModes:      cadenceModes,
 	}
 }
 
@@ -1507,6 +1523,22 @@ func lookupCadenceForMode(agentName, modeName string, cfg *config.Config) string
 
 func lookupCadenceValue(agentName string, cfg *config.Config) config.Cadence {
 	return lookupCadenceValueForMode(agentName, "idle", cfg)
+}
+
+// agentUnscheduledInMode is the per-agent form of governor.ModeUnscheduledAgents
+// (#7474): enabled, governor-kickable, not on-demand, named by SOME mode's
+// cadence map but by nothing the governor resolves in currentMode (the mode's
+// own entry or idle's). It returns the modes that do schedule the agent so
+// the card can name them. A nil config reports nothing: "cannot tell" must
+// not read as "unscheduled" on the operator's screen.
+func agentUnscheduledInMode(cfg *config.Config, name, currentMode string, enabled, onDemand, usesGovernorKick bool) (bool, []string) {
+	if cfg == nil || !enabled || onDemand || !usesGovernorKick {
+		return false, nil
+	}
+	if !cfg.HasAnyCadence(name) || cfg.ModeSchedules(name, currentMode) {
+		return false, nil
+	}
+	return true, cfg.CadenceModes(name)
 }
 
 func lookupCadenceValueForMode(agentName, modeName string, cfg *config.Config) config.Cadence {

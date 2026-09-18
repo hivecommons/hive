@@ -40,9 +40,9 @@ The path, end to end:
   (`src/pkg/proxy/rules.go:112`) matches `githubcopilot.com` and any
   `.githubcopilot.com` subdomain, covering the enterprise per-account hosts. Two
   call seams dispatch into the sniff path — the explicit-CONNECT seam
-  (`src/pkg/proxy/github_proxy.go:799`) and the iptables-transparent seam
+  (`src/pkg/proxy/github_proxy.go:877`) and the iptables-transparent seam
   (`:461`), both guarded identically by `p.tokenSink != nil && agentName != ""`.
-- `proxyCopilotHTTP` (`src/pkg/proxy/github_proxy.go:2232`) runs a keep-alive
+- `proxyCopilotHTTP` (`src/pkg/proxy/github_proxy.go:2559`) runs a keep-alive
   HTTP request/response loop over the terminated TLS connection. It identifies
   completion requests via `isCopilotCompletionsPath`
   (`src/pkg/proxy/copilot_usage.go:40`, suffix `/chat/completions`), buffers the
@@ -66,8 +66,8 @@ moment. That is the per-request grain phase 4 wants, and it already exists.
 
 `liveCaptureSinceMs` comes from exactly one production writer:
 `tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())` at
-`src/cmd/hive/main.go:3727`, called immediately after `SetTokenSink`. The
-collector stores it (`src/pkg/tokens/collector.go:162`) and passes it to
+`src/cmd/hive/main.go:3734`, called immediately after `SetTokenSink`. The
+collector stores it (`src/pkg/tokens/collector.go:273`) and passes it to
 `ScanCopilotSessions` (`collector.go:212`), which zeroes shutdown tokens for
 sessions whose `LastActive` is at or after that moment
 (`copilot_scanner.go:108`) — the double-count guard the epic's must-not #1
@@ -178,7 +178,7 @@ And it is strictly worse than what phase 3 already does: phase 3 joins against
 the **audit log**, which is a durable, timestamped, mediated record of the
 agent's real outputs (`repo=` k=v pairs at seven emission sites, per the epic's
 corrected citation table, read back via `OutputActionsSince`,
-`src/pkg/dashboard/audit.go:190`, with rotated-backup coverage via
+`src/pkg/dashboard/audit.go:202`, with rotated-backup coverage via
 `auditLogFiles`, `:223`). A proxy-side "last REST repo seen" is an inference
 from read traffic with none of that durability and no rotation-aware reader.
 
