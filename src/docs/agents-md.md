@@ -55,7 +55,7 @@ touch — so `Parse` (repo root only) is what runs.
 
 ## What Hive's parser supports
 
-`src/pkg/agentsmd` (`agentsmd.go:119`, `Parse`) reads a plain Markdown
+`src/pkg/agentsmd` (`agentsmd.go:151`, `Parse`) reads a plain Markdown
 `AGENTS.md` file at a repo root, with two additive extensions on top of
 ordinary Markdown:
 
@@ -64,9 +64,9 @@ ordinary Markdown:
 A block delimited by a line containing only `---` at the very top of the file,
 closed by a second `---` line. The only key Hive's parser reads is `skills:` —
 a list of skill names to request into the agent's context by default
-(`agentsmd.go:11-21`, struct `frontMatter` at `agentsmd.go:104`). Everything
+(`agentsmd.go:11-21`, struct `frontMatter` at `agentsmd.go:136`). Everything
 else in the block is ignored. Malformed front-matter is logged and skipped;
-the rest of the file (the body) is still used (`agentsmd.go:184-189`).
+the rest of the file (the body) is still used (`agentsmd.go:216-224`).
 
 ```markdown
 ---

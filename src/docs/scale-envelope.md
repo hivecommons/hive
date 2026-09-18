@@ -34,9 +34,9 @@ ones to:
 2. **Truncation must drop the least important tail, not an arbitrary one.**
    This holds today and is easy to assume backwards:
    - Issues are sorted **oldest first** before any cap is applied
-     (`src/pkg/github/client.go:669-671`, descending `AgeMinutes`).
+     (`src/pkg/github/client.go:690-692`, descending `AgeMinutes`).
    - PRs are sorted by **review class then oldest-first within class**
-     (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:176-192`;
+     (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:181`;
      fixes → refactors/docs → tests).
 
    So a cap drops the *newest, lowest-priority* tail, and those items return on
@@ -87,9 +87,9 @@ operator can change it without rebuilding.
 
 | Cap | Where | Default | Tunable | Behaviour when exceeded |
 | --- | --- | --- | --- | --- |
-| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:895-900` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Truncate oldest-first; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:397`) and with an explicit note in the scanner/work lists |
+| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/scheduler.go:895-900` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Truncate oldest-first; list is cut silently in `formatIssueListWithPolicy` (`scheduler.go:531`) and with an explicit note in the scanner/work lists |
 | PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/scheduler.go:905-910` | 50 | **Yes** (same block/UI) | Truncate in review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
-| Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:31-32` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-47`). Non-positive means "use the default"; there is deliberately **no uncapped setting** |
+| Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:31-32` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:43-64`). Non-positive means "use the default"; there is deliberately **no uncapped setting** |
 | Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/scheduler.go:1545` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
 | Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/scheduler.go:1279` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |
 | Review-thread fix-before-new detail | same constant, used at `src/pkg/scheduler/scheduler.go:1353-1355` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more PRs (full list: `<path>`)" |
@@ -99,7 +99,7 @@ operator can change it without rebuilding.
 | Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:19` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:693-713`, `775-795` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:739`, `:850` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 

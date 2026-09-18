@@ -593,7 +593,7 @@ Trace what reads `HIVE_HUB_SECRET` on a spoke at boot:
 | Reader | Location | Still needed once a wrapped master arrives? |
 |---|---|---|
 | `spokeDomainKey` (session key) | `src/pkg/hub/hub_keys.go:462,519` | No — dedicated var, or the delivered master |
-| `SpokeHeartbeatKey` lane 2 | `src/pkg/hub/hub_keys.go:459-465` | **Yes at first boot** — see below |
+| `SpokeHeartbeatKey` lane 2 | `src/pkg/hub/hub_keys.go:469-472` | **Yes at first boot** — see below |
 | `SpokeInviteKey` lane 2 | `src/pkg/hub/hub_keys.go:554-563` | No |
 | `SpokeSSOPublicKey` lane 2 | `src/pkg/hub/hub_keys.go:582` | No |
 | `provisionMasterSecret` | `src/pkg/hub/hub_keys.go:604-612` | Hub-side only; not a spoke reader |

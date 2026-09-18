@@ -150,7 +150,7 @@ CLI subprocess.
 | State | Where | Citation |
 |---|---|---|
 | Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:925`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5761` |
-| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/main.go:1815` |
+| Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/boot.go:147` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:41`; `watchdog.PersistedAgent` `src/pkg/watchdog/reconciler.go:205` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:49` |
 | Governor budget/spend/eval history, cadence overrides, ACMM level | same file | `src/pkg/snapshot/state.go:16-42` |
@@ -183,18 +183,18 @@ written anywhere.
 | Live output ring buffer | `OutputBuffer *RingBuffer` — pure in-memory circular slice, no persistence path | `src/pkg/agent/manager.go:239`; `src/pkg/agent/ringbuffer.go` |
 | Last captured pane content | `lastPaneCapture []string`, guarded by `paneMu` | `src/pkg/agent/manager.go:232-233` |
 | Activity clock | `LastPaneChange` (guarded by `paneMu`) | `src/pkg/agent/manager.go:304` |
-| Most recent kick text | `LastKickMessage` — replaced on every kick; the durable copy is truncated (`KickRecord.Snippet`) or lives in prompt-history | `src/pkg/agent/manager.go:242`; explicitly called out at `src/pkg/dashboard/prompt_history.go:26-31` |
-| tmux session/socket identity | `tmuxSession`, `tmuxSocket` | `src/pkg/agent/manager.go:248-249` |
-| Per-launch cancel func and launch generation | `cancel context.CancelFunc`, `launchGen int` | `src/pkg/agent/manager.go:258`, `:317` |
-| Launch-serialization flag | `launching bool` (guarded by `m.mu`) | `src/pkg/agent/manager.go:260` |
+| Most recent kick text | `LastKickMessage` — replaced on every kick; the durable copy is truncated (`KickRecord.Snippet`) or lives in prompt-history | `src/pkg/agent/manager.go:235`; explicitly called out at `src/pkg/dashboard/prompt_history.go:26-31` |
+| tmux session/socket identity | `tmuxSession`, `tmuxSocket` | `src/pkg/agent/manager.go:240-241` |
+| Per-launch cancel func and launch generation | `cancel context.CancelFunc`, `launchGen int` | `src/pkg/agent/manager.go:242`, `:320` |
+| Launch-serialization flag | `launching bool` (guarded by `m.mu`) | `src/pkg/agent/manager.go:252` |
 | One-shot bootstrap override | `BootstrapOverride` | `src/pkg/agent/manager.go:253` |
-| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:290`, `:283`, `:285` |
-| Login / quota observations | `NeedsLogin`, `QuotaExhausted` | `src/pkg/agent/manager.go:294-295` |
+| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:273`, `:284`, `:287` |
+| Login / quota observations | `NeedsLogin`, `QuotaExhausted` | `src/pkg/agent/manager.go:288-289` |
 | Consent-screen watcher timers | `consentSeenAt`, `lastConsentDismiss` | `src/pkg/agent/manager.go:305-306` |
-| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:324-327`, `:318`, `:326` |
-| Transient-API-error nudge cooldown | `lastTransientNudge`, `transientNudgesThisKick` | `src/pkg/agent/manager.go:323-324` |
+| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:307-310`, `:321`, `:341` |
+| Transient-API-error nudge cooldown | `lastTransientNudge`, `transientNudgesThisKick` | `src/pkg/agent/manager.go:317-318` |
 | Un-archived-scrollback flag | `kickLogPending` (guarded by `m.mu`) | `src/pkg/agent/manager.go:334` |
-| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:359`, `:335`, `:344` |
+| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:352`, `:361`, `:388` |
 | Poller goroutines themselves | `go m.pollTmuxOutputForAgent(agent, agentCtx)` and siblings, tied to a per-launch context | `src/pkg/agent/manager_launch.go:276`, `:376`, `:279` |
 | Blocked-action thrash windows | `Manager.thrash map[string]*thrashState` under its own `thrashMu` — deliberately *not* `m.mu`, to avoid re-entrancy from the output-capture goroutines | `src/pkg/agent/manager.go:440-444`; `thrashState` `src/pkg/agent/manager_thrash.go:35`; trip logic `recordBlockedAndCheck` `src/pkg/agent/manager_thrash.go:81` |
 
@@ -539,8 +539,8 @@ Things this spike did not establish, and what would settle each.
    Settling it requires per-backend version-pinned testing against the actual
    binaries, since an undocumented on-disk format is not a contract.
 2. **Should the manager-side nudge and restart counters join the persisted
-   envelope?** `tokenRestartAttempts` (`src/pkg/agent/manager.go:291`),
-   `transientNudgesThisKick` (`src/pkg/agent/manager.go:324`), and
+   envelope?** `tokenRestartAttempts` (`src/pkg/agent/manager.go:284`),
+   `transientNudgesThisKick` (`src/pkg/agent/manager.go:318`), and
    `stallNudgeSent` (`src/pkg/agent/manager.go:310`) are loop-breakers that
    reset to zero on restart, while the watchdog's equivalent ladder is
    deliberately persisted (`src/pkg/watchdog/reconciler.go:389-390`). Whether the

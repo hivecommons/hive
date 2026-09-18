@@ -49,26 +49,26 @@ The path, end to end:
   request body, and reads the model id out of it (`:2260`).
 - For streaming requests it rewrites the body to carry
   `stream_options.include_usage=true` (`ensureStreamUsageRequested`,
-  `src/pkg/proxy/copilot_usage.go:63`; call site `github_proxy.go:2262`).
+  `src/pkg/proxy/copilot_usage.go:63`; call site `github_proxy.go:2589`).
   Without that hint the OpenAI-compatible endpoint omits the terminal usage
   chunk and streamed completions are uncountable. Note this is the one place the
   proxy alters an agent's request payload.
-- `forwardCopilotResponseWithUsage` (`github_proxy.go:2311`) buffers the response,
+- `forwardCopilotResponseWithUsage` (`github_proxy.go:2642`) buffers the response,
   extracts usage via `extractCopilotUsage`
   (`src/pkg/proxy/copilot_usage.go:136` — SSE terminal-chunk path at `:104`,
   non-streaming JSON path via `extractOpenAIUsage`), resolves the concrete model
   when the request pinned the `auto` sentinel
-  (`extractCopilotResponseModel`, `:147`), and records it at `github_proxy.go:2331`.
+  (`extractCopilotResponseModel`, `:147`), and records it at `github_proxy.go:2662`.
 
-So at `github_proxy.go:2331` the proxy holds, per completion response:
+So at `github_proxy.go:2662` the proxy holds, per completion response:
 `(agentName, resolvedModel, inputTokens, outputTokens)`, at a known wall-clock
 moment. That is the per-request grain phase 4 wants, and it already exists.
 
 `liveCaptureSinceMs` comes from exactly one production writer:
 `tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())` at
-`src/cmd/hive/main.go:3354`, called immediately after `SetTokenSink`. The
+`src/cmd/hive/main.go:3512`, called shortly after `SetTokenSink`. The
 collector stores it (`src/pkg/tokens/collector.go:273`) and passes it to
-`ScanCopilotSessions` (`collector.go:212`), which zeroes shutdown tokens for
+`ScanCopilotSessions` (call at `collector.go:329`; the function itself moved to `copilot_scanner.go:68`), which zeroes shutdown tokens for
 sessions whose `LastActive` is at or after that moment
 (`copilot_scanner.go:108`) — the double-count guard the epic's must-not #1
 names.
@@ -145,22 +145,22 @@ The proxy *can* extract a repo from a URL path — `ExtractRepo`
 1. **It has exactly one non-test caller**, `RepoFilterAllowed`
    (`rules.go:300`, call at `:307`), which uses it for an allow/deny decision on
    write methods and discards it. `RepoFilterAllowed` in turn has exactly one
-   non-test caller, `github_proxy.go:975`, reached only when
+   non-test caller, `github_proxy.go:1053`, reached only when
    `len(p.allowedRepos) > 0` — so on a hive with no configured repo list the
    extraction does not run at all. It returns early for every non-write method
    (`rules.go:301-303`), so even where it does run it observes only writes.
    Nothing records the extracted repo, per agent or otherwise; the block path
-   (`recordViolation`, `github_proxy.go:1213`) increments a per-agent counter and
+   (`recordViolation`, `github_proxy.go:1421`) increments a per-agent counter and
    logs method and path, with no repo field and no timestamp.
 2. **The git branch of the regex is effectively dead for clone traffic.**
    `github.com` — where `git clone`/`push` go — is registered in `githubHosts`
-   for awareness (`rules.go:32-36`) but opaquely tunneled, not inspected:
+   for awareness (`rules.go:34-38`) but opaquely tunneled, not inspected:
    `NeedsMITM` returns true only for `api.github.com` and the Linear host
    (`rules.go:78-80`), and `NeedsInspection` (`:91`) is the gate every call seam
-   consults. The comment at `rules.go:67-71` states the intent explicitly, and
-   `github_proxy.go:803-806` repeats it at the CONNECT seam. Such a connection
-   falls to `tunnelDirect` (`github_proxy.go:808`) or the raw relay
-   (`:466`), so the proxy sees only SNI `github.com` (`extractSNI`, `:422`) and
+   consults. The comment at `rules.go:71-77` states the intent explicitly, and
+   `github_proxy.go:882-885` repeats it at the CONNECT seam. Such a connection
+   falls to `tunnelDirect` (`github_proxy.go:887`) or the raw relay
+   (`:484`), so the proxy sees only SNI `github.com` (`extractSNI`, `:660`) and
    never a `/owner/repo.git/info/refs` path. The `gitPathPrefix` branch of
    `ExtractRepo` therefore cannot fire on real clone traffic, and the proxy
    cannot learn the repo the agent cloned.
@@ -200,10 +200,10 @@ written under that constraint:
 
 - The sniff seams fall through to an opaque tunnel unless a sink is active and
   the agent is identified, "so Copilot traffic is never broken by usage capture"
-  (`github_proxy.go:795-799`).
+  (`github_proxy.go:874-877`).
 - Bodies are buffered under a 32 MiB cap and oversized bodies are still
   forwarded in full, with only usage extraction skipped
-  (`copilotSniffBodyLimit`, `github_proxy.go:2225`).
+  (`copilotSniffBodyLimit`, `github_proxy.go:2552`).
 - Every extraction helper returns a zero value rather than failing on a
   malformed body (`copilot_usage.go:47-53`, `:104-130`, `:147-173`).
 - The one payload mutation, `ensureStreamUsageRequested`, is a documented no-op

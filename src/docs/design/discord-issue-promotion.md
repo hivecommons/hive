@@ -26,7 +26,7 @@ assignment paths continue unchanged.
 
 The missing piece is the label write. Today the in-repo Discord bot is
 operator-command oriented: `bot.js` constructs a client with `Guilds`,
-`GuildMessages`, and `MessageContent` intents only (`discord/bot.js:20`), and it
+`GuildMessages`, and `MessageContent` intents only (`discord/bot.js:23-27`), and it
 registers `ClientReady` plus `MessageCreate` handlers, not reaction handlers
 (`discord/bot.js:72`, `discord/bot.js:86`). It talks to the dashboard via
 `DashboardBridge`, which connects to `/api/events` and command endpoints
@@ -41,7 +41,7 @@ credentials and label-writing code: `QueuePRAutoMerge` audits a mediated action
 with `recordCreationAudit` and then calls `Issues.AddLabelsToIssue`
 (`src/pkg/github/client.go:1211`, `src/pkg/github/client.go:1165`). The reusable
 `AddLabels` wrapper also calls `Issues.AddLabelsToIssue`
-(`src/pkg/github/client.go:1242`). `recordCreationAudit` is the existing audit
+(`src/pkg/github/client.go:1268`). `recordCreationAudit` is the existing audit
 convention for mediated creations and label-adjacent actions
 (`src/pkg/github/attribution.go:366`).
 

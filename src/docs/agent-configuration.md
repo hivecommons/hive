@@ -520,10 +520,10 @@ agents:
 
 On startup and on every config reload, `defsrc.ApplyToConfig` (`src/pkg/defsrc/defsrc.go:416`) walks every agent that has `definition_source` set, fetches the file's content from GitHub, and merges the parsed `AgentDefinition`'s operator-safe fields over the agent's baked config in place. It is wired at two call sites in `src/cmd/hive/main.go`:
 
-- **Startup**, line 1294 — applied once before the first kick, so a repo edit made while the hive was down is already reflected.
-- **Config reload**, line 3009 — re-applied on every reload, before `initAgentConfigDrivenSystems`, so downstream systems see the merged config.
+- **Startup**, line 1363 — applied once before the first kick, so a repo edit made while the hive was down is already reflected.
+- **Config reload**, line 3299 — re-applied on every reload, before `initAgentConfigDrivenSystems`, so downstream systems see the merged config.
 
-Both call sites build the same `defsrc.Resolver` (`main.go:1655`), gated by `func(slug string) bool { return cfg.GitHubDefinitionAllowed(slug) }` (`main.go:1657`).
+Both call sites build the same `defsrc.Resolver` (`main.go:1356`), gated by `func(slug string) bool { return cfg.GitHubDefinitionAllowed(slug) }` (`main.go:1358`).
 
 ### What fields the live definition can change
 
@@ -561,7 +561,7 @@ Two merge rules to know before you rely on this:
 
 ### The trust boundary: allowlisted repos are seed-only
 
-`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4166`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4146`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
+`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
 
 ```yaml
 variables:
@@ -571,7 +571,7 @@ variables:
       - my-org/agent-definitions           # exact "owner/repo" slugs only
 ```
 
-This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:401-403`, `config.go:4161-4165`), so:
+This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:4380`, `config.go:4439-4441`), so:
 
 - A dashboard save cannot turn `allow_github_prompt` on if the seed has it off.
 - A dashboard save cannot add a repo slug to `github_prompt_allowlist`.
