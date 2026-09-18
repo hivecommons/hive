@@ -23452,6 +23452,8 @@ function burnAreaChart() {
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
+      const rvRec = rv.recommendations || {};
+      const rvRecRepos = Array.isArray(rvRec.repos) ? rvRec.repos : [];
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -23573,6 +23575,18 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
+          </div>
+          <div class="config-toggle" style="margin-top:14px">
+            <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
+            <span class="config-toggle-label">Open a &quot;what to merge next&quot; issue <span class="config-info">i<span class="config-tooltip">For a queue nobody can read top to bottom. The hive reads every open PR it already tracks, works out which ones are genuinely mergeable right now, and writes the answer into ONE issue per repository titled &quot;🐝 Hive recommendations&quot;. That issue is rewritten in place on each cycle, so it stays current without ever sending a second notification. It recommends only &mdash; nothing is merged, approved, closed or labelled, and PRs a maintainer put on hold are left out entirely. Off by default: opening an issue in someone&apos;s repository is not something to do uninvited.</span></span></span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Recommendations repos <span class="config-info">i<span class="config-tooltip">Comma-separated owner/repo names that get an issue, e.g. projectbluefin/common. Leave blank for every watched repository with open PRs &mdash; start with one repo to see what the issue looks like before widening it.</span></span></label>
+            <input type="text" id="rec-repos-input" value="${esc(rvRecRepos.join(', '))}" placeholder="(blank) — every watched repo" data-change-action="gh83">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Min mergeable PRs to open <span class="config-info">i<span class="config-tooltip">How many ready-to-merge PRs must exist before the issue is opened the FIRST time &mdash; an issue that opens saying &quot;nothing is ready&quot; is noise. Once it exists it is kept current regardless, including when the answer becomes &quot;nothing right now&quot;, which is itself worth being able to read. 0 or empty uses the default of 1.</span></span></label>
+            <input type="number" min="0" step="1" id="rec-minready-input" value="${rvRec.min_ready_to_open || ''}" placeholder="1" data-change-action="gh84">
           </div>
         </div>
 
@@ -24052,6 +24066,22 @@ function burnAreaChart() {
     function toggleConfigSwitch(el, section, key) {
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+    }
+
+    // markDirtyRecommendations reads the three Recommendations controls and
+    // stages them as one object, because the server takes review
+    // recommendations as a whole sub-object (an absent key there means "leave
+    // the block alone", so a partial object would look like a deliberate
+    // clear of the fields it omitted).
+    function markDirtyRecommendations() {
+      const sw = document.getElementById('rec-enabled-switch');
+      const reposEl = document.getElementById('rec-repos-input');
+      const minEl = document.getElementById('rec-minready-input');
+      markDirty('review', 'recommendations', {
+        enabled: !!(sw && sw.classList.contains('on')),
+        repos: reposEl ? reposEl.value.split(',').map(s => s.trim()).filter(Boolean) : [],
+        min_ready_to_open: minEl ? (Number(minEl.value) || 0) : 0
+      });
     }
 
     // loadConvergenceSoak fetches the owner-only fixed-commit soak telemetry
@@ -26655,6 +26685,13 @@ function burnAreaChart() {
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh81: function (event, A) { markDirty('review','max_perspectives_per_pr',Number(this.value)||0); },
+      // The recommendations block is sent to /api/config/review as ONE object,
+      // so every control rebuilds it from all three inputs rather than
+      // patching a single key — a per-key markDirty would drop whichever
+      // sibling the operator did not touch.
+      gh82: function (event, A) { this.classList.toggle('on'); markDirtyRecommendations(); },
+      gh83: function (event, A) { markDirtyRecommendations(); },
+      gh84: function (event, A) { markDirtyRecommendations(); },
       gh77: function (event, A) { projectObservabilityPlatformsChanged(this); },
       gh78: function (event, A) { projectObservabilityReferenceChanged(this); },
       gh79: function (event, A) { markDirty('repos','maxIssuesPerKick',Number(this.value)); },

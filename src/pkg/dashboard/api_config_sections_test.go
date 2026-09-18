@@ -286,6 +286,55 @@ func TestReviewConfigPut_MaxPerspectivesPerPR(t *testing.T) {
 	}
 }
 
+func TestReviewConfigPut_Recommendations(t *testing.T) {
+	s := covApiServer(t)
+
+	// A label list configured in hive.yaml has no control in the Features
+	// dialog, so the browser omits it. It must survive a toggle from the UI.
+	s.deps.Config.Review.Recommendations.Labels = []string{"triage"}
+
+	if rec := doPut(s, "/api/config/review", map[string]any{
+		"recommendations": map[string]any{
+			"enabled":           true,
+			"repos":             []string{" owner/one ", "", "owner/two"},
+			"min_ready_to_open": 2,
+		},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := s.deps.Config.Review.Recommendations
+	if !got.Enabled {
+		t.Fatal("recommendations not enabled")
+	}
+	if len(got.Repos) != 2 || got.Repos[0] != "owner/one" || got.Repos[1] != "owner/two" {
+		t.Fatalf("repos not normalized: %v", got.Repos)
+	}
+	if got.MinReadyToOpen != 2 {
+		t.Fatalf("min_ready_to_open not applied: %d", got.MinReadyToOpen)
+	}
+	if len(got.Labels) != 1 || got.Labels[0] != "triage" {
+		t.Fatalf("labels erased by a dialog that cannot set them: %v", got.Labels)
+	}
+
+	// Absent key leaves the whole block untouched.
+	if rec := doPut(s, "/api/config/review", map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("empty put: expected 200, got %d", rec.Code)
+	}
+	if !s.deps.Config.Review.Recommendations.Enabled {
+		t.Fatal("empty put disabled recommendations")
+	}
+
+	// Turning it back off is an explicit false, not an absent key.
+	if rec := doPut(s, "/api/config/review", map[string]any{
+		"recommendations": map[string]any{"enabled": false},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("disabling put: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.Recommendations.Enabled {
+		t.Fatal("recommendations not disabled")
+	}
+}
+
 func TestReviewConfigPut_RejectsNonOwner(t *testing.T) {
 	s := covApiServer(t)
 	if rec := doPutNoRole(s, "/api/config/review", `{"require_approval":true}`); rec.Code != http.StatusForbidden {
