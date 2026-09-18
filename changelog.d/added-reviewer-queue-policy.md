@@ -1,0 +1,1 @@
+- Ship the reviewer's queue-reduction policy template as an embedded default (`reviewer-queue.md`). It previously existed only on an individual hive's data volume, so a `kick_template: reviewer-queue.md` resolved nowhere on any other deployment and the reviewer silently fell back to a stale template that forbade the PR comments its own kick instructed it to post.
