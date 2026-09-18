@@ -103,7 +103,7 @@ func TestIsAvailableRegistryEntry_LockstepWithPlaceholderEntry(t *testing.T) {
 // that keeps it in lockstep with the Go predicates: statusAvailable wins before
 // assigned/assignedUnclaimed can short-circuit the prefix fallback.
 func TestEmbeddedPlaceholderHiveAvailableWins(t *testing.T) {
-	src, err := os.ReadFile("saas.go")
+	src, err := os.ReadFile("assets/dashboard.html")
 	if err != nil {
 		t.Fatal(err)
 	}

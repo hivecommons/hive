@@ -1,11 +1,12 @@
 package hub
 
 import (
-	"github.com/hivecommons/hive/internal/testutil"
 	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // A spoke on a branch tag is measured against that branch's tip — the same

@@ -664,7 +664,7 @@ type SaaSHive struct {
 	// installation belonged to another, so every freshly minted token returned
 	// "404 Not Found" while cached ones kept working — 84 failures in three
 	// hours on one hive, with no config field visibly wrong.
-	RequestedAppReset bool `json:"requested_app_reset,omitempty"`
+	RequestedAppReset  bool                         `json:"requested_app_reset,omitempty"`
 	AgentRestartResets map[string]AgentRestartReset `json:"agent_restart_resets,omitempty"`
 
 	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
@@ -873,7 +873,7 @@ type AgentRestartReset struct {
 	ResetAt       string `json:"reset_at"`
 	By            string `json:"by,omitempty"`
 	TotalBaseline int    `json:"total_baseline"`
-	Pending        bool   `json:"pending,omitempty"`
+	Pending       bool   `json:"pending,omitempty"`
 }
 
 type CreateHiveRequest struct {
