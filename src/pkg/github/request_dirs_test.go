@@ -3,6 +3,7 @@ package github
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -160,12 +161,16 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 	}
 	src := string(raw)
 
-	gate := "if ghClient != nil && cfg.GitHub.HasUsableApp() {"
-	gateIdx := strings.Index(src, gate)
-	if gateIdx < 0 {
+	// The client is read as a bare local in the historical main() and through
+	// the boot struct (b.ghClient) since #7571 split main() into phases; the
+	// gate is the same condition either way.
+	gate := regexp.MustCompile(`if (b\.)?ghClient != nil && cfg\.GitHub\.HasUsableApp\(\) \{`)
+	gateLoc := gate.FindStringIndex(src)
+	if gateLoc == nil {
 		t.Fatalf("cmd/hive/main.go lost the usable-App gate %q — the request watchers "+
 			"must never start without an App identity to author as", gate)
 	}
+	gateIdx := gateLoc[0]
 
 	prepIdx := strings.Index(src, "github.PrepareRequestDirs(")
 	if prepIdx < 0 {
