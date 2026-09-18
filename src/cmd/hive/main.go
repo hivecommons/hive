@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	// automaxprocs sets GOMAXPROCS to match the container's CPU quota (Linux
@@ -72,7 +69,6 @@ import (
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
-	"github.com/hivecommons/hive/pkg/proclock"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/pushbroker"
@@ -995,14 +991,19 @@ func main() {
 // singleton, config load, logger, tracing and the signal handler. It
 // returns false when main() should return without booting (the --version
 // fast path and HIVE_MODE=hub); the fatal paths os.Exit as before.
-func (b *boot) bootConfig() bool {
+func (b *boot) bootConfig() bool { return b.bootConfigWith(defaultBootConfigDeps()) }
+
+// bootConfigWith is bootConfig with its process-level effects injected; see
+// bootConfigDeps for what each seam stands in for.
+func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
+	args := deps.args
 	// --version fast path, before any flag parsing or startup work: the CI
 	// smoke test (and operators) probe the binary with `hive --version`; the
 	// standard flag set would reject it ("flag provided but not defined").
 	// dd's full CLI dispatcher handles this via a version subcommand; this is
 	// the minimal equivalent for the v4 line.
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
-		fmt.Printf("hive %s (commit %s, branch %s)\n", reportedVersion(), gitShort, gitBranch)
+	if len(args) > 1 && (args[1] == "--version" || args[1] == "version") {
+		fmt.Fprintf(deps.stdout, "hive %s (commit %s, branch %s)\n", reportedVersion(), gitShort, gitBranch)
 		return false
 	}
 	// `hive validate` / `hive --config-check`: load the config exactly as a real
@@ -1011,12 +1012,12 @@ func (b *boot) bootConfig() bool {
 	// starting anything. Before this the only way to learn a config was invalid
 	// was to watch a pod crash-loop. Handled here, ahead of flag.Parse, for the
 	// same reason --version is: it takes its own flag set.
-	if len(os.Args) > 1 && (os.Args[1] == "validate" || os.Args[1] == "--config-check") {
-		os.Exit(runConfigCheck(os.Args[2:], os.Stdout, os.Stderr))
+	if len(args) > 1 && (args[1] == "validate" || args[1] == "--config-check") {
+		deps.exit(runConfigCheck(args[2:], deps.stdout, deps.stderr))
+		return false
 	}
 	startTime := time.Now()
-	configPath := flag.String("config", resolveDefaultConfigPath(os.Getenv(hiveConfigEnv)), "path to hive.yaml config file")
-	flag.Parse()
+	configPath := deps.parseFlags(resolveDefaultConfigPath(deps.getenv(hiveConfigEnv)))
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
 	// compares against. The Dockerfile builds it with `--short=7`, but git can
 	// still return more chars when 7 isn't unique; trim so what we report to the
@@ -1028,9 +1029,9 @@ func (b *boot) bootConfig() bool {
 	// Channel-delivered spokes ("stable" retag of a v4 build) label their
 	// version badge with the channel; "" outside a cluster or on branch/SHA
 	// tags, in which case the badge stays branch-only.
-	dashboard.SetReleaseChannel(hub.SelfImageReleaseChannel())
+	dashboard.SetReleaseChannel(deps.releaseChannel())
 
-	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
 
 	// Auto-update visibility (#7092): before anything reads the upgrade marker,
@@ -1039,41 +1040,41 @@ func (b *boot) bootConfig() bool {
 	// record that success durably and clear the marker, so the dashboard can
 	// show "attempted and succeeded" instead of silently losing the success the
 	// moment the new image boots.
-	reconcileUpgradeOutcomeAtBoot(upgradeMarkerPath, lastUpgradeOutcomePath, gitShort, logger)
+	deps.reconcileUpgradeOutcome(gitShort, logger)
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
 	// alternate registry state every beat, and are invisible to both the
 	// in-process StartHeartbeat guard and the hub's duplicate-spoke detector.
 	// The flock releases on process death, so this never blocks a restart.
-	if os.Getenv(singletonLockEnv) != singletonLockDisable {
+	if deps.getenv(singletonLockEnv) != singletonLockDisable {
 		lockPath := singletonLockPath()
-		procLock, lockErr := proclock.Acquire(lockPath)
+		releaseLock, lockErr := deps.acquireLock(lockPath)
 		if lockErr != nil {
 			logger.Error("another hive process is already running in this container — refusing to start a duplicate (#2453, #2496)",
 				"lock", lockPath,
 				"pid", os.Getpid(),
 				"error", lockErr.Error(),
 			)
-			os.Exit(duplicateProcessExitCode)
+			deps.exit(duplicateProcessExitCode)
+			return false
 		}
 		// Held for the process lifetime; the kernel releases it on exit. Kept
 		// referenced so the *os.File is never garbage-collected (a collected
 		// file closes its descriptor, which would silently drop the flock).
-		b.cleanup.push(func() { procLock.Release() })
+		b.cleanup.push(releaseLock)
 	}
 
 	// Clear stale upgrade marker if the current SHA differs from the marker's
 	// current_sha — this means the upgrade succeeded and the marker is from a
 	// previous version.
-	const upgradeMarkerStartupPath = "/data/upgrade-requested"
-	if markerData, err := os.ReadFile(upgradeMarkerStartupPath); err == nil {
+	if markerData, err := deps.readUpgradeMarker(); err == nil {
 		m := parseUpgradeMarker(markerData)
 		if judgeUpgradeMarker(m, gitShort) == upgradeLanded {
 			// We booted on a different SHA than the one that requested the
 			// upgrade: it landed. Drop the marker so the attempt budget resets.
-			if err := os.Remove(upgradeMarkerStartupPath); err != nil && !os.IsNotExist(err) {
-				logger.Warn("failed to clear stale upgrade marker", "path", upgradeMarkerStartupPath, "error", err)
+			if err := deps.clearUpgradeMarker(); err != nil && !os.IsNotExist(err) {
+				logger.Warn("failed to clear stale upgrade marker", "path", upgradeMarkerPath, "error", err)
 			}
 			logger.Info("upgrade landed, cleared marker",
 				"current", gitShort, "previous", m.CurrentSHA, "target", m.TargetSHA)
@@ -1090,8 +1091,8 @@ func (b *boot) bootConfig() bool {
 		}
 	}
 
-	if os.Getenv("HIVE_MODE") == "hub" {
-		runHub(logger, *configPath)
+	if deps.getenv("HIVE_MODE") == "hub" {
+		deps.runHub(logger, configPath)
 		return false
 	}
 
@@ -1102,20 +1103,19 @@ func (b *boot) bootConfig() bool {
 	// ApplyPack re-added deleted pack agents (brainstorm/guide) every time
 	// (#2439). Same return signature as Load; falls back to the seed when no
 	// overlay exists or the pod is not in Kubernetes.
-	cfg, err := config.LoadWithDashboardOverlay(*configPath)
+	cfg, err := deps.loadConfig(configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
-		os.Exit(1)
+		deps.exit(1)
+		return false
 	}
 
 	// Reconfigure logger with rolling file output
-	logger = setupLogger(cfg.Governor.Logging.Dir, cfg.Governor.Logging.MaxSizeMB,
-		cfg.Governor.Logging.MaxAgeDays, cfg.Governor.Logging.MaxBackups,
-		cfg.Governor.Logging.Compress, cfg.Governor.Logging.Level)
+	logger = deps.fileLogger(cfg)
 	slog.SetDefault(logger)
 
 	// Load or generate a unique Hive ID for this instance
-	cfg.HiveID = loadOrGenerateHiveID(logger)
+	cfg.HiveID = deps.hiveID(logger)
 	_ = os.Setenv("HIVE_ID", cfg.HiveID) // valid key/value; Setenv cannot fail on Unix
 
 	// Observability (#2439): report the removed-agents tombstone LoadWithDashboardOverlay
@@ -1139,7 +1139,7 @@ func (b *boot) bootConfig() bool {
 	// location when HIVE_CONFIG happened to live under /data — a literal grep
 	// for "hive.yaml.bak" could not find it either.
 	for _, runtimePath := range []string{config.RuntimeConfigFile, config.RuntimeConfigFileLegacy} {
-		if _, statErr := os.Stat(runtimePath); statErr == nil {
+		if _, statErr := deps.stat(runtimePath); statErr == nil {
 			logger.Info("persisted runtime config present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
 				"path", runtimePath,
 				"github_installation_id", cfg.GitHub.InstallationID,
@@ -1171,10 +1171,10 @@ func (b *boot) bootConfig() bool {
 	// vantage point: /api/config/provenance reads HIVE_CONFIG directly, so it
 	// reports the file the entrypoint chose while the process runs on the one
 	// it did not, and the two disagree with no way to tell from the outside.
-	if envCfg := os.Getenv(hiveConfigEnv); configPathDisagrees(envCfg, *configPath) {
+	if envCfg := deps.getenv(hiveConfigEnv); configPathDisagrees(envCfg, configPath) {
 		logger.Warn("config path disagreement: HIVE_CONFIG names a different file than the one loaded — an explicit -config (the image CMD) outranked the entrypoint's redirect; persisted state in HIVE_CONFIG may be overwritten by the next save",
 			"hive_config_env", envCfg,
-			"loaded_config", *configPath,
+			"loaded_config", configPath,
 		)
 	}
 
@@ -1211,7 +1211,7 @@ func (b *boot) bootConfig() bool {
 	// (or otel.enabled=false) this installs a no-op provider with zero export
 	// overhead. Never fatal — a tracing setup error must not stop hive.
 	otelCfg := cfg.EffectiveOTel()
-	traceShutdown, traceErr := tracing.Init(ctx, tracing.Config{
+	traceShutdown, traceErr := deps.initTracing(ctx, tracing.Config{
 		Enabled:     otelCfg.Enabled,
 		Endpoint:    otelCfg.Endpoint,
 		Headers:     otelCfg.Headers,
@@ -1226,7 +1226,7 @@ func (b *boot) bootConfig() bool {
 		// read at startup; "" outside a cluster). Spans attribute to the code
 		// that actually runs, not to the merge/publish event (#3816).
 		Commit: gitShort,
-		Image:  hub.SelfDeploymentImage(),
+		Image:  deps.selfImage(),
 	})
 	if traceErr != nil {
 		logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
@@ -1239,7 +1239,7 @@ func (b *boot) bootConfig() bool {
 	// this runs unconditionally and a load failure only costs history, never
 	// counting. Counters persisted by a DIFFERENT commit are dropped inside
 	// LoadReachState: a new binary starts fresh keys naturally.
-	if err := tracing.LoadReachState(reachStatePath, gitShort, logger); err != nil {
+	if err := deps.loadReachState(gitShort, logger); err != nil {
 		logger.Warn("reach state load failed; starting with fresh counters", "error", err)
 	}
 	b.cleanup.push(func() {
@@ -1251,7 +1251,7 @@ func (b *boot) bootConfig() bool {
 	})
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	deps.notifySignals(sigCh)
 	// preShutdownHooks run in the signal handler before the context is canceled,
 	// in registration order, while every connection and tmux server is still
 	// live. Registrations happen later in startup, once the subsystems they
@@ -3220,7 +3220,7 @@ func (b *boot) bootWatchers() {
 	ctx, cfg, logger, configPath, gov := b.ctx, b.cfg, b.logger, b.configPath, b.gov
 	definitionResolver, notifier, agentMgr, dashSrv, refreshDashboard := b.definitionResolver, b.notifier, b.agentMgr, b.dashSrv, b.refreshDashboard
 	// Watch hive.yaml for external changes and reload config when modified
-	configWatcher := config.NewWatcher(*configPath, func(newCfg *config.Config) {
+	configWatcher := config.NewWatcher(configPath, func(newCfg *config.Config) {
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = cfg.HiveID
 

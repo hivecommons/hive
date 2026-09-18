@@ -47,6 +47,11 @@ import (
 // Behaviour is unchanged by construction: nothing is reordered, no goroutine
 // starts earlier or later, and the deferred cleanups run in the order they
 // always did (see cleanup).
+//
+// Step 2 gives each phase a deps struct for the collaborators that touch the
+// process, the network, tmux or /data, so a test can drive the phase against
+// fakes: bootConfigWith(bootConfigDeps) is the first (boot_config_deps.go);
+// the pattern is the same as hubDeps/runHubWithDeps.
 type boot struct {
 	// cleanup collects what main() used to `defer` so it still runs LIFO on
 	// main()'s return, not on the return of the phase that registered it.
@@ -54,7 +59,7 @@ type boot struct {
 
 	// bootConfig
 	startTime               time.Time
-	configPath              *string
+	configPath              string
 	cfg                     *config.Config
 	logger                  *slog.Logger
 	ctx                     context.Context
