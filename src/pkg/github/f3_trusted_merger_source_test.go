@@ -2,6 +2,7 @@ package github
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -43,6 +44,38 @@ func f3ReadSource(t *testing.T, file string) string {
 		t.Fatalf("read %s: %v", file, err)
 	}
 	return string(raw)
+}
+
+// f3ReadPackage returns every non-test .go file in dir concatenated, so a
+// source-level assertion follows a declaration that moves between files in the
+// same package. cmd/hive is being split file-by-file out of a god-file, and a
+// guard pinned to one filename fails on pure code motion — which reads as a
+// lost fix when nothing was lost. The package is still the unit that matters:
+// the declaration must exist SOMEWHERE in cmd/hive, and the wiring assertion
+// below stays pinned to main.go because that is where startup lives.
+func f3ReadPackage(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %s: %v", dir, err)
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		b.Write(raw)
+		b.WriteString("\n")
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no non-test .go files found under %s", dir)
+	}
+	return b.String()
 }
 
 // f3FuncBody returns the source of a named func, from its declaration line to
@@ -166,7 +199,7 @@ func TestF3AuthorizerIsWiredInMain(t *testing.T) {
 			"ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg)) beside StartMergeRequestWatcher.")
 	}
 
-	body := f3FuncBody(t, src, "func trustedMergerFunc(", "trustedMergerFunc")
+	body := f3FuncBody(t, f3ReadPackage(t, "../../cmd/hive"), "func trustedMergerFunc(", "trustedMergerFunc")
 	if !strings.Contains(body, "config.RoleAtLeast(role, config.RoleMerger)") {
 		t.Error("trustedMergerFunc no longer requires at least config.RoleMerger — the sweep would " +
 			"admit a tier below the one the dashboard queue endpoint enforces (audit F3)")
