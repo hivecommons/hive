@@ -253,6 +253,39 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 	}
 }
 
+func TestReviewConfigPut_MaxPerspectivesPerPR(t *testing.T) {
+	s := covApiServer(t)
+
+	if rec := doPut(s, "/api/config/review", map[string]any{"max_perspectives_per_pr": -1}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative max_perspectives_per_pr: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.MaxPerspectivesPerPR != 0 {
+		t.Fatalf("rejected write still mutated config: %d", s.deps.Config.Review.MaxPerspectivesPerPR)
+	}
+
+	if rec := doPut(s, "/api/config/review", map[string]any{"max_perspectives_per_pr": 1}); rec.Code != http.StatusOK {
+		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Review.MaxPerspectivesPerPR != 1 {
+		t.Fatalf("cap not applied: %d", s.deps.Config.Review.MaxPerspectivesPerPR)
+	}
+
+	// Absent key leaves the cap untouched; an explicit 0 clears it back to
+	// "no cap", which is the documented way to turn the cap off.
+	if rec := doPut(s, "/api/config/review", map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("empty put: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.MaxPerspectivesPerPR != 1 {
+		t.Fatalf("empty put mutated the cap: %d", s.deps.Config.Review.MaxPerspectivesPerPR)
+	}
+	if rec := doPut(s, "/api/config/review", map[string]any{"max_perspectives_per_pr": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("clearing put: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.MaxPerspectivesPerPR != 0 {
+		t.Fatalf("cap not cleared: %d", s.deps.Config.Review.MaxPerspectivesPerPR)
+	}
+}
+
 func TestReviewConfigPut_RejectsNonOwner(t *testing.T) {
 	s := covApiServer(t)
 	if rec := doPutNoRole(s, "/api/config/review", `{"require_approval":true}`); rec.Code != http.StatusForbidden {

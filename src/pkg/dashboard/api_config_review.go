@@ -29,6 +29,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		RequireApproval    *bool     `json:"require_approval"`
 		FanOut             *bool     `json:"fan_out"`
 		MaxParallelReviews *int      `json:"max_parallel_reviews"`
+		MaxPerspectives    *int      `json:"max_perspectives_per_pr"`
 		ReviewerAgents     *[]string `json:"reviewer_agents"`
 		FixerAgent         *string   `json:"fixer_agent"`
 		AllAuthors         *bool     `json:"all_authors"`
@@ -45,6 +46,11 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.MaxPerspectives != nil && *body.MaxPerspectives < 0 {
+		jsonError(w, "max_perspectives_per_pr must be >= 0", http.StatusBadRequest)
+		return
+	}
+
 	cfg := s.deps.Config
 	if body.RequireApproval != nil {
 		cfg.Review.RequireApproval = *body.RequireApproval
@@ -54,6 +60,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.MaxParallelReviews != nil {
 		cfg.Review.MaxParallelReviews = *body.MaxParallelReviews
+	}
+	if body.MaxPerspectives != nil {
+		cfg.Review.MaxPerspectivesPerPR = *body.MaxPerspectives
 	}
 	if body.ReviewerAgents != nil {
 		agents := make([]string, 0, len(*body.ReviewerAgents))

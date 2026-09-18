@@ -23551,6 +23551,10 @@ function burnAreaChart() {
             <input type="number" min="0" step="1" value="${rv.max_parallel_reviews || ''}" placeholder="3" data-change-action="gh73">
           </div>
           <div class="config-field" style="margin-top:10px">
+            <label>Max perspectives per PR <span class="config-info">i<span class="config-tooltip">Caps how many review perspectives ONE PR may be given in a single cycle. Parallel review slots are a fixed budget spent in PR order, so without a cap the first PR in a deep queue absorbs every slot for its own perspectives &mdash; more opinions on one PR instead of coverage across many. Capping spends the same budget breadth-first. No coverage is lost: perspectives skipped this cycle are still missing next cycle and get dispatched then, so this schedules depth rather than dropping it. It also bounds how many comments one PR can collect at once, which matters once reviewers publish. 0 or empty means no cap (the default).</span></span></label>
+            <input type="number" min="0" step="1" value="${rv.max_perspectives_per_pr || ''}" placeholder="0 — no cap" data-change-action="gh81">
+          </div>
+          <div class="config-field" style="margin-top:10px">
             <label>Reviewer agents <span class="config-info">i<span class="config-tooltip">Comma-separated agent names that review each PR, e.g. reviewer, security-reviewer.</span></span></label>
             <input type="text" value="${esc(rvAgents.join(', '))}" placeholder="reviewer, security-reviewer" data-change-action="gh74">
           </div>
@@ -26650,6 +26654,7 @@ function burnAreaChart() {
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh81: function (event, A) { markDirty('review','max_perspectives_per_pr',Number(this.value)||0); },
       gh77: function (event, A) { projectObservabilityPlatformsChanged(this); },
       gh78: function (event, A) { projectObservabilityReferenceChanged(this); },
       gh79: function (event, A) { markDirty('repos','maxIssuesPerKick',Number(this.value)); },
