@@ -1,0 +1,1 @@
+- Added the v5 → v6 top-up workflow (`.github/workflows/v6-topup.yml`): forward-merges v5 into v6 on every v5 push plus a daily safety net, with the same conflict-inventory-and-stop policy as the v4 → v5 top-up (#7563 Track 7).

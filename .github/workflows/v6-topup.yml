@@ -1,0 +1,161 @@
+name: v6 Top-up
+
+# Keeps the v6 development line level with v5 (#7563, Track 7).
+#
+# v6 was cut from v5 to host dashboard-optional-operation work while v5 soaks
+# toward GA. v5 itself is topped up from v4 after every v4 release
+# (v5-topup.yml), so without this workflow v6 would silently fall behind BOTH
+# lines and every v6 feature branch would age against a stale base.
+#
+# WHY IT TRIGGERS ON PUSH TO v5. v5 only moves when a v4→v5 top-up merges or a
+# v5-targeted PR lands — both infrequent, human-mediated events. Chaining
+# directly off the push means v6 is topped up within minutes of v5 moving, at
+# exactly the cadence v5 itself changes, with no thrash. The daily schedule is
+# a safety net only.
+#
+# CONFLICTS ARE A HUMAN SIGNAL, NOT A RETRY — same policy as v5-topup.yml
+# (#7199 precedent): on conflict the workflow inventories the damage, pushes
+# nothing, and fails loudly for a human to resolve.
+
+on:
+  push:
+    branches: [v5]
+  schedule:
+    # Daily safety net for anything the push trigger missed.
+    - cron: '47 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  top-up:
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a forward-merge needs both lines' commits, and a
+          # shallow clone makes every merge look like an unrelated history.
+          fetch-depth: 0
+
+      - name: Identify the committer
+        run: |
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release[bot]@users.noreply.github.com"
+
+      - name: Check whether v6 is behind v5
+        id: drift
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin v5 v6
+          behind="$(git rev-list --count origin/v6..origin/v5)"
+          echo "behind=${behind}" >> "$GITHUB_OUTPUT"
+          if [ "${behind}" -eq 0 ]; then
+            echo "v6 is already level with v5 — nothing to top up."
+          else
+            echo "v6 is ${behind} commit(s) behind v5."
+          fi
+
+      - name: Forward-merge v5 into the top-up branch
+        id: merge
+        if: steps.drift.outputs.behind != '0'
+        run: |
+          set -euo pipefail
+          # Always rebuild the branch from v6's tip. Reusing a stale top-up
+          # branch would replay an older merge and could resurrect commits v6
+          # has since had reverted.
+          git checkout -B sync/v5-to-v6 origin/v6
+
+          # --signoff because the DCO audits treat a merge commit as a commit
+          # like any other.
+          if git merge --no-ff --signoff origin/v5 \
+               -m "🌱 Forward-merge v5 into v6 (${{ steps.drift.outputs.behind }} commits)"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            # Inventory the conflict BEFORE aborting (#7337): hunk and line
+            # counts per file so the human sizing the resolution doesn't
+            # rediscover the numbers by hand.
+            git diff --name-only --diff-filter=U > /tmp/conflicted.txt || true
+
+            : > /tmp/conflict-rows.tsv
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              # Delete/modify conflicts leave no working-tree file; count them
+              # as zero-hunk rows rather than letting grep exit 2 under set -e.
+              hunks=0
+              lines=0
+              if [ -f "$f" ]; then
+                hunks=$(grep -c "^<<<<<<<" "$f" < /dev/null 2>/dev/null) || hunks=0
+                lines=$(awk "/^<<<<<<</,/^>>>>>>>/" "$f" 2>/dev/null | wc -l | tr -d " ") || lines=0
+              fi
+              printf "%s\t%s\t%s\n" "${hunks:-0}" "${lines:-0}" "$f" >> /tmp/conflict-rows.tsv
+            done < /tmp/conflicted.txt
+            LC_ALL=C sort -rn -k2 /tmp/conflict-rows.tsv -o /tmp/conflict-rows.tsv
+
+            files=$(wc -l < /tmp/conflicted.txt | tr -d " ")
+            total=$(awk -F"\t" "{s+=\$2} END{print s+0}" /tmp/conflict-rows.tsv)
+
+            {
+              echo "### v5 -> v6 forward-merge conflicts"
+              echo ""
+              echo "${{ steps.drift.outputs.behind }} commit(s) behind. Conflicting files, largest first:"
+              echo ""
+              echo "| conflicts | lines | file |"
+              echo "| ---: | ---: | --- |"
+              while IFS="$(printf "\t")" read -r hunks lines f; do
+                [ -n "$f" ] || continue
+                echo "| $hunks | $lines | \`$f\` |"
+              done < /tmp/conflict-rows.tsv
+              echo ""
+              echo "**$files** conflicting file(s), **$total** conflicted line(s) in total."
+            } > /tmp/conflict-report.md
+
+            cat /tmp/conflict-report.md >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/conflict-report.md
+
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report a conflicting top-up and stop
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          echo "::error::v5 -> v6 forward-merge conflicts and needs a human (see #7199 for the precedent)."
+          echo "Nothing was pushed. Resolve locally:"
+          echo "  git checkout -B sync/v5-to-v6 origin/v6"
+          echo "  git merge --no-ff --signoff origin/v5"
+          echo "  # resolve, then push and open a PR against v6"
+          exit 1
+
+      - name: Push the top-up branch
+        if: steps.merge.outputs.conflict == 'false'
+        run: git push --force-with-lease origin sync/v5-to-v6
+
+      - name: Open or refresh the top-up PR
+        if: steps.merge.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND: ${{ steps.drift.outputs.behind }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --base v6 \
+            --head sync/v5-to-v6 --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "PR #${existing} already open for this top-up; the force-push refreshed it."
+            exit 0
+          fi
+          printf '%s\n' \
+            "Automated v5 → v6 top-up (#7563, Track 7)." \
+            "" \
+            "Carries ${BEHIND} commit(s) from v5 onto v6." \
+            "" \
+            "This runs on every push to v5 (v5 only moves when a v4→v5 top-up or a v5 PR merges), plus a daily safety net, so v6 feature work never ages against a stale base." \
+            "" \
+            "Opened by .github/workflows/v6-topup.yml. If this merge conflicts the workflow fails instead of opening it — a conflicting forward-merge is a human decision (see #7199)." \
+            > "$RUNNER_TEMP/v6-topup-body.md"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base v6 --head sync/v5-to-v6 \
+            --title "🌱 Forward-merge v5 into v6 (${BEHIND} commits)" \
+            --body-file "$RUNNER_TEMP/v6-topup-body.md"
