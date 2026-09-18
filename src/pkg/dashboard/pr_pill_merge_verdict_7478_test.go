@@ -199,6 +199,28 @@ const blockedReview = { mergeable: 'no', mergeable_state: 'blocked', merge_verdi
 check('blocked tooltip names the missing review', prMergeNote(blockedReview).includes('awaiting review approval'));
 check('draft tooltip says what to do', prMergeNote({ mergeable: 'yes', merge_verdict: { state: 'blocked', reason: 'draft — mark ready for review to enter the sweep' } }).includes('mark ready for review'));
 check('unknown tooltip says not yet computed', prMergeNote({ mergeable: '', merge_verdict: { state: 'unknown', reason: 'mergeability not yet computed by GitHub — re-checked next tick; CI pending' } }).includes('not yet computed'));
+// hivecommons/hive#7515 step 2: when no sweep gate explains a "blocked" PR,
+// the verdict now names the branch-protection rule GitHub was hiding. The
+// tooltip must show that rule verbatim — the mapping is Go's, and the JS
+// must not re-word, truncate or re-derive any of it.
+const rules = [
+  'blocked — changes requested by @reviewer',
+  'blocked — required check "validate" has not reported',
+  'blocked — required checks "build", "lint" are failing',
+  'blocked — an approving review is required by branch protection (0 given)',
+  'blocked — CI failing: build; GitHub also requires: changes requested by @reviewer',
+];
+rules.forEach(reason => {
+  const p = { mergeable: 'no', mergeable_state: 'blocked', merge_verdict: { state: 'blocked', reason } };
+  check('tooltip shows the derived rule verbatim: ' + reason, prMergeNote(p).includes(reason));
+  check('no raw GitHub state appended to: ' + reason, !prMergeNote(p).includes('GitHub state'));
+  check('a blocked rule never reads as eligible: ' + reason, !prMergeNote(p).includes('eligible'));
+});
+// Negative control: the placeholder is still shown when the governor could
+// NOT name a rule. A frontend that invented one would fail here.
+const unnamed = { mergeable: 'no', mergeable_state: 'blocked', merge_verdict: { state: 'blocked', reason: 'blocked — all sweep gates pass; a branch-protection rule is unsatisfied' } };
+check('an underivable rule still says so honestly', prMergeNote(unnamed).includes('a branch-protection rule is unsatisfied'));
+check('an underivable rule does not name a check', !prMergeNote(unnamed).includes('required check'));
 check('no undefined anywhere', ![green, bluefin1253, dirty, blocked, { mergeable: 'yes' }, {}, { merge_verdict: {} }].some(p => prMergeNote(p).includes('undefined')));
 
 if (fails) { console.log(fails + ' check(s) failed'); process.exit(1); }

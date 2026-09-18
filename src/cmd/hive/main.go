@@ -1661,6 +1661,12 @@ func main() {
 	// installation ID, /gh-setup persists it, auto-discovery finds it later), so
 	// this gap silently disarms agent writes on a hive that looks healthy.
 	github.PrepareRequestDirs(logger)
+	// Token-access audit ingest (#6287): the per-UID wrappers record every gh
+	// call and credential lookup as an event file, and this loop folds them
+	// into the hive-owned 0600 audit log that GET /api/token-access serves.
+	// Unconditional, like the request dirs: agents touch tokens whether or
+	// not the App is usable, and the trail must never depend on App state.
+	github.StartTokenAccessAuditWatcher(ctx, logger)
 
 	if ghClient != nil && cfg.GitHub.HasUsableApp() {
 		// Attribution resolver: effective backend/model from the manager
@@ -7733,15 +7739,16 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		})
 	}
 	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
-		RequireApproval:    cfg.Review.RequireApproval,
-		FanOut:             cfg.Review.FanOut,
-		MaxParallelReviews: cfg.Review.EffectiveMaxParallelReviews(),
-		ReviewerAgents:     cfg.Review.ReviewerAgents,
-		FixerAgent:         cfg.Review.FixerAgent,
-		PostComments:       cfg.Review.PostComments,
-		ProjectOrg:         cfg.Project.Org,
-		AIAuthor:           cfg.EffectiveAIAuthor(),
-		Agents:             agents,
+		RequireApproval:      cfg.Review.RequireApproval,
+		FanOut:               cfg.Review.FanOut,
+		MaxParallelReviews:   cfg.Review.EffectiveMaxParallelReviews(),
+		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
+		ReviewerAgents:       cfg.Review.ReviewerAgents,
+		FixerAgent:           cfg.Review.FixerAgent,
+		PostComments:         cfg.Review.PostComments,
+		ProjectOrg:           cfg.Project.Org,
+		AIAuthor:             cfg.EffectiveAIAuthor(),
+		Agents:               agents,
 	})
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))

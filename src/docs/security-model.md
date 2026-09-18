@@ -122,6 +122,12 @@ Two gotchas:
 - **Empty is worse than absent.** The resolvers fall back on empty values just like missing ones, but an empty var can make convergence accounting report the hive as converged when it is not. Unset rather than blank.
 - Per-hive env material derives from the **current** master generation — relevant during rotation, below.
 
+### Provisioning-template changes reach existing spokes only through a reconcile
+
+The provisioning template (`k8sManifestTemplate` in `src/pkg/hub/saas_provision.go`) is `kubectl apply`ed once, when a hive is provisioned. A change to it is born onto every spoke created afterwards and reaches **no spoke that already exists** — those keep whatever object the template rendered on their day. The per-hive env sweep above, the NET_ADMIN sweep, and the vanity-host patch are the reconcilers that close such gaps for the objects they own; a change to any other existing object needs one too, or the PR must say that existing spokes have to be re-provisioned.
+
+The case that made this rule: [#7457](https://github.com/hivecommons/hive/pull/7457) added `auth-url` / `auth-response-headers` to the `hive-contribute` Ingress so a signed-in visitor's identity reaches `/api/contribute/me`. The code half rolled out with the next image; the Ingress half reached only newly provisioned spokes, and `/api/contribute/me` kept answering `401` everywhere else ([#7517](https://github.com/hivecommons/hive/issues/7517)). The hub now reconciles those two annotations onto every hosted spoke's `hive-contribute` Ingress on nginx clusters (a 15-minute sweep, `contribute_ingress_reconcile.go`; a merge patch on the annotations, which rolls no pod). OpenShift-Route clusters have no nginx Ingress and are skipped.
+
 ### Master key rotation
 
 The hub master secret supports **generations**: at most two live at once — one CURRENT (mints new material) and one PREVIOUS (verify-only, default window 7 days). Design details: [design/master-key-rotation.md](design/master-key-rotation.md).

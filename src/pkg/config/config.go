@@ -6294,6 +6294,19 @@ type ReviewConfig struct {
 	// aggregate has no consumer and the reviewer is silent by construction.
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
+	// given in a single dispatch cycle. It exists because parallel review
+	// slots are a fixed budget spent in PR order: without a cap, the first PR
+	// in a deep queue absorbs every slot for its own perspectives, so adding
+	// reviewers buys more opinions on one PR instead of coverage across many.
+	// Capping it spends the same budget breadth-first. No coverage is lost —
+	// the perspectives skipped this cycle are still "missing" next cycle and
+	// get dispatched then — so this schedules depth rather than dropping it.
+	// It also bounds how many comments a single PR can collect at once, which
+	// matters once reviewers publish. Zero means no cap — fanning every
+	// perspective out at once stays the default, so this only changes a hive
+	// that opts in because its queue is too deep to review in depth.
+	MaxPerspectivesPerPR int `yaml:"max_perspectives_per_pr,omitempty" json:"max_perspectives_per_pr,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep

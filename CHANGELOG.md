@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-18 (v4.54.2)
+
+### Fixed
+
+- Dashboard: hovering a PR pill that is not green now says, in plain words, why the sweep will not merge it and what would unblock it ([#7515](https://github.com/hivecommons/hive/issues/7515)). A PR GitHub reported as not mergeable used to hover as the bare GitHub enum — `not mergeable on GitHub (blocked)` — even though the merge-eligible classifier had just been handed the exact gate that made GitHub say blocked and then dropped it. `blocked` now keeps the sweep's reason (`blocked — CI failing: build, lint`, `blocked — awaiting review approval`, `blocked — held: …`, `blocked — intent verification: …`, `blocked — CI pending`), and when every sweep gate passes it says `blocked — all sweep gates pass; a branch-protection rule is unsatisfied` instead of nothing. The other states read as what to do rather than the API name: `has merge conflicts with v4 — needs a rebase`, `behind v4 — needs an update from the base branch`, `draft — mark ready for review to enter the sweep`, `mergeability not yet computed by GitHub — re-checked next tick`. The base branch comes from the PR list payload (`base_ref`, new on the status snapshot); no extra GitHub calls. Naming the exact branch-protection rule when the sweep itself has no reason (a review GitHub requires, a required check that never reported) is the issue's step 2 and still open.
+
 ## 2026-09-18 (v4.54.1)
 
 ### Changed

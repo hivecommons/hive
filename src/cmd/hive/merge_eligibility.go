@@ -382,8 +382,10 @@ const mergeabilityUnknownReason = "mergeability not yet computed by GitHub — r
 //
 //   - "blocked" folds every unsatisfied branch-protection rule into one
 //     word. When the sweep has a reason it is almost always the rule
-//     ("blocked — CI failing: build"); without one, say that a rule we do
-//     not read is unsatisfied rather than nothing at all.
+//     ("blocked — CI failing: build"); when GitHub's own facts name a
+//     different rule (a review decision, a required check that never
+//     reported) that rule is named too; with neither, say that a rule we
+//     cannot read is unsatisfied rather than nothing at all.
 //   - "dirty" and "behind" name the base branch and the fix (rebase /
 //     update); a sweep reason is appended, since it still stands once the
 //     branch is fixed.
@@ -396,8 +398,22 @@ func notMergeableReason(pr github.PullRequest, sweepReason string) string {
 	var msg string
 	switch pr.MergeableState {
 	case "blocked":
-		if sweepReason == "" {
+		// The branch-protection rule GitHub is hiding behind the word
+		// "blocked", when the sweep collected enough to name it
+		// (hivecommons/hive#7515 step 2). The wording itself lives in
+		// github.PullRequest.BranchProtectionBlockReason — one place, under
+		// test — not in this switch and not in the dashboard's JS.
+		rule, ruleKnown := pr.BranchProtectionBlockReason()
+		switch {
+		case sweepReason == "" && ruleKnown:
+			return "blocked — " + rule
+		case sweepReason == "":
 			return "blocked — all sweep gates pass; a branch-protection rule is unsatisfied"
+		case ruleKnown && !strings.Contains(sweepReason, rule):
+			// Both are true and neither subsumes the other: the sweep's own
+			// gate is what it will act on, and GitHub's rule is what the
+			// operator must also clear.
+			return "blocked — " + sweepReason + "; GitHub also requires: " + rule
 		}
 		return "blocked — " + sweepReason
 	case "dirty":

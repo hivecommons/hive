@@ -122,6 +122,37 @@ operation during the transition, is part of the
 [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
 (live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)).
 
+## v6 — Future Line (not open)
+
+There is no v6 branch, milestone, or release channel, and none is planned
+until v5 reaches GA. "v6" is a **designation, not a line**: a label for
+proposals that deliberately target the horizon after the current one, so
+they can be written down without pretending they are scheduled.
+
+Policy for v6-designated work:
+
+- **Design-only.** A v6-designated proposal may land as a design document
+  under [`src/docs/design/`](src/docs/design/) after normal review.
+  Implementation PRs for v6-designated work are out of scope on every
+  current branch and should be closed with a pointer to this section.
+- **The line opens after v5 GA.** Opening a v6 line is blocked on the
+  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
+  closing (live tracker:
+  [#6016](https://github.com/hivecommons/hive/issues/6016)). When it opens,
+  it opens the same way v5 did — public RFC issues gate each workstream,
+  per [GOVERNANCE.md](GOVERNANCE.md) — and designs parked here re-enter
+  through that gate rather than being grandfathered in.
+- **Designation is cheap and non-binding.** Marking a design "v6" records
+  intent and preserves the work; it is not acceptance, priority, or a
+  commitment that a v6 line will include it.
+
+v6-designated designs to date:
+
+- **GitHub @-mention triggers** — a human summons an agent by mentioning
+  the App on an issue or PR, mirroring the existing Linear inbound-mention
+  path ([#7483](https://github.com/hivecommons/hive/issues/7483),
+  [design doc](src/docs/design/github-mention-triggers.md)).
+
 ## Hosted Hive Hub
 
 The hosted hub at [hive.hivecommons.dev](https://hive.hivecommons.dev) is the

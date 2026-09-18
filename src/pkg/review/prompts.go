@@ -86,7 +86,46 @@ func buildPublishInstruction(pr PullRequest) string {
 	b.WriteString("Say nothing rather than pad. Do NOT post a comment that is only nits, only praise, or a restatement of the diff. If this perspective found nothing a human needs, skip the comment entirely and just return the JSON.\n")
 	b.WriteString("If the PR body claims behavior the diff does not implement, say so with file:line — that gap is one of the most useful things you can report.\n")
 	b.WriteString("Be brief and specific. One comment, at most a few findings, worst first.\n")
+	b.WriteString(buildRoutingInstruction(pr))
 	return b.String()
+}
+
+// buildRoutingInstruction is what turns a verdict into a decision.
+//
+// A hive that cannot merge produces reviews whose only possible outcome is a
+// human acting on them. But a correct, well-cited comment buried in a queue of
+// hundreds is not actionable: nothing distinguishes "a human must decide this"
+// from routine review noise. Routing is therefore not a nicety on top of the
+// review — it is the step that makes the review reach anyone.
+func buildRoutingInstruction(pr PullRequest) string {
+	var b strings.Builder
+	b.WriteString("\nROUTING — make a needed human decision findable.\n")
+	b.WriteString("If your verdict is requires_human or reject, the FIRST line of the comment must be exactly:\n")
+	b.WriteString("  **HUMAN DECISION NEEDED** — <one line naming the decision only a human can make>\n")
+	b.WriteString("A maintainer triaging a long queue filters on that marker; without it a blocking finding reads as one more comment and is skipped.\n")
+	if handle := mentionableAuthor(pr.Author); handle != "" {
+		fmt.Fprintf(&b, "On that same line, mention @%s (the PR author) so the person who can act is notified.\n", handle)
+	} else {
+		b.WriteString("Do NOT @-mention the PR author: this PR was opened by an app or bot account, so a mention notifies nobody. The marker line is the routing.\n")
+	}
+	b.WriteString("Report the limits of your own review. If you could not judge part of this PR — missing context, an unfamiliar subsystem, an ambiguous requirement, a change you cannot test — say so plainly and use requires_human. Naming what you could not verify is more useful than a confident guess, and omitting it is how an unreviewed change gets waved through on the strength of an automated approval.\n")
+	return b.String()
+}
+
+// mentionableAuthor returns the bare @-handle for a PR author when mentioning
+// it would reach a person, and "" when it would not.
+//
+// On a hive fleet most PRs are agent-authored, so the author is an App
+// ("app/<name>") or a bot ("<name>[bot]"). @-mentioning either notifies no one
+// — it renders as a link and nothing else — while still looking to a reader
+// like the review was routed somewhere. That false signal is worse than no
+// mention at all, because it suggests a human is already on it.
+func mentionableAuthor(author string) string {
+	a := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(author), "@"))
+	if a == "" || strings.HasSuffix(a, "[bot]") || strings.Contains(a, "/") {
+		return ""
+	}
+	return a
 }
 
 func BuildPerspectivePrompts(pr PullRequest, perspectives []Perspective) map[Perspective]string {

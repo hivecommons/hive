@@ -145,7 +145,12 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
+# Token-access audit events (#6287): see the matching block in gh-wrapper.sh.
+# The durable log is hive-owned 0600 and not writable by this (agent) UID;
+# events are dropped here one file each and ingested by the hive, which
+# attributes each to the uid that owns the file. No environment override on
+# purpose; must match TokenAccessSpoolDir in pkg/github/token_access_audit.go.
+TOKEN_ACCESS_SPOOL="/var/run/hive-metrics/token-access-events"
 
 case "${1:-}" in
   get)
@@ -154,16 +159,14 @@ case "${1:-}" in
     if [ -n "$REQUEST_PROTOCOL" ] && [ "$REQUEST_PROTOCOL" != "https" ]; then
       exit 0
     fi
-    # The group wraps the append so a failed REDIRECTION is silenced too, the
-    # same shape gh-wrapper.sh uses (#4043): `>> f 2>/dev/null` only mutes the
-    # printf, and when the log cannot be opened by the agent UID — its
-    # directory is 0755 dev:node by design (#4044) and the file does not
-    # exist until the entrypoint pre-creates it — the shell's own
-    # "line N: .../token-access.jsonl: Permission denied" leaked into the
-    # agent's pane on every clone, fetch, and push.
-    { printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}" \
-      >> "$TOKEN_ACCESS_LOG"; } 2>/dev/null || true
+    # Write-then-rename under a pinned umask (0640 into the setgid spool so
+    # the hive can read it and nobody else can); see gh-wrapper.sh.
+    {
+      _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
+      ( umask 027 && printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}" \
+        > "${_evt}.tmp" ) && mv -f "${_evt}.tmp" "$_evt"
+    } 2>/dev/null || true
     # Echo back the SAME host git asked about (github.com, github.ibm.com, or
     # any other configured GitHub Enterprise host) rather than a hardcoded
     # "github.com" — see the file header. entrypoint.sh only registers this

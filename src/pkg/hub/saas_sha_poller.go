@@ -700,6 +700,14 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
 	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
 	s.reconcilePerHiveEnvIfDue()
+	// Put #7457's auth-url / auth-response-headers onto the hive-contribute
+	// Ingress of every hosted spoke provisioned before that fix, so
+	// /api/contribute/me learns who is calling there too (#7517). The
+	// template is applied only at provision time; nothing else re-applies an
+	// Ingress annotation. Throttled internally to
+	// contributeIngressReconcileInterval; an annotation patch rolls no pod.
+	// See contribute_ingress_reconcile.go.
+	s.reconcileContributeIngressIfDue()
 	// Force-delete hive-namespace pods stuck in Terminating past
 	// orphanedPodMinAge with no finalizers and a non-Running phase — the
 	// residue of nodes disappearing without draining (#5328). Throttled

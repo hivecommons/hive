@@ -38,10 +38,13 @@ type DispatchOptions struct {
 	RequireApproval    bool
 	FanOut             bool
 	MaxParallelReviews int
-	ReviewerAgents     []string
-	FixerAgent         string
-	ProjectOrg         string
-	AIAuthor           string
+	// MaxPerspectivesPerPR caps perspectives dispatched to one PR per cycle.
+	// Zero means DefaultMaxPerspectivesPerPR.
+	MaxPerspectivesPerPR int
+	ReviewerAgents       []string
+	FixerAgent           string
+	ProjectOrg           string
+	AIAuthor             string
 	// PostComments carries config.ReviewConfig.PostComments into the prompt
 	// builder, so reviewers are told to publish their verdict on the PR.
 	PostComments bool
@@ -169,6 +172,12 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			continue
 		}
 		limit := len(missing)
+		// Breadth before depth: the parallel budget is spent in PR order, so
+		// an uncapped first PR would take every slot for its own perspectives
+		// and leave the rest of the queue unreviewed this cycle.
+		if perPR := opts.effectiveMaxPerspectivesPerPR(); perPR > 0 && limit > perPR {
+			limit = perPR
+		}
 		if len(reviewers) == 1 && limit > 1 {
 			limit = 1
 		}
@@ -291,6 +300,19 @@ func (a Artifact) AggregateFor(repo string, number int, headSHA string) (Aggrega
 		}
 	}
 	return Aggregate{}, false
+}
+
+// effectiveMaxPerspectivesPerPR returns the per-PR perspective cap, or 0 for
+// "no cap". Unlimited is the default deliberately: fanning every perspective
+// out at once is the review swarm's designed behavior, and a hive that wants
+// depth on each PR should keep getting it. The cap is for the opposite
+// situation — a queue too deep to review in depth — and is opt-in so no
+// existing hive silently changes shape.
+func (o DispatchOptions) effectiveMaxPerspectivesPerPR() int {
+	if o.MaxPerspectivesPerPR <= 0 {
+		return 0
+	}
+	return o.MaxPerspectivesPerPR
 }
 
 func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
