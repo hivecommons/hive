@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -359,7 +360,7 @@ func TestConsumeSocketIgnoresMalformedAndFiltersThenMarksBot(t *testing.T) {
 
 	b := newTestBot(ts.URL)
 	var delivered []chat.Message
-	err := b.consumeSocket(context.Background(), func(msg chat.Message) { delivered = append(delivered, msg) })
+	_, err := b.consumeSocket(context.Background(), func(msg chat.Message) { delivered = append(delivered, msg) })
 	if err == nil {
 		t.Fatal("expected close error")
 	}
@@ -421,5 +422,143 @@ func TestParseMarkdownLinkRejectsMalformed(t *testing.T) {
 		if _, _, _, ok := parseMarkdownLink(in); ok {
 			t.Fatalf("parseMarkdownLink(%q) ok, want false", in)
 		}
+	}
+}
+
+func TestListenContextCancelClosesIdleSocket(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	apiBase := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apps.connections.open":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
+		case "/socket":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			<-r.Context().Done()
+		}
+	}))
+	defer ts.Close()
+	apiBase = ts.URL
+
+	b := newTestBot(ts.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		b.Listen(ctx, func(chat.Message) {})
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Listen did not exit after context cancellation")
+	}
+}
+
+func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
+	var calls atomic.Int64
+	var times []time.Time
+	apiBase := ""
+	upgrader := websocket.Upgrader{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/socket" {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err == nil {
+				_ = conn.WriteJSON(socketEnvelope{EnvelopeID: "refresh", Type: "disconnect", Reason: "refresh_requested"})
+				_, _, _ = conn.ReadMessage()
+				_ = conn.Close()
+			}
+			return
+		}
+		n := calls.Add(1)
+		times = append(times, time.Now())
+		if n == 3 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "temporary"})
+	}))
+	defer ts.Close()
+	apiBase = ts.URL
+
+	b := newTestBot(ts.URL)
+	b.reconnectBase = 20 * time.Millisecond
+	b.reconnectMax = 200 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go b.Listen(ctx, func(chat.Message) {})
+	deadline := time.After(2 * time.Second)
+	for calls.Load() < 4 {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for reconnects; calls=%d", calls.Load())
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	cancel()
+	if len(times) < 4 {
+		t.Fatalf("times = %d, want 4", len(times))
+	}
+	postSuccessDelay := times[3].Sub(times[2])
+	if postSuccessDelay > 35*time.Millisecond {
+		t.Fatalf("post-success reconnect delay = %v, want near base", postSuccessDelay)
+	}
+}
+
+func TestSplitSlackMessageBalancesFencedParagraphs(t *testing.T) {
+	inputs := []string{
+		"before\n\n```\n" + strings.Repeat("a", slackMessageLimit) + "\n\ninside\n```\nafter",
+		"```\n" + strings.Repeat("b", 5000) + "\n```",
+	}
+	for _, input := range inputs {
+		parts := splitSlackMessage(input)
+		if len(parts) < 2 {
+			t.Fatalf("expected split for input length %d", len([]rune(input)))
+		}
+		for i, part := range parts {
+			if len([]rune(part)) > slackMessageLimit {
+				t.Fatalf("part %d length = %d, exceeds %d", i, len([]rune(part)), slackMessageLimit)
+			}
+			if strings.Count(part, "```")%2 != 0 {
+				t.Fatalf("part %d has odd fence count: %q", i, part[:min(len(part), 80)])
+			}
+		}
+	}
+}
+
+func TestConsumeSocketAckFailureSkipsDelivery(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	apiBase := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apps.connections.open":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
+		case "/socket":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			payload, _ := json.Marshal(eventPayload{Event: slackEvent{Type: "message", Channel: "C1", Text: "!kick scanner", User: "U1", TS: "1"}})
+			_ = conn.WriteJSON(socketEnvelope{EnvelopeID: "needs-ack", Type: "events_api", Payload: payload})
+			if tcp, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
+				_ = tcp.SetLinger(0)
+			}
+			_ = conn.UnderlyingConn().Close()
+		}
+	}))
+	defer ts.Close()
+	apiBase = ts.URL
+
+	b := newTestBot(ts.URL)
+	var delivered atomic.Int64
+	_, _ = b.consumeSocket(context.Background(), func(chat.Message) { delivered.Add(1) })
+	if delivered.Load() != 0 {
+		t.Fatalf("delivered = %d, want 0 when ack fails", delivered.Load())
 	}
 }

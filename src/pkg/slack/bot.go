@@ -167,22 +167,31 @@ func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
 			return
 		default:
 		}
-		if err := b.consumeSocket(ctx, deliver); err != nil && !errors.Is(err, context.Canceled) {
+		connected, err := b.consumeSocket(ctx, deliver)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			b.logger.Warn("slack socket disconnected", "error", err)
+		}
+		if connected {
+			delay = b.reconnectBase
+			if delay == 0 {
+				delay = socketReconnectBase
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
 		}
-		delay = min(delay*2, maxDelay)
+		if !connected {
+			delay = min(delay*2, maxDelay)
+		}
 	}
 }
 
-func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Message)) error {
+func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Message)) (bool, error) {
 	url, err := b.openSocketURL(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	h := http.Header{"Authorization": {"Bearer " + b.appToken}}
 	conn, resp, err := b.dial(ctx, url, h)
@@ -190,23 +199,37 @@ func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Mess
 		_ = resp.Body.Close()
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
-	defer func() { _ = conn.Close() }()
+	connCtx, stopConnWatcher := context.WithCancel(ctx)
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		<-connCtx.Done()
+		_ = conn.Close()
+	}()
+	defer func() {
+		stopConnWatcher()
+		<-watcherDone
+		_ = conn.Close()
+	}()
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			return err
+			return true, err
 		}
 		var env socketEnvelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
 		}
 		if env.EnvelopeID != "" {
-			_ = conn.WriteJSON(map[string]string{"envelope_id": env.EnvelopeID})
+			if err := conn.WriteJSON(map[string]string{"envelope_id": env.EnvelopeID}); err != nil {
+				b.logger.Warn("slack socket ack failed", "error", err, "envelope_id", env.EnvelopeID)
+				continue
+			}
 		}
 		if env.Type == "disconnect" || env.Type == "refresh_requested" || env.Reason == "refresh_requested" {
-			return fmt.Errorf("slack socket refresh requested")
+			return true, fmt.Errorf("slack socket refresh requested")
 		}
 		if env.Type != "events_api" {
 			continue
@@ -344,25 +367,87 @@ func splitSlackMessage(s string) []string {
 		return []string{s}
 	}
 	var parts []string
-	for _, para := range strings.Split(s, "\n\n") {
-		if para == "" {
-			continue
+	current := ""
+	inFence := false
+
+	emit := func() {
+		if current == "" {
+			return
 		}
-		for len([]rune(para)) > slackMessageLimit {
-			chunk := takeRunes(para, slackMessageLimit)
-			parts = append(parts, chunk)
-			para = strings.TrimPrefix(para, chunk)
+		part := current
+		if inFence {
+			part += "\n```"
 		}
-		if len(parts) == 0 || len([]rune(parts[len(parts)-1]+"\n\n"+para)) > slackMessageLimit {
-			parts = append(parts, para)
-		} else {
-			parts[len(parts)-1] += "\n\n" + para
+		parts = append(parts, part)
+		current = ""
+	}
+
+	appendSegment := func(segment string) {
+		for segment != "" {
+			if current == "" && strings.HasPrefix(segment, "\n\n") {
+				segment = strings.TrimPrefix(segment, "\n\n")
+			}
+			if current == "" && inFence {
+				current = "```\n"
+			}
+			reserve := 0
+			if inFence || strings.Count(current, "```")%2 == 1 || strings.Contains(segment, "```") {
+				reserve = len([]rune("\n```"))
+			}
+			limit := slackMessageLimit - reserve
+			if limit < 1 {
+				limit = slackMessageLimit
+			}
+			available := limit - len([]rune(current))
+			if available <= 0 {
+				emit()
+				continue
+			}
+			if len([]rune(segment)) <= available {
+				current += segment
+				inFence = updateFenceState(inFence, segment)
+				return
+			}
+			chunk := takeRunes(segment, available)
+			current += chunk
+			inFence = updateFenceState(inFence, chunk)
+			segment = strings.TrimPrefix(segment, chunk)
+			emit()
 		}
 	}
+
+	for i, para := range strings.Split(s, "\n\n") {
+		if i > 0 {
+			para = "\n\n" + para
+		}
+		if current == "" && inFence {
+			appendSegment(para)
+			continue
+		}
+		reserve := 0
+		if inFence || strings.Contains(para, "```") {
+			reserve = len([]rune("\n```"))
+		}
+		if len([]rune(current+para)) <= slackMessageLimit-reserve {
+			current += para
+			inFence = updateFenceState(inFence, para)
+		} else {
+			emit()
+			appendSegment(para)
+		}
+	}
+	emit()
 	if len(parts) == 0 {
 		return []string{""}
 	}
 	return parts
+}
+
+func updateFenceState(inFence bool, s string) bool {
+	if strings.Count(s, "```")%2 == 1 {
+		return !inFence
+	}
+	return inFence
 }
 
 func takeRunes(s string, n int) string {
