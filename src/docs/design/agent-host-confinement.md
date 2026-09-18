@@ -75,7 +75,7 @@ Workspace "confinement" is a `cd`, not a boundary:
   directory only; nothing stops the CLI process — running as the contributor's
   own uid — from reading or writing any path that uid can reach.
 - Hub-pod agents: `launchInTmux` starts the session with `new-session -d -s
-  session -c dir` (`src/pkg/agent/manager.go:2213`), then, when the agent has a
+  session -c dir` (`src/pkg/agent/manager.go:1952`), then, when the agent has a
   UID assigned, runs the tmux command through `su-exec`/an exec-user spec
   (`agentExecUserSpec`, `src/pkg/agent/manager_tmux.go:178-186`,
   `src/pkg/agent/manager_tmux.go:207-212`) so the CLI runs as `hive-<agent>` or a
