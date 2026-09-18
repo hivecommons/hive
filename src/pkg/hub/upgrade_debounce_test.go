@@ -376,9 +376,9 @@ func TestEmptyTargetClearsPendingState(t *testing.T) {
 // AutoUpgrade gate would silently start delaying operator-driven upgrades while
 // every behavioural test above still passed.
 func TestManualAndPinnedUpgradesBypassDebounce(t *testing.T) {
-	src, err := os.ReadFile("saas.go")
+	src, err := os.ReadFile("saas_upgrade.go")
 	if err != nil {
-		t.Fatalf("reading saas.go: %v", err)
+		t.Fatalf("reading saas_upgrade.go: %v", err)
 	}
 	body := string(src)
 
