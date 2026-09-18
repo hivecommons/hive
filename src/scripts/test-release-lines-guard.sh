@@ -78,10 +78,10 @@ expect_mentions "env LONG_LIVED" "the real run asserts docker.yml's LONG_LIVED p
 #    release line to the manifest and change nothing else: every pinned
 #    workflow must be reported as not covering it.
 # ---------------------------------------------------------------------------
-sed 's/^release_lines:.*/release_lines: [v2, v4, v5, v6]/' "$REAL_MANIFEST" > "${TMP}/v6-manifest.yml"
+sed 's/^release_lines:.*/release_lines: [v2, v4, v5, v7]/' "$REAL_MANIFEST" > "${TMP}/v7-manifest.yml"
 expect 1 "a new release line with no workflow edits fails the check" -- \
-  "${TMP}/v6-manifest.yml" "$REAL_WORKFLOWS"
-expect_mentions "missing: v6" "the failure names the branch that would not be covered"
+  "${TMP}/v7-manifest.yml" "$REAL_WORKFLOWS"
+expect_mentions "missing: v7" "the failure names the branch that would not be covered"
 for wf in v2-ci.yml v2-tests.yml podman-contract.yml podman-rootful-lane.yml \
           podman-rootless-lane.yml podman-arm64-lane.yml quadlet-gate.yml \
           suid-contract.yml scorecard.yml; do
