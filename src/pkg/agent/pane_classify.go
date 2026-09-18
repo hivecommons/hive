@@ -74,6 +74,36 @@ func paneShowsFatalNetworkError(lines []string) bool {
 	return false
 }
 
+// agentIsProducing reports whether an agent is still rendering output, and so
+// vetoes the fatal-network restart in the poll loop.
+//
+// paneShowsFatalNetworkError matches on SCROLLBACK, so a hit may be an error
+// the agent already recovered from and worked past — the same lesson
+// transientAPIErrorPatterns documents below, which the fatal detector never
+// learned. That detector's premise is that the agent is "visually ready but
+// actually dead"; an agent whose pane changed moments ago is demonstrably
+// alive, which refutes the premise. Restarting it does not recover anything,
+// it destroys the turn in flight.
+//
+// Observed in production on the projectbluefin spoke: the reviewer emitted a
+// generic "fetch failed" from one failed proxied call mid-turn, kept working,
+// and was killed while streaming 22KB of output. It restarted 52 times and
+// published no review for hours, because every restart landed mid-turn and
+// the next turn met the same line still sitting in scrollback.
+//
+// Startup death is deliberately still caught: an agent that dies before
+// producing anything has a static pane, so lastPaneChange does not advance
+// and this returns false.
+//
+// A zero lastPaneChange means the pane has never been observed to change, so
+// there is nothing to protect and the restart proceeds.
+func agentIsProducing(lastPaneChange, now time.Time) bool {
+	if lastPaneChange.IsZero() {
+		return false
+	}
+	return now.Sub(lastPaneChange) < fatalNetworkProducingGraceSec*time.Second
+}
+
 // transientAPIErrorPatterns are substrings of API failures that a plain retry
 // fixes (#4697). They are the OPPOSITE of fatalNetworkErrorPatterns above: the
 // CLI survives, drops back to its idle prompt with the response truncated, and

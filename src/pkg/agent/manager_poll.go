@@ -93,6 +93,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			if !samePaneCapture(agent.lastPaneCapture, filtered) {
 				agent.LastPaneChange = time.Now()
 			}
+			lastPaneChange := agent.LastPaneChange
 			agent.lastPaneCapture = filtered
 			agent.NeedsLogin = showsLogin
 			agent.QuotaExhausted = quotaExhausted
@@ -207,7 +208,14 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// ever survived long enough to run.
 			if effectiveBackend(agent) == "copilot" && !agent.kickDelivering.Load() && paneShowsFatalNetworkError(filtered) {
 				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
-				if sinceLastRestart >= float64(tlsErrorRestartCooldownSec) {
+				// A producing agent refutes this detector's own premise.
+				// See agentIsProducing.
+				if agentIsProducing(lastPaneChange, time.Now()) {
+					m.logger.Debug("fatal network/TLS pattern in scrollback, but agent is still producing — not restarting",
+						"agent", agent.Name,
+						"since_pane_change_s", time.Since(lastPaneChange).Seconds(),
+					)
+				} else if sinceLastRestart >= float64(tlsErrorRestartCooldownSec) {
 					m.logger.Warn("fatal network/TLS error detected, restarting agent",
 						"agent", agent.Name,
 					)

@@ -45,4 +45,12 @@ const (
 	tokenRestartKickGrace      = 10 * time.Minute
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
 	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
+
+	// fatalNetworkProducingGraceSec is how recently the pane must have
+	// changed for an agent to count as "still producing", which vetoes the
+	// fatal-network restart. It is deliberately a few poll intervals rather
+	// than one: the poll runs every ~3s and a CLI mid-answer can pause
+	// longer than a single interval between rendered chunks, so a tighter
+	// window would call a working agent dead on an ordinary stall.
+	fatalNetworkProducingGraceSec = 15
 )
