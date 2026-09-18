@@ -52,6 +52,7 @@ order, not priority rank.
 | Cross-forge orchestration | Coordinate issues, merge requests, policy, and evidence across GitHub, GitLab, and Forgejo/Gitea-style forges. | [ADR-0005](adr/0005-forge-abstraction.md) |
 | Memory and learning maturation | Turn retro findings and curated knowledge into durable, testable priming without hidden or unauditable agent memory. | [knowledge design](design/knowledge-system.md), [retro lane](retro-lane.md) |
 | Kubernetes-native agent sandboxes | Graduate from tmux/container execution toward k8s-native, policy-isolated agent workloads where that complexity is justified. | [architecture](architecture.md), [security threat model](security-threat-model.md) |
+| v6-designated designs (line not open) | "v6" is a designation, not a line: no v6 branch, milestone, or channel exists, and opening one is blocked on the v5 GA bar closing. v6-designated proposals land as design docs only (no implementation PRs on current branches) and re-enter through the RFC gate when the line opens. First entry: GitHub @-mention triggers — the first inbound GitHub trigger, mirroring the Linear mention path. Full policy in [ROADMAP.md](../../ROADMAP.md#v6--future-line-not-open). | [#7519](https://github.com/hivecommons/hive/issues/7519), [#7483](https://github.com/hivecommons/hive/issues/7483), [mention-triggers design](design/github-mention-triggers.md) |
 
 ## Reading this roadmap
 
