@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +11,8 @@ import (
 	"unicode/utf8"
 )
 
-func (s *Service) cmdStatus() (string, error) {
-	data, err := s.dashboardGet("/api/status")
+func (s *Service) cmdStatus(ctx context.Context) (string, error) {
+	data, err := s.dashboardGet(ctx, "/api/status")
 	if err != nil {
 		return "❌ Could not reach dashboard", nil
 	}
@@ -56,8 +57,8 @@ func (s *Service) cmdStatus() (string, error) {
 	return result, nil
 }
 
-func (s *Service) cmdGovernor() (string, error) {
-	data, err := s.dashboardGet("/api/status")
+func (s *Service) cmdGovernor(ctx context.Context) (string, error) {
+	data, err := s.dashboardGet(ctx, "/api/status")
 	if err != nil {
 		return "❌ Could not reach dashboard", nil
 	}
@@ -97,7 +98,7 @@ func (s *Service) cmdHelp() string {
 	return strings.Join(lines, "\n")
 }
 
-func (s *Service) cmdAgentAction(action, args string) (string, error) {
+func (s *Service) cmdAgentAction(ctx context.Context, action, args string) (string, error) {
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 	agentName := strings.ToLower(parts[0])
 	prompt := ""
@@ -113,16 +114,16 @@ func (s *Service) cmdAgentAction(action, args string) (string, error) {
 
 	switch action {
 	case "kick":
-		return s.dashboardKick(agentName, prompt)
+		return s.dashboardKick(ctx, agentName, prompt)
 	case "pause":
-		return s.dashboardPause(agentName)
+		return s.dashboardPause(ctx, agentName)
 	case "resume":
-		return s.dashboardResume(agentName)
+		return s.dashboardResume(ctx, agentName)
 	}
 	return "❌ Unknown action", nil
 }
 
-func (s *Service) dashboardKick(agent, prompt string) (string, error) {
+func (s *Service) dashboardKick(ctx context.Context, agent, prompt string) (string, error) {
 	var body []byte
 	if prompt != "" {
 		var err error
@@ -131,7 +132,7 @@ func (s *Service) dashboardKick(agent, prompt string) (string, error) {
 			return fmt.Sprintf("❌ Failed to marshal kick payload: %s", err), nil
 		}
 	}
-	err := s.dashboardPost(fmt.Sprintf("/api/kick/%s", agent), body)
+	err := s.dashboardPost(ctx, fmt.Sprintf("/api/kick/%s", agent), body)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to kick %s: %s", agent, err), nil
 	}
@@ -141,24 +142,28 @@ func (s *Service) dashboardKick(agent, prompt string) (string, error) {
 	return fmt.Sprintf("✅ Kicked %s", agent), nil
 }
 
-func (s *Service) dashboardPause(agent string) (string, error) {
-	err := s.dashboardPost(fmt.Sprintf("/api/pause/%s", agent), nil)
+func (s *Service) dashboardPause(ctx context.Context, agent string) (string, error) {
+	err := s.dashboardPost(ctx, fmt.Sprintf("/api/pause/%s", agent), nil)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to pause %s: %s", agent, err), nil
 	}
 	return fmt.Sprintf("✅ Paused %s", agent), nil
 }
 
-func (s *Service) dashboardResume(agent string) (string, error) {
-	err := s.dashboardPost(fmt.Sprintf("/api/resume/%s", agent), nil)
+func (s *Service) dashboardResume(ctx context.Context, agent string) (string, error) {
+	err := s.dashboardPost(ctx, fmt.Sprintf("/api/resume/%s", agent), nil)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to resume %s: %s", agent, err), nil
 	}
 	return fmt.Sprintf("✅ Resumed %s", agent), nil
 }
 
-func (s *Service) dashboardGet(path string) ([]byte, error) {
-	resp, err := s.client.Get(s.dashboardURL + path)
+func (s *Service) dashboardGet(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.dashboardURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -170,12 +175,12 @@ func (s *Service) dashboardGet(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, maxDiscordResponseBytes))
 }
 
-func (s *Service) dashboardPost(path string, body []byte) error {
+func (s *Service) dashboardPost(ctx context.Context, path string, body []byte) error {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(http.MethodPost, s.dashboardURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.dashboardURL+path, reader)
 	if err != nil {
 		return err
 	}

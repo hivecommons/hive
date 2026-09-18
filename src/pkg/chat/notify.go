@@ -45,7 +45,14 @@ type budgetSnapshot struct {
 
 // SSE bridge: monitors /api/events and posts agent transitions + governor mode changes
 func (s *Service) sseLoop(ctx context.Context) {
-	delay := sseReconnectBase
+	delay := s.sseReconnectBase
+	if delay == 0 {
+		delay = sseReconnectBase
+	}
+	maxDelay := s.sseReconnectMax
+	if maxDelay == 0 {
+		maxDelay = sseReconnectMax
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,9 +60,15 @@ func (s *Service) sseLoop(ctx context.Context) {
 		default:
 		}
 
-		err := s.consumeSSE(ctx)
+		connected, err := s.consumeSSE(ctx)
 		if err != nil {
 			s.logger.Warn("discord SSE disconnected", "error", err)
+		}
+		if connected {
+			delay = s.sseReconnectBase
+			if delay == 0 {
+				delay = sseReconnectBase
+			}
 		}
 
 		select {
@@ -63,26 +76,28 @@ func (s *Service) sseLoop(ctx context.Context) {
 			return
 		case <-time.After(delay):
 		}
-		delay = min(delay*2, sseReconnectMax)
+		if !connected {
+			delay = min(delay*2, maxDelay)
+		}
 	}
 }
 
-func (s *Service) consumeSSE(ctx context.Context) error {
+func (s *Service) consumeSSE(ctx context.Context) (bool, error) {
 	url := s.dashboardURL + "/api/events"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	sseClient := &http.Client{Timeout: 0}
 	resp, err := sseClient.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("SSE status %d", resp.StatusCode)
+		return false, fmt.Errorf("SSE status %d", resp.StatusCode)
 	}
 
 	buf := make([]byte, 4096)
@@ -112,7 +127,7 @@ func (s *Service) consumeSSE(ctx context.Context) error {
 			}
 		}
 		if err != nil {
-			return err
+			return true, err
 		}
 	}
 }
@@ -244,7 +259,7 @@ func (s *Service) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			status, err := s.cmdStatus()
+			status, err := s.cmdStatus(ctx)
 			if err == nil && status != "" {
 				s.enqueue(fmt.Sprintf("📊 **Status heartbeat**\n%s", status))
 			}

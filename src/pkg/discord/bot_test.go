@@ -249,7 +249,7 @@ func TestFetchMessages_URLWithoutAfter(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, channelID)
-	_, err := b.fetchMessages("")
+	_, err := b.fetchMessages(context.Background(), "")
 	if err != nil {
 		t.Fatalf("fetchMessages returned error: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestFetchMessages_URLWithAfter(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, channelID)
-	_, err := b.fetchMessages(afterID)
+	_, err := b.fetchMessages(context.Background(), afterID)
 	if err != nil {
 		t.Fatalf("fetchMessages returned error: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestFetchMessages_ParsesJSONResponse(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, "ch")
-	got, err := b.fetchMessages("")
+	got, err := b.fetchMessages(context.Background(), "")
 	if err != nil {
 		t.Fatalf("fetchMessages returned error: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestFetchMessages_AuthorizationHeader(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, "ch")
-	_, _ = b.fetchMessages("")
+	_, _ = b.fetchMessages(context.Background(), "")
 
 	if gotAuth != "Bot test-token" {
 		t.Errorf("Authorization header: got %q, want %q", gotAuth, "Bot test-token")
@@ -353,7 +353,7 @@ func TestFetchMessages_APIErrorReturnsError(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, "ch")
-	msgs, err := b.fetchMessages("")
+	msgs, err := b.fetchMessages(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for 403 response, got nil")
 	}
@@ -373,7 +373,7 @@ func TestFetchMessages_InvalidJSONReturnsError(t *testing.T) {
 	defer ts.Close()
 
 	b := newTestBot(ts, "ch")
-	_, err := b.fetchMessages("")
+	_, err := b.fetchMessages(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected JSON decode error, got nil")
 	}
@@ -384,7 +384,7 @@ func TestFetchMessages_NetworkError(t *testing.T) {
 	ts.Close()
 
 	b := newTestBot(ts, "ch")
-	_, err := b.fetchMessages("")
+	_, err := b.fetchMessages(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for network failure, got nil")
 	}
@@ -412,7 +412,7 @@ func TestSendMessage_NewRequestError(t *testing.T) {
 func TestFetchMessages_NewRequestError(t *testing.T) {
 	b := NewBot(Config{Token: "tok", ChannelID: "\x00"}, discardLogger())
 
-	_, err := b.fetchMessages("")
+	_, err := b.fetchMessages(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error from http.NewRequest with invalid URL, got nil")
 	}
@@ -649,7 +649,7 @@ func TestPollLoop_ProcessesMessagesInReverseOrder(t *testing.T) {
 	// exercising it for a short window.
 
 	// Direct unit test of the ordering logic via fetchMessages + routeMessage:
-	msgs, err := b.fetchMessages("")
+	msgs, err := b.fetchMessages(context.Background(), "")
 	if err != nil {
 		t.Fatalf("fetchMessages: %v", err)
 	}

@@ -109,6 +109,8 @@ type Service struct {
 	messageLimit      int
 	sendInterval      time.Duration
 	heartbeatInterval time.Duration
+	sseReconnectBase  time.Duration
+	sseReconnectMax   time.Duration
 
 	msgQueue  chan msgItem
 	lastState *statusSnapshot
@@ -151,6 +153,8 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		messageLimit:      messageLimit,
 		sendInterval:      sendInterval,
 		heartbeatInterval: heartbeatInterval,
+		sseReconnectBase:  sseReconnectBase,
+		sseReconnectMax:   sseReconnectMax,
 		msgQueue:          make(chan msgItem, 100),
 	}
 }

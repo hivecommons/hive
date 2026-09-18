@@ -1,0 +1,1 @@
+- Fix chat and Discord reconnect backoff and cancellation handling.

@@ -7,23 +7,23 @@ import (
 )
 
 func (s *Service) registerBuiltinCommands() {
-	s.RegisterCommand("status", func(_ context.Context, _ string) (string, error) {
-		return s.cmdStatus()
+	s.RegisterCommand("status", func(ctx context.Context, _ string) (string, error) {
+		return s.cmdStatus(ctx)
 	})
-	s.RegisterCommand("governor", func(_ context.Context, _ string) (string, error) {
-		return s.cmdGovernor()
+	s.RegisterCommand("governor", func(ctx context.Context, _ string) (string, error) {
+		return s.cmdGovernor(ctx)
 	})
 	s.RegisterCommand("help", func(_ context.Context, _ string) (string, error) {
 		return s.cmdHelp(), nil
 	})
-	s.RegisterCommand("kick", func(_ context.Context, args string) (string, error) {
-		return s.cmdAgentAction("kick", args)
+	s.RegisterCommand("kick", func(ctx context.Context, args string) (string, error) {
+		return s.cmdAgentAction(ctx, "kick", args)
 	})
-	s.RegisterCommand("pause", func(_ context.Context, args string) (string, error) {
-		return s.cmdAgentAction("pause", args)
+	s.RegisterCommand("pause", func(ctx context.Context, args string) (string, error) {
+		return s.cmdAgentAction(ctx, "pause", args)
 	})
-	s.RegisterCommand("resume", func(_ context.Context, args string) (string, error) {
-		return s.cmdAgentAction("resume", args)
+	s.RegisterCommand("resume", func(ctx context.Context, args string) (string, error) {
+		return s.cmdAgentAction(ctx, "resume", args)
 	})
 }
 
@@ -99,13 +99,13 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		var err error
 		switch action {
 		case "pause":
-			reply, err = s.dashboardPause(cmd)
+			reply, err = s.dashboardPause(ctx, cmd)
 		case "resume":
-			reply, err = s.dashboardResume(cmd)
+			reply, err = s.dashboardResume(ctx, cmd)
 		case "kick":
-			reply, err = s.dashboardKick(cmd, rest)
+			reply, err = s.dashboardKick(ctx, cmd, rest)
 		default:
-			reply, err = s.dashboardKick(cmd, args)
+			reply, err = s.dashboardKick(ctx, cmd, args)
 		}
 		if err != nil {
 			reply = fmt.Sprintf("❌ %s", err)

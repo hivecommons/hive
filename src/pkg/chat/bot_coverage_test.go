@@ -181,7 +181,7 @@ func TestCmdStatus_Success(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, err := b.cmdStatus()
+	result, err := b.cmdStatus(context.Background())
 	if err != nil {
 		t.Fatalf("cmdStatus error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestCmdStatus_DashboardUnreachable(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://127.0.0.1:1"}, discardLogger())
 	b.client = &http.Client{Timeout: 1 * time.Second}
 
-	result, err := b.cmdStatus()
+	result, err := b.cmdStatus(context.Background())
 	if err != nil {
 		t.Fatalf("cmdStatus should not return error on dashboard failure: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestCmdStatus_InvalidJSON(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, err := b.cmdStatus()
+	result, err := b.cmdStatus(context.Background())
 	if err != nil {
 		t.Fatalf("cmdStatus error: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestCmdStatus_LongDoingTruncated(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.cmdStatus()
+	result, _ := b.cmdStatus(context.Background())
 	// Long doing (>80 chars) gets truncated to 80
 	if !strings.Contains(result, "scanner") {
 		t.Error("result should contain agent name")
@@ -271,7 +271,7 @@ func TestCmdStatus_TruncatesLongResult(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.cmdStatus()
+	result, _ := b.cmdStatus(context.Background())
 	if len(result) > defaultMessageLimit+len("…") {
 		t.Errorf("result length %d exceeds limit %d", len(result), defaultMessageLimit)
 	}
@@ -295,7 +295,7 @@ func TestCmdGovernor_Success(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, err := b.cmdGovernor()
+	result, err := b.cmdGovernor(context.Background())
 	if err != nil {
 		t.Fatalf("cmdGovernor error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestCmdGovernor_NoBudget(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.cmdGovernor()
+	result, _ := b.cmdGovernor(context.Background())
 	if strings.Contains(result, "Budget") {
 		t.Error("result should not contain budget when weekly budget is 0")
 	}
@@ -333,7 +333,7 @@ func TestCmdGovernor_DashboardUnreachable(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://127.0.0.1:1"}, discardLogger())
 	b.client = &http.Client{Timeout: 1 * time.Second}
 
-	result, err := b.cmdGovernor()
+	result, err := b.cmdGovernor(context.Background())
 	if err != nil {
 		t.Fatalf("cmdGovernor error: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestCmdAgentAction_Kick(t *testing.T) {
 	b.client = ts.Client()
 	b.SetAgentNames([]string{"scanner"})
 
-	result, err := b.cmdAgentAction("kick", "scanner fix the build")
+	result, err := b.cmdAgentAction(context.Background(), "kick", "scanner fix the build")
 	if err != nil {
 		t.Fatalf("cmdAgentAction error: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestCmdAgentAction_KickNoPrompt(t *testing.T) {
 	b.client = ts.Client()
 	b.SetAgentNames([]string{"scanner"})
 
-	result, _ := b.cmdAgentAction("kick", "scanner")
+	result, _ := b.cmdAgentAction(context.Background(), "kick", "scanner")
 	if !strings.Contains(result, "Kicked scanner") {
 		t.Errorf("expected kick confirmation, got: %q", result)
 	}
@@ -391,7 +391,7 @@ func TestCmdAgentAction_Pause(t *testing.T) {
 	b.client = ts.Client()
 	b.SetAgentNames([]string{"scanner"})
 
-	result, _ := b.cmdAgentAction("pause", "scanner")
+	result, _ := b.cmdAgentAction(context.Background(), "pause", "scanner")
 	if !strings.Contains(result, "Paused scanner") {
 		t.Errorf("expected pause confirmation, got: %q", result)
 	}
@@ -407,7 +407,7 @@ func TestCmdAgentAction_Resume(t *testing.T) {
 	b.client = ts.Client()
 	b.SetAgentNames([]string{"scanner"})
 
-	result, _ := b.cmdAgentAction("resume", "scanner")
+	result, _ := b.cmdAgentAction(context.Background(), "resume", "scanner")
 	if !strings.Contains(result, "Resumed scanner") {
 		t.Errorf("expected resume confirmation, got: %q", result)
 	}
@@ -417,7 +417,7 @@ func TestCmdAgentAction_UnknownAgent(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{}, discardLogger())
 	b.SetAgentNames([]string{"scanner"})
 
-	result, _ := b.cmdAgentAction("kick", "nonexistent")
+	result, _ := b.cmdAgentAction(context.Background(), "kick", "nonexistent")
 	if !strings.Contains(result, "Unknown agent") {
 		t.Errorf("expected unknown agent error, got: %q", result)
 	}
@@ -427,7 +427,7 @@ func TestCmdAgentAction_UnknownAction(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{}, discardLogger())
 	b.SetAgentNames([]string{"scanner"})
 
-	result, _ := b.cmdAgentAction("badaction", "scanner")
+	result, _ := b.cmdAgentAction(context.Background(), "badaction", "scanner")
 	if !strings.Contains(result, "Unknown action") {
 		t.Errorf("expected unknown action error, got: %q", result)
 	}
@@ -444,7 +444,7 @@ func TestCmdAgentAction_AliasResolution(t *testing.T) {
 	b.SetAgentNames([]string{"scanner"})
 
 	// "sc" is an alias for "scanner"
-	result, _ := b.cmdAgentAction("kick", "sc")
+	result, _ := b.cmdAgentAction(context.Background(), "kick", "sc")
 	if !strings.Contains(result, "Kicked scanner") {
 		t.Errorf("expected alias resolution to scanner, got: %q", result)
 	}
@@ -466,7 +466,7 @@ func TestDashboardGet_Success(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	data, err := b.dashboardGet("/api/status")
+	data, err := b.dashboardGet(context.Background(), "/api/status")
 	if err != nil {
 		t.Fatalf("dashboardGet error: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestDashboardGet_Error(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	_, err := b.dashboardGet("/api/status")
+	_, err := b.dashboardGet(context.Background(), "/api/status")
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -505,7 +505,7 @@ func TestDashboardPost_Success(t *testing.T) {
 	b.client = ts.Client()
 
 	payload, _ := json.Marshal(map[string]string{"prompt": "do stuff"})
-	err := b.dashboardPost("/api/kick/scanner", payload)
+	err := b.dashboardPost(context.Background(), "/api/kick/scanner", payload)
 	if err != nil {
 		t.Fatalf("dashboardPost error: %v", err)
 	}
@@ -526,7 +526,7 @@ func TestDashboardPost_NilBody(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	err := b.dashboardPost("/api/pause/scanner", nil)
+	err := b.dashboardPost(context.Background(), "/api/pause/scanner", nil)
 	if err != nil {
 		t.Fatalf("dashboardPost with nil body error: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestDashboardPost_Error(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	err := b.dashboardPost("/api/kick/scanner", nil)
+	err := b.dashboardPost(context.Background(), "/api/kick/scanner", nil)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
 	}
@@ -564,7 +564,7 @@ func TestDashboardKick_WithPrompt(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, err := b.dashboardKick("scanner", "fix the build")
+	result, err := b.dashboardKick(context.Background(), "scanner", "fix the build")
 	if err != nil {
 		t.Fatalf("dashboardKick error: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestDashboardKick_WithoutPrompt(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.dashboardKick("scanner", "")
+	result, _ := b.dashboardKick(context.Background(), "scanner", "")
 	if !strings.Contains(result, "Kicked scanner") {
 		t.Errorf("expected kick confirmation, got: %q", result)
 	}
@@ -601,7 +601,7 @@ func TestDashboardKick_Error(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.dashboardKick("scanner", "")
+	result, _ := b.dashboardKick(context.Background(), "scanner", "")
 	if !strings.Contains(result, "Failed to kick") {
 		t.Errorf("expected failure message, got: %q", result)
 	}
@@ -616,7 +616,7 @@ func TestDashboardPause_Error(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.dashboardPause("scanner")
+	result, _ := b.dashboardPause(context.Background(), "scanner")
 	if !strings.Contains(result, "Failed to pause") {
 		t.Errorf("expected failure message, got: %q", result)
 	}
@@ -631,7 +631,7 @@ func TestDashboardResume_Error(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 	b.client = ts.Client()
 
-	result, _ := b.dashboardResume("scanner")
+	result, _ := b.dashboardResume(context.Background(), "scanner")
 	if !strings.Contains(result, "Failed to resume") {
 		t.Errorf("expected failure message, got: %q", result)
 	}
@@ -1140,7 +1140,7 @@ func TestConsumeSSE_ParsesEvents(t *testing.T) {
 	defer cancel()
 
 	// consumeSSE will return EOF when the server closes the connection
-	_ = b.consumeSSE(ctx)
+	_, _ = b.consumeSSE(ctx)
 
 	// Verify state was captured
 	b.mu.Lock()
@@ -1163,7 +1163,7 @@ func TestConsumeSSE_NonOKStatus(t *testing.T) {
 
 	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
 
-	err := b.consumeSSE(context.Background())
+	_, err := b.consumeSSE(context.Background())
 	if err == nil {
 		t.Fatal("expected error for non-200 SSE response")
 	}

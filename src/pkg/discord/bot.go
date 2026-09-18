@@ -185,7 +185,7 @@ func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message))
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			messages, err := b.fetchMessages(lastMessageID)
+			messages, err := b.fetchMessages(ctx, lastMessageID)
 			if err != nil {
 				b.logger.Warn("discord poll failed", "error", err)
 				continue
@@ -203,13 +203,13 @@ func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message))
 	}
 }
 
-func (b *discordBackend) fetchMessages(after string) ([]discordMessage, error) {
+func (b *discordBackend) fetchMessages(ctx context.Context, after string) ([]discordMessage, error) {
 	url := fmt.Sprintf("%s/channels/%s/messages?limit=10", discordAPIBase, b.channelID)
 	if after != "" {
 		url += "&after=" + after
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
