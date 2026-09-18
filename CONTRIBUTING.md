@@ -32,9 +32,19 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 
 ## Branches
 
-Use `v4` as the base branch for Hive work and PRs unless a maintainer asks otherwise. The `main` branch is not the active target for changes.
+Hive develops on parallel release lines (see [ROADMAP.md](ROADMAP.md) for the
+authoritative line policy). Pick your base branch by the kind of change:
 
-Before starting work:
+| Base branch | Use it for |
+| --- | --- |
+| `v4` (default) | Bug fixes, security fixes, dependency updates, docs, and operability improvements on the supported stable line. Note the accepted [feature-freeze policy](ROADMAP.md#v4--stable-line) ([#6346](https://github.com/hivecommons/hive/issues/6346)): after the freeze (when the v5 GA bar's Release-train rows are green, or 2026-10-15, whichever comes first), `v4` accepts security and critical fixes only. |
+| `v5` | Structural or protocol-level changes, gated by public `[v5 RFC]` issues per [ROADMAP.md](ROADMAP.md#v5--next-generation). |
+| `v6` | Dashboard-optional-operation work under the [#7563 epic](https://github.com/hivecommons/hive/issues/7563) only — such PRs are out of scope on `v4` and `v5` (see [ROADMAP.md](ROADMAP.md#v6--dashboard-optional-operation-line-open)). |
+
+The `main` branch is not the active target for changes. When in doubt, or if a
+maintainer asks for a different base, follow the maintainer's guidance.
+
+Before starting work (substitute your chosen base branch for `v4`):
 
 ```bash
 git fetch origin
