@@ -471,7 +471,14 @@ func onlyLeaseIdentity(t *testing.T, h *ContributeWSHub) string {
 
 func leaseExpiry(t *testing.T, h *ContributeWSHub, identity string) time.Time {
 	t.Helper()
-	return onlyLeaseOf(t, h, identity).expiresAt
+	l := onlyLeaseOf(t, h, identity)
+	// Read the field under leaseMu: renewLease writes expiresAt under that lock
+	// from the hub's handler goroutine, so reading it after onlyLeaseOf has
+	// released the lock is a data race (caught by -race in CI). Same pattern as
+	// backdateLease, which writes the field the same way.
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	return l.expiresAt
 }
 
 // onlyLeaseOf returns the single lease this identity holds (#7774: the registry

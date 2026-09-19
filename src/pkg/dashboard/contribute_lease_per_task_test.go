@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // contribute_lease_per_task_test.go — hivecommons/hive#7774.
@@ -173,25 +174,24 @@ func TestLeasePerTask_FlapOnFirstTaskResumes(t *testing.T) {
 // to, failing if the leases name more than one.
 func onlyIdentityOf(t *testing.T, h *ContributeWSHub) string {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	var id string
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		h.leaseMu.Lock()
+		defer h.leaseMu.Unlock()
 		ids := map[string]bool{}
 		for _, l := range h.leases {
 			ids[l.identity] = true
 		}
-		h.leaseMu.Unlock()
-		if len(ids) == 1 {
-			for id := range ids {
-				return id
-			}
-		}
 		if len(ids) > 1 {
 			t.Fatalf("leases belong to %d identities, expected one", len(ids))
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no lease recorded")
+		if len(ids) == 1 {
+			for k := range ids {
+				id = k
+			}
+			return true
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return false
+	}, "no lease recorded")
+	return id
 }
