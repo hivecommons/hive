@@ -20,13 +20,13 @@ import (
 type Context7Suggester func(ctx context.Context, keyword string) string
 
 type Primer struct {
-	layers           []layerClient
-	fileStores       []localStore
-	graphStore       *GraphStore
-	config           PrimerConfig
-	logger           *slog.Logger
-	embedder         *EmbeddingCache
-	context7Suggest  Context7Suggester
+	layers          []layerClient
+	fileStores      []localStore
+	graphStore      *GraphStore
+	config          PrimerConfig
+	logger          *slog.Logger
+	embedder        *EmbeddingCache
+	context7Suggest Context7Suggester
 }
 
 type layerClient struct {
@@ -320,4 +320,14 @@ func buildQuery(filePaths []string, keywords []string) string {
 	parts = append(parts, keywords...)
 
 	return strings.Join(parts, " ")
+}
+
+// FileStoreNames returns the names of the registered file stores in
+// registration order.
+func (p *Primer) FileStoreNames() []string {
+	out := make([]string, 0, len(p.fileStores))
+	for _, s := range p.fileStores {
+		out = append(out, s.name)
+	}
+	return out
 }

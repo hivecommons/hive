@@ -2373,7 +2373,11 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 // bootKnowledge builds the knowledge API, connects vaults, git and document
 // sources, starts the bead synthesizer, promotion scheduler and graph store,
 // loads nous state, and resumes or parks the brainstorm inception.
-func (b *boot) bootKnowledge() {
+func (b *boot) bootKnowledge() { b.bootKnowledgeWith(defaultBootKnowledgeDeps()) }
+
+// bootKnowledgeWith is bootKnowledge with its disk and goroutine effects
+// injected; see bootKnowledgeDeps.
+func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	ctx, cfg, logger, sched, agentMgr := b.ctx, b.cfg, b.logger, b.sched, b.agentMgr
 	dashSrv, beadStores := b.dashSrv, b.beadStores
 	var knowledgeAPI *knowledge.KnowledgeAPI
@@ -2392,13 +2396,12 @@ func (b *boot) bootKnowledge() {
 
 	// Auto-connect configured vaults and start git-sync for Obsidian Git integration
 	gitSyncer := knowledge.NewGitSyncer(logger)
-	const seedDataDir = "/opt/hive/seed-data/wiki"
 	for _, vc := range cfg.Knowledge.Vaults {
-		if err := knowledge.InitVaultRepo(vc.Path, logger); err != nil {
+		if err := deps.initVaultRepo(vc.Path, logger); err != nil {
 			logger.Warn("failed to init vault directory", "name", vc.Name, "path", vc.Path, "error", err)
 			continue
 		}
-		if err := knowledge.SeedVaultContent(vc.Path, seedDataDir, logger); err != nil {
+		if err := deps.seedVaultContent(vc.Path, logger); err != nil {
 			logger.Warn("failed to seed vault content", "name", vc.Name, "error", err)
 		}
 		if knowledgeAPI != nil {
@@ -2508,7 +2511,7 @@ func (b *boot) bootKnowledge() {
 		}
 	}
 
-	go gitSyncer.Start(ctx)
+	deps.startGitSyncer(ctx, gitSyncer)
 
 	// Auto-enable knowledge API when not explicitly configured.
 	// Both bead-synth-wiki and inception require it.
@@ -2524,7 +2527,7 @@ func (b *boot) bootKnowledge() {
 	if len(beadStores) > 0 {
 		synthVaultPath := cfg.Knowledge.BeadSynthesizer.VaultPath
 		if synthVaultPath == "" {
-			synthVaultPath = "/data/vaults/bead-synth-wiki"
+			synthVaultPath = beadSynthVaultDefaultPath
 		}
 		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {
 			logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
@@ -2584,7 +2587,7 @@ func (b *boot) bootKnowledge() {
 		}
 
 		if cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil {
-			beadSynth.StartBackground(ctx)
+			deps.startBeadSynth(ctx, beadSynth)
 			logger.Info("bead-to-wiki synthesizer started",
 				"schedule", cfg.Knowledge.BeadSynthesizer.Schedule,
 				"target_layer", cfg.Knowledge.BeadSynthesizer.TargetLayer,
@@ -2607,7 +2610,7 @@ func (b *boot) bootKnowledge() {
 			curatorConfigFromHive(cfg.Knowledge.Curator),
 			logger,
 		)
-		promotionScheduler.StartBackground(ctx)
+		deps.startPromotion(ctx, promotionScheduler)
 	} else if cfg.Knowledge.Curator.Schedule != "" {
 		logger.Info("knowledge.curator.schedule is set but scheduled promotion is disabled",
 			"schedule", cfg.Knowledge.Curator.Schedule,
@@ -2619,14 +2622,12 @@ func (b *boot) bootKnowledge() {
 	// a SQLite file lock that blocks if the old pod still holds it. Deferring
 	// this lets the HTTP server start so the readiness probe passes, which
 	// tells Kubernetes to terminate the old pod and release the lock.
-	const graphStorePath = "/data/graph/knowledge.db"
-	go func() {
-		graphStore, graphErr := knowledge.NewGraphStore(graphStorePath, logger)
+	deps.openGraphStoreAsync(logger, func(graphStore *knowledge.GraphStore, graphErr error) {
 		if graphErr != nil {
-			logger.Warn("failed to open knowledge graph store", "path", graphStorePath, "error", graphErr)
+			logger.Warn("failed to open knowledge graph store", "path", knowledgeGraphStorePath, "error", graphErr)
 			return
 		}
-		logger.Info("knowledge graph store opened", "path", graphStorePath)
+		logger.Info("knowledge graph store opened", "path", knowledgeGraphStorePath)
 		if primer := sched.GetPrimer(); primer != nil {
 			primer.SetGraphStore(graphStore)
 		}
@@ -2648,20 +2649,15 @@ func (b *boot) bootKnowledge() {
 				}
 			}
 		}
-	}()
+	})
 
-	go dashboard.StartWorkspaceCleanup(ctx, logger, dashSrv.GetAudit())
+	deps.startWorkspaceCleanup(ctx, logger, dashSrv.GetAudit())
 
-	if err := os.MkdirAll(nousSnapshotDir, 0o755); err != nil {
-		logger.Warn("failed to create nous snapshot dir", "path", nousSnapshotDir, "error", err)
-	}
-	if err := os.MkdirAll(nousGovernorDir, 0o755); err != nil {
-		logger.Warn("failed to create nous governor dir", "path", nousGovernorDir, "error", err)
-	}
-	nousState := loadNousState(logger)
+	deps.ensureNousDirs(logger)
+	nousState := deps.loadNousState(logger)
 	nousState.SnapshotDir = nousSnapshotDir
 
-	inceptionEngine := knowledge.NewInceptionEngine("/data", knowledgeAPI, logger)
+	inceptionEngine := deps.newInceptionEngine(knowledgeAPI, logger)
 	sched.SetInception(inceptionEngine)
 
 	// Brainstorm is on-demand only. Only restart with bootstrap during
@@ -2675,7 +2671,7 @@ func (b *boot) bootKnowledge() {
 		state.Phase != knowledge.PhaseScaffold {
 		if time.Since(state.StartedAt) < staleInceptionThreshold {
 			msg := sched.BuildAgentMessage("brainstorm", nil, nil)
-			if err := agentMgr.RestartWithBootstrap(ctx, "brainstorm", msg); err != nil {
+			if err := deps.restartBrainstorm(ctx, agentMgr, msg); err != nil {
 				logger.Warn("failed to resume brainstorm for active inception", "error", err)
 			} else {
 				logger.Info("brainstorm resumed for active inception", "phase", state.Phase)

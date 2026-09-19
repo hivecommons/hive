@@ -202,3 +202,12 @@ func SeedVaultContent(vaultPath, seedDir string, logger *slog.Logger) error {
 	logger.Info("seed content copied to vault", "path", vaultPath, "files", copied)
 	return nil
 }
+
+// Names returns the registered vault names in registration order.
+func (g *GitSyncer) Names() []string {
+	out := make([]string, 0, len(g.vaults))
+	for _, v := range g.vaults {
+		out = append(out, v.name)
+	}
+	return out
+}
