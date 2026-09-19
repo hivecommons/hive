@@ -5102,23 +5102,25 @@ func (b *boot) bootLanes() {
 // blocks on the governor ticker until the context is canceled. Its ticker
 // defers are real defers: it is the last call in main(), so they fire at
 // the same moment they always did.
-func (b *boot) runLoop() {
+func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
+
+// runLoopWith is runLoop with its timers and per-tick IO injected; see
+// runLoopDeps.
+func (b *boot) runLoopWith(deps runLoopDeps) {
 	ctx, cfg, logger, gov, sched := b.ctx, b.cfg, b.logger, b.gov, b.sched
-	notifier, advisoryIssues, advisoryStore, agentMgr, dashSrv := b.notifier, b.advisoryIssues, b.advisoryStore, b.agentMgr, b.dashSrv
-	beadStores, tokenCollector, metricsCollector, nousState, inceptionEngine := b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, b.inceptionEngine
-	rotationMgr, wd, trajLane, replanLane, retroLane := b.rotationMgr, b.wd, b.trajLane, b.replanLane, b.retroLane
+	agentMgr, dashSrv, inceptionEngine := b.agentMgr, b.dashSrv, b.inceptionEngine
+	wd, trajLane, replanLane, retroLane := b.wd, b.trajLane, b.replanLane, b.retroLane
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
 	lastEvalInterval := cfg.Governor.EvalIntervalS
-	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
+	ticker := deps.newTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
 	defer ticker.Stop()
-	var lastAutoMergeSweep time.Time
-	var lastTaskListSweep time.Time
-	var lastDuplicateSweep time.Time
+	var sweeps sweepClock
 
-	var agentTicker *time.Ticker
+	var agentTickCh <-chan time.Time
 	if cfg.Dashboard.AgentPollIntervalS > 0 {
-		agentTicker = time.NewTicker(time.Duration(cfg.Dashboard.AgentPollIntervalS) * time.Second)
+		agentTicker := deps.newTicker(time.Duration(cfg.Dashboard.AgentPollIntervalS) * time.Second)
 		defer agentTicker.Stop()
+		agentTickCh = agentTicker.Chan()
 		logger.Info("fast agent status enabled", "interval_seconds", cfg.Dashboard.AgentPollIntervalS)
 	}
 
@@ -5126,13 +5128,10 @@ func (b *boot) runLoop() {
 	// launch and the heartbeat/trajectory/ticker setup. It has been moved to
 	// immediately after the HTTP listener starts (before the agent-launch loop),
 	// so the pod becomes Ready in seconds instead of minutes. See the MarkReady
-	// call and comment above the agent-launch goroutine.
+	// call and comment in bootLaunch.
 
-	const cliStartupDelay = 10 * time.Second
 	logger.Info("waiting for CLI startup before first eval", "delay", cliStartupDelay)
-	select {
-	case <-time.After(cliStartupDelay):
-	case <-ctx.Done():
+	if !deps.waitCLIStartup(ctx) {
 		return
 	}
 
@@ -5150,31 +5149,22 @@ func (b *boot) runLoop() {
 	// interval. A hive with no persisted state (fresh install) has no LastKick
 	// entries, and every cadenced agent is still kicked here, unchanged.
 	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
-	runEvalCycle(ctx, cfg, b.ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &b.lastActionable, advisoryStore, advisoryIssues, nil, logger)
-	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
+	deps.runEval(b, nil)
+	deps.runRotation(b)
 	if wd != nil {
 		wd.Tick(ctx)
 	}
-	runAutoMergeSweepIfDue(ctx, b.ghClient, dashSrv, &lastAutoMergeSweep, logger)
-	runTaskListSweepIfDue(ctx, b.ghClient, dashSrv, &lastTaskListSweep, logger)
-	runDuplicateSweepIfDue(ctx, cfg, b.ghClient, dashSrv, &lastDuplicateSweep, logger)
-	persistState(agentMgr, gov, cfg, hiveStatePath, logger, dashSrv, wd)
-
-	agentTickCh := func() <-chan time.Time {
-		if agentTicker != nil {
-			return agentTicker.C
-		}
-		return nil
-	}()
+	deps.runSweeps(b, &sweeps)
+	deps.persist(b)
 
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down, persisting state")
-			persistState(agentMgr, gov, cfg, hiveStatePath, logger, dashSrv, wd)
+			deps.persist(b)
 			return
-		case <-ticker.C:
-			restarted := agentMgr.CheckAndRestartCrashedAgents(ctx)
+		case <-ticker.Chan():
+			restarted := deps.restartCrashed(ctx, agentMgr)
 			for _, name := range restarted {
 				dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
 			}
@@ -5231,11 +5221,9 @@ func (b *boot) runLoop() {
 					restarted = append(restarted, name)
 				}
 			}
-			runEvalCycle(ctx, cfg, b.ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &b.lastActionable, advisoryStore, advisoryIssues, restarted, logger)
-			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
-			runAutoMergeSweepIfDue(ctx, b.ghClient, dashSrv, &lastAutoMergeSweep, logger)
-			runTaskListSweepIfDue(ctx, b.ghClient, dashSrv, &lastTaskListSweep, logger)
-			runDuplicateSweepIfDue(ctx, cfg, b.ghClient, dashSrv, &lastDuplicateSweep, logger)
+			deps.runEval(b, restarted)
+			deps.runRotation(b)
+			deps.runSweeps(b, &sweeps)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -5254,7 +5242,7 @@ func (b *boot) runLoop() {
 					logger.Info("retro lane filed advisory beads", "findings", n)
 				}
 			}
-			persistState(agentMgr, gov, cfg, hiveStatePath, logger, dashSrv, wd)
+			deps.persist(b)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",
 					"from", lastEvalInterval, "to", cfg.Governor.EvalIntervalS)
