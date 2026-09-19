@@ -127,8 +127,8 @@ func TestLeaseHold_OutageBetweenCooldownAndLeaseDoesNotDoubleAssign(t *testing.T
 	testutil.Eventually(t, 2*time.Second, func() bool {
 		s.contributeHub.leaseMu.Lock()
 		defer s.contributeHub.leaseMu.Unlock()
-		_, held := s.contributeHub.leases[identity]
-		return !held
+		// Per-task registry (#7774): look the lease up by {identity, task}.
+		return s.contributeHub.leaseForLocked(identity, assign.TaskID) == nil
 	}, "task_complete did not revoke the lease")
 	if keys := s.contributeHub.leasedIssueKeys("anyone-else", time.Now()); keys[key] {
 		t.Fatalf("a released task must not stay held: %v", keys)
@@ -154,7 +154,7 @@ func TestLeaseHold_ExpiredLeaseReleasesTheIssue(t *testing.T) {
 
 	// The holder never comes back; the lease ages out.
 	hub.leaseMu.Lock()
-	hub.leases["c-gone"].expiresAt = time.Now().Add(-time.Second)
+	hub.leaseForLocked("c-gone", "ct-gone").expiresAt = time.Now().Add(-time.Second) // per-task key (#7774)
 	hub.leaseMu.Unlock()
 	seedTwoIssues(s, 10, 20)
 	another := &ContributorConnection{
