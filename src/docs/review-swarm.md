@@ -114,6 +114,27 @@ Phase 2 adds dispatch state in `/var/run/hive-metrics/review-dispatch-state.json
 
 When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
 
+## Revising a recorded verdict
+
+Dispatch skips any PR that already carries a verdict for its head SHA. That is the right default — it stops the reviewer re-reviewing unchanged code every sweep — but it also makes a review final the moment it is written, even when the reviewer itself was defective. Two settings, both required, re-open such verdicts narrowly:
+
+```yaml
+review:
+  revise_repos: [org/repo]                       # allowlist; empty (default) = no repo may be revised
+  revise_verdicts_before: 2026-09-19T14:00:00Z   # RFC 3339; only verdicts recorded before this instant
+```
+
+- `revise_repos` allowlists the repos whose reviews may be edited. Silently rewriting text a maintainer has already read is a power worth granting deliberately, per repo — so the empty default means the feature is entirely off.
+- `revise_verdicts_before` re-opens PRs whose verdict was recorded before the cutoff even though their head SHA has not moved. The cutoff is self-limiting: a re-review records a fresh timestamp that is necessarily after it, so each PR is revisited at most once per bump rather than looping. When a revisit is due, the head's pending dispatch entries are cleared so every enabled perspective is asked again, and an in-flight guard stops a revisit whose verdict is still outstanding from being re-kicked every cycle.
+
+The correction **edits the hive's existing review in place** rather than posting a second one — editing notifies nobody, while a new review pings every subscriber. The reviewing agent requests this with `hive-review --revise` (alongside its usual body and verdict file). Three guards in the relay make the edit safe to point at someone else's repo, each pinned by a test:
+
+- only a review authored by the hive's own App login is ever touched (no login configured → fail closed);
+- only `COMMENTED` reviews are edited, never `APPROVED` or `CHANGES_REQUESTED`, since rewriting those would retroactively change what a formal state says;
+- an identical body (modulo whitespace) issues no write at all.
+
+Both keys are also writable at runtime through `PUT /api/config/review` (owner only). The cutoff is validated as RFC 3339, and the GitHub client's cached revise allowlist refreshes on write rather than at the next boot.
+
 ## Deferred work
 
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.
