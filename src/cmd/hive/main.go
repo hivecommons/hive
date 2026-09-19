@@ -3141,7 +3141,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 
 // bootPolicies applies the ACMM pack planACMMBoot chose and starts the
 // policies repo watcher.
-func (b *boot) bootPolicies() {
+func (b *boot) bootPolicies() { b.bootPoliciesWith(defaultBootPoliciesDeps()) }
+
+// bootPoliciesWith is bootPolicies with the pack apply and policy watcher
+// injected; see bootPoliciesDeps.
+func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 	ctx, cfg, logger, saved, dashSrv := b.ctx, b.cfg, b.logger, b.saved, b.dashSrv
 	// The ACMM pack decision (config vs persisted vs HIVE_LEVEL, and whether
 	// this is a merge or a re-apply) lives in planACMMBoot (#7232); only the
@@ -3160,7 +3164,7 @@ func (b *boot) bootPolicies() {
 		} else {
 			logger.Info("audit: "+acmmPlan.action, "level", acmmPlan.level, "saved_level", saved.ACMMLevel, "trigger", "startup")
 		}
-		result, err := dashSrv.ApplyPack(acmmPlan.level)
+		result, err := deps.applyPack(dashSrv, acmmPlan.level)
 		switch {
 		case err != nil && saved == nil:
 			logger.Error("failed to auto-apply ACMM pack", "level", acmmPlan.level, "error", err)
@@ -3190,15 +3194,7 @@ func (b *boot) bootPolicies() {
 
 	if cfg.Policies.Repo != "" {
 		localDir := policiesLocalDir(cfg.Policies)
-		watcher := policies.NewWatcher(
-			cfg.Policies.Repo,
-			cfg.Policies.Branch,
-			cfg.Policies.Path,
-			localDir,
-			cfg.Policies.PollInterval,
-			logger,
-		)
-		if err := watcher.Start(ctx); err != nil {
+		if err := deps.startPolicyWatcher(ctx, cfg.Policies.Repo, cfg.Policies.Branch, cfg.Policies.Path, localDir, cfg.Policies.PollInterval, logger); err != nil {
 			logger.Warn("policy watcher failed to start", "error", err)
 		}
 	}
