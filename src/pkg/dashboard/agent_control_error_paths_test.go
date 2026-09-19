@@ -53,6 +53,12 @@ exit 0
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(tmuxScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	claudeScript := `#!/bin/sh
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(claudeScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
