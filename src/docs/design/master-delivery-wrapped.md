@@ -23,7 +23,7 @@ hub and delivers nothing to two thirds of the fleet.
 
 Every reconciled per-hive value is a pure function of the master plus the hive
 ID. A spoke holding `HIVE_HUB_SECRET` and `HIVE_ID` self-derives all of them:
-the heartbeat bearer (`SpokeHeartbeatKey`, `src/pkg/hub/hub_keys.go:455-466`), the invite
+the heartbeat bearer (`SpokeHeartbeatKey`, `src/pkg/hub/hub_keys.go:504-515`), the invite
 key (`SpokeInviteKey`, `:535-544`), the session key (`spokeDomainKey`,
 `:443-448`), and even the SSO public key — because it holds the master, it
 regenerates the hub's *private* seed via `SSOSigningSeedFromMaster`
@@ -758,7 +758,7 @@ resolved-looking sentence this document elsewhere refuses to write. Precisely:
 
 | | Timeline |
 |---|---|
-| **Evicted immediately at rotation** | All *future* masters. The bearer for N+1 is derived from master N+1 (`src/pkg/hub/hub_keys.go:455-466`), which is sealed to a pinned key the attacker does not hold. They cannot obtain N+1 or anything after it. |
+| **Evicted immediately at rotation** | All *future* masters. The bearer for N+1 is derived from master N+1 (`src/pkg/hub/hub_keys.go:504-515`), which is sealed to a pinned key the attacker does not hold. They cannot obtain N+1 or anything after it. |
 | **Retained for `defaultVerifyWindow` (7 days)** | Everything master N itself derives, **fleet-wide**, until generation N leaves `acceptableGenerations`. |
 
 Generation N remains live for verification for 7 days after rotation
@@ -890,7 +890,7 @@ Ranked, because these are where I would expect the failure:
 ### Regression replays
 
 - **F2 replay.** Assert no code path derives a wrapping-key trust decision
-  without `hiveID`, mirroring the banner at `src/pkg/hub/hub_keys.go:289-302`. If a
+  without `hiveID`, mirroring the banner at `src/pkg/hub/hub_keys.go:249-268`. If a
   publication can be accepted without an identity-bound bearer, F2 is re-opened
   through a new door.
 - **F19 replay.** Assert the wrap path reads the hub's *live* generation set,

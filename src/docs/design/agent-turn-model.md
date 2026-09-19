@@ -92,7 +92,7 @@ text**, by two independent mechanisms:
 `waitForInputPromptForAgent` (`src/pkg/agent/manager_tmux.go:452`) polls
 `captureTmuxPaneForAgent` and returns once `paneShowsInputPrompt`
 (`src/pkg/agent/manager_pane_signals.go:343`) matches a per-backend marker string. `SendKick`
-calls it at `src/pkg/agent/manager_kick.go:187`. This gate is the only thing that
+calls it at `src/pkg/agent/manager_kick.go:110`. This gate is the only thing that
 stops hive typing a new prompt on top of an in-flight response.
 
 The gate is bounded by `inputPromptTimeout` (120s), which is why operator kicks
@@ -128,11 +128,11 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
 - `Governor.Evaluate` (`src/pkg/governor/governor.go:323`) calls it at
   `src/pkg/governor/governor.go:420` and returns the due list.
 - The driving loop is a single ticker in `main`:
-  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:4951`, loop at
-  `src/cmd/hive/main.go:5009`, evaluation at `src/cmd/hive/main.go:5784`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:5928`
-  (`src/pkg/scheduler/scheduler.go:658`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:6005`.
+  `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5143`, loop at
+  `src/cmd/hive/main.go:5164`, evaluation at `src/cmd/hive/main.go:5798`,
+  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6120`
+  (`src/pkg/scheduler/scheduler.go:664`), and delivery via
+  `agentMgr.SendKick` at `src/cmd/hive/main.go:6197`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -149,7 +149,7 @@ CLI subprocess.
 
 | State | Where | Citation |
 |---|---|---|
-| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:925`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5761` |
+| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:925`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5793` |
 | Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/boot.go:147` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:41`; `watchdog.PersistedAgent` `src/pkg/watchdog/reconciler.go:205` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:49` |
@@ -175,7 +175,7 @@ Two caveats on that table:
 ### 2.2 In-process — lost on restart
 
 All of the following are fields of `AgentProcess`
-(`src/pkg/agent/manager.go:212`) or goroutines owned by the manager. None is
+(`src/pkg/agent/manager.go:203`) or goroutines owned by the manager. None is
 written anywhere.
 
 | State | Field / mechanism | Citation |
@@ -188,20 +188,20 @@ written anywhere.
 | Per-launch cancel func and launch generation | `cancel context.CancelFunc`, `launchGen int` | `src/pkg/agent/manager.go:242`, `:320` |
 | Launch-serialization flag | `launching bool` (guarded by `m.mu`) | `src/pkg/agent/manager.go:252` |
 | One-shot bootstrap override | `BootstrapOverride` | `src/pkg/agent/manager.go:253` |
-| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:273`, `:284`, `:287` |
+| Token-restart backoff ladder | `lastTokenRestart`, `tokenRestartAttempts`, `tokenRestartGaveUp` | `src/pkg/agent/manager.go:287`, `:284`, `:287` |
 | Login / quota observations | `NeedsLogin`, `QuotaExhausted` | `src/pkg/agent/manager.go:288-289` |
 | Consent-screen watcher timers | `consentSeenAt`, `lastConsentDismiss` | `src/pkg/agent/manager.go:305-306` |
-| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:307-310`, `:321`, `:341` |
+| Stall-watchdog per-kick state | `lastInferKickAt`, `lastInferKickPane`, `stallNudgeSent`, `lastInferKickMarks`, `actionNudgeSent` | `src/pkg/agent/manager.go:341`, `:321`, `:341` |
 | Transient-API-error nudge cooldown | `lastTransientNudge`, `transientNudgesThisKick` | `src/pkg/agent/manager.go:317-318` |
 | Un-archived-scrollback flag | `kickLogPending` (guarded by `m.mu`) | `src/pkg/agent/manager.go:334` |
-| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:352`, `:361`, `:388` |
+| Sandbox / bob-key latches, last launch banner | `sandboxResumeAfterCancel`, `awaitingBobKey`, `lastLaunchFailureBanner` | `src/pkg/agent/manager.go:388`, `:361`, `:388` |
 | Poller goroutines themselves | `go m.pollTmuxOutputForAgent(agent, agentCtx)` and siblings, tied to a per-launch context | `src/pkg/agent/manager_launch.go:276`, `:376`, `:279` |
 | Blocked-action thrash windows | `Manager.thrash map[string]*thrashState` under its own `thrashMu` — deliberately *not* `m.mu`, to avoid re-entrancy from the output-capture goroutines | `src/pkg/agent/manager.go:440-444`; `thrashState` `src/pkg/agent/manager_thrash.go:35`; trip logic `recordBlockedAndCheck` `src/pkg/agent/manager_thrash.go:81` |
 
 Note the asymmetry: several counters that exist precisely to *stop a runaway
 loop* (`tokenRestartAttempts`, `transientNudgesThisKick`, `stallNudgeSent`) are
 in-process only. A restart resets each of them to zero. The watchdog's own
-backoff ladder is persisted (`src/pkg/watchdog/reconciler.go:363`) specifically
+backoff ladder is persisted (`src/pkg/watchdog/reconciler.go:397`) specifically
 so that it doesn't have this property; the manager-side nudge counters were not
 given the same treatment. This is an observation about current behaviour, not a
 bug report — see Open questions.
@@ -328,7 +328,7 @@ exactly the destructive path in §3.
 
 **What the watchdog does about lost in-process state: nothing, and by design it
 cannot.** It restores its *own* ladder across restarts
-(`Snapshot`/`Restore`, `src/pkg/watchdog/reconciler.go:363` and `:397`), so it
+(`Snapshot`/`Restore`, `src/pkg/watchdog/reconciler.go:397` and `:397`), so it
 "neither forgets a crash-loop nor re-runs a backoff ladder from the top"
 (`src/pkg/watchdog/reconciler.go:389-390`). It has no mechanism to restore the
 agent's conversation, because none exists to call. From the watchdog's point of

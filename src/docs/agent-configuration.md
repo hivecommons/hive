@@ -514,7 +514,7 @@ agents:
       ref: main              # optional; branch/tag/SHA — omit for the default branch
 ```
 
-`definition_source` is `DefinitionSourceConfig` (`src/pkg/config/config.go:518`), a field on `AgentConfig` (`config.go:992`). `owner`, `repo`, and `path` are required for the source to be considered set (`IsSet()`, `config.go:544`); `ref` is optional and falls back to the repo's default branch. `url` is a fifth, informational-only field the dashboard import UI uses to round-trip the pasted `github.com` blob URL — it plays no part in fetching.
+`definition_source` is `DefinitionSourceConfig` (`src/pkg/config/config.go:518`), a field on `AgentConfig` (`config.go:935`). `owner`, `repo`, and `path` are required for the source to be considered set (`IsSet()`, `config.go:544`); `ref` is optional and falls back to the repo's default branch. `url` is a fifth, informational-only field the dashboard import UI uses to round-trip the pasted `github.com` blob URL — it plays no part in fetching.
 
 ### What it does
 
@@ -571,7 +571,7 @@ variables:
       - my-org/agent-definitions           # exact "owner/repo" slugs only
 ```
 
-This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:4380`, `config.go:4439-4441`), so:
+This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:4412`, `config.go:4483-4485`), so:
 
 - A dashboard save cannot turn `allow_github_prompt` on if the seed has it off.
 - A dashboard save cannot add a repo slug to `github_prompt_allowlist`.

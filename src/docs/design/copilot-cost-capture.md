@@ -88,7 +88,7 @@ That design is correct for its purpose and was hard-won: `restoreFromDisk`
 (`inference_sink.go:79`) exists because an in-memory-only sink restarted every
 counter at zero and overwrote the persisted file with a lower value — the
 "$18k→$394 regression" the `SetCopilotLiveCapture` comment names
-(`collector.go:150-160`).
+(`collector.go:261-272`).
 
 **So the epic's table row "Inference sink (proxy): cumulative per-agent, no
 timestamps — ❌ impossible" is accurate about the sink, but misattributes the

@@ -366,7 +366,7 @@ It is not a bug. Those three sites are inside `spokeDomainKey`,
 pod those three functions are never called, so the empty `HIVE_HUB_SECRET`
 they would read is never consulted.
 
-The hub's own material comes from `NewHubServer` (`server.go:1383`), which
+The hub's own material comes from `NewHubServer` (`server.go:1388`), which
 reads the env var, falls back to `/data/saas/hub-secret.key`, and generates +
 persists a fresh secret if both are absent — and `provisionMasterSecret()`
 mirrors that same order. Both resolve to the 64-byte file that exists on the

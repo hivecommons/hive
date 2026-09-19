@@ -192,7 +192,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - **Facts never show up in kicks**: confirm the source reached `Ready: true`
   (`GET /api/knowledge/git-sources`) — the primer only registers a source's
   `FileStore` for priming after it reports ready
-  (`main.go:2680-2693`).
+  (`main.go:2450-2461`).
 
 ## Open questions
 

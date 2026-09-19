@@ -82,7 +82,7 @@ and dispatches on `X-GitHub-Event` (`src/pkg/hub/webhook.go:53`), today for
 `pkg/channels` runtime meant to serve them was never wired into the binary,
 declaring one validated cleanly while suppressing governor kicks, and the agent
 sat permanently dormant with no diagnostics. The types were removed and
-`ValidateChannels` now rejects them (`src/pkg/config/config.go:5506`, #5591).
+`ValidateChannels` now rejects them (`src/pkg/config/config.go:5538`, #5591).
 A mention trigger is a new channel type, and it must land with its runtime in
 the same PR — never as a config key first.
 
@@ -326,8 +326,8 @@ From the issue, restated as boundaries this design must not cross:
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
 - `src/pkg/agent/capabilities.go:32` — `Converse`, documented for mentions.
 - `src/pkg/proxy/rules.go:152,170` — where `Converse` is enforced.
-- `src/pkg/config/config.go:1681` — `linear.session_agent` resolution rule.
-- `src/pkg/config/config.go:5506` — the removed declarative channel types (#5591).
+- `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
+- `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
   list and the per-thread cap.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the

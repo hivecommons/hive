@@ -66,7 +66,7 @@ Fields (`MintConfig`, `pkg/config/config.go:227-239`):
 
 | YAML key | Go field | Required (when `enabled: true`) | Default | Notes |
 |---|---|---|---|---|
-| `enabled` | `Enabled` | — | `false` | Turns the service on. `buildAgentMinter` is only invoked when this is `true` (`main.go:2157-2158`). |
+| `enabled` | `Enabled` | — | `false` | Turns the service on. `buildAgentMinter` is only invoked when this is `true` (`main.go:1870-1871`). |
 | `key_path` | `KeyPath` | **Yes** | — | PEM path of the RSA signing key. Startup fails with `mint.key_path is required when mint is enabled` if empty while `enabled: true` (`main.go:855-857`). |
 | `issuer` | `Issuer` | **Yes** | — | The `iss` claim, and the identity string WIF providers are configured to trust — typically the hive's public URL. Startup fails with `mint.issuer is required when mint is enabled` if empty (`main.go:858-860`). |
 | `max_ttl_seconds` | `MaxTTLSeconds` | No | `900` (15m, `mint.DefaultMaxTTL`) | Bounds a minted token's lifetime. **Clamped, never trusted verbatim**: any configured value is silently clamped into `[MinTTL 1m, HardCapTTL 1h]` (`mint.go:96-111,172-186`) — you cannot configure a token that outlives one hour no matter what you set here. |
@@ -124,7 +124,7 @@ that endpoint.** `pkg/mint/README.md` states this explicitly:
 Confirmed by search: no route registers `jwks` or `well-known` anywhere
 under `pkg/dashboard/` or `cmd/hive/`. Today, `mint.enabled: true` only
 wires the in-process `AgentMinter` that stamps agent-scoped tokens
-(`main.go:2157-2164`) — it does **not** stand up an HTTP `/mint` endpoint or
+(`main.go:1870-1877`) — it does **not** stand up an HTTP `/mint` endpoint or
 a public JWKS endpoint. If your use case needs an *external* WIF broker
 (GCP/AWS/Azure/registry) to independently verify hive-minted tokens over
 HTTP, that transport does not exist yet in this codebase; enabling `mint:`

@@ -44,7 +44,7 @@ and `universalCriteria` contains the repo-universal checks
 (`src/pkg/dashboard/acmm_criteria.go:24`). The evaluator loops all configured
 repos, calls `checkCriterion` for each criterion, stores per-repo results, and
 returns a `RepoEvaluation` with `CodebaseLevel` and level details
-(`src/pkg/dashboard/api_acmm_eval.go:512`, `src/pkg/dashboard/api_acmm_eval.go:533`).
+(`src/pkg/dashboard/api_acmm_eval.go:520`, `src/pkg/dashboard/api_acmm_eval.go:533`).
 `checkCriterion` passes when any listed pattern exists
 (`src/pkg/dashboard/api_acmm_eval.go:649`). That existence-only behavior is
 useful for measurement but dangerous as an automation target.
@@ -63,7 +63,7 @@ There is also a current per-repo checkout-root mechanism, but not the exact
 `governor.acmm.repo_roots` spelling from the RFC. On `v4`,
 `ProjectConfig.CheckoutRootFor` supplies a host-local checkout root for one
 monitored repo (`src/pkg/config/config.go:570`), and the scheduler resolves
-per-repo roots through `agentsRepoRoot` (`src/pkg/scheduler/scheduler.go:2152`).
+per-repo roots through `agentsRepoRoot` (`src/pkg/scheduler/scheduler.go:2178`).
 The onboarding reconciler should follow the current config structure rather than
 revive stale field names.
 

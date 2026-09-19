@@ -18,15 +18,14 @@ Every code reference below was checked against `v4` unless explicitly marked
 Hive can rotate across many agentic CLI backends, but token and cost metering is
 narrower than backend selection. `CLIBackends` lists thirteen CLI backends on `v4`:
 `claude`, `copilot`, `goose`, `codex`, `pi`, `bob`, `aider`, `gemini`, `agy`,
-`opencode`, `kilo`, `muse`, and `omp` (`src/pkg/config/config.go:5233`,
-`src/pkg/config/config.go:5236`). The token collector currently merges native
+`opencode`, `kilo`, `muse`, and `omp` (`src/pkg/config/config.go:5265`). The token collector currently merges native
 session scans for Claude, Copilot, and Bob only
 (`src/pkg/tokens/collector.go:319`, `src/pkg/tokens/collector.go:329`,
 `src/pkg/tokens/collector.go:339`). Those scanners are
 `ScanClaudeSessions` (`src/pkg/tokens/claude_scanner.go:56`),
 `ScanCopilotSessions` (`src/pkg/tokens/copilot_scanner.go:68`), and
 `ScanBobSessions` / `ScanBobSessionsWithLogger`
-(`src/pkg/tokens/bob_scanner.go:97`, `src/pkg/tokens/bob_scanner.go:101`).
+(`src/pkg/tokens/bob_scanner.go:101`, `src/pkg/tokens/bob_scanner.go:101`).
 
 The price table is also local and hand-maintained. `pricing.go` documents it as
 estimated list-price fallback for backends without native dollar figures and
