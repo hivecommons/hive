@@ -300,6 +300,16 @@ const ABSOLUTE_TASK_DEADLINE_MS = Number(process.env.HIVE_ABSOLUTE_TASK_DEADLINE
 // process instead, so a wedged CLI is killed and reported failed rather than
 // hanging the pod forever — and, per #5321, a long-but-live headless run is no
 // longer killed at 30 minutes either.
+//
+// This bound only holds if the HUB agrees (hivecommons/hive#7778). The hub's
+// own lease on the task is a progress lease: it is renewed by every
+// task_progress frame and reclaimed — the task revoked, the issue put in
+// failure cooldown — after 30 minutes without one. The interactive path feeds
+// it from progressTick(); the headless path used to send a single task_progress
+// when the child started and nothing more, so the hub took every headless task
+// back at 30 minutes regardless of this ceiling, and the revoke killed a live
+// child mid-run. runHeadlessTask() now reports progress on the same cadence as
+// the interactive path for as long as its child is alive (headlessProgressTick).
 const HEADLESS_TASK_TIMEOUT_MS = Number(process.env.HIVE_HEADLESS_TASK_TIMEOUT_MS) || ABSOLUTE_TASK_DEADLINE_MS;
 const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // After the hub sends an explicit task_unavailable negative-ack (no admissible
@@ -1350,6 +1360,28 @@ function createBoundedOutputCapture(maxBytes) {
   };
 }
 
+// headlessProgressFrame is the task_progress a headless run sends — once when
+// the child starts, and then on every progress tick while it is alive (#7778).
+// Nothing is scraped: a live child IS the progress signal in this mode, exactly
+// as the hub's lease model needs ("still reporting" means "still alive").
+function headlessProgressFrame(task) {
+  return { type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working', ...effectiveSelectionFields() };
+}
+
+// headlessProgressTick is the headless analogue of progressTick(), armed on the
+// same progressInterval handle and on the same PROGRESS_REPORT_INTERVAL_MS
+// cadence so the hub's 30-minute progress lease is renewed for a headless task
+// the way it is for an interactive one (hivecommons/hive#7778). Every task-exit
+// path already clears progressInterval, so a tick can only run while the relay
+// believes the task is live; the guards below make it a no-op if the child has
+// gone or the assignment has changed hands, so a stale timer can never renew a
+// lease for work that is not happening.
+function headlessProgressTick(task) {
+  if (!currentTask || currentTask.task_id !== task.task_id || currentTask.task_gen !== task.task_gen) return;
+  if (!headlessChild || headlessChild.killed) return;
+  send(headlessProgressFrame(task));
+}
+
 function runHeadlessTask(task) {
   const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
   if (!headlessSupportsBackend()) {
@@ -1376,7 +1408,7 @@ function runHeadlessTask(task) {
   const { bin, args } = built;
   console.log(`Headless: running ${bin} (one-shot) for ${task.repo}#${task.number}`);
   writeHeadlessStatus(HEADLESS_STATE_WORKING, { task_id: task.task_id, task_gen: task.task_gen, repo: task.repo, number: task.number, result: 'working' });
-  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working', ...effectiveSelectionFields() });
+  send(headlessProgressFrame(task));
 
   let settled = false;
   const finish = (fn) => { if (settled) return; settled = true; fn(); };
@@ -1404,8 +1436,20 @@ function runHeadlessTask(task) {
   // killed it (found live by bin/test_backend_smoke.sh). Close stdin for
   // every backend — a one-shot child has no interactive input coming.
   if (headlessChild.stdin) headlessChild.stdin.end();
+  // #7778: keep the hub's progress lease alive for as long as the child is.
+  // Without this the hub heard exactly one task_progress per headless task and
+  // reclaimed it at wsTaskTimeout (30 min), two hours or more before the
+  // ceiling above — killing a live run and cooling down its issue. Reuses the
+  // interactive path's handle so every task-exit path (completion, failure,
+  // revoke, shutdown) already stops it.
+  if (progressInterval) clearInterval(progressInterval);
+  progressInterval = setInterval(() => headlessProgressTick(task), PROGRESS_REPORT_INTERVAL_MS);
   headlessChild.on('close', (code, signal) => {
     clearTimeout(timeout);
+    // The child is gone: stop renewing the hub's lease for it (#7778). Cleared
+    // here rather than only in the exit paths below because the revoked-task
+    // return just under this must not leave a timer running either.
+    if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
     headlessChild = null;
     // Tokens can appear in agent output; redact before the tail leaves the host.
     const outText = output.truncated()
@@ -5285,6 +5329,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     buildHeadlessArgv,
     runHeadlessTask,
     getHeadlessChild: () => headlessChild,
+    // #7778: the headless lease-renewal tick and whether its timer is armed.
+    headlessProgressTick,
+    getProgressIntervalArmed: () => progressInterval !== null,
     // Attach-hint surface (kubestellar/hive#5145): the exact command the
     // needs-authentication banner tells a human to paste.
     ATTACH_COMMAND,

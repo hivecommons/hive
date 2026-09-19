@@ -1575,6 +1575,109 @@ test('Pi revoke kills the child and rejects a raced stale completion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// hivecommons/hive#7778 — a headless task must keep renewing the hub's progress
+// lease while its child is alive.
+//
+// The hub reclaims any task not renewed by a task_progress within wsTaskTimeout
+// (30 min): revoke, failure cooldown on the issue. The interactive path renews
+// it from progressTick(); the headless path sent ONE task_progress at child start
+// and then nothing, so every headless task over 30 minutes was killed mid-run —
+// two hours or more inside the relay's own HEADLESS_TASK_TIMEOUT_MS ceiling.
+// ---------------------------------------------------------------------------
+
+function headlessProgressFrames(relay, taskId) {
+  return relay.__sent.filter(m => m.type === 'task_progress' && m.task_id === taskId);
+}
+
+test('#7778 a headless task arms the progress timer and renews the hub lease while its child runs', () => {
+  const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const task = { task_id: 'hl-7778-long', task_gen: 7, kind: 'issue', repo: 'x/y', number: 4, title: 'a long build' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    assert.strictEqual(headlessProgressFrames(relay, task.task_id).length, 1, 'setup: one progress report at child start');
+    assert.strictEqual(relay.getProgressIntervalArmed(), true,
+      '#7778: no progress timer is armed for the headless task — the hub hears nothing more until the child exits');
+
+    // The ticks the timer fires over the next hours, with the child still alive.
+    relay.headlessProgressTick(task);
+    relay.headlessProgressTick(task);
+    const frames = headlessProgressFrames(relay, task.task_id);
+    assert.strictEqual(frames.length, 3, '#7778: each tick must renew the hub lease with a task_progress');
+    for (const f of frames) {
+      assert.strictEqual(f.status, 'working');
+      assert.strictEqual(f.task_gen, 7, 'the renewal must carry the assignment generation the hub fences on');
+      assert.strictEqual(f.repo, 'x/y');
+      assert.strictEqual(f.number, 4);
+    }
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete' || m.type === 'task_failed'),
+      'renewing the lease must not judge the task');
+    assert.strictEqual(relay.getHeadlessChild().killed, false, 'the live child is left alone');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7778 the headless progress timer stops when the child exits, and completion is reported once', () => {
+  const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const task = { task_id: 'hl-7778-done', task_gen: 8, kind: 'issue', repo: 'x/y', number: 5, title: 'finishes' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    relay.headlessProgressTick(task);
+    relay.__completeDeferredExecFile(null, 'HIVE_VERDICT: complete — done', '');
+    assert.strictEqual(relay.getProgressIntervalArmed(), false,
+      'the progress timer must die with the child, or it renews a lease for work that is over');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1);
+    // A tick that races the exit is a no-op: the child is gone and the task released.
+    const before = relay.__sent.length;
+    relay.headlessProgressTick(task);
+    assert.strictEqual(relay.__sent.length, before, 'no progress may be reported for a task that has completed');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7778 a revoke stops the headless progress timer and a stale tick renews nothing', () => {
+  const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const task = { task_id: 'hl-7778-revoked', task_gen: 9, kind: 'issue', repo: 'x/y', number: 6, title: 'revoked' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    assert.strictEqual(relay.getProgressIntervalArmed(), true, 'setup: timer armed');
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: task.task_id, reason: 'operator stop' }));
+    assert.strictEqual(relay.getProgressIntervalArmed(), false, 'the revoke must stop the lease renewals');
+    const before = relay.__sent.length;
+    relay.headlessProgressTick(task);
+    assert.strictEqual(relay.__sent.length, before,
+      'a tick for a revoked task must not tell the hub the work is still in progress');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7778 a headless task that exceeds its own ceiling is still killed and failed', () => {
+  // The renewals keep the HUB from reclaiming a live task early; they must not
+  // turn the relay's own 4-hour bound into "runs forever". The ceiling is a
+  // setTimeout armed in runHeadlessTask; here its kill is what the fake child
+  // observes, and the exit it produces must still be booked as the timeout.
+  const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    const task = { task_id: 'hl-7778-ceiling', task_gen: 10, kind: 'issue', repo: 'x/y', number: 7, title: 'wedged' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    relay.headlessProgressTick(task);
+    // What the HEADLESS_TASK_TIMEOUT_MS timer does when it fires.
+    const child = relay.getHeadlessChild();
+    child.kill('SIGKILL');
+    relay.__completeDeferredExecFile(Object.assign(new Error('killed'), { code: null, signal: 'SIGKILL' }), '', '');
+    const failed = relay.__sent.find(m => m.type === 'task_failed' && m.task_id === task.task_id);
+    assert.ok(failed, 'a killed child must still be reported failed');
+    assert.strictEqual(relay.getProgressIntervalArmed(), false, 'and its renewals must stop');
+    assert.strictEqual(relay.getCurrentTask(), null);
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // Bug 2 — a task prompt must never be typed into a pane that is not confirmed
 // ready, or the literal keystrokes land on bash and wedge it in PS2.
 // ---------------------------------------------------------------------------
