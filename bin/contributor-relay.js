@@ -1830,6 +1830,16 @@ function waitForCLI() {
 
 let cliReady = false;
 let pendingTask = null;
+// The task_id the queued prompt belongs to (hivecommons/hive#7779), stamped
+// from currentTask when the prompt is queued. A queued prompt is only ever a
+// task's prompt, and it must die with that task: a revoke or failure that
+// lands while the CLI is still coming up used to leave the prompt in the queue,
+// and the readiness callback then typed it into the fresh CLI — the agent
+// started working an issue the hub had already taken back and possibly handed
+// to someone else, while currentTask said the relay held nothing. Every
+// task-exit path now discards the queue, and flushPendingTask() refuses to type
+// a prompt whose owner is not the task the relay currently holds.
+let pendingTaskId = null;
 // True once a CLI-readiness wait has timed out and we handed its task back.
 // Used so the eventual recovery re-advertises availability to the hub, which
 // we deliberately withheld at failure time (see armCLIReadyWait).
@@ -1915,6 +1925,24 @@ if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
 // exactly when no other path has sent one — and a `ready` while currentTask
 // is set (a hub that pushed work during the relaunch) would hand that work
 // back, so idleness is checked here rather than assumed from the path.
+// queuePendingTask parks a task prompt for flushPendingTask() to type once the
+// CLI is confirmed ready, remembering which task it belongs to (#7779).
+function queuePendingTask(text) {
+  pendingTask = text;
+  pendingTaskId = currentTask ? currentTask.task_id : null;
+}
+
+// discardPendingTask drops a queued prompt that must never be typed: the task
+// it was for has ended (revoked, failed, completed) or the CLI it was waiting
+// on never came up (#7779). Called from every task-exit path, and by
+// flushPendingTask() itself when the owner no longer matches.
+function discardPendingTask(why) {
+  if (pendingTask === null) return;
+  console.log(`Dropping the queued prompt for ${pendingTaskId || 'no task'} — ${why}`);
+  pendingTask = null;
+  pendingTaskId = null;
+}
+
 function armCLIReadyWait() {
   waitForCLI().then(() => {
     cliReady = true;
@@ -1930,7 +1958,7 @@ function armCLIReadyWait() {
     // Drop the queued prompt first: if the CLI later recovers, flushing a
     // prompt for a task the hub has already reassigned would have this
     // contributor silently working on someone else's issue.
-    pendingTask = null;
+    discardPendingTask('the CLI never became ready');
     if (currentTask) {
       // environment: the agent CLI never reached its prompt on this host.
       // skipCLI: this IS the relaunch path — armCLIReadyWait() re-arms itself
@@ -2103,12 +2131,12 @@ function tmuxSendKeys(text) {
   // typing; the per-backend readiness patterns already exist in getCLIState().
   if (!cliReady) {
     console.log('CLI not ready — queuing task prompt instead of typing into the pane');
-    pendingTask = text;
+    queuePendingTask(text);
     return;
   }
   if (paneIsRunningShell()) {
     console.log(`Pane is at a shell prompt, not ${BACKEND} — queuing task prompt instead of typing it into the shell`);
-    pendingTask = text;
+    queuePendingTask(text);
     {
       // The latch was STALE: the CLI exited without the relay noticing. Drop it
       // and bring the CLI back, or the queued prompt has nothing to flush into.
@@ -2166,7 +2194,7 @@ function tmuxSendKeys(text) {
       // Previously the restart set cliReady=false and then FELL THROUGH to the
       // send loop below, typing the prompt into a pane where the CLI had just
       // been Ctrl-C'd and had not come back — the exact sequence in #2203.
-      pendingTask = text;
+      queuePendingTask(text);
       cliReady = false;
       try {
         console.log(`CLI restarted: ${relaunchCLI()}`);
@@ -3273,8 +3301,20 @@ function paneStallConfirmed(tmuxLines) {
 
 function flushPendingTask() {
   if (!pendingTask) return;
+  // #7779: the queue is per-task. If the relay no longer holds the task this
+  // prompt was queued for — it was revoked or failed while the CLI was coming
+  // up, and a task-exit path missed the discard — typing it would put the agent
+  // to work on an issue nobody has a lease for. Drop it instead; the readiness
+  // callback that called us has already advertised `ready` if the relay is
+  // idle, so real work follows through the normal assignment path.
+  const owner = currentTask ? currentTask.task_id : null;
+  if (owner !== pendingTaskId) {
+    discardPendingTask(`the relay now holds ${owner || 'no task'}, not the task it was queued for`);
+    return;
+  }
   const t = pendingTask;
   pendingTask = null;
+  pendingTaskId = null;
   tmuxSendKeys(t);
 }
 
@@ -3601,6 +3641,9 @@ function failCurrentTask(reason, opts) {
     tmux_output: tmuxLines,
     ...effectiveSelectionFields(),
   });
+  // #7779: a prompt still queued for this task must not be typed into the
+  // relaunched CLI after the task has been handed back.
+  discardPendingTask('the task failed');
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -3673,6 +3716,10 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // pane is one it was READING, and counting it would let each cycle re-arm
   // the next off its own output — a review loop with no new work behind it.
   const completedWasReviewCycle = isLocalOnlyTask(currentTask);
+  // #7779: nothing queued for the task that just ended may outlive it. (A task
+  // completes only after its prompt was delivered, so this is normally empty;
+  // the review-cycle prompt queued below is for the NEXT task and is unaffected.)
+  discardPendingTask('the task completed');
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -4846,6 +4893,12 @@ function handleMessage(data, hub) {
         break;
       }
       console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
+      // #7779: if this task's prompt was still queued (assigned while the CLI
+      // was relaunching), drop it now. stopAgentForTaskExit() below relaunches
+      // the CLI, and its readiness callback would otherwise flush the revoked
+      // task's prompt into the fresh CLI — an agent working an issue the hub
+      // has taken back, with the relay believing it holds nothing.
+      discardPendingTask('the task was revoked');
       currentTask = null;
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -5237,7 +5290,11 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     setCliReadyFailed: (v) => { cliReadyFailed = v; },
     getCliReadyFailed: () => cliReadyFailed,
     getPendingTask: () => pendingTask,
-    setPendingTask: (v) => { pendingTask = v; },
+    // Stamps the owner from currentTask exactly as queuePendingTask does
+    // (#7779), so a test that re-queues a prompt sees it flush for the task it
+    // was set up under.
+    setPendingTask: (v) => { pendingTask = v; pendingTaskId = (v !== null && currentTask) ? currentTask.task_id : null; },
+    getPendingTaskId: () => pendingTaskId,
     // Per-task prompt-delivery surface (kubestellar/hive#5650).
     getTaskPromptDelivered: () => taskPromptDelivered,
     setTaskPromptDelivered: (v) => { taskPromptDelivered = v; },

@@ -6224,6 +6224,131 @@ test('#7732 the hub answering ready re-opens the readiness callback\'s own adver
   } finally { console.log = log; teardown(relay); }
 });
 
+// #7779: a prompt queued because the CLI was still coming up must die with the
+// task it was for. The queue used to have two lifecycle hooks only — "CLI
+// failed, drop it" and "CLI ready, type it" — so a revoke or failure that landed
+// while the CLI was relaunching left the prompt queued, and the readiness
+// callback then typed it into the fresh CLI: an agent working an issue the hub
+// had taken back, with currentTask saying the relay held nothing.
+//
+// The harness's readiness wait resolves on the first poll (cliStates: ['ready']),
+// so `await drainMicrotasks()` after a relaunch IS "the CLI came up and the
+// readiness callback ran" — the exact moment the revoked prompt used to be typed.
+function literalPromptSends(relay, prompt) {
+  return relay.__tmuxSends().filter(c => / -l /.test(c) && c.includes(prompt));
+}
+
+test('#7779 a prompt queued before a task_revoke is dropped, not typed into the relaunched CLI', async () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  try {
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    // The CLI is relaunching when the assignment lands, so the prompt is queued.
+    relay.setCliReady(false);
+    assignTask(relay, 'ct-7779-revoked');
+    assert.strictEqual(relay.getPendingTask(), 'do the thing', 'setup: the prompt must be queued, not typed');
+    assert.strictEqual(relay.getPendingTaskId(), 'ct-7779-revoked', 'the queue must remember which task the prompt is for');
+
+    // Before the CLI is ready, the hub takes the task back.
+    relay.__sent.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'ct-7779-revoked', reason: 'operator yank' }));
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.strictEqual(relay.getPendingTask(), null,
+      '#7779: the revoked task\'s prompt is still queued and will be typed when the CLI comes up');
+
+    // The relaunched CLI reaches its prompt; the readiness callback flushes.
+    await drainMicrotasks();
+    assert.strictEqual(relay.getCliReady(), true, 'setup: the fresh CLI is confirmed ready');
+    assert.deepStrictEqual(literalPromptSends(relay, 'do the thing'), [],
+      '#7779: the revoked task\'s prompt was typed into the agent with no task held');
+    assert.strictEqual(relay.getCurrentTask(), null, 'the relay holds nothing, and the agent must be doing nothing');
+    // The relay is idle and owes the hub exactly one `ready` (#7732 unchanged).
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      `a revoke asks for work once: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7779 a prompt queued before failCurrentTask is dropped, not typed into the relaunched CLI', async () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    relay.setCliReady(false);
+    assignTask(relay, 'ct-7779-failed');
+    assert.strictEqual(relay.getPendingTask(), 'do the thing', 'setup: the prompt must be queued, not typed');
+
+    // An ordinary failure lands while the CLI is still coming up (the max-duration
+    // lease, a hub-side rejection surfaced as a failure, ...).
+    relay.failCurrentTask('gave up before the CLI came up');
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.strictEqual(relay.getPendingTask(), null,
+      '#7779: the failed task\'s prompt is still queued and will be typed when the CLI comes up');
+
+    await drainMicrotasks();
+    assert.deepStrictEqual(literalPromptSends(relay, 'do the thing'), [],
+      '#7779: the failed task\'s prompt was typed into the agent with no task held');
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7779 flushPendingTask refuses a prompt whose task the relay no longer holds', () => {
+  // The backstop behind the explicit discards: even if some future task-exit
+  // path forgets the queue, a prompt queued for one task is never typed while
+  // the relay holds a different task, or none.
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(false);
+    relay.setCurrentTask({ task_id: 'ct-7779-old', kind: 'issue', repo: 'foo/bar', number: 1, title: 'old' });
+    relay.setPendingTask('the old task prompt');
+    assert.strictEqual(relay.getPendingTaskId(), 'ct-7779-old');
+
+    // The task changes hands underneath the queue without going through a
+    // task-exit path.
+    relay.setCurrentTask(null);
+    relay.setCliReady(true);
+    const before = relay.__tmuxSends().length;
+    relay.flushPendingTask();
+    assert.strictEqual(relay.getPendingTask(), null, 'the orphaned prompt must be dropped, not kept for later');
+    assert.deepStrictEqual(relay.__tmuxSends().slice(before).filter(c => / -l /.test(c)), [],
+      '#7779: a prompt for a task the relay does not hold was typed');
+
+    // And the same when the relay holds a DIFFERENT task: the other task's
+    // prompt is not typed on top of the one already running.
+    relay.setCliReady(false);
+    relay.setCurrentTask({ task_id: 'ct-7779-old', kind: 'issue', repo: 'foo/bar', number: 1, title: 'old' });
+    relay.setPendingTask('the old task prompt');
+    relay.setCurrentTask({ task_id: 'ct-7779-new', kind: 'issue', repo: 'foo/bar', number: 2, title: 'new' });
+    relay.setCliReady(true);
+    const before2 = relay.__tmuxSends().length;
+    relay.flushPendingTask();
+    assert.strictEqual(relay.getPendingTask(), null);
+    assert.deepStrictEqual(relay.__tmuxSends().slice(before2).filter(c => / -l /.test(c)), [],
+      '#7779: a prompt queued for one task was typed while another task was held');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7779 the queue still flushes for the task it was queued for', async () => {
+  // The guard must not eat legitimate deliveries: a prompt queued during a
+  // relaunch is typed once the CLI is up, as long as the task is still ours.
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  try {
+    await drainMicrotasks();
+    relay.setCliReady(false);
+    assignTask(relay, 'ct-7779-kept');
+    assert.strictEqual(relay.getPendingTask(), 'do the thing', 'setup: queued');
+    relay.relaunchCLI();
+    await drainMicrotasks();
+    assert.strictEqual(relay.getPendingTask(), null, 'the queue is drained on delivery');
+    assert.ok(literalPromptSends(relay, 'do the thing').length > 0,
+      'the still-held task\'s prompt must be typed once the CLI is ready');
+    assert.strictEqual(relay.getTaskPromptDelivered(), true);
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#6667 a PR scrolled out of the 15-line payload window is still reported', () => {
   // The inverse of #6662. detectPRURL used to be handed the same fifteen lines
   // the relay sends upstream as tmux_output, and in a real TUI roughly ten of
