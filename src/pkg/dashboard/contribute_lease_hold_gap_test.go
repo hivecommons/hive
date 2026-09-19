@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // contribute_lease_hold_gap_test.go — hivecommons/hive#7773.
@@ -123,19 +124,12 @@ func TestLeaseHold_OutageBetweenCooldownAndLeaseDoesNotDoubleAssign(t *testing.T
 	// And once the holder has released the task, the hold is gone at once: B is
 	// offered it on its next ask.
 	connA2.WriteJSON(WSMessage{Type: "task_complete", Seq: 5, TaskID: assign.TaskID, TaskGen: assign.TaskGen, Result: "completed"})
-	deadline = time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		s.contributeHub.leaseMu.Lock()
+		defer s.contributeHub.leaseMu.Unlock()
 		_, held := s.contributeHub.leases[identity]
-		s.contributeHub.leaseMu.Unlock()
-		if !held || time.Now().After(deadline) {
-			if held {
-				t.Fatalf("task_complete did not revoke the lease")
-			}
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return !held
+	}, "task_complete did not revoke the lease")
 	if keys := s.contributeHub.leasedIssueKeys("anyone-else", time.Now()); keys[key] {
 		t.Fatalf("a released task must not stay held: %v", keys)
 	}
