@@ -59,6 +59,13 @@ exit 0
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(claudeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// UID-isolated managers route every tmux call through su-exec; without a
+	// shim the test needs a real su-exec on PATH and fails on developer
+	// machines. Drop the userspec and exec the rest so the chain still lands
+	// on the fake tmux (same shape as installRestartFakeTmux).
+	if err := os.WriteFile(filepath.Join(dir, "su-exec"), []byte("#!/bin/sh\nshift\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
