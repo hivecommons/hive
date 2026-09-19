@@ -2699,12 +2699,23 @@ test('token_refresh, task_revoke, and blocked progress only affect the hub that 
   try {
     const { hubs, sentA, sentB } = attachHubSinks(relay);
 
+    // #5650: the prompt must have been TYPED, not queued, or progressTick()
+    // refuses to judge the pane at all; and #5281: an unattended question gets
+    // one autonomy reminder before the SECOND tick reports it as blocked. This
+    // test predates both gates and was failing on them unobserved — the runner
+    // never awaited an async test, so its rejection was pre-empted by
+    // process.exit() (#7732).
+    relay.setCliReady(true);
+    // A revoke only ever arrives over a session that authenticated us, and the
+    // post-revoke `ready` is owed to that hub (#7732).
+    hubs[0].authenticated = true;
     relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' }), hubs[0]);
     const tokenPath = path.join(relay.__tmpDir, 'gh-token.cache');
 
     relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'hub-b-token' }), hubs[1]);
     assert.strictEqual(fs.existsSync(tokenPath), false, 'non-owning hub must not overwrite the active task token');
 
+    relay.__crashTick();
     relay.__crashTick();
     assert.ok(sentA.some(m => m.type === 'task_progress' && m.status === 'blocked_on_human'),
       'blocked_on_human progress must go to the owning hub');
@@ -2717,6 +2728,7 @@ test('token_refresh, task_revoke, and blocked progress only affect the hub that 
     relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'hub-a-token' }), hubs[0]);
     assert.strictEqual(fs.readFileSync(tokenPath, 'utf8'), 'hub-a-token');
 
+    const beforeRevoke = sentA.length;
     relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't1', reason: 'owner revoke' }), hubs[0]);
     await Promise.resolve();
     await Promise.resolve();
@@ -2724,7 +2736,8 @@ test('token_refresh, task_revoke, and blocked progress only affect the hub that 
     assert.ok(revokeInterrupts.length >= 2, 'interactive revoke must double-interrupt the configured tmux pane before ready');
     assert.strictEqual(fs.existsSync(tokenPath), false, 'revoking a task must clear its task-scoped GitHub token cache');
     assert.strictEqual(relay.getCurrentTask(), null);
-    assert.ok(sentA.some(m => m.type === 'ready'), 'owning hub is asked for work after its revoke');
+    assert.strictEqual(sentA.slice(beforeRevoke).filter(m => m.type === 'ready').length, 1,
+      'owning hub is asked for work exactly once after its revoke (#7732)');
     assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
   } finally { teardown(relay); }
 });
@@ -3703,6 +3716,9 @@ test('token_refresh and task_revoke only affect the hub that owns the active tas
     const sentA = [], sentB = [];
     hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
     hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+    // A revoke only ever arrives over a session that authenticated us, and the
+    // post-revoke `ready` is owed to that hub (#7732).
+    hubs[0].authenticated = true;
 
     relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' }), hubs[0]);
     const tokenPath = path.join(relay.__tmpDir, 'gh-token.cache');
@@ -3716,6 +3732,7 @@ test('token_refresh and task_revoke only affect the hub that owns the active tas
     relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'hub-a-token' }), hubs[0]);
     assert.strictEqual(fs.readFileSync(tokenPath, 'utf8'), 'hub-a-token');
 
+    const beforeRevoke = sentA.length;
     relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't1', reason: 'owner revoke' }), hubs[0]);
     await Promise.resolve();
     await Promise.resolve();
@@ -3723,7 +3740,8 @@ test('token_refresh and task_revoke only affect the hub that owns the active tas
     assert.ok(revokeInterrupts.length >= 2, 'interactive revoke must double-interrupt the configured tmux pane before ready');
     assert.strictEqual(fs.existsSync(tokenPath), false, 'revoking a task must clear its task-scoped GitHub token cache');
     assert.strictEqual(relay.getCurrentTask(), null);
-    assert.ok(sentA.some(m => m.type === 'ready'), 'owning hub is asked for work after its revoke');
+    assert.strictEqual(sentA.slice(beforeRevoke).filter(m => m.type === 'ready').length, 1,
+      'owning hub is asked for work exactly once after its revoke (#7732)');
     assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
   } finally { teardown(relay); }
 });
@@ -6083,6 +6101,127 @@ test('#5353 a reported completion stops the agent and drops its token', () => {
       'a completed task left its repo-scoped GitHub token on disk, valid for the rest of wsTokenTTL');
     assertAgentStopped(relay.__tmuxSends().slice(before), 'copilot');
   } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7732 — a task exit must advertise `ready` exactly once.
+//
+// finishCurrentTask()/failCurrentTask() send `ready` themselves, AND the
+// relaunch they trigger arms armCLIReadyWait(), whose resolve handler also
+// sends `ready` when the relay is idle and authenticated. With a backend whose
+// pane reads ready on the very first (synchronous) waitForCLI() check — omp
+// after two Ctrl-Cs sits at its prompt — the second frame follows the first
+// within the same event-loop turn. The hub answers the first with a new
+// assignment and reads the second as "relay asked for work while still
+// holding it" (#2545): it books the fresh task as abandoned_handback and
+// assigns a third, which the relay rejects. Hub and relay then disagree about
+// what the contributor is working on.
+//
+// The harness's default pane already reads ready on every capture, so the
+// first check inside waitForCLI() resolves synchronously — exactly the omp
+// shape — and the resolve handler runs as a microtask the test yields to.
+// ---------------------------------------------------------------------------
+
+function drainMicrotasks() {
+  // The resolve handler is a .then on an already-settled promise: two turns
+  // of the microtask queue is enough for it and anything it chains.
+  return Promise.resolve().then(() => Promise.resolve());
+}
+
+test('#7732 completing a task advertises ready exactly once when the relaunched CLI is ready immediately', async () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  const log = console.log; console.log = () => {};
+  try {
+    // Settle the module-load readiness callback first: the relay is up, its
+    // CLI confirmed, before the hub authenticates it — the steady state
+    // every task exit below starts from.
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    dispatchTask(relay, 'ct-7732-complete');
+    relay.__sent.length = 0;
+    relay.__stallTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1, 'setup: the task completed');
+    await drainMicrotasks();
+    const readies = relay.__sent.filter(m => m.type === 'ready');
+    assert.strictEqual(readies.length, 1,
+      `one completion must ask for work once — a second ready makes the hub hand back the task it just assigned: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(relay.getCliReady(), true, 'the relaunched CLI was confirmed ready');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7732 an ordinary task failure advertises ready exactly once when the relaunched CLI is ready immediately', async () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    dispatchTask(relay, 'ct-7732-failed');
+    relay.__sent.length = 0;
+    relay.failCurrentTask('some ordinary failure');
+    await drainMicrotasks();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      `a failure hands the task back and asks for work ONCE: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7732 an interactive revoke advertises ready exactly once', async () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  try {
+    // Settle the module-load readiness callback first: the relay is up, its
+    // CLI confirmed, before the hub authenticates it — the steady state
+    // every task exit below starts from.
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    dispatchTask(relay, 'ct-7732-revoked');
+    relay.__sent.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'ct-7732-revoked', reason: 'lease expired' }));
+    await drainMicrotasks();
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      `a revoke asks for work ONCE once the fresh CLI is confirmed: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7732 the hub answering ready re-opens the readiness callback\'s own advertisement', async () => {
+  // The dedupe must not turn into a mute relay: once the hub has ANSWERED the
+  // outstanding ready (an assignment, or "nothing for you"), a later CLI
+  // readiness with the relay idle must advertise again — the #6655 startup
+  // shape, where auth_ok withheld ready because the CLI was still coming up.
+  const relay = loadRelay({ backend: 'copilot' });
+  const log = console.log; console.log = () => {};
+  try {
+    // Settle the module-load readiness callback first: the relay is up, its
+    // CLI confirmed, before the hub authenticates it — the steady state
+    // every task exit below starts from.
+    await drainMicrotasks();
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    dispatchTask(relay, 'ct-7732-first');
+    relay.__sent.length = 0;
+    relay.failCurrentTask('first task over');
+    await drainMicrotasks();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1, 'setup: one ready outstanding');
+
+    // The hub says there is nothing right now: that ready is answered.
+    relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }));
+    relay.__sent.length = 0;
+    // The CLI is relaunched for an unrelated reason while idle (a stale-latch
+    // recovery, an operator restart) and comes up ready.
+    relay.setCliReady(false);
+    relay.relaunchCLI();
+    await drainMicrotasks();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      `an idle, authenticated relay whose CLI just came up must still ask for work: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+
+    // And an assignment answers it too: the next idle readiness advertises.
+    assignTask(relay, 'ct-7732-second');
+    relay.__sent.length = 0;
+    relay.failCurrentTask('second task over');
+    await drainMicrotasks();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      `the second exit asks once as well: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+  } finally { console.log = log; teardown(relay); }
 });
 
 test('#6667 a PR scrolled out of the 15-line payload window is still reported', () => {
@@ -8982,17 +9121,25 @@ test('#6717 a placeholder still on a pane that has since produced output does no
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
 const only = process.env.RELAY_TEST_ONLY;
-for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
-  try {
-    fn();
-    console.log(`ok   ${name}`);
-  } catch (e) {
-    failed++;
-    console.error(`FAIL ${name}`);
-    console.error(`     ${e.message}`);
+// Each test is awaited (#7732). The runner used to call fn() and fall straight
+// through to process.exit(), which fires before any microtask runs — so an
+// async test's assertions past its first `await` were dead code, and a
+// failure before it was an unhandled rejection the exit pre-empted. The
+// readiness callback under test for #7732 (armCLIReadyWait's .then) IS a
+// microtask, so it can only be observed by a test that yields to it.
+(async () => {
+  for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
+    try {
+      await fn();
+      console.log(`ok   ${name}`);
+    } catch (e) {
+      failed++;
+      console.error(`FAIL ${name}`);
+      console.error(`     ${e.message}`);
+    }
   }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-// waitForCLI() schedules polling timers that would otherwise keep the event
-// loop alive well past the last assertion; exit explicitly.
-process.exit(failed ? 1 : 0);
+  console.log(`\n${tests.length - failed}/${tests.length} passed`);
+  // waitForCLI() schedules polling timers that would otherwise keep the event
+  // loop alive well past the last assertion; exit explicitly.
+  process.exit(failed ? 1 : 0);
+})();
