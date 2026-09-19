@@ -95,6 +95,27 @@ See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) for the end-t
 - Do not commit secrets, generated credentials, or local runtime state.
 - For documentation changes, verify every command, path, and branch name you mention.
 
+### `file:line` citations in docs
+
+The docs under `src/docs/` cite source locations in `path/to/file.go:NNN`
+form (about 360 such cites at the time of writing). They pin claims to real
+code, which makes them valuable — and fragile: any refactor that moves lines
+in a cited file silently breaks them. Three remap waves (PRs #7495, #7669,
+#7680) have each had to re-verify dozens of cites after large refactors.
+
+When you touch cited code or the docs that cite it:
+
+- **Refactoring a file cited by docs?** Grep for cites into it before you
+  open the PR — `grep -rn "yourfile.go:" src/docs/` — and remap any that your
+  change moves. A cite remap belongs in the same PR as the refactor, not in a
+  later cleanup wave.
+- **Writing a new cite?** Point at the symbol's declaration line, and prefer
+  citing a symbol name alongside the line (e.g. `` `ConnectVault`,
+  `pkg/knowledge/api.go:588` ``) so a future remap can re-locate it by name
+  when the line number drifts.
+- **Ranges** (`file.go:588-606`) are fine for a block; keep them tight so
+  drift is detectable.
+
 ## Test policy
 
 **A change to behavior must come with a test that would fail without it.** This
