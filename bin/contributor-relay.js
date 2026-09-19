@@ -223,6 +223,12 @@ const PROGRESS_REPORT_INTERVAL_MS = RELAY_TEST_TIMING ? 100 : 120000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
+const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.HIVE_TMUX_COMMAND_TIMEOUT_MS) || 15000;
+const LIVE_CLI_FIRST_INTERRUPT_DELAY_MS = Number(process.env.HIVE_LIVE_CLI_FIRST_INTERRUPT_DELAY_MS) || 1000;
+const LIVE_CLI_SECOND_INTERRUPT_DELAY_MS = Number(process.env.HIVE_LIVE_CLI_SECOND_INTERRUPT_DELAY_MS) || 2000;
+const LIVE_CLI_SHELL_WAIT_TIMEOUT_MS = Number(process.env.HIVE_LIVE_CLI_SHELL_WAIT_TIMEOUT_MS) || 5000;
+const LIVE_CLI_SHELL_WAIT_POLL_MS = Number(process.env.HIVE_LIVE_CLI_SHELL_WAIT_POLL_MS) || 250;
+const LIVE_CLI_RESPAWN_SETTLE_MS = Number(process.env.HIVE_LIVE_CLI_RESPAWN_SETTLE_MS) || 500;
 // MAX_TASK_DURATION_MS is a PROGRESS lease, not a wall-clock budget
 // (kubestellar/hive#5321). It bounds how long a task may go without the relay
 // observing forward progress; every tick that sees new pane output re-arms it
@@ -2075,44 +2081,32 @@ function recoverWedgedShell() {
 // C-c, with the same delays the memory-cleanup restart path has used since
 // #2596, is what actually exits the CLI.
 //
-// #6776: two C-cs is what claude/codex/agy honour, and no more. The pi CLI
-// is neither, and does NOT terminate on C-c: after this sequence the pi
-// process is still the pane's foreground program, and the subsequent
-// `relaunchCLI()` types its launch command at a still-running pi as if it
-// were a chat prompt — which pi accepts as more conversation. Every task
-// then runs in the same pi session with the previous task's context and the
-// previous task's scoped token still in scope, until pi compacts.
-//
-// The fix for pi is a definitive one: after the best-effort C-c, force the
-// pane's foreground process to be killed by `tmux respawn-pane -k`, which
-// terminates the current pane process and re-executes the pane's default
-// shell. That guarantees the pi instance is gone before `relaunchCLI()`
-// types its launch command, and guarantees each task starts a fresh pi
-// context, which is what the issue asked for ("Consider starting each task
-// in a fresh pi context so prior-task history and the scoped token cannot
-// leak into the next task."). The paneReadinessWait contract does the rest.
-//
-// Kept behind a BACKEND check on purpose: claude, codex and agy exit cleanly
-// on the second C-c, and respawn-pane on them would throw away a perfectly
-// good long-lived CLI on every task boundary — the exact churn the two-C-c
-// path was written to avoid.
+// #6776/#7733: pi and omp do NOT reliably terminate on C-c. After this
+// sequence their process can still be the pane's foreground program, and
+// `relaunchCLI()` would type its launch command into the live TUI as a chat
+// prompt. Verify the pane has fallen back to a shell; if not, force the
+// foreground process down with `tmux respawn-pane -k` before relaunching.
+// Backends that exit cleanly still avoid respawn-pane because the shell check
+// succeeds first.
 //
 // Best-effort by design: if tmux is unreachable the caller is already on a
 // failure path, and a relaunch that lands badly is recovered by the
 // armCLIReadyWait() contract rather than by anything here.
 function quitLiveCLI() {
   try {
-    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-    sleepMs(1000);
-    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-    sleepMs(2000);
-    if (BACKEND === 'pi') {
-      // pi does not exit on C-c (#6776). respawn-pane -k kills the pane's
-      // current foreground program and re-executes the pane's default shell,
-      // so the pi process is gone for certain and the relaunch below lands
-      // in a bare shell — the state the relaunch path assumes.
-      execSync(`tmux respawn-pane -k -t ${TMUX_SESSION}`, { timeout: 15000 });
-      sleepMs(500);
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    sleepMs(LIVE_CLI_FIRST_INTERRUPT_DELAY_MS);
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    sleepMs(LIVE_CLI_SECOND_INTERRUPT_DELAY_MS);
+
+    // A backend that absorbed both interrupts is still the pane foreground
+    // program. Relaunching now would type the shell launch line into the live
+    // TUI as a prompt (#7733). Wait for the pane to become a shell, then
+    // escalate to tmux respawn-pane -k if it does not.
+    if (!waitForPaneShell(LIVE_CLI_SHELL_WAIT_TIMEOUT_MS)) {
+      execSync(`tmux respawn-pane -k -t ${TMUX_SESSION}`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+      sleepMs(LIVE_CLI_RESPAWN_SETTLE_MS);
+      waitForPaneShell(LIVE_CLI_SHELL_WAIT_TIMEOUT_MS);
     }
   } catch (_) {}
 }
@@ -2138,11 +2132,24 @@ function paneForegroundCommand() {
   try {
     return execSync(
       `tmux display-message -p -t ${TMUX_SESSION} '#{pane_current_command}' 2>/dev/null`,
-      { encoding: 'utf8', timeout: 15000 }
+      { encoding: 'utf8', timeout: TMUX_COMMAND_TIMEOUT_MS }
     ).toString().trim();
   } catch (_) {
     return '';
   }
+}
+
+function paneCommandIsShell(command) {
+  return !!command && PANE_SHELL_COMMANDS.has(command);
+}
+
+function waitForPaneShell(timeoutMs) {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / LIVE_CLI_SHELL_WAIT_POLL_MS));
+  for (let i = 0; i < attempts; i++) {
+    if (paneCommandIsShell(paneForegroundCommand())) return true;
+    if (i < attempts - 1) sleepMs(LIVE_CLI_SHELL_WAIT_POLL_MS);
+  }
+  return false;
 }
 
 // cliProcessLooksGone reports whether the agent CLI has left the pane.
@@ -2177,7 +2184,7 @@ function paneForegroundCommand() {
 // gone would re-introduce exactly the blindness this replaces.
 function probeCLIPresence() {
   const fg = paneForegroundCommand();
-  const isShell = !!fg && PANE_SHELL_COMMANDS.has(fg);
+  const isShell = paneCommandIsShell(fg);
   if (!isShell) {
     consecutiveShellReadings = 0;
   } else {
@@ -2196,7 +2203,7 @@ function cliProcessLooksGone() {
 // waiting a tick when we are wrong is nil.
 function paneIsRunningShell() {
   const fg = paneForegroundCommand();
-  return !!fg && PANE_SHELL_COMMANDS.has(fg);
+  return paneCommandIsShell(fg);
 }
 
 function capturePaneText() {

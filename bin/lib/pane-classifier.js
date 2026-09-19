@@ -51,6 +51,10 @@ const PANE_STATE_FATAL_API_ERROR = 'FATAL_API_ERROR';
 // environment failure. Either way, never a fabricated completion.
 const PANE_STATE_UNKNOWN_API_ERROR = 'UNKNOWN_API_ERROR';
 
+const OMP_BUSY_STATUS_WORD_RE = /\b(?:Working|Running)…/;
+const OMP_ACTIVITY_ROW_RE = /^\s*⎋\s+\S/m;
+const OMP_BRAILLE_SPINNER_ELAPSED_RE = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\d+(?:\.\d+)?[smh]\b/;
+
 // ── Transient API-error recovery (kubestellar/hive#5094) ─────────────────────
 //
 // THE DEFECT: Claude Code prints a turn-duration summary ("✻ Cogitated for
@@ -885,14 +889,14 @@ function classifyPane(text, backend, deps = {}) {
     // codex/agy in this file).
     hasIdlePrompt = /π\s*>|─+\d+%─|^\s*╰─/m.test(ompTail);
     hasCompletionMarker = true;
-    // "esc to interrupt" was never observed live (omp 18.1.16/18.1.17):
-    // a tool call renders "⏺ Running… (esc to cancel)" and plain generation
-    // renders a spinner glyph plus "Working…" with no "(esc to …)" suffix at
-    // all. The original pattern therefore never matched a real busy omp
-    // pane, so isWorking was always false and a still-running turn fell
-    // through to whatever hasIdlePrompt/hasCompletionMarker decided instead
-    // of being read as WORKING.
-    isWorking = /\b(?:Working|Running)…/.test(ompTail);
+    // omp 18.1.x rendered "Working…" / "Running…" for live turns. omp 18.2.x
+    // only shows that word briefly, then keeps the turn-live signal in the
+    // activity row ("⎋ Reading …") and footer spinner/elapsed timer
+    // ("⠧ 4m > …"). The footer and input corner remain present while working,
+    // so these busy markers must win before IDLE_COMPLETE.
+    isWorking = OMP_BUSY_STATUS_WORD_RE.test(ompTail) ||
+      OMP_ACTIVITY_ROW_RE.test(ompTail) ||
+      OMP_BRAILLE_SPINNER_ELAPSED_RE.test(ompTail);
   } else if (backend === 'agy') {
     // Scope the activity check to the TAIL, exactly as the claude branch above
     // does. agy narrates in plain English inside the transcript ("I am running

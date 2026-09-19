@@ -1,0 +1,15 @@
+╭─── omp v18.2.6 ─────────────────────────────────────────────────────────────────────────────────╮
+│                          │                                                                       │
+│      Welcome back!       │ Recent sessions                                                       │
+│                          │ Fix desktop runtime contract                                          │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ You are a contributor to the projectbluefin/utah hive. Work on issue #18.
+ ├─ I. Discovery · 0/2
+ │  ├─ ☐ Read contribution and issue requirements
+ │  └─ ☐ Determine base branch and affected flavors
+ ├─ II. Implementation · 0/1
+ ├─ III. Verification · 0/2
+ └─────
+ ⎋ Reading skill improvement guidance
+⠧ 4m > ◑ GPT-5.6-Terra 👁 > 📁 ~/.local/state/hive/agent-cwd > S0.21 + 👁 S1.82 ▶─────────────────────────20%────────────────────────────────
+╰─
