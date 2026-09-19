@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,20 +238,21 @@ func TestBootDashboardAPIWith_InceptionWatcherNeedsTheBrainstormStore(t *testing
 
 func TestRunTickLoop_FiresOnScheduleAndStopsOnCancel(t *testing.T) {
 	const interval = 5 * time.Millisecond
-	var calls atomic.Int32
+	fired := make(chan struct{}, 16)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runTickLoop(ctx, interval, true, func() { calls.Add(1) })
+		runTickLoop(ctx, interval, true, func() { fired <- struct{}{} })
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for calls.Load() < 3 && time.Now().Before(deadline) {
-		time.Sleep(interval)
-	}
-	if calls.Load() < 3 {
-		t.Fatalf("loop fired %d times in 2s, want the immediate run plus ticks", calls.Load())
+	timeout := time.After(2 * time.Second)
+	for got := 0; got < 3; got++ {
+		select {
+		case <-fired:
+		case <-timeout:
+			t.Fatalf("loop fired %d times in 2s, want the immediate run plus ticks", got)
+		}
 	}
 	cancel()
 	select {
@@ -262,11 +262,11 @@ func TestRunTickLoop_FiresOnScheduleAndStopsOnCancel(t *testing.T) {
 	}
 
 	// Without runFirst nothing happens until the first tick.
-	var lazy atomic.Int32
+	lazy := 0
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	cancel2()
-	runTickLoop(ctx2, time.Hour, false, func() { lazy.Add(1) })
-	if lazy.Load() != 0 {
-		t.Fatalf("runFirst=false ran the body %d times before any tick", lazy.Load())
+	runTickLoop(ctx2, time.Hour, false, func() { lazy++ })
+	if lazy != 0 {
+		t.Fatalf("runFirst=false ran the body %d times before any tick", lazy)
 	}
 }
