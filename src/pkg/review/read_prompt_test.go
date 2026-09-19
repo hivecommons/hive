@@ -50,9 +50,56 @@ func TestPromptTellsReviewerToReadBodyAndDiff(t *testing.T) {
 // Scope discipline: a review that relitigates code the PR does not touch reads
 // as an obstacle rather than help, which is how an advisory reviewer loses the
 // maintainers whose cooperation it depends on.
+//
+// Note this constrains what the reviewer may *report*, not what it may *read*.
+// Those were once the same sentence ("Judge the diff, not the surrounding
+// code"), and conflating them is what produced 93 "no findings" verdicts out of
+// 95 on the bluefin spoke — including a 30-file, -1655-line PR. See
+// TestPromptRequiresReadingTheSurroundingTree.
 func TestPromptKeepsReviewScopedToTheDiff(t *testing.T) {
 	got := BuildPerspectivePromptWith(PerspectiveStyle, PullRequest{Repo: "o/r", Number: 1}, PromptOptions{})
-	if !strings.Contains(got, "not the surrounding code") {
-		t.Fatalf("prompt must scope the review to the diff:\n%s", got)
+	for _, want := range []string{
+		"Only defects this diff introduces or exposes are in scope",
+		"pre-existing problems it does not touch stay out",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt must scope reporting to the diff (missing %q):\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "not the surrounding code") {
+		t.Fatal("prompt forbids reading the surrounding tree; that is the measured-worst reviewer configuration")
+	}
+}
+
+// The hive's own measurement (policies/reviewer-queue.md) scored three reviewer
+// configurations against merged PRs with known defects: the diff alone found
+// 17% of them at 3.6 false positives per PR, while the diff plus the repository
+// at merge-base found 67% at 1.4. Reading the tree is the single highest-value
+// instruction in this kick, and shipping a prompt that omits it silently buys
+// the worst arm of that experiment.
+func TestPromptRequiresReadingTheSurroundingTree(t *testing.T) {
+	got := BuildPerspectivePromptWith(PerspectiveCorrectness, PullRequest{
+		Repo: "o/r", Number: 7, HeadSHA: "deadbeef",
+	}, PromptOptions{})
+
+	for _, want := range []string{
+		"THE DIFF ALONE IS NOT ENOUGH",
+		"the callers of what it changes",
+		"67%",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("kick must direct the reviewer into the tree (missing %q):\n%s", want, got)
+		}
+	}
+
+	// The read commands must be pinned to the dispatched head, or the reviewer
+	// reads a different revision than the one it is judging.
+	if !strings.Contains(got, "contents/<path>?ref=deadbeef") {
+		t.Fatalf("tree-read command must be pinned to the dispatched head:\n%s", got)
+	}
+
+	// Reading widely must not become licence to report widely.
+	if !strings.Contains(got, "Read widely; report narrowly") {
+		t.Fatalf("kick must pair the wider read with a narrow reporting scope:\n%s", got)
 	}
 }

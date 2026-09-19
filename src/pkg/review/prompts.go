@@ -110,9 +110,17 @@ func buildReadInstruction(pr PullRequest) string {
 	fmt.Fprintf(&b, "  gh pr diff %d --repo %s\n", pr.Number, pr.Repo)
 	b.WriteString("The body states what the author INTENDED; the diff is what they actually did. You need both — most of the findings worth reporting live in the gap between them.\n")
 	b.WriteString("Reading is read-only and unrestricted: use gh freely here.\n")
-	b.WriteString("Judge the diff, not the surrounding code. Pre-existing problems this PR does not touch are out of scope; raising them reads as an obstacle, not a review.\n")
+	b.WriteString("THE DIFF ALONE IS NOT ENOUGH. Open the files it touches, and the callers of what it changes:\n")
 	if pr.HeadSHA != "" {
-		fmt.Fprintf(&b, "Your citations must come from that diff at head %s. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
+		fmt.Fprintf(&b, "  gh api repos/%s/contents/<path>?ref=%s --jq .content | base64 -d\n", pr.Repo, pr.HeadSHA)
+	} else {
+		fmt.Fprintf(&b, "  gh api repos/%s/contents/<path> --jq .content | base64 -d\n", pr.Repo)
+	}
+	fmt.Fprintf(&b, "  gh search code --repo %s '<changed symbol>'   # who calls it\n", pr.Repo)
+	b.WriteString("This was measured, not assumed: a reviewer reading the diff plus the surrounding tree found 67% of known defects at 1.4 false positives per PR, against 17% at 3.6 for the diff alone. Reading the tree is four times more effective AND quieter. A guard, early return, or caller you cannot see is the usual reason a real defect reads as fine.\n")
+	b.WriteString("Read widely; report narrowly. Only defects this diff introduces or exposes are in scope — pre-existing problems it does not touch stay out, however tempting. Reading the surrounding code tells you whether the change is safe; it is not an invitation to review the file.\n")
+	if pr.HeadSHA != "" {
+		fmt.Fprintf(&b, "Every citation must be code you actually read at head %s — in the diff or in the files around it. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
 	}
 	b.WriteString("If you cannot read the diff — fetch failed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
 	return b.String()
