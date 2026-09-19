@@ -88,7 +88,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString(buildReadInstruction(pr))
 	b.WriteString("Return exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
-	b.WriteString("Allowed verdicts: approve, changes_requested, requires_human, reject. Finding severities: info, low, medium, high, critical.\n")
+	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Use approve only when this perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
 	if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
@@ -263,7 +263,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
-	b.WriteString("Allowed verdicts: approve, changes_requested, requires_human, reject. Finding severities: info, low, medium, high, critical.\n")
+	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Give each perspective its OWN verdict. Use approve only when THAT perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
 	b.WriteString("A perspective you could not meaningfully assess is requires_human, not approve. Approving a perspective you did not actually consider is the one failure mode that makes this whole review worthless, because it is indistinguishable from having considered it.\n")
 	if opts.PostComments {
@@ -296,6 +296,16 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 	fmt.Fprintf(&b, "%d verdicts as a JSON array, including the clean ones — a perspective missing from the array reads downstream as never reviewed, and the PR comes back to you from scratch.\n", len(perspectives))
 	return b.String()
 }
+
+// findingSchemaInstruction spells out the Finding object field by field. The
+// relay validates the whole report against outputschema and a finding missing
+// "summary" fails it — and in a combined review that discards every
+// perspective's verdict at once. The first live combined review did exactly
+// that: two well-cited findings, no summary key, nothing recorded. Naming only
+// the top-level fields and leaving the finding shape to be guessed is not a
+// schema, it is a trap.
+const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
+	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional). A finding missing title, severity or summary fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
 
 func perspectiveNames(ps []Perspective) []string {
 	out := make([]string, 0, len(ps))

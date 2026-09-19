@@ -1,0 +1,1 @@
+- Reviewer prompts now spell out the finding object fields (title, severity, summary, file, line); a finding whose body was under another key failed validation and, in a combined review, discarded every perspective's verdict unrecorded.

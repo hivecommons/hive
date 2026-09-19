@@ -170,3 +170,20 @@ func TestConfirmDeliveredReleasesEveryPerspectiveOfAnUndeliveredCombinedKick(t *
 		}
 	}
 }
+
+// Both prompt shapes must spell out the finding fields. The first live combined
+// review carried two well-cited findings with no "summary" key and the relay
+// discarded every perspective's verdict at once.
+func TestPromptsSpellOutFindingFields(t *testing.T) {
+	pr := PullRequest{Repo: "o/r", Number: 1, HeadSHA: "abc"}
+	for name, msg := range map[string]string{
+		"single":   BuildPerspectivePromptWith(PerspectiveCorrectness, pr, PromptOptions{}),
+		"combined": BuildCombinedPrompt(pr, DefaultPerspectives, PromptOptions{}),
+	} {
+		for _, want := range []string{"title (string, required)", "summary (string, required", "severity (one of info, low, medium, high, critical, required)"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s prompt missing %q", name, want)
+			}
+		}
+	}
+}
