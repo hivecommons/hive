@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/hivecommons/hive/pkg/config"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -398,5 +399,50 @@ func TestReviewConfigPut_Perspectives(t *testing.T) {
 	}
 	if len(s.deps.Config.Review.Perspectives) != 2 || !s.deps.Config.Review.CombinedPerspectives {
 		t.Fatalf("empty put mutated config: %+v", s.deps.Config.Review)
+	}
+}
+
+// The revisit lane's two switches are writable through the API, a malformed
+// cutoff is refused before it reaches config, and the write is pushed into
+// whatever caches review settings at boot instead of waiting for a restart.
+func TestReviewConfigPut_Revise(t *testing.T) {
+	s := covApiServer(t)
+	var applied []config.ReviewConfig
+	s.deps.ReviewConfigApplied = func(rc config.ReviewConfig) { applied = append(applied, rc) }
+
+	rec := doPut(s, "/api/config/review", map[string]any{"revise_verdicts_before": "yesterday"})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "RFC 3339") {
+		t.Fatalf("bad cutoff: expected 400 naming the format, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Review.ReviseVerdictsBefore != "" || len(applied) != 0 {
+		t.Fatalf("rejected write leaked: cutoff=%q applied=%d", s.deps.Config.Review.ReviseVerdictsBefore, len(applied))
+	}
+
+	rec = doPut(s, "/api/config/review", map[string]any{
+		"revise_repos":           []string{" o/r ", "", "o/s"},
+		"revise_verdicts_before": "2026-09-19T14:00:00Z",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rv := s.deps.Config.Review
+	if len(rv.ReviseRepos) != 2 || rv.ReviseRepos[0] != "o/r" || rv.ReviseRepos[1] != "o/s" {
+		t.Fatalf("revise_repos = %v", rv.ReviseRepos)
+	}
+	if rv.ReviseVerdictsBefore != "2026-09-19T14:00:00Z" {
+		t.Fatalf("cutoff = %q", rv.ReviseVerdictsBefore)
+	}
+	if len(applied) != 1 || len(applied[0].ReviseRepos) != 2 {
+		t.Fatalf("hook not called with the new config: %+v", applied)
+	}
+
+	// Empty cutoff clears the pilot; an omitted key leaves it alone.
+	doPut(s, "/api/config/review", map[string]any{"combined_perspectives": true})
+	if s.deps.Config.Review.ReviseVerdictsBefore == "" {
+		t.Fatal("omitted key cleared the cutoff")
+	}
+	doPut(s, "/api/config/review", map[string]any{"revise_verdicts_before": ""})
+	if s.deps.Config.Review.ReviseVerdictsBefore != "" {
+		t.Fatal("empty cutoff did not clear")
 	}
 }

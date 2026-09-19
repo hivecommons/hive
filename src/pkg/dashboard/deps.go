@@ -74,6 +74,11 @@ type Dependencies struct {
 	SkipReloadFunc        func()
 	ReInitFunc            func()
 	EnumerateFunc         func()
+	// ReviewConfigApplied is called after PUT /api/config/review has mutated
+	// Config.Review, so the owner of any component that caches review
+	// settings at boot (the GitHub client's revise allowlist and perspective
+	// set) can push the new values into it. Nil means nothing caches.
+	ReviewConfigApplied func(config.ReviewConfig)
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot
@@ -82,9 +87,9 @@ type Dependencies struct {
 	// the REPOSITORIES "Rescan" button, which must be safe to press at any
 	// time. Nil (the shape most tests construct) makes POST /api/repos/rescan
 	// answer 503 rather than pretending to have scanned.
-	RescanReposFunc func(ctx context.Context) (*ghpkg.ActionableResult, error)
-	AdvisoryResetFunc     func(newPrimaryRepo string)
-	ReinitGitHubFunc      func(appID, installationID int64, keyFile string) error
+	RescanReposFunc   func(ctx context.Context) (*ghpkg.ActionableResult, error)
+	AdvisoryResetFunc func(newPrimaryRepo string)
+	ReinitGitHubFunc  func(appID, installationID int64, keyFile string) error
 	// ResolveAppKeyFileFunc resolves which App private key the process would
 	// actually sign with, given the configured key_file and app_id — the SAME
 	// resolution the boot and heartbeat-apply paths use (config value, then

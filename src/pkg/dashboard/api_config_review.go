@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
@@ -71,6 +72,14 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		Perspectives         *[]string          `json:"perspectives"`
 		PerspectivePrompts   *map[string]string `json:"perspective_prompts"`
 		CombinedPerspectives *bool              `json:"combined_perspectives"`
+		// ReviseRepos / ReviseVerdictsBefore drive the reviewer's revisit
+		// lane (#7706). Both were config-file-only until now, which left the
+		// pilot switch reachable only by a hand edit that the periodic saver
+		// then overwrote. An empty cutoff clears it; a non-empty one must be
+		// RFC 3339 so a typo is refused here rather than silently ignored by
+		// parseReviseCutoff at dispatch time.
+		ReviseRepos          *[]string `json:"revise_repos"`
+		ReviseVerdictsBefore *string   `json:"revise_verdicts_before"`
 		// Recommendations arrives as a whole object rather than one pointer
 		// per knob: its fields are only meaningful together (enabling it
 		// without a repo list means "every watched repo"), and the Features
@@ -135,6 +144,25 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.CombinedPerspectives != nil {
 		cfg.Review.CombinedPerspectives = *body.CombinedPerspectives
+	}
+	if body.ReviseVerdictsBefore != nil {
+		cutoff := strings.TrimSpace(*body.ReviseVerdictsBefore)
+		if cutoff != "" {
+			if _, err := time.Parse(time.RFC3339, cutoff); err != nil {
+				jsonError(w, "revise_verdicts_before must be RFC 3339 (e.g. 2026-09-19T14:00:00Z) or empty", http.StatusBadRequest)
+				return
+			}
+		}
+		cfg.Review.ReviseVerdictsBefore = cutoff
+	}
+	if body.ReviseRepos != nil {
+		repos := make([]string, 0, len(*body.ReviseRepos))
+		for _, repo := range *body.ReviseRepos {
+			if repo = strings.TrimSpace(repo); repo != "" {
+				repos = append(repos, repo)
+			}
+		}
+		cfg.Review.ReviseRepos = repos
 	}
 	if body.RequireApproval != nil {
 		cfg.Review.RequireApproval = *body.RequireApproval
@@ -204,6 +232,13 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to persist config after review update", "error", err)
 	}
 	s.auditFromRequest(r, "config_review", auditDetail("section", "review"), "")
+	// The GitHub client caches the revise allowlist and the perspective set at
+	// boot; without this the file changes but the running relay keeps the old
+	// values until the next restart, and the operator sees "updated" for a
+	// setting that is not in effect.
+	if s.deps.ReviewConfigApplied != nil {
+		s.deps.ReviewConfigApplied(cfg.Review)
+	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }

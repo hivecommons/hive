@@ -2849,6 +2849,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		ReInitFunc: func() {
 			initAgentConfigDrivenSystems(cfg)
 		},
+		ReviewConfigApplied: func(rc config.ReviewConfig) {
+			if b.ghClient == nil {
+				return
+			}
+			b.ghClient.SetReviseRepos(rc.ReviseRepos)
+			b.ghClient.SetPerspectives(reviewPerspectiveSet(cfg, logger))
+		},
 		EnumerateFunc: func() {
 			runEvalCycle(ctx, cfg, b.ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &b.lastActionable, advisoryStore, advisoryIssues, nil, logger)
 		},
