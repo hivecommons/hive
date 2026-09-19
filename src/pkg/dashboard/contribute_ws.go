@@ -2008,12 +2008,16 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if msg.ReasoningEffort != "" {
 		profile.ReasoningEffort = msg.ReasoningEffort
 	}
-	// #7760: the advisor pair is client text bounded the way the declared
-	// capabilities are — it is re-serialized into every fleet poll and lands in
-	// PR trailers — and, unlike the primary, it is NOT checked against the
-	// accepted-models list: it reviewed the work, it did not do it.
-	advisorModel := sanitizeString(msg.AdvisorModel)
-	advisorEffort := sanitizeString(msg.AdvisorReasoningEffort)
+	// #7760: the advisor pair is client text. It is re-serialized into every
+	// fleet poll and lands in PR trailers, so it is HTML-stripped like every
+	// other stored contributor string AND bounded the way the declared
+	// capabilities are (sanitizeCapabilityField: control characters and
+	// newlines collapsed, 64 runes) — a newline here would otherwise start a
+	// new line inside the `— hive:` trailer. Unlike the primary it is NOT
+	// checked against the accepted-models list: it reviewed the work, it did
+	// not do it.
+	advisorModel := sanitizeCapabilityField(sanitizeString(msg.AdvisorModel))
+	advisorEffort := sanitizeCapabilityField(sanitizeString(msg.AdvisorReasoningEffort))
 	if advisorModel != "" {
 		profile.AdvisorModel = advisorModel
 		profile.AdvisorEffort = advisorEffort
@@ -2481,9 +2485,9 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 		}
 		// #7760: the advisor pair refreshes on the same schedule and rule as
 		// the model above — the relay re-reads omp's own records every tick.
-		if adv := sanitizeString(msg.AdvisorModel); adv != "" {
+		if adv := sanitizeCapabilityField(sanitizeString(msg.AdvisorModel)); adv != "" {
 			s.contributor.advisorModel = adv
-			s.contributor.advisorEffort = sanitizeString(msg.AdvisorReasoningEffort)
+			s.contributor.advisorEffort = sanitizeCapabilityField(sanitizeString(msg.AdvisorReasoningEffort))
 			if s.contributor.profile != nil {
 				s.contributor.profile.AdvisorModel = s.contributor.advisorModel
 				s.contributor.profile.AdvisorEffort = s.contributor.advisorEffort
