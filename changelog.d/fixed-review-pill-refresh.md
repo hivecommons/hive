@@ -1,0 +1,1 @@
+- Show hive review-link pills on repository cards immediately after startup and manual repo refreshes, not only after a full governor evaluation cycle.

@@ -2330,6 +2330,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		if d := dashSrv.GetAdvisoryDigest(); d != nil {
 			payload.AdvisoryDigest = d
 		}
+		attachReviewLinksForDashboard(payload, logger)
 		dashSrv.UpdateStatusIfFresh(payload, buildEpoch)
 	}
 
@@ -2774,6 +2775,20 @@ func (b *boot) bootSupervision() {
 	}
 
 	b.rotationMgr, b.wd, b.linearCredentialResolver = rotationMgr, wd, linearCredentialResolver
+}
+
+func attachReviewLinksForDashboard(payload *dashboard.StatusPayload, logger *slog.Logger) {
+	if payload == nil {
+		return
+	}
+	reviewLinks, err := github.LoadReviewLinks("")
+	if err != nil {
+		if logger != nil {
+			logger.Warn("could not load review links for the status snapshot", "error", err)
+		}
+		return
+	}
+	dashboard.AttachReviewLinks(payload, reviewLinks)
 }
 
 // bootDashboardAPI registers the dashboard API with its dependencies and
@@ -6222,11 +6237,7 @@ func runEvalCycle(
 	// view shows where the hive has already spoken. Read from the durable
 	// ledger, so this costs no GitHub call per PR; a missing or unreadable
 	// ledger simply means no review pills this cycle.
-	if reviewLinks, err := github.LoadReviewLinks(""); err != nil {
-		logger.Warn("could not load review links for the status snapshot", "error", err)
-	} else {
-		dashboard.AttachReviewLinks(statusPayload, reviewLinks)
-	}
+	attachReviewLinksForDashboard(statusPayload, logger)
 	statusPublished := false
 	// Ingest any JSONL findings agents wrote and persist them as beads.
 	if advisoryStore != nil {
