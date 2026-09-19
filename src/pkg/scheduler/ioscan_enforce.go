@@ -258,3 +258,12 @@ func (s *Scheduler) recordClassifierAdvisory(score ioscan.InjectionScore, action
 	}
 	adv(title, detail, ioscanAuditUser)
 }
+
+// IoscanHooksForTest exposes the wired ioscan audit/advisory hooks and whether
+// a classifier is installed, so the boot phase that wires them can be
+// asserted without a real dashboard round-trip.
+func (s *Scheduler) IoscanHooksForTest() (audit AuditFunc, advisory AdvisoryFunc, classifierInstalled bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.auditFunc, s.advisoryFunc, s.classifier != nil
+}

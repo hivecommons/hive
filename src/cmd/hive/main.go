@@ -2002,10 +2002,14 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 // history bootGovernor loaded. The advisory sinks it installs read
 // b.beadStores, which bootStores fills next — before that they see a nil
 // map, exactly as the captured local did.
-func (b *boot) bootDashboard() {
+func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps()) }
+
+// bootDashboardWith is bootDashboard with the server constructor and PVC
+// persistence enables injected; see bootDashboardDeps.
+func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	cfg, logger, sched, agentMgr, pendingTokenSeed := b.cfg, b.logger, b.sched, b.agentMgr, b.pendingTokenSeed
 	pendingFactSeed, pendingCostSeed, pendingBudgetWindowSeed, pendingConvergenceSoakSeed, pendingTrendSeed := b.pendingFactSeed, b.pendingCostSeed, b.pendingBudgetWindowSeed, b.pendingConvergenceSoakSeed, b.pendingTrendSeed
-	dashSrv := dashboard.NewServerWithAuth(cfg.Dashboard.Port, cfg.Dashboard.AuthToken, logger)
+	dashSrv := deps.newServer(cfg.Dashboard.Port, cfg.Dashboard.AuthToken, logger)
 	b.cleanup.push(func() { dashSrv.CloseContributeHub() })
 	// SIGTERM (pod roll, hive self-upgrade) kills the process and every
 	// contributor WebSocket with it, and until #5390 it did so without a word:
@@ -2094,12 +2098,12 @@ func (b *boot) bootDashboard() {
 	// there is wiped on every pod roll. That was the "re-login on every visit"
 	// bug on direct-route spokes. /data is the CephFS PVC (same place cost/fact
 	// history persist).
-	dashSrv.EnableSessionPersistence("/data/dashboard-sessions.json")
+	deps.enableSessionPersistence(dashSrv, dashboardSessionsPath)
 
 	// Lifecycle timeline journeys persist on the PVC too (#5656): the ring is
 	// the panel's only memory of merged/blocked outcomes, so a pod roll must
 	// not zero the fleet counters. Enabled before any producer records.
-	dashSrv.EnableLifecyclePersistence("/data/lifecycle-timeline.json")
+	deps.enableLifecyclePersistence(dashSrv, lifecycleTimelinePath)
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.

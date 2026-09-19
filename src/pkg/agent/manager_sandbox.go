@@ -224,3 +224,9 @@ func (m *Manager) auditSandbox(agent, action, detail string) {
 		(*fn)(agent, action, detail)
 	}
 }
+
+// SandboxAuditForTest fires the sandbox audit callback exactly as a sandbox
+// outcome would, so the callback's wiring can be asserted from cmd/hive.
+func (m *Manager) SandboxAuditForTest(agent, action, detail string) {
+	m.auditSandbox(agent, action, detail)
+}
