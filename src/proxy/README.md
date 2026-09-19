@@ -8,7 +8,7 @@ The proxy listens on `HIVE_PROXY_PORT` (default `3001`) and forwards API traffic
 
 ## Auth headers
 
-For mutating `/api` requests, the proxy requires a bearer token when `HIVE_DASHBOARD_TOKEN` is set. It strips user-supplied `X-Hive-User`, `X-Hive-Role`, and `X-Hive-Internal` headers before proxying and injects `X-Hive-Internal` itself for trusted API calls. This prevents a browser client from forging dashboard-internal identity headers.
+For `/api` requests, the proxy verifies the bearer token when `HIVE_DASHBOARD_TOKEN` is set: mutating requests without it are rejected with 401, and `X-Hive-Internal` — which the Go API treats as owner-equivalent, gateway-authenticated trust — is injected **only** on requests (any method) that actually presented the token. Unauthenticated reads are forwarded with no trust material and fail closed at the Go API. The proxy also strips user-supplied `X-Hive-User`, `X-Hive-Role`, and `X-Hive-Internal` headers before proxying, so a browser client can never forge dashboard-internal identity.
 
 Terminal access requires either the hosted hub identity cookie plus per-hive authorization, or a spoke-minted `hive_terminal_assertion` cookie prepared by the Go dashboard. The shared dashboard token is never accepted from `?token=` terminal URLs; token-secured browser clients must call `/api/terminal/handoff` with the normal Authorization header before navigating to `/terminal`.
 

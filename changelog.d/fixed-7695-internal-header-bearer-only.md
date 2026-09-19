@@ -1,0 +1,1 @@
+- Gateway proxy injects the owner-equivalent X-Hive-Internal header only for bearer-verified requests (any method); anonymous reads are forwarded with no trust material and fail closed at the Go API, closing the anonymous owner-level read of raw hive.yaml on token-secured spokes (#7695).

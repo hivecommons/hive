@@ -63,9 +63,19 @@ func TestStaleTokenRetriesExactlyOnce(t *testing.T) {
 // operator was never given would be wrong.
 func TestStaleTokenRecoveryRequiresAStoredToken(t *testing.T) {
 	html := indexHTML(t)
-	const guard = "if (isMutation && _authToken && !opts.__hiveAuthRetried &&"
-	if !strings.Contains(html, guard) {
-		t.Errorf("index.html is missing the %q guard — hosted hives would clear/prompt on a real authorization denial", guard)
+	// Since #7695 guarded READS take the 401-retry path too, so the outer
+	// guard admits them — but clearing storage / flagging rejection stays
+	// behind an inner _authToken check: with no stored token there is nothing
+	// stale to clear, and on hosted/direct-route hives (where /api/auth/token
+	// answers 404) _ensureAuthToken resolves silently to null, so a real
+	// authorization denial still never prompts.
+	const outer = "if ((isMutation || isGuarded) && !opts.__hiveAuthRetried &&"
+	if !strings.Contains(html, outer) {
+		t.Errorf("index.html is missing the %q guard — the 401 retry no longer covers guarded reads (#7695)", outer)
+	}
+	const inner = "if (_authToken) {\n            try { localStorage.removeItem('hive-token'); } catch {}"
+	if !strings.Contains(html, "if (_authToken) {") || !strings.Contains(html, "localStorage.removeItem('hive-token')") {
+		t.Errorf("index.html is missing the inner _authToken guard %q — hosted hives would clear/prompt on a real authorization denial", inner)
 	}
 }
 

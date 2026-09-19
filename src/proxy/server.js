@@ -680,16 +680,21 @@ function parseSnapshotFrameAncestors(raw) {
   }).filter(Boolean);
 }
 
-function requireAuth(req, res, next) {
-  if (!DASHBOARD_TOKEN) return next();
-  const authHeader = req.headers.authorization || '';
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!match) return res.status(401).json({ error: 'Unauthorized' });
+// bearerTokenMatches reports whether the request's Authorization header carries
+// the shared dashboard token, compared in constant time. This is the ONLY
+// predicate that may mark a request as gateway-authenticated.
+function bearerTokenMatches(authHeader) {
+  if (!DASHBOARD_TOKEN) return false;
+  const match = (authHeader || '').match(/^Bearer\s+(.+)$/i);
+  if (!match) return false;
   const supplied = Buffer.from(match[1]);
   const expected = Buffer.from(DASHBOARD_TOKEN);
-  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+
+function requireAuth(req, res, next) {
+  if (!DASHBOARD_TOKEN) return next();
+  if (!req.hiveTokenVerified) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
 
@@ -974,6 +979,16 @@ app.use(async (req, res, next) => {
 
 const PUBLIC_POST_PATHS = ['/api/contribute/register'];
 app.use((req, res, next) => {
+  // SECURITY (CWE-306): decide ONCE, for every method, whether this request
+  // actually presented the shared dashboard token. apiProxy injects the
+  // server-to-server X-Hive-Internal credential ONLY when this is true — the
+  // Go API grants that header verified-owner trust on the explicit assumption
+  // that "the local gateway authenticates the browser ... then injects
+  // X-Hive-Internal" (pkg/dashboard/server.go authenticate()). Injecting it on
+  // unauthenticated GETs, as this proxy used to, promoted every anonymous read
+  // to a verified owner — including GET /api/config/download, which returns
+  // the raw hive.yaml verbatim (issue #7695).
+  req.hiveTokenVerified = bearerTokenMatches(req.headers.authorization);
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (PUBLIC_POST_PATHS.some(p => req.url.startsWith(p))) return next();
     return requireAuth(req, res, next);
@@ -990,7 +1005,15 @@ const apiProxy = createProxyMiddleware({
       if (req.headers.upgrade) return;
       proxyReq.removeHeader('X-Hive-User');
       proxyReq.removeHeader('X-Hive-Role');
-      if (DASHBOARD_TOKEN) {
+      // SECURITY (CWE-306, issue #7695): X-Hive-Internal is owner-equivalent on
+      // the Go side, so it is injected ONLY for requests that authenticated with
+      // the shared token (any method). An unauthenticated read is forwarded with
+      // NO trust material and fails closed at the Go API's authenticate()
+      // middleware; genuinely public endpoints (health, contribute, leaderboard,
+      // snapshot, auth/token) stay public via the Go isPublicPath allowlist.
+      // Requests that DID present the bearer token also keep their Authorization
+      // header, which the Go API accepts directly on non-direct-route spokes.
+      if (DASHBOARD_TOKEN && req.hiveTokenVerified) {
         proxyReq.setHeader('X-Hive-Internal', DASHBOARD_TOKEN);
       } else {
         proxyReq.removeHeader('X-Hive-Internal');

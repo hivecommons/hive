@@ -3844,7 +3844,19 @@
       // Set only while re-prompting after the server rejected a stored token,
       // so the prompt can say WHY it is asking again.
       let _authRejected = false;
-      async function _ensureAuthToken() {
+      // Single-flight: the dashboard fires many reads concurrently at boot, and
+      // since the gateway stopped trusting unauthenticated reads (issue #7695)
+      // each of them can 401 at once on a token-secured spoke with no stored
+      // token. Without this, every one of those failures would open its own
+      // window.prompt. All concurrent callers now share one prompt.
+      let _ensureAuthTokenFlight = null;
+      function _ensureAuthToken() {
+        if (!_ensureAuthTokenFlight) {
+          _ensureAuthTokenFlight = _ensureAuthTokenInner().finally(() => { _ensureAuthTokenFlight = null; });
+        }
+        return _ensureAuthTokenFlight;
+      }
+      async function _ensureAuthTokenInner() {
         if (_authToken) return _authToken;
         if (_authConfigured === null) {
           try {
@@ -3946,15 +3958,24 @@
         opts = opts || {};
         const method = (opts.method || 'GET').toUpperCase();
         const isMutation = ['PUT','POST','PATCH','DELETE'].includes(method);
+        // Same-origin /api requests need the token for READS too, not just
+        // mutations: the gateway no longer injects owner-level trust
+        // (X-Hive-Internal) on unauthenticated GETs (issue #7695), so on a
+        // token-secured spoke an anonymous read is 401'd by the Go API. Attach
+        // the stored token to every guarded request; only mutations proactively
+        // PROMPT for a missing one (reads prompt lazily via the 401 retry
+        // below, so hosted hives — which have no shared token — never see a
+        // prompt on load).
+        const isGuarded = _isGuardedApiRequest(url);
         if (isMutation) {
           await _ensureAuthToken();
-          if (_authToken) {
-            opts.headers = opts.headers || {};
-            if (opts.headers instanceof Headers) {
-              if (!opts.headers.has('Authorization')) opts.headers.set('Authorization', 'Bearer ' + _authToken);
-            } else {
-              if (!opts.headers['Authorization']) opts.headers['Authorization'] = 'Bearer ' + _authToken;
-            }
+        }
+        if (_authToken && (isMutation || isGuarded)) {
+          opts.headers = opts.headers || {};
+          if (opts.headers instanceof Headers) {
+            if (!opts.headers.has('Authorization')) opts.headers.set('Authorization', 'Bearer ' + _authToken);
+          } else {
+            if (!opts.headers['Authorization']) opts.headers['Authorization'] = 'Bearer ' + _authToken;
           }
         }
         const res = await _fetchWithSessionGuard(url, opts);
@@ -3969,14 +3990,20 @@
         // rotation. Drop the bad token, re-prompt once saying why, retry once.
         //
         // Retry exactly once (__hiveAuthRetried): a genuinely wrong token
-        // must not loop. Only when a token was actually SENT — on a hosted
-        // hive identity comes from the hub login, where 401/403 is a real
-        // authorization denial and clearing anything would be wrong.
-        if (isMutation && _authToken && !opts.__hiveAuthRetried &&
+        // must not loop. Guarded READS take this path too (issue #7695): with
+        // no stored token the first read 401s, _ensureAuthToken prompts once
+        // (or resolves silently to null on hosted/direct-route hives, where
+        // /api/auth/token answers 404 and clearing/prompting would be wrong —
+        // there a 401/403 is a real session/authorization denial), and the
+        // retry carries the entered token. A stored-but-stale token is dropped
+        // and re-prompted exactly as before.
+        if ((isMutation || isGuarded) && !opts.__hiveAuthRetried &&
             (res.status === 401 || res.status === 403)) {
-          try { localStorage.removeItem('hive-token'); } catch {}
-          _authToken = null;
-          _authRejected = true;
+          if (_authToken) {
+            try { localStorage.removeItem('hive-token'); } catch {}
+            _authToken = null;
+            _authRejected = true;
+          }
           try {
             await _ensureAuthToken();
           } finally {
