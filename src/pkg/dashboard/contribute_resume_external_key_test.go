@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // contribute_resume_external_key_test.go — hivecommons/hive#7770.
@@ -38,48 +39,40 @@ func seedOneExternalItem(s *Server, externalID, title string) {
 
 // heldIdentityKey polls until some live connection holds taskID and returns
 // that connection's currentTask.identityKey(); "" if nothing holds it in time.
-func heldIdentityKey(h *ContributeWSHub, taskID string) string {
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+func heldIdentityKey(t *testing.T, h *ContributeWSHub, taskID string) string {
+	t.Helper()
+	var key string
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		h.mu.RLock()
+		defer h.mu.RUnlock()
 		for _, c := range h.connections {
 			c.mu.Lock()
-			if c.currentTask != nil && c.currentTask.TaskID == taskID {
-				key := c.currentTask.identityKey()
-				c.mu.Unlock()
-				h.mu.RUnlock()
-				return key
+			held := c.currentTask != nil && c.currentTask.TaskID == taskID
+			if held {
+				key = c.currentTask.identityKey()
 			}
 			c.mu.Unlock()
+			if held {
+				return true
+			}
 		}
-		h.mu.RUnlock()
-		time.Sleep(10 * time.Millisecond)
-	}
-	return ""
+		return false
+	}, "no live connection held task %q within the wait", taskID)
+	return key
 }
 
 func waitForFailureCooldownKey(t *testing.T, h *ContributeWSHub, key string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if h.isTaskInFailureCooldownKey(key) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("disconnect did not book the #2356 hedge for %q — an external item has no cover during the reconnect window", key)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		return h.isTaskInFailureCooldownKey(key)
+	}, "disconnect did not book the #2356 hedge for %q — an external item has no cover during the reconnect window", key)
 }
 
 func waitForNoFailureCooldownKey(t *testing.T, h *ContributeWSHub, key string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if !h.isTaskInFailureCooldownKey(key) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("the resume did not withdraw the #2356 hedge for %q (#5322)", key)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		return !h.isTaskInFailureCooldownKey(key)
+	}, "the resume did not withdraw the #2356 hedge for %q (#5322)", key)
 }
 
 func TestReconnectResume_ExternalItemKeepsCanonicalKey(t *testing.T) {
@@ -97,7 +90,7 @@ func TestReconnectResume_ExternalItemKeepsCanonicalKey(t *testing.T) {
 	if assign.Type != "task_assign" || assign.TaskKey != wantKey || assign.Number != 0 {
 		t.Fatalf("expected task_assign for %s with number 0, got type=%s key=%q number=%d", wantKey, assign.Type, assign.TaskKey, assign.Number)
 	}
-	if got := heldIdentityKey(s.contributeHub, assign.TaskID); got != wantKey {
+	if got := heldIdentityKey(t, s.contributeHub, assign.TaskID); got != wantKey {
 		t.Fatalf("setup: the fresh assignment must already carry the key, got %q", got)
 	}
 
@@ -125,7 +118,7 @@ func TestReconnectResume_ExternalItemKeepsCanonicalKey(t *testing.T) {
 	})
 
 	// (a) The resumed connection reports the item's real canonical key.
-	if got := heldIdentityKey(s.contributeHub, assign.TaskID); got != wantKey {
+	if got := heldIdentityKey(t, s.contributeHub, assign.TaskID); got != wantKey {
 		t.Fatalf("after the resume the live connection's currentTask.identityKey() = %q, want %q — "+
 			"an external item rebuilt from repo/number alone has no identity, so every key-based guard skips it", got, wantKey)
 	}
@@ -149,19 +142,12 @@ func TestReconnectResume_ExternalItemKeepsCanonicalKey(t *testing.T) {
 	// the real key, not against "" — which markTaskCompletedVerdictKeySignal
 	// silently drops.
 	conn2.WriteJSON(WSMessage{Type: "task_complete", Seq: 4, TaskID: assign.TaskID, TaskGen: assign.TaskGen, Result: "completed"})
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		s.contributeHub.completedMu.Lock()
+		defer s.contributeHub.completedMu.Unlock()
 		_, cooled := s.contributeHub.completedTasks[wantKey]
-		s.contributeHub.completedMu.Unlock()
-		if cooled || time.Now().After(deadline) {
-			if !cooled {
-				t.Fatalf("completing the resumed external item booked no completion cooldown for %q", wantKey)
-			}
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return cooled
+	}, "completing the resumed external item booked no completion cooldown for %q", wantKey)
 }
 
 // TestReconnectResume_GitHubItemUnchanged pins the no-regression leg: a GitHub
@@ -197,7 +183,7 @@ func TestReconnectResume_GitHubItemUnchanged(t *testing.T) {
 		Type: "task_progress", Seq: 2, TaskID: assign.TaskID, TaskGen: assign.TaskGen,
 		Repo: assign.Repo, Number: assign.Number, Kind: "issue", Title: assign.Title, Status: "working",
 	})
-	if got := heldIdentityKey(s.contributeHub, assign.TaskID); got != "myorg/repo1#4207" {
+	if got := heldIdentityKey(t, s.contributeHub, assign.TaskID); got != "myorg/repo1#4207" {
 		t.Fatalf("resumed GitHub item identity = %q, want myorg/repo1#4207", got)
 	}
 	waitForNoFailureCooldownKey(t, s.contributeHub, "myorg/repo1#4207")
