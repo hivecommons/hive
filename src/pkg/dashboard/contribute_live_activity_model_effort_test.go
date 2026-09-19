@@ -153,6 +153,7 @@ func TestCCFormatLoadout_Behaviour(t *testing.T) {
 	page := renderContributePage(t)
 
 	script := extractJSFunc(t, page, "function esc(s){") + "\n" +
+		extractJSFunc(t, page, "function ccAdvisorLabel(o){") + "\n" +
 		extractJSFunc(t, page, "function ccFormatLoadout(e,cls){") + "\n" +
 		`const cases=[
 			{cli:'codex',model:'gpt-5.6-terra',effort:'high'},
@@ -161,7 +162,10 @@ func TestCCFormatLoadout_Behaviour(t *testing.T) {
 			{cli:'bob'},
 			{},
 			null,
-			{cli:'<img src=x onerror=alert(1)>',model:'a"b',effort:"c'd"}
+			{cli:'<img src=x onerror=alert(1)>',model:'a"b',effort:"c'd"},
+			{cli:'omp',model:'openai-codex/gpt-5.6-terra',effort:'medium',advisor_model:'anthropic/claude-opus-5',advisor_effort:'high'},
+			{cli:'omp',model:'openai-codex/gpt-5.6-terra',advisor_model:'anthropic/claude-opus-5'},
+			{cli:'omp',advisor_model:'<b>x</b>',advisor_effort:'"h"'}
 		];
 		console.log(JSON.stringify(cases.map(function(c){return ccFormatLoadout(c,'feed-cli');})));`
 
@@ -187,6 +191,12 @@ func TestCCFormatLoadout_Behaviour(t *testing.T) {
 		``,
 		``,
 		` <span class="feed-cli">via &lt;img src=x onerror=alert(1)&gt; CLI with a&quot;b (c&#39;d)</span>`,
+		// hivecommons/hive#7760: an omp contributor with an advisor names both
+		// models, primary first; the advisor's effort is independent of the
+		// primary's, and the pair is escaped like everything else.
+		` <span class="feed-cli">via omp CLI with openai-codex/gpt-5.6-terra (medium) + advisor anthropic/claude-opus-5 (high)</span>`,
+		` <span class="feed-cli">via omp CLI with openai-codex/gpt-5.6-terra + advisor anthropic/claude-opus-5</span>`,
+		` <span class="feed-cli">via omp CLI + advisor &lt;b&gt;x&lt;/b&gt; (&quot;h&quot;)</span>`,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d: %#v", len(got), len(want), got)

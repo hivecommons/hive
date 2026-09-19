@@ -137,7 +137,11 @@ type ContributorProfile struct {
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
 	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
-	AvatarURL         string `json:"avatar_url,omitempty"`
+	// AdvisorModel / AdvisorEffort: the last-reported second model that
+	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
+	AdvisorModel  string `json:"advisor_model,omitempty"`
+	AdvisorEffort string `json:"advisor_effort,omitempty"`
+	AvatarURL     string `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is
 	// pure attribution: it never affects TrustTier (an invitee always joins as

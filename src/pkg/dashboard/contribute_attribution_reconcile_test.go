@@ -33,6 +33,40 @@ func TestWSMessage_ReasoningEffortJSON(t *testing.T) {
 }
 
 func TestContributeWSHub_ReconcilePRAttribution(t *testing.T) {
+	reconcileTrailerFor(t, &ContributorConnection{
+		cliBackend:      "codex",
+		model:           "gpt-5.6-terra",
+		reasoningEffort: "high",
+		role:            "quality",
+		profile: &ContributorProfile{
+			GitHubUsername: "alice",
+		},
+		capabilities: &ContributorCapabilities{
+			AgentCLIVersion: "0.5.2",
+		},
+	}, "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2")
+}
+
+// hivecommons/hive#7760: an omp connection that reported an advisor gets both
+// models in the trailer on the PRs it opens — the hub's own record of the
+// connection, exactly as for the primary.
+func TestContributeWSHub_ReconcilePRAttribution_AdvisorPair(t *testing.T) {
+	reconcileTrailerFor(t, &ContributorConnection{
+		cliBackend:      "omp",
+		model:           "openai-codex/gpt-5.6-terra",
+		reasoningEffort: "medium",
+		advisorModel:    "anthropic/claude-opus-5",
+		advisorEffort:   "high",
+		profile: &ContributorProfile{
+			GitHubUsername: "danathar",
+		},
+	}, "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high")
+}
+
+// reconcileTrailerFor runs reconcilePRAttribution for conn against a fake
+// GitHub and asserts the PR body ends up carrying wantTrailer.
+func reconcileTrailerFor(t *testing.T, conn *ContributorConnection, wantTrailer string) {
+	t.Helper()
 	var mu sync.Mutex
 	var patchedBody string
 	var patchCount int
@@ -87,19 +121,6 @@ func TestContributeWSHub_ReconcilePRAttribution(t *testing.T) {
 	hub := NewContributeWSHub(logger, s)
 	t.Cleanup(hub.Close)
 
-	conn := &ContributorConnection{
-		cliBackend:      "codex",
-		model:           "gpt-5.6-terra",
-		reasoningEffort: "high",
-		role:            "quality",
-		profile: &ContributorProfile{
-			GitHubUsername: "alice",
-		},
-		capabilities: &ContributorCapabilities{
-			AgentCLIVersion: "0.5.2",
-		},
-	}
-
 	prURL := "https://github.com/myorg/repo1/pull/42"
 	hub.reconcilePRAttribution(prURL, conn)
 
@@ -112,7 +133,6 @@ func TestContributeWSHub_ReconcilePRAttribution(t *testing.T) {
 		t.Fatalf("expected 1 PATCH call, got %d", count)
 	}
 
-	wantTrailer := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
 	if !strings.Contains(gotBody, wantTrailer) {
 		t.Errorf("reconciled PR body missing expected trailer: got %q, want trailer %q", gotBody, wantTrailer)
 	}

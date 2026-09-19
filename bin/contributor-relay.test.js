@@ -4213,6 +4213,207 @@ test('#4117: synthetic placeholder turns are skipped in favor of the last real m
   }
 });
 
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7760 — omp: primary model + effort, and the advisor's.
+//
+// omp picks its models from its own config, so contributors never export
+// AGENT_MODEL and showed up as `omp` with `model: null`; with --advisor two
+// models did the work and hive named neither. The detector reads omp's own
+// records: config.yml (modelRoles + advisor.enabled), the newest session's
+// model_change record, and the advisor's __advisor.jsonl sidecar.
+// ---------------------------------------------------------------------------
+
+// Builds an omp agent dir: config.yml plus, optionally, one session transcript
+// and its advisor sidecar. Returns the dir and the paths a test may append to.
+function makeOmpFixture({ config, session, advisor } = {}) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratchRoot, 'omp-detect-'));
+  const agentDir = path.join(root, 'agent');
+  fs.mkdirSync(agentDir, { recursive: true });
+  if (config !== undefined) fs.writeFileSync(path.join(agentDir, 'config.yml'), config);
+  const out = { root, agentDir, sessionFile: null, advisorFile: null };
+  if (session) {
+    const sessDir = path.join(agentDir, 'sessions', '--home-dev-work--');
+    fs.mkdirSync(sessDir, { recursive: true });
+    out.sessionFile = path.join(sessDir, '2026-09-19T14-00-00_abc123.jsonl');
+    fs.writeFileSync(out.sessionFile, session.map(t => JSON.stringify(t)).join('\n') + '\n');
+    if (advisor) {
+      const sidecarDir = path.join(sessDir, '2026-09-19T14-00-00_abc123');
+      fs.mkdirSync(sidecarDir, { recursive: true });
+      out.advisorFile = path.join(sidecarDir, '__advisor.jsonl');
+      fs.writeFileSync(out.advisorFile, advisor.map(t => JSON.stringify(t)).join('\n') + '\n');
+    }
+  }
+  return out;
+}
+
+const OMP_CONFIG_WITH_ADVISOR = [
+  'modelRoles:',
+  '  default: openai-codex/gpt-5.6-terra:medium',
+  '  advisor: anthropic/claude-opus-5:high',
+  'advisor:',
+  '  enabled: true',
+  'theme: dark',
+  '',
+].join('\n');
+
+const OMP_MODEL_CHANGE = { type: 'model_change', model: 'openai-codex/gpt-5.6-terra', timestamp: '2026-09-19T14:00:00Z' };
+const OMP_ADVISOR_TURN = { type: 'message', role: 'assistant', provider: 'anthropic', model: 'claude-opus-5', content: 'note' };
+
+test('#7760: splitOmpSelection separates the thinking level from provider/model and keeps tags', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    assert.deepStrictEqual(relay.splitOmpSelection('openai-codex/gpt-5.6-terra:medium'), { model: 'openai-codex/gpt-5.6-terra', effort: 'medium' });
+    assert.deepStrictEqual(relay.splitOmpSelection('anthropic/claude-opus-5'), { model: 'anthropic/claude-opus-5', effort: '' });
+    assert.deepStrictEqual(relay.splitOmpSelection('ollama/llama3:8b'), { model: 'ollama/llama3:8b', effort: '' },
+      'an Ollama tag is part of the model name, not an effort');
+    assert.deepStrictEqual(relay.splitOmpSelection('"openai-codex/gpt-5.6:max"'), { model: 'openai-codex/gpt-5.6', effort: 'max' });
+    assert.deepStrictEqual(relay.splitOmpSelection(''), { model: '', effort: '' });
+    assert.deepStrictEqual(relay.splitOmpSelection('<synthetic>'), { model: '', effort: '' });
+  } finally { teardown(relay); }
+});
+
+test('#7760: parseOmpConfig reads modelRoles and advisor.enabled, ignoring the rest', () => {
+  const fx = makeOmpFixture({ config: OMP_CONFIG_WITH_ADVISOR });
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    assert.deepStrictEqual(relay.parseOmpConfig(path.join(fx.agentDir, 'config.yml')), {
+      defaultSelection: 'openai-codex/gpt-5.6-terra:medium',
+      advisorSelection: 'anthropic/claude-opus-5:high',
+      advisorEnabled: true,
+    });
+    assert.deepStrictEqual(relay.parseOmpConfig(path.join(fx.agentDir, 'missing.yml')),
+      { defaultSelection: '', advisorSelection: '', advisorEnabled: null }, 'a missing file yields empty fields, not a throw');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: omp primary and advisor are detected from config.yml and the session records', () => {
+  const fx = makeOmpFixture({ config: OMP_CONFIG_WITH_ADVISOR, session: [OMP_MODEL_CHANGE], advisor: [OMP_ADVISOR_TURN] });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.deepStrictEqual(relay.detectOmpSelection(), {
+      model: 'openai-codex/gpt-5.6-terra', effort: 'medium',
+      advisorModel: 'anthropic/claude-opus-5', advisorEffort: 'high',
+    });
+    assert.strictEqual(relay.refreshDetectedModel(), 'openai-codex/gpt-5.6-terra');
+    assert.strictEqual(relay.effectiveReasoningEffort(), 'medium', 'the :level suffix is the effort, from the config spelling');
+    assert.deepStrictEqual(relay.advisorFields(), { advisor_model: 'anthropic/claude-opus-5', advisor_reasoning_effort: 'high' });
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: auth_response carries model, effort and the advisor pair for omp', () => {
+  const fx = makeOmpFixture({ config: OMP_CONFIG_WITH_ADVISOR, session: [OMP_MODEL_CHANGE], advisor: [OMP_ADVISOR_TURN] });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, 'openai-codex/gpt-5.6-terra');
+    assert.strictEqual(auth.reasoning_effort, 'medium');
+    assert.strictEqual(auth.advisor_model, 'anthropic/claude-opus-5');
+    assert.strictEqual(auth.advisor_reasoning_effort, 'high');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: a bare omp with no advisor and no session reports config default and nothing else', () => {
+  const fx = makeOmpFixture({ config: 'modelRoles:\n  default: openai-codex/gpt-5.6-terra:medium\n' });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, 'openai-codex/gpt-5.6-terra', 'config.yml is the fallback when no session exists yet');
+    assert.strictEqual(auth.reasoning_effort, 'medium');
+    assert.strictEqual(auth.advisor_model, undefined, 'no advisor configured: the field is omitted, not empty');
+    assert.strictEqual(auth.advisor_reasoning_effort, undefined);
+    assert.deepStrictEqual(relay.advisorFields(), {});
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: an omp with nothing readable degrades to exactly today\'s empty report', () => {
+  const fx = makeOmpFixture({});
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, '');
+    assert.strictEqual(auth.reasoning_effort, undefined);
+    assert.strictEqual(auth.advisor_model, undefined);
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: the advisor is read from the sidecar when config.yml does not declare it', () => {
+  const fx = makeOmpFixture({
+    config: 'modelRoles:\n  default: openai-codex/gpt-5.6-terra:medium\n',
+    session: [OMP_MODEL_CHANGE],
+    advisor: [OMP_ADVISOR_TURN],
+  });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    const sel = relay.detectOmpSelection();
+    assert.strictEqual(sel.advisorModel, 'anthropic/claude-opus-5', 'the sidecar names provider and model separately; they are joined as provider/model');
+    assert.strictEqual(sel.advisorEffort, '', 'the sidecar records no level, and none was configured');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: an advisor configured but disabled is not reported, and the sidecar never becomes the primary', () => {
+  const fx = makeOmpFixture({
+    config: OMP_CONFIG_WITH_ADVISOR.replace('enabled: true', 'enabled: false'),
+    session: [OMP_MODEL_CHANGE],
+    advisor: [OMP_ADVISOR_TURN],
+  });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    // The sidecar is newer than the session file, which is exactly the mtime
+    // race that would misreport the advisor as the primary if it were a
+    // candidate.
+    const later = new Date(Date.now() + 5000);
+    fs.utimesSync(fx.advisorFile, later, later);
+    const sel = relay.detectOmpSelection();
+    assert.strictEqual(sel.model, 'openai-codex/gpt-5.6-terra', 'the primary comes from the session, not the newer sidecar');
+    assert.strictEqual(sel.advisorModel, '', 'advisor.enabled: false means no advisor reviewed this work');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: AGENT_MODEL and AGENT_REASONING_EFFORT still win over what omp records', () => {
+  const fx = makeOmpFixture({ config: OMP_CONFIG_WITH_ADVISOR, session: [OMP_MODEL_CHANGE], advisor: [OMP_ADVISOR_TURN] });
+  const relay = loadRelay({ backend: 'omp', model: 'my/explicit-model', reasoningEffort: 'low', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'my/explicit-model');
+    assert.strictEqual(relay.effectiveReasoningEffort(), 'low');
+    assert.deepStrictEqual(relay.advisorFields(), { advisor_model: 'anthropic/claude-opus-5', advisor_reasoning_effort: 'high' },
+      'the advisor has no env var, so it is always what the CLI reports');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: a mid-task /model switch in omp reaches task_progress, with the advisor pair alongside', () => {
+  const fx = makeOmpFixture({ config: OMP_CONFIG_WITH_ADVISOR, session: [OMP_MODEL_CHANGE], advisor: [OMP_ADVISOR_TURN] });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', cliStates: ['working'], env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'openai-codex/gpt-5.6-terra');
+    fs.appendFileSync(fx.sessionFile, JSON.stringify({ type: 'model_change', model: 'anthropic/claude-sonnet-5:high' }) + '\n');
+    relay.setCurrentTask({ task_id: 'mt-omp', task_gen: 3, kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' });
+    relay.__stallTick();
+    const prog = relay.__sent.filter(m => m.type === 'task_progress').pop();
+    assert.ok(prog, 'the tick must send a task_progress');
+    assert.strictEqual(prog.model, 'anthropic/claude-sonnet-5', 'the switched model, provider included');
+    assert.strictEqual(prog.reasoning_effort, 'high', 'a level spelled on the switch is the effort now in effect');
+    assert.strictEqual(prog.advisor_model, 'anthropic/claude-opus-5');
+    assert.strictEqual(prog.advisor_reasoning_effort, 'high');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7760: a backend without a selection detector reports no advisor fields', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-opus-5-20260101')]);
+  const relay = loadRelay({ backend: 'claude', model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, 'claude-opus-5-20260101');
+    assert.strictEqual(auth.advisor_model, undefined);
+    assert.strictEqual(relay.SELECTION_DETECTORS.claude, undefined);
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
 test('#4117: copilot model is detected from the newest events.jsonl', () => {
   const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
   fs.mkdirSync(scratchRoot, { recursive: true });

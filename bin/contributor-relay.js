@@ -929,7 +929,10 @@ function effectiveReasoningEffort() {
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
   // muse applies effort with or without a model, but only for values it takes.
   if (BACKEND === 'muse') return MUSE_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : '';
-  return REASONING_EFFORT || '';
+  // omp takes its effort from its own config (the `:level` suffix on the model
+  // selection), read by detectOmpSelection; the env var still wins when set,
+  // the same precedence effectiveModel() applies (#7760).
+  return REASONING_EFFORT || detectedEffort || '';
 }
 
 // --- Model auto-detection from the CLI's own session transcript (#4117) ----
@@ -1078,12 +1081,179 @@ function detectBobModel() {
   return '';
 }
 
-const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel };
+// --- omp: primary model + effort, and the advisor's (hivecommons/hive#7760) ---
+//
+// omp chooses its models from its own config rather than from a flag, so an
+// omp contributor almost never exports AGENT_MODEL — the env var would be a
+// second, drift-prone copy — and showed up everywhere in hive as `omp` with
+// `model: null`. With `--advisor` two models did the work and hive named
+// neither. omp records everything needed locally and machine-readably:
+//
+//   ~/.omp/agent/config.yml        modelRoles: { default: <sel>, advisor: <sel> }
+//                                  advisor: { enabled: true }
+//   ~/.omp/agent/sessions/<slug>/<ts>_<id>.jsonl
+//                                  first record {"type":"model_change","model":
+//                                  "openai-codex/gpt-5.6-terra", ...} — the
+//                                  primary, in the shape the claude/copilot
+//                                  detectors read
+//   ~/.omp/agent/sessions/<slug>/<ts>_<id>/__advisor.jsonl
+//                                  the advisor's sidecar session; its assistant
+//                                  records carry {"provider": ..., "model": ...}
+//
+// A selection is spelled `provider/model[:effort]`; the suffix is omp's
+// thinking level. The primary comes from the newest session's model_change
+// (the model ACTUALLY running, so a mid-task /model switch is reflected) with
+// config.yml's modelRoles.default as the fallback; its effort comes from the
+// config spelling, since the session record carries none. The advisor comes
+// from config.yml's modelRoles.advisor when the advisor is enabled, or from a
+// __advisor.jsonl sidecar next to the newest session when one exists. Both are
+// reported as `provider/model` — provider travels inside the model, as for pi —
+// with the effort split off into its own field. Anything not found degrades
+// to '' and is omitted from the wire, so a bare omp with no advisor renders
+// exactly as a single-model backend does.
+const OMP_AGENT_DIR = process.env.HIVE_OMP_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || path.join(MODEL_DETECT_HOME, '.omp', 'agent');
+// The thinking levels omp accepts as a `:suffix`; pi's plus the wider codex
+// and muse vocabularies. Only one of these is split off as the effort, so an
+// Ollama-style tag (`llama3:8b`) or a revision stays part of the model name.
+const OMP_EFFORT_LEVELS = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
+// splitOmpSelection turns `provider/model[:effort]` into { model, effort },
+// keeping the provider inside model. Returns empty fields for junk.
+function splitOmpSelection(raw) {
+  if (typeof raw !== 'string') return { model: '', effort: '' };
+  let value = raw.trim().replace(/^["']|["']$/g, '');
+  if (!value || /\s/.test(value)) return { model: '', effort: '' };
+  let effort = '';
+  const colon = value.lastIndexOf(':');
+  if (colon > 0) {
+    const suffix = value.slice(colon + 1).toLowerCase();
+    if (OMP_EFFORT_LEVELS.includes(suffix)) {
+      effort = suffix;
+      value = value.slice(0, colon);
+    }
+  }
+  return { model: looksLikeModelName(value) ? value : '', effort };
+}
+
+// parseOmpConfig reads the two things this relay needs from omp's config.yml
+// with the same deliberately small YAML subset omp-backend.js uses: the scalar
+// values under `modelRoles:` and the `enabled:` flag under `advisor:`.
+// Anything else in the file is ignored; a missing file yields empty fields.
+function parseOmpConfig(configFile) {
+  const out = { defaultSelection: '', advisorSelection: '', advisorEnabled: null };
+  let text;
+  try { text = fs.readFileSync(configFile, 'utf8'); } catch (_) { return out; }
+  let section = '';
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.replace(/\s+#.*$/, '').replace(/\r$/, '');
+    if (line.trim() === '') continue;
+    if (!/^\s/.test(line)) {
+      section = /^modelRoles:\s*$/.test(line) ? 'modelRoles' : (/^advisor:\s*$/.test(line) ? 'advisor' : '');
+      continue;
+    }
+    const m = /^\s+([A-Za-z0-9_-]+):\s*(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const value = m[2].replace(/^["']|["']$/g, '');
+    if (section === 'modelRoles' && m[1] === 'default') out.defaultSelection = value;
+    else if (section === 'modelRoles' && m[1] === 'advisor') out.advisorSelection = value;
+    else if (section === 'advisor' && m[1] === 'enabled') out.advisorEnabled = /^(true|yes|on)$/i.test(value);
+  }
+  return out;
+}
+
+// ompSessionFiles lists the transcript files under ~/.omp/agent/sessions/*/,
+// newest-first candidates for newestByMtime. The advisor sidecar lives in a
+// directory named after its session (`<ts>_<id>/__advisor.jsonl`) and is
+// deliberately not a candidate here: it would otherwise win the mtime race and
+// report the advisor as the primary.
+function ompSessionFiles() {
+  const sessionsDir = path.join(OMP_AGENT_DIR, 'sessions');
+  const files = [];
+  for (const d of fs.readdirSync(sessionsDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(sessionsDir, d.name);
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.jsonl') && !f.startsWith('__')) files.push(path.join(dir, f));
+    }
+  }
+  return files;
+}
+
+// detectOmpSelection returns { model, effort, advisorModel, advisorEffort },
+// each '' when not found. Never throws: every read is best-effort, and a
+// missing sessions directory simply means "not running yet", which the
+// config.yml fallback still answers.
+function detectOmpSelection() {
+  const config = parseOmpConfig(path.join(OMP_AGENT_DIR, 'config.yml'));
+  const configured = splitOmpSelection(config.defaultSelection);
+  const out = { model: configured.model, effort: configured.effort, advisorModel: '', advisorEffort: '' };
+
+  let newest = null;
+  try { newest = newestByMtime(ompSessionFiles()); } catch (_) {}
+  if (newest) {
+    // The model_change record is the session's FIRST line, so the newest
+    // record wins on a tail read only when the session switched models
+    // late; read the whole tail newest-first exactly like the other detectors.
+    try {
+      for (const obj of tailLinesReversed(newest)) {
+        if (obj && obj.type === 'model_change' && looksLikeModelName(obj.model)) {
+          const running = splitOmpSelection(obj.model);
+          if (running.model) {
+            out.model = running.model;
+            // A session record carries the model but not the level; keep the
+            // configured effort only when it was configured for this model.
+            out.effort = running.effort || (configured.model === running.model ? configured.effort : '');
+          }
+          break;
+        }
+      }
+    } catch (_) {}
+  }
+
+  const advisorFromConfig = splitOmpSelection(config.advisorSelection);
+  let sidecar = null;
+  if (newest) {
+    const candidate = path.join(newest.slice(0, -'.jsonl'.length), '__advisor.jsonl');
+    try { if (fs.statSync(candidate).isFile()) sidecar = candidate; } catch (_) {}
+  }
+  if (config.advisorEnabled !== false && (config.advisorEnabled === true || sidecar)) {
+    out.advisorModel = advisorFromConfig.model;
+    out.advisorEffort = advisorFromConfig.effort;
+    if (sidecar) {
+      try {
+        for (const obj of tailLinesReversed(sidecar)) {
+          if (obj && looksLikeModelName(obj.model)) {
+            const provider = typeof obj.provider === 'string' && obj.provider && !obj.model.includes('/') ? `${obj.provider}/` : '';
+            out.advisorModel = `${provider}${obj.model}`;
+            if (advisorFromConfig.model !== out.advisorModel) out.advisorEffort = '';
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+  return out;
+}
+
+const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel, omp: () => detectOmpSelection().model };
+
+// Backends whose transcript yields more than a model name: the effort in
+// effect and a second, reviewing model (#7760). Read on the same schedule as
+// MODEL_DETECTORS — at auth and on every progress tick — and reported through
+// effectiveReasoningEffort() / advisorFields() below.
+const SELECTION_DETECTORS = { omp: detectOmpSelection };
 
 // The last model detected from the transcript. Refreshed at auth and on every
 // progress tick, so a mid-session `/model` switch is reflected within one
 // PROGRESS_REPORT_INTERVAL_MS.
 let detectedModel = '';
+// The rest of a SELECTION_DETECTORS reading (#7760): the effort in effect when
+// the backend carries it in its own config rather than a flag, and the second
+// model that reviewed the work. All '' for backends without a selection
+// detector, which leaves every wire field exactly as before.
+let detectedEffort = '';
+let detectedAdvisorModel = '';
+let detectedAdvisorEffort = '';
 
 // detectRunningModel reads the transcript once and returns the model, or ''.
 // Never throws; never runs at all when AGENT_MODEL is set (explicit intent
@@ -1095,15 +1265,60 @@ function detectRunningModel() {
   try { return sanitizeDeclaredValue(detector() || ''); } catch (_) { return ''; }
 }
 
+// detectRunningSelection is detectRunningModel's richer sibling for the
+// backends in SELECTION_DETECTORS: one read of the transcript and config
+// yields the model, its effort and the advisor pair, each sanitized the same
+// way a detected model is. Null for every other backend, and on any error.
+function detectRunningSelection() {
+  const detector = SELECTION_DETECTORS[BACKEND];
+  if (!detector) return null;
+  try {
+    const sel = detector() || {};
+    return {
+      model: sanitizeDeclaredValue(sel.model || ''),
+      effort: sanitizeDeclaredValue(sel.effort || ''),
+      advisorModel: sanitizeDeclaredValue(sel.advisorModel || ''),
+      advisorEffort: sanitizeDeclaredValue(sel.advisorEffort || ''),
+    };
+  } catch (_) { return null; }
+}
+
 // refreshDetectedModel re-detects and returns the model currently in effect
-// under the fixed precedence (AGENT_MODEL → detected → '').
+// under the fixed precedence (AGENT_MODEL → detected → ''). For a backend with
+// a selection detector the same read also refreshes the detected effort and
+// the advisor pair (#7760), so a mid-task change to any of them reaches the
+// hub on the next progress tick along with the model.
 function refreshDetectedModel() {
-  const m = detectRunningModel();
+  const sel = detectRunningSelection();
+  // AGENT_MODEL wins over detection for the primary exactly as before; the
+  // advisor has no env var, so it is always what the CLI reports.
+  const m = sel ? (MODEL ? '' : sel.model) : detectRunningModel();
   if (m && m !== detectedModel) {
     detectedModel = m;
     console.log(`Detected running model from ${BACKEND} session transcript: ${m}`);
   }
+  if (sel) {
+    detectedEffort = sel.effort;
+    if (sel.advisorModel !== detectedAdvisorModel || sel.advisorEffort !== detectedAdvisorEffort) {
+      detectedAdvisorModel = sel.advisorModel;
+      detectedAdvisorEffort = sel.advisorEffort;
+      if (detectedAdvisorModel) {
+        console.log(`Detected ${BACKEND} advisor model: ${detectedAdvisorModel}${detectedAdvisorEffort ? ` (${detectedAdvisorEffort})` : ''}`);
+      }
+    }
+  }
   return effectiveModel();
+}
+
+// advisorFields returns the optional advisor pair (#7760) for the auth frame
+// and for progress reports: the second model that reviewed this work and the
+// effort it ran at. Omitted entirely when there is none — an older hub, or a
+// backend with no advisor, sees no new field.
+function advisorFields() {
+  const out = {};
+  if (detectedAdvisorModel) out.advisor_model = detectedAdvisorModel;
+  if (detectedAdvisorEffort) out.advisor_reasoning_effort = detectedAdvisorEffort;
+  return out;
 }
 
 // effectiveModel is the model counterpart of effectiveReasoningEffort(): the
@@ -1121,6 +1336,7 @@ function progressModelFields() {
   const effort = effectiveReasoningEffort();
   if (model) out.model = model;
   if (effort) out.reasoning_effort = effort;
+  Object.assign(out, advisorFields());
   return out;
 }
 
@@ -4375,6 +4591,9 @@ function handleMessage(data, hub) {
         // no known transcript format).
         model: refreshDetectedModel(),
         reasoning_effort: effectiveReasoningEffort() || undefined,
+        // #7760: the second model that reviews this contributor's work, when
+        // its CLI runs one. Optional and additive; an older hub ignores it.
+        ...advisorFields(),
         role: AGENT_ROLE,
         // Multi-session-per-account: additive, optional. An older hub ignores
         // this unknown field and treats the relay as a single session.
@@ -4996,6 +5215,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     refreshDetectedModel,
     effectiveModel,
     progressModelFields,
+    // omp primary + advisor selection (hivecommons/hive#7760).
+    detectOmpSelection,
+    splitOmpSelection,
+    parseOmpConfig,
+    advisorFields,
+    SELECTION_DETECTORS,
+    OMP_EFFORT_LEVELS,
+    getDetectedEffort: () => detectedEffort,
+    getDetectedAdvisor: () => ({ model: detectedAdvisorModel, effort: detectedAdvisorEffort }),
     effectiveProvider,
     effectiveSelectionFields,
     PI_SELECTION,
