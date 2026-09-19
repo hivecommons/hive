@@ -122,7 +122,11 @@ type TaskRunRecord struct {
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
-	Role     string `json:"role,omitempty"`
+	// AdvisorModel / AdvisorEffort: the second model that reviewed the work
+	// and its effort (hivecommons/hive#7760), when the relay reported one.
+	AdvisorModel  string `json:"advisor_model,omitempty"`
+	AdvisorEffort string `json:"advisor_effort,omitempty"`
+	Role          string `json:"role,omitempty"`
 	// Outcome is "completed", "failed" (which terminal message arrived) or
 	// "abandoned" (none did — see the outcome constants).
 	Outcome string `json:"outcome"`

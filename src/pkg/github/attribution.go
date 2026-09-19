@@ -139,6 +139,14 @@ type InvocationMeta struct {
 	// Effort is the reasoning effort (e.g. "low", "medium", "high", "minimal")
 	// requested at launch for backends that support it. Omitted when empty.
 	Effort string
+	// AdvisorModel is the SECOND model that reviewed the work — omp's
+	// --advisor today (hivecommons/hive#7760) — rendered as "advisor=<model>".
+	// Omitted when the launch had no reviewer; a single-model backend's trailer
+	// is byte-identical to before this field existed.
+	AdvisorModel string
+	// AdvisorEffort is the advisor's reasoning effort, rendered as
+	// "advisor_effort=<v>". Omitted when empty.
+	AdvisorEffort string
 	// Tool is the display name for the version field (e.g. "bobshell"); the
 	// trailer renders it as "<tool>=<version>".
 	Tool string
@@ -169,6 +177,8 @@ func (m InvocationMeta) pairs() []string {
 	add("backend", m.Backend)
 	add("model", m.Model)
 	add("effort", m.Effort)
+	add("advisor", m.AdvisorModel)
+	add("advisor_effort", m.AdvisorEffort)
 	if ver := strings.TrimSpace(m.ToolVersion); ver != "" {
 		tool := strings.TrimSpace(m.Tool)
 		if tool == "" {

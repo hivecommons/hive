@@ -90,11 +90,19 @@ type ContributorConnection struct {
 	session         string
 	model           string
 	reasoningEffort string
-	role            string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	clientRole      string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
-	assignedRole    string // owner-selected role; "none" forces general work
-	connectedAt     time.Time
-	currentTask     *WSTaskAssign
+	// advisorModel / advisorEffort name the SECOND model that reviewed this
+	// contributor's work and the effort it ran at (hivecommons/hive#7760) —
+	// omp's --advisor today; any backend that grows a reviewer role can fill
+	// them. Advisory display metadata exactly like model/reasoningEffort:
+	// shown in fleet, run rows, the activity rail and the PR trailer, never
+	// routed or gated on. Empty for every single-model backend.
+	advisorModel  string
+	advisorEffort string
+	role          string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	clientRole    string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
+	assignedRole  string // owner-selected role; "none" forces general work
+	connectedAt   time.Time
+	currentTask   *WSTaskAssign
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -277,7 +285,13 @@ type WSMessage struct {
 	// exactly the previous single-session behavior. Sanitized/bounded before use.
 	Session         string `json:"session,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	TaskID          string `json:"task_id,omitempty"`
+	// AdvisorModel / AdvisorReasoningEffort are the relay's report of a second,
+	// reviewing model (hivecommons/hive#7760): omp's --advisor. Additive and
+	// optional on auth_response and task_progress; a relay without an advisor
+	// omits both and an older hub ignores them. Display metadata only.
+	AdvisorModel           string `json:"advisor_model,omitempty"`
+	AdvisorReasoningEffort string `json:"advisor_reasoning_effort,omitempty"`
+	TaskID                 string `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
 	// on task_progress / task_complete / task_failed. The hub rejects any completion or
@@ -473,7 +487,29 @@ type ActivityEntry struct {
 	CLI       string `json:"cli,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Effort    string `json:"effort,omitempty"`
-	Task      string `json:"task,omitempty"`
+	// AdvisorModel / AdvisorEffort: the second model that reviewed the work
+	// (hivecommons/hive#7760), when the connection reported one.
+	AdvisorModel  string `json:"advisor_model,omitempty"`
+	AdvisorEffort string `json:"advisor_effort,omitempty"`
+	Task          string `json:"task,omitempty"`
+}
+
+// advisorInfo is the optional trailing argument to addActivity: the advisor
+// pair a connection reported (hivecommons/hive#7760). Passed as a value so the
+// many existing call sites that have no connection at hand stay unchanged.
+type advisorInfo struct {
+	Model  string
+	Effort string
+}
+
+// advisor returns the connection's advisor pair for addActivity. Reads the two
+// fields without contributor.mu, exactly as the call sites already read
+// c.model and c.reasoningEffort next to it.
+func (c *ContributorConnection) advisor() advisorInfo {
+	if c == nil {
+		return advisorInfo{}
+	}
+	return advisorInfo{Model: c.advisorModel, Effort: c.advisorEffort}
 }
 
 type ContributeWSHub struct {
@@ -820,7 +856,11 @@ func taskDescOf(task *WSTaskAssign) string {
 	return assignDesc(task.Kind, task.identityKey(), task.Title, task.TaskID)
 }
 
-func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string) {
+func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string, advisor ...advisorInfo) {
+	adv := advisorInfo{}
+	if len(advisor) > 0 {
+		adv = advisor[0]
+	}
 	h.activityMu.Lock()
 	if len(h.activity) > 0 && (action == "joined" || action == "left") {
 		last := h.activity[len(h.activity)-1]
@@ -857,14 +897,16 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort
 		h.absorbReconnectFlapLocked(username)
 	}
 	entry := ActivityEntry{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Username:  username,
-		Action:    action,
-		Role:      role,
-		CLI:       cli,
-		Model:     model,
-		Effort:    effort,
-		Task:      task,
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Username:      username,
+		Action:        action,
+		Role:          role,
+		CLI:           cli,
+		Model:         model,
+		Effort:        effort,
+		AdvisorModel:  adv.Model,
+		AdvisorEffort: adv.Effort,
+		Task:          task,
 	}
 	h.activity = append(h.activity, entry)
 	if len(h.activity) > maxActivityEntries {
@@ -1106,10 +1148,12 @@ func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *Cont
 	defer cancel()
 	contributor.mu.Lock()
 	meta := ghpkg.InvocationMeta{
-		Agent:   contributor.role,
-		Backend: contributor.cliBackend,
-		Model:   ghpkg.RequestedModel(contributor.cliBackend, contributor.model),
-		Effort:  contributor.reasoningEffort,
+		Agent:         contributor.role,
+		Backend:       contributor.cliBackend,
+		Model:         ghpkg.RequestedModel(contributor.cliBackend, contributor.model),
+		Effort:        contributor.reasoningEffort,
+		AdvisorModel:  contributor.advisorModel,
+		AdvisorEffort: contributor.advisorEffort,
 	}
 	if contributor.capabilities != nil && contributor.capabilities.AgentCLIVersion != "" {
 		meta.Tool = contributor.cliBackend
@@ -1169,18 +1213,20 @@ func (h *ContributeWSHub) appendAbandonedRun(c *ContributorConnection, task *WST
 		provider, _, _ = strings.Cut(c.model, "/")
 	}
 	rec := TaskRunRecord{
-		TaskID:       task.TaskID,
-		Repo:         task.Repo,
-		Number:       task.Number,
-		Username:     c.profile.GitHubUsername,
-		Backend:      c.cliBackend,
-		Provider:     provider,
-		Model:        c.model,
-		Effort:       c.reasoningEffort,
-		Role:         c.role,
-		Outcome:      outcomeAbandoned,
-		AbandonCause: cause,
-		Reason:       abandonReason(cause),
+		TaskID:        task.TaskID,
+		Repo:          task.Repo,
+		Number:        task.Number,
+		Username:      c.profile.GitHubUsername,
+		Backend:       c.cliBackend,
+		Provider:      provider,
+		Model:         c.model,
+		Effort:        c.reasoningEffort,
+		AdvisorModel:  c.advisorModel,
+		AdvisorEffort: c.advisorEffort,
+		Role:          c.role,
+		Outcome:       outcomeAbandoned,
+		AbandonCause:  cause,
+		Reason:        abandonReason(cause),
 	}
 	// Zero when the task was adopted on the resume path without a fresh
 	// assignment (see taskAssignedAt's comment). Left unset rather than
@@ -1893,7 +1939,7 @@ func (s *wsSession) releaseOnDisconnect() {
 			h.appendAbandonedRun(s.contributor, abandonedTask, abandonCauseDisconnect, abandonedTaskAt)
 		}
 		h.logger.Info("[contribute-ws] disconnected", "username", s.contributor.profile.GitHubUsername)
-		h.addActivity(s.contributor.profile.GitHubUsername, "left", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, "")
+		h.addActivity(s.contributor.profile.GitHubUsername, "left", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, "", s.contributor.advisor())
 	}
 	_ = s.conn.Close()
 }
@@ -1962,6 +2008,16 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if msg.ReasoningEffort != "" {
 		profile.ReasoningEffort = msg.ReasoningEffort
 	}
+	// #7760: the advisor pair is client text bounded the way the declared
+	// capabilities are — it is re-serialized into every fleet poll and lands in
+	// PR trailers — and, unlike the primary, it is NOT checked against the
+	// accepted-models list: it reviewed the work, it did not do it.
+	advisorModel := sanitizeString(msg.AdvisorModel)
+	advisorEffort := sanitizeString(msg.AdvisorReasoningEffort)
+	if advisorModel != "" {
+		profile.AdvisorModel = advisorModel
+		profile.AdvisorEffort = advisorEffort
+	}
 	if profile.AvatarURL == "" {
 		profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
 	}
@@ -2023,6 +2079,8 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		session:         sanitizeSessionLabel(msg.Session),
 		model:           msg.Model,
 		reasoningEffort: msg.ReasoningEffort,
+		advisorModel:    advisorModel,
+		advisorEffort:   advisorEffort,
 		role:            requestedRole,
 		clientRole:      clientRole,
 		assignedRole:    assignedRole,
@@ -2083,7 +2141,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		"cli", msg.CLIBackend,
 		"role", requestedRole,
 	)
-	h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "")
+	h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "", advisorInfo{Model: advisorModel, Effort: advisorEffort})
 
 	select {
 	case s.authDone <- s.contributor:
@@ -2224,7 +2282,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		if task.Role != "" {
 			taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
 		}
-		h.addActivity(s.contributor.profile.GitHubUsername, "picked up", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, taskDesc)
+		h.addActivity(s.contributor.profile.GitHubUsername, "picked up", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, taskDesc, s.contributor.advisor())
 		h.logger.Info("[contribute-ws] task assigned",
 			"username", s.contributor.profile.GitHubUsername,
 			"task", task.TaskID,
@@ -2421,6 +2479,16 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 				s.contributor.profile.ReasoningEffort = msg.ReasoningEffort
 			}
 		}
+		// #7760: the advisor pair refreshes on the same schedule and rule as
+		// the model above — the relay re-reads omp's own records every tick.
+		if adv := sanitizeString(msg.AdvisorModel); adv != "" {
+			s.contributor.advisorModel = adv
+			s.contributor.advisorEffort = sanitizeString(msg.AdvisorReasoningEffort)
+			if s.contributor.profile != nil {
+				s.contributor.profile.AdvisorModel = s.contributor.advisorModel
+				s.contributor.profile.AdvisorEffort = s.contributor.advisorEffort
+			}
+		}
 		// SECURITY (v4, kept over v2 #3153): v4 deliberately has NO
 		// client-driven resume path here. A task_progress for a task the hub
 		// does not already track is resumed ONLY through the authoritative
@@ -2595,7 +2663,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			if s.contributor.cliBackend == "pi" {
 				provider, _, _ = strings.Cut(s.contributor.model, "/")
 			}
-			h.addActivity(s.contributor.profile.GitHubUsername, "completed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, completedDesc)
+			h.addActivity(s.contributor.profile.GitHubUsername, "completed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, completedDesc, s.contributor.advisor())
 			h.logger.Info("[contribute-ws] task complete",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,
@@ -2625,6 +2693,8 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				Provider:         provider,
 				Model:            s.contributor.model,
 				Effort:           s.contributor.reasoningEffort,
+				AdvisorModel:     s.contributor.advisorModel,
+				AdvisorEffort:    s.contributor.advisorEffort,
 				Role:             s.contributor.role,
 				Outcome:          "completed",
 				CompletionSignal: normalizeCompletionSignal(msg.CompletionSignal),
@@ -2797,7 +2867,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if s.contributor.cliBackend == "pi" {
 				provider, _, _ = strings.Cut(s.contributor.model, "/")
 			}
-			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc)
+			h.addActivity(s.contributor.profile.GitHubUsername, "failed", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, failedDesc, s.contributor.advisor())
 			h.logger.Info("[contribute-ws] task failed",
 				"username", s.contributor.profile.GitHubUsername,
 				"task", msg.TaskID,
@@ -2814,18 +2884,20 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			// the same bounded, fleet-view-displayed text stored on
 			// lastFailure above; failure_kind is already normalized.
 			runRec := TaskRunRecord{
-				TaskID:      msg.TaskID,
-				TaskGen:     msg.TaskGen,
-				Username:    s.contributor.profile.GitHubUsername,
-				Backend:     s.contributor.cliBackend,
-				Provider:    provider,
-				Model:       s.contributor.model,
-				Effort:      s.contributor.reasoningEffort,
-				Role:        s.contributor.role,
-				Outcome:     "failed",
-				FailureKind: failureKind,
-				Reason:      msg.Reason,
-				Permanent:   msg.Permanent,
+				TaskID:        msg.TaskID,
+				TaskGen:       msg.TaskGen,
+				Username:      s.contributor.profile.GitHubUsername,
+				Backend:       s.contributor.cliBackend,
+				Provider:      provider,
+				Model:         s.contributor.model,
+				Effort:        s.contributor.reasoningEffort,
+				AdvisorModel:  s.contributor.advisorModel,
+				AdvisorEffort: s.contributor.advisorEffort,
+				Role:          s.contributor.role,
+				Outcome:       "failed",
+				FailureKind:   failureKind,
+				Reason:        msg.Reason,
+				Permanent:     msg.Permanent,
 				// #7317 item 3: the pane at the moment of failure. The relay
 				// captures it BEFORE stopping the agent precisely so this
 				// report carries the evidence (see failCurrentTask); until now

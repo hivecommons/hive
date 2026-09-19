@@ -3152,7 +3152,7 @@ function meLoadFieldLog(username){
     var verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up',completed:'shipped',failed:'failed'};
     var rows=acts.slice(-6).reverse().map(function(e){
       var what=(verbs[e.action]||esc(e.action))+(e.task?(' <b>'+esc(e.task)+'</b>'):'')
-        +(e.cli?(' <span>via '+esc(e.cli)+(e.model?(' · '+esc(e.model)):'')+'</span>'):'');
+        +(e.cli?(' <span>via '+esc(e.cli)+(e.model?(' · '+esc(e.model)):'')+(ccAdvisorLabel(e)?(' + '+ccAdvisorLabel(e)):'')+'</span>'):'');
       return '<div class="dz-frow"><span class="f-when">'+esc(meTimeAgo(e.timestamp)||'')+'</span><span class="f-what">'+what+'</span></div>';
     });
     slot.innerHTML=rows.join('');
@@ -3194,6 +3194,7 @@ function renderMeCard(mount,p){
   var livebar='';
   if(p.current_task){
     var loadoutBits=[p.cli_backend,p.model].filter(function(x){return !!x;}).map(esc);
+    if(ccAdvisorLabel(p))loadoutBits.push(ccAdvisorLabel(p));
     if(p.sessions)loadoutBits.push(p.sessions+' session'+(p.sessions===1?'':'s'));
     livebar='<div class="dz-livebar"><span class="dot"></span><span class="live-tag">ON OPERATION</span>'
       +'<span>'+(p.current_task.number?('#'+p.current_task.number+' · '):'')+esc(p.current_task.title||'')+'</span>'
@@ -3334,7 +3335,7 @@ function meProfileRows(p){
   rows.push(['Specializations',specs.length?('<span class="me-specs">'+specs.map(function(s){return '<span class="me-spec">'+esc(s)+'</span>';}).join('')+'</span>'):unset,'']);
   var loadout=p.cli_backend?esc(p.cli_backend):'';
   rows.push(['Loadout',loadout||unset,loadout?' mono':'']);
-  var clanker=p.model?esc(p.model):'';
+  var clanker=(p.model?esc(p.model):'')+(ccAdvisorLabel(p)?((p.model?' + ':'')+ccAdvisorLabel(p)):'');
   rows.push(['Clanker',clanker||unset,clanker?' mono':'']);
   rows.push(['Sponsor',p.invited_by?esc(p.invited_by):unset,'']);
   var active='since '+esc(meYearMonth(p.registered_at)||'—');
@@ -3529,6 +3530,17 @@ document.querySelectorAll('.ops-scope').forEach(function(f){f.addEventListener('
 function esc(s){return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// ccAdvisorLabel names the SECOND model that reviewed a contributor's work
+// (hivecommons/hive#7760: omp's --advisor), as "advisor <model> (<effort>)",
+// or '' when the record carries none. Every view that shows a contributor's
+// model appends this so two models doing the work read as two, and a
+// single-model backend renders exactly as before. Accepts the fleet/activity
+// /runs/profile records alike: they all spell the pair advisor_model /
+// advisor_effort. Escaped here, so callers concatenate it into HTML directly.
+function ccAdvisorLabel(o){
+  if(!o||!o.advisor_model)return '';
+  return 'advisor '+esc(o.advisor_model)+(o.advisor_effort?(' ('+esc(o.advisor_effort)+')'):'');
+}
 
 // ── Sparklines (#persistent-history) ───────────────────────────────────────────
 // A dependency-free, CSP-safe inline-SVG trend renderer. Given an array of
@@ -4399,7 +4411,7 @@ function renderClankers(list){
     var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
     // Trust tier is now surfaced as a compact medallion beside the identity (below),
     // so drop it from the middot sub-line to avoid duplicating the same string.
-    var sub=[c.cli_backend,c.model,c.role].filter(Boolean).map(esc).join(' &middot; ');
+    var sub=[c.cli_backend,c.model].filter(Boolean).map(esc).concat(ccAdvisorLabel(c)?[ccAdvisorLabel(c)]:[]).concat(c.role?[esc(c.role)]:[]).join(' &middot; ');
     // Small tier badge from this clanker's REAL trust_tier (defaults to newcomer).
     var tierPill=tierBadge(c.trust_tier,'tier-inline');
     // #2546: when idle with a known reason, show "idle: no matching work" etc.
@@ -4745,7 +4757,7 @@ function ccRenderRuns(user,data){
     var taskHtml=taskURL?('<a href="'+esc(taskURL)+'" target="_blank" rel="noopener noreferrer">'+taskTxt+'</a>'):taskTxt;
     var bits=[];
     if(r.duration_s)bits.push(ccFmtDuration(r.duration_s));
-    if(r.model)bits.push(esc(r.model));else if(r.backend)bits.push(esc(r.backend));
+    if(r.model)bits.push(esc(r.model)+(ccAdvisorLabel(r)?(' + '+ccAdvisorLabel(r)):''));else if(r.backend)bits.push(esc(r.backend));
     if(r.ts)bits.push(esc(rel(r.ts)));
     var reason=r.reason||r.verdict_reason||'';
     var kind=r.failure_kind&&r.failure_kind!=='unspecified'?('<b>'+esc(r.failure_kind)+'</b> &middot; '):'';
@@ -5736,6 +5748,9 @@ function ccFormatLoadout(e,cls){
   var text='via '+esc(e.cli)+' CLI';
   if(m)text+=' with '+m;
   if(ef)text+=' ('+ef+')';
+  // #7760: the reviewing model, when the CLI ran one, after the primary.
+  var adv=ccAdvisorLabel(e);
+  if(adv)text+=' + '+adv;
   return ' <span class="'+(cls||'feed-cli')+'">'+text+'</span>';
 }
 window.ccFormatLoadout=ccFormatLoadout;

@@ -48,6 +48,38 @@ func TestAttributionTrailer_EffortVariations(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#7760: a launch with a second, reviewing model renders the
+// advisor pair after the primary's effort; a launch without one renders
+// byte-identically to before the fields existed.
+func TestAttributionTrailer_AdvisorPair(t *testing.T) {
+	m := InvocationMeta{
+		Backend: "omp", Model: "openai-codex/gpt-5.6-terra", Effort: "medium",
+		AdvisorModel: "anthropic/claude-opus-5", AdvisorEffort: "high",
+	}
+	want := "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high"
+	if got := m.Trailer(); got != want {
+		t.Errorf("Trailer() with advisor = %q, want %q", got, want)
+	}
+	// The audit detail carries the same pairs in the log's "k=v, k=v" form.
+	if got := m.AuditDetail("repo", "org/x"); got != "repo=org/x, backend=omp, model=openai-codex/gpt-5.6-terra, effort=medium, advisor=anthropic/claude-opus-5, advisor_effort=high" {
+		t.Errorf("AuditDetail() = %q", got)
+	}
+	// An advisor model with no effort omits advisor_effort alone.
+	m.AdvisorEffort = ""
+	if got := m.Trailer(); got != "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5" {
+		t.Errorf("Trailer() advisor without effort = %q", got)
+	}
+	// No advisor: nothing about one appears — a bare omp reads as any
+	// single-model backend does.
+	bare := InvocationMeta{Backend: "omp", Model: "openai-codex/gpt-5.6-terra", Effort: "medium"}
+	if got := bare.Trailer(); got != "— hive: backend=omp model=openai-codex/gpt-5.6-terra effort=medium" {
+		t.Errorf("Trailer() without advisor = %q", got)
+	}
+	if strings.Contains(bare.Trailer(), "advisor") {
+		t.Errorf("Trailer() must omit advisor keys entirely when empty, got %q", bare.Trailer())
+	}
+}
+
 func TestAttributionTrailer_OmitsUnknownFields(t *testing.T) {
 	m := InvocationMeta{Agent: "scanner", Backend: "claude"}
 	want := "— hive: agent=scanner backend=claude"

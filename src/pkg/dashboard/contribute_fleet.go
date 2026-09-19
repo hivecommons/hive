@@ -100,20 +100,25 @@ func (h *ContributeWSHub) RoleBreakdown() map[string]int {
 // carries only what the contributor handshake already put on the wire plus the
 // live connection timing the hub already tracks — no secrets, no new state.
 type FleetClanker struct {
-	ContributorID   string        `json:"contributor_id"`
-	GitHubUsername  string        `json:"github_username,omitempty"`
-	CLIBackend      string        `json:"cli_backend,omitempty"`
-	Model           string        `json:"model,omitempty"`
-	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
-	Role            string        `json:"role,omitempty"`
-	ClientRole      string        `json:"client_role,omitempty"`
-	AssignedRole    string        `json:"assigned_agent_role,omitempty"`
-	RoleMismatch    string        `json:"role_mismatch,omitempty"`
-	TrustTier       string        `json:"trust_tier,omitempty"`
-	ConnectedAt     string        `json:"connected_at,omitempty"`
-	LastActivity    string        `json:"last_activity,omitempty"`
-	Stale           bool          `json:"stale,omitempty"`
-	CurrentTask     *WSTaskAssign `json:"current_task,omitempty"`
+	ContributorID   string `json:"contributor_id"`
+	GitHubUsername  string `json:"github_username,omitempty"`
+	CLIBackend      string `json:"cli_backend,omitempty"`
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// AdvisorModel / AdvisorEffort: the second model reviewing this
+	// contributor's work and its effort (hivecommons/hive#7760); omitted for a
+	// single-model backend.
+	AdvisorModel  string        `json:"advisor_model,omitempty"`
+	AdvisorEffort string        `json:"advisor_effort,omitempty"`
+	Role          string        `json:"role,omitempty"`
+	ClientRole    string        `json:"client_role,omitempty"`
+	AssignedRole  string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch  string        `json:"role_mismatch,omitempty"`
+	TrustTier     string        `json:"trust_tier,omitempty"`
+	ConnectedAt   string        `json:"connected_at,omitempty"`
+	LastActivity  string        `json:"last_activity,omitempty"`
+	Stale         bool          `json:"stale,omitempty"`
+	CurrentTask   *WSTaskAssign `json:"current_task,omitempty"`
 	// IdleReason is the machine-readable reason this clanker currently has no work
 	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
 	// clanker is actively working (CurrentTask set) or has never been refused. It
@@ -216,6 +221,8 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			CLIBackend:      c.cliBackend,
 			Model:           c.model,
 			ReasoningEffort: c.reasoningEffort,
+			AdvisorModel:    c.advisorModel,
+			AdvisorEffort:   c.advisorEffort,
 			Role:            c.role,
 			ClientRole:      c.clientRole,
 			AssignedRole:    c.assignedRole,
