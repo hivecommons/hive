@@ -11,7 +11,7 @@ import (
 // exhausted; before this UI existed, nine escalated PRs sat invisible to the
 // operator for a week (kubestellar/console, 2026-09-01). The invariants:
 //
-//  1. A PR row with the needs-human label renders a "needs human" state chip
+//  1. A PR row with the needs-human label renders a needs-human emoji marker
 //     in the action-chip slot, taking precedence over Queue auto-merge (an
 //     escalated PR is out of the automated lane by definition).
 //  2. The PR pill itself takes the needs-human (alert) tint over mergeable
@@ -26,7 +26,8 @@ func TestNeedsHumanEscalationBadgePinned(t *testing.T) {
 		"labels.includes('needs-human')",
 		// State chip in the action-chip slot.
 		"pill-needs-human-badge",
-		"⚠ needs human",
+		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon"`,
+		`aria-label="${esc(needsHumanTip)}">⚠</span>`,
 		// Pill tint: needs-human wins over mergeable.
 		".repo-pr-pill.needs-human",
 		"needsHuman ? ' needs-human' : mergeClass",

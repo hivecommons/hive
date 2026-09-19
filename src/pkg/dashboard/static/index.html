@@ -1288,17 +1288,20 @@
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-issue-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-issue-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* ⧉ Plan action sits beside its issue pill. Always visible (so the feature is
+    /* Plan action sits beside its issue pill. Always visible (so the feature is
        discoverable) but visually secondary; brightens to full on row hover. */
     .repo-issue-pill-wrap { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
     /* The pill shrinks (its title ellipsis-truncates) so a long title + the
        always-visible Plan button never overflow the fixed-width repo card. */
     .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 0 1 auto; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
+    .repo-pr-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --pill-c: var(--purple); text-decoration: none; max-width: 100%; transition: background 0.15s; }
+    .repo-pr-pill-wrap { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; flex: 1 1 100%; }
+    .repo-pr-pill-wrap .repo-pr-pill:not(.pill-icon) { min-width: 0; flex: 1 1 auto; overflow: hidden; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     /* Three pill states (#7478). Green = the governor's merge-eligible
        verdict: the sweep would merge this now. Amber = GitHub says
@@ -8197,17 +8200,17 @@
 
     async function queuePRAutoMerge(owner, repo, number, btn) {
       if (btn && btn.dataset.busy === '1') return;
-      if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Queueing…'; }
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = '🔀'; }
       try {
         const resp = await fetch('/api/prs/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + '/' + number + '/queue-automerge', { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast('Queued #' + number + ' for auto-merge on green CI', 'success');
-        if (btn) { btn.textContent = 'Queued'; btn.disabled = true; }
+        if (btn) { btn.textContent = '🔀'; btn.disabled = true; btn.title = 'Queued for Hive auto-merge'; btn.setAttribute('aria-label', 'Queued for Hive auto-merge'); }
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Queue failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-        if (btn) { btn.dataset.busy = ''; btn.textContent = 'Queue auto-merge'; }
+        if (btn) { btn.dataset.busy = ''; btn.textContent = '🔀'; }
       }
     }
 
@@ -8260,11 +8263,11 @@
           const age = pillAge(i.created_at);
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (age ? ' (' + age + ')' : '');
           const repoFull = r.full || r.name || '';
-          // ⧉ Plan action (Phase 4): mint an epic from this issue and request
+          // Plan action (Phase 4): mint an epic from this issue and request
           // decomposition. data-action wires into the delegated click handler.
           // Only rendered at ACMM L5+, where the architect that decomposes the
           // epic is actually scheduled — below that the button is hidden.
-          const planBtn = showPlan ? `<button class="repo-issue-plan" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Break this issue into a reviewable task plan (architect decomposes it; you approve before work starts)">⧉ Plan</button>` : '';
+          const planBtn = showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '';
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
@@ -8294,7 +8297,7 @@
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
           const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
-          // The action-chip slot after the PR pill. needs-human takes
+          // The Queue auto-merge action-chip slot after the PR pill. needs-human takes
           // precedence over the Queue auto-merge action: an escalated PR is
           // out of the automated lane by definition, so offering to queue it
           // for auto-merge would contradict the escalation. Removing the
@@ -8314,22 +8317,24 @@
           // tints the PR pill and never gates anything. Absent means "no
           // review recorded", which is not the same as "not reviewed": the
           // ledger only reaches back as far as its retention window.
+          const reviewTip = reviewPillTip(p);
+          const needsHumanTip = 'Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.';
           const reviewPill = p.review_url
-            ? `<a class="repo-pr-pill pill-reviewed" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewPillTip(p))}">💬 reviewed${p.review_count > 1 ? ' ×' + p.review_count : ''}</a>`
+            ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
             : '';
           const queueBtn = needsHuman
-            ? '<span class="repo-pr-pill needs-human pill-needs-human-badge" title="Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.">⚠ needs human</span>'
+            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}">⚠</span>`
             : (canQueue
                 ? (queued
-                    ? '<span class="repo-pr-pill mergeable" title="Already queued for Hive auto-merge on green CI">Queued</span>'
+                    ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
                     : (notMergeable
-                        ? `<button class="repo-pr-pill" disabled title="${esc(notMergeableTip)}">Queue auto-merge</button>`
-                        : `<button class="repo-pr-pill" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1">Queue auto-merge</button>`))
+                        ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
+                        : `<button class="repo-pr-pill pill-icon" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue for Hive auto-merge on green CI" aria-label="Queue for Hive auto-merge on green CI">🔀</button>`))
                 : '');
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see.
-          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}`;
+          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}</span>`;
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';

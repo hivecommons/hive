@@ -148,8 +148,8 @@ func TestPRPillMergeableReadersUseTriStateHelper(t *testing.T) {
 	if !strings.Contains(html, "const notMergeable = p.mergeable === 'no';") {
 		t.Errorf("the Queue auto-merge action is not gated on mergeable === 'no'")
 	}
-	if !strings.Contains(html, `<button class="repo-pr-pill" disabled title="${esc(notMergeableTip)}">Queue auto-merge</button>`) {
-		t.Errorf("a not-mergeable PR should render Queue auto-merge disabled with a reason")
+	if !strings.Contains(html, `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`) {
+		t.Errorf("a not-mergeable PR should render the auto-merge marker disabled with a reason")
 	}
 }
 
