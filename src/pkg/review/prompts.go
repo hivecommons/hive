@@ -52,6 +52,12 @@ type PromptOptions struct {
 	// silence reads as absence. This turns "nothing to report" into one short
 	// line of evidence, deliberately capped at that.
 	AcknowledgeNoFindings bool
+	// Revise tells the reviewer it is re-examining a PR it has already
+	// reviewed, and that its existing review must be corrected in place
+	// rather than joined by a second one. Editing notifies nobody; posting
+	// again notifies every subscriber, which is too high a price for the hive
+	// correcting its own mistake.
+	Revise bool
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -90,7 +96,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString("Allowed verdicts: approve, changes_requested, requires_human, reject. Finding severities: info, low, medium, high, critical.\n")
 	b.WriteString("Use approve only when this perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
 	if opts.PostComments {
-		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings))
+		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
 	}
 	return b.String()
 }
@@ -128,12 +134,21 @@ func buildReadInstruction(pr PullRequest) string {
 
 // buildPublishInstruction is the publish half of the kick: how to say what you
 // found, and — more importantly — when to say nothing.
-func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool) string {
+func buildPublishInstruction(pr PullRequest, acknowledgeNoFindings bool, revise bool) string {
 	var b strings.Builder
 	b.WriteString("\nPUBLISH YOUR VERDICT.\n")
 	b.WriteString("You produce TWO artifacts and both must be delivered: the comment a human reads, and the JSON verdict the hive routes on.\n")
-	b.WriteString("Write the JSON to a file, then post the comment and hand over the verdict in the same call:\n")
-	fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict>\n", pr.Number, pr.Repo)
+	if revise {
+		b.WriteString("YOU HAVE REVIEWED THIS PR BEFORE. You are re-examining it because the reviewer was at fault, not the PR — an earlier review of yours was produced without reading the surrounding code, so its conclusion is not trustworthy.\n")
+		b.WriteString("Correct your existing review in place. Do NOT add a second one:\n")
+		fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict> --revise\n", pr.Number, pr.Repo)
+		b.WriteString("--revise edits the review already on the PR, which notifies nobody. Posting again notifies every subscriber to say the hive changed its mind, and that cost lands on people who did nothing wrong.\n")
+		b.WriteString("Write the comment you should have written the first time, not a diff against it. A maintainer rereading it must see one coherent review, with no reference to a previous version they may never have read.\n")
+		b.WriteString("Reaching the same conclusion is a perfectly good outcome — say so plainly and the revision is skipped as unchanged. Do not manufacture a finding to justify the second look.\n")
+	} else {
+		b.WriteString("Write the JSON to a file, then post the comment and hand over the verdict in the same call:\n")
+		fmt.Fprintf(&b, "  hive-review %d --repo %s --comment --body-file <comment> --verdict-file <verdict>\n", pr.Number, pr.Repo)
+	}
 	b.WriteString("Printing the JSON to your terminal does not deliver it, and you cannot write it into the metrics dir yourself — the relay is the only path. Omit --verdict-file and your judgement is lost: nothing is routed, nothing is escalated, and this PR is dispatched to you again from scratch.\n")
 	b.WriteString("Use hive-review, never `gh pr review` — it is submitted with the App token and recorded on the audit trail.\n")
 	b.WriteString("Only --comment. Do NOT approve, request changes, merge, close, or label; a human decides those.\n")

@@ -47,7 +47,7 @@ set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/review-requests"
 
-REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""
+REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""; REVISE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -62,6 +62,7 @@ while [ $# -gt 0 ]; do
     --request-changes|-r) EVENT="request_changes"; shift;;
     --comment|-c) EVENT="comment"; shift;;
     --record-verdict) EVENT="record_verdict"; shift;;
+    --revise) REVISE=1; shift;;
     --thread|-t) THREAD="$2"; shift 2;;
     --thread=*) THREAD="${1#*=}"; shift;;
     --resolve-thread) EVENT="resolve_thread"; THREAD="$2"; shift 2;;
@@ -145,10 +146,12 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" "$VERDICT" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" "$VERDICT" "$REVISE" <<'PY'
 import json, os, sys
-temporary, path, repo, number, event, body, agent, thread, verdict = sys.argv[1:10]
+temporary, path, repo, number, event, body, agent, thread, verdict, revise = sys.argv[1:11]
 req = {"repo": repo, "number": int(number), "event": event, "agent": agent}
+if revise == "1":
+    req["revise"] = True
 if body:
     req["body"] = body
 if thread:
@@ -172,6 +175,8 @@ if [ "$EVENT" = "record_verdict" ]; then
   echo "hive-review: recorded verdict for $REPO#$NUMBER (no comment posted)"
 elif [ -n "$THREAD" ]; then
   echo "hive-review: requested $EVENT on thread $THREAD of $REPO#$NUMBER as the App bot"
+elif [ "$REVISE" = "1" ]; then
+  echo "hive-review: requested revision of the existing review on $REPO#$NUMBER (edits in place; no notification)"
 else
   echo "hive-review: requested $EVENT review on $REPO#$NUMBER as the App bot"
 fi

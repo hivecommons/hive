@@ -64,6 +64,7 @@ type Client struct {
 	canaryRegistry   *ioscan.CanaryRegistry
 	canaryLeakFunc   func(ioscan.CanaryLeak)
 	appBotLogin      string // "<app-slug>[bot]" when the client authenticates as a GitHub App
+	reviseRepos      []string
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
@@ -243,6 +244,23 @@ func (c *Client) SetAppBotLogin(login string) {
 		return
 	}
 	c.appBotLogin = strings.TrimSpace(login)
+}
+
+// SetReviseRepos allowlists the repos where the reviewer may revise its own
+// previous review in place rather than posting a second one. Empty disables
+// revision everywhere, which is the default: rewriting text a maintainer has
+// already read is granted per repo, never assumed.
+func (c *Client) SetReviseRepos(repos []string) {
+	if c == nil {
+		return
+	}
+	cleaned := make([]string, 0, len(repos))
+	for _, r := range repos {
+		if trimmed := strings.TrimSpace(r); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	c.reviseRepos = cleaned
 }
 
 type Issue struct {

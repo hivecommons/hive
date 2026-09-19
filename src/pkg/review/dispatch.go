@@ -81,8 +81,16 @@ type DispatchOptions struct {
 	// AcknowledgeNoFindings carries config.ReviewConfig.AcknowledgeNoFindings
 	// into the prompt builder, so a clean review still leaves a record.
 	AcknowledgeNoFindings bool
-	Agents                []AgentCapability
-	Now                   time.Time
+	// ReviseRepos allowlists repos whose existing verdicts may be revisited
+	// and whose reviews may be corrected in place. See
+	// config.ReviewConfig.ReviseRepos.
+	ReviseRepos []string
+	// ReviseVerdictsBefore re-opens verdicts recorded before this instant for
+	// a fresh review even though the PR's head SHA has not moved. Zero
+	// disables revisiting entirely.
+	ReviseVerdictsBefore time.Time
+	Agents               []AgentCapability
+	Now                  time.Time
 }
 
 type DispatchState struct {
@@ -212,12 +220,21 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if !opts.AllAuthors && !isAgentAuthored(pr.Author, opts.AIAuthor) {
 			continue
 		}
+		revisiting := false
 		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
-			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-			if agg.Verdict == VerdictChangesRequested {
-				plan.dispatchFix(pr, agg, opts, now)
+			// A verdict normally settles a PR until its head moves. That is
+			// right while the reviewer is sound, and a trap once a
+			// reviewer-side defect is found: without this, verdicts produced
+			// by a known-broken reviewer stay frozen until someone happens to
+			// push a commit.
+			if !staleVerdictRevisitable(pr.Repo, agg, opts) {
+				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+				if agg.Verdict == VerdictChangesRequested {
+					plan.dispatchFix(pr, agg, opts, now)
+				}
+				continue
 			}
-			continue
+			revisiting = true
 		}
 		if len(reviewers) == 0 || availableSlots <= 0 {
 			continue
@@ -262,6 +279,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			msg := BuildPerspectivePromptWith(perspective, pr, PromptOptions{
 				PostComments:          opts.PostComments,
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
+				Revise:                revisiting,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, Dispatched: now})
@@ -533,4 +551,46 @@ func upsertHuman(items []HumanReviewHold, item HumanReviewHold) []HumanReviewHol
 
 func dispatchKickKey(k DispatchKick) string {
 	return fmt.Sprintf("%s|%s|%s#%d@%s|%s", k.Kind, k.Agent, strings.TrimSpace(k.Repo), k.Number, strings.TrimSpace(k.HeadSHA), k.Perspective)
+}
+
+// staleVerdictRevisitable reports whether an existing verdict should be set
+// aside so the PR is reviewed again, despite its head SHA being unchanged.
+//
+// Both gates must pass. The repo must be allowlisted for revision, so a
+// revisit can only happen where the hive also holds the quieter in-place
+// correction path and cannot stack a second review on someone's PR. And the
+// verdict must predate the configured cutoff, which is what scopes the
+// correction to verdicts produced by the reviewer that was wrong.
+//
+// The cutoff is self-limiting: re-reviewing records a fresh timestamp that is
+// necessarily after it, so a PR is revisited at most once per bump rather than
+// entering a loop.
+func staleVerdictRevisitable(repo string, agg Aggregate, opts DispatchOptions) bool {
+	if opts.ReviseVerdictsBefore.IsZero() || len(opts.ReviseRepos) == 0 {
+		return false
+	}
+	if !reviseRepoAllowed(repo, opts.ReviseRepos) {
+		return false
+	}
+	if agg.RecordedAt.IsZero() {
+		// An undated verdict cannot be shown to predate the cutoff. Leave it
+		// alone rather than guess: re-reviewing on a guess is how a narrow
+		// correction turns into a sweep.
+		return false
+	}
+	return agg.RecordedAt.Before(opts.ReviseVerdictsBefore)
+}
+
+// reviseRepoAllowed reports whether a repo is in the revision allowlist.
+func reviseRepoAllowed(repo string, allowlist []string) bool {
+	want := strings.ToLower(strings.TrimSpace(repo))
+	if want == "" {
+		return false
+	}
+	for _, entry := range allowlist {
+		if strings.EqualFold(strings.TrimSpace(entry), want) {
+			return true
+		}
+	}
+	return false
 }

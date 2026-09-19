@@ -1775,6 +1775,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(cfg))
+		b.ghClient.SetReviseRepos(cfg.Review.ReviseRepos)
 		b.ghClient.SetMergeReEngageHook(mergeReEngageHook(cfg))
 
 		// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
@@ -7787,6 +7788,27 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 	}
 }
 
+// parseReviseCutoff reads Review.ReviseVerdictsBefore. A malformed value is
+// logged and ignored rather than defaulting to "now", because a cutoff that
+// silently becomes the current time would re-open every verdict in the
+// artifact at once — the opposite of the narrow, deliberate correction this
+// setting exists for.
+func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}
+	}
+	cutoff, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("review revise_verdicts_before is not RFC3339; ignoring",
+				"value", trimmed, "error", err)
+		}
+		return time.Time{}
+	}
+	return cutoff
+}
+
 func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr *agent.Manager, logger *slog.Logger) review.DispatchPlan {
 	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
 		return review.DispatchPlan{}
@@ -7836,6 +7858,8 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		PostComments:          cfg.Review.PostComments,
 		AllAuthors:            cfg.Review.AllAuthors,
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
+		ReviseRepos:           cfg.Review.ReviseRepos,
+		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,

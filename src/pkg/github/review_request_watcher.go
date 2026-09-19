@@ -60,6 +60,10 @@ type ReviewRequest struct {
 	// is posting. The relay writes it server-side for review.Collect; see
 	// recordReviewVerdict for why the agent cannot write it itself.
 	Report string `json:"report,omitempty"`
+	// Revise asks the relay to update the hive's existing review on this PR
+	// instead of adding another one. Only honored for repos in
+	// Review.ReviseRepos; see review_revise.go.
+	Revise bool `json:"revise,omitempty"`
 }
 
 // ReviewResponse is written next to a consumed request as <name>.result.json.
@@ -308,6 +312,15 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	var created *gh.PullRequestReview
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+	} else if req.Revise {
+		// Correct the record rather than shouting over it. A revision that
+		// finds no prior review of its own falls through to posting
+		// normally: a first review is not a revision.
+		var revised bool
+		created, revised, err = c.reviseReview(ctx, req, body)
+		if err == nil && created == nil && !revised {
+			created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+		}
 	} else {
 		created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 	}
