@@ -253,8 +253,16 @@ contribute-check-backend backend="claude":
         if command -v omp &>/dev/null; then
           echo "OMP CLI detected ($(omp --version 2>&1 | head -1))"
           echo "  Set model: export AGENT_MODEL=provider/model"
-          echo "  Supply that provider's credential through OMP's documented environment or profile."
+          echo "  Sign in on this host (run: omp, complete its provider setup, quit) — container mode"
+          echo "  stages that sign-in from ~/.omp/agent (#7678); a provider API key in the environment"
+          echo "  (ANTHROPIC_API_KEY, OPENAI_API_KEY, …) is forwarded as well."
           echo "  OMP is interactive-only; Hive does not claim a generic authentication probe or headless mode."
+          # Say what container mode will actually stage — which providers are
+          # signed in on this host and which of them the selection keeps — so
+          # a missing sign-in is caught here, not discovered as the setup
+          # wizard inside a container whose relay is waiting at it (#7678).
+          # Provider NAMES only; credential values are never read out.
+          node bin/omp-backend.js --describe "${HOME}/.omp" "${AGENT_MODEL:-}" | sed 's/^/  /'
         else
           echo "ERROR: OMP CLI not found. Install: https://github.com/can1357/oh-my-pi"
           exit 1
@@ -1366,7 +1374,7 @@ contribute-hive backend="" mode="docker": check-version
       # malicious MCP/hook/settings injection by the bypass-permissions agent —
       # lands in the throwaway staging dir and is deleted on exit. The
       # contributor's real ~/.claude / ~/.copilot / ~/.config/goose / ~/.codex
-      # / ~/.pi on the host are never modified.
+      # / ~/.pi / ~/.omp on the host are never modified.
       #
       # The staging dir is created with 0700 perms and removed by the cleanup
       # trap alongside the container.
@@ -1503,6 +1511,42 @@ contribute-hive backend="" mode="docker": check-version
           # destroyed in cleanup_container, so a poisoned agent still cannot
           # plant config on the host.
           NET_FLAGS="--network host"
+          ;;
+        omp)
+          # #7678: before this case existed nothing reached /home/dev/.omp, so
+          # the container's omp started as a fresh install — its first-run
+          # setup wizard, no provider signed in — while local mode, running
+          # the host's omp against the real ${HOME}, picked up the sign-in
+          # with no extra steps. omp keeps its state under ${HOME}/.omp/agent:
+          # config.yml (settings, default model) and agent.db, the SQLite
+          # store whose auth_credentials table holds every provider's OAuth
+          # record or API key — there is no auth.json to stage as pi has.
+          # bin/omp-backend.js copies an allowlist of that directory (never
+          # the host's transcripts, ~360 MB of extracted natives, daemon
+          # sockets or logs) into the staging dir and, like pi-backend.js
+          # --stage, keeps only the selected provider's credential rows:
+          # AGENT_MODEL=provider/model names it, otherwise config.yml's
+          # modelRoles do. Same H6 boundary as every other backend: the
+          # container writes to the throwaway copy, never to ${HOME}/.omp.
+          if [ -d "${HOME}/.omp/agent" ]; then
+            if ! node bin/omp-backend.js --stage "${HOME}/.omp" "${CLI_STAGE}/.omp" "${AGENT_MODEL:-}"; then
+              echo "ERROR: could not stage ${HOME}/.omp for the container (see above)." >&2
+              # The cleanup trap is not registered yet; do not leave a copy of
+              # the credential store behind.
+              rm -rf "${CLI_STAGE}"
+              exit 1
+            fi
+            CLI_MOUNTS="-v ${CLI_STAGE}/.omp:/home/dev/.omp${VOLSUF}"
+          else
+            echo "⚠  ${HOME}/.omp/agent does not exist, so no omp sign-in can be staged into the container."
+            echo ""
+            echo "    omp will open its first-run setup wizard, and the relay will wait at it"
+            echo "    until someone completes the provider sign-in in the container's pane —"
+            echo "    and that sign-in is discarded with the container. To sign in once and"
+            echo "    keep it, quit this, run omp on the host and complete its setup, then"
+            echo "    re-run: just contribute-hive ${BACKEND}"
+            echo ""
+          fi
           ;;
         agy)
           # agy 1.1.x keeps its state under ${HOME}/.gemini/antigravity-cli,

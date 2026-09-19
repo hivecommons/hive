@@ -391,7 +391,26 @@ function classifyReadiness(text, backend) {
       // parse out any particular piece of splash chrome.
       const cliEdge = paneTail(text, 3);
       if (/press enter to skip/i.test(cliEdge)) return 'onboarding';
-      if (/\b(?:sign in|log in|authentication required|credentials? required)\b/i.test(cliEdge)) return 'needs-login';
+      // omp's first-run setup wizard (hivecommons/hive#7678) is the exception
+      // to the "login prompts render at the edge" rule above. It is a
+      // multi-step full-screen form whose provider sign-in — "Signing in to
+      // openai-codex", "Browser login: Open login URL", "Paste the
+      // authorization code (or full redirect URL):" and an input box — sits a
+      // dozen lines ABOVE the pane's bottom, with the status footer and the
+      // "╰─" input corner (the persistent ready signal below) drawn under
+      // it. A container started with no ~/.omp opens on exactly this screen;
+      // the 3-line edge check missed it ("Complete login to finish." is
+      // `login` as one word, and the "Sign in" button is twelve lines up),
+      // the footer matched 'ready', and the relay typed the hub's task prompt
+      // into the authorization-code box. These phrases are the wizard's own
+      // chrome, not words an agent's reply or a splash tip would plausibly
+      // contain — unlike a bare `login`, which the "`/login` again" tip in
+      // omp_tip_mentions_login DOES contain — so they are safe to test across
+      // the whole 15-line window, and a wizard is never 'ready'. It is also
+      // never 'onboarding': the auto-dismiss path answers with Enter, which
+      // here would submit an empty authorization code.
+      if (/Setup step \d+ of \d+|Set up your providers|Signing in to \S|Browser login:|Paste the authorization code/i.test(recent)) return 'needs-login';
+      if (/\b(?:sign in|log in|login|authentication required|credentials? required)\b/i.test(cliEdge)) return 'needs-login';
       // kubestellar/hive#6623/#6626 shipped this backend against a
       // hand-written fixture (a 6-line pane), never a real tmux capture at
       // the dimensions bin/contributor-agent.sh actually launches with

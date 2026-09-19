@@ -1,0 +1,9 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "getCLIState": "needs-login",
+    "paneShowsActiveWork": false
+  },
+  "note": "omp's first-run setup wizard, as reported in hivecommons/hive#7678: a container started with no ~/.omp staged opened on 'Setup step 1 of 5', signed in to openai-codex and parked on 'Paste the authorization code (or full redirect URL):' with an input box. The wizard text is the verbatim pane from the report; the status footer and the input box's '╰─' corner beneath it are omp's persistent chrome (the same lines omp_ready carries). The 3-line edge check saw only 'Complete login to finish.' plus that chrome, the footer's percent meter matched 'ready', and the relay typed the hub's task prompt into the authorization-code field. A wizard is never ready: the sign-in request lives a dozen lines above the pane's bottom and must be read from the wider 15-line window."
+}

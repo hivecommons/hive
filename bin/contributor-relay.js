@@ -1627,10 +1627,19 @@ const BACKEND_LOGIN_HELP = {
   },
   omp: {
     product: 'Oh My Pi',
+    // omp's setup wizard offers a paste flow ("Paste the authorization code
+    // (or full redirect URL)"), so a browser on the HOST is enough to finish
+    // a sign-in inside a container. What that sign-in cannot do is persist:
+    // container mode writes to a throwaway copy of ~/.omp (#7678), so the
+    // lasting fix is to sign in on the host once, where contribute-hive
+    // stages it from.
     steps: (attach) => [
       'In another terminal, run:',
       `  ${attach}`,
-      'Complete the provider sign-in OMP prompts for, then press Ctrl-B D to detach.',
+      'Complete the provider sign-in OMP prompts for (open its login URL in a browser',
+      'here and paste the code back into the pane), then press Ctrl-B D to detach.',
+      'In container mode that sign-in lasts only for this run; to keep it, sign in',
+      'on the host once (run: omp) and restart with just contribute-hive omp.',
     ],
   },
   bob: {

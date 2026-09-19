@@ -13,6 +13,7 @@ const Module = require('module');
 const path = require('path');
 const fs = require('fs');
 const piBackend = require('./pi-backend.js');
+const ompBackend = require('./omp-backend.js');
 // The pure pane classifier (kubestellar/hive#6429) — required directly, with
 // no relay/tmux/ws stubbing at all, for the tests below that exercise it as a
 // standalone library. Tests that need the relay's WIRING (task lifecycle, hub
@@ -1171,6 +1172,180 @@ test('Pi container staging retains only the selected provider credentials', () =
       piBackend.redactPiCredentials('selected-custom-key unrelated-custom-key', selection, { PI_CODING_AGENT_DIR: agentDir }),
       '***REDACTED*** unrelated-custom-key',
     );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// omp container staging (hivecommons/hive#7678).
+//
+// omp keeps provider credentials as rows of the auth_credentials table in
+// ~/.omp/agent/agent.db — there is no auth.json — so the staging helper has to
+// narrow a SQLite store, not a JSON map. The fake host below is built with the
+// same node:sqlite the helper uses; when this Node predates it (and no sqlite3
+// CLI exists) the helper reports that instead of guessing, which the last test
+// pins.
+// ---------------------------------------------------------------------------
+
+function makeFakeOmpHome(root, { providers = ['anthropic', 'openai-codex', 'google-antigravity'], configYml = null } = {}) {
+  const sqlite = require('node:sqlite');
+  const agentDir = path.join(root, 'agent');
+  fs.mkdirSync(path.join(agentDir, 'sessions', '-work'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'natives', '18.2.5'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'run', 'daemons'), { recursive: true });
+  fs.writeFileSync(path.join(agentDir, 'sessions', '-work', 'session.jsonl'), '{"private":"host transcript"}\n');
+  fs.writeFileSync(path.join(root, 'natives', '18.2.5', 'pi_natives.node'), 'not staged');
+  fs.writeFileSync(path.join(agentDir, 'history.db'), 'not staged');
+  if (configYml !== null) fs.writeFileSync(path.join(agentDir, 'config.yml'), configYml);
+  const db = new sqlite.DatabaseSync(path.join(agentDir, 'agent.db'));
+  db.exec(`CREATE TABLE auth_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+    data TEXT NOT NULL, disabled_cause TEXT DEFAULT NULL, identity_key TEXT DEFAULT NULL,
+    created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)`);
+  const insert = db.prepare('INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, ?, ?)');
+  for (const p of providers) insert.run(p, 'oauth', JSON.stringify({ access: `${p}-access-token`, refresh: `${p}-refresh-token` }));
+  db.close();
+  return agentDir;
+}
+
+function providersIn(dbFile) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+  try {
+    return db.prepare('SELECT provider FROM auth_credentials ORDER BY provider').all().map((r) => r.provider);
+  } finally { db.close(); }
+}
+
+const OMP_CONFIG_YML = [
+  'setupVersion: 2',
+  '',
+  'modelRoles:',
+  '  default: openai-codex/gpt-5.6-luna:max',
+  '  advisor: anthropic/claude-opus-5:high',
+  '',
+  'advisor:',
+  '  enabled: false',
+  '',
+].join('\n');
+
+test('omp container staging copies only the credential/config allowlist and keeps only the selected provider', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const report = ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.strictEqual(report.selection.source, 'model');
+    assert.deepStrictEqual(report.keptProviders, ['anthropic']);
+    assert.deepStrictEqual(providersIn(path.join(stage, 'agent', 'agent.db')), ['anthropic'],
+      'the container must inherit only the provider AGENT_MODEL names, never every host sign-in (least privilege, as for pi)');
+    // The host's real store is untouched: staging narrows the COPY.
+    assert.deepStrictEqual(providersIn(path.join(hostOmp, 'agent', 'agent.db')), ['anthropic', 'google-antigravity', 'openai-codex']);
+    assert.ok(fs.existsSync(path.join(stage, 'agent', 'config.yml')), 'config.yml (default model, setupVersion) must be staged or omp re-runs its wizard');
+    // Host transcripts, native modules, daemon state and history never reach the container.
+    for (const absent of [['agent', 'sessions'], ['agent', 'history.db'], ['natives'], ['run']]) {
+      assert.ok(!fs.existsSync(path.join(stage, ...absent)), `${absent.join('/')} must not be staged`);
+    }
+    assert.strictEqual(fs.statSync(path.join(stage, 'agent', 'agent.db')).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp container staging without a provider in AGENT_MODEL follows config.yml modelRoles', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    // No AGENT_MODEL: omp runs config.yml's roles, so both of their providers stay.
+    let report = ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage-a', '.omp'), '');
+    assert.strictEqual(report.selection.source, 'config');
+    assert.deepStrictEqual(providersIn(path.join(tmpDir, 'stage-a', '.omp', 'agent', 'agent.db')), ['anthropic', 'openai-codex']);
+    // A fuzzy AGENT_MODEL ("opus") names no provider: same fallback, and the
+    // report says so rather than silently guessing.
+    report = ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage-b', '.omp'), 'opus');
+    assert.strictEqual(report.selection.source, 'config');
+    assert.ok(report.warnings.some((w) => /AGENT_MODEL="opus" does not name a provider/.test(w)), JSON.stringify(report.warnings));
+    // Selecting a provider the host never signed in to stages no credential
+    // and says which providers ARE signed in, so the wizard is explained
+    // before the container starts rather than discovered inside it.
+    report = ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage-c', '.omp'), 'openai/gpt-5');
+    assert.deepStrictEqual(providersIn(path.join(tmpDir, 'stage-c', '.omp', 'agent', 'agent.db')), []);
+    assert.ok(report.warnings.some((w) => /no stored credential matches the selected provider\(s\) openai; stored: anthropic, google-antigravity, openai-codex/.test(w)), JSON.stringify(report.warnings));
+    // No config.yml and no provider in AGENT_MODEL: nothing selects, nothing
+    // is narrowed, and the report names the selection source honestly.
+    const bareOmp = path.join(tmpDir, 'bare-omp');
+    makeFakeOmpHome(bareOmp, { providers: ['anthropic'] });
+    report = ompBackend.stageOmp(bareOmp, path.join(tmpDir, 'stage-d', '.omp'), '');
+    assert.strictEqual(report.selection.source, 'none');
+    assert.deepStrictEqual(providersIn(path.join(tmpDir, 'stage-d', '.omp', 'agent', 'agent.db')), ['anthropic']);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp container staging narrows the store through the sqlite3 CLI when node:sqlite is unavailable', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const cli = require('child_process').spawnSync('sqlite3', ['-version'], { encoding: 'utf8' });
+  if (cli.error || cli.status !== 0) { console.log('SKIP: no sqlite3 CLI on PATH; the omp staging fallback is not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-cli-'));
+  const prior = process.env.HIVE_OMP_BACKEND_SQLITE;
+  process.env.HIVE_OMP_BACKEND_SQLITE = 'sqlite3';
+  try {
+    assert.strictEqual(ompBackend.sqliteBackend(), 'sqlite3');
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    const report = ompBackend.stageOmp(hostOmp, stage, 'google-antigravity/gemini-3.6-pro');
+    assert.deepStrictEqual(report.keptProviders, ['google-antigravity']);
+    assert.deepStrictEqual(report.storedProviders, ['anthropic', 'google-antigravity', 'openai-codex']);
+    // Read back through node:sqlite: the CLI path must leave the same store.
+    assert.deepStrictEqual(providersIn(path.join(stage, 'agent', 'agent.db')), ['google-antigravity']);
+  } finally {
+    if (prior === undefined) delete process.env.HIVE_OMP_BACKEND_SQLITE; else process.env.HIVE_OMP_BACKEND_SQLITE = prior;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp preflight describes what container mode will stage, and names a missing sign-in before the container starts', () => {
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-describe-'));
+  try {
+    // Never set up: the wizard is inevitable, and the preflight must say so.
+    const absent = ompBackend.describeOmpHost(path.join(tmpDir, 'never-ran'), '');
+    assert.strictEqual(absent.agentDirPresent, false);
+    assert.match(ompBackend.describeLines(absent).join('\n'), /does not exist.*setup wizard/);
+    if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const lines = ompBackend.describeLines(ompBackend.describeOmpHost(hostOmp, 'openai-codex/gpt-5.6-luna:max'));
+    const text = lines.join('\n');
+    assert.match(text, /signed-in providers: anthropic, google-antigravity, openai-codex/);
+    assert.match(text, /container mode stages: openai-codex \(selected by AGENT_MODEL\)/);
+    // Credential VALUES never appear in the preflight output.
+    assert.ok(!/access-token|refresh-token/.test(text), text);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp model spellings: only provider/model names a provider; config.yml roles are read as a minimal YAML subset', () => {
+  assert.strictEqual(ompBackend.parseOmpProvider('openai-codex/gpt-5.6-luna:max'), 'openai-codex');
+  assert.strictEqual(ompBackend.parseOmpProvider('Anthropic/claude-opus-5'), 'anthropic');
+  assert.strictEqual(ompBackend.parseOmpProvider('openrouter/moonshotai/kimi-k2.6'), 'openrouter');
+  for (const bad of ['', 'opus', 'gpt-5.2', '/gpt-5', 'openai/', "op'en/x", 'open ai/x', undefined, null]) {
+    assert.strictEqual(ompBackend.parseOmpProvider(bad), null, `accepted ${JSON.stringify(bad)} as naming a provider`);
+  }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-config-'));
+  try {
+    const cfg = path.join(tmpDir, 'config.yml');
+    fs.writeFileSync(cfg, OMP_CONFIG_YML);
+    assert.deepStrictEqual(ompBackend.configModelRoleProviders(cfg), ['anthropic', 'openai-codex']);
+    fs.writeFileSync(cfg, 'setupVersion: 2\nmodelRoles:\n  default: opus   # fuzzy, names no provider\n');
+    assert.deepStrictEqual(ompBackend.configModelRoleProviders(cfg), []);
+    assert.deepStrictEqual(ompBackend.configModelRoleProviders(path.join(tmpDir, 'missing.yml')), []);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -7349,6 +7524,59 @@ test('pane-classifier: OMP captured chrome distinguishes ready, onboarding, logi
       relay.detectCompletionVerdict(fixture('omp_terminal_verdict').trim().split('\n')).verdict,
       'complete');
   } finally { teardown(relay); }
+});
+
+// omp's first-run setup wizard (hivecommons/hive#7678), with the rule + update
+// banner + status footer + input corner omp draws under its screens. Every
+// wizard phrase is six or more non-blank lines above the pane's bottom — well
+// outside the 3-line edge the login check used to be confined to — while the
+// footer's percent meter and the "╰─" corner sit inside the 15-line window
+// the ready check reads. That is the shape that made the relay report 'ready'
+// and type a task into the authorization-code box.
+const OMP_SETUP_WIZARD_DEEP_PANE = [
+  '                    omp',
+  '              Setup step 1 of 5',
+  '',
+  'Set up your providers',
+  "Sign in and pick a web search provider. Press Esc when you're done.",
+  '',
+  'Providers:  [Sign in]   Web search',
+  '',
+  'Signing in to openai-codex',
+  'Browser login: Open login URL',
+  '',
+  'Paste the authorization code (or full redirect URL):',
+  '>',
+  '',
+  'A browser window should open. Complete login to finish.',
+  '',
+  '────────────────────────────────────────────────────────────────────────────',
+  ' Update Available',
+  ' New version 18.2.7 is available. Run: omp update',
+  '────────────────────────────────────────────────────────────────────────────',
+  '',
+  ' 󰵗  󰪣 GPT-5.6   ~/.local/state/hive/agent-cwd  󰙺 ────0%──────────────────󰁨──────1M─',
+  '╰─',
+].join('\n');
+
+test('pane-classifier: the omp setup wizard is needs-login even when its sign-in request is far above the edge', () => {
+  assert.strictEqual(paneClassifier.classifyReadiness(OMP_SETUP_WIZARD_DEEP_PANE, 'omp'), 'needs-login');
+  // Each wizard phrase on its own, anywhere in the 15-line window, is enough:
+  // the pane may scroll so only one of them survives above the footer.
+  for (const phrase of ['Setup step 2 of 5', 'Set up your providers', 'Signing in to anthropic', 'Browser login: Open login URL', 'Paste the authorization code (or full redirect URL):']) {
+    const pane = [phrase, ...Array.from({ length: 8 }, (_, i) => `filler line ${i}`), ' 󰵗  󰪣 GPT-5.6  ~/w  󰙺 ────0%────1M─', '╰─'].join('\n');
+    assert.strictEqual(paneClassifier.classifyReadiness(pane, 'omp'), 'needs-login', `"${phrase}" nine lines above the footer must not read as ready`);
+  }
+  // Never 'onboarding': the auto-dismiss path would press Enter into the
+  // authorization-code box.
+  assert.notStrictEqual(paneClassifier.classifyReadiness(OMP_SETUP_WIZARD_DEEP_PANE, 'omp'), 'onboarding');
+  // `login` as ONE word at the edge is a login request too ("Complete login
+  // to finish."), but ONLY at the edge: the "`/login` again" splash tip in
+  // omp_tip_mentions_login sits inside the 15-line window of a pane that is
+  // genuinely ready, and must stay ready (#6639).
+  assert.strictEqual(paneClassifier.classifyReadiness('some output\nComplete login to finish.\n>', 'omp'), 'needs-login');
+  assert.strictEqual(paneClassifier.classifyReadiness(
+    fs.readFileSync(path.join(PANE_FIXTURES_DIR, 'omp_tip_mentions_login.pane.txt'), 'utf8'), 'omp'), 'ready');
 });
 
 // Claude Code's first-run login chooser, as captured from a contributor
