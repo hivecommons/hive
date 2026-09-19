@@ -326,7 +326,22 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 	if err != nil {
 		return nil, fmt.Errorf("CA setup: %w", err)
 	}
+	return newGitHubProxyWithCA(caCert, caX509, logger, org, repos), nil
+}
 
+// NewGitHubProxyEphemeral is NewGitHubProxy with a freshly generated CA that
+// is never written to disk. It exists so cmd/hive boot tests can construct a
+// real proxy (routes, providers, sinks) on a host without /data; nothing in
+// production calls it.
+func NewGitHubProxyEphemeral(logger *slog.Logger, org string, repos []string) (*GitHubProxy, error) {
+	caCert, caX509, err := generateCA()
+	if err != nil {
+		return nil, fmt.Errorf("CA setup: %w", err)
+	}
+	return newGitHubProxyWithCA(caCert, caX509, logger, org, repos), nil
+}
+
+func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logger *slog.Logger, org string, repos []string) *GitHubProxy {
 	var uidMap *agent.UIDMap
 	if loaded, loadErr := agent.LoadUIDMap(agent.UIDMapPath); loadErr == nil {
 		uidMap = loaded
@@ -375,7 +390,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		}
 	}
 
-	return p, nil
+	return p
 }
 
 // ListenAddr returns the proxy listen address.
