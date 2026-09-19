@@ -3686,35 +3686,38 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 // bootLaunch starts the dashboard listener and Discord bot, writes the
 // hive_restart audit marker, marks the pod Ready, and launches the
 // persistent agents in the background.
-func (b *boot) bootLaunch() {
+func (b *boot) bootLaunch() { b.bootLaunchWith(defaultBootLaunchDeps()) }
+
+// bootLaunchWith is bootLaunch with its goroutines, Discord bot, stagger
+// wait, and agent starts injected; see bootLaunchDeps.
+func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	ctx, cfg, logger, agentMgr, dashSrv := b.ctx, b.cfg, b.logger, b.agentMgr, b.dashSrv
-	go func() {
-		if err := dashSrv.Start(); err != nil {
+	deps.spawn("dashboard-serve", func() {
+		if err := deps.serve(dashSrv); err != nil {
 			logger.Error("dashboard server failed", "error", err)
 		}
-	}()
+	})
 
 	if cfg.Notifications.Discord != nil && cfg.Notifications.Discord.BotToken != "" && cfg.Notifications.Discord.ChannelID != "" {
-		discordBot := discord.NewBot(discord.Config{
+		var agentNameList []string
+		for name := range cfg.EnabledAgents() {
+			agentNameList = append(agentNameList, name)
+		}
+		err := deps.startDiscordBot(ctx, discord.Config{
 			Token:          cfg.Notifications.Discord.BotToken,
 			ChannelID:      cfg.Notifications.Discord.ChannelID,
 			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
 			AllowedUsers:   cfg.Notifications.Discord.AllowedUsers,
-		}, logger)
-		var agentNameList []string
-		for name := range cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
-		discordBot.SetAgentNames(agentNameList)
-		if err := discordBot.Start(ctx); err != nil {
+		}, agentNameList, logger)
+		if err != nil {
 			logger.Warn("discord bot failed to start", "error", err)
 		} else {
 			logger.Info("discord bot started", "channel", cfg.Notifications.Discord.ChannelID)
 		}
 	}
 
-	onDemandFromPack := config.OnDemandAgentsFromPacks()
+	onDemandFromPack := deps.onDemandFromPack()
 	if len(onDemandFromPack) > 0 {
 		logger.Info("on-demand agents from pack definitions", "agents", onDemandFromPack)
 	}
@@ -3732,7 +3735,7 @@ func (b *boot) bootLaunch() {
 
 	// Mark the dashboard READY as soon as the HTTP server can serve requests —
 	// which is NOW: config is loaded, GitHub client/App auth are wired, the
-	// dashboard deps are set, and the listener (go dashSrv.Start() above) is up.
+	// dashboard deps are set, and the listener (dashboard-serve above) is up.
 	// None of /api/*, /sso, /open, /api/livez or /api/health depend on the agent
 	// fleet being up; the frontend already handles agents appearing over time.
 	//
@@ -3750,8 +3753,7 @@ func (b *boot) bootLaunch() {
 	// staggered start no longer gates pod readiness. The loop honors ctx: on
 	// shutdown the ctx-aware stagger returns immediately instead of leaking a
 	// goroutine parked in a bare time.Sleep.
-	go func() {
-		const agentLaunchDelaySec = 15
+	deps.spawn("agent-launch", func() {
 		agentIndex := 0
 		for name, ac := range cfg.EnabledAgents() {
 			isOnDemand := ac.OnDemand || onDemandFromPack[name]
@@ -3760,10 +3762,8 @@ func (b *boot) bootLaunch() {
 				continue
 			}
 			if agentIndex > 0 {
-				logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
-				select {
-				case <-time.After(time.Duration(agentLaunchDelaySec) * time.Second):
-				case <-ctx.Done():
+				logger.Info("staggering agent launch", "name", name, "delay_sec", int(agentLaunchStagger/time.Second))
+				if !deps.waitStagger(ctx) {
 					logger.Info("aborting staggered agent launch: shutting down")
 					return
 				}
@@ -3775,7 +3775,7 @@ func (b *boot) bootLaunch() {
 				return
 			}
 			logger.Info("audit: starting agent", "name", name, "trigger", "startup")
-			if err := agentMgr.Start(ctx, name); err != nil {
+			if err := deps.startAgent(ctx, agentMgr, name); err != nil {
 				logger.Warn("failed to start agent", "name", name, "error", err)
 			} else {
 				// Surface whether a persisted operator pause was honored on this
@@ -3788,7 +3788,7 @@ func (b *boot) bootLaunch() {
 			}
 			agentIndex++
 		}
-	}()
+	})
 
 	b.onDemandFromPack = onDemandFromPack
 }
