@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -208,7 +207,20 @@ func (h *ContributeWSHub) recordTaskFailureKey(key string, permanent bool) {
 // watchdog giving up via "ready", and the wedged-task lease backstop — deliberately
 // keep calling recordTaskFailure and keep counting.
 func (h *ContributeWSHub) bookReleaseCooldown(repo string, number int) {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	h.bookReleaseCooldownKey(worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+// bookReleaseCooldownKey is bookReleaseCooldown against a canonical identity
+// key (hivecommons/hive#7770), so an external (Linear/Jira) item — whose
+// identity lives in Key with Number == 0 — is hedged during the reconnect
+// window exactly as a GitHub issue is. For a GitHub issue the key is the same
+// "repo#number" string the repo/number form always wrote, so persisted ledgers
+// read back unchanged. An empty key (a synthetic task, or a zero-numbered ref
+// with no external id) books nothing rather than a fabricated "repo#0".
+func (h *ContributeWSHub) bookReleaseCooldownKey(key string) {
+	if key == "" {
+		return
+	}
 	h.completedMu.Lock()
 	h.failedTasks[key] = time.Now()
 	h.completedMu.Unlock()
@@ -238,7 +250,16 @@ func (h *ContributeWSHub) bookReleaseCooldown(repo string, number int) {
 // re-entering activeIssues, which is the stronger guard the window was standing in
 // for.
 func (h *ContributeWSHub) clearReleaseCooldown(repo string, number int) {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	h.clearReleaseCooldownKey(worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+// clearReleaseCooldownKey is clearReleaseCooldown against a canonical identity
+// key (hivecommons/hive#7770): the withdrawal half of bookReleaseCooldownKey,
+// with the same narrowness. An empty key clears nothing.
+func (h *ContributeWSHub) clearReleaseCooldownKey(key string) {
+	if key == "" {
+		return
+	}
 	h.completedMu.Lock()
 	_, booked := h.failedTasks[key]
 	if booked && h.consecutiveFailures[key] == 0 {

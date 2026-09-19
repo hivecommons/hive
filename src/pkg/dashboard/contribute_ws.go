@@ -1867,9 +1867,15 @@ func (s *wsSession) releaseOnDisconnect() {
 			// quarantineCooldownHours quarantine of an issue nobody had failed.
 			// The #2356 duplicate-PR guarantee lives entirely in the timestamp and
 			// is unaffected.
-			if abandonedTask.Number > 0 {
-				h.bookReleaseCooldown(abandonedTask.Repo, abandonedTask.Number)
-			}
+			//
+			// #7770: booked against the task's canonical identity rather than
+			// repo#number, so a Linear/Jira item — Number 0, identity in Key —
+			// gets the same reconnect-window hedge a GitHub issue does instead
+			// of none. For a GitHub issue the key IS "repo#number", byte for
+			// byte, so nothing changes there; a synthetic pr-review task has
+			// no identity and is skipped by the helper, which is what the old
+			// Number > 0 guard was for.
+			h.bookReleaseCooldownKey(abandonedTask.identityKey())
 			// #5097: make the abandonment VISIBLE. Until now this path recorded
 			// nothing an operator could see — the issue showed a "picked up" with
 			// no terminal event ever following it, which is indistinguishable in
@@ -2334,14 +2340,37 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// fields: repo/number/tier are the server's, and the task keeps its
 			// ORIGINAL generation so it stays fenced against any older-generation
 			// straggler. lastLeaseRenew starts the wedged-task clock.
-			s.contributor.mu.Lock()
-			s.contributor.currentTask = &WSTaskAssign{
+			//
+			// The lease's canonical key comes along too (hivecommons/hive#7770).
+			// Every guard that stops two contributors working one item keys on
+			// identityKey() — the activeIssues scan in selectTask, the completion
+			// and failure cooldowns — and identityKey() falls back to "repo#number"
+			// only when Key is empty. For a Linear/Jira item Number is 0 and that
+			// fallback is "", so a rebuild that copied repo and number alone left
+			// a live connection working `acme/repo!ENG-123` with no identity at
+			// all: the item dropped out of the double-assignment guard the moment
+			// the old socket aged out, and finishing it booked a cooldown against
+			// "". GitHub items were untouched only because Number > 0 recovers
+			// their key. The lease has carried the key since #4245 (#5120); this
+			// is the one consumer that never read it. ExternalID is recovered from
+			// the same key so the task's display stays the native key rather than
+			// "#0"; SourceType is not in the lease and a client-declared value is
+			// not adopted here, exactly as repo and number are not.
+			rebuilt := &WSTaskAssign{
 				TaskID: lease.taskID,
 				Kind:   msg.Kind,
 				Repo:   lease.repo,
 				Number: lease.number,
+				Key:    lease.key,
 				Title:  msg.Title,
 			}
+			if lease.number == 0 {
+				if ref, ok := worksource.ParseKey(lease.key); ok {
+					rebuilt.ExternalID = ref.ExternalID
+				}
+			}
+			s.contributor.mu.Lock()
+			s.contributor.currentTask = rebuilt
 			s.contributor.currentTaskGen = lease.gen
 			s.contributor.lastLeaseRenew = time.Now()
 			s.contributor.tmuxOutput = msg.TmuxOutput
@@ -2362,10 +2391,11 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// than leave a live, in-flight issue stamped "recently released"
 			// in the failure ledger for the rest of the window. Narrow by
 			// construction: clearReleaseCooldown refuses to touch an issue
-			// that carries a real consecutive-failure count.
-			if lease.number > 0 {
-				h.clearReleaseCooldown(lease.repo, lease.number)
-			}
+			// that carries a real consecutive-failure count. Keyed on the
+			// task's identity (#7770), so the hedge booked for an external
+			// item on disconnect is the one withdrawn here; the key is "" for
+			// a synthetic task and the helper skips it.
+			h.clearReleaseCooldownKey(rebuilt.identityKey())
 
 			h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 				"username", s.contributor.profile.GitHubUsername,
