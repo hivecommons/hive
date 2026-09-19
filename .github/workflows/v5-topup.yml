@@ -33,6 +33,14 @@ name: v5 Top-up
 # SECURITY POSTURE. Past top-ups have carried security fixes (grpc v1.83.2 /
 # GO-2026-6443 arrived on v5 through a v4 merge), which is why letting v5 lag is
 # not cosmetic and why this runs unattended.
+#
+# POST-FREEZE DISPOSITION (#7693, runbook §4). Once the freeze marshal sets the
+# repository variable `V4_FEATURE_FREEZE`, the accepted v4 lifecycle policy
+# (#6346) makes v4 -> v5 movement cherry-pick-only: no batch syncs. This
+# workflow IS the batch sync, so behind that flag the `top-up` job is skipped
+# on every trigger — schedule, release, and manual dispatch alike — and the
+# `frozen` job runs instead to leave a visible record of why. Nothing here is
+# deleted, so lifting the flag re-arms the cadence without a workflow change.
 
 on:
   workflow_run:
@@ -52,9 +60,13 @@ jobs:
     # Only after a SUCCESSFUL release; a failed or superseded release run has
     # nothing to carry forward. The schedule and manual paths carry no
     # conclusion, so they are admitted explicitly.
+    #
+    # And never once v4 is feature-frozen: batch syncs are forbidden by the
+    # accepted policy from that line on (see POST-FREEZE DISPOSITION above).
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      vars.V4_FEATURE_FREEZE == '' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     permissions:
       contents: write
@@ -207,3 +219,22 @@ jobs:
           gh pr create --repo "$GITHUB_REPOSITORY" --base v5 --head sync/v4-to-v5 \
             --title "🌱 Forward-merge v4 into v5 (${BEHIND} commits)" \
             --body-file "$RUNNER_TEMP/v5-topup-body.md"
+
+  frozen:
+    # The visible half of the post-freeze disposition: when the flag is set
+    # this job runs INSTEAD of top-up so the run log says why nothing was
+    # merged, rather than the workflow silently doing nothing (#7693 §4).
+    if: vars.V4_FEATURE_FREEZE != ''
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    steps:
+      - name: Report the freeze
+        env:
+          V4_FEATURE_FREEZE: ${{ vars.V4_FEATURE_FREEZE }}
+        run: |
+          {
+            echo "### v4 -> v5 batch top-up disabled: v4 is feature-frozen"
+            echo ""
+            echo "Freeze declared: \`${V4_FEATURE_FREEZE}\`. Per the accepted v4 lifecycle policy (#6346)"
+            echo "v4 -> v5 movement is now cherry-pick-only; see src/docs/v4-freeze-runbook.md §4"
+            echo "for the per-fix procedure. Unset the repository variable to re-arm this cadence."
+          } | tee "$GITHUB_STEP_SUMMARY"

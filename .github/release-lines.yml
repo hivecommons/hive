@@ -109,6 +109,10 @@ pinned:
   # carry forward, and v5 is the merge TARGET rather than a trigger, so it is
   # not a branch this workflow watches.
   v5-topup.yml: [-v2]
+  # Post-freeze intake gate for v4 (#7693, runbook §2). It watches PRs into
+  # the ONE line the accepted freeze policy (#6346) applies to; v2 is sunset
+  # and takes no PRs, and v5/v6 are exactly where non-critical work is sent.
+  v4-freeze-gate.yml: [-v2]
   # Automated v5 -> v6 forward-merge cadence (#7563, Track 7). Its only branch
   # filter is the `push` trigger naming the line whose MOVEMENT it reacts to —
   # v5, the source of every v6 top-up. v2 and v4 are excluded for the same

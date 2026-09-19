@@ -1,0 +1,86 @@
+name: v4 Freeze Gate
+
+# Enforces the accepted v4 feature-freeze policy (#6346) once it is declared
+# (#7693, src/docs/v4-freeze-runbook.md §2).
+#
+# THE SWITCH. The repository variable `V4_FEATURE_FREEZE` is the single
+# freeze flag. While it is unset or empty this workflow is a no-op that passes;
+# the freeze marshal sets it at the freeze line
+# (`gh variable set V4_FEATURE_FREEZE --body "<v4-sha> <date>"`) and from that
+# moment every PR targeting v4 must be a security or critical fix. A repository
+# variable rather than a file in the tree because a PR cannot edit it away, and
+# because flipping it needs no merge: the freeze can fire on any day and the
+# gate must follow the same day.
+#
+# WHAT COUNTS AS EXEMPT. A PR passes the gate when it carries at least one of
+# `security`, `agent/security`, `priority/critical-urgent`, or
+# `v4-freeze-exempt`. The first three are the labels sec-check and the triage
+# lanes already apply; the last is the maintainers' explicit override for the
+# critical fix nobody labelled. Anything else fails the check AND is escalated
+# with `needs-human` so the merge path (which already refuses PRs carrying that
+# label, #7641) cannot land it unattended. Failing alone would not be enough:
+# the hive's own agent lanes open non-critical v4 PRs at a cadence that would
+# violate the freeze within hours (#7693 lists six in 48h), so the gate has to
+# stop the machine, not only warn the human.
+#
+# WHY LABELS AND NOT DIFF INSPECTION. "Critical" is a judgement, and the policy
+# assigns that judgement to maintainers. A label is a recorded decision with an
+# actor and a timestamp; a heuristic over the diff would be neither.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+    branches: [v4]
+
+permissions:
+  contents: read
+
+jobs:
+  freeze-gate:
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      V4_FEATURE_FREEZE: ${{ vars.V4_FEATURE_FREEZE }}
+      PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Enforce the v4 feature freeze
+        run: |
+          set -euo pipefail
+          if [ -z "${V4_FEATURE_FREEZE:-}" ]; then
+            echo "v4 is not frozen (repository variable V4_FEATURE_FREEZE is unset) — gate is a no-op."
+            exit 0
+          fi
+          echo "v4 feature freeze in effect: ${V4_FEATURE_FREEZE}"
+          exempt=""
+          IFS=',' read -r -a labels <<< "${PR_LABELS}"
+          for l in "${labels[@]}"; do
+            case "$l" in
+              security|agent/security|priority/critical-urgent|v4-freeze-exempt) exempt="$l" ;;
+            esac
+          done
+          if [ -n "$exempt" ]; then
+            echo "PR #${PR_NUMBER} carries \`${exempt}\` — admitted as a security/critical fix."
+            exit 0
+          fi
+          {
+            echo "### v4 is feature-frozen"
+            echo ""
+            echo "Since \`${V4_FEATURE_FREEZE}\` v4 accepts **security and critical fixes only** (#6346, runbook: src/docs/v4-freeze-runbook.md)."
+            echo ""
+            echo "This PR carries none of \`security\`, \`agent/security\`, \`priority/critical-urgent\`, \`v4-freeze-exempt\`."
+            echo ""
+            echo "- If it IS a security or critical fix, a maintainer adds \`v4-freeze-exempt\` and the gate re-runs."
+            echo "- Otherwise retarget it at \`v5\` (\`gh pr edit ${PR_NUMBER} --base v5\`) — that is where non-critical work lands now."
+            echo ""
+            echo "\`needs-human\` has been added so the merge path does not land this unattended."
+          } | tee "$GITHUB_STEP_SUMMARY"
+          # Escalate. Fork PRs carry a read-only token; the check failing is
+          # still the gate, so a labelling failure must not mask it.
+          gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label needs-human \
+            || echo "::warning::could not add needs-human (read-only token?) — the failing check is still the gate"
+          echo "::error::v4 is feature-frozen: PR #${PR_NUMBER} is not labelled as a security/critical fix"
+          exit 1

@@ -1,12 +1,32 @@
-# v4 feature-freeze execution runbook (draft)
+# v4 feature-freeze execution runbook
 
-> **Status: draft planning artifact — not yet maintainer-accepted.**
-> The freeze *policy* is accepted
-> ([#6346](https://github.com/hivecommons/hive/issues/6346), recorded in
-> [v5-ga.md — v4 lifecycle policy](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md#v4-lifecycle-policy-accepted)).
-> This runbook sequences its *execution* and becomes binding only when a
-> maintainer records acceptance on
-> [#7693](https://github.com/hivecommons/hive/issues/7693).
+> **Status: mechanics wired, awaiting the trigger.** The freeze *policy* is
+> accepted ([#6346](https://github.com/hivecommons/hive/issues/6346), recorded
+> in [v5-ga.md — v4 lifecycle policy](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md#v4-lifecycle-policy-accepted)).
+> The enforcement below is already in the tree behind one switch — the
+> repository variable **`V4_FEATURE_FREEZE`** — so declaring the freeze is a
+> single command, not a workflow change under time pressure. The gap this
+> closes was filed as [#7693](https://github.com/hivecommons/hive/issues/7693).
+
+## The switch
+
+```bash
+# At the freeze line (freeze marshal, maintainer permissions):
+unset GITHUB_TOKEN
+gh variable set V4_FEATURE_FREEZE --repo hivecommons/hive \
+  --body "$(git rev-parse --short origin/v4) $(date -u +%F)"
+```
+
+Setting the variable does two things on its own, with no further merges:
+
+| Effect | Where | Behaviour while frozen |
+| --- | --- | --- |
+| **v4 intake gate** | `.github/workflows/v4-freeze-gate.yml` | Every PR targeting `v4` must carry `security`, `agent/security`, `priority/critical-urgent`, or `v4-freeze-exempt`; otherwise the check fails and the PR is labelled `needs-human`, which the automerge path refuses to land. |
+| **Batch-sync shutdown** | `.github/workflows/v5-topup.yml` | The `top-up` job is skipped on every trigger (release, schedule, manual) and a `frozen` job records why in the run summary. `v6-topup` (v5→v6) is unaffected. |
+
+While the variable is unset both workflows are no-ops that pass. Unsetting it
+(`gh variable delete V4_FEATURE_FREEZE`) re-arms the cadence and disarms the
+gate — that is the roll-back if the freeze is declared in error.
 
 ## Trigger
 
@@ -46,22 +66,30 @@ artifact** (PR, workflow run, dashboard state), never on intent.
 
 ### 2. Gate v4 intake
 
-- [ ] A `v4-freeze-exempt` label (or equivalent) is created, and
-      CONTRIBUTING.md's base-branch table gains a row stating that post-freeze
-      v4 PRs must be security or critical fixes. Evidence: merged PR.
-- [ ] The merge path for v4 rejects (or escalates to `needs-human`) any v4 PR
-      not labeled as a security/critical fix. Implementation choice —
-      required-check, governor policy, or review-lane rule — is the
-      maintainers' call; this runbook only requires that *some* enforcement
-      exists, because unenforced freeze policy decays into fiction.
-      Evidence: link to the gate (workflow run or config) plus one rejected
-      or escalated test PR. **Workflow-file portion needs a human or
-      merge-tier agent.**
+- [x] A `v4-freeze-exempt` label exists and CONTRIBUTING.md's base-branch
+      table states that post-freeze v4 PRs must be security or critical fixes
+      and names the gate. Evidence: label
+      [`v4-freeze-exempt`](https://github.com/hivecommons/hive/labels/v4-freeze-exempt),
+      CONTRIBUTING.md row (this runbook's PR).
+- [x] The merge path for v4 rejects **and** escalates to `needs-human` any
+      v4 PR not labelled as a security/critical fix:
+      `.github/workflows/v4-freeze-gate.yml`, armed by `V4_FEATURE_FREEZE`.
+      Unenforced freeze policy decays into fiction, so this is a failing
+      check plus a label the automerge path refuses, not a warning.
+      Evidence: the workflow (this runbook's PR).
+- [ ] At the freeze line, after setting the variable: mark `freeze-gate` a
+      **required** status check on `v4` branch protection, and open one
+      deliberately unlabelled test PR to confirm it is rejected and labelled
+      `needs-human`. Evidence: protection setting via API, the test PR.
 
 ### 3. Retarget the agent fleet
 
 - [ ] Hive agent lanes (quality, guide, architect, strategist, scanner) stop
-      opening non-critical PRs against v4 and target v5 instead. The last
+      opening non-critical PRs against v4 and target v5 instead. Until they
+      are retargeted the intake gate is the backstop: every non-critical
+      agent PR fails `freeze-gate` and is parked `needs-human`, so the fleet
+      cannot land a freeze violation unattended — but it will pile up parked
+      PRs, which is why this row is same-day. The last
       48 hours before this draft was written saw at least six non-critical
       agent commits land on v4 (`aafa26f`, `11a4ce6`, `2f88669`, `d1e4dd4`,
       `b1b677b`, `9a91315`) — at that cadence the fleet violates the freeze
@@ -74,18 +102,50 @@ artifact** (PR, workflow run, dashboard state), never on intent.
 
 ### 4. Dispose of the batch-sync automation
 
-- [ ] `v5-topup.yml` is disabled or made manual-only. The workflow automates
-      **batch** forward-merges — exactly what the accepted policy forbids
-      post-freeze. Evidence: merged workflow change (**human or merge-tier
-      agent required**) or repo Actions-settings screenshot.
-      Open defects #7659 (`gh: command not found` on ARC runners) and #7660
-      (recurring conflicts) become moot for v4→v5 once this lands; `v6-topup`
-      (v5→v6) is unaffected and keeps running.
-- [ ] The cherry-pick procedure replacing it is documented: one cherry-pick
-      per security/critical v4 fix, opened against v5, carrying its own
-      `Signed-off-by` per the accepted policy (see
-      [v5-sync-policy.md](v5-sync-policy.md) for the pre-freeze contrast).
-      Evidence: doc merged, first real cherry-pick PR linked.
+- [x] `v5-topup.yml` disables itself behind `V4_FEATURE_FREEZE`: the
+      `top-up` job is skipped on release, schedule **and** manual dispatch,
+      and a `frozen` job writes the reason into the run summary. The
+      workflow automated **batch** forward-merges — exactly what the accepted
+      policy forbids post-freeze. `v6-topup` (v5→v6) is unaffected and keeps
+      running. Evidence: the workflow (this runbook's PR); after the flag is
+      set, the first run showing `frozen` and a skipped `top-up`.
+- [x] The cherry-pick procedure replacing it is documented below
+      (§ Cherry-pick procedure). Evidence: this doc.
+- [ ] First real post-freeze cherry-pick PR linked here.
+
+#### Cherry-pick procedure (post-freeze v4 → v5)
+
+One PR per security/critical v4 fix, never a range, never a merge commit. The
+cherry-pick carries the original author and adds the picker's own
+`Signed-off-by` (`-s`), so `dco-push-delta` / `dco-post-merge` on v5 see a
+valid trailer for the person who actually pushed it (the squash-attribution
+guard skips nothing here — this is a single-parent commit).
+
+```bash
+unset GITHUB_TOKEN
+git fetch origin v4 v5
+git switch -c pick/v5-<v4-pr-number> origin/v5
+git cherry-pick -x -s <v4-merge-sha>      # -x records "(cherry picked from commit …)"
+# resolve conflicts if any; keep the v4 fix's intent, adapt to v5 APIs
+cd src && go build ./... && go test -race -short ./pkg/<touched>/... && cd ..
+git push -u origin HEAD
+gh pr create --repo hivecommons/hive --base v5 \
+  --title "🐛 <original title> (cherry-pick of #<v4-pr>)" \
+  --body "Cherry-pick of #<v4-pr> onto v5 per the post-freeze policy (#6346). Refs #<issue>."
+```
+
+Rules:
+
+- Pick the v4 **merge/rebase result SHA** (what `git log origin/v4` shows), not
+  the PR's pre-rebase head, so `-x` points at history v5 readers can find.
+- A pick that touches `changelog.d/` keeps its fragment (the compiler on v5
+  owns the headings); a pick that needs adaptation gets a new fragment
+  describing the v5 behaviour, not the v4 one.
+- Do **not** label a pick `no-changelog` to dodge the guard — that label is
+  for batch syncs, which no longer exist.
+- The pre-freeze contrast (batch forward-merges, `no-changelog`, merge
+  commits) is in [v5-sync-policy.md](v5-sync-policy.md); it stops applying at
+  the freeze line.
 
 ### 5. Remap channels and default branch (at GA cut, after the freeze)
 
