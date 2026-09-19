@@ -1280,9 +1280,13 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // and b.appAuth are set here and REASSIGNED later by three closures (the
 // dashboard's ReinitGitHubFunc, the config watcher, and the heartbeat's
 // app-config callback), which is why every reader goes through b.
-func (b *boot) bootGitHub() {
+func (b *boot) bootGitHub() { b.bootGitHubWith(defaultBootGitHubDeps()) }
+
+// bootGitHubWith is bootGitHub with credential resolution injected; see
+// bootGitHubDeps.
+func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	ctx, cfg, logger := b.ctx, b.cfg, b.logger
-	ghAuth := initGitHubAuth(ctx, cfg, logger)
+	ghAuth := deps.initGitHubAuth(ctx, cfg, logger)
 	b.ghClient, b.appAuth = ghAuth.Client, ghAuth.AppAuth
 	// appAuthFailure, when non-empty, is the operator-facing reason GitHub auth
 	// is unavailable. It is surfaced through the existing
@@ -1464,7 +1468,11 @@ func (b *boot) bootGovernor() {
 // bootAdvisory builds the notifier, infers the ACMM level, seeds the
 // GitHub App banner state, finds or creates the pinned advisory issue and
 // writes the embedded brainstorm policy to the policy dir.
-func (b *boot) bootAdvisory() {
+func (b *boot) bootAdvisory() { b.bootAdvisoryWith(defaultBootAdvisoryDeps()) }
+
+// bootAdvisoryWith is bootAdvisory with its GitHub calls injected; see
+// bootAdvisoryDeps.
+func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) {
 	ctx, cfg, logger, appAuthFailure, appAuthState := b.ctx, b.cfg, b.logger, b.appAuthFailure, b.appAuthState
 	notifier := notify.New(cfg.Notifications, logger)
 	notifier.SetHiveID(cfg.HiveID)
@@ -1513,7 +1521,7 @@ func (b *boot) bootAdvisory() {
 			primaryRepo = cfg.Project.Repos[0]
 		}
 		if primaryRepo != "" {
-			num, err := b.ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
+			num, err := deps.ensureAdvisoryIssue(ctx, b.ghClient, primaryRepo)
 			if err != nil {
 				logger.Error("failed to ensure advisory issue", "repo", primaryRepo, "error", err)
 				// GitHub returns 403 for rate limiting too — a transient
@@ -1530,7 +1538,7 @@ func (b *boot) bootAdvisory() {
 					// vanished on the first Re-check with nothing fixed.
 					// classifyGitHubAppFailure is the same verdict Re-check
 					// uses, and it declines to raise on AppStateUnknown.
-					raise, diag, state := classifyGitHubAppFailure(ctx, b.ghClient.AppAuth(), cfg.Project.Org, logger)
+					raise, diag, state := deps.classifyAppFailure(ctx, b.ghClient.AppAuth(), cfg.Project.Org, logger)
 					if raise {
 						githubAppRequired = true
 						githubAppDiag, githubAppState = diag, state
