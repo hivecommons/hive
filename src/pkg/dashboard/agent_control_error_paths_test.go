@@ -43,14 +43,20 @@ func resumableServer(t *testing.T) (*Server, *Dependencies) {
 func installAgentControlFakeTmux(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	script := `#!/bin/sh
+	tmuxScript := `#!/bin/sh
 case "$*" in
   *has-session*) exit 0 ;;
   *capture-pane*) printf '%s\n' "Copilot ready" "❯"; exit 0 ;;
 esac
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(tmuxScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	suExecScript := `#!/bin/sh
+exec "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "su-exec"), []byte(suExecScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -245,11 +251,9 @@ func TestRestartPausedAgentSuccessReportsCancelledKick(t *testing.T) {
 	installAgentControlFakeTmux(t)
 	s, deps := resumableServer(t)
 	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
-		Agent:     "scanner",
-		Phase:     agent.KickPhaseFailed,
-		Error:     "cancelled: agent restarted (operator)",
-		QueuedAt:  time.Now(),
-		SettledAt: time.Now(),
+		Agent:    "scanner",
+		Phase:    agent.KickPhasePending,
+		QueuedAt: time.Now(),
 	})
 
 	rec := doPost(s, "/api/restart/scanner", nil)
@@ -263,5 +267,12 @@ func TestRestartPausedAgentSuccessReportsCancelledKick(t *testing.T) {
 	}
 	if cancelled, _ := body["kickCancelled"].(bool); !cancelled {
 		t.Fatalf("kickCancelled = %v, want true: %v", cancelled, body)
+	}
+	dispatch, ok := deps.AgentMgr.KickDispatchState("scanner")
+	if !ok {
+		t.Fatalf("missing dispatch after restart")
+	}
+	if dispatch.Phase != agent.KickPhaseFailed || !strings.HasPrefix(dispatch.Error, "cancelled:") {
+		t.Fatalf("dispatch after restart = phase %q error %q, want cancelled failure", dispatch.Phase, dispatch.Error)
 	}
 }
