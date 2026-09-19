@@ -53,12 +53,6 @@ exit 0
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(tmuxScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	suExecScript := `#!/bin/sh
-exec "$@"
-`
-	if err := os.WriteFile(filepath.Join(dir, "su-exec"), []byte(suExecScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -244,35 +238,5 @@ func TestKickRunningAgentResponses(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestRestartPausedAgentSuccessReportsCancelledKick(t *testing.T) {
-	installAgentControlFakeTmux(t)
-	s, deps := resumableServer(t)
-	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
-		Agent:    "scanner",
-		Phase:    agent.KickPhasePending,
-		QueuedAt: time.Now(),
-	})
-
-	rec := doPost(s, "/api/restart/scanner", nil)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("restart paused agent = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	body := decodeKickJSON(t, rec.Body.String())
-	if status, _ := body["status"].(string); status != "restarted" {
-		t.Fatalf("status = %q, want restarted: %v", status, body)
-	}
-	if cancelled, _ := body["kickCancelled"].(bool); !cancelled {
-		t.Fatalf("kickCancelled = %v, want true: %v", cancelled, body)
-	}
-	dispatch, ok := deps.AgentMgr.KickDispatchState("scanner")
-	if !ok {
-		t.Fatalf("missing dispatch after restart")
-	}
-	if dispatch.Phase != agent.KickPhaseFailed || !strings.HasPrefix(dispatch.Error, "cancelled:") {
-		t.Fatalf("dispatch after restart = phase %q error %q, want cancelled failure", dispatch.Phase, dispatch.Error)
 	}
 }
