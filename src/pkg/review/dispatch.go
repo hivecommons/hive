@@ -270,6 +270,18 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				}
 				continue
 			}
+			// Pending entries are the lifetime record of what this head has
+			// already been asked, and a PR with a verdict always has them —
+			// so left in place they make every perspective look covered and
+			// the revisit silently never dispatches. Clear them so the whole
+			// set is asked again. But only once: a revisit already in flight
+			// shows as entries dispatched after the cutoff, and clearing
+			// those would re-kick the same PR every cycle until its new
+			// verdict lands.
+			if revisitInFlight(plan.State, pr, opts.ReviseVerdictsBefore) {
+				continue
+			}
+			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
 			revisiting = true
 		}
 		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent)
@@ -603,6 +615,18 @@ func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspective
 		}
 	}
 	return missing
+}
+
+// revisitInFlight reports whether this head already has a review dispatched
+// after the revise cutoff — i.e. the revisit has been kicked and its verdict
+// has not yet replaced the stale one.
+func revisitInFlight(state DispatchState, pr PullRequest, cutoff time.Time) bool {
+	for _, p := range state.Pending {
+		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) && p.Dispatched.After(cutoff) {
+			return true
+		}
+	}
+	return false
 }
 
 func removePendingForHead(pending []PendingReview, pr PullRequest) []PendingReview {

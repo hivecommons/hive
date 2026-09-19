@@ -1,0 +1,1 @@
+- The reviewer revisit lane (`revise_repos` / `revise_verdicts_before`) now actually dispatches: a settled PR always carries pending entries for its head, which made every perspective look covered and silently suppressed the revisit. They are cleared once per revisit, with an in-flight guard against re-kicking each cycle.

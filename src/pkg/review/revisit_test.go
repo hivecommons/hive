@@ -189,7 +189,30 @@ func TestPlanDispatchRevisitsFrozenPRWithReviseKick(t *testing.T) {
 		t.Error("revisit kick must permit reaching the same conclusion again")
 	}
 
-	_ = now
+	// The production shape: a PR with a settled verdict ALWAYS has pending
+	// entries for its head — they are the lifetime record of what was asked.
+	// The revisit must clear them and ask again, or it never dispatches.
+	settled := DispatchState{}
+	for _, p := range DefaultPerspectives {
+		settled.Pending = append(settled.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: "reviewer", Dispatched: cutoff.Add(-23 * time.Hour)})
+	}
+	plan = PlanDispatch([]PullRequest{pr}, frozen, settled, opts)
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("revisit with lifetime pending entries should still dispatch once, got %d kicks", len(plan.ReviewKicks))
+	}
+	if !strings.Contains(plan.ReviewKicks[0].Message, "--revise") {
+		t.Fatal("revisit kick lost --revise once pending entries were present")
+	}
+
+	// And only once: the next cycle sees the revisit in flight (pending
+	// dispatched after the cutoff, verdict still the stale one) and waits.
+	inFlight := plan.State
+	for i := range inFlight.Pending {
+		inFlight.Pending[i].Dispatched = now
+	}
+	if again := PlanDispatch([]PullRequest{pr}, frozen, inFlight, opts); len(again.ReviewKicks) != 0 {
+		t.Fatalf("revisit re-kicked while its verdict was still outstanding: %d kicks", len(again.ReviewKicks))
+	}
 }
 
 // A first review is not a revision: an ordinary dispatch must never carry
