@@ -1892,9 +1892,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 
 // bootState loads the persisted state snapshot and replays it into the
 // agent manager, governor and config, migrating legacy config overrides.
-func (b *boot) bootState() {
+func (b *boot) bootState() { b.bootStateWith(defaultBootStateDeps()) }
+
+// bootStateWith is bootState with its disk reads/writes injected; see
+// bootStateDeps.
+func (b *boot) bootStateWith(deps bootStateDeps) {
 	cfg, logger, gov, agentMgr := b.cfg, b.logger, b.gov, b.agentMgr
-	saved, stateErr := snapshot.LoadState(hiveStatePath, logger)
+	saved, stateErr := deps.loadState(logger)
 	if stateErr != nil {
 		logger.Warn("failed to load persisted state", "error", stateErr)
 	} else if saved != nil {
@@ -1974,13 +1978,13 @@ func (b *boot) bootState() {
 				"repos", cfg.Project.Repos)
 
 			// Write merged config to hive.yaml so overrides become the base config
-			if err := cfg.Save(); err != nil {
+			if err := deps.saveConfig(cfg); err != nil {
 				logger.Error("failed to save migrated config", "error", err)
 			}
 
 			// Strip config_overrides from state and re-save
 			saved.ConfigOverrides = nil
-			if err := snapshot.SaveState(hiveStatePath, saved, logger); err != nil {
+			if err := deps.saveState(saved, logger); err != nil {
 				logger.Error("failed to re-save state after migration", "error", err)
 			}
 		}
