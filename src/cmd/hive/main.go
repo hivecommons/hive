@@ -2792,14 +2792,18 @@ func (b *boot) bootSupervision() {
 // callbacks, publishes the GitHub App banner state, installs the Re-check
 // callback, and starts the installation-discovery, banner self-heal and
 // inception watcher loops.
-func (b *boot) bootDashboardAPI() {
+func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardAPIDeps()) }
+
+// bootDashboardAPIWith is bootDashboardAPI with its long-lived effects
+// injected; see bootDashboardAPIDeps.
+func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	ctx, cfg, logger, ghAuth, appAuthFailure := b.ctx, b.cfg, b.logger, b.ghAuth, b.appAuthFailure
 	gov, sched, notifier, githubAppRequired, githubAppDiag := b.gov, b.sched, b.notifier, b.githubAppRequired, b.githubAppDiag
 	githubAppState, advisoryIssues, advisoryStore, agentMgr, dashSrv := b.githubAppState, b.advisoryIssues, b.advisoryStore, b.agentMgr, b.dashSrv
 	beadStores, beadStoreLoadFailures, tokenCollector, metricsCollector, fleetStatsCollector := b.beadStores, b.beadStoreLoadFailures, b.tokenCollector, b.metricsCollector, b.fleetStatsCollector
 	activityCollector, repoCostCollector, refreshDashboard, knowledgeAPI, beadSynth := b.activityCollector, b.repoCostCollector, b.refreshDashboard, b.knowledgeAPI, b.beadSynth
 	nousState, inceptionEngine, rotationMgr, wd := b.nousState, b.inceptionEngine, b.rotationMgr, b.wd
-	dashSrv.RegisterAPI(&dashboard.Dependencies{
+	deps.registerAPI(dashSrv, &dashboard.Dependencies{
 		Config:           cfg,
 		AgentMgr:         agentMgr,
 		Governor:         gov,
@@ -2942,7 +2946,7 @@ func (b *boot) bootDashboardAPI() {
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
 	// provider never touches key material.
-	dashSrv.SetForgeAppInventoryFn(func() dashboard.ForgeAppInventory {
+	deps.setForgeAppInventory(dashSrv, func() dashboard.ForgeAppInventory {
 		held := heldPerAppIDKeyFingerprints()
 		keys := make([]dashboard.ForgeAppKey, 0, len(held))
 		for idStr, fp := range held {
@@ -3067,28 +3071,12 @@ func (b *boot) bootDashboardAPI() {
 	// empty, discover it automatically. This covers the delayed approval path:
 	// a non-admin requests installation, an org admin approves later, and the
 	// spoke adopts the installation ID without requiring anyone to paste it.
-	{
-		const githubAppDiscoveryInterval = 5 * time.Minute
-		tryDiscover := func() {
-			if cfg.GitHub.InstallationID != 0 {
-				return
-			}
-			_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
+	deps.startInstallDiscovery(ctx, func() {
+		if cfg.GitHub.InstallationID != 0 {
+			return
 		}
-		go func() {
-			tryDiscover()
-			ticker := time.NewTicker(githubAppDiscoveryInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					tryDiscover()
-				}
-			}
-		}()
-	}
+		_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
+	})
 
 	// Self-heal the "GitHub App not installed" banner. This handles:
 	// 1. GitHub App credentials arrived after startup (via heartbeat/webhook)
@@ -3113,45 +3101,30 @@ func (b *boot) bootDashboardAPI() {
 			primaryRepo = cfg.Project.Repos[0]
 		}
 		if primaryRepo != "" {
-			// githubAppSelfHealInterval mirrors the heartbeat cadence so a stale
-			// banner clears within one heartbeat window of the app becoming
-			// healthy, without adding meaningful GitHub API load (the check only
-			// runs while the banner is actually showing).
-			const githubAppSelfHealInterval = 2 * time.Minute
-			go func() {
-				ticker := time.NewTicker(githubAppSelfHealInterval)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						// Nothing to heal unless the banner is showing.
-						if !dashSrv.IsGitHubAppRequired() {
-							continue
-						}
-						_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
-						// Re-run the same read+write verification the manual
-						// Re-check button uses. It clears the flag on success
-						// (installed AND write-verified) and leaves it set on a
-						// genuine failure (not installed / insufficient perms).
-						if dashSrv.RecheckGitHubApp() {
-							if num, exists := advisoryIssues[primaryRepo]; exists {
-								_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
-							}
-							logger.Info("github app self-heal: banner cleared, app installed and write verified", "repo", primaryRepo)
-						} else {
-							logger.Debug("github app self-heal: still not verified, banner remains", "repo", primaryRepo)
-						}
-					}
+			deps.startSelfHeal(ctx, func() {
+				// Nothing to heal unless the banner is showing.
+				if !dashSrv.IsGitHubAppRequired() {
+					return
 				}
-			}()
+				_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
+				// Re-run the same read+write verification the manual
+				// Re-check button uses. It clears the flag on success
+				// (installed AND write-verified) and leaves it set on a
+				// genuine failure (not installed / insufficient perms).
+				if dashSrv.RecheckGitHubApp() {
+					if num, exists := advisoryIssues[primaryRepo]; exists {
+						_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
+					}
+					logger.Info("github app self-heal: banner cleared, app installed and write verified", "repo", primaryRepo)
+				} else {
+					logger.Debug("github app self-heal: still not verified, banner remains", "repo", primaryRepo)
+				}
+			})
 		}
 	}
 
 	if brainstormBeads, ok := beadStores["brainstorm"]; ok {
-		inceptionWatcher := dashboard.NewInceptionWatcher(brainstormBeads, inceptionEngine, sched, agentMgr, gov, logger)
-		go inceptionWatcher.Run(ctx)
+		deps.startInceptionWatcher(ctx, dashboard.NewInceptionWatcher(brainstormBeads, inceptionEngine, sched, agentMgr, gov, logger))
 	}
 }
 
