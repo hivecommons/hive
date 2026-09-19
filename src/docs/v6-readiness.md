@@ -82,7 +82,8 @@ not a unit test:
 
 ## Tracker checklist
 
-Create or maintain one issue named **v6 readiness bar** and keep its checklist
-in sync with the tables above. Rows are checked only with linked evidence
-(PR, workflow run, message screenshot/audit entry, pager event), never on
-"merged".
+The live tracker is
+[#7683 — v6 readiness bar](https://github.com/hivecommons/hive/issues/7683).
+Keep its checklist in sync with the tables above. Rows are checked only with
+linked evidence (PR, workflow run, message screenshot/audit entry, pager
+event), never on "merged".
