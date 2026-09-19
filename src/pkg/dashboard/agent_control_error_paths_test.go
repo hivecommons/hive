@@ -1,11 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -35,6 +38,22 @@ func resumableServer(t *testing.T) (*Server, *Dependencies) {
 	s := NewServer(0, logger)
 	s.RegisterAPI(deps)
 	return s, deps
+}
+
+func installAgentControlFakeTmux(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$*" in
+  *has-session*) exit 0 ;;
+  *capture-pane*) printf '%s\n' "Copilot ready" "❯"; exit 0 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // TestResumeConfigSeededPauseSucceedsAndClaimsOwnership pins handleResume's
@@ -164,5 +183,85 @@ func TestKickPromptAtCapIsNotRejectedForLength(t *testing.T) {
 	msg, _ := decodeKickJSON(t, rec.Body.String())["error"].(string)
 	if strings.Contains(msg, "prompt too long") {
 		t.Errorf("a prompt of exactly maxKickPromptLen was rejected for length: %q", msg)
+	}
+}
+
+func TestKickRunningAgentResponses(t *testing.T) {
+	cases := []struct {
+		name       string
+		seed       func(*Dependencies)
+		wantState  string
+		wantDetail string
+	}{
+		{
+			name:      "queued",
+			wantState: kickStatusQueued,
+		},
+		{
+			name: "in flight",
+			seed: func(deps *Dependencies) {
+				deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+					Agent:    "scanner",
+					Phase:    agent.KickPhasePending,
+					QueuedAt: time.Now(),
+				})
+			},
+			wantState:  kickStatusInFlight,
+			wantDetail: "already being delivered",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			installAgentControlFakeTmux(t)
+			s, deps := apiServer(t)
+			if err := deps.AgentMgr.Start(context.Background(), "scanner"); err != nil {
+				t.Fatalf("start scanner with fake tmux: %v", err)
+			}
+			if tc.seed != nil {
+				tc.seed(deps)
+			}
+
+			rec := doPost(s, "/api/kick/scanner", map[string]string{"message": "cover handler response"})
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("kick = %d, want 202: %s", rec.Code, rec.Body.String())
+			}
+			body := decodeKickJSON(t, rec.Body.String())
+			if status, _ := body["status"].(string); status != tc.wantState {
+				t.Fatalf("status = %q, want %q: %v", status, tc.wantState, body)
+			}
+			if tc.wantDetail != "" {
+				msg, _ := body["message"].(string)
+				if !strings.Contains(msg, tc.wantDetail) {
+					t.Errorf("message = %q, want it to contain %q", msg, tc.wantDetail)
+				}
+			}
+		})
+	}
+}
+
+func TestRestartPausedAgentSuccessReportsCancelledKick(t *testing.T) {
+	installAgentControlFakeTmux(t)
+	s, deps := resumableServer(t)
+	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+		Agent:     "scanner",
+		Phase:     agent.KickPhaseFailed,
+		Error:     "cancelled: agent restarted (operator)",
+		QueuedAt:  time.Now(),
+		SettledAt: time.Now(),
+	})
+
+	rec := doPost(s, "/api/restart/scanner", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restart paused agent = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeKickJSON(t, rec.Body.String())
+	if status, _ := body["status"].(string); status != "restarted" {
+		t.Fatalf("status = %q, want restarted: %v", status, body)
+	}
+	if cancelled, _ := body["kickCancelled"].(bool); !cancelled {
+		t.Fatalf("kickCancelled = %v, want true: %v", cancelled, body)
 	}
 }
