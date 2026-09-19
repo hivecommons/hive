@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // contribute_ws_advisor_model_test.go — hivecommons/hive#7760: an omp
@@ -178,17 +179,13 @@ func TestTaskProgressRefreshesAdvisorPair(t *testing.T) {
 		Model: "openai-codex/gpt-5.6-terra", ReasoningEffort: "medium",
 		AdvisorModel: "anthropic/claude-sonnet-5", AdvisorReasoningEffort: "medium"})
 
-	deadline := time.Now().Add(2 * time.Second)
 	var gotModel, gotEffort string
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		holder.mu.Lock()
+		defer holder.mu.Unlock()
 		gotModel, gotEffort = holder.advisorModel, holder.advisorEffort
-		holder.mu.Unlock()
-		if gotModel == "anthropic/claude-sonnet-5" || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return gotModel == "anthropic/claude-sonnet-5"
+	}, "task_progress advisor pair not consumed")
 	if gotModel != "anthropic/claude-sonnet-5" || gotEffort != "medium" {
 		t.Fatalf("task_progress advisor pair not consumed: %q/%q", gotModel, gotEffort)
 	}
@@ -202,16 +199,11 @@ func TestTaskProgressRefreshesAdvisorPair(t *testing.T) {
 	// A later progress WITHOUT the fields (the shape of every relay before
 	// #7760) must not clobber what is known.
 	conn.WriteJSON(WSMessage{Type: "task_progress", TaskID: "ct-7760", TaskGen: 4, Status: "working", TmuxOutput: []string{"still working"}})
-	deadline = time.Now().Add(2 * time.Second)
-	for {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		holder.mu.Lock()
-		consumed := len(holder.tmuxOutput) == 1 && holder.tmuxOutput[0] == "still working"
-		holder.mu.Unlock()
-		if consumed || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer holder.mu.Unlock()
+		return len(holder.tmuxOutput) == 1 && holder.tmuxOutput[0] == "still working"
+	}, "later progress without advisor fields was not consumed")
 	holder.mu.Lock()
 	gotModel, gotEffort = holder.advisorModel, holder.advisorEffort
 	holder.mu.Unlock()
