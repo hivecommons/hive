@@ -108,7 +108,10 @@ complete the same way: every list still naming it is reported as `unexpected`.
   The value takes the same `[extra]` / `[-excluded]` grammar; `mk` and `dd` are
   declared extras on `LONG_LIVED` — standing experimental branches that are not
   release lines but that a hive can be assigned to, so they legitimately publish
-  a tag. The value is read in any of the spellings a workflow env can take
+  a tag — and so is `v6`, the development line the `edge` channel is re-based on
+  ([#7721](https://github.com/hivecommons/hive/issues/7721)): published, but not
+  a supported release line, so it is an extra here rather than a `release_lines`
+  entry. The value is read in any of the spellings a workflow env can take
   (`"v2 v4"`, unquoted, or `[v2, v4]`), with trailing comments ignored.
 - **That the env list is still there to check.** The variable must appear
   exactly once in the workflow. Zero occurrences means it was renamed or

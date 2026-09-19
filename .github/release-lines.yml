@@ -49,10 +49,13 @@ pinned:
   # docs-link-check.yml below.
   # v6 is carried as an EXTRA on the workflows below rather than added to
   # `release_lines`: it is a development line for the #7563 epic, not a
-  # supported release line — hives are not assigned to it and GHCR publishes no
-  # v6-latest. What it DOES need is the same PR gating as v4, because feature
-  # PRs target it directly (spine, mention triggers); without these extras a
-  # v6-base PR runs no Go build, test, or security lane at all.
+  # supported release line with a GA bar. What it DOES need is the same PR
+  # gating as v4, because feature PRs target it directly (spine, mention
+  # triggers); without these extras a v6-base PR runs no Go build, test, or
+  # security lane at all. It is ALSO published — `v6-latest` and, once its own
+  # docker.yml rows say so, the `edge` channel (#7721 Phase 1) — which is the
+  # `env_lists` extra below, not a `release_lines` entry: publishing a line's
+  # image is a narrower commitment than covering it with every pinned lane.
   changelog-fragment-guard.yml: [v5, v6, -v2]
   # Static analysis and vulnerability scanning for the Go module. Pinned to the
   # release lines and nothing else: a feature branch gets the same gate through
@@ -147,7 +150,11 @@ env_lists:
   # docker.yml's gate job: only long-lived branches push to GHCR. `mk` and `dd`
   # are standing experimental branches — not release lines, but branches a hive
   # can be assigned to, so they legitimately publish a `<branch>-latest` tag.
-  docker.yml LONG_LIVED: [mk, dd]
+  # `v6` is the #7563 development line, published so the `edge` channel can be
+  # re-based on it (#7721 Phase 1): `v6-latest` must exist before v6's own
+  # docker.yml publish rows can point `edge` at it. Every release branch that
+  # carries this list names v6 here, so the guard agrees across lines.
+  docker.yml LONG_LIVED: [mk, dd, v6]
 
 # MAINTAINER DECISION — deliberately NOT answered here (#4405).
 #

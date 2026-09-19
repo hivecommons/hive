@@ -118,7 +118,7 @@ jobs:
       - name: Decide push policy
         id: decide
         env:
-          LONG_LIVED: "v2 v4 mk dd"
+          LONG_LIVED: "v2 v4 mk dd v6"
           REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
           TARGET_SHA: ${{ inputs.release_sha || github.sha }}
