@@ -4134,6 +4134,49 @@ test('task_assign with an unwritable token cache path does not crash the relay',
   }
 });
 
+test('#7777 task_assign with an unwritable task file path does not crash the relay', () => {
+  // Same shape as the token-cache case above: the parent "directory" is a
+  // regular file, so writeFileSync fails no matter what uid the test runs as.
+  // Before the fix the write was the one unguarded call in the task_assign
+  // handler: the exception left handleMessage, there is no uncaughtException
+  // handler, and the relay died on every assignment — a crash loop on a full
+  // /tmp or a stale file owned by another user — with currentTask already set
+  // and the token written but task_accepted never sent.
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(scratchRoot, 'relay-badtaskfile-'));
+  const fileAsDir = path.join(tmp, 'blocker');
+  fs.writeFileSync(fileAsDir, 'not a directory');
+  const relay = loadRelay({ env: { HIVE_TASK_FILE: path.join(fileAsDir, 'contributor-task.json') } });
+  const errors = [];
+  const origError = console.error;
+  console.error = (...args) => { errors.push(args.join(' ')); };
+  try {
+    relay.setCliReady(true);
+    assert.doesNotThrow(() => relay.handleMessage(JSON.stringify({
+      type: 'task_assign',
+      task_id: 'taskfile-1',
+      task_gen: 3,
+      kind: 'issue',
+      repo: 'foo/bar',
+      number: 7777,
+      title: 'task file write failure must degrade',
+      prompt: 'do the thing',
+      github_token: 'scoped-task-token',
+    })), 'an unwritable task file must not throw out of handleMessage');
+    const accepted = relay.__sent.find(m => m.type === 'task_accepted');
+    assert.ok(accepted,
+      'task_assign must survive an unwritable task file and still accept the task');
+    assert.strictEqual(accepted.task_id, 'taskfile-1');
+    assert.ok(errors.some(e => e.includes('Failed to write task file') && e.includes('continuing without it')),
+      `the failure must be logged loudly, got: ${JSON.stringify(errors)}`);
+  } finally {
+    console.error = origError;
+    teardown(relay);
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
 // ---------------------------------------------------------------------------
 // #4117 — auto-detect the running model from the CLI's own session transcript
 // when AGENT_MODEL is unset. Precedence: AGENT_MODEL → detected → ''.

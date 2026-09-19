@@ -4764,8 +4764,20 @@ function handleMessage(data, hub) {
       // so a task-scoped GitHub token never sits world-readable under /tmp
       // (kubestellar/hive#5065).
       const { github_token: _omittedToken, ...taskFileRecord } = msg;
-      fs.writeFileSync(TASK_FILE, JSON.stringify(taskFileRecord, null, 2), { mode: 0o600 });
-      try { fs.chmodSync(TASK_FILE, 0o600); } catch (_) { /* content is already token-free */ }
+      // A failed write must never throw out of handleMessage
+      // (hivecommons/hive#7777): this runs before task_accepted is sent, so an
+      // unwritable path — a full /tmp, a stale file owned by another uid on a
+      // shared host, a bad HIVE_TASK_FILE — crashed the relay on every
+      // assignment: a crash loop, not a degraded mode, with currentTask already
+      // set and the token already written but no task_accepted ever sent. The
+      // file is observability state no task depends on, so log loudly and carry
+      // on, exactly as injectGhToken above does for the token cache.
+      try {
+        fs.writeFileSync(TASK_FILE, JSON.stringify(taskFileRecord, null, 2), { mode: 0o600 });
+        try { fs.chmodSync(TASK_FILE, 0o600); } catch (_) { /* content is already token-free */ }
+      } catch (e) {
+        console.error(`Failed to write task file ${TASK_FILE}: ${e.message} — continuing without it`);
+      }
       send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
         // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI

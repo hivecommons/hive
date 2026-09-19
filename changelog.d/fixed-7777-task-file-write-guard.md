@@ -1,0 +1,1 @@
+- The contributor relay no longer crashes on every `task_assign` when its task file (`HIVE_TASK_FILE`, default `/tmp/contributor-task.json`) cannot be written — a full `/tmp`, a stale file owned by another user, or a bad path now logs an error and the assignment continues, matching how the token-cache write already degrades (#7777).
