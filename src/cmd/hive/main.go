@@ -961,31 +961,7 @@ func init() {
 	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...interface{}) {}))
 }
 
-func main() {
-	b := &boot{}
-	defer b.cleanup.run()
-	if !b.bootConfig() {
-		return
-	}
-	b.bootGitHub()
-	b.bootGovernor()
-	b.bootAdvisory()
-	b.bootAgents()
-	b.bootState()
-	b.bootDashboard()
-	b.bootStores()
-	b.bootCollectors()
-	b.bootKnowledge()
-	b.bootSupervision()
-	b.bootDashboardAPI()
-	b.bootPolicies()
-	b.bootWatchers()
-	b.bootProxy()
-	b.bootLaunch()
-	b.bootHeartbeat()
-	b.bootLanes()
-	b.runLoop()
-}
+func main() { runBoot(&boot{}, defaultBootSequence()) }
 
 // bootConfig handles the CLI fast paths, flag parsing, the process
 // singleton, config load, logger, tracing and the signal handler. It
