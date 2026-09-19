@@ -138,19 +138,83 @@ function listProviderRows(dbFile) {
   return rows.map((row) => ({ provider: String(row.provider), credentialType: String(row.credential_type) }));
 }
 
+// deleteProvidersNotIn narrows the staged store to `keep` and makes the
+// narrowing PHYSICAL, not just logical (#7682). A plain DELETE leaves the
+// dropped rows byte-for-byte in SQLite's free pages (secure_delete defaults
+// off) and committed frames survive in the -wal sidecar, so the container
+// could carve unselected providers' tokens out of the mounted file. So:
+//   secure_delete=ON   — zero the row bytes as they are deleted;
+//   journal_mode=DELETE — checkpoint the -wal into the main file and remove
+//                         the sidecar (staged copies are never shared, so WAL
+//                         buys nothing here);
+//   VACUUM             — rebuild the file with no free pages at all.
 function deleteProvidersNotIn(dbFile, keep) {
   const placeholders = keep.map(quoteSql).join(', ');
-  const sql = keep.length
+  const del = keep.length
     ? `DELETE FROM ${OMP_AUTH_TABLE} WHERE lower(provider) NOT IN (${placeholders})`
     : `DELETE FROM ${OMP_AUTH_TABLE}`;
+  const statements = ['PRAGMA secure_delete = ON', 'PRAGMA journal_mode = DELETE', del, 'VACUUM'];
   const sqlite = nodeSqlite();
   if (sqlite) {
     const db = new sqlite.DatabaseSync(dbFile);
-    try { db.exec(sql); } finally { db.close(); }
-    return;
+    try { for (const sql of statements) db.exec(sql); } finally { db.close(); }
+  } else {
+    const r = spawnSync('sqlite3', [dbFile, statements.join('; ')], { encoding: 'utf8' });
+    if (r.error || r.status !== 0) throw new Error(`sqlite3 could not narrow ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
   }
-  const r = spawnSync('sqlite3', [dbFile, sql], { encoding: 'utf8' });
-  if (r.error || r.status !== 0) throw new Error(`sqlite3 could not narrow ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
+  // journal_mode=DELETE removes the sidecars on close; make sure nothing that
+  // predates the narrowing is left beside the file the container mounts.
+  for (const sidecar of [`${dbFile}-wal`, `${dbFile}-shm`, `${dbFile}-journal`]) {
+    fs.rmSync(sidecar, { force: true });
+  }
+}
+
+// freelistPageCount reports how many free (unreferenced, possibly still
+// populated) pages the store holds. After VACUUM it must be zero; anything
+// else means bytes of deleted rows may still be in the file.
+function freelistPageCount(dbFile) {
+  const sql = 'PRAGMA freelist_count';
+  const sqlite = nodeSqlite();
+  if (sqlite) {
+    const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+    try {
+      const row = db.prepare(sql).get();
+      return Number(row ? Object.values(row)[0] : NaN);
+    } finally { db.close(); }
+  }
+  const r = spawnSync('sqlite3', ['-readonly', dbFile, sql], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) throw new Error(`sqlite3 could not inspect ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
+  return Number(r.stdout.trim());
+}
+
+// credentialBlobsNotIn returns the raw `data` values of the rows that
+// deleteProvidersNotIn(dbFile, keep) will drop, so the caller can prove
+// afterwards that those exact bytes no longer exist anywhere in the file.
+// The values are held in memory only for the length of the staging call and
+// are never logged or reported.
+function credentialBlobsNotIn(dbFile, keep) {
+  const placeholders = keep.map(quoteSql).join(', ');
+  const sql = keep.length
+    ? `SELECT data FROM ${OMP_AUTH_TABLE} WHERE lower(provider) NOT IN (${placeholders})`
+    : `SELECT data FROM ${OMP_AUTH_TABLE}`;
+  const sqlite = nodeSqlite();
+  if (sqlite) {
+    const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+    try { return db.prepare(sql).all().map((r) => String(r.data)); } finally { db.close(); }
+  }
+  const r = spawnSync('sqlite3', ['-readonly', '-json', dbFile, sql], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) throw new Error(`sqlite3 could not read ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
+  const rows = r.stdout.trim() ? JSON.parse(r.stdout) : [];
+  return rows.map((row) => String(row.data));
+}
+
+// physicalResidueCount scans the raw bytes of the staged store (and any
+// sidecar) for the deleted credential blobs. Returns how many of them are
+// still recoverable; the caller reports the count, never the values.
+function physicalResidueCount(dbFile, blobs) {
+  const files = [dbFile, `${dbFile}-wal`, `${dbFile}-journal`].filter((f) => fs.existsSync(f));
+  const bytes = Buffer.concat(files.map((f) => fs.readFileSync(f)));
+  return blobs.filter((blob) => blob.length > 0 && bytes.includes(Buffer.from(blob))).length;
 }
 
 // ── Selection ────────────────────────────────────────────────────────────────
@@ -268,6 +332,7 @@ function stageOmp(ompDir, stageDir, model) {
     throw new Error('cannot narrow the staged omp credential store: install Node 22.13+ (node:sqlite) or a sqlite3 CLI.');
   }
   if (report.selection.source !== 'none') {
+    const doomed = credentialBlobsNotIn(stagedDb, report.selection.providers);
     deleteProvidersNotIn(stagedDb, report.selection.providers);
     // Re-read the store the container will mount and refuse to ship it if an
     // unselected provider survived (a sidecar replayed on open, a schema this
@@ -277,6 +342,17 @@ function stageOmp(ompDir, stageDir, model) {
     const allowed = new Set(report.selection.providers);
     const leaked = remaining.filter((p) => !allowed.has(p));
     if (leaked.length) throw new Error(`staged omp credential store still holds unselected providers: ${leaked.join(', ')}`);
+    // ...and physically (#7682): no free pages that could still carry the
+    // deleted rows' bytes, no WAL/journal sidecar carrying their frames, and
+    // no deleted provider's name anywhere in the raw file.
+    const freePages = freelistPageCount(stagedDb);
+    if (freePages !== 0) throw new Error(`staged omp credential store still has ${freePages} free page(s) that may hold deleted credential bytes`);
+    for (const sidecar of ['agent.db-wal', 'agent.db-shm', 'agent.db-journal']) {
+      if (fs.existsSync(path.join(dstAgent, sidecar))) throw new Error(`staged omp credential store still has a ${sidecar} sidecar that may hold deleted credential frames`);
+    }
+    report.staged = report.staged.filter((entry) => entry !== 'agent.db-wal');
+    const residue = physicalResidueCount(stagedDb, doomed);
+    if (residue) throw new Error(`staged omp credential store still holds the bytes of ${residue} deleted credential(s)`);
     report.keptProviders = remaining;
   }
   return report;

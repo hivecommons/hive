@@ -1,0 +1,1 @@
+- omp container staging now narrows the staged credential store physically as well as logically: `secure_delete`, WAL checkpoint into the main file (no sidecar shipped) and `VACUUM`, then refuses to stage if any free page, sidecar, or byte of a deleted credential survives (#7682).

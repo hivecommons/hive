@@ -1254,6 +1254,59 @@ test('omp container staging copies only the credential/config allowlist and keep
   }
 });
 
+// #7682: the narrowing must be PHYSICAL. SQLite's DELETE leaves row bytes in
+// free pages (secure_delete is off by default) and a WAL-mode store keeps
+// committed frames in its -wal sidecar, so a "logically narrowed" file still
+// carried every deleted provider's tokens for anyone who read it raw.
+test('omp container staging leaves no recoverable bytes of deleted credentials in the staged store', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    // Put the host store in WAL mode with un-checkpointed frames, the way a
+    // live omp leaves it, so the sidecar travels into the stage.
+    // (A second handle stays open like omp's daemon does, so closing the
+    // writer does not checkpoint and delete the sidecar.)
+    const hostDb = new sqlite.DatabaseSync(path.join(agentDir, 'agent.db'));
+    hostDb.exec('PRAGMA journal_mode = WAL');
+    const holdOpen = new sqlite.DatabaseSync(path.join(agentDir, 'agent.db'), { readOnly: true });
+    holdOpen.prepare('SELECT count(*) FROM auth_credentials').get();
+    hostDb.prepare('INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, ?, ?)')
+      .run('openai-codex', 'api_key', JSON.stringify({ key: 'sk-openai-codex-wal-only-secret' }));
+    hostDb.close();
+    assert.ok(fs.existsSync(path.join(agentDir, 'agent.db-wal')), 'fixture: host store must carry a WAL sidecar');
+    assert.ok(fs.statSync(path.join(agentDir, 'agent.db-wal')).size > 0, 'fixture: the WAL sidecar must hold un-checkpointed frames');
+
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    const report = ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.keptProviders, ['anthropic']);
+    const stagedDb = path.join(stage, 'agent', 'agent.db');
+    assert.deepStrictEqual(providersIn(stagedDb), ['anthropic']);
+
+    const raw = fs.readFileSync(stagedDb);
+    for (const secret of ['openai-codex-access-token', 'openai-codex-refresh-token', 'google-antigravity-access-token', 'sk-openai-codex-wal-only-secret']) {
+      assert.ok(!raw.includes(secret), `deleted credential ${JSON.stringify(secret)} is still recoverable from the staged agent.db bytes`);
+    }
+    assert.ok(raw.includes('anthropic-access-token'), 'the selected provider credential must still be present');
+    for (const sidecar of ['agent.db-wal', 'agent.db-shm', 'agent.db-journal']) {
+      assert.ok(!fs.existsSync(path.join(stage, 'agent', sidecar)), `${sidecar} must not be shipped beside the narrowed store`);
+    }
+    assert.ok(!report.staged.includes('agent.db-wal'), 'report.staged must not claim a sidecar that was folded into agent.db');
+    const db = new sqlite.DatabaseSync(stagedDb, { readOnly: true });
+    try {
+      assert.strictEqual(Number(Object.values(db.prepare('PRAGMA freelist_count').get())[0]), 0, 'the staged store must have no free pages');
+    } finally { db.close(); }
+    // The host store is untouched — still WAL, still every provider.
+    assert.ok(fs.existsSync(path.join(agentDir, 'agent.db-wal')), 'the host store must keep its own WAL sidecar');
+    holdOpen.close();
+    assert.deepStrictEqual(providersIn(path.join(agentDir, 'agent.db')), ['anthropic', 'google-antigravity', 'openai-codex', 'openai-codex']);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('omp container staging without a provider in AGENT_MODEL follows config.yml modelRoles', () => {
   if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
   const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-stage-'));
