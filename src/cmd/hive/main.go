@@ -7772,17 +7772,20 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
 	}
+	prAgents := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
 	prs := make([]review.PullRequest, 0, len(actionable.PRs.Items))
 	for _, pr := range actionable.PRs.Items {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
+		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
 		prs = append(prs, review.PullRequest{
-			Repo:    pr.Repo,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			Author:  pr.Author,
-			HeadSHA: pr.HeadSHA,
-			URL:     pr.URL,
-			Lane:    string(lane),
+			Repo:        pr.Repo,
+			Number:      pr.Number,
+			Title:       pr.Title,
+			Author:      pr.Author,
+			HeadSHA:     pr.HeadSHA,
+			URL:         pr.URL,
+			Lane:        string(lane),
+			AuthorAgent: prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
 		})
 	}
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))

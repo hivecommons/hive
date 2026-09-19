@@ -1,0 +1,1 @@
+- Bind structured review verdict recording to dispatched reviewer assignments and reject PR author self-approval.

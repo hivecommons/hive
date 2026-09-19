@@ -1,11 +1,13 @@
 package github
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
@@ -35,6 +37,30 @@ func validVerdictJSON(t *testing.T, repo string, number int, perspective, verdic
 	return string(raw)
 }
 
+func withVerdictDispatchState(t *testing.T, state review.DispatchState) {
+	t.Helper()
+	dir := t.TempDir()
+	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath
+	review.ReviewDispatchStatePath = filepath.Join(dir, review.ReviewDispatchStateFile)
+	review.LegacyReviewDispatchStatePath = filepath.Join(dir, "legacy-"+review.ReviewDispatchStateFile)
+	t.Cleanup(func() {
+		review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath = oldPath, oldLegacy
+	})
+	if err := review.WriteDispatchState("", state); err != nil {
+		t.Fatalf("write dispatch state: %v", err)
+	}
+}
+
+func pendingVerdict(repo string, number int, perspective review.Perspective, agent string) review.PendingReview {
+	return review.PendingReview{
+		Repo:        repo,
+		Number:      number,
+		Perspective: perspective,
+		Agent:       agent,
+		Dispatched:  time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}
+}
+
 // The whole point of the relay verdict path: the file review.Collect reads must
 // actually appear, and Collect must be able to aggregate it. A test that only
 // asserts "some file was written" would pass even if the name or the contents
@@ -44,8 +70,13 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSON(t, "projectbluefin/common", 1121, "correctness", "requires_human")
+	pending := pendingVerdict("PROJECTBLUEFIN/common", 1121, review.PerspectiveCorrectness, "reviewer")
+	pending.HeadSHA = "abc123"
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pending,
+	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Report: raw}, dir)
+	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 1 {
@@ -61,6 +92,9 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	got := artifact.Items[0]
 	if got.Repo != "projectbluefin/common" || got.Number != 1121 {
 		t.Fatalf("wrong target: %s#%d", got.Repo, got.Number)
+	}
+	if got.HeadSHA != "abc123" {
+		t.Fatalf("dispatch head SHA was not bound into the recorded verdict: %q", got.HeadSHA)
 	}
 	if !got.RequiresHuman {
 		t.Fatalf("requires_human verdict did not survive into the aggregate: %+v", got)
@@ -80,6 +114,162 @@ func TestRecordReviewVerdictRejectsMismatchedTarget(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 0 {
 		t.Fatalf("verdict for a different PR was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictAcceptsRecentConfirmedDispatch(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "projectbluefin/common", 1121, "security", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveSecurity,
+		Agent:       "sec-check",
+		Confirmed:   time.Now().UTC(),
+	}}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "sec-check", Report: raw}, dir)
+
+	if matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix)); len(matches) != 1 {
+		t.Fatalf("recent confirmed dispatch verdict was not recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsNoDispatch(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
+	withVerdictDispatchState(t, review.DispatchState{})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
+		t.Fatalf("verdict without dispatch was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsWrongPerspective(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "security", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "reviewer"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
+		t.Fatalf("wrong-perspective verdict was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsWrongAgent(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "assigned-reviewer"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
+
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
+		t.Fatalf("wrong-agent verdict was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsAuthorSelfApproval(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
+	pending := pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "author-agent")
+	pending.AuthorAgent = "author-agent"
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{pending}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
+		t.Fatalf("author self-approval verdict was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsAuthorSelfApprovalFromAuditTrail(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	oldAuditPath := reviewVerdictAuditPath
+	reviewVerdictAuditPath = auditPath
+	t.Cleanup(func() { reviewVerdictAuditPath = oldAuditPath })
+	line := `{"ts":"` + time.Now().UTC().Format(time.RFC3339) + `","action":"agent_pr_created","detail":"repo=o/r, number=1, author=hive[bot]","agent":"author-agent"}` + "\n"
+	if err := os.WriteFile(auditPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write audit fixture: %v", err)
+	}
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "author-agent"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+
+	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
+	if len(matches) != 0 {
+		t.Fatalf("audit-attributed author self-approval verdict was recorded: %v", matches)
+	}
+}
+
+func TestAuditAuthorAgentPrefersExactRepoMatch(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	now := time.Now().UTC().Format(time.RFC3339)
+	lines := strings.Join([]string{
+		`{"ts":"` + now + `","action":"agent_pr_created","detail":"repo=orgA/repo, number=1","agent":"author-a"}`,
+		`{"ts":"` + now + `","action":"agent_pr_created","detail":"repo=orgB/repo, number=1","agent":"author-b"}`,
+		`{"ts":"` + now + `","action":"agent_pr_created","detail":"repo=repo, number=2","agent":"bare-author"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(auditPath, []byte(lines), 0o644); err != nil {
+		t.Fatalf("write audit fixture: %v", err)
+	}
+	since := time.Now().UTC().Add(-time.Hour)
+
+	if got := auditAuthorAgentForPR("orgA/repo", 1, auditPath, since); got != "author-a" {
+		t.Fatalf("exact repo author = %q, want author-a", got)
+	}
+	if got := auditAuthorAgentForPR("orgC/repo", 2, auditPath, since); got != "bare-author" {
+		t.Fatalf("bare repo author = %q, want bare-author", got)
+	}
+}
+
+func TestAuditAuthorAgentReadsRotatedCompressedLogs(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	rotatedPath := auditPath + ".1"
+	compressedPath := filepath.Join(dir, "audit-2026-09-19.jsonl.gz")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := os.WriteFile(rotatedPath, []byte(`{"ts":"`+now+`","action":"agent_pr_created","detail":"repo=o/r, number=1","agent":"rotated-author"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write rotated audit fixture: %v", err)
+	}
+	f, err := os.Create(compressedPath)
+	if err != nil {
+		t.Fatalf("create gzip audit fixture: %v", err)
+	}
+	gz := gzip.NewWriter(f)
+	if _, err := gz.Write([]byte(`{"ts":"` + now + `","action":"agent_pr_created","detail":"repo=o/r, number=2","agent":"compressed-author"}` + "\n")); err != nil {
+		t.Fatalf("write gzip audit fixture: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip audit fixture: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close compressed audit fixture: %v", err)
+	}
+	since := time.Now().UTC().Add(-time.Hour)
+
+	if got := auditAuthorAgentForPR("o/r", 1, auditPath, since); got != "rotated-author" {
+		t.Fatalf("rotated audit author = %q, want rotated-author", got)
+	}
+	if got := auditAuthorAgentForPR("o/r", 2, auditPath, since); got != "compressed-author" {
+		t.Fatalf("compressed audit author = %q, want compressed-author", got)
 	}
 }
 
@@ -121,8 +311,11 @@ func TestRecordReviewVerdictDoesNotEscapeDir(t *testing.T) {
 	c := &Client{logger: testLogger()}
 	evil := "../../etc/cron.d/x"
 	raw := validVerdictJSON(t, evil, 1, "correctness", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict(evil, 1, review.PerspectiveCorrectness, "reviewer"),
+	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: evil, Number: 1, Report: raw}, dir)
+	c.recordReviewVerdict(ReviewRequest{Repo: evil, Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	// The only acceptable outcome is a plain file directly inside dir.
 	var stray []string
@@ -162,7 +355,10 @@ func TestRecordReviewVerdictNoReportIsNoop(t *testing.T) {
 func TestRecordReviewVerdictIsIdempotentPerPerspective(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
-	req := ReviewRequest{Repo: "o/r", Number: 7}
+	req := ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer"}
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 7, review.PerspectiveCorrectness, "reviewer"),
+	}})
 
 	req.Report = validVerdictJSON(t, "o/r", 7, "correctness", "changes_requested")
 	c.recordReviewVerdict(req, dir)
@@ -194,6 +390,9 @@ func TestRecordVerdictEventPassesShapeValidation(t *testing.T) {
 	outputschema.AgentReportDir = t.TempDir()
 	defer func() { outputschema.AgentReportDir = prevReportDir }()
 	raw := validVerdictJSON(t, "o/r", 5, "correctness", "approve")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 5, review.PerspectiveCorrectness, "reviewer"),
+	}})
 
 	for name, tc := range map[string]struct {
 		req     ReviewRequest

@@ -7,13 +7,14 @@ import (
 )
 
 type PullRequest struct {
-	Repo    string
-	Number  int
-	Title   string
-	Author  string
-	HeadSHA string
-	URL     string
-	Lane    string
+	Repo        string
+	Number      int
+	Title       string
+	Author      string
+	HeadSHA     string
+	URL         string
+	Lane        string
+	AuthorAgent string
 }
 
 // BuildPerspectivePrompt builds the per-PR review kick without the publish

@@ -16,6 +16,7 @@ import (
 const (
 	DefaultMaxParallelReviews = 5
 	ReviewDispatchStateFile   = "review-dispatch-state.json"
+	RecentDispatchTTL         = 24 * time.Hour
 	// DefaultDispatchStateDir is the durable data dir. It matches the path the
 	// knowledge engine and the dashboard config overlay already persist to,
 	// which on a hosted spoke is the PersistentVolumeClaim.
@@ -88,6 +89,7 @@ type DispatchOptions struct {
 type DispatchState struct {
 	GeneratedAt time.Time         `json:"generated_at"`
 	Pending     []PendingReview   `json:"pending_reviews,omitempty"`
+	Recent      []RecentReview    `json:"recent_reviews,omitempty"`
 	Fixes       []PendingFix      `json:"pending_fixes,omitempty"`
 	Human       []HumanReviewHold `json:"requires_human,omitempty"`
 }
@@ -98,7 +100,19 @@ type PendingReview struct {
 	HeadSHA     string      `json:"head_sha,omitempty"`
 	Perspective Perspective `json:"perspective"`
 	Agent       string      `json:"agent"`
+	AuthorAgent string      `json:"author_agent,omitempty"`
 	Dispatched  time.Time   `json:"dispatched_at"`
+}
+
+type RecentReview struct {
+	Repo        string      `json:"repo"`
+	Number      int         `json:"number"`
+	HeadSHA     string      `json:"head_sha,omitempty"`
+	Perspective Perspective `json:"perspective"`
+	Agent       string      `json:"agent"`
+	AuthorAgent string      `json:"author_agent,omitempty"`
+	Dispatched  time.Time   `json:"dispatched_at,omitempty"`
+	Confirmed   time.Time   `json:"confirmed_at"`
 }
 
 type PendingFix struct {
@@ -127,6 +141,7 @@ type DispatchKick struct {
 	Number      int
 	HeadSHA     string
 	Perspective Perspective
+	AuthorAgent string
 }
 
 type DispatchPlan struct {
@@ -219,7 +234,8 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			}
 			continue
 		}
-		if len(reviewers) == 0 || availableSlots <= 0 {
+		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent)
+		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
 		missing := pendingMissingPerspectives(plan.State, pr)
@@ -250,25 +266,39 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				limit = remaining
 			}
 		}
-		if len(reviewers) == 1 && limit > 1 {
+		if len(prReviewers) == 1 && limit > 1 {
 			limit = 1
 		}
 		if limit > availableSlots {
 			limit = availableSlots
 		}
 		for i := 0; i < limit; i++ {
-			agent := reviewers[i%len(reviewers)].Name
+			agent := prReviewers[i%len(prReviewers)].Name
 			perspective := missing[i]
 			msg := BuildPerspectivePromptWith(perspective, pr, PromptOptions{
 				PostComments:          opts.PostComments,
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective})
-			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, Dispatched: now})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
+			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
 			availableSlots--
 		}
 	}
 	return plan
+}
+
+func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapability {
+	authorAgent = strings.TrimSpace(authorAgent)
+	if authorAgent == "" {
+		return reviewers
+	}
+	out := make([]AgentCapability, 0, len(reviewers))
+	for _, reviewer := range reviewers {
+		if reviewer.Name != authorAgent {
+			out = append(out, reviewer)
+		}
+	}
+	return out
 }
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
@@ -308,9 +338,13 @@ func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
 }
 
 func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) DispatchState {
+	now := time.Now().UTC()
 	deliveredSet := map[string]bool{}
 	for _, k := range delivered {
 		deliveredSet[dispatchKickKey(k)] = true
+		if k.Kind == "review" {
+			state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, Perspective: k.Perspective, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
+		}
 	}
 	undelivered := map[string]bool{}
 	for _, k := range planned {
@@ -334,7 +368,40 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 		}
 	}
 	state.Fixes = fixes
+	state.Recent = pruneRecentReviews(state.Recent, now)
 	return state
+}
+
+func upsertRecentReview(items []RecentReview, item RecentReview) []RecentReview {
+	for i := range items {
+		if recentReviewSameDispatch(items[i], item) {
+			items[i] = item
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func pruneRecentReviews(items []RecentReview, now time.Time) []RecentReview {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	cutoff := now.Add(-RecentDispatchTTL)
+	out := items[:0]
+	for _, item := range items {
+		if item.Confirmed.IsZero() || !item.Confirmed.Before(cutoff) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func recentReviewSameDispatch(a, b RecentReview) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Repo), strings.TrimSpace(b.Repo)) &&
+		a.Number == b.Number &&
+		strings.TrimSpace(a.HeadSHA) == strings.TrimSpace(b.HeadSHA) &&
+		a.Perspective == b.Perspective &&
+		a.Agent == b.Agent
 }
 
 func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) string {
@@ -456,19 +523,32 @@ func removePendingForHead(pending []PendingReview, pr PullRequest) []PendingRevi
 
 func pruneState(state DispatchState, prs []PullRequest, org string) DispatchState {
 	openHeads := map[string]bool{}
+	authorAgents := map[string]string{}
 	openPRs := map[string]bool{}
 	for _, pr := range prs {
 		repo := fullRepoName(pr.Repo, org)
-		openHeads[reviewKey(repo, pr.Number, pr.HeadSHA)] = true
+		key := reviewKey(repo, pr.Number, pr.HeadSHA)
+		openHeads[key] = true
+		if strings.TrimSpace(pr.AuthorAgent) != "" {
+			authorAgents[key] = pr.AuthorAgent
+		}
 		openPRs[fmt.Sprintf("%s#%d", repo, pr.Number)] = true
 	}
 	var pending []PendingReview
 	for _, p := range state.Pending {
-		if openHeads[reviewKey(p.Repo, p.Number, p.HeadSHA)] {
+		key := reviewKey(p.Repo, p.Number, p.HeadSHA)
+		if openHeads[key] {
+			if strings.TrimSpace(p.AuthorAgent) == "" {
+				p.AuthorAgent = authorAgents[key]
+			}
+			if strings.TrimSpace(p.AuthorAgent) != "" && p.Agent == p.AuthorAgent {
+				continue
+			}
 			pending = append(pending, p)
 		}
 	}
 	state.Pending = pending
+	state.Recent = pruneRecentReviews(state.Recent, time.Now().UTC())
 	var fixes []PendingFix
 	for _, f := range state.Fixes {
 		if openPRs[fmt.Sprintf("%s#%d", f.Repo, f.Number)] {

@@ -59,6 +59,49 @@ func TestPlanDispatchSHAInvalidation(t *testing.T) {
 	}
 }
 
+func TestPlanDispatchDoesNotAssignAuthorAgentAsReviewer(t *testing.T) {
+	pr := dispatchPR("sha1")
+	pr.AuthorAgent = "r1"
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval:    true,
+		FanOut:             true,
+		ProjectOrg:         "acme",
+		MaxParallelReviews: 5,
+		Agents:             []AgentCapability{reviewer("r1"), reviewer("r2")},
+	})
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("reviews=%d, want only the non-author reviewer", len(plan.ReviewKicks))
+	}
+	if plan.ReviewKicks[0].Agent != "r2" || plan.State.Pending[0].Agent != "r2" {
+		t.Fatalf("author agent was assigned review work: kicks=%+v pending=%+v", plan.ReviewKicks, plan.State.Pending)
+	}
+
+	onlyAuthor := PlanDispatch([]PullRequest{pr}, Artifact{}, DispatchState{}, DispatchOptions{
+		RequireApproval: true,
+		FanOut:          true,
+		ProjectOrg:      "acme",
+		Agents:          []AgentCapability{reviewer("r1")},
+	})
+	if len(onlyAuthor.ReviewKicks) != 0 || len(onlyAuthor.State.Pending) != 0 {
+		t.Fatalf("single author reviewer must not create unrecordable pending work: %+v", onlyAuthor)
+	}
+
+	legacyState := DispatchState{Pending: []PendingReview{
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Agent: "r1"},
+	}}
+	reassigned := PlanDispatch([]PullRequest{pr}, Artifact{}, legacyState, DispatchOptions{
+		RequireApproval:    true,
+		FanOut:             true,
+		ProjectOrg:         "acme",
+		MaxParallelReviews: 5,
+		Agents:             []AgentCapability{reviewer("r1"), reviewer("r2")},
+	})
+	if len(reassigned.ReviewKicks) != 1 || reassigned.ReviewKicks[0].Agent != "r2" || reassigned.ReviewKicks[0].Perspective != PerspectiveCorrectness {
+		t.Fatalf("legacy author-owned pending review was not reassigned to a non-author: %+v", reassigned)
+	}
+}
+
 func TestConfirmDeliveredRollsBackFailedKicks(t *testing.T) {
 	planned := []DispatchKick{
 		{Kind: "review", Agent: "r1", Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness},
