@@ -12,6 +12,7 @@ const assert = require('assert');
 const Module = require('module');
 const path = require('path');
 const fs = require('fs');
+const { EventEmitter } = require('events');
 const piBackend = require('./pi-backend.js');
 const ompBackend = require('./omp-backend.js');
 // The pure pane classifier (kubestellar/hive#6429) — required directly, with
@@ -135,6 +136,38 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     return child;
   };
 
+  const fakeSpawn = (bin, args, opts) => {
+    execFileCalls.push({ bin, args, opts });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { end() {} };
+    child.killed = false;
+    let completed = false;
+    const r = execFileResult || {};
+    const complete = (err = r.err || null, stdout = r.stdout || '', stderr = r.stderr || '') => {
+      if (completed) return;
+      completed = true;
+      if (stdout) child.stdout.emit('data', Buffer.from(stdout));
+      if (stderr) child.stderr.emit('data', Buffer.from(stderr));
+      if (err && err.code === 'ENOENT') child.emit('error', err);
+      if (err) {
+        child.emit('close', typeof err.code === 'number' ? err.code : 1, err.signal || null);
+      } else {
+        child.emit('close', 0, null);
+      }
+    };
+    child.kill = () => { child.killed = true; };
+    const on = child.on.bind(child);
+    child.on = (event, listener) => {
+      const result = on(event, listener);
+      if (event === 'close' && !r.defer) complete();
+      return result;
+    };
+    if (r.defer) deferredExecFileCallbacks.push(complete);
+    return child;
+  };
+
   // execFileSync covers literal tmux sends plus the capability probe
   // (`<cli> --version`, kubestellar/hive#2547). `cliVersion` is what the CLI
   // "prints"; an Error instance makes the probe throw, standing in for an
@@ -160,6 +193,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     child_process: {
       execSync: fakeExecSync,
       execFile: fakeExecFile,
+      spawn: fakeSpawn,
       execFileSync: fakeExecFileSync,
     },
     ws: class FakeWebSocket {
@@ -2778,6 +2812,28 @@ test('a successful headless run reports task_complete then ready, and status=don
   } finally { teardown(relay); }
 });
 
+test('headless output capture is configurable and truncates without failing the task', () => {
+  const maxBytes = 64;
+  const noisyOutput = `${'x'.repeat(maxBytes * 2)}\nHIVE_VERDICT: no_work_needed\n`;
+  const relay = loadRelay({
+    backend: 'claude',
+    mode: 'headless',
+    env: { HIVE_RELAY_MAX_OUTPUT_BYTES: String(maxBytes) },
+    execFileResult: { stdout: noisyOutput },
+  });
+  try {
+    assert.strictEqual(relay.HEADLESS_MAX_OUTPUT_BYTES, maxBytes);
+    assignHeadlessTask(relay);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'chatty output must not trip child_process maxBuffer into a task failure');
+    assert.ok(!relay.__sent.some(m => m.type === 'task_failed'), 'truncated output should still allow an exit-0 task to complete');
+    assert.ok(complete.tmux_output.join('\n').includes('captured output truncated'),
+      'the audit tail should record that earlier output was truncated');
+    assert.strictEqual(relay.__execFileCalls[0].opts.maxBuffer, undefined,
+      'headless runs must stream output instead of relying on execFile maxBuffer');
+  } finally { teardown(relay); }
+});
+
 test('a failing headless run reports task_failed rather than hanging', () => {
   const err = new Error('boom'); err.code = 2;
   const relay = loadRelay({ backend: 'copilot', mode: 'headless', execFileResult: { err, stderr: 'fatal: something\n' } });
@@ -3463,6 +3519,27 @@ test('an ordinary task failure still re-advertises ready (skipReady is opt-in)',
     relay.failCurrentTask('some ordinary failure');
     assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
       'the pre-existing failure path must be unchanged');
+  } finally { teardown(relay); }
+});
+
+test('interactive completion advertises ready only once when relaunch is immediately ready', async () => {
+  const relay = loadRelay({ backend: 'omp', cliStates: ['ready'] });
+  try {
+    relay.getHubs()[0].authenticated = true;
+    relay.setCurrentTask({ task_id: 'ct-ready-once', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 8, title: 'x' });
+    relay.__sent.length = 0;
+
+    relay.finishCurrentTask({
+      completionSignal: 'verdict',
+      summary: 'done',
+      tmuxLines: ['done'],
+      prURL: '',
+      noWork: { verdict: 'no_work_needed', reason: 'done' },
+    });
+    await Promise.resolve();
+
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      'finishCurrentTask and armCLIReadyWait must not both advertise the same idle slot');
   } finally { teardown(relay); }
 });
 

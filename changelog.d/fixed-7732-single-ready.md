@@ -1,0 +1,1 @@
+- Relay task completion now advertises ready only once when the relaunched CLI is immediately ready (#7732).

@@ -1,0 +1,1 @@
+- Relay headless output capture now streams and truncates via HIVE_RELAY_MAX_OUTPUT_BYTES (default 16 MiB) instead of crashing on a hard-coded 1 MiB execFile buffer (#7739).

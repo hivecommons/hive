@@ -26,7 +26,7 @@
 'use strict';
 
 const WebSocket = require('ws');
-const { execSync, execFile, execFileSync } = require('child_process');
+const { execSync, execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -198,10 +198,22 @@ const TRANSIENT_API_ERROR_NUDGE_COOLDOWN_MS = 90000;
 const AUTONOMY_NUDGE_MESSAGE =
   'no human is available to answer, so proceed autonomously with your best judgment';
 
+const BYTES_PER_MIB = 1024 * 1024;
+const DEFAULT_HEADLESS_MAX_OUTPUT_MIB = 16;
+const DEFAULT_HEADLESS_MAX_OUTPUT_BYTES = DEFAULT_HEADLESS_MAX_OUTPUT_MIB * BYTES_PER_MIB;
+const HEADLESS_MAX_OUTPUT_ENV = 'HIVE_RELAY_MAX_OUTPUT_BYTES';
+
+function parsePositiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 // Cap on captured child output kept in memory / sent to the hub, so a chatty
 // CLI cannot grow the buffer without bound. The tail is what matters for an
 // audit trail, mirroring TMUX_TAIL_LINES on the interactive path.
-const HEADLESS_MAX_OUTPUT_BYTES = 1048576; // 1 MiB
+const HEADLESS_MAX_OUTPUT_BYTES = parsePositiveIntegerEnv(HEADLESS_MAX_OUTPUT_ENV, DEFAULT_HEADLESS_MAX_OUTPUT_BYTES);
 
 const TMUX_TAIL_LINES = 15;
 const NEEDS_LOGIN_CONFIRM_TICKS = 3;
@@ -1280,6 +1292,25 @@ let headlessChild = null;
 // (exit 0) or task_failed (non-zero / spawn error / timeout) over the existing
 // WebSocket channel — then announces `ready` for the next task. This is the
 // headless analogue of the interactive progressTick() completion path.
+function createBoundedOutputCapture(maxBytes) {
+  let buffer = Buffer.alloc(0);
+  let truncated = false;
+  return {
+    append(chunk) {
+      if (!chunk || maxBytes <= 0) return;
+      const next = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))]);
+      if (next.length > maxBytes) {
+        truncated = true;
+        buffer = next.subarray(next.length - maxBytes);
+      } else {
+        buffer = next;
+      }
+    },
+    text() { return buffer.toString('utf8'); },
+    truncated() { return truncated; },
+  };
+}
+
 function runHeadlessTask(task) {
   const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
   if (!headlessSupportsBackend()) {
@@ -1311,15 +1342,37 @@ function runHeadlessTask(task) {
   let settled = false;
   const finish = (fn) => { if (settled) return; settled = true; fn(); };
 
-  headlessChild = execFile(bin, args, {
-    timeout: HEADLESS_TASK_TIMEOUT_MS,
-    maxBuffer: HEADLESS_MAX_OUTPUT_BYTES,
-    killSignal: 'SIGKILL',
+  const output = createBoundedOutputCapture(HEADLESS_MAX_OUTPUT_BYTES);
+  let timedOut = false;
+  let spawnError = null;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    if (headlessChild && !headlessChild.killed) headlessChild.kill('SIGKILL');
+  }, HEADLESS_TASK_TIMEOUT_MS);
+  if (timeout.unref) timeout.unref();
+
+  headlessChild = spawn(bin, args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
     cwd: TASK_WORKSPACE_DIR,
-  }, (err, stdout, stderr) => {
+  });
+  if (headlessChild.stdout) headlessChild.stdout.on('data', chunk => output.append(chunk));
+  if (headlessChild.stderr) headlessChild.stderr.on('data', chunk => output.append(chunk));
+  headlessChild.on('error', err => { spawnError = err; });
+  // codex exec prints "Reading additional input from stdin..." and then blocks
+  // on stdin-EOF even with the prompt already passed as an argv element; with
+  // execFile's default piped stdio nothing ever closes that pipe, so a
+  // headless codex task produced zero output and hung until the timeout
+  // killed it (found live by bin/test_backend_smoke.sh). Close stdin for
+  // every backend — a one-shot child has no interactive input coming.
+  if (headlessChild.stdin) headlessChild.stdin.end();
+  headlessChild.on('close', (code, signal) => {
+    clearTimeout(timeout);
     headlessChild = null;
     // Tokens can appear in agent output; redact before the tail leaves the host.
-    const outLines = redactTokens(String(stdout || '') + String(stderr || '')).split('\n');
+    const outText = output.truncated()
+      ? `[relay: captured output truncated to the last ${HEADLESS_MAX_OUTPUT_BYTES} bytes]\n${output.text()}`
+      : output.text();
+    const outLines = redactTokens(outText).split('\n');
     const outTail = outLines.slice(-TMUX_TAIL_LINES);
     // #6667: headless has no TUI chrome, but a build log easily pushes a PR URL
     // past fifteen lines, so scan the same deep window the interactive path does.
@@ -1331,20 +1384,21 @@ function runHeadlessTask(task) {
       writeHeadlessStatus(HEADLESS_STATE_WAITING, { revoked_task_id: task.task_id });
       return;
     }
-    if (err) {
+    const wasTimedOut = timedOut || signal === 'SIGKILL';
+    const failed = spawnError || wasTimedOut || code !== 0 || signal;
+    if (failed) {
       // A non-zero exit, a spawn failure (ENOENT), or the timeout kill all land
       // here. err.killed && err.signal signals the timeout; report a real
       // failure either way so the hub can reassign — never a silent hang.
-      const timedOut = err.killed === true;
       // Preserve one bounded, token-redacted diagnostic line. In particular,
       // Codex automatic-review denial/timeout is an expected terminal outcome
       // for an unattended run and must reach Hive as an actionable failure,
       // rather than being flattened to an opaque exit code.
       const diagnostic = outTail.map(line => line.trim()).filter(Boolean).slice(-1)[0];
       const diagnosticSuffix = diagnostic ? `: ${diagnostic.slice(0, 500)}` : '';
-      const reason = timedOut
+      const reason = wasTimedOut
         ? `headless task exceeded ${HEADLESS_TASK_TIMEOUT_MS / 60000}min and was killed`
-        : `headless CLI exited with error: ${err.code !== undefined ? `code ${err.code}` : err.message}${diagnosticSuffix}`;
+        : `headless CLI exited with error: ${code !== null && code !== undefined ? `code ${code}` : (spawnError ? spawnError.message : `signal ${signal}`)}${diagnosticSuffix}`;
       finish(() => {
         setPiInvocationState('failed');
         console.error(`Headless task ${task.task_id} failed: ${reason}`);
@@ -1386,13 +1440,6 @@ function runHeadlessTask(task) {
       send({ type: 'ready', seq: nextSeq() });
     });
   });
-  // codex exec prints "Reading additional input from stdin..." and then blocks
-  // on stdin-EOF even with the prompt already passed as an argv element; with
-  // execFile's default piped stdio nothing ever closes that pipe, so a
-  // headless codex task produced zero output and hung until the timeout
-  // killed it (found live by bin/test_backend_smoke.sh). Close stdin for
-  // every backend — a one-shot child has no interactive input coming.
-  if (headlessChild && headlessChild.stdin) headlessChild.stdin.end();
 }
 
 // A tmux pane can be left in bash's PS2 continuation state ("> ") when task
@@ -1749,6 +1796,7 @@ let pendingTask = null;
 let cliReadyFailed = false;
 // Set only by an interactive revoke. The next ready is delayed until a fresh CLI is confirmed.
 let readyAfterInteractiveRevoke = false;
+let readyAdvertisedForIdleTaskSlot = false;
 
 // False until the CURRENT task's prompt actually reached the pane
 // (kubestellar/hive#5650). tmuxSendKeys() queues rather than types whenever the
@@ -1819,7 +1867,8 @@ function armCLIReadyWait() {
     // startup path is already advertised by the auth_ok handler.
     if (hadFailed) {
       send({ type: 'ready', seq: nextSeq() });
-    } else if (!currentTask && currentTaskHub().authenticated) {
+    } else if (!currentTask && currentTaskHub().authenticated && !readyAdvertisedForIdleTaskSlot) {
+      readyAdvertisedForIdleTaskSlot = true;
       send({ type: 'ready', seq: nextSeq() });
     }
     flushPendingTask();
@@ -3431,6 +3480,7 @@ function failCurrentTask(reason, opts) {
   // claiming to be free. Advertising 'ready' here would just pull in another
   // task the CLI still cannot run. The caller re-advertises on recovery.
   if (!(opts && opts.skipReady)) {
+    readyAdvertisedForIdleTaskSlot = true;
     send({ type: 'ready', seq: nextSeq() });
   }
 }
@@ -4456,6 +4506,7 @@ function handleMessage(data, hub) {
         });
         break;
       }
+      readyAdvertisedForIdleTaskSlot = false;
       currentTask = msg;
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
@@ -4819,6 +4870,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     flushPendingTask,
     relaunchCLI,
     failCurrentTask,
+    finishCurrentTask,
     startProgressReporting,
     progressTick,
     // Local-only (synthetic pr-review) task surface — kubestellar/hive#5715.
@@ -4902,6 +4954,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     MAX_TASK_DURATION_MS,
     ABSOLUTE_TASK_DEADLINE_MS,
     HEADLESS_TASK_TIMEOUT_MS,
+    DEFAULT_HEADLESS_MAX_OUTPUT_BYTES,
+    HEADLESS_MAX_OUTPUT_BYTES,
+    HEADLESS_MAX_OUTPUT_ENV,
     armTaskProgressLease,
     onTaskProgressLeaseExpired,
     getTaskTimeoutHandle: () => taskTimeoutHandle,
