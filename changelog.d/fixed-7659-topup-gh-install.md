@@ -1,0 +1,1 @@
+- v5/v6 top-up workflows install the gh CLI on ARC runners before opening the top-up PR, so clean forward-merges auto-open their sync PR instead of dying with `gh: command not found` (#7659).
