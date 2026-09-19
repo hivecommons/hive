@@ -310,34 +310,50 @@ func TestLeaseRestart_RestoredLeaseHoldsItsIssue(t *testing.T) {
 	}
 }
 
-// TestLeaseRestart_HoldLapsesAfterGrace pins that this is a restart measure, NOT a
-// change to what a lease means in steady state. A dropped socket keeps its lease so
-// the relay can resume (#4260) while its item merely cools down (#2356); honouring
-// leases as holds for the full TTL would silently replace that hedge with a
-// 30-minute park on every disconnect.
-func TestLeaseRestart_HoldLapsesAfterGrace(t *testing.T) {
+// TestLeaseRestart_HoldLastsWhileResumable pins what #7773 changed. #5681 made a
+// RESTORED lease a hold only for a two-minute post-restart grace, reasoning that in
+// steady state a dropped socket's item should merely cool down (#2356) rather than
+// be parked for the lease's length. That left the item offerable between the
+// ten-minute hedge lapsing and the thirty-minute lease expiring, while the
+// disconnected relay could still resume it — the double assignment #7773 reproduces.
+// A lease is now a hold for exactly as long as it is re-adoptable: restored or
+// minted here, until it is released or expires.
+func TestLeaseRestart_HoldLastsWhileResumable(t *testing.T) {
 	hub, _ := covK2Hub(t)
-	hub.recordLease("c-holder", "ct-held", "myorg/repo1", 10, "contributor", 12, time.Now())
+	now := time.Now()
+	hub.recordLease("c-holder", "ct-held", "myorg/repo1", 10, "contributor", 12, now)
 	hub.leaseMu.Lock()
 	hub.leaseForLocked("c-holder", "ct-held").restored = true // as if loaded at boot
 	hub.leaseMu.Unlock()
 
-	if len(hub.leasedIssueKeys("c-other", time.Now())) != 1 {
-		t.Fatalf("a restored lease must hold its item during the post-restart grace window")
+	if len(hub.leasedIssueKeys("c-other", now)) != 1 {
+		t.Fatalf("a restored lease must hold its item")
 	}
-	past := hub.startedAt.Add(leaseHoldGraceAfterStart + time.Second)
-	if got := hub.leasedIssueKeys("c-other", past); len(got) != 0 {
-		t.Fatalf("after the grace window the live-connection guard is back in sole "+
-			"charge; leases must contribute no holds, got %v", got)
+	// Well past the old two-minute grace, well inside the lease: still held.
+	if got := hub.leasedIssueKeys("c-other", now.Add(15*time.Minute)); len(got) != 1 {
+		t.Fatalf("#7773: fifteen minutes after a disconnect the lease is still re-adoptable, "+
+			"so its item must still be held; got %v", got)
+	}
+	// Past expiry: nothing.
+	if got := hub.leasedIssueKeys("c-other", now.Add(leaseTTL+time.Second)); len(got) != 0 {
+		t.Fatalf("an expired lease must contribute no hold, got %v", got)
 	}
 
-	// A lease minted by THIS process is never a hold: its holder has a live
-	// connection, which the existing guard already covers.
-	hub.recordLease("c-fresh", "ct-fresh", "myorg/repo1", 77, "contributor", 13, time.Now())
-	for key := range hub.leasedIssueKeys("c-other", time.Now()) {
-		if key == "myorg/repo1#77" {
-			t.Fatalf("a lease minted in this process must not act as a restart hold")
-		}
+	// A lease minted by THIS process holds its item exactly the same way: the
+	// live-connection guard covers it while the holder is connected, and this
+	// covers it after the holder drops.
+	hub.recordLease("c-fresh", "ct-fresh", "myorg/repo1", 77, "contributor", 13, now)
+	if !hub.leasedIssueKeys("c-other", now.Add(15*time.Minute))["myorg/repo1#77"] {
+		t.Fatalf("a lease minted in this process must hold its item while it is re-adoptable")
+	}
+	// Releasing it clears the hold at once.
+	hub.revokeLease("c-fresh", "ct-fresh")
+	if hub.leasedIssueKeys("c-other", now)["myorg/repo1#77"] {
+		t.Fatalf("a revoked lease must not hold its item")
+	}
+	// The holder itself is never blocked by its own lease.
+	if len(hub.leasedIssueKeys("c-holder", now)) != 0 {
+		t.Fatalf("a contributor's own lease must not lock it out of work")
 	}
 }
 

@@ -501,6 +501,15 @@ func TestSelectTask_DeclaredCapabilitiesDoNotAffectSelection(t *testing.T) {
 	}
 
 	declared := hub.selectTask(mkConn("cap-rich", richDeclaration()))
+	// The first pick's lease now holds its item against every OTHER contributor
+	// for as long as it is re-adoptable (#7773), so the second contributor would
+	// correctly be steered to the next item. This test asks whether DECLARING
+	// changes the pick, not whether two contributors can share one item, so the
+	// first assignment is released — as task_complete/task_failed would — before
+	// the second contributor asks.
+	if declared != nil {
+		hub.revokeLease("c-cap-rich", declared.TaskID)
+	}
 	undeclared := hub.selectTask(mkConn("cap-none", nil))
 	for name, msg := range map[string]*WSMessage{"declared": declared, "undeclared": undeclared} {
 		if msg == nil || msg.Type != "task_assign" {

@@ -44,9 +44,10 @@ type taskLease struct {
 	// restored marks a lease loadLeases read from disk at startup rather than one
 	// recordLease minted in this process (#5681). It is deliberately NOT persisted:
 	// it means "issued by the PREVIOUS process, whose holder has not reconnected
-	// here yet", which is only ever true for the current boot. It is what lets the
-	// double-assignment guard hold an item for a relay the hub has not seen yet
-	// WITHOUT changing what a lease means in steady state.
+	// here yet", which is only ever true for the current boot. It used to gate the
+	// double-assignment guard's hold on the item to a post-restart grace window;
+	// since #7773 every unexpired lease is a hold (leasedIssueKeys), so this is
+	// diagnostic — it says where a lease came from, not what it does.
 	restored  bool
 	expiresAt time.Time
 }
@@ -485,47 +486,48 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	return dropped
 }
 
-// leaseHoldGraceAfterStart is how long after startup the hub treats a RESTORED
-// lease as an active hold on its work item (#5681).
+// leasedIssueKeys returns the canonical work-item keys that an unexpired lease is
+// holding for some identity OTHER than exceptIdentity. selectTask adds them to its
+// in-flight exclusions, so an item that is still RE-ADOPTABLE is never OFFERABLE
+// (hivecommons/hive#7773).
 //
-// It exists to cover exactly one window: the hub has just booted, it has restored
-// the leases the previous process issued, but the relays holding them have not
-// reconnected yet, so h.connections — the only thing the double-assignment guard
-// used to consult — is empty. Since those relays WILL resume (that is the whole
-// point of persisting the lease), handing the same item to somebody else during
-// those seconds would convert the old "lose the task" bug into a real double
-// assignment.
+// Those two windows used to be allowed to overlap. A dropped socket keeps its lease
+// so the relay can resume (#4260), and the item was left merely cooling down under
+// #2356's release hedge — ten minutes — while the lease stayed re-adoptable for
+// leaseTTL, thirty. Nothing covered the gap: between ten and thirty minutes after a
+// disconnected relay's last progress report the item was out of the live-connection
+// scan, out of cooldown, and still resumable. A second contributor asking for work
+// in that window was offered it; when the first relay came back — a laptop waking,
+// a VPN reconnecting — lookupLease matched, resumeTaskToken minted it a fresh
+// credential, and two contributors held the same issue with valid tokens. The
+// design note for #5322 was right that the hedge "comfortably outlasts the
+// reconnect backoff"; it did not outlast a medium-length outage.
 //
-// It is bounded well under leaseTTL on purpose. A lease is NOT a hold in steady
-// state: a relay whose socket drops keeps its lease so it can resume (#4260), while
-// its item is left merely cooling down (#2356's speculative release hedge) rather
-// than blocked. Honouring leases as holds for the full TTL would silently replace
-// that hedge with a 30-minute park for every disconnect. The relay reconnects on a
-// one-second backoff and re-asserts its task immediately, so two minutes is many
-// times the window that actually needs covering, and after it the ordinary
-// live-connection guard is back in sole charge.
-const leaseHoldGraceAfterStart = 2 * time.Minute
-
-// leasedIssueKeys returns the canonical work-item keys that a RESTORED, unexpired
-// lease is holding for some identity OTHER than exceptIdentity, during the brief
-// post-restart grace window (#5681). Outside that window, or with nothing restored,
-// it returns nothing and the guard behaves exactly as it did before.
+// A lease that can still be resumed IS a hold, and is treated as one for exactly as
+// long as it can be resumed: the moment it is released (task_complete, task_failed,
+// ready-abandon, operator requeue, the wedged-task backstop) revokeLease removes
+// it, and the moment it expires pruneExpiredLeases drops it. The cost #5681
+// weighed — a park for the length of the lease on every disconnect — is real for a
+// relay that never comes back, and it is the price of the invariant: the same
+// item cannot be offerable to one contributor and resumable by another. #5681's
+// two-minute post-restart grace was this rule applied to restored leases only; it
+// is now the rule for every lease, so the restored flag no longer gates anything.
 //
 // A lease belonging to the REQUESTER is deliberately never an exclusion: asking for
-// work is itself the statement that it is not holding that task any more. (Since
-// #7774 an assignment no longer replaces the requester's other leases, so for an
-// identity that holds several tasks this exception is slightly wider than it needs
-// to be during the grace window; the live-connection scan takes over the moment
-// its other connections reconnect, and the window is two minutes after a restart.)
+// work is itself the statement that it is not holding that task any more. An
+// identity that runs several connections and loses one mid-task can therefore be
+// re-offered that task on its other connection while the first could still resume
+// it — a duplicate within one account, in a configuration the docs discourage —
+// which is narrower than the cross-contributor duplicate this closes.
 func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) map[string]bool {
 	keys := make(map[string]bool)
-	if h == nil || h.startedAt.IsZero() || now.Sub(h.startedAt) > leaseHoldGraceAfterStart {
+	if h == nil {
 		return keys
 	}
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
 	for _, l := range h.leases {
-		if l == nil || !l.restored || l.identity == exceptIdentity {
+		if l == nil || l.identity == exceptIdentity {
 			continue
 		}
 		if l.expiresAt.IsZero() || now.After(l.expiresAt) {

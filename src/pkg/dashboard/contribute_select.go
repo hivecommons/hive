@@ -423,12 +423,15 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 	h.mu.RUnlock()
 
-	// #5681: for the first leaseHoldGraceAfterStart of this process, also exclude
-	// items held by a lease RESTORED from the previous one. Those relays have not
-	// reconnected yet, so the live-connection scan above cannot see them — but they
-	// will resume, so offering their work to somebody else now would convert the
-	// old "lose the task" bug into a real double assignment. Outside that window
-	// this contributes nothing.
+	// Also exclude every item some OTHER identity still holds an unexpired lease
+	// on (#7773). The live-connection scan above sees only relays that are
+	// connected right now; a relay whose socket dropped keeps its lease so it can
+	// resume (#4260), and between #2356's ten-minute release hedge lapsing and the
+	// thirty-minute lease expiring the item was offerable here while still
+	// resumable there — a second contributor was handed it, the first came back
+	// and resumed it, and both opened PRs. A lease that can still be resumed is a
+	// hold for exactly as long as it can be resumed. (#5681 applied this to
+	// RESTORED leases during a post-restart grace; it is now the rule for all.)
 	for key := range h.leasedIssueKeys(identityOf(c), time.Now()) {
 		activeIssues[key] = true
 	}

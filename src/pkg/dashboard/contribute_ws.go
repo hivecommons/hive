@@ -629,10 +629,11 @@ type ContributeWSHub struct {
 	// survives a hub restart (#5681). Overridable per hub for tests, like the
 	// sibling ledgers.
 	taskLeasesFile string
-	// startedAt is when this hub process came up. It bounds the window in which a
-	// lease restored from the previous process is honoured as a hold on its work
-	// item (#5681, leaseHoldGraceAfterStart). Written once at construction and only
-	// read afterwards, so it needs no lock.
+	// startedAt is when this hub process came up. It used to bound the window in
+	// which a lease restored from the previous process was honoured as a hold on
+	// its work item (#5681); since #7773 every unexpired lease is a hold, so it is
+	// informational. Written once at construction and only read afterwards, so it
+	// needs no lock.
 	startedAt          time.Time
 	noWorkVerdictsFile string
 	asyncActivitySave  bool
