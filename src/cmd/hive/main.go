@@ -2231,7 +2231,11 @@ func (b *boot) bootStores() {
 // bootCollectors starts the token, metrics, fleet-stats, activity and
 // repo-cost collectors, defines refreshDashboard, and restores the cached
 // actionable result into b.lastActionable.
-func (b *boot) bootCollectors() {
+func (b *boot) bootCollectors() { b.bootCollectorsWith(defaultBootCollectorsDeps()) }
+
+// bootCollectorsWith is bootCollectors with its goroutines, PVC persistence,
+// and GitHub lookups injected; see bootCollectorsDeps.
+func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	ctx, cfg, logger, gov, agentMgr := b.ctx, b.cfg, b.logger, b.gov, b.agentMgr
 	dashSrv, beadStores := b.dashSrv, b.beadStores
 	initAgentConfigDrivenSystems(cfg)
@@ -2241,13 +2245,13 @@ func (b *boot) bootCollectors() {
 	tokenCollector.SetCopilotSessionsDir(cfg.Data.CopilotSessionsDir)
 	tokenCollector.SetBobSessionsDir(cfg.Data.BobSessionsDir)
 	tokenStop := make(chan struct{})
-	go tokenCollector.Start(tokenStop)
+	deps.startTokenCollector(tokenCollector, tokenStop)
 	b.cleanup.push(func() { close(tokenStop) })
 
 	badgeURL := resolveCoverageBadgeURL(os.Getenv(coverageBadgeURLEnv))
 	primaryRepo := metricsPrimaryRepo(cfg.Project)
 	metricsCollector := dashboard.NewMetricsCollector(b.ghClient, cfg.Project.Org, primaryRepo, badgeURL, cfg.Project.AIAuthor, cfg.Project.Name, logger)
-	go metricsCollector.Start(ctx)
+	deps.startCollector(ctx, "metrics", metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
 	// (merged/rejected PRs, CVE-referencing PRs) across its org on a slow timer
@@ -2270,13 +2274,7 @@ func (b *boot) bootCollectors() {
 	// have github.token empty, so there was no token to identify. The result
 	// was a fleet where essentially no spoke ever attempted a collect.
 	fleetID := resolveFleetStatsIdentity(cfg.EffectiveAIAuthor(), cfg.GitHub.Token, os.Getenv("HIVE_GITHUB_TOKEN"),
-		func(token string) (string, error) {
-			botUser, err := github.ValidateToken(token, cfg.GitHub.ResolvedAPIURL())
-			if err != nil {
-				return "", err
-			}
-			return botUser.Login, nil
-		})
+		func(token string) (string, error) { return deps.lookupTokenLogin(token, cfg.GitHub.ResolvedAPIURL()) })
 	fleetStatsAuthor := fleetID.author
 	if fleetID.fromToken {
 		logger.Info("fleet stats: ai_author unset, using bot token identity",
@@ -2298,8 +2296,8 @@ func (b *boot) bootCollectors() {
 	// of nil. Without this, a fleet-wide upgrade clears every spoke's in-memory
 	// counts and the public landing-page total collapses until all spokes
 	// re-collect (#2329, building on the hub-side #2328 defensive aging fix).
-	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
-	go fleetStatsCollector.Start(ctx)
+	deps.enablePersistence("fleet-stats", fleetStatsCollector, fleetStatsPersistPath)
+	deps.startCollector(ctx, "fleet-stats", fleetStatsCollector)
 
 	// Per-repo output-activity collector: reads the local audit log (no GitHub
 	// calls) and summarizes issues/PRs/comments/merges/claims/reviews per repo
@@ -2308,8 +2306,8 @@ func (b *boot) bootCollectors() {
 	// PVC so a restart resumes the last summary; the collector loop reads
 	// /data/audit.jsonl every few minutes.
 	activityCollector := dashboard.NewActivityCollector(dashSrv.GetAudit(), "", logger)
-	activityCollector.EnablePersistence("/data/activity.json")
-	go activityCollector.Start(ctx)
+	deps.enablePersistence("activity", activityCollector, activityPersistPath)
+	deps.startCollector(ctx, "activity", activityCollector)
 
 	// Per-repo cost collector: joins the same audited output events against
 	// the token collector's per-message usage timeline, on the same ticker
@@ -2319,8 +2317,8 @@ func (b *boot) bootCollectors() {
 	// every 60s dashboard poll, per open browser tab, instead of once per
 	// collection interval.
 	repoCostCollector := dashboard.NewRepoCostCollector(dashSrv.GetAudit(), tokenCollector, "", logger)
-	repoCostCollector.EnablePersistence("/data/repo-cost.json")
-	go repoCostCollector.Start(ctx)
+	deps.enablePersistence("repo-cost", repoCostCollector, repoCostPersistPath)
+	deps.startCollector(ctx, "repo-cost", repoCostCollector)
 
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
@@ -2328,7 +2326,7 @@ func (b *boot) bootCollectors() {
 	// rollup goroutine samples + buckets hourly, so a rolling upgrade resumes the
 	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
 	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
-	dashSrv.StartContributeMetrics(ctx)
+	deps.startContributeMetrics(ctx, dashSrv)
 
 	refreshDashboard := func() {
 		// Capture the mutation epoch BEFORE reading any state: if a mutation
@@ -2358,7 +2356,7 @@ func (b *boot) bootCollectors() {
 		dashSrv.UpdateStatusIfFresh(payload, buildEpoch)
 	}
 
-	if data, err := os.ReadFile(lastActionablePath); err == nil {
+	if data, err := deps.readLastActionable(); err == nil {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
 			b.lastActionable.Store(&cached)
