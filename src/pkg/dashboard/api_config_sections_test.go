@@ -352,8 +352,8 @@ func TestReviewConfigPut_RejectsNonOwner(t *testing.T) {
 func TestReviewConfigPut_Perspectives(t *testing.T) {
 	s := covApiServer(t)
 
-	rec := doPut(s, "/api/config/review", map[string]any{"perspectives": []string{"correctness", "secuirty"}})
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "secuirty") {
+	rec := doPut(s, "/api/config/review", map[string]any{"perspectives": []string{"correctness", "sekurity"}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "sekurity") {
 		t.Fatalf("typo: expected 400 naming it, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if len(s.deps.Config.Review.Perspectives) != 0 {

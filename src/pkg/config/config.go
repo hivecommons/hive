@@ -6355,7 +6355,7 @@ type ReviewConfig struct {
 	// wants docs-currency and little else. It may also name a perspective this
 	// hive invented, which is defined by giving it focus text in
 	// PerspectivePrompts. A name that is neither built in nor described there
-	// fails config load rather than being dropped — a typo'd "secuirty" that
+	// fails config load rather than being dropped — a typo'd "sekurity" that
 	// silently disappeared would read as enabled everywhere it is displayed
 	// while nothing reviewed it.
 	Perspectives []string `yaml:"perspectives,omitempty" json:"perspectives,omitempty"`

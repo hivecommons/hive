@@ -72,7 +72,7 @@ type PerspectiveSet struct {
 // text, keyed by perspective name.
 //
 // A name that is neither built in nor given focus text is an error rather than
-// a silent drop. A typo'd "secuirty" that quietly disappeared would leave an
+// a silent drop. A typo'd "sekurity" that quietly disappeared would leave an
 // operator believing security review was on: the setting reads as enabled
 // everywhere it is displayed, and nothing reviews it. That is the worst
 // possible outcome of a config mistake, so it fails loudly at load instead.

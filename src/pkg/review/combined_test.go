@@ -137,7 +137,7 @@ func TestPerspectiveSetResolution(t *testing.T) {
 		}
 	})
 	t.Run("typo fails loudly", func(t *testing.T) {
-		if _, err := NewPerspectiveSet([]string{"secuirty"}, nil); err == nil || !strings.Contains(err.Error(), "secuirty") {
+		if _, err := NewPerspectiveSet([]string{"sekurity"}, nil); err == nil || !strings.Contains(err.Error(), "sekurity") {
 			t.Fatalf("err = %v", err)
 		}
 	})

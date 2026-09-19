@@ -418,15 +418,6 @@ func agentReportJSON(r outputschema.AgentReport) []byte {
 	return data
 }
 
-func validPerspective(p Perspective) bool {
-	for _, want := range DefaultPerspectives {
-		if p == want {
-			return true
-		}
-	}
-	return false
-}
-
 func validVerdict(v Verdict) bool {
 	switch v {
 	case VerdictApprove, VerdictChangesRequested, VerdictRequiresHuman, VerdictReject:
