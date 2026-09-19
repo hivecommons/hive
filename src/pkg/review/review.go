@@ -137,7 +137,11 @@ func ValidateReport(raw []byte) (*PerspectiveReport, error) {
 		return nil, fmt.Errorf("review report must be a non-empty JSON object")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
+	// Unknown fields are ignored rather than rejected. The report is written by a
+	// model that routinely adds descriptive keys ("detail", "message") alongside
+	// the schema; refusing the whole object over one extra key discards a review
+	// that is otherwise complete and correct. Every field the hive routes on is
+	// validated explicitly below, so an unrecognised key cannot change a verdict.
 	var report PerspectiveReport
 	if err := dec.Decode(&report); err != nil {
 		return nil, fmt.Errorf("decode review report: %w", err)

@@ -145,7 +145,7 @@ func TestValidateReportRejections(t *testing.T) {
 		want string
 	}{
 		{"empty input", []byte("   \n"), "non-empty"},
-		{"unknown field", []byte(`{"kind":"review","surprise":true}`), "decode"},
+		{"not an object", []byte(`["review"]`), "decode"},
 		{"trailing object", append(mustJSON(t, valid), mustJSON(t, valid)...), "exactly one"},
 		{"wrong kind", mutate(func(r *PerspectiveReport) { r.Kind = "advisory" }), "kind"},
 		{"bad perspective", mutate(func(r *PerspectiveReport) { r.Perspective = "vibes" }), "perspective"},
