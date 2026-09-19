@@ -367,6 +367,14 @@ const hubs = rawHubList.map((url, i) => ({
   // #2547: set once we have reported a contributor-protocol difference with
   // this hub, so a reconnect loop does not repeat the same advisory line.
   protocolDriftReported: false,
+  // #7732: true from the moment a `ready` is actually transmitted to this hub
+  // until the hub answers it (task_assign or task_unavailable), or the
+  // conversation it belonged to ends (socket close, re-auth). While it is
+  // set, this relay has ALREADY asked for work and must not ask again: the
+  // hub reads a second `ready` as "give back whatever you were just assigned"
+  // (#2545). Maintained in sendTo() and the answer handlers, never at a
+  // `ready` call site — see armCLIReadyWait for the one reader.
+  readyOutstanding: false,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -562,6 +570,9 @@ function sendTo(hub, msg) {
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
     hub.ws.send(JSON.stringify(msg));
+    // #7732: recorded only for a frame that actually left, so a `ready`
+    // dropped on a closed socket does not look like an open question.
+    if (msg && msg.type === 'ready') hub.readyOutstanding = true;
   }
 }
 
@@ -1801,9 +1812,6 @@ let pendingTask = null;
 // Used so the eventual recovery re-advertises availability to the hub, which
 // we deliberately withheld at failure time (see armCLIReadyWait).
 let cliReadyFailed = false;
-// Set only by an interactive revoke. The next ready is delayed until a fresh CLI is confirmed.
-let readyAfterInteractiveRevoke = false;
-let readyAdvertisedForIdleTaskSlot = false;
 
 // False until the CURRENT task's prompt actually reached the pane
 // (kubestellar/hive#5650). tmuxSendKeys() queues rather than types whenever the
@@ -1860,22 +1868,37 @@ if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
 // NOT re-advertise 'ready' until the CLI genuinely reaches its prompt.
 // Otherwise it would immediately accept another task it still cannot run and
 // churn one task per timeout window forever.
+//
+// On readiness the relay advertises AT MOST ONCE, and only when three things
+// hold: it is idle, the hub it would ask has authenticated it, and no earlier
+// `ready` to that hub is still awaiting an answer (hub.readyOutstanding,
+// #7732). The third guard is what makes this callback safe to arm from every
+// task-exit path. finishCurrentTask()/failCurrentTask() already send `ready`
+// themselves and THEN relaunch the CLI, which arms this; with a backend whose
+// pane reads ready on the very first waitForCLI() poll (omp sits at its prompt
+// after the two Ctrl-Cs), this callback ran before the hub could possibly have
+// answered and sent a second `ready` in the same event-loop turn. The hub
+// answered the first with an assignment and read the second as the relay
+// giving that assignment back (#2545): an abandoned_handback row, a cooldown
+// on the fresh task, and a third assignment the relay rejected because it was
+// already running the second. The interactive-revoke path had the same shape
+// from two sends inside this one callback.
+//
+// The cases this single condition replaces were all instances of it: the
+// startup path (#6655) where auth_ok withheld `ready` because the CLI was
+// still coming up; recovery after a readiness failure, where the task was
+// handed back with skipReady and nothing has asked since; and the revoke
+// path, whose task is gone and whose `ready` was deliberately deferred until
+// a fresh CLI was confirmed (#5042). In every one of them a `ready` is owed
+// exactly when no other path has sent one — and a `ready` while currentTask
+// is set (a hub that pushed work during the relaunch) would hand that work
+// back, so idleness is checked here rather than assumed from the path.
 function armCLIReadyWait() {
-  const hadFailed = cliReadyFailed;
-  const becameReadyAfterRevoke = readyAfterInteractiveRevoke;
   waitForCLI().then(() => {
     cliReady = true;
     cliReadyFailed = false;
-    if (becameReadyAfterRevoke) {
-      readyAfterInteractiveRevoke = false;
-      send({ type: 'ready', seq: nextSeq() });
-    }
-    // Only re-advertise if we previously withdrew by failing a task; the normal
-    // startup path is already advertised by the auth_ok handler.
-    if (hadFailed) {
-      send({ type: 'ready', seq: nextSeq() });
-    } else if (!currentTask && currentTaskHub().authenticated && !readyAdvertisedForIdleTaskSlot) {
-      readyAdvertisedForIdleTaskSlot = true;
+    const hub = currentTaskHub();
+    if (!currentTask && hub.authenticated && !hub.readyOutstanding) {
       send({ type: 'ready', seq: nextSeq() });
     }
     flushPendingTask();
@@ -2772,10 +2795,7 @@ function dropTaskCredential() {
 // has no pane at all; there the in-flight one-shot child is killed instead,
 // matching what the revoke handler does.
 //
-// opts.reason names the exit in the relaunch log line, and opts.onRelaunchFailed
-// lets a caller with its own post-relaunch latch (the revoke handler's
-// readyAfterInteractiveRevoke) unwind it — the latch is only meaningful if a
-// relaunch actually happened.
+// opts.reason names the exit in the relaunch log line.
 //
 // opts.noRelaunch runs steps 1 and 2 but not step 3 — for the signal-shutdown
 // path (kubestellar/hive#5655), where the PROCESS is exiting: relaunching
@@ -2809,7 +2829,6 @@ function stopAgentForTaskExit(opts) {
     console.log(`Relaunching ${BACKEND} after ${reason}: ${relaunchCLI()}`);
   } catch (e) {
     cliReadyFailed = true;
-    if (opts && opts.onRelaunchFailed) opts.onRelaunchFailed();
     console.error(`Failed to stop and relaunch ${BACKEND} after ${reason}: ${e.message}`);
   }
 }
@@ -3487,7 +3506,6 @@ function failCurrentTask(reason, opts) {
   // claiming to be free. Advertising 'ready' here would just pull in another
   // task the CLI still cannot run. The caller re-advertises on recovery.
   if (!(opts && opts.skipReady)) {
-    readyAdvertisedForIdleTaskSlot = true;
     send({ type: 'ready', seq: nextSeq() });
   }
 }
@@ -4410,6 +4428,9 @@ function handleMessage(data, hub) {
       hub.authenticated = true;
       hub.authFailed = false;
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+      // #7732: a fresh session. Whatever this hub was asked before it
+      // re-authenticated is not a question it is still going to answer.
+      hub.readyOutstanding = false;
       // Scoped to the hub this task would have been re-asserted TO, so a
       // second, non-active hub authenticating mid-review stays as silent as it
       // was before — it was never going to resume anything either way.
@@ -4475,6 +4496,9 @@ function handleMessage(data, hub) {
       break;
 
     case 'task_assign':
+      // #7732: an assignment answers the `ready` it was sent for, whatever
+      // this relay does with it below.
+      hub.readyOutstanding = false;
       if (!currentTask && hub !== hubs[activeHubIndex]) {
         console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
@@ -4513,7 +4537,6 @@ function handleMessage(data, hub) {
         });
         break;
       }
-      readyAdvertisedForIdleTaskSlot = false;
       currentTask = msg;
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
@@ -4642,22 +4665,20 @@ function handleMessage(data, hub) {
       // Pi turn but leaves the CLI alive; relaunchCLI gates ready on a clean
       // prompt; and in headless mode the in-flight one-shot child is killed
       // instead, so the revoked task's process does not keep running.
-      if (CONTRIBUTOR_MODE !== MODE_HEADLESS) {
-        // Set before the stop: the relaunch's readiness callback consumes this
-        // latch to re-advertise availability, and it is only meaningful if a
-        // relaunch actually happened — hence the unwind on failure.
-        readyAfterInteractiveRevoke = true;
-      }
-      stopAgentForTaskExit({
-        reason: 'task revoke',
-        onRelaunchFailed: () => { readyAfterInteractiveRevoke = false; },
-      });
+      //
+      // Interactive mode sends no `ready` here (#5042): the relaunch's
+      // readiness callback advertises once — and only once (#7732) — when the
+      // fresh CLI is confirmed at its prompt with the relay still idle.
+      stopAgentForTaskExit({ reason: 'task revoke' });
       // Stay with the hub that just revoked — it's clearly alive and reachable.
       activeHubIndex = hubs.indexOf(hub);
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) sendTo(hub, { type: 'ready', seq: nextSeq() });
       break;
 
     case 'task_unavailable':
+      // #7732: the hub's explicit "nothing for you" answers the outstanding
+      // `ready`; the retry below asks again.
+      hub.readyOutstanding = false;
       if (hub !== hubs[activeHubIndex]) {
         console.log(`Ignoring task_unavailable from inactive hub ${hub.url}`);
         break;
@@ -4804,6 +4825,9 @@ function connectHub(hub) {
     console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
       `Reconnecting in ${hub.reconnectDelay}ms...`);
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+    // #7732: a `ready` in flight on this socket died with it; the auth_ok of
+    // the reconnect asks afresh.
+    hub.readyOutstanding = false;
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
   });
