@@ -42,6 +42,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   let stateIdx = 0;
   // Guard against a runaway loop in the code under test eating all memory.
   const MAX_RECORDED_COMMANDS = 10000;
+  let currentProcAlive = procAlive;
+  let ctrlCCount = 0;
 
   // #5281: lets a test model a literal tmux send that fails, so the one-shot
   // budget's behaviour on a throwing send is pinned rather than assumed.
@@ -62,6 +64,20 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
     if (/backend_perm_flag_shell/.test(cmd)) return `${backendPermShell === null ? backendPerm : backendPermShell}\n`;
     if (/backend_perm_flag/.test(cmd)) return `${backendPerm}\n`;
+    if (/send-keys\b.*\sC-c\b/.test(cmd)) {
+      ctrlCCount++;
+      if (ctrlCCount >= 2 && backend !== 'pi' && backend !== 'omp') currentProcAlive = false;
+      return '';
+    }
+    if (procAlive && /send-keys\b/.test(cmd) && /Enter\b/.test(cmd) && new RegExp(`\\b${backend}\\b`).test(cmd)) {
+      currentProcAlive = true;
+      ctrlCCount = 0;
+      return '';
+    }
+    if (/respawn-pane\b/.test(cmd)) {
+      currentProcAlive = false;
+      return '';
+    }
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
       // REAL pane rendering (e.g. a codex modal menu) rather than one of the
@@ -94,13 +110,13 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     if (/display-message/.test(cmd)) {
       // The relay asks the PANE what it is running (pane_current_command).
       // procAlive:false models a CLI that exited and left the pane at a shell.
-      return procAlive ? `${backend}\n` : 'bash\n';
+      return currentProcAlive ? `${backend}\n` : 'bash\n';
     }
     if (/cmdline|ps -eo/.test(cmd)) {
       // The relay's liveness probe greps this for the backend name. When the
       // CLI is "dead" the pane is a bare shell — and crucially the string must
       // not contain any known backend name.
-      return procAlive ? `${backend} --allow-all\n` : '/usr/bin/sh\n';
+      return currentProcAlive ? `${backend} --allow-all\n` : '/usr/bin/sh\n';
     }
     // #6662: `gh pr view --json …` is how the relay asks GitHub whether a PR it
     // saw in the pane is actually THIS task's work. `prMeta` is the answer:
@@ -978,6 +994,28 @@ test('#6776 quitLiveCLI on the pi backend actually kills the pi process — two 
       `pi quitLiveCLI must respawn the pane after the C-cs so the pi process is definitively gone — got ${JSON.stringify(after)}`,
     );
   } finally { teardown(relay); }
+});
+
+test('#7733 omp task exit respawns a still-running TUI before typing the relaunch command', () => {
+  // omp 18.2 absorbs the relay's two Ctrl-Cs: one aborts the turn and the next
+  // leaves the TUI idle, still as pane_current_command=omp. The relaunch must
+  // not be typed until that foreground process is gone, or the shell launch
+  // line becomes a user prompt in the previous task's omp session.
+  const relay = loadRelay({ backend: 'omp' });
+  const log = console.log; console.log = () => {};
+  try {
+    const before = relay.__commands.length;
+    relay.stopAgentForTaskExit({ reason: 'test task exit' });
+    const after = relay.__commands.slice(before);
+    const ctrlCs = after.filter(c => /send-keys\s+-t\s+\S+\s+C-c\b/.test(c));
+    assert.ok(ctrlCs.length >= 2, `expected quit C-c sends before relaunch, got ${JSON.stringify(after)}`);
+    const respawnIdx = after.findIndex(c => /tmux\s+respawn-pane\b.*-k\b/.test(c) || /tmux\s+respawn-pane\s+-k\b/.test(c));
+    assert.ok(respawnIdx >= 0, `omp must be force-killed when it survives C-c: ${JSON.stringify(after)}`);
+    const launchIdx = after.findIndex(c => /send-keys\b/.test(c) && /omp/.test(c) && /Enter\b/.test(c) && !/C-c\b/.test(c));
+    assert.ok(launchIdx >= 0, `expected an omp relaunch command: ${JSON.stringify(after)}`);
+    assert.ok(respawnIdx < launchIdx,
+      `the pane must be respawned before relaunch is typed; got ${JSON.stringify(after)}`);
+  } finally { console.log = log; teardown(relay); }
 });
 
 test('a pane that reaches real IDLE_COMPLETE between stall ticks is reported as a normal completion, PR and all', () => {
