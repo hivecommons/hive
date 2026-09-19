@@ -87,7 +87,7 @@ func TestReconnectResume_LeaseStillExpiresWhenProgressStops(t *testing.T) {
 			"still re-adoptable", leaseTTL)
 	}
 	hub.leaseMu.Lock()
-	_, still := hub.leases[identity]
+	still := hub.leaseForLocked(identity, "ct-stall") != nil
 	hub.leaseMu.Unlock()
 	if still {
 		t.Fatalf("an expired lease was left in the registry instead of being dropped")
@@ -152,14 +152,14 @@ func TestReconnectResume_RenewalPreservesTheMatchTuple(t *testing.T) {
 	hub.recordLease("c-fence", "ct-fence", "myorg/repo1", 55, "contributor", 17, now)
 
 	hub.leaseMu.Lock()
-	before := *hub.leases["c-fence"]
+	before := *hub.leaseForLocked("c-fence", "ct-fence")
 	hub.leaseMu.Unlock()
 
 	renewedAt := now.Add(20 * time.Minute)
 	hub.renewLease("c-fence", "ct-fence", renewedAt)
 
 	hub.leaseMu.Lock()
-	after := *hub.leases["c-fence"]
+	after := *hub.leaseForLocked("c-fence", "ct-fence")
 	hub.leaseMu.Unlock()
 
 	if after.identity != before.identity || after.taskID != before.taskID ||
@@ -455,8 +455,8 @@ func onlyLeaseIdentity(t *testing.T, h *ContributeWSHub) string {
 		h.leaseMu.Lock()
 		n := len(h.leases)
 		var id string
-		for k := range h.leases {
-			id = k
+		for _, l := range h.leases {
+			id = l.identity
 		}
 		h.leaseMu.Unlock()
 		if n == 1 {
@@ -471,25 +471,38 @@ func onlyLeaseIdentity(t *testing.T, h *ContributeWSHub) string {
 
 func leaseExpiry(t *testing.T, h *ContributeWSHub, identity string) time.Time {
 	t.Helper()
+	return onlyLeaseOf(t, h, identity).expiresAt
+}
+
+// onlyLeaseOf returns the single lease this identity holds (#7774: the registry
+// is keyed per task, so an identity's lease is found by scanning, and these tests
+// assume it holds exactly one). The caller must NOT hold leaseMu.
+func onlyLeaseOf(t *testing.T, h *ContributeWSHub, identity string) *taskLease {
+	t.Helper()
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
-	l, ok := h.leases[identity]
-	if !ok {
+	var found *taskLease
+	for _, l := range h.leases {
+		if l != nil && l.identity == identity {
+			if found != nil {
+				t.Fatalf("identity %q holds more than one lease; this helper assumes one", identity)
+			}
+			found = l
+		}
+	}
+	if found == nil {
 		t.Fatalf("no lease recorded for identity %q", identity)
 	}
-	return l.expiresAt
+	return found
 }
 
 // backdateLease rewinds a lease's expiry to simulate a task that has been working
 // long enough for the pre-#4260 assignment-anchored window to have lapsed.
 func backdateLease(t *testing.T, h *ContributeWSHub, identity string, lastRenewal time.Time) {
 	t.Helper()
+	l := onlyLeaseOf(t, h, identity)
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
-	l, ok := h.leases[identity]
-	if !ok {
-		t.Fatalf("no lease recorded for identity %q", identity)
-	}
 	l.expiresAt = lastRenewal.Add(leaseTTL)
 }
 

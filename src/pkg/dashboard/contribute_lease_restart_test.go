@@ -223,7 +223,7 @@ func TestLeaseRestart_ExpiredLeaseIsNotRestored(t *testing.T) {
 	// Rewind past the window and force a rewrite so the file itself holds the
 	// expired record (saveLeasesLocked skips expired leases, so write it directly).
 	hub1.leaseMu.Lock()
-	hub1.leases[identity].expiresAt = time.Now().Add(-time.Minute)
+	hub1.leaseForLocked(identity, "ct-stale").expiresAt = time.Now().Add(-time.Minute)
 	hub1.leaseMu.Unlock()
 	writeRawLeaseFile(t, []persistedLease{{
 		Identity: identity, TaskID: "ct-stale", Repo: "myorg/repo1", Number: 11,
@@ -319,7 +319,7 @@ func TestLeaseRestart_HoldLapsesAfterGrace(t *testing.T) {
 	hub, _ := covK2Hub(t)
 	hub.recordLease("c-holder", "ct-held", "myorg/repo1", 10, "contributor", 12, time.Now())
 	hub.leaseMu.Lock()
-	hub.leases["c-holder"].restored = true // as if loaded at boot
+	hub.leaseForLocked("c-holder", "ct-held").restored = true // as if loaded at boot
 	hub.leaseMu.Unlock()
 
 	if len(hub.leasedIssueKeys("c-other", time.Now())) != 1 {
@@ -402,7 +402,7 @@ func TestLeaseRestart_ExpiredLeasesArePruned(t *testing.T) {
 	hub, _ := covK2Hub(t)
 	hub.recordLease("c-gone", "ct-gone", "myorg/repo1", 4, "contributor", 5, time.Now())
 	hub.leaseMu.Lock()
-	hub.leases["c-gone"].expiresAt = time.Now().Add(-time.Second)
+	hub.leaseForLocked("c-gone", "ct-gone").expiresAt = time.Now().Add(-time.Second)
 	hub.leaseMu.Unlock()
 
 	if n := hub.pruneExpiredLeases(time.Now()); n != 1 {

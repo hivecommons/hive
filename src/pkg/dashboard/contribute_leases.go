@@ -16,6 +16,16 @@ import (
 // exact generation it was assigned, and only until the lease expires. It is minted
 // by recordLease at assignment and cleared by revokeLease on every release path; a
 // resume that does not match an unexpired lease here is rejected outright.
+//
+// The registry holds one lease PER TASK, keyed by leaseKey(identity, taskID)
+// (hivecommons/hive#7774). It was keyed by identity alone when it was written, on
+// the premise that an identity holds one task at a time — but the concurrency
+// gate in selectTask lets an identity hold max_concurrent tasks across its live
+// connections (2 for contributor, 5 for trusted/merger), so a second assignment
+// silently evicted the first task's lease. A flap on the connection working the
+// first task then found only the second's lease, the resume was rejected, and a
+// healthy agent was revoked mid-turn and its issue requeued as failed. Every
+// task the hub has issued and not released is now independently re-adoptable.
 type taskLease struct {
 	identity string
 	taskID   string
@@ -63,8 +73,27 @@ type taskLease struct {
 // rejected; the relay simply asks for fresh work via "ready".
 const leaseTTL = wsTaskTimeout
 
-// recordLease registers (or replaces) the server-authoritative lease for an
-// identity when the hub assigns it a task (hivecommons/hive C4). It stores the
+// leaseKey is the registry key for one task held by one identity (#7774). The
+// separator is a control character neither half can contain: identities are
+// ContributorID or ContributorID#session (sanitized labels), task ids are
+// hub-minted. Both halves are also stored on the lease itself, so nothing ever
+// has to parse a key back apart.
+func leaseKey(identity, taskID string) string {
+	return identity + "\x1f" + taskID
+}
+
+// leaseForLocked returns the lease this identity holds for taskID, or nil. It is
+// the one place the composite key is looked up, so callers — and tests — never
+// spell it themselves. The caller must hold leaseMu.
+func (h *ContributeWSHub) leaseForLocked(identity, taskID string) *taskLease {
+	if h.leases == nil {
+		return nil
+	}
+	return h.leases[leaseKey(identity, taskID)]
+}
+
+// recordLease registers (or replaces) the server-authoritative lease for one
+// task issued to an identity (hivecommons/hive C4). It stores the
 // exact {task, repo, generation, tier} the hub issued plus an expiry, so a later
 // reconnect can be validated against what the server actually handed out — never
 // reconstructed from client-supplied fields. Called from selectTask under the new
@@ -77,6 +106,11 @@ func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int,
 // selectTask calls this form with chosen.ref.Key() so an EXTERNAL item's lease
 // carries its real identity; an empty key falls back to the repo#number spelling,
 // which is exact for GitHub work and is what the plain recordLease form records.
+//
+// A new lease never touches the identity's OTHER leases (#7774): an identity
+// holding task X on one connection and being assigned task Y on another keeps
+// both, and each stays re-adoptable on its own. Re-recording the SAME task
+// replaces that task's lease, as before.
 func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, number int, key, tier string, gen uint64, now time.Time) {
 	if identity == "" || taskID == "" {
 		return
@@ -88,7 +122,7 @@ func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, numbe
 	if h.leases == nil {
 		h.leases = make(map[string]*taskLease)
 	}
-	h.leases[identity] = &taskLease{
+	h.leases[leaseKey(identity, taskID)] = &taskLease{
 		identity:  identity,
 		taskID:    taskID,
 		repo:      repo,
@@ -110,19 +144,18 @@ func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, numbe
 // apart and a long-running task does not lose the ability to survive a reconnect
 // simply because it has been working for longer than leaseTTL.
 //
-// It grants NOTHING a caller did not already have. The lease is only touched when it
-// is already the one recorded for this identity AND is for this exact taskID, so a
-// connection can neither renew another identity's lease nor extend a lease for a task
-// it does not hold; a revoked lease is absent and stays absent. Only expiresAt moves —
-// the {task, repo, number, tier, generation} tuple lookupLease matches on is never
-// rewritten, so the C4 exact-match contract and the #2568 generation fence are
-// untouched.
+// It grants NOTHING a caller did not already have. The lease is only touched when
+// this identity holds one for this exact taskID, so a connection can neither renew
+// another identity's lease nor extend a lease for a task it does not hold; a revoked
+// lease is absent and stays absent. Only expiresAt moves — the {task, repo, number,
+// tier, generation} tuple lookupLease matches on is never rewritten, so the C4
+// exact-match contract and the #2568 generation fence are untouched.
 func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
 	if identity == "" || taskID == "" {
 		return
 	}
 	h.leaseMu.Lock()
-	if l, ok := h.leases[identity]; ok && l.taskID == taskID {
+	if l := h.leaseForLocked(identity, taskID); l != nil {
 		l.expiresAt = now.Add(leaseTTL)
 		// #5681: persist the EXTENDED window. Without this a restart would restore
 		// the window as it stood at assignment, so a task that had been progressing
@@ -133,20 +166,34 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
 	h.leaseMu.Unlock()
 }
 
-// revokeLease removes the server-authoritative lease for an identity on any release
-// path (hivecommons/hive C4): disconnect, ready-abandon, task_complete, task_failed,
-// operator requeue, and lease-TTL expiry. Once revoked, a reconnecting relay's
-// task_progress for that task no longer matches any lease and cannot re-adopt it —
-// closing the window in which a released task could be resurrected from client
-// fields. It only deletes the entry when the current lease is for taskID, so a race
-// where a NEW lease was already recorded for the same identity is not clobbered.
+// revokeLease removes the server-authoritative lease for one task an identity holds,
+// on any release path (hivecommons/hive C4): disconnect, ready-abandon,
+// task_complete, task_failed, operator requeue, and lease-TTL expiry. Once revoked,
+// a reconnecting relay's task_progress for that task no longer matches any lease and
+// cannot re-adopt it — closing the window in which a released task could be
+// resurrected from client fields. Only that task's entry goes; the identity's other
+// leases are untouched (#7774). An empty taskID revokes every lease the identity
+// holds — no production path passes one today, but the meaning is kept explicit.
 func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 	if identity == "" {
 		return
 	}
 	h.leaseMu.Lock()
-	if l, ok := h.leases[identity]; ok && (taskID == "" || l.taskID == taskID) {
-		delete(h.leases, identity)
+	revoked := false
+	if taskID != "" {
+		if _, ok := h.leases[leaseKey(identity, taskID)]; ok {
+			delete(h.leases, leaseKey(identity, taskID))
+			revoked = true
+		}
+	} else {
+		for k, l := range h.leases {
+			if l != nil && l.identity == identity {
+				delete(h.leases, k)
+				revoked = true
+			}
+		}
+	}
+	if revoked {
 		// #5681: a revoke that did not reach disk would be undone by the next
 		// restart, resurrecting a released task. Persist it with the same urgency
 		// as the in-memory delete.
@@ -173,17 +220,21 @@ func (h *ContributeWSHub) lookupLease(identity, taskID, repo string, number int,
 	}
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
-	l, ok := h.leases[identity]
-	if !ok {
+	// Keyed by {identity, task} (#7774): a lease for a DIFFERENT task the same
+	// identity holds is simply not this one, rather than a mismatch that rejects
+	// the resume — which is what revoked healthy work whenever an identity held
+	// more than one task.
+	l := h.leaseForLocked(identity, taskID)
+	if l == nil {
 		return nil
 	}
 	if now.After(l.expiresAt) {
 		// Expired: drop it so it can never be re-adopted, and treat as no lease.
-		delete(h.leases, identity)
+		delete(h.leases, leaseKey(identity, taskID))
 		h.saveLeasesLocked()
 		return nil
 	}
-	if l.taskID != taskID || l.gen != clientGen {
+	if l.gen != clientGen {
 		return nil
 	}
 	if repo != "" && l.repo != repo {
@@ -227,8 +278,9 @@ func (h *ContributeWSHub) taskLeasesPath() string {
 // outside it, two concurrent mutations could land their renames in the opposite
 // order and leave the file describing an OLDER registry than the one in memory —
 // and the whole point of the file is that it is what the next process boots from.
-// The cost is negligible: the file holds one record per contributor identity
-// (bounded by maxWSConnections) and every mutation site is low-frequency —
+// The cost is negligible: the file holds one record per held task (bounded by
+// maxWSConnections times the tier's max_concurrent) and every mutation site is
+// low-frequency —
 // assignment, release, and one task_progress per relay per PROGRESS_REPORT_INTERVAL_MS.
 //
 // Leases already past their expiry are skipped rather than written: a lease that
@@ -371,7 +423,10 @@ func (h *ContributeWSHub) loadLeases() {
 		if key == "" {
 			key = worksource.Ref{Repo: rec.Repo, Number: rec.Number}.Key()
 		}
-		h.leases[rec.Identity] = &taskLease{
+		// One record per task (#7774). A file written before that held at most
+		// one record per identity and loads unchanged; a file written after may
+		// hold several for one identity, each of which must come back.
+		h.leases[leaseKey(rec.Identity, rec.TaskID)] = &taskLease{
 			identity:  rec.Identity,
 			taskID:    rec.TaskID,
 			repo:      rec.Repo,
@@ -417,9 +472,9 @@ func (h *ContributeWSHub) loadLeases() {
 func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	dropped := 0
 	h.leaseMu.Lock()
-	for identity, l := range h.leases {
+	for k, l := range h.leases {
 		if l == nil || l.expiresAt.IsZero() || now.After(l.expiresAt) {
-			delete(h.leases, identity)
+			delete(h.leases, k)
 			dropped++
 		}
 	}
@@ -457,8 +512,11 @@ const leaseHoldGraceAfterStart = 2 * time.Minute
 // it returns nothing and the guard behaves exactly as it did before.
 //
 // A lease belonging to the REQUESTER is deliberately never an exclusion: asking for
-// work is itself the statement that it is not holding that task any more, and the
-// assignment replaces its lease.
+// work is itself the statement that it is not holding that task any more. (Since
+// #7774 an assignment no longer replaces the requester's other leases, so for an
+// identity that holds several tasks this exception is slightly wider than it needs
+// to be during the grace window; the live-connection scan takes over the moment
+// its other connections reconnect, and the window is two minutes after a restart.)
 func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) map[string]bool {
 	keys := make(map[string]bool)
 	if h == nil || h.startedAt.IsZero() || now.Sub(h.startedAt) > leaseHoldGraceAfterStart {
@@ -466,8 +524,8 @@ func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) 
 	}
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
-	for identity, l := range h.leases {
-		if l == nil || !l.restored || identity == exceptIdentity {
+	for _, l := range h.leases {
+		if l == nil || !l.restored || l.identity == exceptIdentity {
 			continue
 		}
 		if l.expiresAt.IsZero() || now.After(l.expiresAt) {

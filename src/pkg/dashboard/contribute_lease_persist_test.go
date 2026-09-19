@@ -33,7 +33,7 @@ func persistHub(t *testing.T, leasesPath string) *ContributeWSHub {
 		persistTaskLedgers: true,
 		taskLeasesFile:     leasesPath,
 		leases: map[string]*taskLease{
-			"clanker-7": {
+			leaseKey("clanker-7", "task-5681"): {
 				identity:  "clanker-7",
 				taskID:    "task-5681",
 				repo:      "hivecommons/hive",
@@ -101,7 +101,7 @@ func TestLeasePersist_FileIsOwnerOnly(t *testing.T) {
 func TestLeasePersist_ExpiredLeaseNeverWritten(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task-leases.json")
 	h := persistHub(t, path)
-	h.leases["expired-1"] = &taskLease{
+	h.leases[leaseKey("expired-1", "task-old")] = &taskLease{
 		identity:  "expired-1",
 		taskID:    "task-old",
 		repo:      "hivecommons/hive",
@@ -109,7 +109,7 @@ func TestLeasePersist_ExpiredLeaseNeverWritten(t *testing.T) {
 		gen:       1,
 		expiresAt: time.Now().Add(-time.Minute),
 	}
-	h.leases["zero-expiry"] = &taskLease{
+	h.leases[leaseKey("zero-expiry", "task-zero")] = &taskLease{
 		identity: "zero-expiry",
 		taskID:   "task-zero",
 		gen:      2,
@@ -204,7 +204,7 @@ func TestLeasePersist_SaveThenLoadRestoresLease(t *testing.T) {
 	h2.loadLeases()
 
 	h2.leaseMu.Lock()
-	lease := h2.leases["clanker-7"]
+	lease := h2.leaseForLocked("clanker-7", "task-5681")
 	h2.leaseMu.Unlock()
 	if lease == nil {
 		t.Fatal("lease did not survive the save/load round trip")

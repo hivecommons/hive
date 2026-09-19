@@ -41,8 +41,8 @@ func leaseCountFor(h *ContributeWSHub, identity string) int {
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
 	n := 0
-	for id := range h.leases {
-		if id == identity {
+	for _, l := range h.leases {
+		if l != nil && l.identity == identity {
 			n++
 		}
 	}

@@ -234,7 +234,7 @@ The relay speaks to whatever backend you set up — pass it to `contribute-setup
 
 ## Running multiple backends under one account
 
-One GitHub account maps to one contributor profile per hub — one `ContributorID`, one auth token, one trust tier. The hub keys task leases, assignment cooldowns, failure streaks, and ownership fences on that identity, so without a distinguisher two relays under the same account collide on a single active-task slot.
+One GitHub account maps to one contributor profile per hub — one `ContributorID`, one auth token, one trust tier. The hub keys assignment cooldowns, failure streaks, and ownership fences on that identity, so without a distinguisher two relays under the same account collide on a single active-task slot. (Task leases are the exception: since [#7774](https://github.com/hivecommons/hive/issues/7774) the hub keeps one lease per task an identity holds, so an identity whose tier allows `max_concurrent > 1` can hold several tasks across its connections and a reconnect on any one of them resumes that task rather than being answered `task_revoke` because a later task had replaced its lease.)
 
 The optional `HIVE_SESSION` session label removes that limit. When a relay declares a session, the hub keys the per-identity state above on `ContributorID#session` instead, so each labeled relay holds its own task independently. Because `HIVE_SESSION` **defaults to the backend name**, the common case needs no configuration at all — this runs three concurrent relays under one account, with sessions `claude`, `agy`, and `pi`:
 
