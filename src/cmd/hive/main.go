@@ -3822,7 +3822,11 @@ func (b *boot) bootLaunch() {
 // bootHeartbeat resolves the hub target and, when this spoke reports to a
 // hub, starts the heartbeat and task-status pushes with every hub-delivered
 // callback (restart, upgrade, App config, banner, project claim, ...).
-func (b *boot) bootHeartbeat() {
+func (b *boot) bootHeartbeat() { b.bootHeartbeatWith(defaultBootHeartbeatDeps()) }
+
+// bootHeartbeatWith is bootHeartbeat with its long-lived effects injected;
+// see bootHeartbeatDeps.
+func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 	ctx, cfg, logger, startTime, repoTargetMisconfigured := b.ctx, b.cfg, b.logger, b.startTime, b.repoTargetMisconfigured
 	repoTargetIssueMessage, gov, agentMgr, dashSrv, beadStores := b.repoTargetIssueMessage, b.gov, b.agentMgr, b.dashSrv, b.beadStores
 	tokenCollector, fleetStatsCollector, activityCollector, onDemandFromPack := b.tokenCollector, b.fleetStatsCollector, b.activityCollector, b.onDemandFromPack
@@ -3831,15 +3835,6 @@ func (b *boot) bootHeartbeat() {
 	hubURL := hubTgt.url
 	cfg.Hub.Enabled, cfg.Hub.URL, cfg.Hub.ClusterID = hubTgt.enabled, hubTgt.url, hubTgt.clusterID
 	if hubTgt.heartbeatsToHub() {
-		// Heartbeat cadence is INDEPENDENT of the governor eval interval. It was
-		// previously tied to cfg.Governor.EvalIntervalS, so a low-ACMM hive
-		// (which evaluates infrequently by design — e.g. ~10 min at L2) beat the
-		// hub only every ~10 min. The hub marks a hive stale after
-		// heartbeatHealthStaleness (5 min), so such hives showed a gray/stale
-		// dot for half of every cycle despite being perfectly healthy. Beat on a
-		// fixed interval comfortably under that 5-min threshold so every hive,
-		// regardless of ACMM level, stays fresh on the hub.
-		const heartbeatSendInterval = 2 * time.Minute
 		// Publish the collect-independent identity BEFORE the loop starts, so
 		// this spoke can report liveness even if its very first collects time
 		// out. collect() below reaches api.github.com (owner-token validation,
@@ -3847,7 +3842,7 @@ func (b *boot) bootHeartbeat() {
 		// a hive with real repos routinely exceeds the collect budget right
 		// after a restart. Without this, such a spoke sent NOTHING and read
 		// OFFLINE on the hub while being perfectly healthy.
-		hub.PublishHeartbeatIdentity(
+		deps.publishIdentity(
 			cfg.HiveID,
 			cfg.Project.Org,
 			cfg.Project.PrimaryRepo,
@@ -3856,7 +3851,7 @@ func (b *boot) bootHeartbeat() {
 			processStartedAt.UTC().Format(time.RFC3339),
 			gitShort,
 		)
-		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
+		deps.startHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
 			if !cfg.Hub.Enabled {
 				return nil
 			}
@@ -5003,7 +4998,7 @@ func (b *boot) bootHeartbeat() {
 			}
 		}))
 
-		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
+		deps.startTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
 			reg, active := dashSrv.ContributorSummary()
 			lb := dashSrv.LeaderboardForHub()
 			out := make([]hub.LeaderboardEntry, len(lb))
