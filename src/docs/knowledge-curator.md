@@ -171,7 +171,7 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - `DELETE` disconnects the live source and removes matching entries from
   `Config.Knowledge.GitSources`, then persists (`api_knowledge.go:1005-1015`).
 - Editing `git_sources:` directly in `hive.yaml` takes effect on the next
-  process restart (main.go's startup loop at `cmd/hive/main.go:2303-2347`);
+  process restart (main.go's startup loop at `cmd/hive/main.go:2420-2466`);
   it does not hot-reload while the process is running. Use the API for a
   live change without a restart.
 
@@ -180,11 +180,11 @@ and are the *same* underlying list as `knowledge.git_sources` in
 - **Never appears / `knowledge not enabled`**: if `knowledge.enabled` is
   `false` but `git_sources` is non-empty, startup auto-enables a minimal
   knowledge API (`engine: file`) just to host the git sources
-  (`main.go:2651-2658`) — so a git source can work even with `knowledge.enabled: false`.
+  (`main.go:2421-2427`) — so a git source can work even with `knowledge.enabled: false`.
   If you still get "knowledge not enabled" from the API, no source has
   triggered that auto-enable yet (empty `git_sources` list).
 - **Connect fails immediately**: check the hive log for `failed to connect
-  git source` with the URL and error (`main.go:2667`) — most often an
+  git source` with the URL and error (`main.go:2437`) — most often an
   SSRF-validation rejection, a bad branch name, or (for private repos) an
   authentication failure from git itself.
 - **Connects but `subpath` errors**: `subpath "<x>" not found after clone` —
@@ -193,6 +193,110 @@ and are the *same* underlying list as `knowledge.git_sources` in
   (`GET /api/knowledge/git-sources`) — the primer only registers a source's
   `FileStore` for priming after it reports ready
   (`main.go:2450-2461`).
+
+## Local vaults (`knowledge.vaults`)
+
+`knowledge.vaults` lists local file-based (Obsidian-style) vaults that main.go
+auto-connects at boot (`cmd/hive/main.go:2381-2417`):
+
+```yaml
+knowledge:
+  vaults:
+    - name: team-notes
+      path: /data/vaults/team-notes
+      auto_index: true
+      git_sync: true
+```
+
+For each entry, boot git-inits the directory if needed
+(`InitVaultRepo`, `pkg/knowledge/gitsync.go:146`), seeds it from
+`/opt/hive/seed-data/wiki` (`SeedVaultContent`, `gitsync.go:162`), connects it
+to the knowledge API, and registers its store with the kick primer at the
+**personal** layer.
+
+- `auto_index` is parsed-but-unactioned: connecting a vault always indexes it
+  (`ConnectVault` → `NewFileStore`, `pkg/knowledge/api.go:588-606`); the flag
+  is only echoed in the `vault auto-connected` log line. Setting it `false`
+  does not skip indexing.
+- `git_sync: true` adds the vault to a background syncer that runs
+  `git pull` and reindexes every 60 seconds
+  (`gitSyncInterval`, `gitsync.go:14`) — the Obsidian Git integration path.
+
+## Document sources (`knowledge.documents`)
+
+`knowledge.documents` imports standalone documents (PDF, HTML, markdown,
+plain text) as knowledge facts at boot (`cmd/hive/main.go:2467-2494`):
+
+```yaml
+knowledge:
+  documents:
+    - name: style-guide
+      url: https://example.com/style-guide.pdf   # or file_path: /data/docs/guide.pdf
+      layer: project
+```
+
+Each entry names either a `url` to fetch or a local `file_path`. Imports run
+once per boot via `KnowledgeAPI.ImportDocument`; the parsed facts land in the
+vault with a `doc-` slug prefix (`pkg/knowledge/docsource.go`). Fetches are
+capped at 50 MB with a 30-second timeout (`docsource.go:19-24`) and go through
+the same SSRF validation as git sources. Like `git_sources`, a non-empty
+`documents` list auto-enables a minimal file-engine knowledge API even when
+`knowledge.enabled: false` (`main.go:2468-2475`). Documents can also be
+imported at runtime via `POST /api/knowledge/documents` — see
+[api-reference.md](api-reference.md).
+
+## Bead synthesizer (`knowledge.bead_synthesizer`)
+
+The bead synthesizer periodically scans every agent's **closed** beads,
+classifies them into wiki fact types, and writes the results into a dedicated
+vault so future kicks are primed with past findings
+(`pkg/knowledge/bead_synthesizer.go`, wired at `cmd/hive/main.go:2508-2581`).
+
+**It is on by default.** `enabled` is a tri-state pointer that defaults to
+true when absent (`IsEnabled`, `pkg/config/knowledge_config.go:51-56`), and
+main.go auto-enables a file-based knowledge API for it even when
+`knowledge.enabled: false` (`main.go:2498-2505`). A hive that never mentions
+`knowledge:` in its config still runs the hourly synthesis loop and the
+retention manager below. `bead_synthesizer.enabled: false` is the only
+opt-out.
+
+```yaml
+knowledge:
+  bead_synthesizer:
+    # enabled: false                # opt out (defaults to true)
+    schedule: hourly                # hourly (default) or daily
+    min_confidence: 0.0             # drop facts classified below this
+    target_layer: personal          # primer layer for the synth vault
+    max_facts_per_cycle: 0          # 0 = unlimited
+    vault_path: /data/vaults/bead-synth-wiki
+    retention_policy:
+      max_beads: 5000
+      archive_after_synth_days: 7
+      high_priority_retain_days: 30
+      preserve_with_deps: true
+```
+
+| Field | Current behavior |
+| --- | --- |
+| `schedule` | `hourly` (also the default and the fallback for unrecognized values) or `daily` (`ParseSynthSchedule`, `bead_synthesizer.go:929-937`). |
+| `min_confidence` | Facts whose heuristic classification confidence (`ClassifyBead`, `bead_synthesizer.go:254`, emits 0.5–0.8) falls below this are skipped. Default `0.0` — everything classifiable is ingested. |
+| `target_layer` | Layer the synth vault is registered at with the primer; empty defaults to `personal` (`main.go:2525-2528`). |
+| `max_facts_per_cycle` | Cap per synthesis cycle after dedup; `0` means unlimited (`bead_synthesizer.go:223-226`). |
+| `vault_path` | Defaults to `/data/vaults/bead-synth-wiki`; the directory is created and auto-connected as vault `bead-synth-wiki` (`main.go:2510-2522`). |
+
+`retention_policy` drives a bead lifecycle manager that archives old beads —
+it is always constructed, whether or not the block is present
+(`main.go:2541-2553`). Zero-valued fields fill in as `max_beads: 5000`,
+`archive_after_synth_days: 7`, `high_priority_retain_days: 30`
+(`pkg/knowledge/bead_lifecycle.go:29-31`); archiving stops once counts drop to
+80% of `max_beads`. One asymmetry to watch: `preserve_with_deps` (never
+archive a bead with open dependents) defaults to **true when the whole
+`retention_policy` block is absent**, but to **false when the block is present
+without the key** — set it explicitly whenever you write the block.
+
+Runtime status and toggle: `GET /api/knowledge/bead-synthesizer` and
+`PUT /api/knowledge/bead-synthesizer/enabled` (owner-only) — see
+[api-reference.md](api-reference.md).
 
 ## Open questions
 
