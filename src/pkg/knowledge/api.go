@@ -1259,14 +1259,14 @@ func (k *KnowledgeAPI) obsidianSyncToFile(slug, title, factType, layer string, c
 
 	var buf strings.Builder
 	buf.WriteString("---\n")
-	fmt.Fprintf(&buf, "title: %s\n", title)
-	fmt.Fprintf(&buf, "type: %s\n", factType)
-	fmt.Fprintf(&buf, "layer: %s\n", layer)
+	fmt.Fprintf(&buf, "title: %s\n", sanitizeFrontmatterValue(title))
+	fmt.Fprintf(&buf, "type: %s\n", sanitizeFrontmatterValue(factType))
+	fmt.Fprintf(&buf, "layer: %s\n", sanitizeFrontmatterValue(layer))
 	fmt.Fprintf(&buf, "confidence: %.2f\n", confidence)
 	if len(tags) > 0 {
-		fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(tags, ", "))
+		fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(tags))
 	}
-	fmt.Fprintf(&buf, "source: obsidian:%s\n", req.Vault())
+	fmt.Fprintf(&buf, "source: obsidian:%s\n", sanitizeFrontmatterValue(req.Vault()))
 	fmt.Fprintf(&buf, "synced: %s\n", time.Now().UTC().Format(time.RFC3339))
 	buf.WriteString("---\n\n")
 	buf.WriteString(req.Content)

@@ -110,18 +110,18 @@ func (s *FileStore) WriteFacts(facts []ExtractedFact) error {
 
 		var buf strings.Builder
 		buf.WriteString("---\n")
-		fmt.Fprintf(&buf, "title: %s\n", f.Title)
+		fmt.Fprintf(&buf, "title: %s\n", sanitizeFrontmatterValue(f.Title))
 		if f.Type != "" {
-			fmt.Fprintf(&buf, "type: %s\n", string(f.Type))
+			fmt.Fprintf(&buf, "type: %s\n", sanitizeFrontmatterValue(string(f.Type)))
 		}
 		if f.Confidence > 0 {
 			fmt.Fprintf(&buf, "confidence: %.2f\n", f.Confidence)
 		}
 		if len(f.Tags) > 0 {
-			fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(f.Tags, ", "))
+			fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(f.Tags))
 		}
 		if len(f.Related) > 0 {
-			fmt.Fprintf(&buf, "related: [%s]\n", strings.Join(f.Related, ", "))
+			fmt.Fprintf(&buf, "related: [%s]\n", sanitizeFrontmatterList(f.Related))
 		}
 		fmt.Fprintf(&buf, "imported: %s\n", time.Now().UTC().Format(time.RFC3339))
 		buf.WriteString("---\n\n")

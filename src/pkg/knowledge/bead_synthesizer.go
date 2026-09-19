@@ -481,17 +481,17 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 
 	var buf strings.Builder
 	buf.WriteString("---\n")
-	fmt.Fprintf(&buf, "title: %s\n", fact.Title)
-	fmt.Fprintf(&buf, "type: %s\n", string(fact.Type))
-	fmt.Fprintf(&buf, "layer: %s\n", s.config.TargetLayer)
+	fmt.Fprintf(&buf, "title: %s\n", sanitizeFrontmatterValue(fact.Title))
+	fmt.Fprintf(&buf, "type: %s\n", sanitizeFrontmatterValue(string(fact.Type)))
+	fmt.Fprintf(&buf, "layer: %s\n", sanitizeFrontmatterValue(s.config.TargetLayer))
 	fmt.Fprintf(&buf, "confidence: %.2f\n", fact.Confidence)
 	if len(fact.Tags) > 0 {
-		fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(fact.Tags, ", "))
+		fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(fact.Tags))
 	}
 	if len(fact.Related) > 0 {
-		fmt.Fprintf(&buf, "related: [%s]\n", strings.Join(fact.Related, ", "))
+		fmt.Fprintf(&buf, "related: [%s]\n", sanitizeFrontmatterList(fact.Related))
 	}
-	fmt.Fprintf(&buf, "source: %s\n", fact.SourcePR)
+	fmt.Fprintf(&buf, "source: %s\n", sanitizeFrontmatterValue(fact.SourcePR))
 	fmt.Fprintf(&buf, "synthesized: %s\n", time.Now().UTC().Format(time.RFC3339))
 	buf.WriteString("---\n\n")
 	buf.WriteString(fact.Body)

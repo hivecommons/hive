@@ -417,16 +417,16 @@ func (ds *DocumentSource) writeFactsToVault(facts []ExtractedFact, synthesized t
 
 		var buf strings.Builder
 		buf.WriteString("---\n")
-		fmt.Fprintf(&buf, "title: %s\n", fact.Title)
-		fmt.Fprintf(&buf, "type: %s\n", string(fact.Type))
-		fmt.Fprintf(&buf, "layer: %s\n", string(ds.config.Layer))
+		fmt.Fprintf(&buf, "title: %s\n", sanitizeFrontmatterValue(fact.Title))
+		fmt.Fprintf(&buf, "type: %s\n", sanitizeFrontmatterValue(string(fact.Type)))
+		fmt.Fprintf(&buf, "layer: %s\n", sanitizeFrontmatterValue(string(ds.config.Layer)))
 		fmt.Fprintf(&buf, "confidence: %.2f\n", fact.Confidence)
 		if len(fact.Tags) > 0 {
-			fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(fact.Tags, ", "))
+			fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(fact.Tags))
 		}
-		fmt.Fprintf(&buf, "source: %s\n", fact.SourcePR)
+		fmt.Fprintf(&buf, "source: %s\n", sanitizeFrontmatterValue(fact.SourcePR))
 		if ds.config.URL != "" {
-			fmt.Fprintf(&buf, "source_url: %s\n", ds.config.URL)
+			fmt.Fprintf(&buf, "source_url: %s\n", sanitizeFrontmatterValue(ds.config.URL))
 		}
 		fmt.Fprintf(&buf, "synthesized: %s\n", synthesized.Format(time.RFC3339))
 		buf.WriteString("---\n\n")
