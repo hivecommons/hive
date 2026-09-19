@@ -2186,11 +2186,13 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	task := h.selectTask(s.contributor)
 	switch {
 	case task == nil:
-		// Defensive backstop only: after #2436 and #2546 every selectTask
-		// path returns an explicit message, so this should not be reached.
-		// Kept so an unforeseen nil still fails safe (no send) rather than
+		// Reached when the claim selectTask committed was released while its
+		// GitHub round-trips were still in flight — the socket dropped mid-mint
+		// and the disconnect path cleared it (#7775). There is nothing to send.
+		// Every other selectTask path returns an explicit message (#2436,
+		// #2546); an unforeseen nil still fails safe (no send) rather than
 		// panicking.
-		h.logger.Info("[contribute-ws] no tasks available",
+		h.logger.Info("[contribute-ws] no task to send",
 			"username", s.contributor.profile.GitHubUsername,
 		)
 	case task.Type == "task_unavailable":
@@ -2213,7 +2215,13 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		)
 	default:
 		if err := s.contributor.send(*task); err != nil {
-			h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
+			// #7775: the socket is already gone — typically closed by the
+			// heartbeat loop while this ready waited its turn. Undo the claim so
+			// the disconnect path finds nothing to release: no release cooldown
+			// on an issue the contributor never received, no lease left to
+			// expire, no rate-window slot spent on a task that never shipped.
+			h.logger.Warn("[contribute-ws] failed to send task_assign; releasing the undelivered claim", "error", err, "task", task.TaskID)
+			h.rollbackAssignment(s.contributor, task.TaskID)
 			return true
 		}
 		pickupKey := task.TaskKey

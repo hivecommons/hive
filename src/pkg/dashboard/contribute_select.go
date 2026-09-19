@@ -142,6 +142,66 @@ func (h *ContributeWSHub) recordAssignment(identity string, at time.Time) {
 	h.rateMu.Unlock()
 }
 
+// unrecordAssignment removes ONE assignment stamp `at` for the identity — the
+// undo of recordAssignment, for a claim that was committed under selectMu and then
+// could not be delivered (the token mint failed, or the task_assign send failed
+// because the socket had already closed) (hivecommons/hive#7775). Without it a
+// task the contributor never received would still consume one of its
+// max_per_hour / max_per_day slots. Caller must NOT hold rateMu.
+func (h *ContributeWSHub) unrecordAssignment(identity string, at time.Time) {
+	if identity == "" || at.IsZero() {
+		return
+	}
+	h.rateMu.Lock()
+	defer h.rateMu.Unlock()
+	times := h.assignmentTimes[identity]
+	for i := len(times) - 1; i >= 0; i-- {
+		if times[i].Equal(at) {
+			times = append(times[:i], times[i+1:]...)
+			break
+		}
+	}
+	if len(times) == 0 {
+		delete(h.assignmentTimes, identity)
+	} else {
+		h.assignmentTimes[identity] = times
+	}
+}
+
+// rollbackAssignment undoes a claim selectTask committed to a connection whose
+// task_assign never reached the relay (hivecommons/hive#7775): the scoped-token
+// mint failed after the claim, or the send failed because the heartbeat loop had
+// already closed the socket. It clears the connection's task, revokes the lease
+// and frees the rate-window slot, so that nothing downstream — releaseOnDisconnect
+// in particular — sees a task to release: no release cooldown is booked on an issue
+// nobody worked, and no lease is left to expire. Guarded on taskID so a claim that
+// was already released (or replaced) by another path is left alone. The generation
+// is bumped as on every other release path, so the never-shipped generation can
+// never be echoed back and accepted.
+func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID string) {
+	if c == nil || taskID == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.currentTask == nil || c.currentTask.TaskID != taskID {
+		c.mu.Unlock()
+		return
+	}
+	assignedAt := c.taskAssignedAt
+	c.currentTask = nil
+	c.currentPrompt = ""
+	c.currentLabels = nil
+	c.pendingToken = ""
+	c.credentialDelivered = false
+	c.tokenMintedAt = time.Time{}
+	c.lastLeaseRenew = time.Time{}
+	c.taskAssignedAt = time.Time{}
+	c.currentTaskGen = h.nextTaskGen()
+	c.mu.Unlock()
+	h.revokeLease(identityOf(c), taskID)
+	h.unrecordAssignment(identityOf(c), assignedAt)
+}
+
 // taskUnavailable builds the explicit negative-ack the ready handler sends in
 // place of silence. It carries a machine-readable reason so the failure is
 // diagnosable rather than an indefinite hang (kubestellar/hive#2436, finding 1).
@@ -258,8 +318,28 @@ func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
+	// selectMu makes offer→claim atomic: scan the candidates, pick one, commit
+	// it to the connection, so two contributors are never handed the same item.
+	// It guards IN-MEMORY state only. The GitHub round-trips that decorate a
+	// claim — the scoped-token mint and the push-permission lookup — run AFTER
+	// the unlock below (hivecommons/hive#7775). They used to run inside this
+	// section, which serialized every contributor's `ready` behind one
+	// contributor's GitHub latency; and because handleReady runs on the
+	// connection's read goroutine, a contributor queued behind a few slow
+	// selections stopped reading the hub's pongs, was hung up on by the
+	// heartbeat loop, and then had an assignment committed to its dead socket.
+	// The claim itself (currentTask, the lease, the rate-window slot) IS the
+	// reservation other selections see, so it can safely be decorated unlocked
+	// and rolled back if the decoration fails.
 	h.selectMu.Lock()
-	defer h.selectMu.Unlock()
+	unlocked := false
+	unlock := func() {
+		if !unlocked {
+			unlocked = true
+			h.selectMu.Unlock()
+		}
+	}
+	defer unlock()
 
 	if h.server == nil {
 		// No server reference — the hub cannot read status or config, so there is
@@ -802,6 +882,79 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			"username", ownUsername, "repo", chosen.repoFull, "number", chosen.number)
 	}
 
+	// The task id carries the item's own identity segment so two zero-numbered
+	// external items cannot mint the same id within one second
+	// (kubestellar/hive#4245). GitHub-backed work keeps its historical
+	// "ct-<repo>-<number>-<unix>" shape byte for byte.
+	taskID := fmt.Sprintf("ct-%s-%s-%d", chosen.repoFull, taskIDSegment(chosen.ref), time.Now().Unix())
+
+	// #2568: mint a fresh assignment generation for this task. It is stamped on the
+	// connection, shipped in task_assign below, and echoed back by the relay so a
+	// later stale-worker completion carrying an older generation is fenced out.
+	gen := h.nextTaskGen()
+	assignedAt := time.Now()
+
+	// Commit the CLAIM under selectMu (#7775): currentTask is what the
+	// activeIssues scan above reads, so from here on no other selection can pick
+	// this item. The prompt and the scoped token are filled in below, after the
+	// unlock, once the GitHub round-trips that produce them have returned; if
+	// either the mint or the send then fails, rollbackAssignment undoes exactly
+	// this claim.
+	c.mu.Lock()
+	c.currentTask = &WSTaskAssign{
+		TaskID:     taskID,
+		Kind:       "issue",
+		Role:       requestedRole,
+		Repo:       chosen.repoFull,
+		Number:     chosen.number,
+		Title:      chosen.title,
+		Key:        chosen.ref.Key(),
+		SourceType: chosen.ref.SourceType,
+		ExternalID: chosen.ref.ExternalID,
+		URL:        chosen.url,
+	}
+	c.currentTaskGen = gen
+	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
+	// auto-releases the task if it is not renewed within wsTaskTimeout.
+	c.lastLeaseRenew = assignedAt
+	// Duration anchor for the run log — lastLeaseRenew moves on every
+	// progress report, so it cannot serve as the start time. Also the stamp
+	// rollbackAssignment hands back to unrecordAssignment.
+	c.taskAssignedAt = assignedAt
+	c.currentLabels = chosen.labels
+	c.lastIdleReason = ""
+	// The prompt and the credential are not known yet — see below. A stale
+	// pendingToken from a previous task must not survive into this claim.
+	c.currentPrompt = ""
+	c.pendingToken = ""
+	c.credentialDelivered = false
+	c.tokenMintedAt = time.Time{}
+	c.mu.Unlock()
+
+	// C4: record the SERVER-AUTHORITATIVE lease for this assignment so a later
+	// reconnect can be validated against what the hub actually issued — the exact
+	// {task, repo, generation, tier} bound here — instead of reconstructing ownership
+	// from client-supplied task_progress fields. Revoked on every release path.
+	// #5681: record the item's canonical key too, so the double-assignment guard can
+	// recognise the lease after a restart — including for external work, whose
+	// identity is Key rather than repo#number (#4245).
+	h.recordLeaseForKey(identityOf(c), taskID, chosen.repoFull, chosen.number,
+		chosen.ref.Key(), c.profile.TrustTier, gen, assignedAt)
+
+	// #2566: record this assignment against the identity's rolling hourly/daily
+	// windows so the next selectTask enforces tier_limits.max_per_hour /
+	// max_per_day. Recorded here, under the lock, so the next selection's count
+	// is exact; a refused pass (which returns early above) never consumes a slot,
+	// and a claim that fails to ship hands its slot back through
+	// rollbackAssignment (#7775). Uses the same identity key as the concurrency
+	// gate.
+	h.recordAssignment(identityOf(c), assignedAt)
+
+	// The claim is committed and visible to every other selection; nothing below
+	// touches the shared selection state, so the fleet-wide lock is released
+	// BEFORE the GitHub round-trips (#7775).
+	unlock()
+
 	// Mint through the shared path so task_assign and the heartbeat token-refresh
 	// advertise tokens minted the same way (#2393 item 2). tokenMintedAt below
 	// arms the refresh ticker for the token we hand out here. C4: the token is
@@ -815,16 +968,15 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		// hang. We do not fall through to another candidate: the mint is keyed on
 		// the contributor's tier, not the candidate, so every candidate in this
 		// pass would fail identically. Preserve the existing Warn log.
+		//
+		// #7775: the claim was committed before the mint; hand it back in full so
+		// the item is offerable again at once and no slot, lease or cooldown
+		// records a task that never shipped.
 		h.logger.Warn("[contribute-ws] failed to mint scoped token — task unavailable",
 			"tier", c.profile.TrustTier, "error", err)
+		h.rollbackAssignment(c, taskID)
 		return h.taskUnavailable(taskUnavailableTokenMintFailed)
 	}
-
-	// The task id carries the item's own identity segment so two zero-numbered
-	// external items cannot mint the same id within one second
-	// (kubestellar/hive#4245). GitHub-backed work keeps its historical
-	// "ct-<repo>-<number>-<unix>" shape byte for byte.
-	taskID := fmt.Sprintf("ct-%s-%s-%d", chosen.repoFull, taskIDSegment(chosen.ref), time.Now().Unix())
 
 	// #2539: build the prompt through the shared, credential-free buildTaskPrompt
 	// so the exact text shipped in task_assign below can also be PREVIEWED
@@ -844,36 +996,19 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// by the post-merge reconciliation safety net (#4088, unchanged).
 	prompt += attributionPromptInstruction(promptInvocationMeta(c))
 
-	// #2568: mint a fresh assignment generation for this task. It is stamped on the
-	// connection, shipped in task_assign below, and echoed back by the relay so a
-	// later stale-worker completion carrying an older generation is fenced out.
-	gen := h.nextTaskGen()
-
+	// Decorate the claim. If it is no longer on the connection — the socket
+	// dropped during the GitHub round-trips and releaseOnDisconnect released it —
+	// there is nobody to send to: return nil, which handleReady treats as
+	// "nothing to send", rather than a task_assign for a released item.
 	c.mu.Lock()
-	c.currentTask = &WSTaskAssign{
-		TaskID:     taskID,
-		Kind:       "issue",
-		Role:       requestedRole,
-		Repo:       chosen.repoFull,
-		Number:     chosen.number,
-		Title:      chosen.title,
-		Key:        chosen.ref.Key(),
-		SourceType: chosen.ref.SourceType,
-		ExternalID: chosen.ref.ExternalID,
-		URL:        chosen.url,
+	if c.currentTask == nil || c.currentTask.TaskID != taskID {
+		c.mu.Unlock()
+		h.logger.Info("[contribute-ws] claim released while its credential was being minted; not sending task_assign",
+			"username", ownUsername, "task", taskID)
+		return nil
 	}
-	c.currentTaskGen = gen
-	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
-	// auto-releases the task if it is not renewed within wsTaskTimeout.
-	c.lastLeaseRenew = time.Now()
-	// Duration anchor for the run log — lastLeaseRenew moves on every
-	// progress report, so it cannot serve as the start time.
-	c.taskAssignedAt = time.Now()
-	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539),
-	// and clear any stale idle reason now that this connection has real work.
+	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539).
 	c.currentPrompt = prompt
-	c.currentLabels = chosen.labels
-	c.lastIdleReason = ""
 	// #2537: hold the minted scoped token as PENDING rather than shipping it in the
 	// task_assign below. It is delivered only AFTER the acceptance decision — see
 	// the ready-handler (auto-accept default) and the task_accepted handler
@@ -886,24 +1021,6 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.credentialDelivered = false
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
-
-	// C4: record the SERVER-AUTHORITATIVE lease for this assignment so a later
-	// reconnect can be validated against what the hub actually issued — the exact
-	// {task, repo, generation, tier} bound here — instead of reconstructing ownership
-	// from client-supplied task_progress fields. Revoked on every release path.
-	// #5681: record the item's canonical key too, so the double-assignment guard can
-	// recognise the lease after a restart — including for external work, whose
-	// identity is Key rather than repo#number (#4245).
-	h.recordLeaseForKey(identityOf(c), taskID, chosen.repoFull, chosen.number,
-		chosen.ref.Key(), c.profile.TrustTier, gen, time.Now())
-
-	// #2566: record this assignment against the identity's rolling hourly/daily
-	// windows so the next selectTask enforces tier_limits.max_per_hour /
-	// max_per_day. Recorded here — after the task is committed to the connection
-	// and we are certain a task_assign will ship — so a refused pass (which returns
-	// early above) never consumes a slot. Uses the same identity key as the
-	// concurrency gate.
-	h.recordAssignment(identityOf(c), time.Now())
 
 	return &WSMessage{
 		Type:    "task_assign",
