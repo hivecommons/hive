@@ -3224,11 +3224,15 @@ func (b *boot) bootPolicies() {
 // pause persistence, the prompt and audit sinks, compiles the operator's
 // hooks, installs the hook emitters, registers GHE hosts with the proxy
 // allowlist and sets the dashboard's auth providers.
-func (b *boot) bootWatchers() {
+func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
+
+// bootWatchersWith is bootWatchers with its long-lived effects injected; see
+// bootWatchersDeps.
+func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	ctx, cfg, logger, configPath, gov := b.ctx, b.cfg, b.logger, b.configPath, b.gov
 	definitionResolver, notifier, agentMgr, dashSrv, refreshDashboard := b.definitionResolver, b.notifier, b.agentMgr, b.dashSrv, b.refreshDashboard
 	// Watch hive.yaml for external changes and reload config when modified
-	configWatcher := config.NewWatcher(configPath, func(newCfg *config.Config) {
+	configWatcher := deps.newConfigWatcher(configPath, func(newCfg *config.Config) {
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = cfg.HiveID
 
@@ -3303,12 +3307,7 @@ func (b *boot) bootWatchers() {
 		addedAgents := agentMgr.ReconcileAgents(cfg.EnabledAgents())
 		for _, added := range addedAgents {
 			if ac, ok := cfg.Agents[added]; ok && !ac.OnDemand {
-				go func(name string) {
-					logger.Info("audit: starting reconciled agent", "name", name, "trigger", "config-reload")
-					if err := agentMgr.Start(ctx, name); err != nil {
-						logger.Warn("failed to start reconciled agent", "name", name, "error", err)
-					}
-				}(added)
+				deps.startAgent(ctx, agentMgr, added, logger)
 			}
 		}
 		gov.UpdateAgents(cfg.EnabledAgents())
@@ -3360,7 +3359,7 @@ func (b *boot) bootWatchers() {
 					b.appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
 					// Immediate per-agent token delivery — see #4072.
-					go agentMgr.RefreshAgentTokens(ctx)
+					deps.refreshAgentTokens(ctx, agentMgr)
 					agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
 					agentMgr.SetSandboxPRClient(newClient)
 					dashSrv.UpdateGitHubClient(newClient, newAppAuth)
@@ -3376,7 +3375,7 @@ func (b *boot) bootWatchers() {
 		refreshDashboard()
 	}, logger)
 	dashSrv.SetSkipReloadFunc(configWatcher.SkipNext)
-	go configWatcher.Start(ctx)
+	deps.startConfigWatcher(ctx, configWatcher)
 
 	// Persist operator pause/resume into the on-disk config so it survives
 	// restarts and upgrades. Without this, a pod restart rebuilt every agent
@@ -3439,7 +3438,7 @@ func (b *boot) bootWatchers() {
 	// enforcement applies to GitHub Enterprise API and web requests.
 	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {
 		if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
-			proxy.RegisterGitHubHost(parsed.Host)
+			deps.registerGitHubHost(parsed.Host)
 		}
 	}
 
