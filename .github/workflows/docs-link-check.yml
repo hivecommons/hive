@@ -39,28 +39,38 @@ on:
       - v4
     paths:
       - 'src/docs/**'
+      - 'src/**'
       - 'src/deploy/data/wiki/**'
       - 'docs/**'
       - 'src/scripts/check-docs-links.py'
       - 'src/scripts/test-check-docs-links.sh'
+      - 'src/scripts/check-docs-citations.py'
+      - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
       - 'src/pkg/hub/**'
+      - '.github/workflows/**'
+      - 'bin/**'
       - '.github/workflows/docs-link-check.yml'
   pull_request:
     branches:
       - v4
     paths:
       - 'src/docs/**'
+      - 'src/**'
       - 'src/deploy/data/wiki/**'
       - 'docs/**'
       - 'src/scripts/check-docs-links.py'
       - 'src/scripts/test-check-docs-links.sh'
+      - 'src/scripts/check-docs-citations.py'
+      - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
       - 'src/pkg/hub/**'
+      - '.github/workflows/**'
+      - 'bin/**'
       - '.github/workflows/docs-link-check.yml'
 
 permissions:
@@ -86,6 +96,14 @@ jobs:
 
       - name: Check api-reference.md source citations
         run: bash src/scripts/check-api-reference-citations.sh
+
+      # Verifies repo-local file:line citations across every src/docs/*.md file
+      # still point at existing files and in-range lines (hivecommons/hive#7691).
+      - name: Self-test the docs citation checker
+        run: bash src/scripts/test-check-docs-citations.sh
+
+      - name: Check src/docs file:line citations
+        run: python3 src/scripts/check-docs-citations.py src/docs
 
       # Repo-root docs/ was covered by nothing until #5491: it was absent from
       # both paths: filters and had no step, so a PR breaking a relative link

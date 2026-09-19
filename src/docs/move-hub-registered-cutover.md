@@ -76,7 +76,7 @@ move procedures in the other guides should regenerate:
   `cross-cluster-migration.md`) matters on every runtime that self-discovers
   its host this way.
 - The "My Hives → Dashboard" button and any hub UI showing where to reach the
-  hive read `registry.Hives[i].DashboardURL` (`src/pkg/hub/saas_hives_api.go:1291,7279-7280,10204`)
+  hive read `registry.Hives[i].DashboardURL` (`src/pkg/hub/saas_hives_api.go:1291,1693-1694,1814`)
   — i.e. exactly the value the last heartbeat wrote, never a value you set by
   hand anywhere else.
 
