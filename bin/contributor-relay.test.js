@@ -7380,16 +7380,36 @@ test('#7662 a verdict buried under a backend\'s post-turn chrome still completes
   // The exact capture from the issue. On the pre-fix relay the sentinel is
   // outside the 15-row window on the very first tick, the pane is read as idle
   // chrome with "no HIVE_VERDICT yet", and nothing ends the task.
-  const relay = loadRelay({ backend: 'omp', paneText: OMP_FINISHED_PANE, prMeta: new Error('gh: offline') });
+  //
+  // #7759: the chrome under this verdict is two advisor ⟦concern⟧ notes, so
+  // reading the sentinel now earns the agent one follow-up turn before the
+  // task ends. The first tick therefore proves the verdict was READ by the
+  // follow-up it provokes — the pre-fix relay saw no verdict and sent nothing
+  // — and the second tick, with the agent's re-printed verdict below the
+  // relay's echoed request, is the completion this test has always asserted.
+  let pane = OMP_FINISHED_PANE;
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
   const log = console.log; console.log = () => {};
   try {
     dispatchTask(relay, 'ct-omp-buried-verdict', 294);
     assert.ok(OMP_FINISHED_PANE.split('\n').slice(-relay.TMUX_TAIL_LINES).every(l => !/HIVE_VERDICT/.test(l)),
       'setup: the sentinel must sit OUTSIDE the display tail for this test to mean anything');
     relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'two concerns sit under the verdict, so the first tick asks the agent to address them rather than finalizing (#7759)');
+    assert.ok(relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)),
+      'the agent printed HIVE_VERDICT: complete; the relay must read it however much chrome the CLI drew under it — here by asking for the advisor follow-up');
+    pane = [
+      OMP_FINISHED_PANE,
+      `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`,
+      ' Set compression-level: 0 on the upload step and pushed the fix to PR #295.',
+      'HIVE_VERDICT: complete — PR #295 open against main with README path filters fixed',
+      ...OMP_POST_TURN_CHROME,
+    ].join('\n');
+    relay.__crashTick();
     const completed = relay.__sent.filter(m => m.type === 'task_complete');
     assert.strictEqual(completed.length, 1,
-      'the agent printed HIVE_VERDICT: complete; the relay must read it however much chrome the CLI drew under it');
+      'the re-printed verdict, below the echoed follow-up, completes the task');
     assert.strictEqual(completed[0].completion_signal, 'verdict',
       'this is the agent\'s own statement, not a chrome inference');
     assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/295',
@@ -7562,6 +7582,230 @@ test('#7662 lease expiry with a PR another author opened still fails as before',
     assert.strictEqual(failures[0].failure_kind, 'environment');
     assert.ok(!failures[0].reason.includes('pull/12'), 'a refuted PR is not offered to the operator as this task\'s');
   } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// Advisor notes that land after the verdict (hivecommons/hive#7759).
+//
+// omp's --advisor reviews every turn passively and injects its notes after the
+// turn ends, so its review of the agent's FINAL turn lands under HIVE_VERDICT.
+// The sentinel being final (#5376, #7662, #7733) meant the relay killed the CLI
+// with those notes unread. The relay now asks the agent ONCE per task to
+// address the ⟦concern⟧ notes and re-print the verdict; the second verdict is
+// final whatever appears under it.
+//
+// The capture from the issue, as tmux renders it (#7759 shows the glyph forms
+// "ⓘ Advisor 1 note" / "▎ ⟦concern⟧"; the #7662 capture rendered the same
+// notes as "@ Advisor 1 note" / "[concern]" — both are accepted).
+// ---------------------------------------------------------------------------
+
+const OMP_UTAH14_VERDICT = 'HIVE_VERDICT: complete — PR #198 delivers gated production ISO artifact retention against main.';
+const OMP_UTAH14_NOTES = [
+  ' ⓘ Advisor 1 note',
+  '   ▎ ⟦concern⟧ Base branch: repo has no CONTRIBUTING/PR template, but .github/workflows contains',
+  '   ▎ promote-testing-to-main.yml and sync-main-to-testing.yml — a promotion model where `testing` is the',
+  '   ▎ integration branch and `main` is released. Branch from upstream/testing and open the PR against `testing`, …',
+  ' ⓘ Advisor 1 note',
+  '   ▎ ⟦concern⟧ Working tree is dirty from a prior task (M docs/skills/kernel-cache.md,',
+  '   ▎ scripts/verify-rpm-contract.py, tests/test_verify_rpm_contract.py) … can leak into your commit …',
+  ' ⓘ Advisor 1 note',
+  '   ▎ ⟦nit⟧ Set `compression-level: 0` on the Retain production ISO upload — upload-artifact zips at level 6 by',
+  '   ▎ default, and an ISO that is already a zstd squashfs will burn many minutes of CPU per flavor for near-zero',
+  '   ▎ size gain.',
+];
+const OMP_UTAH14_NITS_ONLY = OMP_UTAH14_NOTES.slice(7);
+const OMP_UTAH14_TAIL = OMP_POST_TURN_CHROME.slice(OMP_POST_TURN_CHROME.indexOf('Advisor history copied to clipboard'));
+
+function ompPane(...blocks) {
+  return blocks.flat().join('\n');
+}
+
+// The second verdict, as omp renders the turn the follow-up provokes: the
+// relay's message echoed as a user turn, the agent's work, the re-printed
+// sentinel, and — because the advisor reviews THAT turn too — more notes.
+function ompAnsweredPane(relay, first, answerNotes) {
+  return ompPane(
+    first,
+    `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`,
+    ' Set compression-level: 0 on the Retain production ISO upload; pushed to PR #198.',
+    OMP_UTAH14_VERDICT,
+    answerNotes,
+    OMP_UTAH14_TAIL,
+  );
+}
+
+test('#7759 concerns posted under the verdict earn the agent one follow-up before the task ends', () => {
+  // The pane at dispatch is the agent mid-task; the verdict and the notes
+  // under it arrive before the first judged tick, as they did live.
+  let pane = ompPane(' ⠋ Editing .github/workflows/build.yml', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-followup', 14);
+    const before = relay.__tmuxSends().length;
+    pane = ompPane(' Opened https://github.com/foo/bar/pull/198', OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'the verdict must not finalize while two concerns sit unread under it');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+    const sends = relay.__tmuxSends().slice(before).filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR));
+    assert.strictEqual(sends.length, 1, `exactly one follow-up is typed: ${JSON.stringify(relay.__tmuxSends().slice(before))}`);
+    const progress = relay.__sent.filter(m => m.type === 'task_progress' && /advisor posted 2 concern/.test(m.summary || ''));
+    assert.strictEqual(progress.length, 1, 'the hub is told why the task is still open, with the concern count');
+    assert.strictEqual(relay.getPostVerdictReviewRequested(), true);
+
+    // Next tick: the agent is still working on the notes. The first verdict
+    // is still on the pane, above the echoed request — it must not complete.
+    pane = ompPane(' Opened https://github.com/foo/bar/pull/198', OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES,
+      `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`, ' ⠋ Editing .github/workflows/build.yml', '╰─');
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'the FIRST verdict, still on the pane above the echoed follow-up, must not end the task mid-turn');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)).length, 1,
+      'and no second follow-up is typed');
+
+    // The agent addressed the notes and re-printed the verdict — and the
+    // advisor reviewed that turn too. The second verdict is final.
+    pane = ompAnsweredPane(relay, [' Opened https://github.com/foo/bar/pull/198', OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES], OMP_UTAH14_NOTES.slice(0, 4));
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the re-printed verdict completes the task');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/198');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)).length, 1,
+      'a fresh concern under the SECOND verdict does not buy another turn — one follow-up per task, ever');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7759 a verdict with only nits, or nothing, under it finalizes on the tick it is read', () => {
+  for (const [label, notes] of [['nits only', OMP_UTAH14_NITS_ONLY], ['no notes', []]]) {
+    const relay = loadRelay({ backend: 'omp', paneText: ompPane(OMP_UTAH14_VERDICT, notes, OMP_UTAH14_TAIL), prMeta: new Error('gh: offline') });
+    const log = console.log; console.log = () => {};
+    try {
+      dispatchTask(relay, `ct-7759-${label.replace(/ /g, '-')}`, 14);
+      relay.__crashTick();
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
+        `${label}: nothing worth a turn was posted, so the verdict is final on this tick`);
+      assert.ok(!relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)),
+        `${label}: no follow-up is typed`);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('#7759 concerns ABOVE the verdict are an earlier turn\'s review and do not re-open the task', () => {
+  // Transcript order is the evidence: the advisor writes under the turn it
+  // reviewed, so a note above the sentinel was posted before it.
+  const relay = loadRelay({ backend: 'omp', paneText: ompPane(OMP_UTAH14_NOTES, ' Fixed those.', OMP_UTAH14_VERDICT, OMP_UTAH14_TAIL), prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-above', 14);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1);
+    assert.ok(!relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)));
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7759 only a backend that posts review output after the verdict gets the follow-up', () => {
+  // The same text under a claude verdict is the agent's own output; nothing
+  // reviewed it, and a verdict on claude is final on the tick it is read.
+  const pane = ompPane('HIVE_VERDICT: complete — done', OMP_UTAH14_NOTES, '/ commands for help');
+  const relay = loadRelay({ backend: 'claude', paneText: pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-claude', 14);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1);
+    assert.ok(!relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)));
+    assert.strictEqual(relay.POST_VERDICT_REVIEW_MARKERS.claude, undefined, 'claude declares no post-verdict review markers');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7759 a concern already on the pane at the previous tick is not new and does not trigger', () => {
+  // The verdict is first read while the pane shows an API error, which
+  // excludes it from completing (#5094/#5121); the concerns under it are
+  // snapshotted on that tick. When the error clears, the same concerns are
+  // not news — nothing new since the verdict means finalize immediately.
+  let pane = ompPane(OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES, ' ⚠ API Error: 529 overloaded — retrying', OMP_UTAH14_TAIL);
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-stale-notes', 14);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'setup: an API-error pane does not complete');
+    assert.ok(!relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)), 'setup: and does not ask for the follow-up');
+    pane = ompPane(OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
+      'the concerns were already there at the previous tick, so the verdict is final');
+    assert.ok(!relay.__tmuxSends().some(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)));
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('#7759 a follow-up the pane refuses is not retried; the verdict finalizes as it would have', () => {
+  const relay = loadRelay({ backend: 'omp', paneText: ompPane(OMP_UTAH14_VERDICT, OMP_UTAH14_NOTES, OMP_UTAH14_TAIL), prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-send-fails', 14);
+    relay.__failNextNudge();
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
+      'a send that throws costs the agent its one turn, not the task its completion');
+    assert.strictEqual(relay.getPostVerdictReviewRequested(), true, 'the budget is spent before typing, so the next tick cannot retry');
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7759 an agent that addresses the notes but never re-prints the verdict completes on chrome idle, first verdict carried', () => {
+  // The fallback the sentinel exists to replace, reached the same way as for
+  // an agent that never printed one — and the first verdict's no_work_needed
+  // still reaches the hub, since that IS what the agent concluded.
+  const firstVerdict = 'HIVE_VERDICT: no_work_needed — the issue is already fixed on main';
+  let pane = ompPane(' ⠋ Reading the issue', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = () => {};
+  try {
+    dispatchTask(relay, 'ct-7759-no-second-verdict', 18);
+    pane = ompPane(firstVerdict, OMP_UTAH14_NOTES, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'setup: the follow-up went out');
+    pane = ompPane(firstVerdict, OMP_UTAH14_NOTES, `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`,
+      ' Both concerns are moot: the tree is clean and main is the right base.', OMP_UTAH14_TAIL);
+    graceTicks(relay, () => relay.__crashTick());
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'idle chrome after the follow-up completes the task through the ordinary grace');
+    assert.strictEqual(completed[0].completion_signal, 'chrome_idle', 'honestly recorded: the second verdict never came');
+    assert.strictEqual(completed[0].verdict, 'no_work_needed', 'the verdict the agent DID print is still reported');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('#7759 postVerdictConcerns reads only bracketed concerns inside a note block below the verdict', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    const m = relay.POST_VERDICT_REVIEW_MARKERS.omp;
+    const v = 'HIVE_VERDICT: complete — x';
+    assert.deepStrictEqual(relay.postVerdictConcerns([v, ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ a', ' @ Advisor 2 note', '  [concern] b', '  [nit] c'], v, m),
+      ['   ▎ ⟦concern⟧ a', '  [concern] b'], 'both live spellings count; nits do not');
+    assert.deepStrictEqual(relay.postVerdictConcerns([v, '  the diff mentions [concern] in prose'], v, m), [],
+      'a bracketed word outside a note block is not a review note');
+    assert.deepStrictEqual(relay.postVerdictConcerns([' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ earlier', v], v, m), [],
+      'a note above the verdict is not below it');
+    assert.deepStrictEqual(relay.postVerdictConcerns(['   ▎ ⟦concern⟧ a'], v, m), [], 'no verdict line, no "below"');
+    // The last occurrence of the verdict line is the one that counts: the
+    // #5650 baseline may leave an identical previous-task line higher up.
+    assert.deepStrictEqual(relay.postVerdictConcerns([v, ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ old', ' new work', v, ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ new'], v, m),
+      ['   ▎ ⟦concern⟧ new']);
+    // The echo test: a verdict counts as the second one only below the echo.
+    const echo = `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`;
+    assert.strictEqual(relay.postVerdictReviewAnswered([v, echo, ' working']), false);
+    assert.strictEqual(relay.postVerdictReviewAnswered([v, echo, ' done', v]), true);
+    assert.strictEqual(relay.postVerdictReviewAnswered([' done', v]), true, 'echo scrolled out of the window: any verdict is below it');
+    assert.ok(relay.POST_VERDICT_REVIEW_MESSAGE.startsWith(relay.POST_VERDICT_REVIEW_ANCHOR), 'the anchor is a verbatim prefix of the message');
+    assert.ok(!/\n/.test(relay.POST_VERDICT_REVIEW_MESSAGE), 'typed as one line');
+    assert.ok(!/HIVE_VERDICT:/.test(relay.POST_VERDICT_REVIEW_MESSAGE), 'the echoed request must not itself read as a verdict');
+  } finally { teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------

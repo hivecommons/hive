@@ -198,6 +198,28 @@ const TRANSIENT_API_ERROR_NUDGE_COOLDOWN_MS = 90000;
 const AUTONOMY_NUDGE_MESSAGE =
   'no human is available to answer, so proceed autonomously with your best judgment';
 
+// What the relay types when a backend's own reviewer posts notes UNDER the
+// agent's HIVE_VERDICT line (hivecommons/hive#7759). omp's `--advisor` runtime
+// reviews every turn passively and injects its notes after the turn ends, so
+// its review of the agent's FINAL turn lands on the pane after the sentinel —
+// and the sentinel being final (#5376, #7662, #7733) means the relay used to
+// kill the CLI with those notes unread. Two live tasks each ended under a stack
+// of ⟦concern⟧ notes; one was a real, cheap fix the agent would have made.
+//
+// The agent is asked ONCE per task to address them and re-print the verdict;
+// the second verdict is final whatever appears under it. See
+// maybeRequestPostVerdictReview for the bound and POST_VERDICT_REVIEW_MARKERS
+// for which backends and which notes qualify.
+//
+// The opening phrase doubles as the anchor postVerdictReviewAnswered() looks
+// for in the CLI's echo of this message, so that a verdict is only read as the
+// SECOND one when it sits below that echo. Keep it at the very start, short
+// enough to survive tmux wrapping at any sane pane width, and keep
+// POST_VERDICT_REVIEW_ANCHOR a verbatim prefix of it.
+const POST_VERDICT_REVIEW_MESSAGE =
+  'Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.';
+const POST_VERDICT_REVIEW_ANCHOR = 'Advisor notes were posted after your verdict';
+
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_HEADLESS_MAX_OUTPUT_MIB = 16;
 const DEFAULT_HEADLESS_MAX_OUTPUT_BYTES = DEFAULT_HEADLESS_MAX_OUTPUT_MIB * BYTES_PER_MIB;
@@ -2532,6 +2554,73 @@ function detectCompletionVerdict(lines) {
   return detectHiveVerdict(lines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
 }
 
+// ── Review output that lands after the verdict (hivecommons/hive#7759) ──────
+//
+// Backends whose CLI posts REVIEW output after the agent's final line, keyed by
+// backend name. Only omp today: its `--advisor` runtime reviews each turn and
+// injects "Advisor N note" blocks under it, each note tagged ⟦concern⟧ or
+// ⟦nit⟧. The shape — a reviewer feature that writes below the agent's
+// statement — is likely to recur with other CLIs, so the hook is per-backend
+// data rather than an omp special case in the tick loop.
+//
+//   note     — the header line of one review block. Live captures render the
+//              leading glyph differently ("ⓘ Advisor 1 note" in #7759,
+//              "@ Advisor 1 note" in #7662), so only the words are matched.
+//   concern  — the marker that earns the agent one more turn. ⟦nit⟧ is
+//              deliberately NOT included: the advisor emits nits freely and
+//              they are cheap to ignore; concerns are the ones worth a turn
+//              (#7759 discussion). Both bracket spellings seen live are
+//              accepted.
+const POST_VERDICT_REVIEW_MARKERS = Object.freeze({
+  omp: Object.freeze({
+    note: /\bAdvisor \d+ note\b/,
+    concern: /⟦concern⟧|\[concern\]/,
+  }),
+});
+
+// postVerdictConcerns returns the concern lines that sit BELOW the agent's
+// verdict line on the pane — the review of its final turn — in pane order.
+//
+// "Below" is what makes a note post-verdict: the advisor writes in transcript
+// order, so anything above the verdict was posted about an earlier turn and is
+// not this task's closing review. A concern only counts when a note header
+// precedes it after the verdict, so a bare bracketed word in the agent's own
+// prose (or in a quoted diff) cannot pass as a review note. Returns [] when the
+// verdict line is not on the pane at all, since then there is no "below".
+function postVerdictConcerns(lines, verdictLine, markers) {
+  if (!markers || !Array.isArray(lines) || typeof verdictLine !== 'string') return [];
+  const at = lines.lastIndexOf(verdictLine);
+  if (at < 0) return [];
+  const concerns = [];
+  let inNote = false;
+  for (let i = at + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (markers.note.test(line)) { inNote = true; continue; }
+    if (inNote && markers.concern.test(line)) concerns.push(line);
+  }
+  return concerns;
+}
+
+// postVerdictReviewAnswered reports whether a verdict on the pane is the
+// SECOND one — printed after the relay's follow-up — rather than the first
+// verdict still sitting there while the agent works on the notes.
+//
+// The two verdict lines may be byte-identical (an agent that re-prints its
+// conclusion verbatim), so line equality cannot tell them apart. The CLI's
+// echo of the follow-up message can: a verdict below that echo was printed
+// after it. When the echo has scrolled out of the scan window the agent has
+// produced more than PR_SCAN_LINES rows of work since, and any verdict still
+// in the window is by construction below it.
+function postVerdictReviewAnswered(lines) {
+  if (!Array.isArray(lines)) return true;
+  let echoAt = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].includes(POST_VERDICT_REVIEW_ANCHOR)) { echoAt = i; break; }
+  }
+  if (echoAt < 0) return true;
+  return detectCompletionVerdict(lines.slice(echoAt + 1)) !== null;
+}
+
 // True while a bob CLI process is alive. bob exits at the end of every turn,
 // so "process gone" means the turn finished — see the bob branch of
 // checkTmuxIdle(). Matches the launch command rather than the bare name so a
@@ -3078,6 +3167,21 @@ function resetAutonomyNudgeState() {
   autonomyNudgeSent = false;
 }
 
+// Post-verdict review state (hivecommons/hive#7759), scoped to the CURRENT
+// task. Budget of exactly one: an advisor that reviews every turn will always
+// have something new to say, so the second HIVE_VERDICT is final no matter
+// what appears under it. `lastTickConcernLines` is the set of concern lines
+// anywhere on the pane at the previous tick — the follow-up only fires for
+// notes that were not there then, so a note from mid-task can never re-open a
+// finished task.
+let postVerdictReviewRequested = false;
+let lastTickConcernLines = new Set();
+
+function resetPostVerdictReviewState() {
+  postVerdictReviewRequested = false;
+  lastTickConcernLines = new Set();
+}
+
 function resetPaneStallClock() {
   lastPaneFingerprint = null;
   lastPaneChangeAt = Date.now();
@@ -3620,6 +3724,10 @@ function startProgressReporting() {
   resetTransientNudgeState();
   // And the one-shot autonomy reminder (#5281), for the same reason.
   resetAutonomyNudgeState();
+  // And the one-shot post-verdict review follow-up (#7759): the previous
+  // task's spent budget, and the notes that were on its pane, say nothing
+  // about this one.
+  resetPostVerdictReviewState();
 
   armTaskProgressLease();
 
@@ -3920,6 +4028,62 @@ function maybeSendAutonomyNudge(tmuxLines) {
   return true;
 }
 
+// maybeRequestPostVerdictReview asks the agent, once per task, to address the
+// review notes its own CLI posted under the HIVE_VERDICT line and then to
+// print the verdict again (hivecommons/hive#7759). Returns true when the
+// follow-up went out and the tick must NOT finalize the task this time.
+//
+// The bound, stated once here because an advisor that reviews every turn
+// would otherwise never let a task end:
+//
+//   - One follow-up per task, ever. The second verdict is final whatever
+//     appears under it; there is no "notes arrived after the second verdict,
+//     go again". The budget is spent BEFORE typing, so a send that throws is
+//     not retried on the next tick — the task finalizes as it would have.
+//   - Only ⟦concern⟧ triggers it, never ⟦nit⟧ (see POST_VERDICT_REVIEW_MARKERS).
+//   - Only notes BELOW the verdict, and only ones that were not on the pane
+//     at the previous tick. Nothing new since the verdict means the task
+//     finalizes on this very tick, exactly as before this existed.
+//   - The progress lease and the absolute deadline are untouched. The
+//     follow-up neither extends nor resets either; if the agent burns the
+//     remaining budget on the concern, the lease/stall paths book it exactly
+//     as today — and lease expiry, which reads the pane itself (#7662),
+//     completes on whichever verdict it finds.
+//
+// Backends without a POST_VERDICT_REVIEW_MARKERS entry never reach the send:
+// for them a verdict finalizes on the tick it is read, unchanged.
+function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previousConcerns) {
+  if (!currentTask || !verdict) return false;
+  const markers = POST_VERDICT_REVIEW_MARKERS[BACKEND];
+  if (!markers) return false;
+  if (postVerdictReviewRequested) return false;
+
+  const concerns = postVerdictConcerns(paneScanLines, verdict.line, markers)
+    .filter(line => !previousConcerns.has(line));
+  if (concerns.length === 0) return false;
+
+  postVerdictReviewRequested = true;
+  console.log(`Task ${currentTask.task_id}: ${concerns.length} advisor concern(s) were posted under its HIVE_VERDICT line — ` +
+    `asking the agent once to address them and re-print the verdict (#7759): ${concerns.map(c => JSON.stringify(c.trim())).join(' ')}`);
+  try {
+    tmuxSendNudge(POST_VERDICT_REVIEW_MESSAGE);
+  } catch (e) {
+    console.error('Failed to send the post-verdict review follow-up; finalizing on the verdict as-is:', e.message);
+    return false;
+  }
+  send({
+    type: 'task_progress',
+    seq: nextSeq(),
+    task_id: currentTask.task_id,
+    task_gen: currentTask.task_gen,
+    status: 'working',
+    summary: `Agent printed HIVE_VERDICT, then its advisor posted ${concerns.length} concern(s) under it; asked it once to address them and re-print the verdict`,
+    tmux_output: tmuxLines,
+    ...progressModelFields(),
+  });
+  return true;
+}
+
 function progressTick() {
   lastProgressTick = Date.now();
   if (!currentTask) return;
@@ -4088,6 +4252,27 @@ function progressTick() {
     ? (taskAgentActivityObserved = true)
     : recordTaskAgentActivity(paneScanLines);
 
+  // #7759: the review notes a backend posts UNDER the verdict. Two things are
+  // read here, every tick, whichever branch below returns:
+  //
+  //   - the concern lines on the pane right now, snapshotted so the NEXT tick
+  //     can tell a note that just appeared from one that was already there
+  //     (the previous snapshot is what the trigger below is filtered against);
+  //   - whether a follow-up is outstanding and the agent has not yet answered
+  //     it. While that is so, the verdict on the pane is the FIRST one — the
+  //     agent is mid-turn on the notes — and finalizing on it would kill that
+  //     turn. It is treated like a pane with no verdict yet: WORKING reports
+  //     progress, and idle chrome accrues toward the chrome-idle completion,
+  //     so an agent that addresses the notes but never re-prints the sentinel
+  //     still ends through the same fallback as one that never printed it —
+  //     with the first verdict's no_work_needed, if that is what it said,
+  //     still carried to the hub.
+  const reviewMarkers = POST_VERDICT_REVIEW_MARKERS[BACKEND];
+  const previousConcerns = lastTickConcernLines;
+  lastTickConcernLines = new Set(reviewMarkers ? paneScanLines.filter(l => reviewMarkers.concern.test(l)) : []);
+  const secondVerdictPending = postVerdictReviewRequested && !!completionVerdict &&
+    !postVerdictReviewAnswered(paneScanLines);
+
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
   // may end a task on its own. A verdict short-circuits the wait entirely.
@@ -4097,7 +4282,7 @@ function progressTick() {
   // tick whose bytes differ from the previous credited one — a pane still
   // producing output cannot pretend to be idle just because classifyPane()
   // misread a busy frame (pi's progress percentages were the observed case).
-  const idleWithoutVerdict = paneState === PANE_STATE_IDLE_COMPLETE && !completionVerdict;
+  const idleWithoutVerdict = paneState === PANE_STATE_IDLE_COMPLETE && (!completionVerdict || secondVerdictPending);
   const chromeIdleGraceElapsed = recordChromeIdleTick(idleWithoutVerdict, paneFingerprint(tmuxLines));
 
   // ── The chrome-idle veto (#6717) ──────────────────────────────────────────
@@ -4167,11 +4352,20 @@ function progressTick() {
   const apiErrorState = paneState === PANE_STATE_TRANSIENT_API_ERROR ||
     paneState === PANE_STATE_UNKNOWN_API_ERROR ||
     paneState === PANE_STATE_FATAL_API_ERROR;
-  const verdictCompletes = !!completionVerdict && !apiErrorState;
+  const verdictCompletes = !!completionVerdict && !apiErrorState && !secondVerdictPending;
 
   if (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed && !verdictCompletes && !hasTaskAgentActivity) {
     resetChromeIdleGrace();
     failCurrentTask(`pane went idle before ${BACKEND} produced any task output; prompt may not have been submitted`, { kind: 'environment' });
+    return;
+  }
+
+  // #7759: before a verdict ends the task, give the agent its one chance at
+  // the review its CLI posted underneath it. Only a verdict that would
+  // complete right now is eligible — the api-error exclusions above and the
+  // stale-baseline suppression already applied — so this can never re-open a
+  // task the relay would not otherwise have finalized on this tick.
+  if (verdictCompletes && maybeRequestPostVerdictReview(paneScanLines, tmuxLines, completionVerdict, previousConcerns)) {
     return;
   }
 
@@ -4181,7 +4375,11 @@ function progressTick() {
     // non-compliance is measurable rather than guessed at.
     const completionSignal = verdictCompletes ? 'verdict' : 'chrome_idle';
     console.log(`Task ${currentTask.task_id} completed — signal=${completionSignal}` +
-      (verdictCompletes ? ` (HIVE_VERDICT: ${completionVerdict.verdict})` : ` (pane idle for ${chromeIdleTicks} consecutive checks, no verdict emitted)`));
+      (verdictCompletes
+        ? ` (HIVE_VERDICT: ${completionVerdict.verdict})`
+        : (completionVerdict
+          ? ` (pane idle for ${chromeIdleTicks} consecutive checks; the agent's HIVE_VERDICT: ${completionVerdict.verdict} was followed by advisor notes it was asked to address, and it never re-printed the verdict — #7759)`
+          : ` (pane idle for ${chromeIdleTicks} consecutive checks, no verdict emitted)`)));
     resetChromeIdleGrace();
     // Successful completion clears this work item's crash-retry budget.
     cliRestartCounts.delete(taskKey(currentTask));
@@ -4931,6 +5129,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     maybeSendAutonomyNudge,
     resetAutonomyNudgeState,
     AUTONOMY_NUDGE_MESSAGE,
+    // Post-verdict review follow-up (hivecommons/hive#7759).
+    POST_VERDICT_REVIEW_MESSAGE,
+    POST_VERDICT_REVIEW_ANCHOR,
+    POST_VERDICT_REVIEW_MARKERS,
+    postVerdictConcerns,
+    postVerdictReviewAnswered,
+    maybeRequestPostVerdictReview,
+    resetPostVerdictReviewState,
+    getPostVerdictReviewRequested: () => postVerdictReviewRequested,
     tmuxSessionHasAttachedClient,
     tmuxSessionHumanPresence,
     HUMAN_PRESENCE_IDLE_MS,
