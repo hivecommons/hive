@@ -124,11 +124,49 @@ func TestCombinedPromptDemandsEveryVerdict(t *testing.T) {
 	for _, want := range []string{
 		"even the ones that found nothing",
 		"A perspective you could not meaningfully assess is requires_human, not approve",
-		"no findings from any of the 5 perspectives",
+		"no findings from correctness, security, intent-alignment, style, docs-currency.",
 		"_No findings from:",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q", want)
+		}
+	}
+}
+
+// A combined kick that never reaches the agent must release EVERY perspective
+// it covered, not just the first. Before this, a busy reviewer turned one
+// missed kick into three perspectives stuck "pending" forever — never
+// re-dispatched, never judged — while the first was re-sent on its own.
+func TestConfirmDeliveredReleasesEveryPerspectiveOfAnUndeliveredCombinedKick(t *testing.T) {
+	pr := PullRequest{Repo: "o/r", Number: 7, HeadSHA: "abc"}
+	kick := DispatchKick{Kind: "review", Agent: "reviewer", Repo: "o/r", Number: 7, HeadSHA: "abc",
+		Perspective: PerspectiveSecurity, Perspectives: []Perspective{PerspectiveSecurity, PerspectiveStyle, PerspectiveDocsCurrency}}
+	var state DispatchState
+	for _, p := range kick.Perspectives {
+		state.Pending = append(state.Pending, PendingReview{Repo: "o/r", Number: 7, HeadSHA: "abc", Perspective: p, Agent: "reviewer"})
+	}
+
+	got := ConfirmDelivered(state, []DispatchKick{kick}, nil)
+	if len(got.Pending) != 0 {
+		t.Fatalf("undelivered combined kick left pending entries: %+v", got.Pending)
+	}
+	if missing := pendingMissingPerspectives(got, pr, kick.Perspectives); len(missing) != 3 {
+		t.Fatalf("next cycle should re-dispatch all three, got %v", missing)
+	}
+
+	// Delivered: pending stays, and Recent records each perspective so the
+	// relay can bind a late verdict for any of them.
+	got = ConfirmDelivered(state, []DispatchKick{kick}, []DispatchKick{kick})
+	if len(got.Pending) != 3 {
+		t.Fatalf("delivered kick lost pending entries: %+v", got.Pending)
+	}
+	seen := map[Perspective]bool{}
+	for _, r := range got.Recent {
+		seen[r.Perspective] = true
+	}
+	for _, p := range kick.Perspectives {
+		if !seen[p] {
+			t.Fatalf("recent lacks %s: %+v", p, got.Recent)
 		}
 	}
 }

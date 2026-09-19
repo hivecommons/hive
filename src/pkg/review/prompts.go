@@ -286,7 +286,10 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 	b.WriteString("Five separate \"nothing to report\" paragraphs is the same noise as five separate comments, just collected into one place.\n")
 	if opts.AcknowledgeNoFindings {
 		b.WriteString("If NO perspective found anything, the whole comment is exactly one line:\n")
-		fmt.Fprintf(&b, "  **Reviewed** — no findings from any of the %d perspectives reviewed.\n", len(perspectives))
+		// Named, not counted: "no findings from any of the 1 perspectives" is
+		// what a single-perspective combined kick produced, and a count says
+		// nothing a reader can check against the review anyway.
+		fmt.Fprintf(&b, "  **Reviewed** — no findings from %s.\n", strings.Join(perspectiveNames(perspectives), ", "))
 		b.WriteString("That line is the WHOLE comment. Do not list what you checked or append a summary of the diff.\n")
 	}
 	b.WriteString("The verdict file still carries all ")

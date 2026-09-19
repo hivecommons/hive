@@ -403,13 +403,35 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 	for _, k := range delivered {
 		deliveredSet[dispatchKickKey(k)] = true
 		if k.Kind == "review" {
-			state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, Perspective: k.Perspective, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
+			// One recent entry per perspective the kick covered, not one for
+			// the kick. The verdict relay binds a late verdict to a recent
+			// entry by perspective, so a combined kick recorded under its
+			// first perspective alone would leave every other verdict in the
+			// array with nothing to bind to once its pending entry is gone.
+			for _, p := range kickPerspectives(k) {
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, Perspective: p, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
+			}
 		}
 	}
+	// Undelivered is keyed per PERSPECTIVE, because pending entries are. A
+	// combined kick wrote one pending entry for each perspective it covered;
+	// if it never reached the agent, every one of those must be released or
+	// the ones after the first stay "pending" for a review that never
+	// happened — never re-dispatched, never judged, and holding the PR's
+	// unanimity check open indefinitely.
 	undelivered := map[string]bool{}
 	for _, k := range planned {
-		if !deliveredSet[dispatchKickKey(k)] {
+		if deliveredSet[dispatchKickKey(k)] {
+			continue
+		}
+		if k.Kind != "review" {
 			undelivered[dispatchKickKey(k)] = true
+			continue
+		}
+		for _, p := range kickPerspectives(k) {
+			one := k
+			one.Perspective = p
+			undelivered[dispatchKickKey(one)] = true
 		}
 	}
 	var pending []PendingReview
@@ -430,6 +452,15 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 	state.Fixes = fixes
 	state.Recent = pruneRecentReviews(state.Recent, now)
 	return state
+}
+
+// kickPerspectives is every perspective a kick covers: the combined list when
+// set, else the single Perspective. Never empty for a review kick.
+func kickPerspectives(k DispatchKick) []Perspective {
+	if len(k.Perspectives) > 0 {
+		return k.Perspectives
+	}
+	return []Perspective{k.Perspective}
 }
 
 func upsertRecentReview(items []RecentReview, item RecentReview) []RecentReview {

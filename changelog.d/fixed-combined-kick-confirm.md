@@ -1,0 +1,1 @@
+- A combined review kick that never reaches the reviewer now releases every perspective it covered, instead of leaving all but the first stuck "pending" for a review that never happened; the all-clean comment names the perspectives rather than counting them.
