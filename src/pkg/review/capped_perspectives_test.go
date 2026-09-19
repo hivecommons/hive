@@ -92,7 +92,7 @@ func TestHasAllRequiredPerspectivesRejectsNonApprove(t *testing.T) {
 		"empty never approves":       {map[Perspective]Verdict{}, 1, false},
 		"empty with no cap":          {map[Perspective]Verdict{}, 0, false},
 	} {
-		if got := hasAllRequiredPerspectives(tc.got, tc.maxPer); got != tc.want {
+		if got := hasAllRequiredPerspectives(tc.got, tc.maxPer, 0); got != tc.want {
 			t.Errorf("%s: hasAllRequiredPerspectives = %v, want %v", name, got, tc.want)
 		}
 	}

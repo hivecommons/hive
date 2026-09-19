@@ -5,13 +5,40 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // handleReviewConfigGet returns the top-level review-swarm gate config
 // (Config.Review) so the governor Features tab can prefill the Review Gate
 // section. The struct is secret-free, so it is returned as-is.
+//
+// The built-in perspective list and focus text ride along as read-only
+// metadata. The dialog shows an operator what each perspective looks for by
+// default so an override is never a one-way door — without it, nothing in the
+// UI would remember what the default said once it had been edited away from.
 func (s *Server) handleReviewConfigGet(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, s.deps.Config.Review)
+	jsonResponse(w, reviewSectionResponse(s.deps.Config))
+}
+
+type reviewSection struct {
+	config.ReviewConfig
+	BuiltinPerspectives []map[string]string `json:"builtin_perspectives"`
+}
+
+// reviewSectionResponse is the review block as the dashboard sees it: the
+// config plus the built-in perspective list and default focus text. Served
+// from both the governor bundle and the standalone GET so the Features tab
+// sees the same shape whichever it loads from.
+func reviewSectionResponse(cfg *config.Config) reviewSection {
+	builtin := make([]map[string]string, 0, len(review.DefaultPerspectives))
+	for _, p := range review.DefaultPerspectives {
+		builtin = append(builtin, map[string]string{"name": string(p), "focus": review.DefaultFocus(p)})
+	}
+	var rc config.ReviewConfig
+	if cfg != nil {
+		rc = cfg.Review
+	}
+	return reviewSection{rc, builtin}
 }
 
 // handleReviewConfigPut updates the review-swarm merge-gate settings from the
@@ -37,6 +64,13 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		AllAuthors         *bool     `json:"all_authors"`
 		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string   `json:"human_decision_label"`
+		// Perspectives and PerspectivePrompts travel together: a hive-defined
+		// perspective is only valid once its prompt exists, so validating one
+		// without the other would reject a correct pair sent in two requests.
+		// The dialog always sends both when it sends either.
+		Perspectives         *[]string          `json:"perspectives"`
+		PerspectivePrompts   *map[string]string `json:"perspective_prompts"`
+		CombinedPerspectives *bool              `json:"combined_perspectives"`
 		// Recommendations arrives as a whole object rather than one pointer
 		// per knob: its fields are only meaningful together (enabling it
 		// without a repo list means "every watched repo"), and the Features
@@ -60,6 +94,48 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.deps.Config
+	// Validated against the real resolver rather than a copy of its rules, so
+	// what the API accepts is exactly what the hive will load. Rejected here
+	// with the resolver's own message, which names the offending perspective.
+	if body.Perspectives != nil || body.PerspectivePrompts != nil {
+		names := cfg.Review.Perspectives
+		if body.Perspectives != nil {
+			names = *body.Perspectives
+		}
+		prompts := cfg.Review.PerspectivePrompts
+		if body.PerspectivePrompts != nil {
+			prompts = *body.PerspectivePrompts
+		}
+		if _, err := review.NewPerspectiveSet(names, prompts); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Perspectives != nil {
+			cleaned := make([]string, 0, len(names))
+			for _, n := range names {
+				if n = strings.ToLower(strings.TrimSpace(n)); n != "" {
+					cleaned = append(cleaned, n)
+				}
+			}
+			cfg.Review.Perspectives = cleaned
+		}
+		if body.PerspectivePrompts != nil {
+			cleaned := make(map[string]string, len(prompts))
+			for k, v := range prompts {
+				k, v = strings.ToLower(strings.TrimSpace(k)), strings.TrimSpace(v)
+				if k != "" && v != "" {
+					cleaned[k] = v
+				}
+			}
+			if len(cleaned) == 0 {
+				cleaned = nil
+			}
+			cfg.Review.PerspectivePrompts = cleaned
+		}
+	}
+	if body.CombinedPerspectives != nil {
+		cfg.Review.CombinedPerspectives = *body.CombinedPerspectives
+	}
 	if body.RequireApproval != nil {
 		cfg.Review.RequireApproval = *body.RequireApproval
 	}

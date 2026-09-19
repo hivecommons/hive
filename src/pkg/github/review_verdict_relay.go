@@ -61,13 +61,32 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
 	// Validate BEFORE the report lands where the collector reads. review.Collect
 	// fails the whole collection on the first unparseable file, so one malformed
 	// agent verdict would otherwise take down routing for every PR in the hive.
-	report, err := review.ValidateReport([]byte(raw))
+	//
+	// A combined review judges every perspective in one session and delivers
+	// them as one array, so this accepts either shape: a bare object is still
+	// exactly what it was.
+	reports, err := review.ValidateReportsFor([]byte(raw), c.perspectives)
 	if err != nil {
 		c.logger.Warn("review-request watcher: rejected malformed verdict",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("agent", req.Agent), slog.String("error", err.Error()))
 		return
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.logger.Warn("review-request watcher: could not create report dir",
+			slog.String("dir", dir), slog.String("error", err.Error()))
+		return
+	}
+	for _, report := range reports {
+		c.writeOneVerdict(req, report, dir)
+	}
+}
+
+// writeOneVerdict commits a single perspective's verdict where review.Collect
+// will find it. One file per perspective, which is what the collector has
+// always read — a combined review changes how verdicts arrive, not how they
+// are stored, so nothing downstream needs to know the difference.
+func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveReport, dir string) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
@@ -78,24 +97,33 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
 			slog.String("agent", req.Agent))
 		return
 	}
-	if ok, reason, dispatchHead := verdictDispatchAuthorized(*report, req); !ok {
-		c.logger.Warn("review-request watcher: verdict target does not match reviewed PR, discarded",
+	// Bind to a real dispatch record. A combined review answers one kick with
+	// several verdicts, so each element is checked on its own: the dispatch is
+	// recorded per perspective, and a perspective nothing dispatched is refused
+	// here exactly as it would be for a single-object verdict.
+	ok, reason, dispatchHead := verdictDispatchAuthorized(report, req)
+	if !ok {
+		c.logger.Warn("review-request watcher: verdict does not match a review dispatch, discarded",
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
-			slog.String("claimed", fmt.Sprintf("%s#%d", report.Repo, report.Number)),
 			slog.String("perspective", string(report.Perspective)),
 			slog.String("agent", req.Agent),
 			slog.String("reason", reason))
 		return
-	} else if strings.TrimSpace(report.HeadSHA) == "" && strings.TrimSpace(dispatchHead) != "" {
+	}
+	if strings.TrimSpace(report.HeadSHA) == "" && strings.TrimSpace(dispatchHead) != "" {
 		report.HeadSHA = strings.TrimSpace(dispatchHead)
-		encoded, err := json.Marshal(report)
-		if err != nil {
-			c.logger.Warn("review-request watcher: could not bind verdict head SHA",
-				slog.String("repo", req.Repo), slog.Int("number", req.Number),
-				slog.String("agent", req.Agent), slog.String("error", err.Error()))
-			return
-		}
-		raw = string(encoded)
+	}
+
+	// Re-marshalled from the validated struct rather than written through from
+	// the request. One array element is not a standalone document, and the
+	// collector reads each file as one report; re-marshalling also drops the
+	// descriptive extra keys models add, which ValidateReport tolerates but
+	// nothing downstream reads, and carries the bound head SHA above.
+	raw, err := json.Marshal(report)
+	if err != nil {
+		c.logger.Warn("review-request watcher: could not serialize verdict",
+			slog.String("perspective", string(report.Perspective)), slog.String("error", err.Error()))
+		return
 	}
 
 	name := review.ReviewReportFilePrefix +
@@ -105,15 +133,10 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
 		review.ReviewReportFileSuffix
 	path := filepath.Join(dir, name)
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		c.logger.Warn("review-request watcher: could not create report dir",
-			slog.String("dir", dir), slog.String("error", err.Error()))
-		return
-	}
 	// Write-then-rename: review.Collect scans this dir on its own schedule and
 	// must never observe a half-written report.
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		c.logger.Warn("review-request watcher: could not write verdict",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return

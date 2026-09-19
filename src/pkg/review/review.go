@@ -97,8 +97,13 @@ type AggregateOptions struct {
 	// MaxPerspectivesPerPR mirrors DispatchOptions.MaxPerspectivesPerPR. A
 	// perspective the dispatcher never hands out cannot approve, so unanimity
 	// must be judged against what the PR was eligible to receive. Zero means
-	// "no cap": every perspective in DefaultPerspectives is required.
+	// "no cap": every perspective in the hive's set is required.
 	MaxPerspectivesPerPR int
+	// Perspectives is the set this hive reviews with. The zero value means the
+	// built-in default set, so unanimity is judged against the perspectives
+	// actually configured rather than a hardcoded five -- a hive that reviews
+	// with three could otherwise never reach unanimity at all.
+	Perspectives PerspectiveSet
 }
 
 type Aggregate struct {
@@ -132,7 +137,17 @@ type Artifact struct {
 	Items       []Aggregate `json:"items"`
 }
 
+// ValidateReport validates a verdict against the built-in perspective set. Use
+// ValidateReportFor on a hive that defines its own perspectives.
 func ValidateReport(raw []byte) (*PerspectiveReport, error) {
+	return ValidateReportFor(raw, PerspectiveSet{})
+}
+
+// ValidateReportFor validates a verdict against the perspectives THIS hive
+// reviews with. A verdict naming anything else is refused: nothing dispatched
+// it, nothing is waiting on it, and accepting it would let a reviewer
+// manufacture a judgment for a perspective no one asked for.
+func ValidateReportFor(raw []byte, set PerspectiveSet) (*PerspectiveReport, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, fmt.Errorf("review report must be a non-empty JSON object")
 	}
@@ -155,8 +170,8 @@ func ValidateReport(raw []byte) (*PerspectiveReport, error) {
 	if report.Kind != outputschema.KindReview {
 		return nil, fmt.Errorf("kind must be %q", outputschema.KindReview)
 	}
-	if !validPerspective(report.Perspective) {
-		return nil, fmt.Errorf("perspective must be one of %s", joinPerspectives(DefaultPerspectives))
+	if !set.Known(report.Perspective) {
+		return nil, fmt.Errorf("perspective must be one of %s", set.Names())
 	}
 	if !validVerdict(report.Verdict) {
 		return nil, fmt.Errorf("verdict must be one of approve, changes_requested, requires_human, reject")
@@ -231,7 +246,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		agg.FixCycle = true
 		return agg
 	}
-	if len(seenVerdicts) == 1 && seenVerdicts[VerdictApprove] && hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR) {
+	if len(seenVerdicts) == 1 && seenVerdicts[VerdictApprove] && hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
 		agg.Verdict = VerdictApprove
 		agg.MergeEligible = true
 		return agg
@@ -454,8 +469,16 @@ func severityRank(s outputschema.Severity) int {
 // require_approval could never clear anything.
 //
 // The bar is therefore what the PR was eligible to receive, not the full set.
-func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR int) bool {
-	required := len(DefaultPerspectives)
+//
+// configured is how many perspectives the hive reviews with (0 means the
+// built-in set). A hive that selected three perspectives must reach unanimity
+// on three -- holding it to five would make approve unreachable for the same
+// reason the cap did.
+func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR, configured int) bool {
+	required := configured
+	if required <= 0 {
+		required = len(DefaultPerspectives)
+	}
 	if maxPerPR > 0 && maxPerPR < required {
 		required = maxPerPR
 	}

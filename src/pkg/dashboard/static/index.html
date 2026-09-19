@@ -23515,6 +23515,29 @@ function burnAreaChart() {
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
+      const rvBuiltin = Array.isArray(rv.builtin_perspectives) ? rv.builtin_perspectives : [];
+      const rvSelected = Array.isArray(rv.perspectives) ? rv.perspectives : [];
+      const rvPrompts = (rv.perspective_prompts && typeof rv.perspective_prompts === 'object') ? rv.perspective_prompts : {};
+      // Empty selection means "all built-ins" server-side; render it that way
+      // so the checkboxes show what will actually run, not an empty list.
+      const rvBuiltinNames = rvBuiltin.map(b => b.name);
+      const rvCustomNames = Object.keys(rvPrompts).filter(n => !rvBuiltinNames.includes(n))
+        .concat(rvSelected.filter(n => !rvBuiltinNames.includes(n)))
+        .filter((n, i, a) => a.indexOf(n) === i);
+      const rvIsOn = (name) => rvSelected.length === 0 ? rvBuiltinNames.includes(name) || rvCustomNames.includes(name) : rvSelected.includes(name);
+      const rvPerspectiveRow = (name, defaultFocus) => {
+        const custom = rvPrompts[name] || '';
+        const isCustom = !rvBuiltinNames.includes(name);
+        return `<div class="rv-perspective" data-perspective="${esc(name)}" style="margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:0.8rem">
+              <input type="checkbox" class="rv-perspective-on" ${rvIsOn(name) ? 'checked' : ''} data-change-action="gh91">
+              <code>${esc(name)}</code>${isCustom ? ' <span style="font-size:0.68rem;color:var(--muted);font-weight:400">custom</span>' : ''}
+              ${isCustom ? `<button type="button" class="btn-small" style="margin-left:auto" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button>` : ''}
+            </label>
+            <textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:6px;font-size:0.76rem" placeholder="${esc(defaultFocus || 'what should this perspective look for?')}" data-change-action="gh92">${esc(custom)}</textarea>
+            ${defaultFocus ? `<p style="font-size:0.68rem;color:var(--muted);margin:3px 0 0">Built-in: ${esc(defaultFocus)}${custom ? ' — <a href="#" data-action="gh94" data-prevent="1" data-arg0="' + esc(name) + '" data-arg-types="s">use built-in</a>' : ''}</p>` : ''}
+          </div>`;
+      };
       const rvRec = rv.recommendations || {};
       const rvRecRepos = Array.isArray(rvRec.repos) ? rvRec.repos : [];
       const traj = (_configState.data || {}).trajectory || {};
@@ -23619,6 +23642,21 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Max perspectives per PR <span class="config-info">i<span class="config-tooltip">Caps how many review perspectives ONE PR may be given in a single cycle. Parallel review slots are a fixed budget spent in PR order, so without a cap the first PR in a deep queue absorbs every slot for its own perspectives &mdash; more opinions on one PR instead of coverage across many. Capping spends the same budget breadth-first. No coverage is lost: perspectives skipped this cycle are still missing next cycle and get dispatched then, so this schedules depth rather than dropping it. It also bounds how many comments one PR can collect at once, which matters once reviewers publish. 0 or empty means no cap (the default).</span></span></label>
             <input type="number" min="0" step="1" value="${rv.max_perspectives_per_pr || ''}" placeholder="0 — no cap" data-change-action="gh81">
+          </div>
+          <div class="config-subgroup">Perspectives</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rv.combined_perspectives ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="combined_perspectives"></div>
+            <span class="config-toggle-label">Review every perspective in one session, one comment <span class="config-info">i<span class="config-tooltip">Off: each perspective is its own agent session and its own review comment, and &quot;Max perspectives per PR&quot; caps how many a PR gets &mdash; which is how a fleet ends up reviewing only correctness. On: ONE session judges every enabled perspective and leaves ONE comment, with findings grouped under the perspective they belong to. The diff and surrounding tree are read once instead of once per perspective. Each perspective still records its own verdict, so any one of them can still hold a PR for a human. The per-PR cap does not apply in this mode: it exists to bound comments, and a combined review is always exactly one.</span></span></span>
+          </div>
+          <div id="rv-perspectives" style="margin-top:10px">
+            <p style="font-size:0.72rem;color:var(--muted);margin:0 0 4px">Which questions the reviewer asks of every PR, and what each one looks for. Edit the text to tell this hive&apos;s reviewer what matters in <em>your</em> repos &mdash; e.g. name the conventions doc for <code>style</code>. Blank means the built-in. Unchecking a perspective stops it running and stops its verdicts being accepted.</p>
+            ${rvBuiltin.map(b => rvPerspectiveRow(b.name, b.focus)).join('')}
+            ${rvCustomNames.map(n => rvPerspectiveRow(n, '')).join('')}
+            <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+              <input type="text" id="rv-new-perspective" placeholder="new perspective, e.g. api-compatibility" style="flex:1;font-size:0.76rem" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*">
+              <button type="button" class="btn-small" data-action="gh95">Add perspective</button>
+            </div>
+            <p style="font-size:0.68rem;color:var(--muted);margin:4px 0 0">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>
           </div>
           <div class="config-subgroup">Reviewers</div>
           <div class="config-field">
@@ -24142,6 +24180,29 @@ function burnAreaChart() {
     // recommendations as a whole sub-object (an absent key there means "leave
     // the block alone", so a partial object would look like a deliberate
     // clear of the fields it omitted).
+    // markDirtyPerspectives reads every perspective row and stages the
+    // selection and the prompts as a pair. Selection is sent as the explicit
+    // checked list; if every built-in is checked and nothing custom exists,
+    // it is sent empty, which the server treats as "all built-ins" — so a hive
+    // that never touched this keeps the default even after a save.
+    function markDirtyPerspectives() {
+      const rows = Array.from(document.querySelectorAll('#rv-perspectives .rv-perspective'));
+      const builtin = ((_configState.data || {}).review || {}).builtin_perspectives || [];
+      const builtinNames = builtin.map(b => b.name);
+      const selected = [], prompts = {};
+      for (const row of rows) {
+        const name = row.dataset.perspective;
+        const on = row.querySelector('.rv-perspective-on');
+        const ta = row.querySelector('.rv-perspective-focus');
+        if (on && on.checked) selected.push(name);
+        const text = ta ? ta.value.trim() : '';
+        if (text) prompts[name] = text;
+      }
+      const allBuiltinOnly = selected.length === builtinNames.length && builtinNames.every(n => selected.includes(n));
+      markDirty('review', 'perspectives', allBuiltinOnly ? [] : selected);
+      markDirty('review', 'perspective_prompts', prompts);
+    }
+
     function markDirtyRecommendations() {
       const sw = document.getElementById('rec-enabled-switch');
       const reposEl = document.getElementById('rec-repos-input');
@@ -26754,6 +26815,29 @@ function burnAreaChart() {
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh81: function (event, A) { markDirty('review','max_perspectives_per_pr',Number(this.value)||0); },
+      // Perspectives and their prompts are staged together on every change:
+      // the server validates them as a pair (a custom perspective is only
+      // valid with its prompt), and an absent key means "leave alone", so a
+      // partial write could orphan one half.
+      gh91: function (event, A) { markDirtyPerspectives(); },
+      gh92: function (event, A) { markDirtyPerspectives(); },
+      gh93: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); if (row) row.remove(); markDirtyPerspectives(); },
+      gh94: function (event, A) { const row = document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(A[0])}"]`); const ta = row && row.querySelector('.rv-perspective-focus'); if (ta) { ta.value = ''; } markDirtyPerspectives(); },
+      gh95: function (event, A) {
+        const input = document.getElementById('rv-new-perspective');
+        const name = (input.value || '').trim().toLowerCase();
+        if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(name)) { showToast('Perspective names are lowercase letters, digits and single dashes', 'error'); return; }
+        if (document.querySelector(`.rv-perspective[data-perspective="${CSS.escape(name)}"]`)) { showToast(`${name} already exists`, 'error'); return; }
+        const anchorEl = input.parentElement;
+        const row = document.createElement('div');
+        row.className = 'rv-perspective'; row.dataset.perspective = name;
+        row.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px';
+        row.innerHTML = `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:0.8rem"><input type="checkbox" class="rv-perspective-on" checked data-change-action="gh91"><code>${esc(name)}</code> <span style="font-size:0.68rem;color:var(--muted);font-weight:400">custom</span><button type="button" class="btn-small" style="margin-left:auto" data-action="gh93" data-arg0="${esc(name)}" data-arg-types="s">remove</button></label><textarea class="rv-perspective-focus" rows="2" style="width:100%;margin-top:6px;font-size:0.76rem" placeholder="what should this perspective look for?" data-change-action="gh92"></textarea>`;
+        anchorEl.parentElement.insertBefore(row, anchorEl);
+        input.value = '';
+        row.querySelector('textarea').focus();
+        markDirtyPerspectives();
+      },
       // The recommendations block is sent to /api/config/review as ONE object,
       // so every control rebuilds it from all three inputs rather than
       // patching a single key — a per-key markDirty would drop whichever

@@ -4,15 +4,32 @@ Hive's review swarm adds a structured review-to-fix decision point for pull requ
 
 ## Perspectives
 
-The `pkg/review` package defines five review perspectives:
+The `pkg/review` package ships five built-in review perspectives:
 
-- `correctness`
-- `security`
-- `intent-alignment`
-- `style`
-- `docs-currency`
+- `correctness` — regressions, edge cases, data races, test adequacy
+- `security` — exploitable vulnerabilities, unsafe permissions, injection, secrets, trust-boundary regressions
+- `intent-alignment` — does the diff solve the linked issue without unrelated scope creep
+- `style` — maintainability, conventions, readability, repository idioms
+- `docs-currency` — documentation, examples, generated docs, operator-facing text that must change with behavior
 
-Each reviewer returns a JSON object that extends the `pkg/outputschema.AgentReport` contract. Required AgentReport fields remain `lane`, `kind`, `findings`, `prs_opened`, `beads_filed`, and `summary`; review reports add `perspective`, `verdict`, `repo`, `number`, and optional `head_sha`. `kind` must be `review`.
+Which perspectives run, and what each is told to look for, are per-hive settings under `review:` (Governor → Features → Review Gate → Perspectives in the dashboard):
+
+```yaml
+review:
+  perspectives: [correctness, security, api-compat]   # empty = all built-ins
+  perspective_prompts:
+    style: "follow docs/CONVENTIONS.md; flag any exported symbol without a doc comment"
+    api-compat: "breaking changes to the public Go API or CRD schema"
+  combined_perspectives: true
+```
+
+- `perspectives` selects the set, in dispatch order. Empty means every built-in. A name that is neither built in nor described in `perspective_prompts` fails validation rather than being dropped — a typo that silently disappeared would read as enabled everywhere it is displayed while nothing reviewed it.
+- `perspective_prompts` overrides the focus line for a built-in, or defines a hive-specific perspective entirely (custom names: lowercase letters, digits, single dashes, ≤ 40 chars). A blank entry means the built-in text.
+- `combined_perspectives` reviews every enabled perspective in **one** agent session that leaves **one** review comment, with findings grouped under the perspective they belong to. Off, each perspective is its own session and its own comment, and `max_perspectives_per_pr` caps how many a PR receives. Combined mode ignores that cap: it exists to bound comments, and a combined review is always exactly one. The reviewer still emits one verdict per perspective — as a JSON array in the verdict file — so any single perspective can still hold a PR for a human.
+
+Verdicts are validated against the hive's own perspective set: a verdict naming a perspective this hive does not review with is refused by the relay, since nothing dispatched it and nothing is waiting on it.
+
+Each reviewer returns a JSON object that extends the `pkg/outputschema.AgentReport` contract — or, for a combined review, a JSON array of one such object per perspective, all for the same PR and head SHA. Required AgentReport fields remain `lane`, `kind`, `findings`, `prs_opened`, `beads_filed`, and `summary`; review reports add `perspective`, `verdict`, `repo`, `number`, and optional `head_sha`. `kind` must be `review`.
 
 Allowed verdicts are `approve`, `changes_requested`, `requires_human`, and `reject`. Finding severities reuse `outputschema.Severity`: `info`, `low`, `medium`, `high`, and `critical`.
 
@@ -30,7 +47,7 @@ Aggregation rules are deterministic:
 2. Any finding at or above the human threshold defaults to `requires_human`.
 3. Any explicit `requires_human` yields `requires_human`.
 4. Any `changes_requested` enters a fix cycle while below the fix cap.
-5. All five default perspectives approving yields a merge-eligible aggregate.
+5. Every perspective in the hive's configured set approving (or, under `max_perspectives_per_pr`, every perspective the PR was eligible to receive) yields a merge-eligible aggregate.
 6. Missing perspectives or any other non-unanimous result requires human review.
 
 The default human threshold is `high`. Review-triggered fix cycles use the same cap value as the escalation re-engagement circuit breaker (`escalation.MaxReEngagements`) so bot loops remain bounded.

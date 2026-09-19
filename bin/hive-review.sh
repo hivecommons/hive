@@ -20,7 +20,9 @@
 #
 # Structured verdict (hivecommons/hive: the reviewer's second artifact) —
 #   hive-review <number> --repo <owner/repo> --comment --body-file <c> --verdict-file <v>
-# <v> holds the single JSON verdict object. The relay validates it, checks it
+# <v> holds one JSON verdict object — or, for a review that covered several
+# perspectives in one session, a JSON array of one object per perspective, all
+# for the same PR. The relay validates it, checks it
 # names the PR you just reviewed, and writes it where the routing chain reads
 # it. You cannot write that file yourself: /var/run/hive-metrics is owned by the
 # hive, not by any agent uid. Post the comment WITHOUT a verdict and the comment

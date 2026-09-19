@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -342,5 +343,60 @@ func TestReviewConfigPut_RejectsNonOwner(t *testing.T) {
 	}
 	if s.deps.Config.Review.RequireApproval {
 		t.Fatal("refused write still flipped require_approval")
+	}
+}
+
+// The perspective set is validated by the same resolver the hive loads it
+// with, so what the dialog accepts is exactly what will run. A typo must be a
+// 400 with the offending name, not a silently dropped perspective.
+func TestReviewConfigPut_Perspectives(t *testing.T) {
+	s := covApiServer(t)
+
+	rec := doPut(s, "/api/config/review", map[string]any{"perspectives": []string{"correctness", "secuirty"}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "secuirty") {
+		t.Fatalf("typo: expected 400 naming it, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(s.deps.Config.Review.Perspectives) != 0 {
+		t.Fatalf("rejected write mutated config: %v", s.deps.Config.Review.Perspectives)
+	}
+
+	// A hive-defined perspective is only valid alongside its prompt.
+	if rec := doPut(s, "/api/config/review", map[string]any{"perspectives": []string{"api-compat"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("custom without prompt: expected 400, got %d", rec.Code)
+	}
+	rec = doPut(s, "/api/config/review", map[string]any{
+		"perspectives":          []string{" Security ", "api-compat"},
+		"perspective_prompts":   map[string]string{"api-compat": "public API breakage", "style": "  "},
+		"combined_perspectives": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rv := s.deps.Config.Review
+	if len(rv.Perspectives) != 2 || rv.Perspectives[0] != "security" || rv.Perspectives[1] != "api-compat" {
+		t.Fatalf("perspectives = %v", rv.Perspectives)
+	}
+	if rv.PerspectivePrompts["api-compat"] != "public API breakage" {
+		t.Fatalf("prompts = %v", rv.PerspectivePrompts)
+	}
+	if _, ok := rv.PerspectivePrompts["style"]; ok {
+		t.Fatal("blank prompt stored instead of dropped")
+	}
+	if !rv.CombinedPerspectives {
+		t.Fatal("combined_perspectives not applied")
+	}
+
+	// Removing the prompt from under a selected custom perspective is refused:
+	// the pair must stay valid.
+	if rec := doPut(s, "/api/config/review", map[string]any{"perspective_prompts": map[string]string{}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("orphaning api-compat: expected 400, got %d", rec.Code)
+	}
+
+	// Absent keys leave everything untouched.
+	if rec := doPut(s, "/api/config/review", map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("empty put: %d", rec.Code)
+	}
+	if len(s.deps.Config.Review.Perspectives) != 2 || !s.deps.Config.Review.CombinedPerspectives {
+		t.Fatalf("empty put mutated config: %+v", s.deps.Config.Review)
 	}
 }

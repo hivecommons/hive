@@ -145,7 +145,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(),
 		"features":              featuresSectionResponse(cfg),
-		"review":                cfg.Review,
+		"review":                reviewSectionResponse(cfg),
 		"auto_merge":            autoMergeSectionResponse(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),
 		"advisory":              advisorySectionResponse(cfg),

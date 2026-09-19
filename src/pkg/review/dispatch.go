@@ -69,6 +69,22 @@ type DispatchOptions struct {
 	// how much review traffic a single pull request attracts.
 	// Zero means DefaultMaxPerspectivesPerPR.
 	MaxPerspectivesPerPR int
+	// Perspectives is the set this hive reviews with, including any it
+	// defines itself. The zero value means the built-in defaults.
+	Perspectives PerspectiveSet
+	// CombinedPerspectives dispatches ONE kick covering every perspective a PR
+	// still needs, instead of one kick per perspective.
+	//
+	// It exists because breadth and quiet were in direct conflict. One kick
+	// per perspective meant five agent sessions and five review comments on a
+	// single PR, and capping that (max_perspectives_per_pr, #7562) bought
+	// quiet by never reviewing four of the five perspectives at all. Reviewing
+	// all of them in one session costs one comment, and reads the diff and its
+	// surrounding tree once rather than five times.
+	//
+	// The verdicts stay separate: the reviewer emits one per perspective, and
+	// any single one of them can still withhold approval.
+	CombinedPerspectives bool
 	ReviewerAgents       []string
 	FixerAgent           string
 	ProjectOrg           string
@@ -150,6 +166,11 @@ type DispatchKick struct {
 	HeadSHA     string
 	Perspective Perspective
 	AuthorAgent string
+	// Perspectives is every perspective this kick covers. It is set only by
+	// combined dispatch; Perspective stays populated with the first of them so
+	// existing consumers (logging, metrics, kick dedup) keep working unchanged
+	// rather than silently seeing an empty perspective.
+	Perspectives []Perspective
 }
 
 type DispatchPlan struct {
@@ -255,8 +276,28 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
-		missing := pendingMissingPerspectives(plan.State, pr)
+		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List())
 		if len(missing) == 0 {
+			continue
+		}
+		// One kick, every outstanding perspective, one comment. The per-PR cap
+		// is deliberately not applied here: it exists to bound how many review
+		// COMMENTS one PR collects, and a combined review produces exactly one
+		// however many perspectives it covers. Applying it anyway would drop
+		// perspectives to buy quiet that has already been bought.
+		if opts.CombinedPerspectives {
+			agent := prReviewers[0].Name
+			msg := BuildCombinedPrompt(pr, missing, PromptOptions{
+				PostComments:          opts.PostComments,
+				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
+				Revise:                revisiting,
+				Perspectives:          opts.Perspectives,
+			})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
+			for _, p := range missing {
+				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
+			}
+			availableSlots--
 			continue
 		}
 		limit := len(missing)
@@ -274,7 +315,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// it says. A force-push clears the pending entries, so genuinely new
 		// code earns a fresh budget.
 		if perPR := opts.effectiveMaxPerspectivesPerPR(); perPR > 0 {
-			covered := len(DefaultPerspectives) - len(missing)
+			covered := opts.Perspectives.Len() - len(missing)
 			remaining := perPR - covered
 			if remaining <= 0 {
 				continue
@@ -296,6 +337,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				PostComments:          opts.PostComments,
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
 				Revise:                revisiting,
+				Perspectives:          opts.Perspectives,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
@@ -513,15 +555,18 @@ func hasReviewCapability(a AgentCapability) bool {
 	return false
 }
 
-func pendingMissingPerspectives(state DispatchState, pr PullRequest) []Perspective {
+func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective) []Perspective {
 	pending := map[Perspective]bool{}
 	for _, p := range state.Pending {
 		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			pending[p.Perspective] = true
 		}
 	}
+	if len(perspectives) == 0 {
+		perspectives = DefaultPerspectives
+	}
 	var missing []Perspective
-	for _, p := range DefaultPerspectives {
+	for _, p := range perspectives {
 		if !pending[p] {
 			missing = append(missing, p)
 		}
