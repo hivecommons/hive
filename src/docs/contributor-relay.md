@@ -587,6 +587,21 @@ The placeholder rendering is recorded **per backend, and only where a real captu
 
 Finally, a `chrome_idle` completion carrying **neither** a verdict **nor** a PR is now logged as a warning. It is not always wrong — an agent that found nothing to do but never printed the sentinel lands there too — but it is the shape this bug takes, and nothing in the pane shows what such a task produced.
 
+### Review notes that land after the verdict get one more turn
+
+omp's `--advisor` runtime reviews every turn passively and injects its notes after the turn ends, so its review of the agent's *final* turn is drawn on the pane **under** `HIVE_VERDICT`. The sentinel being final — which [#5376](https://github.com/hivecommons/hive/issues/5376), [#7662](https://github.com/hivecommons/hive/issues/7662) and [#7733](https://github.com/hivecommons/hive/issues/7733) established, and which is what makes omp bookable at all — meant the relay finalized on the line and killed the CLI with every note on the closing turn unread. Two live tasks on 2026-09-19 each ended under a stack of `⟦concern⟧`/`⟦nit⟧` notes; one was a real, cheap fix the agent would have made if it had seen it ([#7759](https://github.com/hivecommons/hive/issues/7759)).
+
+The relay now gives the agent **one** more turn, and only when a backend declares that its CLI posts review output after the agent's last line (`POST_VERDICT_REVIEW_MARKERS` in `bin/contributor-relay.js`; omp today, keyed by backend so the next CLI with a reviewer feature is a table entry rather than a tick-loop special case). When a verdict that would otherwise complete the task is read with `⟦concern⟧` notes below it that were not on the pane at the previous tick, the relay types one follow-up — *"Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line."* — reports `working` to the hub with the concern count, and resumes the normal verdict wait. The task prompt tells the agent this may happen, so the second `HIVE_VERDICT` is expected behaviour rather than a breach of "print it exactly once".
+
+The bound is explicit, because an advisor that reviews every turn will always have something new to say:
+
+- **One follow-up per task, ever.** The second verdict is final whatever appears under it. The budget is spent before the message is typed, so a send that fails is not retried — the task finalizes on the verdict as it would have.
+- **Only `⟦concern⟧` triggers it, never `⟦nit⟧`.** Nits are emitted freely and are cheap to ignore.
+- **Only notes below the verdict, and only new ones.** Transcript order is the evidence — a note above the sentinel was posted about an earlier turn — and a note already on the pane at the previous tick is not news. Nothing new under the verdict means the task finalizes on that very tick, exactly as before.
+- **The progress lease and the absolute deadline are untouched.** The follow-up neither extends nor resets either; if the agent burns the remaining budget on the concern, the stall and lease paths book it exactly as today, and lease expiry — which reads the pane itself — completes on whichever verdict it finds.
+
+Two verdict lines can be byte-identical (an agent that re-prints its conclusion verbatim), so the relay does not tell them apart by text. It looks for the CLI's echo of the follow-up message: a verdict *below* that echo is the second one; the first, still sitting above it while the agent works, is treated as no verdict yet. While that is so, idle chrome accrues toward the ordinary chrome-idle completion, so an agent that addresses the notes but never re-prints the sentinel still ends the same way as one that never printed it — with the verdict it did print (a `no_work_needed`, say) still carried to the hub.
+
 ## Reconnecting without losing in-flight work
 
 The relay heartbeats every 30 s and reconnects with exponential backoff (1 s to 60 s). A drop inside that window is meant to be invisible to the agent: the relay keeps its task locally, re-asserts it on the new socket, and carries on typing into the same tmux pane.

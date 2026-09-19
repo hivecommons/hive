@@ -309,3 +309,30 @@ func TestBuildTaskPrompt_RequiresPlainTextVerdicts(t *testing.T) {
 		t.Errorf("prompt must require plain text for both verdict instructions; got %d occurrences in: %q", got, prompt)
 	}
 }
+
+// TestBuildTaskPrompt_SanctionsOneReviewFollowUp pins the exception to
+// "print it exactly once" (hivecommons/hive#7759). A CLI that runs a passive
+// reviewer posts its notes on the agent's final turn UNDER the sentinel, so the
+// relay asks the agent once to address them and re-print the verdict. The
+// prompt has to say so, or that request contradicts the instruction above it
+// and a careful agent refuses it — and it has to say the second line is final,
+// so the agent does not wait for a third.
+func TestBuildTaskPrompt_SanctionsOneReviewFollowUp(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	for _, want := range []string{
+		"Print it exactly once",
+		"reviewer or advisor",
+		"print the HIVE_VERDICT line again",
+		"second line is expected, and it is final",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt must carry %q; got: %q", want, prompt)
+		}
+	}
+	// The exception is stated AFTER the rule it excepts, so a reader meets the
+	// rule first and the exception reads as the narrowing it is.
+	if strings.Index(prompt, "One exception") < strings.Index(prompt, "Print it exactly once") {
+		t.Errorf("the review follow-up exception must follow the exactly-once rule; got: %q", prompt)
+	}
+}

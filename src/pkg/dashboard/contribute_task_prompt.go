@@ -431,7 +431,19 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, "+
 			"only when you are actually done, and never before starting work. "+
 			"If you printed the no_work_needed line above, that already counts "+
-			"as your completion — do not print both.",
+			"as your completion — do not print both. "+
+			// #7759: the one sanctioned second verdict. A CLI that runs a
+			// passive reviewer (omp's --advisor) posts its notes on the agent's
+			// FINAL turn under the sentinel, after the agent has stopped, so
+			// the relay asks it once to address them and re-print the line.
+			// Without this sentence that request contradicts "exactly once"
+			// and a careful agent may refuse it. The bound is the relay's
+			// (maybeRequestPostVerdictReview in bin/contributor-relay.js):
+			// one follow-up per task, and the second verdict is final.
+			"One exception: if your CLI runs a reviewer or advisor whose notes "+
+			"appear after your verdict, you may be asked once to address the "+
+			"ones that apply and print the HIVE_VERDICT line again — do so; that "+
+			"second line is expected, and it is final.",
 		repoFull, issueRef, title, sourceHint, checkoutHint, baseHint, pushHint,
 	)
 }
