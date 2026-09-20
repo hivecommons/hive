@@ -1651,6 +1651,122 @@ test('omp container staging narrows the store through the sqlite3 CLI when node:
   }
 });
 
+// #7922: the container refreshes a COPY of the OAuth record. Refresh tokens
+// are single-use, so from then on the host row (and every later stage of it)
+// carries a revoked token; omp marks it disabled_cause and falls back to any
+// provider that lists a model, while the relay keeps reporting the selected
+// one. Two guards: write the container's newer row back on exit, and refuse
+// to launch on a row omp has already disabled.
+function credentialRow(dbFile, provider) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+  try {
+    return db.prepare('SELECT data, disabled_cause, updated_at FROM auth_credentials WHERE provider = ?').get(provider);
+  } finally { db.close(); }
+}
+
+test('omp sync-back writes the container-refreshed credential over the host row it was staged from, and nothing else', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp sync-back not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-syncback-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    const stampHost = new sqlite.DatabaseSync(hostDb);
+    stampHost.exec('UPDATE auth_credentials SET updated_at = 1000');
+    stampHost.close();
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    const stagedDb = path.join(stage, 'agent', 'agent.db');
+
+    // The container ran long enough to refresh: newer tokens, newer stamp.
+    // It also tampered with things sync-back must never carry home.
+    const inContainer = new sqlite.DatabaseSync(stagedDb);
+    inContainer.prepare("UPDATE auth_credentials SET data = ?, updated_at = 2000 WHERE provider = 'anthropic'")
+      .run(JSON.stringify({ access: 'anthropic-access-token-2', refresh: 'anthropic-refresh-token-2' }));
+    inContainer.prepare("INSERT INTO auth_credentials (provider, credential_type, data, updated_at) VALUES ('openai-codex', 'oauth', ?, 9000)")
+      .run(JSON.stringify({ access: 'planted-by-container', refresh: 'planted-by-container' }));
+    inContainer.prepare("INSERT INTO auth_credentials (provider, credential_type, data, updated_at) VALUES ('evil-provider', 'api_key', ?, 9000)")
+      .run(JSON.stringify({ key: 'planted-by-container' }));
+    inContainer.close();
+    fs.writeFileSync(path.join(stage, 'agent', 'config.yml'), 'modelRoles:\n  default: evil-provider/x\n');
+
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.syncedProviders, ['anthropic']);
+    const anthropic = credentialRow(hostDb, 'anthropic');
+    assert.strictEqual(anthropic.updated_at, 2000);
+    assert.ok(String(anthropic.data).includes('anthropic-refresh-token-2'), 'the host must now hold the refresh token the container was issued');
+    // Unselected/planted rows never reach the host; the host keeps only what it had.
+    assert.deepStrictEqual(providersIn(hostDb), ['anthropic', 'google-antigravity', 'openai-codex']);
+    assert.ok(!String(credentialRow(hostDb, 'openai-codex').data).includes('planted-by-container'), 'a container-written row for an unselected provider was carried home');
+    assert.ok(!fs.readFileSync(path.join(agentDir, 'config.yml'), 'utf8').includes('evil-provider'), 'config.yml must never sync back (H6)');
+    assert.ok(report.skipped.some((s) => s.startsWith('evil-provider:')) && report.skipped.some((s) => s.startsWith('openai-codex:')));
+
+    // Idempotent and monotonic: a second pass with nothing newer writes nothing.
+    const again = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(again.syncedProviders, []);
+    assert.match(ompBackend.syncBackLines(again).join('\n'), /nothing newer/);
+    assert.match(ompBackend.syncBackLines(report).join('\n'), /written back .*anthropic/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp sync-back does not roll a host sign-in back to an older staged copy', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp sync-back not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-syncback-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    // The operator re-logged in on the host while the container ran.
+    const host = new sqlite.DatabaseSync(hostDb);
+    host.prepare("UPDATE auth_credentials SET data = ?, updated_at = 5000 WHERE provider = 'anthropic'")
+      .run(JSON.stringify({ access: 'host-relogin', refresh: 'host-relogin' }));
+    host.close();
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.syncedProviders, []);
+    assert.ok(String(credentialRow(hostDb, 'anthropic').data).includes('host-relogin'), 'the newer host sign-in was overwritten by the stale staged copy');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('omp container staging refuses a sign-in omp has disabled, and the preflight names the cause', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-disabled-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const host = new sqlite.DatabaseSync(path.join(agentDir, 'agent.db'));
+    host.exec("UPDATE auth_credentials SET disabled_cause = 'oauth refresh failed: 400 {\"error\":\"invalid_grant\",\"error_description\":\"Refresh token not found or invalid\"}' WHERE provider = 'anthropic'");
+    host.close();
+
+    const describe = ompBackend.describeOmpHost(hostOmp, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(describe.disabledProviders.map((d) => d.provider), ['anthropic']);
+    const text = ompBackend.describeLines(describe).join('\n');
+    assert.match(text, /anthropic sign-in on this host is disabled/);
+    assert.match(text, /invalid_grant/);
+    assert.match(text, /\/login/);
+
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    assert.throws(() => ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5'), /disabled on this host: anthropic .*invalid_grant.*\/login/);
+    assert.ok(!fs.existsSync(path.join(stage, 'agent', 'agent.db')), 'a refused launch must not leave a copy of the store behind');
+
+    // A different, healthy provider is unaffected by anthropic's disabled row.
+    const ok = ompBackend.stageOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna');
+    assert.deepStrictEqual(ok.keptProviders, ['openai-codex']);
+    assert.deepStrictEqual(ok.disabledProviders, []);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('omp preflight describes what container mode will stage, and names a missing sign-in before the container starts', () => {
   const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-describe-'));
   try {

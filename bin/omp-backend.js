@@ -123,19 +123,45 @@ function quoteSql(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-function listProviderRows(dbFile) {
-  const sql = `SELECT provider, credential_type FROM ${OMP_AUTH_TABLE} ORDER BY provider, credential_type`;
+// queryRows runs one read-only SELECT against dbFile through whichever
+// SQLite the host has (node:sqlite, else the sqlite3 CLI) and returns the
+// rows as plain objects.
+function queryRows(dbFile, sql) {
   const sqlite = nodeSqlite();
   if (sqlite) {
     const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
-    try {
-      return db.prepare(sql).all().map((r) => ({ provider: String(r.provider), credentialType: String(r.credential_type) }));
-    } finally { db.close(); }
+    try { return db.prepare(sql).all(); } finally { db.close(); }
   }
   const r = spawnSync('sqlite3', ['-readonly', '-json', dbFile, sql], { encoding: 'utf8' });
   if (r.error || r.status !== 0) throw new Error(`sqlite3 could not read ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
-  const rows = r.stdout.trim() ? JSON.parse(r.stdout) : [];
-  return rows.map((row) => ({ provider: String(row.provider), credentialType: String(row.credential_type) }));
+  return r.stdout.trim() ? JSON.parse(r.stdout) : [];
+}
+
+// execStatements runs write statements against dbFile in order.
+function execStatements(dbFile, statements) {
+  const sqlite = nodeSqlite();
+  if (sqlite) {
+    const db = new sqlite.DatabaseSync(dbFile);
+    try { for (const sql of statements) db.exec(sql); } finally { db.close(); }
+    return;
+  }
+  const r = spawnSync('sqlite3', [dbFile, statements.join('; ')], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) throw new Error(`sqlite3 could not write ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
+}
+
+// listProviderRows reads the non-secret columns of every credential row:
+// which provider, what kind, and — #7922 — whether omp has disabled it and
+// why. disabled_cause is what omp writes when a refresh fails ("oauth refresh
+// failed: ... invalid_grant ..."); a row carrying one is a sign-in the
+// container cannot use, and staging it only moves the failure into a pane
+// nobody is watching.
+function listProviderRows(dbFile) {
+  const sql = `SELECT provider, credential_type, disabled_cause FROM ${OMP_AUTH_TABLE} ORDER BY provider, credential_type`;
+  return queryRows(dbFile, sql).map((r) => ({
+    provider: String(r.provider),
+    credentialType: String(r.credential_type),
+    disabledCause: r.disabled_cause == null ? '' : String(r.disabled_cause),
+  }));
 }
 
 // deleteProvidersNotIn narrows the staged store to `keep` and makes the
@@ -252,6 +278,7 @@ function describeOmpHost(ompDir, model) {
     selection: ompProviderSelection(model, configFile),
     storedProviders: [],
     keptProviders: [],
+    disabledProviders: [],
     warnings: [],
   };
   if (!report.agentDirPresent) {
@@ -276,6 +303,17 @@ function describeOmpHost(ompDir, model) {
   report.keptProviders = report.selection.source === 'none'
     ? report.storedProviders
     : report.storedProviders.filter((p) => keep.has(p));
+  // #7922: a kept provider whose row omp has disabled. The container would
+  // start with "No API key found for <provider>" and fall back to whatever
+  // provider lists any model — on the observed host, an unreachable local
+  // ollama — while the relay keeps reporting the selected model to the hub.
+  const kept = new Set(report.keptProviders);
+  report.disabledProviders = rows
+    .filter((r) => r.disabledCause && kept.has(r.provider.toLowerCase()))
+    .map((r) => ({ provider: r.provider.toLowerCase(), cause: r.disabledCause }));
+  for (const d of report.disabledProviders) {
+    report.warnings.push(`the ${d.provider} sign-in on this host is disabled — ${d.cause}. Run omp on the host and /login to ${d.provider} again; until then the container would start with no usable ${d.provider} credential.`);
+  }
   if (report.storedProviders.length === 0) {
     report.warnings.push('no provider credential is stored on this host; the container would start at omp\'s setup wizard.');
   } else if (report.selection.source !== 'none' && report.keptProviders.length === 0) {
@@ -317,6 +355,13 @@ function stageOmp(ompDir, stageDir, model) {
   const dstAgent = path.join(stageDir, 'agent');
   report.staged = [];
   if (!report.agentDirPresent) return report;
+  // #7922: refuse to launch on a disabled sign-in rather than ship it. The
+  // failure is the operator's to fix on the host (/login), and a launch that
+  // proceeds ends in a silent provider fallback the relay cannot see.
+  if (report.disabledProviders.length) {
+    const named = report.disabledProviders.map((d) => `${d.provider} (${d.cause})`).join('; ');
+    throw new Error(`the selected omp sign-in is disabled on this host: ${named}. Run omp on the host and /login again, then relaunch.`);
+  }
   fs.mkdirSync(dstAgent, { recursive: true, mode: 0o700 });
   for (const entry of OMP_STAGED_AGENT_ENTRIES) {
     const src = path.join(srcAgent, entry);
@@ -358,6 +403,69 @@ function stageOmp(ompDir, stageDir, model) {
   return report;
 }
 
+// ── Sync back (contribute-hive cleanup, container mode) ─────────────────────
+
+// syncBackOmp copies a refreshed credential out of the staged store into the
+// host's, after the container has stopped (hivecommons/hive#7922).
+//
+// The container runs against a COPY of an OAuth record, and OAuth refresh
+// tokens are single-use: the first client to refresh receives a new refresh
+// token and the old one is revoked. A container that ran long enough for its
+// access token to expire refreshed, and from that moment the host's row held
+// a revoked refresh token — the host's own omp broke, and every later launch
+// staged the dead token ("Refresh token not found or invalid", then "No API
+// key found for anthropic", then a silent fallback to a model the container
+// could not reach). Writing the container's newer row back closes that
+// window for every clean exit; a crash mid-run can still lose the refresh.
+//
+// The H6 boundary is kept as narrow as the fix allows: only rows the host
+// ALREADY holds for the selected providers are touched, only their
+// credential columns (data, disabled_cause, updated_at), and only when the
+// staged row is strictly newer. Nothing is inserted, no other provider is
+// read, config.yml and models.db never travel back. What the container can
+// do to the host through this is overwrite a credential it was already
+// holding — which it could revoke anyway.
+function syncBackOmp(ompDir, stageDir, model) {
+  const report = describeOmpHost(ompDir, model);
+  report.syncedProviders = [];
+  report.skipped = [];
+  const hostDb = path.join(report.agentDir, 'agent.db');
+  const stagedDb = path.join(stageDir, 'agent', 'agent.db');
+  if (!fs.existsSync(stagedDb) || !fs.existsSync(hostDb) || !report.sqlite) return report;
+  const keep = report.selection.source === 'none' ? null : new Set(report.selection.providers);
+  const cols = 'provider, credential_type, identity_key, data, disabled_cause, updated_at';
+  const staged = queryRows(stagedDb, `SELECT ${cols} FROM ${OMP_AUTH_TABLE}`);
+  const host = queryRows(hostDb, `SELECT ${cols} FROM ${OMP_AUTH_TABLE}`);
+  const rowKey = (r) => `${String(r.provider).toLowerCase()}\u0000${r.credential_type}\u0000${r.identity_key == null ? '' : r.identity_key}`;
+  const hostByKey = new Map(host.map((r) => [rowKey(r), r]));
+  const statements = [];
+  for (const s of staged) {
+    const provider = String(s.provider).toLowerCase();
+    if (keep && !keep.has(provider)) { report.skipped.push(`${provider}: not a selected provider`); continue; }
+    const h = hostByKey.get(rowKey(s));
+    if (!h) { report.skipped.push(`${provider}: no matching row on the host`); continue; }
+    if (!(Number(s.updated_at) > Number(h.updated_at))) { report.skipped.push(`${provider}: host row is as new or newer`); continue; }
+    const where = `lower(provider) = ${quoteSql(provider)} AND credential_type = ${quoteSql(s.credential_type)} AND ` +
+      (s.identity_key == null ? 'identity_key IS NULL' : `identity_key = ${quoteSql(s.identity_key)}`) +
+      ` AND updated_at < ${Number(s.updated_at)}`;
+    const cause = s.disabled_cause == null ? 'NULL' : quoteSql(s.disabled_cause);
+    statements.push(`UPDATE ${OMP_AUTH_TABLE} SET data = ${quoteSql(s.data)}, disabled_cause = ${cause}, updated_at = ${Number(s.updated_at)} WHERE ${where}`);
+    report.syncedProviders.push(provider);
+  }
+  if (statements.length) execStatements(hostDb, ['BEGIN', ...statements, 'COMMIT']);
+  return report;
+}
+
+function syncBackLines(report) {
+  const lines = [];
+  if (report.syncedProviders && report.syncedProviders.length) {
+    lines.push(`omp sign-in refreshed in the container written back to ${report.agentDir}: ${report.syncedProviders.join(', ')} (#7922)`);
+  } else {
+    lines.push(`omp sign-in: nothing newer in the container to write back to ${report.agentDir}`);
+  }
+  return lines;
+}
+
 module.exports = {
   OMP_STAGED_AGENT_ENTRIES,
   parseOmpProvider,
@@ -366,6 +474,8 @@ module.exports = {
   describeOmpHost,
   describeLines,
   stageOmp,
+  syncBackOmp,
+  syncBackLines,
   sqliteBackend,
 };
 
@@ -393,6 +503,21 @@ if (require.main === module) {
     process.stdout.write(`${describeLines(report).join('\n')}\n`);
     process.exit(0);
   }
-  process.stderr.write('usage: omp-backend.js --describe <omp-dir> [AGENT_MODEL] | --stage <omp-dir> <stage-dir> [AGENT_MODEL]\n');
+  if (command === '--sync-back') {
+    // --sync-back <omp-dir> <stage-dir> [AGENT_MODEL]
+    const [ompDir, stageDir, model] = rest;
+    if (!ompDir || !stageDir) {
+      process.stderr.write('usage: omp-backend.js --sync-back <omp-dir> <stage-dir> [AGENT_MODEL]\n');
+      process.exit(2);
+    }
+    let report;
+    try { report = syncBackOmp(ompDir, stageDir, model || ''); } catch (err) {
+      process.stderr.write(`ERROR: ${err.message}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`${syncBackLines(report).join('\n')}\n`);
+    process.exit(0);
+  }
+  process.stderr.write('usage: omp-backend.js --describe <omp-dir> [AGENT_MODEL] | --stage <omp-dir> <stage-dir> [AGENT_MODEL] | --sync-back <omp-dir> <stage-dir> [AGENT_MODEL]\n');
   process.exit(2);
 }

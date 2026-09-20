@@ -1682,6 +1682,18 @@ contribute-hive backend="" mode="docker": check-version
       # in the cleanup trap below, after the logs have been read.
       cleanup_container() {
         "$RUNTIME" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        # #7922: omp's OAuth refresh tokens are single-use. When the container
+        # refreshed the staged copy, the host's row became a revoked token and
+        # the host's own omp (and every later launch, which stages that dead
+        # row) broke. Write the container's newer credential row back before
+        # the copy is destroyed. Narrow by construction: only the selected
+        # provider's existing row, only its credential columns, only when
+        # strictly newer — never config.yml or anything else the container
+        # wrote (see syncBackOmp in bin/omp-backend.js).
+        if [ "${BACKEND}" = "omp" ] && [ -n "${CLI_STAGE:-}" ] && [ -f "${CLI_STAGE}/.omp/agent/agent.db" ]; then
+          node bin/omp-backend.js --sync-back "${HOME}/.omp" "${CLI_STAGE}/.omp" "${AGENT_MODEL:-}" \
+            || echo "⚠  could not write the container's refreshed omp sign-in back to ${HOME}/.omp; if omp on the host now fails to refresh, run omp and /login again (#7922)." >&2
+        fi
         # Remove the ephemeral CLI config staging dir (H6). Any config the
         # container wrote — including a malicious injection — dies with it and
         # never touches the contributor's real host config.
