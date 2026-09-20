@@ -268,6 +268,138 @@ func TestContributeMeMatchesProfileCase(t *testing.T) {
 	}
 }
 
+// meWithPRRollups seeds a profile and drives n rollups in which the contributor
+// completes `done` tasks and ships `prs` pull requests per hour (#7894).
+func meWithPRRollups(t *testing.T, s *Server, user string, n, done, prs int) {
+	t.Helper()
+	seedStatsProfile(t, user, n*done, n*prs, 0)
+	store := s.contributeMetricsStore()
+	for i := 0; i < n; i++ {
+		store.rollup(rollupSample{
+			queueDepth: 0, fleetSize: 1,
+			userTotals:   map[string]int{user: i * done},
+			userPRTotals: map[string]int{user: i * prs},
+			now:          time.Now(),
+		})
+	}
+}
+
+// mePRFields is the slice of the /me payload the PR tile reads.
+type mePRFields struct {
+	Recent    int  `json:"tasks_completed_24h"`
+	PRs       int  `json:"prs_produced_24h"`
+	Covered   int  `json:"window_hours_covered"`
+	PRCovered int  `json:"pr_window_hours_covered"`
+	HaveHours bool `json:"history_available"`
+	HavePRs   bool `json:"pr_history_available"`
+}
+
+// TestContributeMePRs24hWindow is the core of #7894: the 24-hour PR figure sums
+// the trailing 24 buckets of the caller's OWN PR ring, and it is DISTINCT from
+// the 24-hour completion figure the card already showed.
+func TestContributeMePRs24hWindow(t *testing.T) {
+	s := meStatsServer(t)
+	meWithPRRollups(t, s, "shipper", 30, 3, 1) // 3 completions/h, 1 PR/h
+
+	rec := getAs(s, "/api/contribute/me", "shipper")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got mePRFields
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if !got.HavePRs {
+		t.Fatal("pr_history_available = false, want true — 30 buckets were rolled up")
+	}
+	if got.PRCovered != recentWindowBuckets {
+		t.Fatalf("pr_window_hours_covered = %d, want a full %d", got.PRCovered, recentWindowBuckets)
+	}
+	if got.PRs != recentWindowBuckets {
+		t.Fatalf("prs_produced_24h = %d, want %d (one PR per hour)", got.PRs, recentWindowBuckets)
+	}
+	if got.Recent != 3*recentWindowBuckets {
+		t.Fatalf("tasks_completed_24h = %d, want %d — the PR figure must not replace it", got.Recent, 3*recentWindowBuckets)
+	}
+}
+
+// TestContributeMePRsShortHistoryIsHonest proves the PR figure carries its own
+// coverage: a contributor with a day of completion history but a PR ring that
+// only started three hours ago is told "3h", not a day of zero pull requests.
+func TestContributeMePRsShortHistoryIsHonest(t *testing.T) {
+	s := meStatsServer(t)
+	seedStatsProfile(t, "veteran", 40, 12, 0)
+	store := s.contributeMetricsStore()
+	// A day of completion-only history (a spoke from before the PR ring existed).
+	for i := 0; i < 26; i++ {
+		store.rollup(rollupSample{userTotals: map[string]int{"veteran": i}, now: time.Now()})
+	}
+	// Then three post-upgrade hours that sample PRs: seed, +1 PR, +0.
+	store.seededTotals = false
+	for _, withPR := range []int{10, 11, 11} {
+		store.rollup(rollupSample{
+			userTotals:   map[string]int{"veteran": 30},
+			userPRTotals: map[string]int{"veteran": withPR},
+			now:          time.Now(),
+		})
+	}
+
+	rec := getAs(s, "/api/contribute/me", "veteran")
+	var got mePRFields
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if !got.HaveHours || got.Covered != recentWindowBuckets {
+		t.Fatalf("completion window = covered %d / available %v, want %d/true", got.Covered, got.HaveHours, recentWindowBuckets)
+	}
+	if !got.HavePRs || got.PRCovered != 3 || got.PRs != 1 {
+		t.Fatalf("PR window = %d PRs / covered %d / available %v, want 1/3/true — the real depth of PR history",
+			got.PRs, got.PRCovered, got.HavePRs)
+	}
+}
+
+// TestContributeMePRsNoHistoryIsNotZero proves a contributor whose PR ring has
+// not started yet — every contributor between an upgrade and the first rollup
+// after it — is reported as "not measured" for PRs even while their completion
+// series is available, rather than as a real zero.
+func TestContributeMePRsNoHistoryIsNotZero(t *testing.T) {
+	s := meStatsServer(t)
+	seedStatsProfile(t, "pre", 10, 4, 0)
+	store := s.contributeMetricsStore()
+	for i := 0; i < 5; i++ {
+		store.rollup(rollupSample{userTotals: map[string]int{"pre": i}, now: time.Now()})
+	}
+
+	rec := getAs(s, "/api/contribute/me", "pre")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200", rec.Code)
+	}
+	var got mePRFields
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if !got.HaveHours {
+		t.Fatal("history_available = false, want true — the completion ring exists")
+	}
+	if got.HavePRs {
+		t.Fatal("pr_history_available = true with no PR rollups, want false")
+	}
+	if got.PRs != 0 || got.PRCovered != 0 {
+		t.Fatalf("unmeasured PR window should report 0/0, got %d/%d", got.PRs, got.PRCovered)
+	}
+}
+
+// TestContributeMePRsMatchProfileCase proves the PR lookup keys off the STORED
+// github_username like the completion lookup does, so a session with a
+// different login case does not degrade the PR figure to "no history".
+func TestContributeMePRsMatchProfileCase(t *testing.T) {
+	s := meStatsServer(t)
+	meWithPRRollups(t, s, "MixedCase", 4, 1, 1)
+
+	rec := getAs(s, "/api/contribute/me", "mixedcase")
+	var got mePRFields
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if !got.HavePRs || got.PRs != 3 {
+		t.Fatalf("PR figure lost to a case mismatch: available=%v prs=%d, want true/3", got.HavePRs, got.PRs)
+	}
+}
+
 // TestContributionPanelWiredOnOpsPage pins the client-side pieces of the "Your
 // contribution" panel on the rendered /contribute page, in the strings.Contains
 // style the other Operations-page tests use, so the panel cannot silently
@@ -285,7 +417,15 @@ func TestContributionPanelWiredOnOpsPage(t *testing.T) {
 		"ccLoadMine();",          // actually invoked from opsPoll
 		"Issues worked (24h)",    // the three asks from the issue, verbatim
 		"Issues worked (total)",
-		"PRs produced",
+		"PRs produced (total)",
+		// #7894: the 24h PR tile, its own availability/coverage fields, and the
+		// footnote that now speaks for both 24h figures.
+		"PRs produced (24h)",
+		"function ccMineRecent(",
+		"d.prs_produced_24h",
+		"d.pr_history_available",
+		"d.pr_window_hours_covered",
+		"Both 24h figures are summed from the same hourly rollup",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered contribute page missing contribution-panel marker %q", want)

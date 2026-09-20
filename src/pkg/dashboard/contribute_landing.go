@@ -992,11 +992,12 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-search-clear:hover{color:var(--cc-text-2)}
 .cc-q-filternote{padding:6px 20px;font-size:.72rem;color:var(--cc-muted-2);border-bottom:1px solid var(--cc-border-2)}
 /* ── Your contribution (#6543) — the signed-in contributor's own numbers ────────
-   A quiet tile row: issues worked (24h), issues worked (total), PRs produced, and
-   failures. The PR tile carries the page's green accent because it is the figure
-   that actually distinguishes a session that shipped from one that returned
-   no_work_needed — and the one auto-promotion counts. Same sober ops register as
-   the panels around it; no new colour tokens. */
+   A quiet tile row: issues worked (24h), issues worked (total), PRs produced
+   (24h, #7894), PRs produced (total), and failures. The PR tiles carry the
+   page's green accent because that is the figure that actually distinguishes a
+   session that shipped from one that returned no_work_needed — and the one
+   auto-promotion counts. Same sober ops register as the panels around it; no
+   new colour tokens. */
 .cc-mine{display:grid;grid-template-columns:repeat(auto-fit,minmax(94px,1fr));gap:10px;padding:14px 20px}
 .cc-mine-tile{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:8px;padding:9px 11px}
 .cc-mine-val{font-size:1.35rem;font-weight:700;line-height:1.15;color:var(--cc-text)}
@@ -2091,7 +2092,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      vertical swap, no id/behavior change. -->
 <!-- Your contribution (#6543): the signed-in contributor's OWN numbers — issues
      worked in the last 24h and all-time, how many of those produced a pull
-     request, and how many failed. "Tasks completed" alone cannot tell a session
+     request (24h and all-time, #7894), and how many failed. "Tasks completed" alone cannot tell a session
      that shipped fourteen pull requests from one that returned no_work_needed
      fourteen times, and the PR count is also what auto-promotion actually reads,
      so showing it tells a contributor what they are being measured on instead of
@@ -6278,7 +6279,22 @@ function ccMineTile(val,label,sub,cls){
     (sub?('<div class="cc-mine-sub">'+esc(sub)+'</div>'):'')+
   '</div>';
 }
-// ccRenderMine paints the four tiles and reveals the card. Idempotent, and it
+// ccMineRecent turns one trailing-window figure from the /me payload into the
+// text a 24h tile shows: the number when an hourly series backs it, otherwise
+// an em dash, with a sub-line saying why the number is short or absent. A
+// contributor who registered since the last rollup has no buckets at all, and
+// printing "0" there would read as "you did nothing today" rather than "not
+// measured yet" — so that case shows the dash and says so. Shared by the
+// issues and PRs tiles (#7894) so the two cannot drift in what they call honest.
+function ccMineRecent(available,value,covered,winH){
+  var num=function(x){return (typeof x==='number'&&isFinite(x))?x:0;};
+  var c=num(covered);
+  return {
+    val:available?String(num(value)):'&mdash;',
+    sub:!available?'no hourly history yet':(c<winH?(c+'h of history so far'):'')
+  };
+}
+// ccRenderMine paints the five tiles and reveals the card. Idempotent, and it
 // undoes the message layout: a viewer who signs in mid-session gets the grid
 // back rather than tiles stacked in one 94px column.
 function ccRenderMine(){
@@ -6288,27 +6304,26 @@ function ccRenderMine(){
   body.classList.remove('is-message');
   var d=ccMineData;
   var num=function(x){return (typeof x==='number'&&isFinite(x))?x:0;};
-  // The 24h tile is only honest when an hourly series actually backs it. A
-  // contributor who registered since the last rollup has no buckets at all, and
-  // printing "0" there would read as "you did nothing today" rather than "not
-  // measured yet" — so that case shows an em dash and says why.
   var winH=num(d.window_hours)||24;
-  var covered=num(d.window_hours_covered);
-  var recent=d.history_available?String(num(d.tasks_completed_24h)):'&mdash;';
-  var recentSub=!d.history_available?'no hourly history yet'
-    :(covered<winH?(covered+'h of history so far'):'');
+  var recent=ccMineRecent(d.history_available,d.tasks_completed_24h,d.window_hours_covered,winH);
+  // The PR ring is younger than the completion ring (#7894), so it carries its
+  // own availability and coverage: a spoke upgraded an hour ago has a day of
+  // completions to sum and no PR hours at all, and the two tiles say so
+  // independently instead of one borrowing the other's confidence.
+  var recentPR=ccMineRecent(d.pr_history_available,d.prs_produced_24h,d.pr_window_hours_covered,winH);
   var done=num(d.total_tasks_completed);
   var prs=num(d.total_tasks_completed_with_pr);
   var noPR=Math.max(0,done-prs);
   var tier=document.getElementById('cc-mine-tier');
   if(tier)tier.textContent=d.trust_tier?ccTierLabel(d.trust_tier):'';
   body.innerHTML=
-    ccMineTile(recent,'Issues worked (24h)',recentSub)+
+    ccMineTile(recent.val,'Issues worked (24h)',recent.sub)+
     ccMineTile(String(done),'Issues worked (total)')+
-    ccMineTile(String(prs),'PRs produced',noPR?(noPR+' shipped no PR'):'','is-pr')+
+    ccMineTile(recentPR.val,'PRs produced (24h)',recentPR.sub,'is-pr')+
+    ccMineTile(String(prs),'PRs produced (total)',noPR?(noPR+' shipped no PR'):'','is-pr')+
     ccMineTile(String(num(d.total_tasks_failed)),'Failed');
   var note=document.getElementById('cc-mine-note');
-  if(note)note.innerHTML='<b>PRs produced</b> counts only completions that reported a pull request the hub could verify against GitHub &mdash; it is what auto-promotion reads, not the bare completion count. The 24h figure is summed from the same hourly series as the sparklines.';
+  if(note)note.innerHTML='<b>PRs produced</b> counts only completions that reported a pull request the hub could verify against GitHub &mdash; it is what auto-promotion reads, not the bare completion count. Both 24h figures are summed from the same hourly rollup that feeds the sparklines.';
   card.style.display='';
 }
 // ccUserSeries resolves the viewer's OWN per-hour completion ring from the cached

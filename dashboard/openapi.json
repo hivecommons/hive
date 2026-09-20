@@ -11550,7 +11550,7 @@
           "Contribute"
         ],
         "summary": "Get the caller's own contribution stats",
-        "description": "Returns the caller's own contribution numbers: issues worked in the last 24 hours, issues worked all-time, how many of those completions reported a pull request the hub verified, and how many failed. Self-service \u2014 identity is resolved server-side via resolveContributeCaller and there is NO username parameter, so a caller only ever reads their own record. The all-time counters come from the stored ContributorProfile; the 24-hour figure is summed from the trailing 24 buckets of the caller's per-hour series in /api/contribute/metrics.",
+        "description": "Returns the caller's own contribution numbers: issues worked in the last 24 hours, issues worked all-time, how many of those completions reported a pull request the hub verified (in the last 24 hours and all-time), and how many failed. Self-service \u2014 identity is resolved server-side via resolveContributeCaller and there is NO username parameter, so a caller only ever reads their own record. The all-time counters come from the stored ContributorProfile; the 24-hour figures are summed from the trailing 24 buckets of the caller's per-hour completion series (the one served by /api/contribute/metrics) and of a per-hour PR series rolled up alongside it from the same cumulative counters.",
         "responses": {
           "200": {
             "description": "Caller's own contribution stats",
@@ -11591,6 +11591,18 @@
                     "history_available": {
                       "type": "boolean",
                       "description": "False when this contributor has no hourly series yet, which is distinct from a real zero (present on the timeline, finished nothing)."
+                    },
+                    "prs_produced_24h": {
+                      "type": "integer",
+                      "description": "Completions in the trailing window_hours hourly buckets that reported a pull request the hub could verify — the per-hour counterpart of total_tasks_completed_with_pr. Meaningful only when pr_history_available is true."
+                    },
+                    "pr_window_hours_covered": {
+                      "type": "integer",
+                      "description": "How many hourly buckets actually backed prs_produced_24h. Reported separately from window_hours_covered because the PR series is younger than the completion series: a spoke upgraded three hours ago has a day of completion history and three hours of PR history."
+                    },
+                    "pr_history_available": {
+                      "type": "boolean",
+                      "description": "False when this contributor has no hourly PR series yet — registered since the last rollup, or the spoke has not rolled up since the upgrade that introduced the series — which is distinct from a real zero."
                     }
                   }
                 }

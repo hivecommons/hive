@@ -13,13 +13,17 @@ import (
 )
 
 // Persistent hourly time-series feeding the Operations-tab and Leaderboard
-// sparklines (#persistent-history). Four series are kept, each a ring of the
+// sparklines (#persistent-history). Five series are kept, each a ring of the
 // most-recent hourly buckets on the spoke PVC so the trend survives restarts and
 // rolling upgrades instead of resetting to a flat line on every deploy:
 //   - queue_depth   : length of the admitted ready-work queue, SAMPLED hourly
 //   - tasks_done    : task completions counted in each hour (delta of cumulative)
 //   - fleet_size    : number of connected clankers, SAMPLED hourly
 //   - per_user_done : per-contributor (github_username) completions per hour
+//   - per_user_pr   : per-contributor completions that produced a verified pull
+//     request per hour (#7894) — the same delta-of-cumulative
+//     rollup as per_user_done, read from TasksWithPR instead of
+//     TasksCompleted
 //
 // Every series shares ONE timeline: index i of per_user_done[u] is the same hour
 // as index i of tasks_done, because a rollup appends exactly one bucket to every
@@ -29,10 +33,21 @@ import (
 // with the shared ones instead of stretching a handful of active hours across a
 // strip labelled "last 7 days" (#6543).
 //
+// per_user_pr is aligned at the TAIL only: its last bucket is the timeline's
+// last hour and each rollup appends exactly one bucket, but a ring that started
+// late is not left-padded to the timeline's length. Nothing draws it — it is
+// only ever summed from the tail — so head alignment buys nothing, while its
+// length stays the number of hours actually measured. That is what keeps the
+// "PRs produced (24h)" coverage honest across the upgrade that introduced the
+// ring: for the first day every contributor's PR ring is shorter than their
+// completion ring, and the card says "Nh of history so far" instead of
+// labelling zeros nobody measured as a full day of no pull requests.
+//
 // The store owns ONLY the counting + persistence. Sampling reads live values
 // from the contribute hub; the deltas come from the cumulative per-contributor
-// TasksCompleted counters that already persist per user, so a restart mid-hour
-// cannot double-count (a bucket is the difference between two cumulative reads).
+// TasksCompleted / TasksWithPR counters that already persist per user, so a
+// restart mid-hour cannot double-count (a bucket is the difference between two
+// cumulative reads).
 
 const (
 	// metricsRetentionBuckets is how many hourly buckets each series keeps: 168
@@ -71,6 +86,14 @@ type metricsPersistShape struct {
 	TasksDone   []int            `json:"tasks_done"`
 	FleetSize   []int            `json:"fleet_size"`
 	PerUserDone map[string][]int `json:"per_user_done"`
+	// PerUserPR is persisted so the "PRs produced (24h)" figure survives a restart
+	// the same way the completion figure does (#7894). It is absent from files
+	// written before the ring existed, which load() treats as "no PR history
+	// yet" rather than as zeros. It is NOT served by /api/contribute/metrics: the
+	// sparklines do not read it, and doubling the per-user payload every poll
+	// for a series nothing draws would be pure cost on a large hub. Rings here
+	// may be SHORTER than tasks_done (tail-aligned, see the package comment).
+	PerUserPR   map[string][]int `json:"per_user_pr,omitempty"`
 	Bucket      string           `json:"bucket"`
 	CollectedAt string           `json:"collected_at"`
 }
@@ -78,9 +101,9 @@ type metricsPersistShape struct {
 // metricsStore is a concurrency-safe ring of hourly buckets per series. Every
 // series is capped at metricsRetentionBuckets; per_user_done is a map of
 // username -> a ring INDEX-ALIGNED with tasksDone (one bucket per rollup tick,
-// zero-filled for hours the user completed nothing). lastTotals holds the
-// previous cumulative per-user completion counts so each tick can derive the
-// hour's delta.
+// zero-filled for hours the user completed nothing), and per_user_pr the same
+// keyed map of TAIL-aligned rings. lastTotals and lastPRTotals hold the previous
+// cumulative per-user counts so each tick can derive the hour's delta.
 type metricsStore struct {
 	mu sync.Mutex
 
@@ -88,6 +111,7 @@ type metricsStore struct {
 	tasksDone   []int
 	fleetSize   []int
 	perUserDone map[string][]int
+	perUserPR   map[string][]int
 
 	// lastTotals is the cumulative TasksCompleted per user as of the previous
 	// rollup, used to compute this hour's completion delta. Not persisted: it is
@@ -95,6 +119,9 @@ type metricsStore struct {
 	// first post-restart bucket may under-count a partial hour rather than
 	// mistaking the whole cumulative total for a single hour's work.
 	lastTotals map[string]int
+
+	// lastPRTotals is the same baseline for TasksWithPR, feeding perUserPR.
+	lastPRTotals map[string]int
 
 	// seededTotals guards the first-tick seed so a restart does not book the
 	// entire historical cumulative count as one hour of completions.
@@ -109,10 +136,12 @@ type metricsStore struct {
 // from the PVC and Start() to run the hourly rollup.
 func newMetricsStore(path string, logger *slog.Logger) *metricsStore {
 	return &metricsStore{
-		perUserDone: make(map[string][]int),
-		lastTotals:  make(map[string]int),
-		path:        path,
-		logger:      logger,
+		perUserDone:  make(map[string][]int),
+		perUserPR:    make(map[string][]int),
+		lastTotals:   make(map[string]int),
+		lastPRTotals: make(map[string]int),
+		path:         path,
+		logger:       logger,
 	}
 }
 
@@ -205,6 +234,23 @@ func (m *metricsStore) load() {
 		}
 		m.perUserDone[user] = ring
 	}
+	// PR rings are tail-aligned and may legitimately be SHORTER than the
+	// timeline (started after it). One LONGER than the timeline cannot have been
+	// written by rollup — one bucket per tick, capped alike — so it is dropped
+	// rather than trusted. A file written before the PR ring existed simply has
+	// no per_user_pr: the map stays empty, so every contributor reads as "no PR
+	// history yet" until the first post-upgrade rollup starts their ring — the
+	// same answer a contributor who registered since the last tick gets, and the
+	// honest one, since nothing measured PRs per hour before this.
+	m.perUserPR = make(map[string][]int, len(stored.PerUserPR))
+	for user, ring := range stored.PerUserPR {
+		ring = capRing(ring)
+		if len(ring) == 0 || len(ring) > want {
+			reset++
+			continue
+		}
+		m.perUserPR[user] = ring
+	}
 	if t, err := time.Parse(time.RFC3339, stored.CollectedAt); err == nil {
 		m.collectedAt = t
 	}
@@ -225,10 +271,14 @@ func (m *metricsStore) snapshot() metricsPersistShape {
 		TasksDone:   append([]int(nil), m.tasksDone...),
 		FleetSize:   append([]int(nil), m.fleetSize...),
 		PerUserDone: make(map[string][]int, len(m.perUserDone)),
+		PerUserPR:   make(map[string][]int, len(m.perUserPR)),
 		Bucket:      "hour",
 	}
 	for user, ring := range m.perUserDone {
 		out.PerUserDone[user] = append([]int(nil), ring...)
+	}
+	for user, ring := range m.perUserPR {
+		out.PerUserPR[user] = append([]int(nil), ring...)
 	}
 	if !m.collectedAt.IsZero() {
 		out.CollectedAt = m.collectedAt.UTC().Format(time.RFC3339)
@@ -249,6 +299,7 @@ func (m *metricsStore) persistLocked() {
 		TasksDone:   m.tasksDone,
 		FleetSize:   m.fleetSize,
 		PerUserDone: m.perUserDone,
+		PerUserPR:   m.perUserPR,
 		Bucket:      "hour",
 	}
 	if !m.collectedAt.IsZero() {
@@ -273,27 +324,33 @@ func (m *metricsStore) persistLocked() {
 
 // rollupSample is the live data one rollup tick observes: the current admitted
 // queue depth, the current connected fleet size, and the current CUMULATIVE
-// per-user completion totals. The store converts the cumulative totals into a
-// per-hour delta internally.
+// per-user completion and with-PR totals. The store converts the cumulative
+// totals into a per-hour delta internally.
 type rollupSample struct {
 	queueDepth int
 	fleetSize  int
 	// userTotals maps github_username -> cumulative TasksCompleted so far. The
 	// store diffs this against the previous tick to get the hour's completions.
 	userTotals map[string]int
+	// userPRTotals maps github_username -> cumulative TasksWithPR so far, diffed
+	// the same way into the hour's PR-producing completions (#7894). A nil map
+	// (older callers, tests that only care about completions) rolls up no PR
+	// buckets at all rather than booking zeros nobody measured.
+	userPRTotals map[string]int
 	// now is the wall clock for this tick, truncated to the hour for bucketing.
 	now time.Time
 }
 
 // rollup folds one sample into a new bucket for every series and persists. It is
-// the single place a bucket is appended, so the four rings stay index-aligned by
-// construction. queue_depth and fleet_size are point SAMPLES; tasks_done and
-// per_user_done are DELTAS derived from the cumulative per-user totals.
+// the single place a bucket is appended, so the shared rings and per_user_done
+// stay index-aligned — and per_user_pr tail-aligned — by construction.
+// queue_depth and fleet_size are point SAMPLES; tasks_done, per_user_done and
+// per_user_pr are DELTAS derived from the cumulative per-user totals.
 func (m *metricsStore) rollup(s rollupSample) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Seed the baseline on the first tick after a (re)start so we book only the
+	// Seed the baselines on the first tick after a (re)start so we book only the
 	// completions that happen AFTER we start watching, never the whole historical
 	// cumulative total as a single hour's work.
 	if !m.seededTotals {
@@ -301,22 +358,15 @@ func (m *metricsStore) rollup(s rollupSample) {
 		for user, total := range s.userTotals {
 			m.lastTotals[user] = total
 		}
+		m.lastPRTotals = make(map[string]int, len(s.userPRTotals))
+		for user, total := range s.userPRTotals {
+			m.lastPRTotals[user] = total
+		}
 		m.seededTotals = true
 	}
 
-	hourTasks := 0
-	deltas := make(map[string]int, len(s.userTotals))
-	for user, total := range s.userTotals {
-		delta := total - m.lastTotals[user]
-		if delta < 0 {
-			// A profile reset / re-registration lowered the cumulative count.
-			// Treat as zero for this hour rather than a negative bucket.
-			delta = 0
-		}
-		deltas[user] = delta
-		hourTasks += delta
-		m.lastTotals[user] = total
-	}
+	deltas, hourTasks := cumulativeDeltas(s.userTotals, m.lastTotals)
+	prDeltas, _ := cumulativeDeltas(s.userPRTotals, m.lastPRTotals)
 
 	m.queueDepth = capRing(append(m.queueDepth, s.queueDepth))
 	m.fleetSize = capRing(append(m.fleetSize, s.fleetSize))
@@ -329,25 +379,64 @@ func (m *metricsStore) rollup(s rollupSample) {
 	// not fall behind. padRing aligns a newcomer's first bucket to the tail of the
 	// timeline instead of the head.
 	want := len(m.tasksDone)
-	for user, delta := range deltas {
-		m.perUserDone[user] = capRing(append(padRing(m.perUserDone[user], want-1), delta))
+	appendUserBuckets(m.perUserDone, deltas, want)
+	// The PR ring gets the same bucket per tick but no left-padding: its length
+	// is the number of hours it has actually measured (see the package comment).
+	appendUserBuckets(m.perUserPR, prDeltas, 0)
+
+	m.persistLocked()
+}
+
+// cumulativeDeltas diffs this tick's cumulative per-user totals against the
+// previous tick's, updating last in place, and returns the per-user deltas plus
+// their sum (the shared series' bucket). A drop in a cumulative count — a profile
+// reset or re-registration — books as zero for the hour, never a negative bucket.
+func cumulativeDeltas(totals, last map[string]int) (map[string]int, int) {
+	sum := 0
+	deltas := make(map[string]int, len(totals))
+	for user, total := range totals {
+		delta := total - last[user]
+		if delta < 0 {
+			delta = 0
+		}
+		deltas[user] = delta
+		sum += delta
+		last[user] = total
 	}
-	for user, ring := range m.perUserDone {
+	return deltas, sum
+}
+
+// appendUserBuckets appends this tick's bucket to every ring in one per-user
+// map: the delta for users present in this tick's sample, an explicit zero for
+// users known only from earlier buckets. want > 0 first left-pads each ring so
+// it ends up exactly want long (the index-aligned per_user_done contract);
+// want == 0 appends without padding (the tail-aligned per_user_pr contract).
+//
+// A contributor whose profile is gone AND who has nothing left inside the
+// retained window carries no information; they are dropped rather than growing
+// the map with all-zero rings forever. Anyone still registered is kept, so
+// their sparkline reads as a truthful flat line rather than vanishing. Mutates
+// rings in place; callers hold m.mu.
+func appendUserBuckets(rings map[string][]int, deltas map[string]int, want int) {
+	grow := func(ring []int, n int) []int {
+		if want > 0 {
+			ring = padRing(ring, want-1)
+		}
+		return capRing(append(ring, n))
+	}
+	for user, delta := range deltas {
+		rings[user] = grow(rings[user], delta)
+	}
+	for user, ring := range rings {
 		if _, fresh := deltas[user]; fresh {
 			continue
 		}
-		// A contributor whose profile is gone AND who has nothing left inside the
-		// retained window carries no information; drop them rather than growing the
-		// map with all-zero rings forever. Anyone still registered is kept, so their
-		// sparkline reads as a truthful flat line rather than vanishing.
 		if allZero(ring) {
-			delete(m.perUserDone, user)
+			delete(rings, user)
 			continue
 		}
-		m.perUserDone[user] = capRing(append(padRing(ring, want-1), 0))
+		rings[user] = grow(ring, 0)
 	}
-
-	m.persistLocked()
 }
 
 // metricsSampler is the minimal live-data surface the rollup needs, so the store
@@ -453,12 +542,36 @@ const recentWindowBuckets = 24
 // or registered since the last tick. That is distinct from a real zero (present
 // on the timeline, finished nothing), which the panel words differently.
 func (m *metricsStore) userRecent(user string, buckets int) (sum int, covered int, known bool) {
-	if m == nil || user == "" || buckets <= 0 {
+	if m == nil {
 		return 0, 0, false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ring, ok := m.perUserDone[user]
+	return recentFromRings(m.perUserDone, user, buckets)
+}
+
+// userRecentPR is userRecent over the per-user PR ring: how many of this
+// contributor's completions in the trailing `buckets` hours produced a verified
+// pull request (#7894). Same alignment guarantee, same covered/known contract.
+// known is false — not zero — for a contributor whose PR ring has not started
+// yet, which is every contributor between an upgrade that introduced the ring
+// and the first rollup after it.
+func (m *metricsStore) userRecentPR(user string, buckets int) (sum int, covered int, known bool) {
+	if m == nil {
+		return 0, 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return recentFromRings(m.perUserPR, user, buckets)
+}
+
+// recentFromRings is the shared trailing-window sum behind userRecent and
+// userRecentPR. Callers hold m.mu.
+func recentFromRings(rings map[string][]int, user string, buckets int) (sum int, covered int, known bool) {
+	if user == "" || buckets <= 0 {
+		return 0, 0, false
+	}
+	ring, ok := rings[user]
 	if !ok {
 		return 0, 0, false
 	}
@@ -474,11 +587,13 @@ func (m *metricsStore) userRecent(user string, buckets int) (sum int, covered in
 
 // sampleMetricsInputs reads the live values the rollup buckets: the admitted
 // ready-work queue length, the connected clanker count, and each contributor's
-// cumulative completion total. All reads are cheap and side-effect-free.
+// cumulative completion and with-PR totals. All reads are cheap and
+// side-effect-free.
 func (s *Server) sampleMetricsInputs() rollupSample {
 	sample := rollupSample{
-		userTotals: make(map[string]int),
-		now:        time.Now(),
+		userTotals:   make(map[string]int),
+		userPRTotals: make(map[string]int),
+		now:          time.Now(),
 	}
 	if s.contributeHub != nil {
 		// Admitted ready-work queue length — the SAME admissible set the
@@ -494,6 +609,7 @@ func (s *Server) sampleMetricsInputs() rollupSample {
 			continue
 		}
 		sample.userTotals[p.GitHubUsername] = p.TasksCompleted
+		sample.userPRTotals[p.GitHubUsername] = p.TasksWithPR
 	}
 	return sample
 }

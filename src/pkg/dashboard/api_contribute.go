@@ -876,13 +876,14 @@ const maxLabelInterestLen = 128
 // what work they want surfaced to them.
 // handleContributeMe serves the signed-in contributor their OWN contribution
 // numbers (#6543): issues worked in the last 24 hours, issues worked all-time,
-// how many of those produced a pull request, and how many failed.
+// how many of those produced a pull request (all-time and, since #7894, in the
+// last 24 hours), and how many failed.
 //
 // Every number here already existed and was already load-bearing — TasksWithPR
 // is the auto-promotion currency — but nothing on the Operations page ever
 // showed it back to the person who earned it, so "tasks completed" could not be
-// told apart from "pull requests shipped". This endpoint changes no schema and
-// computes nothing new; it reads the persisted profile and the hourly ring.
+// told apart from "pull requests shipped". This endpoint changes no schema; it
+// reads the persisted profile and the hourly rings.
 //
 // Identity is resolved server-side (resolveContributeCaller) and there is NO
 // username parameter, so the response is always the caller's own record. That
@@ -908,7 +909,9 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 	if seriesKey == "" {
 		seriesKey = username
 	}
-	recent, covered, known := s.contributeMetricsStore().userRecent(seriesKey, recentWindowBuckets)
+	store := s.contributeMetricsStore()
+	recent, covered, known := store.userRecent(seriesKey, recentWindowBuckets)
+	prRecent, prCovered, prKnown := store.userRecentPR(seriesKey, recentWindowBuckets)
 
 	resp := map[string]any{
 		"github_username": profile.GitHubUsername,
@@ -934,6 +937,22 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 		// has not rolled up since you registered) from a genuine zero. Without it a
 		// brand-new contributor and an idle one look identical.
 		"history_available": known,
+		// prs_produced_24h is the trailing 24 buckets of this contributor's own
+		// PR-producing completions (#7894), the per-hour counterpart of
+		// total_tasks_completed_with_pr. It gets its own availability/coverage
+		// pair rather than borrowing the completion series': the PR ring is
+		// younger, so a spoke upgraded this morning has a day of completion
+		// history and a few hours of PR history (none at all until its first
+		// post-upgrade rollup), and the tile must say so rather than print a
+		// zero labelled "24h".
+		"prs_produced_24h": prRecent,
+		"pr_window_hours_covered": func() int {
+			if !prKnown {
+				return 0
+			}
+			return prCovered
+		}(),
+		"pr_history_available": prKnown,
 	}
 	jsonResponse(w, resp)
 }
