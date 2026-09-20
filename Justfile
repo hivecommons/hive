@@ -293,6 +293,14 @@ contribute-check backend="claude": (contribute-check-backend backend)
 backend-smoke backends="claude codex":
     HIVE_SMOKE_BACKENDS="{{backends}}" bash bin/test_backend_smoke.sh
 
+# Contract tests for the pre-kick issue classifier (bin/issue-classifier.sh):
+# tiers, model recommendations, trackers, lanes and clustering, run against a
+# path-rewritten copy in a temp dir — hermetic, no /var/run or /etc/hive.
+# Wire this into .github/workflows/v2-ci.yml next to test_enumerate_actionable.sh
+# so it runs in CI too (tracked in the issue that introduced the suite).
+test-issue-classifier:
+    bash bin/test_issue_classifier.sh
+
 # One-time setup: register with hub + authenticate GitHub + authenticate CLI
 # Ordering note (#2543): the backend-readiness preflight runs FIRST, before
 # any credential is written to disk or a contributor slot is registered —
