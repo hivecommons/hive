@@ -213,6 +213,12 @@ type GitHubProxy struct {
 	// upstream; production leaves it nil.
 	copilotDial func(host string) (net.Conn, error)
 
+	// tunnelDial, when set, overrides how a non-inspected transparent tunnel
+	// dials its upstream (the raw TCP leg that carries the agent's ClientHello
+	// verbatim). Tests substitute a pipe so the tunnel path is exercised
+	// without network access.
+	tunnelDial func(host string) (net.Conn, error)
+
 	canariesEnabled  bool
 	canaryFailClosed bool
 	canaryRegistry   *ioscan.CanaryRegistry
@@ -517,35 +523,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		host = "github.com"
 	}
 
-	// Identify agent by UID from /proc/net/tcp
-	agentName := ""
-	if p.uidMap != nil {
-		_, portStr, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
-		if splitErr == nil {
-			port := 0
-			const maxPort = 65535
-			for _, c := range portStr {
-				port = port*10 + int(c-'0')
-				if port > maxPort {
-					port = 0
-					break
-				}
-			}
-			uid, lookupErr := LookupUIDByLocalPort(port)
-			if lookupErr == nil {
-				agentName = p.uidMap.LookupByUID(uid)
-				// The hive's own control plane is not an agent, so the lookup
-				// above returns "". Under v4's forced-proxy egress that made
-				// every hive-originated write — notably the App installation
-				// token mint — look like an unattributable agent, which the
-				// mode gate blocks. Name it explicitly so it is attributed
-				// rather than mistaken for a UID-attribution failure.
-				if agentName == "" && p.uidMap.IsInternalUID(uid) {
-					agentName = internalCallerName
-				}
-			}
-		}
-	}
+	agentName := p.attributeTransparentConn(conn)
 
 	// Copilot completion host under iptables redirection: MITM to read live
 	// token usage (same guard as the explicit-CONNECT path). The peeked
@@ -559,7 +537,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	if !NeedsInspection(host) {
 		// Non-inspected host: tunnel directly. SO_MARK the socket
 		// so the forced-egress redirect exempts this proxy-originated dial.
-		upstream, err := markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
+		upstream, err := p.dialTunnelUpstream(host)
 		if err != nil {
 			return
 		}
@@ -604,6 +582,65 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	defer func() { _ = upstreamConn.Close() }()
 
 	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
+}
+
+// attributeTransparentConn names the agent behind an iptables-redirected
+// connection (#7793). Under transparent redirection there is no
+// Proxy-Authorization header and no CONNECT request, so the ONLY identity
+// evidence is the kernel socket table: the peer's ephemeral port is looked up
+// in /proc/net/tcp{,6} for the owning UID, and the UID in the agent map.
+//
+// It returns "" — "unidentified", which the mode gate downgrades to ADVISORY —
+// when there is no UID map, when the peer address carries no port (a net.Pipe
+// or unix socket), when the port is not in the socket table, or when the UID
+// belongs to no agent. The one deliberate exception is the hive's own control
+// plane: a UID the map reports as internal (root or the proxy user, and never
+// an allocated agent UID) is named internalCallerName so a hive-originated
+// write is attributed rather than mistaken for a UID-attribution failure.
+func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
+	if p.uidMap == nil {
+		return ""
+	}
+	_, portStr, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
+	if splitErr != nil {
+		return ""
+	}
+	port := 0
+	const maxPort = 65535
+	for _, c := range portStr {
+		port = port*10 + int(c-'0')
+		if port > maxPort {
+			port = 0
+			break
+		}
+	}
+	uid, lookupErr := LookupUIDByLocalPort(port)
+	if lookupErr != nil {
+		return ""
+	}
+	if name := p.uidMap.LookupByUID(uid); name != "" {
+		return name
+	}
+	// The hive's own control plane is not an agent, so the lookup above
+	// returns "". Under v4's forced-proxy egress that made every
+	// hive-originated write — notably the App installation token mint — look
+	// like an unattributable agent, which the mode gate blocks. Name it
+	// explicitly so it is attributed rather than mistaken for a
+	// UID-attribution failure.
+	if p.uidMap.IsInternalUID(uid) {
+		return internalCallerName
+	}
+	return ""
+}
+
+// dialTunnelUpstream opens the raw TCP leg of a non-inspected transparent
+// tunnel. The socket is SO_MARKed so the forced-egress redirect exempts this
+// proxy-originated dial. tunnelDial, when set, overrides it (tests).
+func (p *GitHubProxy) dialTunnelUpstream(host string) (net.Conn, error) {
+	if p.tunnelDial != nil {
+		return p.tunnelDial(host)
+	}
+	return markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 }
 
 const tlsClientHelloMaxSize = 4096
