@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -28,7 +29,11 @@ const verdictSettleTimeout = 90 * time.Second
 // today's behaviour (the hub's own verdict ledger + cooldown) is unchanged.
 //
 // The text alone is never trusted. The API check is what turns the claim into
-// a fact, and it also defuses a model fabricating "already fixed by #123".
+// a fact, and it also defuses a model fabricating "already fixed by #123" (a
+// ref that does not exist — a real but unrelated ref is not detectable here
+// and is bounded by the claim TTL). An open PR is recorded only when its
+// author is not the reporter (hivecommons/hive#7890); a merged PR is a fact
+// regardless of who merged it.
 // Runs detached from the read loop; callers `go` it.
 func (h *ContributeWSHub) settleIssueFromVerdict(repo string, number int, reason string, dispatchedAt time.Time, reporter string) {
 	if h == nil || repo == "" || number <= 0 || reason == "" {
@@ -70,6 +75,16 @@ func (h *ContributeWSHub) settleIssueFromVerdict(repo string, number int, reason
 			continue
 		}
 		claim := res.Claim
+		if !claim.MergedPR && reporter != "" && strings.EqualFold(strings.TrimSpace(claim.PRAuthor), reporter) {
+			// hivecommons/hive#7890: an OPEN PR settles the issue only when
+			// someone OTHER than the reporter is on it. The reporter citing
+			// their own open PR — on anything, related or not — is not an
+			// external claim; recording it would let the least-trusted write
+			// path defer an issue on its own say-so. Skip to the next ref.
+			h.logger.Info("[contribute-ws] verdict settle: open PR is the reporter's own, not an external claim",
+				"repo", repo, "number", number, "ref", ref.String(), "pr_author", claim.PRAuthor, "reporter", reporter)
+			continue
+		}
 		claim.Repo, claim.Issue = repo, number
 		claim.Source = ghpkg.ClaimSourceVerdict
 		claim.SourceReporter = reporter

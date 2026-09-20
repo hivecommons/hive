@@ -19,7 +19,9 @@ import (
 //
 // This file turns the cited reference into a verified ledger claim. The text
 // alone is never trusted — the API check is what turns a claim into a fact,
-// which also defuses a model fabricating "already fixed by #123".
+// which also defuses a model fabricating "already fixed by #123" — a ref that
+// does not exist. It does not, and cannot, check that a real ref is RELEVANT
+// to the issue; see VerifySettlingRef for that residual and its bounds.
 
 // SettlingRef is one candidate reference parsed out of a verdict reason: a
 // pull request (Repo + Number) or a commit (SHA). Exactly one of Number/SHA
@@ -145,9 +147,13 @@ type SettleVerifier func(ctx context.Context, taskRepo string, taskIssue int, re
 //     A PR merged after dispatch is not accepted from a no_work_needed verdict:
 //     the settle scan will pick it up if it references the issue, and if it
 //     does not, the next agent's verdict will cite it and pass this check.
-//   - A PR that is still OPEN in taskRepo, by someone other than the reporter,
-//     is a weak external claim: another author is on it, so the queue defers
-//     rather than presenting the issue cold (the #808 / #277 rows).
+//   - A PR that is still OPEN in taskRepo is a weak external claim: another
+//     author is on it, so the queue defers rather than presenting the issue
+//     cold (the #808 / #277 rows). This function does not know who the
+//     reporter is; the CALLER (the contribute hub's settleIssueFromVerdict)
+//     enforces "by someone other than the reporter" by comparing
+//     Claim.PRAuthor to the reporting contributor and dropping a self-authored
+//     open PR (hivecommons/hive#7890).
 //   - A commit reachable from taskRepo's default branch settles the issue as a
 //     merged claim. When GitHub associates a merged PR with the commit, that
 //     PR is recorded; otherwise the commit itself is (PRNumber 0, commit URL).
@@ -155,6 +161,14 @@ type SettleVerifier func(ctx context.Context, taskRepo string, taskIssue int, re
 // PRs in another repo, closed-unmerged PRs, unreachable commits and API
 // failures all return Settled=false; an API failure additionally returns the
 // error so the caller can log it distinctly from a clean negative.
+//
+// What this does NOT verify: that the cited PR or commit has anything to do
+// with taskIssue. A settling PR by definition never referenced the issue, so
+// relevance cannot be checked mechanically; the defence here is against a
+// model fabricating a ref that does not exist, not against one citing a real
+// but unrelated ref. That residual is bounded by the claim TTL (a merged
+// claim expires after the merged-claim window, an open one when the PR
+// closes) and voided by newer activity on the issue.
 func (c *Client) VerifySettlingRef(ctx context.Context, taskRepo string, taskIssue int, ref SettlingRef, dispatchedAt time.Time) (SettleVerification, error) {
 	if c == nil || c.client == nil {
 		return SettleVerification{Reason: "no github client configured"}, ErrNoGitHubClient

@@ -110,3 +110,67 @@ func TestVerdictSettle7871_NoLedgerNoReasonNoRefsAreNoOps(t *testing.T) {
 		t.Fatalf("empty reason / no refs / no repo must be no-ops; checked=%v recorded=%v", fx.checked, fx.recorded)
 	}
 }
+
+// hivecommons/hive#7890: an OPEN PR is an external claim only when someone
+// other than the reporter authored it. The reporter citing their own open PR
+// must record nothing (and the fan-out continues to the next ref); a merged PR
+// is a fact whoever merged it, and a different author's open PR still counts.
+func TestVerdictSettle7890_SelfAuthoredOpenPRIsNotAnExternalClaim(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions#41": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 41, PRRepo: "o/actions", PRURL: "https://github.com/o/actions/pull/41",
+			PRAuthor: "Alice-Dev", Reference: true, ExternalAuthor: true,
+		}},
+		"o/actions#42": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 42, PRRepo: "o/actions", PRURL: "https://github.com/o/actions/pull/42",
+			PRAuthor: "bob", Reference: true, ExternalAuthor: true,
+		}},
+	}, nil)
+
+	// Case-insensitive: GitHub logins are, and the profile may differ in case.
+	hub.settleIssueFromVerdict("o/actions", 7, "already covered by my open #41; bob's #42 also touches it", time.Now(), "alice-dev")
+
+	if len(fx.recorded) != 1 || fx.recorded[0].PRNumber != 42 || fx.recorded[0].PRAuthor != "bob" {
+		t.Fatalf("the reporter's own open PR must be skipped and the next ref tried; recorded=%+v", fx.recorded)
+	}
+	if len(fx.checked) != 2 {
+		t.Fatalf("both refs should have been verified; checked=%v", fx.checked)
+	}
+}
+
+func TestVerdictSettle7890_SelfAuthoredMergedPRStillSettles(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions#41": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 41, PRRepo: "o/actions", PRAuthor: "alice-dev", MergedPR: true, MergedAt: time.Now().Add(-time.Hour),
+		}},
+	}, nil)
+
+	hub.settleIssueFromVerdict("o/actions", 7, "already landed in #41", time.Now(), "alice-dev")
+
+	if len(fx.recorded) != 1 || !fx.recorded[0].MergedPR {
+		t.Fatalf("a merged PR is a fact regardless of author; recorded=%+v", fx.recorded)
+	}
+}
+
+func TestVerdictSettle7890_OnlySelfAuthoredOpenPRRecordsNothing(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/actions#41": {Settled: true, Claim: ghpkg.IssueClaim{
+			PRNumber: 41, PRRepo: "o/actions", PRAuthor: "alice-dev", Reference: true, ExternalAuthor: true,
+		}},
+	}, nil)
+
+	hub.settleIssueFromVerdict("o/actions", 7, "my #41 has this", time.Now(), "alice-dev")
+
+	if len(fx.recorded) != 0 {
+		t.Fatalf("a self-authored open PR alone must record nothing; recorded=%+v", fx.recorded)
+	}
+}
