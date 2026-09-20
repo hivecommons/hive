@@ -251,6 +251,15 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 90000;
 const RELAY_TEST_TIMING = process.env.HIVE_RELAY_TEST_TIMING === '1';
 const PROGRESS_REPORT_INTERVAL_MS = RELAY_TEST_TIMING ? 100 : 120000;
+// #7841: how often the relay glances at the pane for a HIVE_VERDICT line
+// between progress ticks. The tick loop is what credits a verdict, but it runs
+// every PROGRESS_REPORT_INTERVAL_MS, so a verdict printed just after a tick sat
+// unacted-on for up to two minutes — and whatever re-woke the agent in that
+// window (a background shell exiting, omp's todo reminder) ran on after the
+// task had, in every sense that matters, finished. The watch is a pure pane
+// read; when it sees a fresh verdict it runs the SAME progressTick early rather
+// than duplicating any of its judgement.
+const VERDICT_WATCH_INTERVAL_MS = RELAY_TEST_TIMING ? 30 : 5000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
@@ -419,6 +428,8 @@ let activeHubIndex = 0;
 let seq = 0;
 let currentTask = null;
 let progressInterval = null;
+let verdictWatchInterval = null;
+let verdictFastPathLine = null;
 let tokenExpiresAt = null;
 // tokenRefreshFailedAt records when the hub last told us a mid-task re-mint
 // FAILED (a token_refresh_failed, kubestellar/hive#5447). Null means "no known
@@ -4153,6 +4164,53 @@ function startProgressReporting() {
   armTaskProgressLease();
 
   progressInterval = setInterval(progressTick, PROGRESS_REPORT_INTERVAL_MS);
+  startVerdictWatch();
+}
+
+// startVerdictWatch arms the #7841 fast path for the current task. It lives and
+// dies with progressInterval: every path that stops the tick loop (task exit,
+// hub disconnect, shutdown) nulls that handle, and the watch disarms itself on
+// the next glance when it finds it gone — so none of those paths needs to know
+// the watch exists.
+function startVerdictWatch() {
+  if (verdictWatchInterval) clearInterval(verdictWatchInterval);
+  verdictFastPathLine = null;
+  verdictWatchInterval = setInterval(verdictWatchTick, VERDICT_WATCH_INTERVAL_MS);
+}
+
+function stopVerdictWatch() {
+  if (verdictWatchInterval) { clearInterval(verdictWatchInterval); verdictWatchInterval = null; }
+}
+
+// verdictWatchTick is the glance itself. Pure until it fires: one capture-pane
+// read (captureTmuxLines does not touch the paneStalled() fingerprint — only
+// checkTmuxPaneState()/paneStalled() do), the same detectCompletionVerdict and
+// the same #5650 baseline exclusion the tick loop applies. A verdict it has not
+// acted on yet runs progressTick() now and re-phases the regular interval so
+// the next scheduled tick is a full period away rather than moments later. The
+// verdict LINE is remembered, not a boolean: after a #7759 review follow-up the
+// agent prints a second, different verdict, and that one deserves the fast
+// path too. Whether the tick finalizes is entirely progressTick's call — a
+// pending review follow-up or an API-error pane still refuse it exactly as on
+// a scheduled tick.
+function verdictWatchTick() {
+  if (!progressInterval) { stopVerdictWatch(); return; }
+  if (!currentTask) return;
+  if (CONTRIBUTOR_MODE !== MODE_HEADLESS && !taskPromptDelivered) return;
+  // Inside the task grace period progressTick() judges nothing, so firing it
+  // would only spend this verdict's one fast-path run on a no-op. Leave the
+  // line unconsumed and glance again once the grace period is over.
+  if (Date.now() - taskAssignedAt < TASK_GRACE_PERIOD_MS) return;
+  const paneVerdict = detectCompletionVerdict(captureTmuxLines(PR_SCAN_LINES));
+  if (!paneVerdict || paneVerdict.line === deliveredVerdictBaseline) return;
+  if (paneVerdict.line === verdictFastPathLine) return;
+  verdictFastPathLine = paneVerdict.line;
+  console.log(`Task ${currentTask.task_id}: HIVE_VERDICT: ${paneVerdict.verdict} is on the pane — running the progress tick now instead of waiting up to ${Math.round(PROGRESS_REPORT_INTERVAL_MS / 1000)}s for the next one (#7841)`);
+  progressTick();
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = setInterval(progressTick, PROGRESS_REPORT_INTERVAL_MS);
+  }
 }
 
 // armTaskProgressLease (re)starts the max-duration timer from NOW.
@@ -5471,6 +5529,7 @@ function cleanup() {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  stopVerdictWatch();
   // A shutdown with a task in flight must run the same task-exit contract as
   // every other way a task stops being ours (kubestellar/hive#5655, #5353).
   // Ctrl-C is the NORMAL way a contributor stops a relay, and this path used
@@ -5725,6 +5784,11 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // #7778: the headless lease-renewal tick and whether its timer is armed.
     headlessProgressTick,
     getProgressIntervalArmed: () => progressInterval !== null,
+    // #7841: the verdict fast path and whether its watch is armed.
+    verdictWatchTick,
+    VERDICT_WATCH_INTERVAL_MS,
+    getVerdictWatchArmed: () => verdictWatchInterval !== null,
+    TASK_GRACE_PERIOD_MS,
     // Attach-hint surface (kubestellar/hive#5145): the exact command the
     // needs-authentication banner tells a human to paste.
     ATTACH_COMMAND,

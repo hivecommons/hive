@@ -317,6 +317,28 @@ func TestBuildTaskPrompt_RequiresPlainTextVerdicts(t *testing.T) {
 // prompt has to say so, or that request contradicts the instruction above it
 // and a careful agent refuses it — and it has to say the second line is final,
 // so the agent does not wait for a third.
+// TestBuildTaskPrompt_ForbidsLiveBackgroundShellsAtVerdict pins the #7841
+// clause: a background shell left running at the sentinel re-wakes the agent
+// when it exits, so the prompt must require everything the agent launched to
+// be stopped or finished before the verdict line — and say so between the
+// exactly-once rule and the review-follow-up exception.
+func TestBuildTaskPrompt_ForbidsLiveBackgroundShellsAtVerdict(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	for _, want := range []string{
+		"stop or wait for every background shell",
+		"nothing you launched may still be running when the verdict line appears",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt must carry %q; got: %q", want, prompt)
+		}
+	}
+	at := strings.Index(prompt, "stop or wait for every background shell")
+	if at < strings.Index(prompt, "Print it exactly once") || at > strings.Index(prompt, "One exception") {
+		t.Errorf("the background-shell rule must sit between the exactly-once rule and the review exception; got: %q", prompt)
+	}
+}
+
 func TestBuildTaskPrompt_SanctionsOneReviewFollowUp(t *testing.T) {
 	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
 

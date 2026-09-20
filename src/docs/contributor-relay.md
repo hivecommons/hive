@@ -617,6 +617,15 @@ The bound is explicit, because an advisor that reviews every turn will always ha
 
 Two verdict lines can be byte-identical (an agent that re-prints its conclusion verbatim), so the relay does not tell them apart by text. It looks for the CLI's echo of the follow-up message: a verdict *below* that echo is the second one; the first, still sitting above it while the agent works, is treated as no verdict yet. While that is so, idle chrome accrues toward the ordinary chrome-idle completion, so an agent that addresses the notes but never re-prints the sentinel still ends the same way as one that never printed it — with the verdict it did print (a `no_work_needed`, say) still carried to the hub.
 
+### Acting on the verdict within seconds, not at the next tick
+
+The tick loop that credits `HIVE_VERDICT` runs every `PROGRESS_REPORT_INTERVAL_MS` (120 s). A verdict printed just after a tick therefore sat on the pane, seen by nobody, for up to two minutes — and the agent did not necessarily stop. Claude Code re-enters the agent when a background shell it started exits (the output is delivered as a task notification and the model takes another turn), so an agent that printed its verdict with `3 shells still running` was mid-turn again twenty seconds later, pushing to and commenting on a task the relay was about to credit ([#7841](https://github.com/hivecommons/hive/issues/7841)). omp's todo reminder ([#7733](https://github.com/hivecommons/hive/issues/7733)) is the same shape from a different runtime feature.
+
+Two changes close the window from both ends:
+
+- **The task prompt forbids it.** Right after "print it exactly once": *stop or wait for every background shell or job you started — nothing you launched may still be running when the verdict line appears*. That makes the CLI's own "N shells still running" chrome on the verdict line a prompt violation rather than a race.
+- **The relay glances for the verdict every `VERDICT_WATCH_INTERVAL_MS` (5 s).** `verdictWatchTick()` is a pure pane read — the same `detectCompletionVerdict()` and the same [#5650](https://github.com/hivecommons/hive/issues/5650) dispatch-baseline exclusion the tick loop applies — and when it sees a verdict it has not acted on, it runs the *same* `progressTick()` early and re-phases the regular interval. It duplicates none of the tick's judgement: a pending [#7759](https://github.com/hivecommons/hive/issues/7759) review follow-up, an API-error pane or the task grace period refuse the completion exactly as they would on a scheduled tick. The verdict *line* is remembered rather than a flag, so the second verdict after a review follow-up gets the fast path too; the watch arms with the tick loop and disarms itself when it finds the tick loop gone.
+
 ## Reconnecting without losing in-flight work
 
 The relay heartbeats every 30 s and reconnects with exponential backoff (1 s to 60 s). A drop inside that window is meant to be invisible to the agent: the relay keeps its task locally, re-asserts it on the new socket, and carries on typing into the same tmux pane.

@@ -430,6 +430,17 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"last thing you output and on a line by itself, in plain text, no Markdown formatting: "+
 			"'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, "+
 			"only when you are actually done, and never before starting work. "+
+			// #7841: a background shell the agent left alive re-enters it when
+			// the shell exits (Claude Code delivers the output as a task
+			// notification and the model takes another turn), so a verdict
+			// printed with shells still running is followed by more work after
+			// the relay has credited the task. Stated as a rule so the CLI's own
+			// "N shells still running" chrome on the verdict line reads as a
+			// violation rather than a race.
+			"Before printing it, stop or wait for every background shell or "+
+			"job you started — nothing you launched may still be running when "+
+			"the verdict line appears, because its completion would wake you "+
+			"for another turn after the task has been credited. "+
 			"If you printed the no_work_needed line above, that already counts "+
 			"as your completion — do not print both. "+
 			// #7759: the one sanctioned second verdict. A CLI that runs a

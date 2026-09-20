@@ -10090,3 +10090,90 @@ const only = process.env.RELAY_TEST_ONLY;
   // loop alive well past the last assertion; exit explicitly.
   process.exit(failed ? 1 : 0);
 })();
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7841 — a verdict on the pane is acted on within seconds,
+// not at the next 120 s progress tick.
+//
+// The tick loop credits the verdict, but between ticks the finished agent kept
+// running: a background shell it left alive re-entered it on exit, and for up
+// to two minutes it pushed and commented on a task the relay was about to
+// credit. verdictWatchTick() is the glance between ticks: a pure pane read that
+// runs the SAME progressTick early when it sees a verdict it has not acted on.
+// ---------------------------------------------------------------------------
+
+test('#7841 the verdict watch runs the progress tick as soon as a fresh HIVE_VERDICT is on the pane', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-7841-fast');
+    relay.setTaskPromptDelivered(true);
+    relay.setTaskAssignedAt(Date.now() - relay.TASK_GRACE_PERIOD_MS - 1);
+    assert.ok(relay.getProgressIntervalArmed(), 'setup: the tick loop is armed by the assignment');
+    assert.ok(relay.getVerdictWatchArmed(), 'the assignment must arm the verdict watch alongside the tick loop');
+    relay.__sent.length = 0;
+    relay.verdictWatchTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, `the watch must credit the verdict without waiting for a scheduled tick: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(relay.getCurrentTask(), null);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7841 the verdict watch ignores the previous task\'s verdict still on the pane (#5650 baseline)', () => {
+  const stale = 'HIVE_VERDICT: complete — the last task';
+  const relay = loadRelay({ backend: 'copilot', paneText: `${stale}\n${IDLE_PANE}` });
+  try {
+    dispatchTask(relay, 't-7841-stale');
+    relay.setTaskPromptDelivered(true);
+    relay.setTaskAssignedAt(Date.now() - relay.TASK_GRACE_PERIOD_MS - 1);
+    relay.setDeliveredVerdictBaseline(stale);
+    relay.__sent.length = 0;
+    relay.verdictWatchTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'a verdict identical to the one on the pane at dispatch is the previous task\'s and must not fire the fast path');
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-7841-stale');
+  } finally { teardown(relay); }
+});
+
+test('#7841 the verdict watch does not judge a pane whose prompt has not been typed yet', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  try {
+    dispatchTask(relay, 't-7841-queued');
+    relay.setTaskPromptDelivered(false);
+    relay.__sent.length = 0;
+    relay.verdictWatchTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'nothing on the pane is evidence about a task the agent was never given');
+  } finally { teardown(relay); }
+});
+
+test('#7841 the verdict watch disarms itself once the tick loop is gone', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-7841-disarm');
+    relay.setTaskPromptDelivered(true);
+    relay.setTaskAssignedAt(Date.now() - relay.TASK_GRACE_PERIOD_MS - 1);
+    relay.verdictWatchTick();               // completes the task; task exit clears progressInterval
+    assert.ok(!relay.getProgressIntervalArmed(), 'setup: the task exit stopped the tick loop');
+    relay.verdictWatchTick();               // next glance finds no tick loop and lets go
+    assert.ok(!relay.getVerdictWatchArmed(), 'the watch must stop when the tick loop it serves has stopped');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7841 the verdict watch waits out the task grace period without spending the fast path', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-7841-grace');
+    relay.setTaskPromptDelivered(true);
+    relay.__sent.length = 0;
+    relay.verdictWatchTick();               // inside the grace period: nothing judged, nothing consumed
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    relay.setTaskAssignedAt(Date.now() - relay.TASK_GRACE_PERIOD_MS - 1);
+    relay.verdictWatchTick();               // grace over: the same line now fires the fast path
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
+      'a verdict first seen during the grace period must still take the fast path once the grace period ends');
+  } finally { console.log = log; teardown(relay); }
+});
