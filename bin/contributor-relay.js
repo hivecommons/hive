@@ -220,6 +220,17 @@ const POST_VERDICT_REVIEW_MESSAGE =
   'Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.';
 const POST_VERDICT_REVIEW_ANCHOR = 'Advisor notes were posted after your verdict';
 
+// #7862: a `HIVE_VERDICT: complete` with no PR behind it gets one follow-up
+// before it is finalized. Same once-per-task bound and same pending/answered
+// mechanics as the #7759 review follow-up above.
+const PR_CLAIM_FOLLOWUP_MESSAGE =
+  'Your verdict says complete, but no PR for this task exists. Open it now — branch, commit, push, gh pr create — and then print the HIVE_VERDICT line again on its own line; or, if there is nothing to ship, print HIVE_VERDICT: no_work_needed — <reason> instead.';
+const PR_CLAIM_FOLLOWUP_ANCHOR = 'Your verdict says complete, but no PR for this task exists';
+// The verdict's reason text claims a PR. Only such a claim triggers the
+// follow-up: a bare `complete` with no PR is booked evidence-less by the hub
+// (same issue), but it is not a contradiction the relay can put to the agent.
+const PR_CLAIM_PATTERN = /\bPRs?\b|pull[ -]request|\bopened\b/i;
+
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_HEADLESS_MAX_OUTPUT_MIB = 16;
 const DEFAULT_HEADLESS_MAX_OUTPUT_BYTES = DEFAULT_HEADLESS_MAX_OUTPUT_MIB * BYTES_PER_MIB;
@@ -2710,12 +2721,21 @@ function detectPRURLs(lines, repo) {
   if (!Array.isArray(lines) || lines.length === 0) return [];
   // Matches https://github.com/<owner>/<repo>/pull/<number>, capturing owner/repo.
   const PR_URL_RE = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/\d+/g;
+  // #7862: agents cite their own PR by number on the verdict line ("complete
+  // — PR #198 delivers …") at least as often as by URL. With the task repo
+  // known, that IS a candidate — synthesized as the repo's URL and put
+  // through the same verification as a pasted one, so a `#N` that turns out
+  // to be someone else's PR is refuted like any other researched reference.
+  // Verdict lines only: a bare "#42" elsewhere in a transcript is usually an
+  // issue.
+  const PR_REF_RE = /\b(?:PR|pull[ -]request)\s*#(\d+)/gi;
   const onVerdictLine = [];
   const elsewhere = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (typeof line !== 'string') continue;
-    const bucket = isHiveVerdictLine(line) ? onVerdictLine : elsewhere;
+    const verdictLine = isHiveVerdictLine(line);
+    const bucket = verdictLine ? onVerdictLine : elsewhere;
     let m;
     PR_URL_RE.lastIndex = 0;
     while ((m = PR_URL_RE.exec(line)) !== null) {
@@ -2723,6 +2743,12 @@ function detectPRURLs(lines, repo) {
       // URL to either way; every URL is a candidate, as the old code allowed.
       if (repo && m[1] !== repo) continue;
       bucket.push(m[0]);
+    }
+    if (verdictLine && repo) {
+      PR_REF_RE.lastIndex = 0;
+      while ((m = PR_REF_RE.exec(line)) !== null) {
+        bucket.push(`https://github.com/${repo}/pull/${m[1]}`);
+      }
     }
   }
   const seen = new Set();
@@ -3150,10 +3176,20 @@ function postVerdictConcerns(lines, verdictLine, markers) {
 // produced more than PR_SCAN_LINES rows of work since, and any verdict still
 // in the window is by construction below it.
 function postVerdictReviewAnswered(lines) {
+  return followUpAnswered(lines, POST_VERDICT_REVIEW_ANCHOR);
+}
+
+// prClaimFollowUpAnswered is the #7862 twin: true once a HIVE_VERDICT line sits
+// below the pane's echo of PR_CLAIM_FOLLOWUP_MESSAGE.
+function prClaimFollowUpAnswered(lines) {
+  return followUpAnswered(lines, PR_CLAIM_FOLLOWUP_ANCHOR);
+}
+
+function followUpAnswered(lines, anchor) {
   if (!Array.isArray(lines)) return true;
   let echoAt = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].includes(POST_VERDICT_REVIEW_ANCHOR)) { echoAt = i; break; }
+    if (lines[i].includes(anchor)) { echoAt = i; break; }
   }
   if (echoAt < 0) return true;
   return detectCompletionVerdict(lines.slice(echoAt + 1)) !== null;
@@ -3709,10 +3745,13 @@ function resetAutonomyNudgeState() {
 // finished task.
 let postVerdictReviewRequested = false;
 let lastTickConcernLines = new Set();
+// #7862: whether this task's one PR-less-complete follow-up has been spent.
+let prClaimFollowUpRequested = false;
 
 function resetPostVerdictReviewState() {
   postVerdictReviewRequested = false;
   lastTickConcernLines = new Set();
+  prClaimFollowUpRequested = false;
 }
 
 function resetPaneStallClock() {
@@ -4682,6 +4721,65 @@ function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previo
   return true;
 }
 
+// ── A `complete` with no PR behind it (hivecommons/hive#7862) ───────────────
+//
+// The prompt defines `HIVE_VERDICT: complete` as "the PR is open". Observed
+// live: a model printing `complete — PR opened` after thirty read-only tool
+// calls — no branch, no commit, no push, no PR. resolveTaskPR() correctly
+// found nothing, and the relay reported the completion anyway with the claim
+// passed through as prose; the verdict text and the PR scan were never
+// compared. The hub (which now books this shape as evidence-less) cannot fix
+// the missing PR; only the agent can, and it is still sitting at its prompt.
+//
+// So: when a `complete` verdict whose reason CLAIMS a PR (PR_CLAIM_PATTERN)
+// would finalize this tick and resolveTaskPR() attributes no PR to the task,
+// tell the agent once — open the PR now, or downgrade to no_work_needed — and
+// hold the finalization until it answers
+// with a second HIVE_VERDICT (or goes idle, via the same pending mechanics
+// as #7759). Whatever the second verdict says is final: a `complete` that
+// still has no PR is reported as-is and the hub books it evidence-less.
+//
+// Bounds, shared with maybeRequestPostVerdictReview: once per task, budget
+// spent before typing, lease and deadline untouched. It never fires for
+// no_work_needed (that verdict is a conclusion in itself), never for a
+// verdict with a PR, and never on an api-error pane (verdictCompletes is
+// already false there).
+//
+// `prFinding` is the tick's single resolveTaskPR() result, shared with the
+// finalization below it: the lookup has a per-tick gh budget and a log line
+// per candidate, and must not run twice for one verdict.
+function maybeRequestPRForClaimedComplete(tmuxLines, verdict, prFinding) {
+  if (!currentTask || !verdict) return false;
+  // Only an issue task's `complete` means "a PR is open". A review task
+  // ("complete — no PR comments to address") legitimately ends with no new PR.
+  if (currentTask.kind !== 'issue') return false;
+  if (verdict.verdict !== HIVE_VERDICT_COMPLETE) return false;
+  if (!PR_CLAIM_PATTERN.test(verdict.reason || '')) return false;
+  if (prClaimFollowUpRequested) return false;
+  if (prFinding && prFinding.url) return false;
+
+  prClaimFollowUpRequested = true;
+  console.warn(`Task ${currentTask.task_id}: HIVE_VERDICT: complete is on the pane${verdict.reason ? ` (${JSON.stringify(verdict.reason)})` : ''} but no PR for this task exists — ` +
+    `asking the agent once to open it or downgrade to no_work_needed (#7862)`);
+  try {
+    tmuxSendNudge(PR_CLAIM_FOLLOWUP_MESSAGE);
+  } catch (e) {
+    console.error('Failed to send the missing-PR follow-up; finalizing on the verdict as-is:', e.message);
+    return false;
+  }
+  send({
+    type: 'task_progress',
+    seq: nextSeq(),
+    task_id: currentTask.task_id,
+    task_gen: currentTask.task_gen,
+    status: 'working',
+    summary: 'Agent printed HIVE_VERDICT: complete but no PR for this task exists; asked it once to open the PR or downgrade to no_work_needed',
+    tmux_output: tmuxLines,
+    ...progressModelFields(),
+  });
+  return true;
+}
+
 function progressTick() {
   lastProgressTick = Date.now();
   if (!currentTask) return;
@@ -4868,8 +4966,9 @@ function progressTick() {
   const reviewMarkers = POST_VERDICT_REVIEW_MARKERS[BACKEND];
   const previousConcerns = lastTickConcernLines;
   lastTickConcernLines = new Set(reviewMarkers ? paneScanLines.filter(l => reviewMarkers.concern.test(l)) : []);
-  const secondVerdictPending = postVerdictReviewRequested && !!completionVerdict &&
-    !postVerdictReviewAnswered(paneScanLines);
+  const secondVerdictPending = !!completionVerdict && (
+    (postVerdictReviewRequested && !postVerdictReviewAnswered(paneScanLines)) ||
+    (prClaimFollowUpRequested && !prClaimFollowUpAnswered(paneScanLines)));
 
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
@@ -4966,8 +5065,28 @@ function progressTick() {
   if (verdictCompletes && maybeRequestPostVerdictReview(paneScanLines, tmuxLines, completionVerdict, previousConcerns)) {
     return;
   }
+  // Best-effort: the PR the agent opened, if one is attributable to this
+  // task from its recent output, so the hub can distinguish "shipped a PR"
+  // from "just went idle" and pick the right issue cooldown
+  // (kubestellar/hive#2393 item 7). Resolved ONCE here, ahead of both the
+  // #7862 follow-up and the finalization that share it. Empty when no PR is
+  // found — the hub then applies the short cooldown.
+  const finalizing = verdictCompletes || (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed);
+  const prFinding = finalizing
+    ? resolveTaskPR(paneScanLines, {
+      repo: currentTask.repo,
+      taskId: currentTask.task_id,
+      taskStartedAt: taskAssignedAt,
+      contributorLogin: CONTRIBUTOR_LOGIN,
+    })
+    : null;
 
-  if (verdictCompletes || (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed)) {
+  // #7862: and its one chance to back a `complete` with the PR it implies.
+  if (verdictCompletes && maybeRequestPRForClaimedComplete(tmuxLines, completionVerdict, prFinding)) {
+    return;
+  }
+
+  if (finalizing) {
     // How this task ended, recorded so the hub and the operator can tell the
     // trustworthy signal from the fallback — and so per-backend sentinel
     // non-compliance is measurable rather than guessed at.
@@ -4976,21 +5095,11 @@ function progressTick() {
       (verdictCompletes
         ? ` (HIVE_VERDICT: ${completionVerdict.verdict})`
         : (completionVerdict
-          ? ` (pane idle for ${chromeIdleTicks} consecutive checks; the agent's HIVE_VERDICT: ${completionVerdict.verdict} was followed by advisor notes it was asked to address, and it never re-printed the verdict — #7759)`
+          ? ` (pane idle for ${chromeIdleTicks} consecutive checks; the agent's HIVE_VERDICT: ${completionVerdict.verdict} was followed by a relay follow-up it was asked to answer, and it never re-printed the verdict — #7759/#7862)`
           : ` (pane idle for ${chromeIdleTicks} consecutive checks, no verdict emitted)`)));
     resetChromeIdleGrace();
     // Successful completion clears this work item's crash-retry budget.
     cliRestartCounts.delete(taskKey(currentTask));
-    // Best-effort: report the PR the agent opened, if one is visible in its
-    // recent output, so the hub can distinguish "shipped a PR" from "just went
-    // idle" and pick the right issue cooldown (kubestellar/hive#2393 item 7).
-    // Empty when no PR link is found — the hub then applies the short cooldown.
-    const prFinding = resolveTaskPR(paneScanLines, {
-      repo: currentTask.repo,
-      taskId: currentTask.task_id,
-      taskStartedAt: taskAssignedAt,
-      contributorLogin: CONTRIBUTOR_LOGIN,
-    });
     const prURL = prFinding.url;
     // #6717 item 4: make the weakest completion the loudest line in the log.
     // A chrome_idle completion with no verdict AND no PR is the exact shape of
@@ -5767,6 +5876,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     maybeRequestPostVerdictReview,
     resetPostVerdictReviewState,
     getPostVerdictReviewRequested: () => postVerdictReviewRequested,
+    getPRClaimFollowUpRequested: () => prClaimFollowUpRequested,
+    PR_CLAIM_FOLLOWUP_MESSAGE,
+    PR_CLAIM_FOLLOWUP_ANCHOR,
+    PR_CLAIM_PATTERN,
     tmuxSessionHasAttachedClient,
     tmuxSessionHumanPresence,
     HUMAN_PRESENCE_IDLE_MS,

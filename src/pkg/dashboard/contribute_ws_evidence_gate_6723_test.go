@@ -132,7 +132,12 @@ func TestIsEvidenceLessCompletion(t *testing.T) {
 		{"verified PR outranks signal", "https://github.com/o/r/pull/9", completionVerdictShipped, completionSignalChromeIdle, false},
 		{"whitespace-only PR is no PR", "   ", completionVerdictIdle, completionSignalChromeIdle, true},
 		{"no_work_needed is a conclusion", "", completionVerdictNoWorkNeeded, completionSignalChromeIdle, false},
-		{"explicit verdict signal", "", completionVerdictIdle, completionSignalVerdict, false},
+		// #7862: `HIVE_VERDICT: complete` with no PR normalizes to idle with
+		// signal=verdict. The prompt defines complete as "PR is open"; without
+		// one the verdict is prose, not evidence.
+		{"verdict signal, complete but no PR (#7862)", "", completionVerdictIdle, completionSignalVerdict, true},
+		{"verdict signal, no_work_needed is still a conclusion", "", completionVerdictNoWorkNeeded, completionSignalVerdict, false},
+		{"verdict signal with verified PR", "https://github.com/o/r/pull/9", completionVerdictShipped, completionSignalVerdict, false},
 		{"absent signal (pre-#5376 relay)", "", completionVerdictIdle, "", false},
 		{"unrecognised signal", "", completionVerdictIdle, "something-new", false},
 	} {

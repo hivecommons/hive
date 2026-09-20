@@ -10378,3 +10378,100 @@ test('#7861 end to end: the pair completes the task as no_work_needed with the i
       'The issue is explicitly blocked by a pending maintainer decision in issue #305.');
   } finally { teardown(relay); }
 });
+
+// ── hivecommons/hive#7862: a `complete` that claims a PR nobody opened ───────
+//
+// Live: `HIVE_VERDICT: complete — PR opened` after thirty read-only tool calls;
+// resolveTaskPR() found nothing, and the completion went to the hub with the
+// claim as prose. The relay now puts the contradiction to the agent once —
+// same once-per-task, pending-until-answered mechanics as #7759 — and
+// finalizes on whatever the second verdict says.
+
+test('#7862 a complete that claims a PR with none attributable gets one follow-up, then finalizes on the reply', () => {
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7862-claim', 137);
+    const before = relay.__tmuxSends().length;
+    pane = `HIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'a complete claiming a PR that does not exist must not finalize unchallenged');
+    const sends = relay.__tmuxSends().slice(before).filter(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR));
+    assert.strictEqual(sends.length, 1, `exactly one follow-up typed: ${JSON.stringify(relay.__tmuxSends().slice(before))}`);
+    assert.ok(relay.__sent.some(m => m.type === 'task_progress' && /no PR for this task exists/.test(m.summary || '')),
+      'the hub is told why the task is still open');
+    assert.strictEqual(relay.getPRClaimFollowUpRequested(), true);
+
+    // Still the first verdict above the echoed follow-up: agent mid-turn.
+    pane = `HIVE_VERDICT: complete — PR opened\n> ${relay.PR_CLAIM_FOLLOWUP_MESSAGE}\nWorking…`;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'the first verdict above the echoed follow-up must not end the task mid-turn');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)).length, 1, 'no second follow-up');
+
+    // The agent came clean: no_work_needed is a conclusion and is final.
+    pane = `HIVE_VERDICT: complete — PR opened\n> ${relay.PR_CLAIM_FOLLOWUP_MESSAGE}\nHIVE_VERDICT: no_work_needed — rollback already exists in main\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the second verdict completes the task');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.ok(!completed[0].pr_url, 'no PR is reported');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 a second complete that still has no PR is reported as-is — one follow-up per task', () => {
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7862-stubborn', 138);
+    pane = `HIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    pane = `HIVE_VERDICT: complete — PR opened\n> ${relay.PR_CLAIM_FOLLOWUP_MESSAGE}\nHIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the second verdict is final whatever it says');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.ok(!completed[0].pr_url, 'still no PR: the hub books it evidence-less');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)).length, 1);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 the follow-up does not fire when the PR exists, for a bare complete, for no_work_needed, or for a review task', () => {
+  const cases = [
+    { label: 'PR URL on the pane', pane: `Opened https://github.com/foo/bar/pull/205\nHIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`, prMeta: new Error('gh: offline') },
+    { label: 'PR cited by number on the verdict line', pane: `HIVE_VERDICT: complete — PR #205 adds the rollback\n${IDLE_PANE}`, prMeta: new Error('gh: offline') },
+    { label: 'bare complete (hub books it evidence-less)', pane: `HIVE_VERDICT: complete\n${IDLE_PANE}`, prMeta: null },
+    { label: 'no_work_needed mentioning a PR', pane: `HIVE_VERDICT: no_work_needed — PR #12 already fixed this\n${IDLE_PANE}`, prMeta: null },
+  ];
+  for (const c of cases) {
+    const relay = loadRelay({ backend: 'copilot', paneText: c.pane, prMeta: c.prMeta });
+    const log = console.log; console.log = () => {};
+    try {
+      dispatchTask(relay, `ct-7862-${c.label.replace(/[^a-z0-9]+/gi, '-')}`, 139);
+      relay.__crashTick();
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1, `${c.label}: finalizes on the tick`);
+      assert.ok(!relay.__tmuxSends().some(s => s.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)), `${c.label}: no follow-up typed`);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict line, for the task repo only', () => {
+  const relay = loadRelay({});
+  try {
+    assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — PR #198 delivers it'], 'foo/bar'),
+      ['https://github.com/foo/bar/pull/198']);
+    assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — see pull request #7'], 'foo/bar'),
+      ['https://github.com/foo/bar/pull/7']);
+    assert.deepStrictEqual(relay.detectPRURLs(['Looked at PR #198 for context'], 'foo/bar'), [],
+      'a PR number off the verdict line is research, not a claim');
+    assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — PR #198'], undefined), [],
+      'no repo, nothing to synthesize against');
+    assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — fixes #198'], 'foo/bar'), [],
+      'a bare #N is an issue reference');
+  } finally { teardown(relay); }
+});

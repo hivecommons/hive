@@ -2763,7 +2763,16 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// the contributor's fast-failure streak.
 			h.resetContributorFailureStreak(identityOf(s.contributor))
 			s.contributor.mu.Lock()
-			s.contributor.profile.TasksCompleted++
+			// #7862: a completion with nothing behind it — no PR, no
+			// no_work_needed, from a relay that said how it decided (chrome
+			// inference or a bare `HIVE_VERDICT: complete`) — earns no
+			// completed-task credit. It is still booked as a run (above) and
+			// still clears the failure streak: the runtime worked, the model
+			// just declared victory. The same predicate picks the short,
+			// non-escalating issue cooldown in markTaskCompletedVerdictKeySignal.
+			if !isEvidenceLessCompletion(verifiedPR, verdict, msg.CompletionSignal) {
+				s.contributor.profile.TasksCompleted++
+			}
 			// Trust credit is gated on the VERIFIED PR, not the reported one:
 			// counting the raw self-reported field would hand out
 			// contents:write / pulls:write for a PR that was never shown to

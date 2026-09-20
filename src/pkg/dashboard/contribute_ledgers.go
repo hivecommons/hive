@@ -338,17 +338,26 @@ const (
 //     self-reported;
 //   - an affirmative no_work_needed verdict — the agent reached a conclusion
 //     and said so;
-//   - anything other than an explicit chrome_idle signal. This is the
-//     conservative half of the predicate and it is deliberate: the field is
-//     absent from every relay predating #5376 and from the headless path,
-//     both of which normalize to "unknown". Keying off chrome_idle
-//     SPECIFICALLY means this policy changes behaviour only for a relay that
-//     has affirmatively told us it fell back to chrome inference. No existing
-//     relay silently changes behaviour by upgrading the hub.
+//   - an "unknown" completion signal. This is the conservative half of the
+//     predicate and it is deliberate: the field is absent from every relay
+//     predating #5376 and from the headless path, both of which normalize
+//     to "unknown". Keying off the two AFFIRMATIVE signals means this policy
+//     changes behaviour only for a relay that has told us how it decided the
+//     task was over. No existing relay silently changes behaviour by
+//     upgrading the hub.
 //
-// What remains — no PR, no conclusion, and a relay admitting it inferred
-// completion from idle terminal chrome — is the #6717 shape exactly: a prompt
-// that was never submitted, reported as done.
+// What remains is a completion with no PR and no conclusion from a relay that
+// said how it got there — and neither way is evidence:
+//
+//   - chrome_idle: the relay inferred completion from idle terminal chrome.
+//     That is the #6717 shape exactly: a prompt that was never submitted,
+//     reported as done.
+//   - verdict: the agent printed `HIVE_VERDICT: complete` but opened nothing.
+//     The prompt defines `complete` as "the PR is open"; a `complete` with no
+//     PR is a sentence, not a result (#7862 — three in nine tasks from one
+//     model, every one of them 30+ read-only tool calls and then the
+//     sentinel). It used to book a real completion: TasksCompleted++ and the
+//     escalating no-PR cooldown on the issue, parking live work behind prose.
 func isEvidenceLessCompletion(prURL, verdict, signal string) bool {
 	if strings.TrimSpace(prURL) != "" {
 		return false
@@ -356,7 +365,11 @@ func isEvidenceLessCompletion(prURL, verdict, signal string) bool {
 	if verdict == completionVerdictNoWorkNeeded {
 		return false
 	}
-	return normalizeCompletionSignal(signal) == completionSignalChromeIdle
+	switch normalizeCompletionSignal(signal) {
+	case completionSignalChromeIdle, completionSignalVerdict:
+		return true
+	}
+	return false
 }
 
 // normalizeCompletionSignal maps a client-reported completion_signal onto the
@@ -709,11 +722,12 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 			verdictLedgerDirty = true
 		}
 	} else if evidenceLess {
-		// #6723: no PR, no verdict line, and no affirmative no_work_needed —
-		// the relay fell back to idle-looking terminal chrome and has told us
-		// so. That is not evidence that the work was even attempted, so it must
-		// not escalate. A flat base cooldown keeps the issue out of a tight
-		// re-offer loop (#2492/#2557) while leaving it offerable.
+		// #6723/#7862: no PR and no affirmative no_work_needed — the relay
+		// either fell back to idle-looking terminal chrome or read a bare
+		// `complete` with nothing behind it, and has told us which. Neither is
+		// evidence that the work was even attempted, so it must not escalate.
+		// A flat base cooldown keeps the issue out of a tight re-offer loop
+		// (#2492/#2557) while leaving it offerable.
 		cooldown = completedNoPRCooldownHours * time.Hour
 	} else {
 		// #3980: repeated no-PR completions escalate geometrically (4h → 8h →
