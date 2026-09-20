@@ -120,7 +120,21 @@ Flags `gh` accepts but this path does not need — `--draft`, `--fill`, `--web`,
 `--no-maintainer-edit` — are **accepted and ignored**, so an agent's existing
 command line does not need rewriting. Note that `--draft` being ignored means
 **you cannot open a draft PR this way**; the PR opens ready for review. Any
-other unrecognized flag is ignored with a warning on stderr naming it.
+other unrecognized flag is ignored with a warning on stderr naming it — with
+one deliberate exception:
+
+`--label`/`-l` is **accepted silently and its value discarded**
+(`bin/hive-open-pr.sh:149`). No warning is printed, on purpose: `--label hold`
+is in every hold-gated policy template, so it arrives on essentially every
+agent PR, and "ignoring unrecognized flag `--label`" would read to an agent
+mid-run as "your PR will not be held" — the opposite of the truth. The `hold`
+label does land, but not because of the flag: the PR-request watcher applies it
+server-side from authoritative ACMM config after the PR is created
+(`src/pkg/github/pr_request_watcher.go:393`), and treats a failure to apply it
+as a failed request, not a cosmetic miss. Every **other** label in the flag's
+value (`--label documentation,hold`, say) is simply lost — the request file has
+no label field. If you want a non-`hold` label on your PR, add it after the PR
+exists, e.g. `gh pr edit <number> --repo <repo> --add-label documentation`.
 
 ## It is asynchronous, by design
 
