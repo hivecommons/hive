@@ -309,6 +309,10 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   };
   relay.__tmuxSends = () => commands.filter(c => /send-keys/.test(c));
   relay.__execFileSyncCalls = execFileSyncCalls;
+  // #7907: a verdict is judged on the capture that finds it unless a test
+  // opts into the settle — the existing tick-by-tick tests hand the relay a
+  // pane that already carries everything the verdict came with.
+  relay.__setVerdictSettleMs(0);
   return relay;
 }
 
@@ -10365,6 +10369,114 @@ test('#7841 the verdict watch waits out the task grace period without spending t
     relay.verdictWatchTick();               // grace over: the same line now fires the fast path
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
       'a verdict first seen during the grace period must still take the fast path once the grace period ends');
+  } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7907 — the verdict is judged on a settled pane, not the
+// capture that discovered it.
+//
+// omp appends the advisor notes it queued mid-turn at the END of the turn, in
+// the same instant as the agent's final message, and renders them under the
+// verdict about a second later. The #7841 glance saw the verdict while that
+// message was still streaming and ran the finalizing tick on a pane the notes
+// had not reached; #7879 recorded nothing (utah#218 lost four ⟦concern⟧s).
+// The first tick to see a verdict line now defers; a later capture, at least
+// VERDICT_SETTLE_MS after, is the one that judges it. loadRelay() sets the
+// settle to 0; these tests opt in.
+// ---------------------------------------------------------------------------
+
+const OMP_UTAH218_VERDICT = 'HIVE_VERDICT: complete — PR #218 confirmed open against `main`.';
+const OMP_UTAH218_LATE_NOTES = [
+  ' ⓘ Advisor 1 note',
+  '   ▎ ⟦concern⟧ Skip the rebase. Rewriting ffeca63 solely to change "via omp" → "via GitHub Copilot" needs a',
+  '   ▎ force-push the reviewer did not ask for.',
+];
+
+function settleElapsed(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+test('#7907 a verdict alone on capture N, verdict + notes on capture N+1: the notes are recorded, not dropped', async () => {
+  let pane = ompPane(' ⠋ Editing docs/skills/index.md', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    relay.__setVerdictSettleMs(40);
+    dispatchTask(relay, 'ct-7907-settle', 169);
+    // Capture N: the final message has streamed as far as the verdict line;
+    // the advisor's end-of-turn notes are not rendered yet.
+    pane = ompPane(' Opened https://github.com/foo/bar/pull/218', OMP_UTAH218_VERDICT, OMP_UTAH14_TAIL);
+    relay.__sent.length = 0;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'the tick that discovers the verdict must not finalize on that capture');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_progress' && m.status === 'working').length, 1,
+      'it reports progress and waits');
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 0, 'and does not spend the #7759 follow-up on a note-less pane');
+
+    // Capture N+1, ~1 s later live: the same verdict, the notes under it.
+    pane = ompPane(' Opened https://github.com/foo/bar/pull/218', OMP_UTAH218_VERDICT, OMP_UTAH218_LATE_NOTES, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    // The settle has not elapsed yet: still deferred, still not judged.
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 0, 'no branch judges the verdict before the settle elapses');
+
+    await settleElapsed(60);
+    relay.__crashTick();
+    // The settled pane carries a NEW concern under the first verdict — this
+    // is exactly the #7759 shape, and the agent gets its one turn on it.
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 1, 'the settled capture sees the concern and the #7759 follow-up fires');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+
+    // The agent answers and re-prints the verdict; the advisor's review of
+    // THAT turn lands a second later. Same race, second verdict — new line,
+    // new settle.
+    const first = [' Opened https://github.com/foo/bar/pull/218', OMP_UTAH218_VERDICT, OMP_UTAH218_LATE_NOTES];
+    const second = ompPane(first, `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`, ' Left ffeca63 alone; noted the trailer in the PR body.', OMP_UTAH14_VERDICT);
+    pane = ompPane(second, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'the second verdict is first seen here and defers too');
+    pane = ompPane(second, OMP_638_LATE_CONCERN, OMP_UTAH14_TAIL);
+    await settleElapsed(60);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the settled second verdict finalizes');
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 1, 'a concern under the second verdict buys no turn (#7759 bound intact)');
+    assert.ok(completed[0].summary.includes(relay.UNADDRESSED_ADVISOR_NOTES_HEADING) && completed[0].summary.includes('gitAuthor'),
+      `the late concern under the final verdict is recorded (#7879): ${JSON.stringify(completed[0].summary)}`);
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7907 the fast-path glance defers with the tick and re-fires once the settle elapses, spending the fast path once', async () => {
+  let pane = `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.__setVerdictSettleMs(40);
+    dispatchTask(relay, 't-7907-glance');
+    relay.setTaskPromptDelivered(true);
+    relay.setTaskAssignedAt(Date.now() - relay.TASK_GRACE_PERIOD_MS - 1);
+    relay.__sent.length = 0;
+    relay.verdictWatchTick();               // discovers the line: the tick records the sighting and defers
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    const deferred = relay.__sent.filter(m => m.type === 'task_progress').length;
+    relay.verdictWatchTick();               // settle pending: glances again later, does not spend the fast path
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_progress').length, deferred, 'a pending settle runs no tick');
+    await settleElapsed(60);
+    relay.verdictWatchTick();               // settled: this run judges — and consumes the line
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, `the glance must still credit the verdict without a scheduled tick: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7907 with the settle at zero (the harness default) a verdict is judged on the capture that finds it', () => {
+  const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: complete — shipped it\n${IDLE_PANE}` });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 't-7907-zero');
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1);
   } finally { console.log = log; teardown(relay); }
 });
 

@@ -278,6 +278,17 @@ const PROGRESS_REPORT_INTERVAL_MS = RELAY_TEST_TIMING ? 100 : 120000;
 // read; when it sees a fresh verdict it runs the SAME progressTick early rather
 // than duplicating any of its judgement.
 const VERDICT_WATCH_INTERVAL_MS = RELAY_TEST_TIMING ? 30 : 5000;
+// #7907: how long a HIVE_VERDICT line must have been on the pane before the
+// tick that finalizes on it. omp queues the advisor notes generated mid-turn
+// and appends them at the END of the agent's turn — the same instant as the
+// final message — and renders them under the verdict about a second later.
+// The #7841 fast path saw the verdict while that message was still streaming
+// and judged a pane the notes had not reached yet, so whether #7879 recorded
+// them depended on the phase of a 5 s timer (utah#218 lost four). A verdict
+// first seen on this capture is re-captured on a later tick, at least this
+// long after; one extra interval at most, no new turns. The test harness sets
+// it to 0 via __setVerdictSettleMs and opts in per case.
+let VERDICT_SETTLE_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
@@ -3795,12 +3806,40 @@ let postVerdictReviewRequested = false;
 let lastTickConcernLines = new Set();
 // #7862: whether this task's one PR-less-complete follow-up has been spent.
 let prClaimFollowUpRequested = false;
+// #7907: the verdict LINE currently on the pane and when a tick first saw it.
+// A different line (the second verdict after a #7759 follow-up) starts a new
+// sighting; the same line ages toward VERDICT_SETTLE_MS.
+let verdictFirstSeen = null;
 
 function resetPostVerdictReviewState() {
   postVerdictReviewCount = 0;
   postVerdictReviewRequested = false;
   lastTickConcernLines = new Set();
   prClaimFollowUpRequested = false;
+  verdictFirstSeen = null;
+}
+
+// noteVerdictSighting records that `line` is on the pane now and reports
+// whether it has been there long enough to judge (#7907). The first sighting
+// of a line is never settled: the whole point is that the tick which
+// discovers the verdict is the one that captured too early. Called once per
+// tick, ahead of every branch that acts on the verdict, so the follow-up
+// (#7759), the PR-claim follow-up (#7862) and the finalization all read the
+// settled pane rather than the streaming one.
+function noteVerdictSighting(line) {
+  const now = Date.now();
+  if (!verdictFirstSeen || verdictFirstSeen.line !== line) {
+    verdictFirstSeen = { line, at: now };
+    return VERDICT_SETTLE_MS <= 0;
+  }
+  return now - verdictFirstSeen.at >= VERDICT_SETTLE_MS;
+}
+
+// verdictSettlePending: the fast-path glance asks this before firing again
+// for a line it has already handed to a tick that deferred on it.
+function verdictSettlePending(line) {
+  return !!verdictFirstSeen && verdictFirstSeen.line === line &&
+    Date.now() - verdictFirstSeen.at < VERDICT_SETTLE_MS;
 }
 
 function resetPaneStallClock() {
@@ -4439,7 +4478,13 @@ function verdictWatchTick() {
   const paneVerdict = detectCompletionVerdict(captureTmuxLines(PR_SCAN_LINES));
   if (!paneVerdict || paneVerdict.line === deliveredVerdictBaseline) return;
   if (paneVerdict.line === verdictFastPathLine) return;
-  verdictFastPathLine = paneVerdict.line;
+  // #7907: a line the tick has seen but refused to judge yet (its settle has
+  // not elapsed) is glanced at again next interval, not now. The line is
+  // marked consumed only on the run that gets to judge it — the first run
+  // records the sighting and defers, so it must not spend the fast path.
+  if (verdictSettlePending(paneVerdict.line)) return;
+  const settled = !!verdictFirstSeen && verdictFirstSeen.line === paneVerdict.line;
+  if (settled) verdictFastPathLine = paneVerdict.line;
   console.log(`Task ${currentTask.task_id}: HIVE_VERDICT: ${paneVerdict.verdict} is on the pane — running the progress tick now instead of waiting up to ${Math.round(PROGRESS_REPORT_INTERVAL_MS / 1000)}s for the next one (#7841)`);
   progressTick();
   if (progressInterval) {
@@ -5139,6 +5184,25 @@ function progressTick() {
     paneState === PANE_STATE_UNKNOWN_API_ERROR ||
     paneState === PANE_STATE_FATAL_API_ERROR;
   const verdictCompletes = !!completionVerdict && !apiErrorState && !secondVerdictPending;
+
+  // #7907: a verdict this tick is the FIRST to see is judged on a later
+  // capture. The backend renders its end-of-turn advisor notes under the
+  // verdict about a second after the line itself appears; a capture taken in
+  // that second shows the verdict alone, and every branch below that reads
+  // the notes — the #7759 follow-up, the #7879 recording — would read none.
+  // Bounded at one extra tick (the #7841 glance re-fires once the settle has
+  // elapsed); the verdict line is remembered, not a boolean, so a second
+  // verdict after a follow-up settles on its own.
+  if (verdictCompletes && !noteVerdictSighting(completionVerdict.line)) {
+    // A deferred tick judged nothing, so it must not advance the #7759
+    // concern snapshot either: the notes that render during the settle have
+    // to read as NEW on the tick that finally looks, or the follow-up they
+    // would have earned on a lucky timer phase is lost to an unlucky one.
+    lastTickConcernLines = previousConcerns;
+    console.log(`Task ${currentTask.task_id}: HIVE_VERDICT: ${completionVerdict.verdict} first seen on this capture — re-capturing after ${VERDICT_SETTLE_MS}ms before judging it, so notes the ${BACKEND} CLI renders at end of turn are on the pane (#7907)`);
+    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines, ...progressModelFields() });
+    return;
+  }
 
   if (paneState === PANE_STATE_IDLE_COMPLETE && chromeIdleGraceElapsed && !verdictCompletes && !hasTaskAgentActivity) {
     resetChromeIdleGrace();
@@ -5993,6 +6057,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     __clearTransientNudgeCooldown: () => { lastTransientNudgeAt = 0; },
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
+    __setVerdictSettleMs: (ms) => { VERDICT_SETTLE_MS = ms; },
     paneStalled,
     paneStallConfirmed,
     paneChangedSince,
