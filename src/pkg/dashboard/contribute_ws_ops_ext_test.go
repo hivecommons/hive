@@ -339,6 +339,27 @@ func TestBuildTaskPrompt_ForbidsLiveBackgroundShellsAtVerdict(t *testing.T) {
 	}
 }
 
+// #7858: the prompt must tell the agent that opening the PR is finishing — no
+// waiting on CI or review bots — and say so before the review exception, so the
+// "you may be asked once" sentence is not read as licence to wait for it.
+func TestBuildTaskPrompt_ForbidsWaitingOnCIOrReviewBots(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	for _, want := range []string{
+		"Opening the PR IS finishing",
+		"do not wait for CI, checks, or review bots",
+		"follows up on open PRs separately",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt must carry %q; got: %q", want, prompt)
+		}
+	}
+	at := strings.Index(prompt, "do not wait for CI, checks, or review bots")
+	if at < strings.Index(prompt, "Print it exactly once") || at > strings.Index(prompt, "One exception") {
+		t.Errorf("the no-waiting rule must sit between the exactly-once rule and the review exception; got: %q", prompt)
+	}
+}
+
 func TestBuildTaskPrompt_SanctionsOneReviewFollowUp(t *testing.T) {
 	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
 

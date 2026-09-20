@@ -1,0 +1,1 @@
+- Contribute prompt: the agent is told that opening the PR is finishing — do not wait for CI, checks, or review bots before printing `HIVE_VERDICT`; hive's PR review cycle owns post-PR follow-up (#7858).

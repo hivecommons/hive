@@ -441,6 +441,16 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"job you started — nothing you launched may still be running when "+
 			"the verdict line appears, because its completion would wake you "+
 			"for another turn after the task has been credited. "+
+			// #7858: a careful agent's instinct — or a contributor's standing
+			// instructions — is to verify before declaring done, so it parks on
+			// CI gates and review bots for minutes with a PR URL on the pane and
+			// no verdict. The relay cannot tell that from a stall, and hive's
+			// periodic PR review cycle already owns post-PR follow-up, so the
+			// wait is pure cost. Say so explicitly.
+			"Opening the PR IS finishing: do not wait for CI, checks, or review "+
+			"bots to report before printing the verdict — hive reviews and "+
+			"follows up on open PRs separately, so any wait here only holds the "+
+			"task. "+
 			"If you printed the no_work_needed line above, that already counts "+
 			"as your completion — do not print both. "+
 			// #7759: the one sanctioned second verdict. A CLI that runs a
