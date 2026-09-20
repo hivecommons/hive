@@ -71,6 +71,17 @@ silently dropped by an older parser, which opened PRs whose entire body was the
 attribution footer. The floor is "non-blank" only: minimal bodies like
 `Closes #12` still pass.
 
+**On a host without `python3`, a control character in any field is refused**
+with exit `3` and no request written. The request JSON is normally encoded by
+python3; without it, a fallback escaper handles newline, carriage return, and
+tab — everything a PR body legitimately contains — but refuses the remaining C0
+controls rather than emit invalid JSON. Before
+[#7839](https://github.com/hivecommons/hive/issues/7839) that refusal was
+swallowed by a command substitution and the request was written with the
+offending field silently blanked — the exact loss the empty-body guard above
+exists to prevent; now nothing is written. Install `python3`, or strip the
+control character, and rerun.
+
 `--issues` declares which issue(s) this PR is for. The watcher then verifies
 the body actually references each declared issue — `Closes #N`, or `Refs #N`
 when part of the issue deliberately stays open — and rejects the request
