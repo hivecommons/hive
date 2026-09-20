@@ -1,0 +1,1 @@
+- Contributor relay: when an agent prints `HIVE_VERDICT: no_work_needed` and then a narrated `HIVE_VERDICT: complete` for the same task, the relay now reports `no_work_needed` with its reason instead of a PR-less `complete` that the hub degraded to `idle`; a PR the task opened still overrides it (#7861).

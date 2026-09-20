@@ -7363,13 +7363,24 @@ test('#5376 the completion sentinel inherits the anti-false-positive guards, not
 test('#5376 the newest verdict wins, so a stale one cannot end a later turn', () => {
   const relay = loadRelay({});
   try {
+    // A complete revised UP to no_work_needed: the newest line wins, as always.
     const v = relay.detectCompletionVerdict([
+      'HIVE_VERDICT: complete — opened PR #2',
+      'actually, on reflection, #2 was already merged',
+      'HIVE_VERDICT: no_work_needed — nothing here',
+    ], null);
+    assert.strictEqual(v.verdict, 'no_work_needed');
+    assert.strictEqual(v.reason, 'nothing here');
+    // The other order — no_work_needed then complete — is #7861's case: the
+    // no_work_needed is kept at detection time, and whether a PR this task
+    // opened overrides it is decided where the verdict is acted on
+    // (resolveTaskPR's suppressesVerdict), not by which line is newer.
+    const pair = relay.detectCompletionVerdict([
       'HIVE_VERDICT: no_work_needed — nothing here',
       'actually, on reflection, there was work',
       'HIVE_VERDICT: complete — opened PR #2',
-    ]);
-    assert.strictEqual(v.verdict, 'complete');
-    assert.strictEqual(v.reason, 'opened PR #2');
+    ], null);
+    assert.strictEqual(pair.verdict, 'no_work_needed');
   } finally { teardown(relay); }
 });
 
@@ -10279,4 +10290,87 @@ test('#7863 default harness (session present) never recreates the tmux session',
   } finally {
     teardown(relay);
   }
+});
+
+// --- #7861: both HIVE_VERDICT lines on the pane ------------------------------
+
+test('#7861 a no_work_needed followed by a narrated PR-less complete keeps no_work_needed and its reason', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectCompletionVerdict([
+      'some work',
+      ' HIVE_VERDICT: no_work_needed — The issue is explicitly blocked by a pending maintainer decision in issue #305.',
+      ' HIVE_VERDICT: complete — The problem is identified as blocked on a maintainer decision.',
+    ], null);
+    assert.strictEqual(v.verdict, 'no_work_needed');
+    assert.strictEqual(v.reason, 'The issue is explicitly blocked by a pending maintainer decision in issue #305.');
+
+    // Reverse order is the agent revising itself upward; the newest still wins.
+    const rev = relay.detectCompletionVerdict([
+      'HIVE_VERDICT: complete — shipped',
+      'HIVE_VERDICT: no_work_needed — actually nothing to do',
+    ], null);
+    assert.strictEqual(rev.verdict, 'no_work_needed');
+    // Two completes: newest, unchanged.
+    const two = relay.detectCompletionVerdict([
+      'HIVE_VERDICT: complete — first',
+      'HIVE_VERDICT: complete — second',
+    ], null);
+    assert.strictEqual(two.reason, 'second');
+  } finally { teardown(relay); }
+});
+
+test('#7861 a previous task\'s no_work_needed at or above the baseline is never preferred', () => {
+  const relay = loadRelay({});
+  try {
+    const prev = 'HIVE_VERDICT: no_work_needed — previous task, gated';
+    // Previous task printed no_work_needed; THIS task printed complete. The
+    // baseline is the previous sentinel, so the complete is this task's verdict.
+    const v = relay.detectCompletionVerdict([prev, 'work', 'HIVE_VERDICT: complete — shipped PR #9'], prev);
+    assert.strictEqual(v.verdict, 'complete');
+    assert.strictEqual(v.reason, 'shipped PR #9');
+
+    // Previous task printed BOTH (no_work then complete). The baseline is its
+    // newest line (the complete). On the next task's first tick the answer must
+    // be that baseline line — which the caller discards — not the older
+    // no_work_needed, or the new task would be completed off a stale verdict.
+    const prevComplete = 'HIVE_VERDICT: complete — narrated';
+    const stale = relay.detectCompletionVerdict([prev, prevComplete, 'new task working…'], prevComplete);
+    assert.strictEqual(stale.line, prevComplete);
+  } finally { teardown(relay); }
+});
+
+test('#7861 prompt delivery baselines the NEWEST sentinel even when both are on the pane', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: [
+    'HIVE_VERDICT: no_work_needed — previous task',
+    'HIVE_VERDICT: complete — previous task narrated',
+    '❯ ',
+  ].join('\n') });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-baseline');
+    assert.strictEqual(relay.getTaskPromptDelivered(), true, 'setup: the prompt must have been typed');
+    assert.strictEqual(relay.getDeliveredVerdictBaseline(), 'HIVE_VERDICT: complete — previous task narrated');
+    // …and that first tick must not complete the new task off either stale line.
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+  } finally { teardown(relay); }
+});
+
+test('#7861 end to end: the pair completes the task as no_work_needed with the informative reason', () => {
+  const PANE = [
+    ' HIVE_VERDICT: no_work_needed — The issue is explicitly blocked by a pending maintainer decision in issue #305.',
+    ' HIVE_VERDICT: complete — The problem is identified as blocked on a maintainer decision.',
+    '❯ ',
+  ].join('\n');
+  const relay = loadRelay({ backend: 'claude', paneText: PANE });
+  try {
+    dispatchTask(relay, 't-pair');
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_reason,
+      'The issue is explicitly blocked by a pending maintainer decision in issue #305.');
+  } finally { teardown(relay); }
 });

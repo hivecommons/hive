@@ -2560,7 +2560,10 @@ function tmuxSendKeys(text) {
     // tick.
     const deliveryBaselineLines = captureTmuxLines(PR_SCAN_LINES);
     resetTaskAgentActivity(deliveryBaselineLines);
-    const priorVerdict = detectCompletionVerdict(deliveryBaselineLines);
+    // The baseline is the NEWEST sentinel, whatever kind: #7861's preference
+    // must not apply here, or a previous task's trailing "complete" would sit
+    // above the baseline and complete the next task on its first tick.
+    const priorVerdict = detectHiveVerdict(deliveryBaselineLines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
@@ -2994,8 +2997,24 @@ function isHiveVerdictLine(line) {
 // Returns null rather than throwing on junk input: every caller is on a
 // best-effort path reading a terminal capture that may be empty.
 function detectHiveVerdict(lines, wanted) {
-  if (!Array.isArray(lines) || lines.length === 0) return null;
-  if (!Array.isArray(wanted) || wanted.length === 0) return null;
+  const all = detectHiveVerdicts(lines, wanted);
+  return all.length > 0 ? withoutPaneIndex(all[0]) : null;
+}
+
+// withoutPaneIndex drops the pane index detectHiveVerdicts() carries; the
+// single-verdict shape callers compare and log is { verdict, reason, line }.
+function withoutPaneIndex(v) {
+  return { verdict: v.verdict, reason: v.reason, line: v.line };
+}
+
+// detectHiveVerdicts is detectHiveVerdict for EVERY sentinel on the pane,
+// newest-first, each carrying its pane index — so a caller can reason about
+// the pair an agent prints when it narrates a closing "complete" after its
+// real verdict (#7861).
+function detectHiveVerdicts(lines, wanted) {
+  if (!Array.isArray(lines) || lines.length === 0) return [];
+  if (!Array.isArray(wanted) || wanted.length === 0) return [];
+  const found = [];
   // The anchoring, chrome tolerance and token boundary are all in
   // hiveVerdictLineRe() above, shared with isHiveVerdictLine().
   const VERDICT_RE = hiveVerdictLineRe(wanted);
@@ -3021,9 +3040,9 @@ function detectHiveVerdict(lines, wanted) {
     // compares it against the line that was already on the pane when the task's
     // prompt was delivered, which is how a verdict gets attributed to a task at
     // all (#5650).
-    return { verdict: m[2].toLowerCase(), reason, line: lines[i] };
+    found.push({ verdict: m[2].toLowerCase(), reason, line: lines[i], index: i });
   }
-  return null;
+  return found;
 }
 
 // Best-effort scan for the no_work_needed sentinel. Unchanged in behaviour
@@ -3039,8 +3058,37 @@ function detectNoWorkVerdict(lines) {
 // is a completion too — it is the agent concluding the task with nothing to
 // ship — and requiring a second `complete` line after it would make a
 // compliant agent look non-compliant.
-function detectCompletionVerdict(lines) {
-  return detectHiveVerdict(lines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
+//
+// #7861: when the agent prints BOTH sentinels for the same task — a
+// no_work_needed with its real reason, then a narrated "complete" (the prompt
+// forbids it; Flash does it anyway) — the last-printed rule reported `complete`,
+// which with no PR behind it degrades to a bare `idle` in the hub's ledger,
+// while the informative verdict sat one line above. Prefer the no_work_needed
+// in that case: the prompt already defines it as the completion when nothing
+// shipped, and a PR-less `complete` carries strictly less. A `complete` WITH a
+// PR still wins — not here, but where the verdicts are acted on: a confirmed
+// PR suppresses no_work_needed (resolveTaskPR's suppressesVerdict), so this
+// preference can never demote a real shipment.
+//
+// `baselineLine` is the sentinel that was already on the pane when this task's
+// prompt was delivered (#5650). Only a no_work_needed printed AFTER it belongs
+// to this task; one at or above it is a previous task's and must not be
+// preferred — and when the newest line IS the baseline the caller discards it,
+// so the answer must stay the newest line, exactly as before.
+function detectCompletionVerdict(lines, baselineLine = deliveredVerdictBaseline) {
+  const all = detectHiveVerdicts(lines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
+  if (all.length === 0) return null;
+  const newest = withoutPaneIndex(all[0]);
+  if (newest.verdict !== HIVE_VERDICT_COMPLETE || newest.line === baselineLine) return newest;
+  const baselineAt = typeof baselineLine === 'string' ? lines.lastIndexOf(baselineLine) : -1;
+  for (let i = 1; i < all.length; i++) {
+    if (all[i].index <= baselineAt) break;
+    if (all[i].verdict === HIVE_VERDICT_NO_WORK) {
+      console.log(`Both HIVE_VERDICT lines are on the pane for this task — keeping no_work_needed over the complete printed after it; a PR this task opened still overrides it (#7861)`);
+      return withoutPaneIndex(all[i]);
+    }
+  }
+  return newest;
 }
 
 // ── Review output that lands after the verdict (hivecommons/hive#7759) ──────
@@ -5738,6 +5786,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     HIVE_VERDICT_COMPLETE,
     HIVE_VERDICT_NO_WORK,
     detectHiveVerdict,
+    detectHiveVerdicts,
     detectCompletionVerdict,
     recordChromeIdleTick,
     resetChromeIdleGrace,
