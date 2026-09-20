@@ -2306,21 +2306,66 @@ function captureTmuxLines(n) {
 // approximate audit trail beats none. It does not: pr_url is a value the hub
 // books cooldowns and credits work on, so an approximate one is a wrong one. A
 // PR in a different repository cannot be the PR for this task's issue.
-function detectPRURL(lines, repo) {
-  if (!Array.isArray(lines) || lines.length === 0) return '';
+//
+// ALL CANDIDATES, IN THE ORDER WORTH VERIFYING THEM (hivecommons/hive#7789).
+// This used to return the FIRST matching URL top-down and resolveTaskPR()
+// verified only that one — so when the agent had read an older PR before
+// opening its own (the task prompt tells it to check for prior PRs first), the
+// researched PR sat higher on the pane, was the one examined, was refuted, and
+// the relay stopped there: the PR the agent actually shipped, further down,
+// was never looked at and the task was booked with no PR at all. Observed
+// live on utah#131, which shipped utah#205 and was credited `verdict=idle`.
+// #7759 makes this shape routine: a no_work_needed verdict cites prior PRs by
+// construction, and the advisor can now turn it into a shipped PR in the same
+// pane.
+//
+// So this returns every distinct matching URL, ordered by how likely each is
+// to be the agent's OWN:
+//
+//   1. URLs on a HIVE_VERDICT: line, newest verdict first. The sentinel is
+//      the agent's deliberate statement of what it did, and a `complete`
+//      verdict that names a PR is naming the one it opened.
+//   2. Everything else, newest-printed first. The agent researches before it
+//      ships, so its own PR is printed after the ones it read about.
+//
+// resolveTaskPR() verifies them in this order and stops at the first that is
+// not refuted, so the order only decides which candidate wins when several
+// survive (gh offline: every one is UNKNOWN) and how many gh lookups a pane
+// full of researched PRs costs before the real one is reached.
+function detectPRURLs(lines, repo) {
+  if (!Array.isArray(lines) || lines.length === 0) return [];
   // Matches https://github.com/<owner>/<repo>/pull/<number>, capturing owner/repo.
   const PR_URL_RE = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/\d+/g;
-  for (const line of lines) {
+  const onVerdictLine = [];
+  const elsewhere = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (typeof line !== 'string') continue;
+    const bucket = isHiveVerdictLine(line) ? onVerdictLine : elsewhere;
     let m;
     PR_URL_RE.lastIndex = 0;
     while ((m = PR_URL_RE.exec(line)) !== null) {
-      if (repo && m[1] === repo) return m[0];
       // With no task repo to compare against there is nothing to attribute the
-      // URL to either way; take the first as the old code did.
-      if (!repo) return m[0];
+      // URL to either way; every URL is a candidate, as the old code allowed.
+      if (repo && m[1] !== repo) continue;
+      bucket.push(m[0]);
     }
   }
-  return '';
+  const seen = new Set();
+  const ordered = [];
+  for (const url of onVerdictLine.concat(elsewhere)) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    ordered.push(url);
+  }
+  return ordered;
+}
+
+// detectPRURL is the single best candidate — the head of detectPRURLs() — kept
+// for callers and tests that want one URL rather than the ranked list.
+function detectPRURL(lines, repo) {
+  const urls = detectPRURLs(lines, repo);
+  return urls.length > 0 ? urls[0] : '';
 }
 
 // ── Did THIS task open that PR? (kubestellar/hive#6662) ──────────────────────
@@ -2451,23 +2496,51 @@ function verifyTaskPR(url, opts) {
 // only a CONFIRMED PR suppresses the verdict. An UNKNOWN one is still reported
 // as a best-effort audit trail — dropping it on a transient gh failure would
 // start losing real PRs — but it no longer gets to silently overrule the agent.
+//
+// A refutation is a verdict on ONE candidate, not on the pane (#7789). The
+// agent is told to look for prior PRs before it works, so a researched PR
+// above its own is the normal shape of a pane that shipped something — and
+// stopping at the first refutation credited exactly those tasks with nothing.
+// Candidates come from detectPRURLs() already ranked (the verdict line's URL
+// first, then newest-printed first), each refuted one is logged as before,
+// and the walk continues until a candidate survives.
+//
+// PR_ATTRIBUTION_MAX_LOOKUPS bounds the gh calls. Each is a blocking, up to
+// 20-second execSync in the tick loop, and a pane that rendered `gh pr view`
+// for a dozen prior PRs must not spend minutes refuting them one by one. The
+// ranking puts the agent's own PR at the front, so the cap is a backstop, not
+// something a normal pane reaches.
+const PR_ATTRIBUTION_MAX_LOOKUPS = 8;
+
 function resolveTaskPR(lines, opts) {
   const o = opts || {};
-  const candidate = detectPRURL(lines, o.repo);
-  if (!candidate) return { url: '', evidence: null, suppressesVerdict: false };
-  const evidence = verifyTaskPR(candidate, o);
-  if (evidence.status === PR_ATTRIBUTION_REFUTED) {
-    console.log(`Ignoring PR ${candidate} for ${o.taskId || 'task'} — not this task's work (${evidence.reason}); ` +
-      `it was visible in the pane because the agent researched it (kubestellar/hive#6662)`);
-    return { url: '', evidence, suppressesVerdict: false };
+  const candidates = detectPRURLs(lines, o.repo);
+  if (candidates.length === 0) return { url: '', evidence: null, suppressesVerdict: false };
+  let evidence = null;
+  const budget = Math.min(candidates.length, PR_ATTRIBUTION_MAX_LOOKUPS);
+  for (let i = 0; i < budget; i++) {
+    const candidate = candidates[i];
+    evidence = verifyTaskPR(candidate, o);
+    if (evidence.status === PR_ATTRIBUTION_REFUTED) {
+      console.log(`Ignoring PR ${candidate} for ${o.taskId || 'task'} — not this task's work (${evidence.reason}); ` +
+        `it was visible in the pane because the agent researched it (kubestellar/hive#6662)`);
+      continue;
+    }
+    if (evidence.status === PR_ATTRIBUTION_UNKNOWN) {
+      console.log(`Detected PR for ${o.taskId || 'task'}: ${candidate} (UNVERIFIED — ${evidence.reason}; ` +
+        `reporting it, but not letting it override the agent's verdict)`);
+      return { url: candidate, evidence, suppressesVerdict: false };
+    }
+    console.log(`Detected PR for ${o.taskId || 'task'}: ${candidate}`);
+    return { url: candidate, evidence, suppressesVerdict: true };
   }
-  if (evidence.status === PR_ATTRIBUTION_UNKNOWN) {
-    console.log(`Detected PR for ${o.taskId || 'task'}: ${candidate} (UNVERIFIED — ${evidence.reason}; ` +
-      `reporting it, but not letting it override the agent's verdict)`);
-    return { url: candidate, evidence, suppressesVerdict: false };
+  if (candidates.length > budget) {
+    console.warn(`Stopped verifying PR candidates for ${o.taskId || 'task'} after ${budget} refutations; ` +
+      `${candidates.length - budget} more PR URL(s) on the pane were not checked (#7789)`);
   }
-  console.log(`Detected PR for ${o.taskId || 'task'}: ${candidate}`);
-  return { url: candidate, evidence, suppressesVerdict: true };
+  // Every candidate examined was refuted: the last refutation stands in for the
+  // pane, exactly as the single refutation did before.
+  return { url: '', evidence, suppressesVerdict: false };
 }
 
 // ── The HIVE_VERDICT: sentinel family (kubestellar/hive#3987, #5376) ─────────
@@ -2504,6 +2577,45 @@ function resolveTaskPR(lines, opts) {
 const HIVE_VERDICT_NO_WORK = 'no_work_needed';
 const HIVE_VERDICT_COMPLETE = 'complete';
 
+// hiveVerdictLineRe builds the one regex that recognises a sentinel line, for
+// any subset of the verdict tokens. Groups: 1 = optional Markdown emphasis
+// opener, 2 = the verdict token, 3 = the rest of the line (the reason).
+//
+// Anchored at line start: the task PROMPT quotes the marker mid-sentence
+// ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
+// that instruction echo from reading as the agent's own verdict. Codex
+// renders its completed assistant messages with a leading bullet (•,
+// U+2022) and Claude Code with a filled circle (●, U+25CF) — presentation
+// chrome rather than part of the verdict. Some backends also wrap the whole
+// line in Markdown emphasis (for example **HIVE_VERDICT: complete — done**),
+// which is likewise presentation rather than sentinel content. The claude
+// glyph was missing
+// until bin/test_backend_smoke.sh drove a REAL claude pane through the
+// relay: the agent printed the sentinel, this regex missed it, and every
+// interactive claude completion silently degraded to the chrome_idle
+// fallback the sentinel exists to replace.
+//
+// The verdict token is an alternation of exactly the wanted tokens with a \b
+// after it, so "no_work_neededX" and "completely rewrote the parser" are both
+// non-matches — a prose line that merely STARTS with a verdict word must not
+// become a verdict.
+function hiveVerdictLineRe(wanted) {
+  const alt = wanted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`^\\s*(?:[•●]\\s*)?([*_]{1,3})?\\s*HIVE_VERDICT:\\s*(${alt})\\b[\\s:—–-]*(.*)$`, 'i');
+}
+
+// isHiveVerdictLine says whether one pane line is a sentinel the agent
+// printed (either verdict), with the same anchoring and the same echo
+// exclusion detectHiveVerdict() applies. detectPRURLs() uses it to rank a PR
+// URL the agent named IN its verdict above one it merely printed (#7789).
+function isHiveVerdictLine(line) {
+  if (typeof line !== 'string') return false;
+  const m = hiveVerdictLineRe([HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]).exec(line);
+  if (!m) return false;
+  // The prompt's own "<short reason>" placeholder, wrapped to a line start.
+  return !(m[3] || '').trim().startsWith('<');
+}
+
 // detectHiveVerdict scans `lines` newest-first for any of `wanted` (an array of
 // verdict tokens) and returns { verdict, reason } for the first — i.e. the
 // LAST-printed — match, or null.
@@ -2513,26 +2625,9 @@ const HIVE_VERDICT_COMPLETE = 'complete';
 function detectHiveVerdict(lines, wanted) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
   if (!Array.isArray(wanted) || wanted.length === 0) return null;
-  // Anchored at line start: the task PROMPT quotes the marker mid-sentence
-  // ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
-  // that instruction echo from reading as the agent's own verdict. Codex
-  // renders its completed assistant messages with a leading bullet (•,
-  // U+2022) and Claude Code with a filled circle (●, U+25CF) — presentation
-  // chrome rather than part of the verdict. Some backends also wrap the whole
-  // line in Markdown emphasis (for example **HIVE_VERDICT: complete — done**),
-  // which is likewise presentation rather than sentinel content. The claude
-  // glyph was missing
-  // until bin/test_backend_smoke.sh drove a REAL claude pane through the
-  // relay: the agent printed the sentinel, this regex missed it, and every
-  // interactive claude completion silently degraded to the chrome_idle
-  // fallback the sentinel exists to replace.
-  //
-  // The verdict token is an alternation of exactly the wanted tokens with a \b
-  // after it, so "no_work_neededX" and "completely rewrote the parser" are both
-  // non-matches — a prose line that merely STARTS with a verdict word must not
-  // become a verdict.
-  const alt = wanted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  const VERDICT_RE = new RegExp(`^\\s*(?:[•●]\\s*)?([*_]{1,3})?\\s*HIVE_VERDICT:\\s*(${alt})\\b[\\s:—–-]*(.*)$`, 'i');
+  // The anchoring, chrome tolerance and token boundary are all in
+  // hiveVerdictLineRe() above, shared with isHiveVerdictLine().
+  const VERDICT_RE = hiveVerdictLineRe(wanted);
   // Scan newest-first so the agent's final conclusion wins over anything it
   // merely quoted or considered earlier in the transcript.
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -5298,6 +5393,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     captureTmuxLines,
     detectNoWorkVerdict,
     detectPRURL,
+    // Every PR URL on the pane, ranked for verification (hivecommons/hive#7789).
+    detectPRURLs,
+    isHiveVerdictLine,
     // PR attribution (kubestellar/hive#6662). prAttributionEvidence is the pure
     // rule set and is where the interesting cases live; resolveTaskPR is the
     // wiring, exercised through a stubbed gh.
@@ -5308,6 +5406,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     PR_ATTRIBUTION_REFUTED,
     PR_ATTRIBUTION_UNKNOWN,
     PR_ATTRIBUTION_CLOCK_SKEW_MS,
+    PR_ATTRIBUTION_MAX_LOOKUPS,
     CONTRIBUTOR_LOGIN,
     TMUX_TAIL_LINES,
     PR_SCAN_LINES,

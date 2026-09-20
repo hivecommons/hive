@@ -123,11 +123,16 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     // saw in the pane is actually THIS task's work. `prMeta` is the answer:
     //   - an object  → serialized as gh's JSON (the interesting cases)
     //   - an Error   → thrown, modelling gh missing/offline/rate-limited
+    //   - a function → called with the URL being asked about and treated as
+    //                  one of the above; #7789 verifies several candidates
+    //                  from one pane, each with its own metadata
     //   - unset      → '' falls through, which is what a JSON.parse failure and
     //                  therefore the UNVERIFIED path looks like.
     if (/gh pr view/.test(cmd)) {
-      if (prMeta instanceof Error) throw prMeta;
-      if (prMeta) return JSON.stringify(prMeta);
+      const asked = /gh pr view '([^']*)'/.exec(cmd);
+      const answer = typeof prMeta === 'function' ? prMeta(asked ? asked[1] : '') : prMeta;
+      if (answer instanceof Error) throw answer;
+      if (answer) return JSON.stringify(answer);
       return '';
     }
     return '';
@@ -4778,10 +4783,13 @@ test('#4267 detectPRURL prefers the task repo; #6662 there is no cross-repo fall
     // for this task's issue. An approximate value there is a wrong one.
     assert.strictEqual(relay.detectPRURL(lines, 'nomatch/repo'), '',
       'a PR in another repo must never be attributed to this task');
-    // With no task repo supplied there is nothing to attribute against, so the
-    // first match stands — unchanged.
+    // With no task repo supplied there is nothing to attribute against, so
+    // every URL is a candidate — and #7789 ranks the newest-printed first, so
+    // the head is now the LAST match rather than the first.
     assert.strictEqual(relay.detectPRURL(lines, ''),
-      'https://github.com/other/repo/pull/7');
+      'https://github.com/hivecommons/hive/pull/4267');
+    assert.deepStrictEqual(relay.detectPRURLs(lines, ''),
+      ['https://github.com/hivecommons/hive/pull/4267', 'https://github.com/other/repo/pull/7']);
     assert.strictEqual(relay.detectPRURL(['no urls here'], 'hivecommons/hive'), '');
     assert.strictEqual(relay.detectPRURL([], 'hivecommons/hive'), '');
     assert.strictEqual(relay.detectPRURL(null, 'hivecommons/hive'), '');
@@ -8671,6 +8679,206 @@ test('#6662 resolveTaskPR reports the three-way split it promises', () => {
     assert.strictEqual(none.suppressesVerdict, false);
     assert.strictEqual(none.evidence, null);
   } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7789 — a researched PR above the agent's own must not cost
+// the agent its credit.
+//
+// #6662 made resolveTaskPR() refute a PR the agent merely read about. It
+// verified only the FIRST URL on the pane and stopped at that refutation, so
+// an agent that looked at an older PR before opening its own — which the task
+// prompt tells it to do — got no PR credit at all. Observed live: utah#131
+// shipped utah#205; the relay examined utah#133 (researched, created the day
+// before), refuted it, and booked `verdict=idle`, `pr_url` empty.
+//
+// The pane below is the shape from the issue: a no_work_needed verdict citing
+// the prior PR, the #7759 advisor blocker, the retraction, and the second
+// verdict carrying the real PR.
+// ---------------------------------------------------------------------------
+
+const UTAH131_RESEARCHED = 'https://github.com/foo/bar/pull/133';
+const UTAH131_SHIPPED = 'https://github.com/foo/bar/pull/205';
+// The real timestamps from the report: #133 predates the task by a day; #205
+// is opened by this contributor while the task runs.
+const UTAH131_META = (taskStartedAt) => ({
+  [UTAH131_RESEARCHED]: {
+    url: UTAH131_RESEARCHED, author: { login: 'someone-else' },
+    createdAt: '2026-09-18T17:34:25Z', mergedAt: null, state: 'OPEN',
+  },
+  [UTAH131_SHIPPED]: {
+    url: UTAH131_SHIPPED, author: { login: 'Danathar' },
+    createdAt: new Date(taskStartedAt + 20 * 60 * 1000).toISOString(), mergedAt: null, state: 'OPEN',
+  },
+});
+const UTAH131_PANE = [
+  '● Bash(gh pr view 133 --repo foo/bar)',
+  '  #133  OPEN  fix(build): reusable-build correction',
+  `  ${UTAH131_RESEARCHED}`,
+  'HIVE_VERDICT: no_work_needed — the required reusable-build fix is blocked in projectbluefin/actions (read-only access), and Utah PR #133 already contains the Utah-side correction.',
+  ' ⓘ Advisor 1 note',
+  '   ▎ ⟦blocker⟧ #133 is a different change; the Utah-side fix is not in it. Ship it.',
+  'Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.',
+  '● Retracting: the advisor is right, #133 does not carry the correction.',
+  `● Bash(gh pr create --base main …)`,
+  `  ${UTAH131_SHIPPED}`,
+  `HIVE_VERDICT: complete — opened ${UTAH131_SHIPPED} against main, ready for review.`,
+  '✻ Cogitating… (esc to interrupt)',
+].join('\n');
+
+test('#7789 the PR the agent shipped is credited even when a researched PR sits above it', () => {
+  // End to end through the completion path. On the pre-fix relay this
+  // completes with pr_url '' — the #133 refutation is the only PR decision
+  // made, and #205 is never looked at.
+  // __crashTick() backdates the assignment by the startup grace period; the
+  // shipped PR's createdAt (taskStartedAt + 20min) must land after that.
+  const asked = [];
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: UTAH131_PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'Danathar' },
+    prMeta: (url) => { asked.push(url); return UTAH131_META(Date.now())[url] || new Error(`unexpected lookup ${url}`); },
+  });
+  const logged = [];
+  const log = console.log; console.log = (...a) => { logged.push(a.join(' ')); };
+  try {
+    dispatchTask(relay, 'ct-foo/bar-131', 131);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].pr_url, UTAH131_SHIPPED,
+      'the PR this task opened must be credited, whatever the agent read before opening it');
+    assert.strictEqual(completed[0].verdict, undefined,
+      'the retracted no_work_needed must not be reported: the task shipped');
+    assert.ok(logged.some(l => l.includes(`Detected PR for ct-foo/bar-131: ${UTAH131_SHIPPED}`)),
+      `the detection line must name the shipped PR; got:\n${logged.join('\n')}`);
+    // The shipped PR is named on the verdict line, so it is the first thing
+    // verified — the researched PR is not even looked up on this pane.
+    assert.deepStrictEqual(asked, [UTAH131_SHIPPED],
+      'the URL on the HIVE_VERDICT line is the agent\'s own claim and must be verified first');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7789 resolveTaskPR walks past a refuted candidate to the one that survives', () => {
+  // The mechanism on its own, with the ranking working AGAINST the agent: no
+  // verdict line names a URL and the researched PR was printed last, so it is
+  // verified first, refuted, and the walk must continue.
+  const taskStartedAt = Date.now() - 60 * 60 * 1000;
+  const asked = [];
+  const relay = loadRelay({
+    prMeta: (url) => { asked.push(url); return UTAH131_META(taskStartedAt)[url] || new Error(`unexpected lookup ${url}`); },
+  });
+  const logged = [];
+  const log = console.log; console.log = (...a) => { logged.push(a.join(' ')); };
+  try {
+    const lines = [
+      `Opened ${UTAH131_SHIPPED}`,
+      `This supersedes ${UTAH131_RESEARCHED}, which does not carry the fix.`,
+    ];
+    const found = relay.resolveTaskPR(lines, { repo: 'foo/bar', taskId: 't-walk', taskStartedAt, contributorLogin: 'Danathar' });
+    assert.deepStrictEqual(asked, [UTAH131_RESEARCHED, UTAH131_SHIPPED],
+      'newest-printed first; the refutation must not end the walk');
+    assert.strictEqual(found.url, UTAH131_SHIPPED);
+    assert.strictEqual(found.suppressesVerdict, true, 'a CONFIRMED PR still outranks the verdict');
+    assert.strictEqual(found.evidence.status, relay.PR_ATTRIBUTION_CONFIRMED);
+    // Each refutation is still logged as before, so the audit trail explains
+    // why a PR that was on the pane is not the one reported.
+    assert.ok(logged.some(l => l.includes(`Ignoring PR ${UTAH131_RESEARCHED} for t-walk`)),
+      `the refuted candidate must still be logged; got:\n${logged.join('\n')}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7789 detectPRURLs ranks the verdict line first, then newest-printed, and deduplicates', () => {
+  const relay = loadRelay({});
+  try {
+    const lines = [
+      'saw https://github.com/foo/bar/pull/1 and https://github.com/foo/bar/pull/2',
+      'HIVE_VERDICT: no_work_needed — https://github.com/foo/bar/pull/2 covers it',
+      'retracting; opened https://github.com/foo/bar/pull/3',
+      'HIVE_VERDICT: complete — https://github.com/foo/bar/pull/3 open, supersedes https://github.com/foo/bar/pull/1',
+      '   ▎ ⟦nit⟧ compare with https://github.com/foo/bar/pull/4',
+      'https://github.com/other/repo/pull/5 is not in this repo',
+    ];
+    assert.deepStrictEqual(relay.detectPRURLs(lines, 'foo/bar'), [
+      // Newest verdict line first, left to right within it...
+      'https://github.com/foo/bar/pull/3',
+      'https://github.com/foo/bar/pull/1',
+      // ...then the earlier verdict line...
+      'https://github.com/foo/bar/pull/2',
+      // ...then everything else newest-printed first, already-seen URLs dropped.
+      'https://github.com/foo/bar/pull/4',
+    ]);
+    // The prompt's own instruction echo is not a verdict line, so a URL that
+    // happens to sit on it gets no priority.
+    const echo = [
+      'opened https://github.com/foo/bar/pull/8',
+      "HIVE_VERDICT: complete — <short reason> as in https://github.com/foo/bar/pull/7",
+    ];
+    assert.deepStrictEqual(relay.detectPRURLs(echo, 'foo/bar'),
+      ['https://github.com/foo/bar/pull/7', 'https://github.com/foo/bar/pull/8']);
+    assert.strictEqual(relay.isHiveVerdictLine(echo[1]), false);
+    assert.strictEqual(relay.isHiveVerdictLine('● **HIVE_VERDICT: complete — done**'), true);
+    assert.strictEqual(relay.isHiveVerdictLine('the exact form HIVE_VERDICT: complete'), false, 'must stay anchored');
+    // Junk in, nothing out.
+    assert.deepStrictEqual(relay.detectPRURLs(null, 'foo/bar'), []);
+    assert.deepStrictEqual(relay.detectPRURLs([], 'foo/bar'), []);
+    assert.deepStrictEqual(relay.detectPRURLs([undefined, 42, 'https://github.com/foo/bar/issues/9'], 'foo/bar'), []);
+  } finally { teardown(relay); }
+});
+
+test('#7789 an offline gh still costs one lookup, and the top-ranked candidate is what is reported', () => {
+  // UNKNOWN ends the walk: if gh could not answer for one candidate it cannot
+  // answer for the next, and each attempt is a blocking execSync. The
+  // candidate reported is the agent's own claim — the verdict line's URL — not
+  // whichever happened to be printed first.
+  const asked = [];
+  const relay = loadRelay({ prMeta: (url) => { asked.push(url); return new Error('gh: offline'); } });
+  const log = console.log; console.log = () => {};
+  try {
+    const found = relay.resolveTaskPR(UTAH131_PANE.split('\n'), { repo: 'foo/bar', taskStartedAt: Date.now() - 60000 });
+    assert.deepStrictEqual(asked, [UTAH131_SHIPPED]);
+    assert.strictEqual(found.url, UTAH131_SHIPPED);
+    assert.strictEqual(found.suppressesVerdict, false, 'an unverified scrape must not outrank the sentinel');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7789 the candidate walk is bounded, and every candidate refuted reports no PR', () => {
+  const cap = 8; // PR_ATTRIBUTION_MAX_LOOKUPS
+  const relay = loadRelay({
+    prMeta: () => ({ author: { login: 'someone-else' }, createdAt: '2026-01-01T00:00:00Z', mergedAt: '2026-01-02T00:00:00Z', state: 'MERGED' }),
+  });
+  assert.ok(Number.isInteger(relay.PR_ATTRIBUTION_MAX_LOOKUPS) && relay.PR_ATTRIBUTION_MAX_LOOKUPS >= 2
+    && relay.PR_ATTRIBUTION_MAX_LOOKUPS <= 20,
+    `the lookup cap must be a small finite integer, got ${relay.PR_ATTRIBUTION_MAX_LOOKUPS}`);
+  assert.strictEqual(relay.PR_ATTRIBUTION_MAX_LOOKUPS, cap);
+  const lookups = [];
+  const warned = [];
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = (...a) => { warned.push(a.join(' ')); };
+  try {
+    // `gh pr list`-style research: many distinct prior PRs, all somebody else's.
+    const lines = Array.from({ length: cap + 3 }, (_, i) => `  https://github.com/foo/bar/pull/${100 + i}  MERGED  older work`);
+    const r = loadRelay({ prMeta: (url) => { lookups.push(url); return { author: { login: 'someone-else' }, createdAt: '2026-01-01T00:00:00Z', mergedAt: '2026-01-02T00:00:00Z', state: 'MERGED' }; } });
+    try {
+      const found = r.resolveTaskPR(lines, { repo: 'foo/bar', taskId: 't-cap', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+      assert.strictEqual(lookups.length, cap, 'the walk must stop at the cap');
+      assert.strictEqual(found.url, '', 'nothing survived: no PR is credited');
+      assert.strictEqual(found.suppressesVerdict, false);
+      assert.strictEqual(found.evidence.status, r.PR_ATTRIBUTION_REFUTED, 'the last refutation stands in for the pane');
+      assert.ok(warned.some(w => w.includes('after 8 refutations') && w.includes('3 more PR URL(s)')),
+        `the operator must be told candidates went unchecked; got:\n${warned.join('\n')}`);
+    } finally { teardown(r); }
+    // Below the cap, every candidate is tried and the result is the same
+    // refutation the single-candidate path always produced.
+    lookups.length = 0; warned.length = 0;
+    const r2 = loadRelay({ prMeta: (url) => { lookups.push(url); return { author: { login: 'someone-else' }, createdAt: '2026-01-01T00:00:00Z', mergedAt: null, state: 'OPEN' }; } });
+    try {
+      const found = r2.resolveTaskPR(lines.slice(0, 3), { repo: 'foo/bar', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+      assert.strictEqual(lookups.length, 3);
+      assert.strictEqual(found.url, '');
+      assert.strictEqual(warned.length, 0, 'no warning when every candidate was checked');
+    } finally { teardown(r2); }
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
 });
 
 // kubestellar/hive#6664 — the review cycle must review the contributor's PRs,
