@@ -126,6 +126,9 @@ var transientAPIErrorPatterns = []string{
 	// The shape reported in #4697, observed repeatedly on a claude-backend
 	// agent: the response is cut off mid-stream and the CLI returns to ❯.
 	"connection lost mid-response",
+	// Claude Code 2.1.x says "closed" where older builds said "lost"
+	// (hivecommons/hive#7855). Same failure, same remedy.
+	"connection closed mid-response",
 	// Newer Claude Code wording for the same cut-off-mid-stream failure:
 	// "API Error: Response stalled mid-stream. The response above may be
 	// incomplete." Same remedy — the request never completed, so repeating

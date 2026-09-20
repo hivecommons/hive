@@ -66,6 +66,12 @@ func TestPaneShowsTransientAPIError(t *testing.T) {
 			want:  true,
 		},
 		{
+			// Claude Code 2.1.x wording: "closed" where #4697 said "lost".
+			name:  "the #7855 report, verbatim",
+			lines: []string{"API Error: Connection closed mid-response. The response above may be incomplete."},
+			want:  true,
+		},
+		{
 			// Newer Claude Code wording of the same mid-stream cut-off.
 			name:  "response stalled mid-stream, verbatim",
 			lines: []string{"API Error: Response stalled mid-stream. The response above may be incomplete."},

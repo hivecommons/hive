@@ -1,0 +1,1 @@
+- Relay and agent pane classifiers now recognise Claude Code 2.1.x's "API Error: Connection closed mid-response" as a known transient error (older builds said "lost"); the relay's list also gains "stalled mid-stream" to match the hub's. The outcome was already a retry via the #5121 unknown-error fallback; this makes the operator log say so. (#7855)

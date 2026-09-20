@@ -5979,6 +5979,10 @@ test('#5121 the curated buckets keep first claim on their lines', () => {
       line);
     assert.strictEqual(relay.classifyTmuxPane(mk('● API Error: Connection lost mid-response. The response above may be incomplete.')),
       relay.PANE_STATE_TRANSIENT_API_ERROR, 'a known-retryable error stays in its bucket');
+    assert.strictEqual(relay.classifyTmuxPane(mk('● API Error: Connection closed mid-response. The response above may be incomplete.')),
+      relay.PANE_STATE_TRANSIENT_API_ERROR, 'Claude Code 2.1.x says "closed", not "lost" — still known-retryable (#7855)');
+    assert.strictEqual(relay.classifyTmuxPane(mk('● API Error: Response stalled mid-stream. The response above may be incomplete.')),
+      relay.PANE_STATE_TRANSIENT_API_ERROR, 'the Go list already knew "stalled mid-stream"; the two lists stay in step');
     assert.strictEqual(relay.classifyTmuxPane(mk('● API Error: 403 Forbidden')),
       relay.PANE_STATE_FATAL_API_ERROR, 'a known-fatal error stays in its bucket');
     assert.strictEqual(relay.classifyTmuxPane(mk('● Please run /login · API Error: 401 {"type":"error"}')),

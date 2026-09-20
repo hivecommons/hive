@@ -71,6 +71,12 @@ const OMP_BRAILLE_SPINNER_ELAPSED_RE = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\d+(?
 // an error where REPEATING THE SAME REQUEST CAN SUCCEED.
 const TRANSIENT_API_ERROR_PATTERNS = [
   'connection lost mid-response',
+  // Claude Code 2.1.x wording for the same cut-off-mid-stream failure
+  // (hivecommons/hive#7855): "API Error: Connection closed mid-response.
+  // The response above may be incomplete." Older CLIs said "lost".
+  'connection closed mid-response',
+  // And its "Response stalled mid-stream" sibling, already in the Go list.
+  'stalled mid-stream',
   'connection error',
   'request timed out',
   'overloaded_error',
