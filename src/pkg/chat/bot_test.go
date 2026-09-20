@@ -9,22 +9,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 type recordingBackend struct {
+	mu     sync.Mutex
 	sent   []string
 	topics []string
 }
 
 func (b *recordingBackend) Name() string { return "test" }
 func (b *recordingBackend) Send(content string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.sent = append(b.sent, content)
 	return nil
 }
 func (b *recordingBackend) SetTopic(topic string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.topics = append(b.topics, topic)
 	return nil
+}
+func (b *recordingBackend) sentSnapshot() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.sent...)
 }
 func (b *recordingBackend) Listen(ctx context.Context, deliver func(Message)) {
 	<-ctx.Done()
@@ -92,7 +106,7 @@ func TestStart_NilBackendReturnsError(t *testing.T) {
 
 func TestStart_WithBackendRegistersAndQueuesOnlineMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
 	backend := &recordingBackend{}
 	s := NewService(backend, Config{}, discardLogger())
 	if err := s.Start(ctx); err != nil {
@@ -106,8 +120,13 @@ func TestStart_WithBackendRegistersAndQueuesOnlineMessage(t *testing.T) {
 		t.Fatal("Start did not register builtin commands")
 	}
 
-	var sent []string
-	drainQueue(s, &sent)
+	// Start launches drainLoop, so the online message is observed where it
+	// lands — on the backend — rather than by racing the drain goroutine for
+	// s.msgQueue.
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		return len(backend.sentSnapshot()) >= 1
+	}, "online message never reached the backend")
+	sent := backend.sentSnapshot()
 	if len(sent) != 1 || !strings.Contains(sent[0], "Discord bot online") {
 		t.Fatalf("online message = %v", sent)
 	}
