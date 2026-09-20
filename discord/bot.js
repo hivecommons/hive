@@ -99,8 +99,17 @@ client.once(Events.ClientReady, (c) => {
   }, STATUS_HEARTBEAT_MS);
 });
 
+// Fail closed: commands are only honoured in the configured operator
+// channel(s). Without this gate any guild member in ANY channel the bot can
+// read could kick agents with arbitrary prompts or pause/resume the fleet —
+// the README documents the private-channel boundary, this enforces it (#7822).
+const commandChannels = new Set(
+  [config.channelPrimary, config.channelAlerts].filter(Boolean)
+);
+
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
+  if (!commandChannels.has(message.channel.id)) return;
 
   let content = '';
 

@@ -53,6 +53,7 @@ Unknown agents and unreachable-dashboard conditions are reported back in-channel
 ## Security
 
 The bot token and any dashboard auth token are secrets — supply them via
-environment variables, never commit them. Restrict the bot to a private
-operator channel; anyone who can post in `DISCORD_CHANNEL_PRIMARY` can kick,
-pause, and resume agents.
+environment variables, never commit them. The bot only accepts commands
+posted in `DISCORD_CHANNEL_PRIMARY` or `DISCORD_CHANNEL_ALERTS`; messages in
+any other channel are ignored. Still restrict those channels to operators —
+anyone who can post in them can kick, pause, and resume agents.
