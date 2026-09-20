@@ -113,6 +113,19 @@ func TestBootDashboardAPIWith_RegistersDependenciesFromTheBootStruct(t *testing.
 	}
 }
 
+func TestBootDashboardAPIWith_RegistersRoutesExactlyOnce(t *testing.T) {
+	f := newBootDashboardAPIFake()
+	b := newBootDashboardAPIBoot(t, f, bootDashboardAPIConfig())
+	f.deps.registerAPI = func(srv *dashboard.Server, d *dashboard.Dependencies) {
+		srv.RegisterAPI(d)
+	}
+
+	// net/http.ServeMux panics when the same method/path is registered twice.
+	// This exercises the production registration callback so boot cannot hide a
+	// second direct RegisterAPI call behind the injected dependency.
+	b.bootDashboardAPIWith(f.deps)
+}
+
 func TestBootDashboardAPIWith_AppliesClassifiedAppStateOnlyWhenRequired(t *testing.T) {
 	t.Run("required: state and diagnosis reach the banner", func(t *testing.T) {
 		f := newBootDashboardAPIFake()
