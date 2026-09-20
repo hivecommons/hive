@@ -1638,8 +1638,29 @@ function headlessProgressTick(task) {
   send(headlessProgressFrame(task));
 }
 
-function runHeadlessTask(task) {
+// resolveTaskPrompt is the one place a task's prompt text is produced for the
+// agent, on both dispatch paths (hivecommons/hive#7908).
+//
+// The hub names the checkout as `$HIVE_WORKSPACE_DIR/<owner>/<repo>` because
+// it cannot know the path — it differs per contributor (contributor-agent.sh
+// defaults it to ~/workspace; local mode differs again). Inside the shell
+// commands the prompt quotes that is fine. But the agent reads it as THE PATH
+// of the repo and hands the same string to its CLI's non-shell file tools,
+// which do not expand shell variables: omp began 3 of 5 sessions in one night
+// with `Path not found: $HIVE_WORKSPACE_DIR/...`, and the advisor spent a
+// concern explaining it. Every task is a fresh CLI session, so the agent
+// cannot learn it once. The relay is the process that types the prompt and
+// the one that knows the answer (TASK_WORKSPACE_DIR), so it substitutes the
+// literal path before the agent ever sees the variable. The quoted shell
+// commands work identically with a literal path.
+const WORKSPACE_DIR_VARIABLE = /\$\{?HIVE_WORKSPACE_DIR\}?/g;
+function resolveTaskPrompt(task) {
   const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
+  return prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
+}
+
+function runHeadlessTask(task) {
+  const prompt = resolveTaskPrompt(task);
   if (!headlessSupportsBackend()) {
     // No non-interactive entry point for this backend: fail LOUDLY rather than
     // stall. This is the #2538 guarantee — a headless run never waits silently.
@@ -5641,7 +5662,7 @@ function handleMessage(data, hub) {
         // tmux, no pane scraping, no watchdog waiting on an invisible prompt.
         runHeadlessTask(msg);
       } else {
-        const taskPrompt = msg.prompt || `Work on ${msg.kind} ${msg.repo}#${msg.number}: ${msg.title}`;
+        const taskPrompt = resolveTaskPrompt(msg);
         // tmuxSendKeys() itself queues when the CLI is not confirmed ready, so
         // there is a single gate rather than two that can disagree.
         tmuxSendKeys(taskPrompt);
@@ -6058,6 +6079,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     __setVerdictSettleMs: (ms) => { VERDICT_SETTLE_MS = ms; },
+    resolveTaskPrompt,
+    TASK_WORKSPACE_DIR,
     paneStalled,
     paneStallConfirmed,
     paneChangedSince,

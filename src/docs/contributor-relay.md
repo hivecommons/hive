@@ -302,6 +302,10 @@ When `AGENT_MODEL` is unset, the relay reports the model the CLI is actually run
 
 Contributors never hold long-lived repo credentials: the relay receives short-lived GitHub tokens per task, and API keys for the contributor's own model provider never leave their machine.
 
+### The checkout path reaches the agent as a literal, not as `$HIVE_WORKSPACE_DIR`
+
+The hub writes the checkout as `$HIVE_WORKSPACE_DIR/<owner>/<repo>` because it cannot know the path — it differs per contributor (`contributor-agent.sh` defaults it to `~/workspace`; local mode differs again). That is fine inside the shell commands the prompt quotes, but the agent reads it as *the path of the repo* and hands the same string to its CLI's non-shell file tools, which do not expand shell variables: omp opened 3 of 5 sessions in one night with `Path not found: $HIVE_WORKSPACE_DIR/...`, and the advisor spent a `⟦concern⟧` explaining it — per task, since every task is a fresh CLI session ([#7908](https://github.com/hivecommons/hive/issues/7908)). The relay is the process that types the prompt and the one that knows the answer, so `resolveTaskPrompt()` substitutes the literal `TASK_WORKSPACE_DIR` for every `$HIVE_WORKSPACE_DIR` / `${HIVE_WORKSPACE_DIR}` before the prompt is typed into the pane or passed on the headless command line. The quoted shell commands work identically with a literal path; the hub's wording is unchanged.
+
 ### The base branch comes from the assignment, not from the checkout
 
 Your relay works one issue at a time out of a single **persistent** checkout under `$HIVE_WORKSPACE_DIR`, and nothing resets it between tasks. The branch you find on disk therefore answers the *previous* task, not the current one.

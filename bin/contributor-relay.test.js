@@ -10373,6 +10373,57 @@ test('#7841 the verdict watch waits out the task grace period without spending t
 });
 
 // ---------------------------------------------------------------------------
+// hivecommons/hive#7908 — the agent gets the workspace path, not the variable.
+//
+// The hub's prompt names the checkout as `$HIVE_WORKSPACE_DIR/<owner>/<repo>`;
+// the agent hands that string to its CLI's non-shell file tools, which do not
+// expand it (`Path not found: $HIVE_WORKSPACE_DIR/...` opened 3 of 5 omp
+// sessions one night, plus an advisor note each). The relay knows the path
+// and types the prompt, so it substitutes the literal on both dispatch paths.
+// ---------------------------------------------------------------------------
+
+const HUB_PROMPT_7908 = "Work on foo/bar#7. Run: mkdir -p $HIVE_WORKSPACE_DIR/foo && gh repo fork foo/bar --clone -- $HIVE_WORKSPACE_DIR/foo/bar. The checkout is ${HIVE_WORKSPACE_DIR}/foo/bar.";
+
+test('#7908 interactive dispatch types the literal workspace path in place of $HIVE_WORKSPACE_DIR', () => {
+  const workspace = '/home/hive/workspace';
+  const relay = loadRelay({ env: { HIVE_WORKSPACE_DIR: workspace } });
+  try {
+    assert.strictEqual(relay.TASK_WORKSPACE_DIR, workspace, 'setup: the relay pinned the workspace from its environment');
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'ct-7908', kind: 'issue', repo: 'foo/bar', number: 7, title: 'ws task', prompt: HUB_PROMPT_7908 }));
+    const typed = relay.__tmuxSends().filter(c => c.includes('Work on foo/bar#7'));
+    assert.strictEqual(typed.length, 1, `the task prompt was typed once: ${JSON.stringify(relay.__tmuxSends())}`);
+    assert.ok(typed[0].includes(`mkdir -p ${workspace}/foo && gh repo fork foo/bar --clone -- ${workspace}/foo/bar`),
+      `the quoted shell commands carry the literal path: ${typed[0]}`);
+    assert.ok(typed[0].includes(`The checkout is ${workspace}/foo/bar.`), `the braced form is substituted too: ${typed[0]}`);
+    assert.ok(!typed[0].includes('HIVE_WORKSPACE_DIR'), `no form of the variable reaches the agent: ${typed[0]}`);
+  } finally { teardown(relay); }
+});
+
+test('#7908 headless dispatch passes the literal workspace path on the command line', () => {
+  const workspace = '/tmp/hive-contributor-workspace';
+  const relay = loadRelay({ backend: 'codex', mode: 'headless', env: { HIVE_WORKSPACE_DIR: workspace } });
+  try {
+    assignHeadlessTask(relay, { prompt: HUB_PROMPT_7908 });
+    const call = relay.__execFileCalls[0];
+    assert.ok(call, 'the one-shot CLI was invoked');
+    const promptArg = call.args.find(a => a.includes('Work on foo/bar#7'));
+    assert.ok(promptArg, `the prompt is an argv element: ${JSON.stringify(call.args)}`);
+    assert.ok(promptArg.includes(`${workspace}/foo/bar`) && !promptArg.includes('HIVE_WORKSPACE_DIR'),
+      `the headless prompt carries the literal path: ${promptArg}`);
+  } finally { teardown(relay); }
+});
+
+test('#7908 resolveTaskPrompt leaves a prompt without the variable untouched and builds the fallback wording', () => {
+  const relay = loadRelay({});
+  try {
+    assert.strictEqual(relay.resolveTaskPrompt({ prompt: 'do the thing' }), 'do the thing');
+    assert.strictEqual(relay.resolveTaskPrompt({ kind: 'issue', repo: 'foo/bar', number: 3, title: 'T' }), 'Work on issue foo/bar#3: T');
+    assert.ok(!relay.resolveTaskPrompt({ prompt: 'cd $HIVE_WORKSPACE_DIR/x' }).includes('$'), 'the fallback path also substitutes');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // hivecommons/hive#7907 — the verdict is judged on a settled pane, not the
 // capture that discovered it.
 //
