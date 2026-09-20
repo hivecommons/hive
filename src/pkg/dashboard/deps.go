@@ -110,7 +110,15 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
-	HookFire     func(context.Context, hooks.Payload)
+	// RecordIssueClaim writes one claim into the same ledger IssueClaimed
+	// reads (hivecommons/hive#7871). The contribute hub calls it after
+	// verifying, against GitHub, that a PR or commit a no_work_needed verdict
+	// cited really does settle the issue — so a fix that landed WITHOUT
+	// referencing the issue suppresses it the same way a referencing PR would.
+	// A nil func disables recording; verdicts are still honoured by the
+	// hub's own (activity-voidable) verdict ledger exactly as before.
+	RecordIssueClaim func(ghpkg.IssueClaim) error
+	HookFire         func(context.Context, hooks.Payload)
 }
 
 type NousState struct {

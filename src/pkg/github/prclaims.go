@@ -171,7 +171,22 @@ type IssueClaim struct {
 	MergedPR bool `json:"merged_pr,omitempty"`
 	// MergedAt is when the claiming PR merged. Zero unless MergedPR is set.
 	MergedAt time.Time `json:"merged_at,omitempty"`
+	// Source records how the claim was recovered. Empty for the enumeration
+	// scan (every claim before #7871). ClaimSourceVerdict marks a claim
+	// recovered from a `no_work_needed` verdict reason and verified against
+	// the API: the settling PR carried NO reference to the issue, so the scan
+	// cannot re-find it and Reconcile's authoritative path carries such
+	// claims forward instead of replacing them (see Reconcile).
+	Source string `json:"source,omitempty"`
+	// SourceReporter is the contributor whose verdict produced a
+	// ClaimSourceVerdict claim. Logged on suppression so an operator can see
+	// whose research the hub is trusting.
+	SourceReporter string `json:"source_reporter,omitempty"`
 }
+
+// ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
+// verified no_work_needed verdict reason (hivecommons/hive#7871).
+const ClaimSourceVerdict = "verdict"
 
 // claimRank orders claims by evidential strength, highest first. It exists so
 // insertLocked can resolve key collisions with a single comparison instead of a
@@ -753,6 +768,27 @@ func (l *ClaimLedger) insertLocked(c IssueClaim) {
 	l.claims[key] = c
 }
 
+// Record inserts one claim outside the enumeration cycle and persists the
+// ledger (hivecommons/hive#7871). It is the write path for verdict-recovered
+// claims: the contribute hub has just verified, via the API, that a PR or
+// commit the agent cited in its no_work_needed reason settles the issue, and
+// records it exactly as the scan would have had the PR referenced the issue.
+// The rank rule in insertLocked still applies, so a verdict claim never
+// displaces stronger live evidence for the same issue. Claims with no repo or
+// issue are ignored; a nil ledger is a no-op.
+func (l *ClaimLedger) Record(c IssueClaim) error {
+	if l == nil || c.Issue <= 0 || c.Repo == "" {
+		return nil
+	}
+	l.mu.Lock()
+	if c.ObservedAt.IsZero() {
+		c.ObservedAt = l.now()
+	}
+	l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
+	l.mu.Unlock()
+	return l.Save()
+}
+
 // SetTTL overrides the entry lifetime. Intended for tests.
 func (l *ClaimLedger) SetTTL(d time.Duration) {
 	if l == nil || d <= 0 {
@@ -853,6 +889,24 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 				continue
 			}
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
+		}
+		// #7871: verdict-recovered claims describe a settling PR (or commit)
+		// that never referenced the issue, so the scan that just ran did not
+		// and will not see it. Replacing the map would forget the one verified
+		// fact the verdict produced and re-offer the issue on the next cycle.
+		// Carry them forward until the TTL retires them — the same bound a
+		// scan-found merged claim lives under (mergedClaimScanWindow) — and let
+		// insertLocked's rank rule decide when the scan DID find something.
+		cutoff := l.now().Add(-l.ttl)
+		for key, c := range prev {
+			if c.Source != ClaimSourceVerdict || c.ObservedAt.Before(cutoff) {
+				continue
+			}
+			if _, live := l.claims[key]; live {
+				l.insertLocked(c)
+				continue
+			}
+			l.claims[key] = c
 		}
 		return
 	}

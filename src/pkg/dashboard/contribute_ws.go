@@ -688,6 +688,9 @@ type ContributeWSHub struct {
 	// expire yankSelfExcludeSeconds after the yank and are pruned lazily on read.
 	// Guarded by h.mu, like the other per-issue live state.
 	yankExclusions map[string]time.Time
+	// settleVerifier is the #7871 API-check seam; nil means "use
+	// deps.GHClient.VerifySettlingRef". Tests substitute a fixture.
+	settleVerifier ghpkg.SettleVerifier
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -2702,6 +2705,18 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
 					verdict, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
 					msg.CompletionSignal)
+				// #7871: a no_work_needed reason usually names WHAT settled
+				// the issue. Verify the citation against GitHub and, if it
+				// holds, record it in the claim ledger so the issue is
+				// suppressed for the merged-claim window rather than one
+				// cooldown. Off the read loop like reconcilePRAttribution:
+				// several GitHub round trips must not stall this
+				// contributor's pongs.
+				if verdict == completionVerdictNoWorkNeeded {
+					go h.settleIssueFromVerdict(completedTask.Repo, completedTask.Number,
+						strings.TrimSpace(msg.VerdictReason), taskAssignedAt,
+						s.contributor.profile.GitHubUsername)
+				}
 			}
 			completedDesc := msg.TaskID
 			if completedTask != nil {

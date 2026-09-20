@@ -778,7 +778,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 					h.logger.Info("[contribute-ws] skip: issue already claimed by a PR",
 						"repo", repo.Full, "number", number,
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
-						"merged", decision.claim.MergedPR)
+						"merged", decision.claim.MergedPR,
+						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
 				case contributorAdmissionReasonWorkflowBlocked:
 					h.logger.Info("[contribute-ws] skip: issue is blocked by workflow state",
 						"repo", repo.Full, "number", number)
