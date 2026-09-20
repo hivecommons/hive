@@ -2964,15 +2964,16 @@ function detectCompletionVerdict(lines) {
 //
 // Backends whose CLI posts REVIEW output after the agent's final line, keyed by
 // backend name. Only omp today: its `--advisor` runtime reviews each turn and
-// injects "Advisor N note" blocks under it, each note tagged ⟦concern⟧ or
-// ⟦nit⟧. The shape — a reviewer feature that writes below the agent's
+// injects "Advisor N note" blocks under it, each note tagged ⟦blocker⟧,
+// ⟦concern⟧ or ⟦nit⟧. The shape — a reviewer feature that writes below the agent's
 // statement — is likely to recur with other CLIs, so the hook is per-backend
 // data rather than an omp special case in the tick loop.
 //
 //   note     — the header line of one review block. Live captures render the
 //              leading glyph differently ("ⓘ Advisor 1 note" in #7759,
 //              "@ Advisor 1 note" in #7662), so only the words are matched.
-//   concern  — the marker that earns the agent one more turn. ⟦nit⟧ is
+//   concern  — the marker that earns the agent one more turn. ⟦blocker⟧ is
+//              included because it is strictly stronger than a concern. ⟦nit⟧ is
 //              deliberately NOT included: the advisor emits nits freely and
 //              they are cheap to ignore; concerns are the ones worth a turn
 //              (#7759 discussion). Both bracket spellings seen live are
@@ -2980,7 +2981,7 @@ function detectCompletionVerdict(lines) {
 const POST_VERDICT_REVIEW_MARKERS = Object.freeze({
   omp: Object.freeze({
     note: /\bAdvisor \d+ note\b/,
-    concern: /⟦concern⟧|\[concern\]/,
+    concern: /⟦blocker⟧|\[blocker\]|⟦concern⟧|\[concern\]/,
   }),
 });
 
@@ -4460,7 +4461,7 @@ function maybeSendAutonomyNudge(tmuxLines) {
 //     appears under it; there is no "notes arrived after the second verdict,
 //     go again". The budget is spent BEFORE typing, so a send that throws is
 //     not retried on the next tick — the task finalizes as it would have.
-//   - Only ⟦concern⟧ triggers it, never ⟦nit⟧ (see POST_VERDICT_REVIEW_MARKERS).
+//   - Only ⟦blocker⟧/⟦concern⟧ triggers it, never ⟦nit⟧ (see POST_VERDICT_REVIEW_MARKERS).
 //   - Only notes BELOW the verdict, and only ones that were not on the pane
 //     at the previous tick. Nothing new since the verdict means the task
 //     finalizes on this very tick, exactly as before this existed.

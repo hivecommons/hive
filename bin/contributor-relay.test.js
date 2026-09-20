@@ -8296,6 +8296,29 @@ test('#7759 concerns posted under the verdict earn the agent one follow-up befor
   } finally { console.log = log; teardown(relay); }
 });
 
+test('#7791 blocker-only advisor notes under the verdict earn the same follow-up', () => {
+  let pane = ompPane(' ⠋ Reviewing', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7791-blocker-followup', 131);
+    const before = relay.__tmuxSends().length;
+    pane = ompPane(
+      ' No work needed here.',
+      'HIVE_VERDICT: no_work_needed — the issue is already fixed',
+      [' ⓘ Advisor 1 note', '   ▎ ⟦blocker⟧ Premature no_work_needed: shippable work remains.'],
+      OMP_UTAH14_TAIL,
+    );
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'a blocker is stronger than a concern, so the verdict must not finalize unread');
+    const sends = relay.__tmuxSends().slice(before).filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR));
+    assert.strictEqual(sends.length, 1, `blocker-only notes must trigger exactly one follow-up: ${JSON.stringify(relay.__tmuxSends().slice(before))}`);
+    const progress = relay.__sent.filter(m => m.type === 'task_progress' && /advisor posted 1 concern/.test(m.summary || ''));
+    assert.strictEqual(progress.length, 1, 'the hub is told why the blocker kept the task open');
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#7759 a verdict with only nits, or nothing, under it finalizes on the tick it is read', () => {
   for (const [label, notes] of [['nits only', OMP_UTAH14_NITS_ONLY], ['no notes', []]]) {
     const relay = loadRelay({ backend: 'omp', paneText: ompPane(OMP_UTAH14_VERDICT, notes, OMP_UTAH14_TAIL), prMeta: new Error('gh: offline') });
@@ -8405,8 +8428,8 @@ test('#7759 postVerdictConcerns reads only bracketed concerns inside a note bloc
   try {
     const m = relay.POST_VERDICT_REVIEW_MARKERS.omp;
     const v = 'HIVE_VERDICT: complete — x';
-    assert.deepStrictEqual(relay.postVerdictConcerns([v, ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ a', ' @ Advisor 2 note', '  [concern] b', '  [nit] c'], v, m),
-      ['   ▎ ⟦concern⟧ a', '  [concern] b'], 'both live spellings count; nits do not');
+    assert.deepStrictEqual(relay.postVerdictConcerns([v, ' ⓘ Advisor 1 note', '   ▎ ⟦blocker⟧ stop', '   ▎ ⟦concern⟧ a', ' @ Advisor 2 note', '  [blocker] hard stop', '  [concern] b', '  [nit] c'], v, m),
+      ['   ▎ ⟦blocker⟧ stop', '   ▎ ⟦concern⟧ a', '  [blocker] hard stop', '  [concern] b'], 'blockers and both concern spellings count; nits do not');
     assert.deepStrictEqual(relay.postVerdictConcerns([v, '  the diff mentions [concern] in prose'], v, m), [],
       'a bracketed word outside a note block is not a review note');
     assert.deepStrictEqual(relay.postVerdictConcerns([' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ earlier', v], v, m), [],

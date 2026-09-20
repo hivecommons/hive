@@ -1,0 +1,1 @@
+- Honour ⟦blocker⟧ advisor notes as post-verdict follow-up triggers in the contributor relay.
