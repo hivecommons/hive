@@ -63,6 +63,13 @@ concurrency:
 jobs:
   changelog-fragment-guard:
     name: changelog-fragment-guard
+    # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
+    # ones maintainers open when those conflict) live on sync/* branches and
+    # carry the source line's entire history. The three-dot diff below
+    # re-attributes every src/ change and every release-time CHANGELOG.md
+    # compilation edit to the sync PR, so it can never satisfy the guard —
+    # each carried change already passed it on its own PR (#7783).
+    if: ${{ !startsWith(github.head_ref, 'sync/') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
