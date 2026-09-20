@@ -1,0 +1,1 @@
+- `bin/hive-open-pr.sh`: on a python3-less host, a control character in the title/body/repo now aborts with exit 3 and no request file — previously the awk refusal only ended a command substitution, so the request was written with that field silently emptied (#7839).

@@ -260,7 +260,7 @@ else
       BEGIN { RS = "^$"; ORS = "" }
       {
         if (match($0, /[\001-\010\013\014\016-\037]/)) {
-          print "hive-open-pr: cannot encode a control character without python3" > "/dev/stderr"
+          print "hive-open-pr: cannot encode a control character without python3\n" > "/dev/stderr"
           exit 3
         }
         gsub(/\\/, "\\\\")
@@ -271,10 +271,29 @@ else
         print
       }'
   }
+  # Escape into variables FIRST and check each status. Calling esc inside the
+  # printf's "$(...)" substitutions meant awk's `exit 3` only ended the
+  # substitution subshell: `set -e` does not trip there, printf ran with that
+  # field empty, and the request was written with a silently blanked body
+  # (#7839) -- the exact loss the empty-body guard above exists to prevent.
+  esc_or_die() {
+    local out
+    out="$(esc "$1")" || {
+      echo "hive-open-pr: no request was written (control character in a field; install python3 or strip it)" >&2
+      exit 3
+    }
+    printf '%s' "$out"
+  }
+  E_REPO=$(esc_or_die "$REPO")
+  E_HEAD=$(esc_or_die "$HEAD")
+  E_BASE=$(esc_or_die "$BASE")
+  E_TITLE=$(esc_or_die "$TITLE")
+  E_BODY=$(esc_or_die "$BODY")
+  E_AGENT=$(esc_or_die "$AGENT")
   ISSUES_JSON=""
   [ -n "$ISSUE_LIST" ] && ISSUES_JSON=",\"issues\":[$ISSUE_LIST]"
   printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s}\n' \
-    "$(esc "$REPO")" "$(esc "$HEAD")" "$(esc "$BASE")" "$(esc "$TITLE")" "$(esc "$BODY")" "$(esc "$AGENT")" "$ISSUES_JSON" \
+    "$E_REPO" "$E_HEAD" "$E_BASE" "$E_TITLE" "$E_BODY" "$E_AGENT" "$ISSUES_JSON" \
     > "$REQ_FILE"
 fi
 
