@@ -108,6 +108,50 @@ func TestParseReferencedIssues(t *testing.T) {
 			text: "Refs #7. Part of #3.",
 			want: []ClaimedRef{{defaultRepo, 7}, {defaultRepo, 3}},
 		},
+
+		// Lists (#7911). One keyword can introduce several references on a
+		// line; before this every element after the first was invisible.
+		{
+			name: "comma list",
+			text: "Refs #72, #74, #87",
+			want: []ClaimedRef{{defaultRepo, 72}, {defaultRepo, 74}, {defaultRepo, 87}},
+		},
+		{
+			name: "list joined with and",
+			text: "Part of #5 and #6",
+			want: []ClaimedRef{{defaultRepo, 5}, {defaultRepo, 6}},
+		},
+		{
+			name: "list with an oxford comma",
+			text: "Addresses #1, #2, and #3.",
+			want: []ClaimedRef{{defaultRepo, 1}, {defaultRepo, 2}, {defaultRepo, 3}},
+		},
+		{
+			name: "cross-repo element inside a list",
+			text: "Refs #1, owner/other#2",
+			want: []ClaimedRef{{defaultRepo, 1}, {"owner/other", 2}},
+		},
+		{
+			name: "a list ends at the line",
+			text: "Refs #1,\n#2 is unrelated",
+			want: []ClaimedRef{{defaultRepo, 1}},
+		},
+		{
+			name: "a list ends at prose",
+			text: "Refs #1, #2 which supersedes #3",
+			want: []ClaimedRef{{defaultRepo, 1}, {defaultRepo, 2}},
+		},
+		{
+			// The real projectbluefin/server#210 body that motivated #7911:
+			// the closing ref is the closing parser's; every listed
+			// reference must come out of this one.
+			name: "real PR #210 body: closing sentence then a reference list",
+			text: "Closes #159. Refs #72, #74, #87, #193, #196, #197, #198, #199.",
+			want: []ClaimedRef{
+				{defaultRepo, 72}, {defaultRepo, 74}, {defaultRepo, 87}, {defaultRepo, 193},
+				{defaultRepo, 196}, {defaultRepo, 197}, {defaultRepo, 198}, {defaultRepo, 199},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -154,35 +198,50 @@ func TestFetchClaimsReferenceTier(t *testing.T) {
 		return p
 	}
 
+	type want struct {
+		issue     int
+		reference bool
+	}
 	tests := []struct {
-		name          string
-		prs           []map[string]any
-		wantIssue     int
-		wantReference bool
-		wantNoClaim   bool
+		name string
+		prs  []map[string]any
+		want []want // in claim order; nil means no claim at all
 	}{
 		{
-			name:          "reference recovers a PR that claimed nothing before",
-			prs:           []map[string]any{prWithBranch(3898, "autoscale", "Refs #3498 — no `Fixes` keyword, deliberately.", "feat/governor-autoscale-thresholds")},
-			wantIssue:     3498,
-			wantReference: true,
+			name: "reference recovers a PR that claimed nothing before",
+			prs:  []map[string]any{prWithBranch(3898, "autoscale", "Refs #3498 — no `Fixes` keyword, deliberately.", "feat/governor-autoscale-thresholds")},
+			want: []want{{3498, true}},
 		},
 		{
-			name:          "closing keyword still wins over a reference",
-			prs:           []map[string]any{prWithBranch(1, "t", "Fixes #100. Also refs #200.", "scratch")},
-			wantIssue:     100,
-			wantReference: false,
+			// #7911: the reference no longer disappears behind the closing
+			// keyword. The closed issue keeps its strong claim, listed
+			// first; the referenced one gains a weak claim it never had.
+			name: "closing keyword still wins for its issue; the reference now claims its own",
+			prs:  []map[string]any{prWithBranch(1, "t", "Fixes #100. Also refs #200.", "scratch")},
+			want: []want{{100, false}, {200, true}},
 		},
 		{
-			name:          "branch heuristic still wins over a reference",
-			prs:           []map[string]any{prWithBranch(2, "t", "Refs #200", "issue-443")},
-			wantIssue:     443,
-			wantReference: false,
+			name: "branch heuristic still wins for its issue; the reference now claims its own",
+			prs:  []map[string]any{prWithBranch(2, "t", "Refs #200", "issue-443")},
+			want: []want{{443, false}, {200, true}},
 		},
 		{
-			name:        "a passing mention still claims nothing",
-			prs:         []map[string]any{prWithBranch(3, "t", "unlike #999, this uses a map", "scratch")},
-			wantNoClaim: true,
+			// An issue both closed and referenced is one claim, the strong one.
+			name: "an issue both closed and referenced keeps the strong claim only",
+			prs:  []map[string]any{prWithBranch(4, "t", "Fixes #100. Part of #100 and #101.", "scratch")},
+			want: []want{{100, false}, {101, true}},
+		},
+		{
+			// The real projectbluefin/server#210 body (#7911): one closed
+			// issue and a list of eight references, all of which the
+			// contribute queue must see.
+			name: "real PR #210: closes one issue and references a list",
+			prs:  []map[string]any{prWithBranch(210, "feat(kubernetes): replace the k0s sysext", "Closes #159. Refs #72, #74, #87, #193, #196, #197, #198, #199.", "fix/boot-zfs-udev-and-depmod")},
+			want: []want{{159, false}, {72, true}, {74, true}, {87, true}, {193, true}, {196, true}, {197, true}, {198, true}, {199, true}},
+		},
+		{
+			name: "a passing mention still claims nothing",
+			prs:  []map[string]any{prWithBranch(3, "t", "unlike #999, this uses a map", "scratch")},
 		},
 	}
 
@@ -194,20 +253,16 @@ func TestFetchClaimsReferenceTier(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantNoClaim {
-				if len(claims) != 0 {
-					t.Fatalf("expected no claims, got %+v", claims)
+			if len(claims) != len(tt.want) {
+				t.Fatalf("got %d claims %+v, want %d %+v", len(claims), claims, len(tt.want), tt.want)
+			}
+			for i, w := range tt.want {
+				if claims[i].Issue != w.issue {
+					t.Errorf("claim[%d].Issue = %d, want %d", i, claims[i].Issue, w.issue)
 				}
-				return
-			}
-			if len(claims) != 1 {
-				t.Fatalf("expected exactly one claim, got %+v", claims)
-			}
-			if claims[0].Issue != tt.wantIssue {
-				t.Errorf("Issue = %d, want %d", claims[0].Issue, tt.wantIssue)
-			}
-			if claims[0].Reference != tt.wantReference {
-				t.Errorf("Reference = %v, want %v", claims[0].Reference, tt.wantReference)
+				if claims[i].Reference != w.reference {
+					t.Errorf("claim[%d] (#%d).Reference = %v, want %v", i, claims[i].Issue, claims[i].Reference, w.reference)
+				}
 			}
 		})
 	}

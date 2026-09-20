@@ -277,24 +277,28 @@ func parseRefs(pattern *regexp.Regexp, text, defaultRepo string) []ClaimedRef {
 	seen := make(map[string]bool, len(matches))
 	var refs []ClaimedRef
 	for _, m := range matches {
-		// m[2] is the optional owner/repo prefix, m[3] the issue number.
-		if len(m) < 4 {
-			continue
+		// A match is one keyword and at least one reference; with
+		// referenceListTail it can be several. Neither pattern lets a '#'
+		// into the keyword or the gap, so every `#N` inside the match is a
+		// reference, and reading them from the whole match (m[0]) is what
+		// makes a list work — a repeated group's capture is only its last
+		// element. m[1..3] remain keyword, first owner/repo, first number.
+		for _, r := range issueRefPattern.FindAllStringSubmatch(m[0], -1) {
+			num, err := strconv.Atoi(r[2])
+			if err != nil || num <= 0 {
+				continue
+			}
+			repo := defaultRepo
+			if r[1] != "" {
+				repo = r[1]
+			}
+			key := claimKey(repo, num)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			refs = append(refs, ClaimedRef{Repo: repo, Issue: num})
 		}
-		num, err := strconv.Atoi(m[3])
-		if err != nil || num <= 0 {
-			continue
-		}
-		repo := defaultRepo
-		if m[2] != "" {
-			repo = m[2]
-		}
-		key := claimKey(repo, num)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		refs = append(refs, ClaimedRef{Repo: repo, Issue: num})
 	}
 	return refs
 }
@@ -345,15 +349,37 @@ var referenceKeywords = []string{
 // On the agent side it can defer dispatch for up to weakClaimDeferWindow
 // (kubestellar/hive#4929) — never longer, and never while the PR is closed.
 var referenceRefPattern = regexp.MustCompile(
-	`(?i)\b(` + strings.Join(referenceKeywords, "|") + `)\b[^.\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+	`(?i)\b(` + strings.Join(referenceKeywords, "|") + `)\b[^.\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)` + referenceListTail)
+
+// referenceListTail extends a matched reference with the rest of a same-line
+// list (hivecommons/hive#7911): "Refs #72, #74, #87" or "Part of #5 and #6".
+// Each element is a separator — optional comma or semicolon, optional "and" or
+// "&", spaces or tabs only, so a newline ends the list — followed by one more
+// `#N` or `owner/repo#N`. A Go repeated group captures only its last
+// iteration, so parseRefs does not read the group: it reads every reference
+// inside the whole match instead.
+//
+// Only the reference tier reads lists. GitHub closes only the first issue of
+// "Fixes #1, #2" (it wants a keyword per number), and the closing parser keeps
+// parity with that so a strong claim is never asserted for an issue GitHub
+// will leave open on merge. The real body that motivated this — a maintainer's
+// consolidation PR reading "Closes #159. Refs #72, #74, #87, #193, #196, #197,
+// #198, #199." — yielded a reference to #72 alone, and the contribute queue
+// offered #197 to an agent while the PR that removes the subsystem it
+// describes was open.
+const referenceListTail = `(?:[ \t]*[,;]?[ \t]*(?:\band\b|&)?[ \t]*(?:[\w.-]+/[\w.-]+)?#\d+)*`
+
+// issueRefPattern is one `#N` or `owner/repo#N`, used by parseRefs to read
+// every reference out of a whole pattern match (see referenceListTail).
+var issueRefPattern = regexp.MustCompile(`(?:([\w.-]+/[\w.-]+))?#(\d+)`)
 
 // ParseReferencedIssues extracts every issue this text REFERENCES without
 // claiming to close (kubestellar/hive#3980). defaultRepo supplies the
 // repository for bare `#N` references. Results are de-duplicated and returned
 // in first-seen order; nil/empty text yields no refs.
 //
-// It is the weak-evidence companion to ParseClaimedIssues and is only consulted
-// when that (and the branch-name heuristic) found nothing at all.
+// It is the weak-evidence companion to ParseClaimedIssues: claimsFromPR reads
+// both and keeps the closing claim wherever the two name the same issue.
 func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
 	return parseRefs(referenceRefPattern, text, defaultRepo)
 }
@@ -459,28 +485,37 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 		}
 	}
 
-	// Third and weakest tier (#3980): a PR that references an issue
-	// without a closing keyword ("Refs #N", "Part of #N") and whose
-	// branch name carries no issue number. Such a PR is working the
-	// issue but deliberately not claiming to finish it, and until
-	// now produced NO claim at all — so the contribute queue kept
-	// re-offering an issue whose work was already open in a PR.
+	// Third and weakest tier (#3980): an issue the PR references without
+	// a closing keyword ("Refs #N", "Part of #N"). Such a PR is working
+	// the issue but deliberately not claiming to finish it, and before
+	// #3980 produced NO claim at all — so the contribute queue kept
+	// re-offering an issue whose work was already open in a PR. Marked
+	// Reference so FilterClaimedIssues can keep agent work flowing on a
+	// partially-addressed issue.
 	//
-	// Ordered last on purpose. The two tiers above are unchanged and
-	// still win, so no claim that exists today changes its target or
-	// its strength; this only fills in PRs that previously yielded
-	// nothing. Marked Reference so FilterClaimedIssues can keep
-	// agent work flowing on a partially-addressed issue.
-	reference := false
-	if len(refs) == 0 {
-		if refRefs := ParseReferencedIssues(text, repo); len(refRefs) > 0 {
-			refs = refRefs
-			reference = true
+	// This tier used to run only when the two above found nothing, which
+	// left a PR that closes one issue and references others claiming only
+	// the one it closes (hivecommons/hive#7911): a maintainer's
+	// consolidation PR reading "Closes #159. Refs #72, … #197" held #159
+	// and let #197 be offered to an agent while the PR that removes the
+	// subsystem #197 describes was open. The tiers above still win, per
+	// issue: an issue they claim keeps its strong claim and is not
+	// re-listed here, so no claim that existed before changes target or
+	// strength — this only adds weak ones, each bounded by
+	// weakClaimDeferWindow exactly as a lone reference always was.
+	strong := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		strong[claimKey(ref.Repo, ref.Issue)] = true
+	}
+	var referenced []ClaimedRef
+	for _, ref := range ParseReferencedIssues(text, repo) {
+		if !strong[claimKey(ref.Repo, ref.Issue)] {
+			referenced = append(referenced, ref)
 		}
 	}
 
-	claims := make([]IssueClaim, 0, len(refs))
-	for _, ref := range refs {
+	claims := make([]IssueClaim, 0, len(refs)+len(referenced))
+	add := func(ref ClaimedRef, reference bool) {
 		claims = append(claims, IssueClaim{
 			Repo:            ref.Repo,
 			Issue:           ref.Issue,
@@ -493,6 +528,12 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 			ExternalAuthor:  external,
 			Reference:       reference,
 		})
+	}
+	for _, ref := range refs {
+		add(ref, false)
+	}
+	for _, ref := range referenced {
+		add(ref, true)
 	}
 	return claims
 }
