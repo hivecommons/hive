@@ -8456,6 +8456,163 @@ test('#7759 an agent that addresses the notes but never re-prints the verdict co
   } finally { console.log = log; console.warn = warn; teardown(relay); }
 });
 
+// ---------------------------------------------------------------------------
+// Notes that land after the FINAL verdict (hivecommons/hive#7879).
+//
+// #7759's bound worked as specified on projectbluefin/contribute#638 and still
+// lost a real (minor) finding: the advisor's note under the SECOND verdict —
+// the PR body misdescribed a validator rule — was never looked at, because the
+// latch was already spent, and nothing recorded it. Two additive layers:
+// record instead of drop (summary + one PR comment, zero extra turns), and a
+// second follow-up reserved for a NEW ⟦blocker⟧, hard cap two.
+// ---------------------------------------------------------------------------
+
+const OMP_638_VERDICT = 'HIVE_VERDICT: complete — PR #641 adds a renovate.json regression test.';
+const OMP_638_LATE_CONCERN = [
+  ' ⓘ Advisor 2 note',
+  '   ▎ ⟦concern⟧ PR body still says `gitAuthor` is rejected by the validator — false; only `username` is',
+  '   ▎ self-hosted-only. Prose only; the code is correct.',
+];
+const OMP_638_LATE_BLOCKER = [
+  ' ⓘ Advisor 2 note',
+  '   ▎ ⟦blocker⟧ The regression test asserts on the OLD schema path; it passes today only because the fixture',
+  '   ▎ is empty.',
+];
+const OMP_638_THIRD_BLOCKER = [
+  ' ⓘ Advisor 3 note',
+  '   ▎ ⟦blocker⟧ Still wrong: the fixture is now populated but the assertion path was not updated.',
+];
+
+function omp638Answered(relay, first, answerNotes, work = ' Fixed the JSONC handling; pushed to PR #641.') {
+  return ompPane(first, `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`, work, OMP_638_VERDICT, answerNotes, OMP_UTAH14_TAIL);
+}
+
+test('#7879 a concern under the final verdict is recorded in the summary and posted to the PR, not dropped — and buys no turn', () => {
+  let pane = ompPane(' ⠋ Editing renovate.json', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    dispatchTask(relay, 'ct-7879-record', 638);
+    const first = [' Opened https://github.com/projectbluefin/contribute/pull/641', OMP_638_VERDICT, ...OMP_UTAH14_NOTES.slice(0, 4)];
+    pane = ompPane(first, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 1, 'setup: the first concern earned the one follow-up');
+
+    // The agent answers; the advisor reviews THAT turn and posts a new
+    // concern under the second verdict — 100 s before finalization, live.
+    pane = omp638Answered(relay, first, OMP_638_LATE_CONCERN);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'a concern under the second verdict does not buy another turn (#7759 bound intact)');
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 1);
+    assert.match(completed[0].pr_url, /\/pull\/641$/);
+    assert.ok(completed[0].summary.includes(relay.UNADDRESSED_ADVISOR_NOTES_HEADING),
+      `the summary carries the heading: ${JSON.stringify(completed[0].summary)}`);
+    assert.ok(/- ⟦concern⟧ PR body still says `gitAuthor` is rejected by the validator — false; only `username` is self-hosted-only\. Prose only; the code is correct\./.test(completed[0].summary),
+      `the note is recorded whole, continuation lines joined: ${JSON.stringify(completed[0].summary)}`);
+    const comments = relay.__commands.filter(c => /gh pr comment/.test(c));
+    assert.strictEqual(comments.length, 1, `exactly one PR comment is posted: ${JSON.stringify(comments)}`);
+    assert.ok(comments[0].includes(completed[0].pr_url), 'on the task\'s PR');
+    assert.ok(comments[0].includes(relay.UNADDRESSED_ADVISOR_NOTES_HEADING) && comments[0].includes('gitAuthor'), 'with the note text');
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7879 a NEW blocker under the second verdict earns one more follow-up; a third never fires', () => {
+  let pane = ompPane(' ⠋ Editing tests/test_renovate.py', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    dispatchTask(relay, 'ct-7879-blocker', 638);
+    const first = [' Opened https://github.com/projectbluefin/contribute/pull/641', OMP_638_VERDICT, ...OMP_UTAH14_NOTES.slice(0, 4)];
+    pane = ompPane(first, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 1);
+
+    // Second verdict, NEW blocker under it → second (final) follow-up.
+    const second = omp638Answered(relay, first, OMP_638_LATE_BLOCKER);
+    pane = second;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'a new blocker holds the task open once more');
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 2);
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)).length, 2, 'two follow-ups typed');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_progress' && /second and final time/.test(m.summary || '')).length, 1);
+
+    // The first blocker is still on the pane, above the second echo; the
+    // agent is working — nothing completes.
+    pane = ompPane(second, `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`, ' ⠋ Editing tests/test_renovate.py', '╰─');
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'the second verdict above the second echo must not end the task mid-turn');
+
+    // Third verdict with yet another blocker: cap reached, the task finalizes,
+    // and the blocker is recorded rather than dropped.
+    pane = ompPane(second, `> ${relay.POST_VERDICT_REVIEW_MESSAGE}`, ' Updated the assertion path; pushed.', OMP_638_VERDICT, OMP_638_THIRD_BLOCKER, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the third verdict is final whatever sits under it');
+    assert.strictEqual(relay.getPostVerdictReviewCount(), 2, 'never a third follow-up');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR)).length, 2);
+    assert.ok(completed[0].summary.includes('Still wrong: the fixture is now populated'), `the late blocker is recorded: ${JSON.stringify(completed[0].summary)}`);
+    assert.strictEqual(relay.__commands.filter(c => /gh pr comment/.test(c)).length, 1);
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7879 a nit under the second verdict finalizes with nothing recorded; a note with no PR goes to the summary only', () => {
+  let pane = ompPane(' ⠋ Reviewing', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    dispatchTask(relay, 'ct-7879-nit', 638);
+    const first = [' Opened https://github.com/projectbluefin/contribute/pull/641', OMP_638_VERDICT, ...OMP_UTAH14_NOTES.slice(0, 4)];
+    pane = ompPane(first, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    pane = omp638Answered(relay, first, OMP_UTAH14_NITS_ONLY);
+    relay.__crashTick();
+    let completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.ok(!completed[0].summary.includes(relay.UNADDRESSED_ADVISOR_NOTES_HEADING), 'nits are not worth recording');
+    assert.strictEqual(relay.__commands.filter(c => /gh pr comment/.test(c)).length, 0);
+
+    // No PR: a no_work_needed verdict with a concern already present at the
+    // previous tick (API-error pane) finalizes and records to the summary only.
+    const nwVerdict = 'HIVE_VERDICT: no_work_needed — already fixed upstream';
+    const before = relay.__commands.length;
+    dispatchTask(relay, 'ct-7879-nopr', 639);
+    pane = ompPane(nwVerdict, OMP_638_LATE_CONCERN, ' ⚠ API Error: 529 overloaded — retrying', OMP_UTAH14_TAIL);
+    const warn = console.warn; console.warn = () => {};
+    try { relay.__crashTick(); } finally { console.warn = warn; }
+    pane = ompPane(nwVerdict, OMP_638_LATE_CONCERN, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    completed = relay.__sent.filter(m => m.type === 'task_complete' && m.task_id === 'ct-7879-nopr');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.ok(completed[0].summary.includes('gitAuthor'), `recorded in the summary: ${JSON.stringify(completed[0].summary)}`);
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh pr comment/.test(c)).length, 0, 'no PR, no comment');
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7879 postVerdictNoteBlocks joins a note\'s continuation lines, skips nits, and ignores notes above the verdict', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    const m = relay.POST_VERDICT_REVIEW_MARKERS.omp;
+    const v = 'HIVE_VERDICT: complete';
+    const lines = [
+      ' ⓘ Advisor 1 note', '   ▎ ⟦blocker⟧ above the verdict — an earlier turn',
+      v,
+      ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ first line', '   ▎ second line',
+      ' ⓘ Advisor 1 note', '   ▎ ⟦nit⟧ ignore me',
+      ' ⓘ Advisor 2 note', '   ▎ ⟦blocker⟧ alone',
+      'Advisor history copied to clipboard',
+    ];
+    assert.deepStrictEqual(relay.postVerdictNoteBlocks(lines, v, m), ['⟦concern⟧ first line second line', '⟦blocker⟧ alone']);
+    assert.deepStrictEqual(relay.postVerdictNoteBlocks(lines, 'not on pane', m), []);
+    assert.deepStrictEqual(relay.postVerdictNoteBlocks(lines, v, undefined), []);
+    assert.strictEqual(relay.POST_VERDICT_REVIEW_MAX_FOLLOWUPS, 2);
+  } finally { teardown(relay); }
+});
+
 test('#7759 postVerdictConcerns reads only bracketed concerns inside a note block below the verdict', () => {
   const relay = loadRelay({ backend: 'omp' });
   try {

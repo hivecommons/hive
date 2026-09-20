@@ -219,6 +219,13 @@ const AUTONOMY_NUDGE_MESSAGE =
 const POST_VERDICT_REVIEW_MESSAGE =
   'Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.';
 const POST_VERDICT_REVIEW_ANCHOR = 'Advisor notes were posted after your verdict';
+// #7879: hard cap on review follow-ups per task. The first is earned by any
+// new ⟦blocker⟧/⟦concern⟧ under the verdict; the second ONLY by a ⟦blocker⟧
+// that was not on the pane at the previous verdict. Never a third.
+const POST_VERDICT_REVIEW_MAX_FOLLOWUPS = 2;
+// Heading under which notes that were still unaddressed when the task
+// finalized are recorded in the task_complete summary and the PR comment.
+const UNADDRESSED_ADVISOR_NOTES_HEADING = 'Advisor notes not addressed before completion';
 
 // #7862: a `HIVE_VERDICT: complete` with no PR behind it gets one follow-up
 // before it is finalized. Same once-per-task bound and same pending/answered
@@ -3139,6 +3146,9 @@ const POST_VERDICT_REVIEW_MARKERS = Object.freeze({
   omp: Object.freeze({
     note: /\bAdvisor \d+ note\b/,
     concern: /⟦blocker⟧|\[blocker\]|⟦concern⟧|\[concern\]/,
+    // #7879: the strictly-stronger subset that alone can earn the SECOND
+    // follow-up.
+    blocker: /⟦blocker⟧|\[blocker\]/,
   }),
 });
 
@@ -3163,6 +3173,39 @@ function postVerdictConcerns(lines, verdictLine, markers) {
     if (inNote && markers.concern.test(line)) concerns.push(line);
   }
   return concerns;
+}
+
+// postVerdictNoteBlocks returns, for each review note BELOW the verdict line
+// that carries a ⟦blocker⟧/⟦concern⟧ marker, its text — the marker line plus
+// the indented continuation lines omp renders under it, with the gutter glyph
+// stripped and whitespace collapsed (hivecommons/hive#7879). Same "below the
+// verdict" rule as postVerdictConcerns; nits are skipped for the same reason
+// they never earn a turn. This is what gets RECORDED when a task finalizes
+// with notes still unaddressed: the information already exists on the pane
+// and used to die with the relaunch.
+function postVerdictNoteBlocks(lines, verdictLine, markers) {
+  if (!markers || !Array.isArray(lines) || typeof verdictLine !== 'string') return [];
+  const at = lines.lastIndexOf(verdictLine);
+  if (at < 0) return [];
+  const blocks = [];
+  let current = null;
+  const flush = () => {
+    if (current && current.flagged && current.text.length) {
+      blocks.push(current.text.join(' ').replace(/\s+/g, ' ').trim());
+    }
+    current = null;
+  };
+  for (let i = at + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (markers.note.test(line)) { flush(); current = { flagged: false, text: [] }; continue; }
+    if (!current) continue;
+    // A note's body is indented; the first flush-left line ends it.
+    if (!/^\s/.test(line) || line.trim() === '') { flush(); continue; }
+    if (markers.concern.test(line)) current.flagged = true;
+    current.text.push(line.replace(/^[\s▎│|]+/, '').trim());
+  }
+  flush();
+  return blocks;
 }
 
 // postVerdictReviewAnswered reports whether a verdict on the pane is the
@@ -3743,12 +3786,18 @@ function resetAutonomyNudgeState() {
 // anywhere on the pane at the previous tick — the follow-up only fires for
 // notes that were not there then, so a note from mid-task can never re-open a
 // finished task.
+// #7879: the boolean latch became a counter — the second follow-up is
+// reserved for a NEW ⟦blocker⟧ and there is never a third
+// (POST_VERDICT_REVIEW_MAX_FOLLOWUPS). `postVerdictReviewRequested` reads as
+// "at least one sent", so every pending/answered check is unchanged.
+let postVerdictReviewCount = 0;
 let postVerdictReviewRequested = false;
 let lastTickConcernLines = new Set();
 // #7862: whether this task's one PR-less-complete follow-up has been spent.
 let prClaimFollowUpRequested = false;
 
 function resetPostVerdictReviewState() {
+  postVerdictReviewCount = 0;
   postVerdictReviewRequested = false;
   lastTickConcernLines = new Set();
   prClaimFollowUpRequested = false;
@@ -4200,8 +4249,36 @@ function failCurrentTask(reason, opts) {
 //                      launch chrome.
 //   prURL            — the PR resolveTaskPR() attributed to this task, or ''.
 //   noWork           — the no_work_needed verdict object, or null.
-function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork }) {
+// postUnaddressedNotesComment leaves the advisor notes the agent did not get
+// to on the PR, as ONE comment, so the reviewer sees exactly what the advisor
+// saw (hivecommons/hive#7879). Authenticated with the task credential from
+// GH_TOKEN_CACHE when present (it is about to be dropped), else gh's ambient
+// auth. Best-effort and bounded: a gh that is missing, offline or refused
+// costs a log line, never the completion.
+function postUnaddressedNotesComment(prURL, notes) {
+  let token = null;
+  try { token = fs.readFileSync(GH_TOKEN_CACHE, 'utf8').trim() || null; } catch (_) {}
+  const body = `### ${UNADDRESSED_ADVISOR_NOTES_HEADING}\n\n` +
+    'The contributor\'s advisor posted these after the final verdict; the agent had no further turn to address them. Recorded here for the reviewer.\n\n' +
+    notes.map(n => `- ${n}`).join('\n') +
+    '\n\n<sub>— hive contributor relay (#7879)</sub>';
+  try {
+    execSync(`gh pr comment ${shellQuote(prURL)} --body ${shellQuote(body)} 2>/dev/null`, {
+      encoding: 'utf8',
+      timeout: 20000,
+      env: token ? { ...process.env, GH_TOKEN: token } : process.env,
+    });
+    console.log(`Posted ${notes.length} unaddressed advisor note(s) as a comment on ${prURL} (#7879)`);
+  } catch (e) {
+    console.error(`Could not post the unaddressed advisor notes to ${prURL}: ${(e && e.message) || 'unknown error'} — they are still in the task_complete summary`);
+  }
+}
+
+function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
   if (!currentTask) return;
+  // #7879: the PR comment must go out BEFORE stopAgentForTaskExit drops the
+  // task credential below — it is posted with the same token the agent used.
+  if (prURL && unaddressedNotes.length) postUnaddressedNotesComment(prURL, unaddressedNotes);
   // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
   // chrome, and it is wrong often enough to have produced thirteen separate
   // issues. When it is wrong, the agent is still mid-turn — and reporting
@@ -4693,15 +4770,25 @@ function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previo
   if (!currentTask || !verdict) return false;
   const markers = POST_VERDICT_REVIEW_MARKERS[BACKEND];
   if (!markers) return false;
-  if (postVerdictReviewRequested) return false;
+  if (postVerdictReviewCount >= POST_VERDICT_REVIEW_MAX_FOLLOWUPS) return false;
 
-  const concerns = postVerdictConcerns(paneScanLines, verdict.line, markers)
+  let concerns = postVerdictConcerns(paneScanLines, verdict.line, markers)
     .filter(line => !previousConcerns.has(line));
+  // #7879: the second follow-up is bought only by a NEW ⟦blocker⟧. A concern
+  // or nit under the second verdict finalizes as before — a body-prose nit is
+  // not worth a turn — but a late blocker of the kind that turned utah#131 /
+  // testsuite#805 into real PRs gets one more, and never a third.
+  const secondRound = postVerdictReviewCount > 0;
+  if (secondRound) concerns = concerns.filter(line => markers.blocker && markers.blocker.test(line));
   if (concerns.length === 0) return false;
 
+  postVerdictReviewCount++;
   postVerdictReviewRequested = true;
-  console.log(`Task ${currentTask.task_id}: ${concerns.length} advisor concern(s) were posted under its HIVE_VERDICT line — ` +
-    `asking the agent once to address them and re-print the verdict (#7759): ${concerns.map(c => JSON.stringify(c.trim())).join(' ')}`);
+  console.log(secondRound
+    ? `Task ${currentTask.task_id}: a NEW advisor ⟦blocker⟧ was posted under its re-printed HIVE_VERDICT — ` +
+      `asking the agent a second and final time to address it and re-print the verdict (#7879): ${concerns.map(c => JSON.stringify(c.trim())).join(' ')}`
+    : `Task ${currentTask.task_id}: ${concerns.length} advisor concern(s) were posted under its HIVE_VERDICT line — ` +
+      `asking the agent once to address them and re-print the verdict (#7759): ${concerns.map(c => JSON.stringify(c.trim())).join(' ')}`);
   try {
     tmuxSendNudge(POST_VERDICT_REVIEW_MESSAGE);
   } catch (e) {
@@ -4714,7 +4801,9 @@ function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previo
     task_id: currentTask.task_id,
     task_gen: currentTask.task_gen,
     status: 'working',
-    summary: `Agent printed HIVE_VERDICT, then its advisor posted ${concerns.length} concern(s) under it; asked it once to address them and re-print the verdict`,
+    summary: secondRound
+      ? `Agent re-printed HIVE_VERDICT, then its advisor posted a new blocker under it; asked it a second and final time to address it and re-print the verdict`
+      : `Agent printed HIVE_VERDICT, then its advisor posted ${concerns.length} concern(s) under it; asked it once to address them and re-print the verdict`,
     tmux_output: tmuxLines,
     ...progressModelFields(),
   });
@@ -5137,12 +5226,23 @@ function progressTick() {
     // is already true. tmuxLines was captured above, so the evidence the hub
     // receives is still the agent's own output and not launch chrome.
     //
-    const completionSummary = noWork
+    let completionSummary = noWork
       ? 'Agent returned to idle (reported no_work_needed)'
       : (verdictCompletes
         ? 'Agent reported the task complete (HIVE_VERDICT)'
         : `Agent returned to idle (no verdict emitted; pane idle for ${CHROME_IDLE_GRACE_TICKS} consecutive checks)`);
-    finishCurrentTask({ completionSignal, summary: completionSummary, tmuxLines, prURL, noWork });
+    // #7879: review notes under the verdict being finalized are, by
+    // construction, ones the agent will not get another turn for. Record
+    // them — in the summary the hub keeps, and on the PR if there is one —
+    // instead of letting them die with the relaunch. Zero extra turns.
+    const unaddressedNotes = verdictCompletes
+      ? postVerdictNoteBlocks(paneScanLines, completionVerdict.line, reviewMarkers)
+      : [];
+    if (unaddressedNotes.length) {
+      console.log(`Task ${currentTask.task_id}: ${unaddressedNotes.length} advisor note(s) under the final verdict were not addressed before completion — recording them (#7879)`);
+      completionSummary += `\n\n${UNADDRESSED_ADVISOR_NOTES_HEADING}:\n${unaddressedNotes.map(n => `- ${n}`).join('\n')}`;
+    }
+    finishCurrentTask({ completionSignal, summary: completionSummary, tmuxLines, prURL, noWork, unaddressedNotes });
   } else if (paneState === PANE_STATE_IDLE_COMPLETE) {
     // Idle chrome, no verdict, grace not yet elapsed (#5376). Report progress
     // and wait — this is the tick or two in which a momentary misread (a
@@ -5876,6 +5976,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     maybeRequestPostVerdictReview,
     resetPostVerdictReviewState,
     getPostVerdictReviewRequested: () => postVerdictReviewRequested,
+    getPostVerdictReviewCount: () => postVerdictReviewCount,
+    postVerdictNoteBlocks,
+    POST_VERDICT_REVIEW_MAX_FOLLOWUPS,
+    UNADDRESSED_ADVISOR_NOTES_HEADING,
     getPRClaimFollowUpRequested: () => prClaimFollowUpRequested,
     PR_CLAIM_FOLLOWUP_MESSAGE,
     PR_CLAIM_FOLLOWUP_ANCHOR,
