@@ -148,12 +148,23 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
-grep -q 'v5 true edge' "$workflow"
+# #7893: :latest is v4-owned until #7721 Phase 1 hands it over. Every image
+# row on this lane must pass INCLUDE_LATEST=false — the mirror steps too, or
+# the cross-org copy would still advance :latest.
+[[ $(grep -c 'v5 false edge' "$workflow") -eq 3 ]]
+if grep -q 'v5 true edge' "$workflow"; then
+  echo "docker workflow publishes v4-owned :latest from the v5 lane" >&2
+  exit 1
+fi
 if grep -q 'v5 true stable\|CHANNELS: "stable' "$workflow"; then
   echo "docker workflow publishes v4-owned stable from the v5 lane" >&2
   exit 1
 fi
-grep -q 'INCLUDE_LATEST: "true"' "$workflow"
+[[ $(grep -c 'INCLUDE_LATEST: "false"' "$workflow") -eq 3 ]]
+if grep -q 'INCLUDE_LATEST: "true"' "$workflow"; then
+  echo "cross-org mirror step publishes v4-owned :latest from the v5 lane" >&2
+  exit 1
+fi
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then
   echo "HEAD-only publication guard was reintroduced" >&2
   exit 1

@@ -726,7 +726,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
-          INCLUDE_LATEST: "true"
+          INCLUDE_LATEST: "false"
           RELEASE_BRANCH: "v5"
           CHANNELS: "edge"
         run: |
@@ -917,7 +917,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
-          INCLUDE_LATEST: "true"
+          INCLUDE_LATEST: "false"
           RELEASE_BRANCH: "v5"
           CHANNELS: "edge"
         run: |
