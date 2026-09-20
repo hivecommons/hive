@@ -301,6 +301,15 @@ backend-smoke backends="claude codex":
 test-issue-classifier:
     bash bin/test_issue_classifier.sh
 
+# Contract tests for the agent PR-request wrapper (bin/hive-open-pr.sh):
+# flag parsing, empty-body refusal, body sourcing, --issues normalization,
+# request JSON structure and the python3-less fallback escaper — hermetic via
+# HIVE_OPEN_PR_REQ_DIR and a throwaway git repo.
+# Wire this into .github/workflows/v2-ci.yml next to test_hive_open_issue.sh
+# so it runs in CI too (tracked in the issue that introduced the suite).
+test-hive-open-pr:
+    bash bin/test_hive_open_pr.sh
+
 # One-time setup: register with hub + authenticate GitHub + authenticate CLI
 # Ordering note (#2543): the backend-readiness preflight runs FIRST, before
 # any credential is written to disk or a contributor slot is registered —
