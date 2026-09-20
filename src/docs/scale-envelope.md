@@ -99,7 +99,7 @@ operator can change it without rebuilding.
 | Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge_sweep.go:18` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:19` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:80` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
-| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:739`, `:850` | **no cap** | n/a | Pages to completion; cost grows with backlog |
+| Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:774`, `:885` | **no cap** | n/a | Pages to completion; cost grows with backlog |
 
 ### The inconsistency this inventory exposes
 

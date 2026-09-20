@@ -130,9 +130,9 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
 - The driving loop is a single ticker in `main`:
   `time.NewTicker(… EvalIntervalS …)` at `src/cmd/hive/main.go:5143`, loop at
   `src/cmd/hive/main.go:5164`, evaluation at `src/cmd/hive/main.go:5798`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6120`
+  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:6076`
   (`src/pkg/scheduler/scheduler.go:664`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:6197`.
+  `agentMgr.SendKick` at `src/cmd/hive/main.go:6153`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -149,7 +149,7 @@ CLI subprocess.
 
 | State | Where | Citation |
 |---|---|---|
-| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:925`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5793` |
+| Pause flag (one bool per agent) | `/data/hive.yaml` via `AgentConfig.Paused` | `src/pkg/config/config.go:957`; writer `SetAgentPausedAndSave` `src/pkg/config/config.go:5793` |
 | Pause provenance (`PausedAt`, `PausedReason`, `PausedTrigger`, `PausedBy`), CLI/model pins, model/backend overrides, restart count, `LastKick`, truncated kick history | `/data/hive-state.json` via `snapshot.AgentState` | `src/pkg/snapshot/state.go:78-101`; path `src/cmd/hive/boot.go:147` |
 | Watchdog failure count, crash-loop latch, backoff deadline, healthy-since, conditions | same file, `snapshot.PersistedState.Watchdog` | `src/pkg/snapshot/state.go:41`; `watchdog.PersistedAgent` `src/pkg/watchdog/reconciler.go:205` |
 | Fleet-breaker engagement + held set | same file, `BreakerState` | `src/pkg/snapshot/state.go:49` |
