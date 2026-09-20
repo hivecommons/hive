@@ -391,6 +391,16 @@ jobs:
         working-directory: .
         run: bash bin/test_enumerate_actionable.sh
 
+      # bin/issue-classifier.sh is the pre-kick stage that stamps every
+      # actionable issue with complexity_tier / model_recommendation /
+      # is_tracker / lane / cluster_key — fields kick-agents.sh inlines into
+      # every kick and agents are told to trust rather than re-derive. The
+      # suite (#7810) EXECUTES a path-rewritten copy against fixture documents
+      # and a harness-owned classification: config; 40 assertions, ~2s.
+      - name: issue-classifier contract tests (tiers, lanes, clustering)
+        working-directory: .
+        run: bash bin/test_issue_classifier.sh
+
       # bin/kick-governor.sh (923 lines, called from bin/hive.sh, run every 15
       # min via kick-governor.timer) is the adaptive kick decision engine that
       # reads enumerate-actionable's actionable.json: it measures the backlog,

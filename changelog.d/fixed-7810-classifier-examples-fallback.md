@@ -1,0 +1,1 @@
+- `bin/issue-classifier.sh` no longer dies under `set -euo pipefail` when `HIVE_PROJECT_YAML` is missing and there is no `examples/` directory beside the script (a deployed copy without the repo checkout); it falls through to the built-in defaults. Its contract suite now runs in CI (#7810).

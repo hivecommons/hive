@@ -15,7 +15,15 @@ LOG="/var/log/kick-agents.log"
 
 PROJECT_YAML="${HIVE_PROJECT_YAML:-/etc/hive/hive-project.yaml}"
 if [ ! -f "$PROJECT_YAML" ]; then
-  PROJECT_YAML="$(find "$(dirname "$(dirname "$0")")/examples" -name 'hive-project.yaml' -type f 2>/dev/null | head -1)"
+  # A deployed copy of this script may have no repo checkout (and so no
+  # examples/) beside it. Under `set -euo pipefail` a failing find would kill
+  # the classifier stage instead of falling through to the built-in defaults
+  # (#7810), so only search when the directory exists.
+  EXAMPLES_DIR="$(dirname "$(dirname "$0")")/examples"
+  PROJECT_YAML=""
+  if [ -d "$EXAMPLES_DIR" ]; then
+    PROJECT_YAML="$(find "$EXAMPLES_DIR" -name 'hive-project.yaml' -type f 2>/dev/null | head -1 || true)"
+  fi
 fi
 
 log() { echo "[$(date -Is)] CLASSIFY $*" >> "$LOG"; }

@@ -61,12 +61,11 @@ RUN_DIR="${WORK}/run"               # stands in for /var/run/hive-metrics
 LOG_FILE="${WORK}/kick-agents.log"  # stands in for /var/log/kick-agents.log
 IN="${RUN_DIR}/actionable.json"
 CONFIG="${WORK}/hive-project.yaml"
-# The empty examples/ dir matters: when HIVE_PROJECT_YAML is missing the
-# script falls back to `find <script-root>/examples -name hive-project.yaml`.
-# With the dir present-but-empty that find succeeds with no output and the
-# python defaults apply — the case test 8 pins. (If the dir does not exist at
-# all, `set -euo pipefail` kills the script on the failing find instead; that
-# latent crash is out of scope here and noted in the tracking issue.)
+# When HIVE_PROJECT_YAML is missing the script falls back to
+# `find <script-root>/examples -name hive-project.yaml`. Test 8 runs with the
+# dir present-but-empty (find succeeds with no output → python defaults) and
+# test 9 with no examples/ dir at all — the deployed-copy shape that used to
+# crash under `set -euo pipefail` (#7810).
 mkdir -p "$RUN_DIR" "${WORK}/bin" "${WORK}/examples"
 
 # ── The path-rewritten copy ──────────────────────────────────────────────────
@@ -246,6 +245,14 @@ assert_eq "default simple rule: auto-qa label → Simple/haiku"        "$(iget 2
 assert_eq "default tracker prefix [Auto-QA] is honoured"             "$(iget 22 '.is_tracker')" "true"
 assert_eq "default complex rule: architecture label → Complex/opus"  "$(iget 23 '"\(.complexity_tier)/\(.model_recommendation)"')" "Complex/opus"
 assert_eq "no lanes configured → everything is scanner"              "$(jget '[.issues.items[].lane] | unique | join(",")')" "scanner"
+
+# ── 9. Missing config AND no examples/ dir: still the defaults (#7810) ───────
+echo "-- missing config, no examples dir --"
+rmdir "${WORK}/examples"
+rc="$(run_classifier "${WORK}/no-such-config.yaml")"
+assert_eq "no examples/ beside the script: exits 0 instead of dying on find" "$rc" "0"
+assert_eq "…and the built-in defaults still classify"  "$(iget 21 '"\(.complexity_tier)/\(.model_recommendation)"')" "Simple/haiku"
+mkdir -p "${WORK}/examples"
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="
