@@ -358,6 +358,7 @@ func TestReconnect5322_GenuineDepartureStillReleases(t *testing.T) {
 	shortDisconnectGrace(t, 200*time.Millisecond)
 	s, ts := setupWSTest(t)
 	defer ts.Close()
+	drainGraceBookings(t, s.contributeHub)
 	s.deps = &Dependencies{GHAppAuth: newSucceedingAppAuth(t, "ghs_5322_gone")}
 	s.contributeHub.server = s
 	setStatusIssues(s, intgIssue(7777, "genuinely abandoned issue", "someone", nil))
@@ -394,16 +395,30 @@ func sawReleasedRow(h *ContributeWSHub, user string) bool {
 // run log to a temp file so abandonment rows can be counted.
 func shortDisconnectGrace(t *testing.T, grace time.Duration) string {
 	t.Helper()
-	origGrace := disconnectAbandonGrace
-	disconnectAbandonGrace = grace
+	origGrace := disconnectAbandonGrace()
+	disconnectAbandonGraceNanos.Store(int64(grace))
 	path := filepath.Join(t.TempDir(), "task_runs.jsonl")
 	origPath := taskRunLogPath
 	taskRunLogPath = path
 	t.Cleanup(func() {
-		disconnectAbandonGrace = origGrace
+		disconnectAbandonGraceNanos.Store(int64(origGrace))
 		taskRunLogPath = origPath
 	})
 	return path
+}
+
+// drainGraceBookings registers a cleanup — after the hub exists, so it runs
+// BEFORE shortDisconnectGrace's restore — that lets any booking timer the
+// test armed finish before the globals it reads are put back.
+func drainGraceBookings(t *testing.T, hub *ContributeWSHub) {
+	t.Helper()
+	t.Cleanup(func() {
+		// Handlers first: a socket closing at teardown may still be inside
+		// releaseOnDisconnect arming a booking, and WaitGroup.Add racing
+		// Wait is itself a reportable race.
+		hub.handlers.Wait()
+		hub.graceBookings.Wait()
+	})
 }
 
 func abandonedRowsFor(t *testing.T, path, taskID string) int {
@@ -442,6 +457,7 @@ func TestReconnect7838_BlipInsideGraceWritesNoAbandonment(t *testing.T) {
 	runLog := shortDisconnectGrace(t, 400*time.Millisecond)
 	s, ts := setupWSTest(t)
 	defer ts.Close()
+	drainGraceBookings(t, s.contributeHub)
 	s.deps = &Dependencies{GHAppAuth: newSucceedingAppAuth(t, "ghs_7838_blip")}
 	s.contributeHub.server = s
 	setStatusIssues(s, intgIssue(1042, "docs: something", "someone", nil))
@@ -484,7 +500,7 @@ func TestReconnect7838_BlipInsideGraceWritesNoAbandonment(t *testing.T) {
 	waitForHeldTask(t, s.contributeHub, cid, assign.TaskID, 3*time.Second)
 
 	// Let the grace deadline pass, then check the ledger stayed clean.
-	deadline := time.NewTimer(disconnectAbandonGrace * 3)
+	deadline := time.NewTimer(disconnectAbandonGrace() * 3)
 	defer deadline.Stop()
 	<-deadline.C
 	if sawReleasedRow(s.contributeHub, "blipper") {
@@ -506,6 +522,7 @@ func TestReconnect7838_BlipInsideGraceWritesNoAbandonment(t *testing.T) {
 func TestReconnect7838_TaskFinishedInsideGraceWritesNoAbandonment(t *testing.T) {
 	runLog := shortDisconnectGrace(t, 600*time.Millisecond)
 	hub, _ := covK2Hub(t)
+	drainGraceBookings(t, hub)
 	conn := lockScopeConn(hub, "finisher", "c-finisher")
 	task := &WSTaskAssign{TaskID: "ct-7838-finished", Kind: "issue", Repo: "myorg/repo1", Number: 1042}
 	conn.mu.Lock()
@@ -519,7 +536,7 @@ func TestReconnect7838_TaskFinishedInsideGraceWritesNoAbandonment(t *testing.T) 
 	hub.appendTaskRun(TaskRunRecord{TaskID: task.TaskID, Repo: task.Repo, Number: task.Number,
 		Username: "finisher", Outcome: outcomeCompleted, CompletionSignal: completionSignalVerdict, Verdict: completionVerdictShipped})
 
-	deadline := time.NewTimer(disconnectAbandonGrace * 3)
+	deadline := time.NewTimer(disconnectAbandonGrace() * 3)
 	defer deadline.Stop()
 	<-deadline.C
 	if n := abandonedRowsFor(t, runLog, task.TaskID); n != 0 {

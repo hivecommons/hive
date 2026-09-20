@@ -699,6 +699,8 @@ type ContributeWSHub struct {
 	// live for recentlyFinishedTTL. Guarded by finishedMu.
 	finishedMu       sync.Mutex
 	recentlyFinished map[string]time.Time
+	// graceBookings counts deferred #7838 bookings still pending or running.
+	graceBookings sync.WaitGroup
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -1973,15 +1975,24 @@ const (
 	recentlyFinishedTTL = time.Minute
 )
 
-// disconnectAbandonGrace is a variable so tests can shrink it.
-var disconnectAbandonGrace = func() time.Duration {
-	if v := os.Getenv(disconnectAbandonGraceEnv); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
-			return d
+// disconnectAbandonGraceNanos holds the grace window; atomic so tests can
+// shrink it while a disconnect from a previous connection is still being
+// processed on another goroutine. Read via disconnectAbandonGrace().
+var disconnectAbandonGraceNanos = func() *atomic.Int64 {
+	var v atomic.Int64
+	d := defaultDisconnectAbandonGrace
+	if raw := os.Getenv(disconnectAbandonGraceEnv); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed >= 0 {
+			d = parsed
 		}
 	}
-	return defaultDisconnectAbandonGrace
+	v.Store(int64(d))
+	return &v
 }()
+
+func disconnectAbandonGrace() time.Duration {
+	return time.Duration(disconnectAbandonGraceNanos.Load())
+}
 
 // bookAbandonmentAfterGrace writes the activity row and the run-log row for a
 // task released on disconnect (#5097/#7317), after disconnectAbandonGrace has
@@ -2018,11 +2029,18 @@ func (h *ContributeWSHub) bookAbandonmentAfterGrace(c *ContributorConnection, ta
 			c.role, c.cliBackend, c.model, c.reasoningEffort, taskDescOf(task))
 		h.appendAbandonedRun(c, task, abandonCauseDisconnect, assignedAt)
 	}
-	if disconnectAbandonGrace <= 0 {
+	grace := disconnectAbandonGrace()
+	if grace <= 0 {
 		book()
 		return
 	}
-	time.AfterFunc(disconnectAbandonGrace, book)
+	// Tracked so shutdown (and tests that swap the run-log path) can wait for
+	// an in-flight booking instead of racing it.
+	h.graceBookings.Add(1)
+	time.AfterFunc(grace, func() {
+		defer h.graceBookings.Done()
+		book()
+	})
 }
 
 // noteTaskFinished records that a completed/failed run row was written for a
