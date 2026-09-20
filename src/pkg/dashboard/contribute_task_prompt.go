@@ -344,6 +344,32 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			repoOwner, repoFull, repoFull, repoFull)
 		pushHint = "Push your branch to the 'upstream' remote, then open a PR from that branch. "
 	}
+	// #7790: the reused checkout's WORKING TREE, not just its branch. The
+	// reuse-the-clone clause above says "fetch"; the base-branch clause below
+	// says "do not use the branch you find". Neither said anything about
+	// uncommitted changes, and a task that is revoked or aborted mid-edit
+	// leaves exactly those behind — the relay interrupts the agent and nothing
+	// touches the tree. Observed on projectbluefin/utah: one revoked task left
+	// three modified files on its branch, and the next four tasks on that repo
+	// all started from them. `git checkout -b` carries a dirty tree onto the
+	// new branch silently, so one `git add -A` ships another task's half-
+	// finished change under this contributor's name. The three PRs that
+	// followed leaked nothing only because that agent chose `git worktree add`
+	// on its own initiative each time.
+	//
+	// Stash rather than reset, so an operator can still recover the work; and
+	// prefer a worktree, so the shared checkout is never this task's working
+	// tree at all. The relay stashes on its own task-exit paths too
+	// (preserveTaskLeftovers in bin/contributor-relay.js), but this sentence is
+	// what covers a contributor whose relay never sees the checkout.
+	checkoutHint += "A checkout left by a prior task may also hold that task's UNCOMMITTED " +
+		"changes — a task revoked or aborted mid-edit leaves its half-done edits in " +
+		"the tree, and 'git checkout -b' would carry them onto your branch. Before " +
+		"creating your branch, run 'git status'; if the tree has changes you did not " +
+		"make, set them aside with 'git stash push -u -m \"hive leftover\"' — never " +
+		"discard them and never commit them — and confirm the tree is clean. Prefer " +
+		"'git worktree add' for your task branch so the shared checkout is never your " +
+		"working tree. "
 
 	return fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+

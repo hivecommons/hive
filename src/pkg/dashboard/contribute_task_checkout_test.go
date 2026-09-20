@@ -44,6 +44,64 @@ func TestTaskPromptPushCheckoutSkipsImpossibleFork(t *testing.T) {
 	}
 }
 
+// Regression coverage for hivecommons/hive#7790.
+//
+// A task revoked or aborted mid-edit leaves its uncommitted changes in the
+// shared checkout, and every later task on that repo is told to reuse that
+// checkout. The prompt covered the BRANCH it might find there (#5729) but said
+// nothing about the TREE: on projectbluefin/utah one revoked task left three
+// modified files behind and the next four tasks all started from them. The
+// prompt has to tell the agent to look, to set the leftovers aside without
+// destroying or committing them, and to prefer a worktree — in both checkout
+// variants, since the reuse-the-clone clause exists in each.
+func TestTaskPromptReusedCheckoutMustBeCleanBeforeBranching(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		canPush bool
+	}{
+		{"fork checkout", false},
+		{"direct-push checkout", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prompt := buildTaskPromptForContributor(
+				worksource.Ref{Repo: "acme/widgets", Number: 42}, "fix checkout", tc.canPush)
+
+			for _, want := range []string{
+				// Name the hazard, so an agent that finds a dirty tree knows it
+				// is someone else's work and not a repository quirk.
+				"UNCOMMITTED",
+				// Look before branching.
+				"Before creating your branch, run 'git status'",
+				// Preserve, never destroy and never ship.
+				`git stash push -u -m "hive leftover"`,
+				"never discard them and never commit them",
+				"confirm the tree is clean",
+				// The shape that made the utah PRs leak-free by luck.
+				"Prefer 'git worktree add' for your task branch",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("prompt is missing the checkout-hygiene text %q:\n%s", want, prompt)
+				}
+			}
+			// The hygiene step has to come BEFORE the branch instruction it
+			// protects: an agent reads the prompt top to bottom and forms its
+			// plan as it goes (#5729).
+			hygiene := strings.Index(prompt, "run 'git status'")
+			branch := strings.Index(prompt, "git checkout -b <your-branch>")
+			if hygiene < 0 || branch < 0 || hygiene > branch {
+				t.Errorf("the git status check (at %d) must precede the branch instruction (at %d):\n%s", hygiene, branch, prompt)
+			}
+			// Guard against a destructive rewording: the leftovers belong to
+			// somebody, and an operator must be able to recover them.
+			for _, forbidden := range []string{"git reset --hard", "git clean", "git checkout -- ."} {
+				if strings.Contains(prompt, forbidden) {
+					t.Errorf("prompt must never tell the agent to destroy leftovers with %q:\n%s", forbidden, prompt)
+				}
+			}
+		})
+	}
+}
+
 func TestContributorCanPushOwnRepositoryWithoutAPI(t *testing.T) {
 	hub := &ContributeWSHub{}
 	if !hub.contributorCanPush("Alice/widgets", "alice") {

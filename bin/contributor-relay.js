@@ -164,6 +164,11 @@ const CONTRIBUTOR_MODE = process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
 // mutation cannot make the one-shot CLI run outside the workspace that was
 // granted to Codex with --add-dir.
 const TASK_WORKSPACE_DIR = process.env.HIVE_WORKSPACE_DIR || process.cwd();
+// The same variable WITHOUT the cwd fallback, for the one consumer that must
+// never guess: the task-exit checkout sweep (taskCheckoutDir, #7790). In local
+// mode the relay's cwd is the operator's own hive checkout, and a sweep that
+// fell back to it would stash the operator's work.
+const TASK_CHECKOUT_ROOT = (process.env.HIVE_WORKSPACE_DIR || '').trim();
 
 // Where the headless runner records its current lifecycle state as JSON, so a
 // supervising process (or a future K8s liveness/readiness probe reading the
@@ -3447,6 +3452,98 @@ function dropTaskCredential() {
   lastTokenExpiryWarnAt = 0;
 }
 
+// The shape a hub-assigned repo has ('owner/name'), and the only shape
+// taskCheckoutDir will turn into a path. Anything else — an empty repo, a
+// bare name, a segment that could climb out of the workspace — resolves to no
+// checkout at all rather than to a guess.
+const TASK_REPO_SHAPE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+// taskCheckoutDir is where the task prompt tells the agent to put (or reuse)
+// the checkout for `repo`: $HIVE_WORKSPACE_DIR/<owner>/<name>, as
+// buildTaskPromptBodyForAccess in src/pkg/dashboard/contribute_task_prompt.go
+// spells it. Returns '' when the relay cannot name that directory precisely.
+//
+// Deliberately keyed on TASK_CHECKOUT_ROOT (the explicit HIVE_WORKSPACE_DIR)
+// and not on TASK_WORKSPACE_DIR's process.cwd() fallback: in local mode the
+// relay's cwd is the hive checkout `just contribute-hive` was run from — the
+// operator's own tree — and the one thing the hygiene below must never do is
+// touch a checkout that is not the task's. The '.git' probe is the second half
+// of that guarantee: `git -C <dir>` on a directory that exists but is not
+// itself a repository would operate on whatever repository ENCLOSES it.
+function taskCheckoutDir(repo) {
+  if (!TASK_CHECKOUT_ROOT || typeof repo !== 'string' || !TASK_REPO_SHAPE.test(repo)) return '';
+  if (repo.split('/').some(seg => seg === '.' || seg === '..')) return '';
+  const dir = path.join(TASK_CHECKOUT_ROOT, repo);
+  try {
+    if (!fs.existsSync(path.join(dir, '.git'))) return '';
+  } catch (_) {
+    return '';
+  }
+  return dir;
+}
+
+// preserveTaskLeftovers sets aside whatever an exiting task left uncommitted in
+// the shared checkout, so the next task on that repo starts from a clean tree
+// (hivecommons/hive#7790).
+//
+// A relay works every task on a repo out of ONE persistent checkout under
+// $HIVE_WORKSPACE_DIR, and the prompt tells each task to reuse it. A task that
+// is revoked or aborted mid-edit is stopped by stopAgentForTaskExit() — two
+// Ctrl-Cs and a relaunch — and nothing touches the tree: its half-done edits
+// stay on its branch. Observed on projectbluefin/utah: utah#175 was revoked
+// mid-edit in the #7732 hub-restart cascade and left three modified files on
+// fix/kernel-module-fallback; the next four tasks on that repo (#14, #131,
+// #128 …) all started from them, and each agent's advisor flagged it. None of
+// the resulting PRs leaked the files only because that agent chose
+// `git worktree add` on its own each time — an agent that follows the prompt
+// literally (`cd` in, `git checkout -b … upstream/<base>`) carries them onto
+// its branch, and one `git add -A` ships someone else's half-finished change
+// under this contributor's name.
+//
+// STASH, never reset or clean: the leftovers are somebody's work, and an
+// operator must be able to get them back (`git stash list` shows the task they
+// came from). `--include-untracked` so a new file the task created is set
+// aside too — that is exactly what a literal `git add -A` would pick up.
+// Ignored files are left alone; they are build state, not work.
+//
+// Called on EVERY task-exit path, not just failure and revoke. The checkout
+// stops being this task's whatever the verdict, and a completed task's stray
+// uncommitted file is just as much the next task's problem. Sequenced AFTER
+// the agent is stopped, so the stash is not racing an editor; a `git` the
+// agent left mid-flight can still hold the index lock for a moment, in which
+// case the stash fails and is logged — best-effort by design, like everything
+// else on an exit path, and the prompt's own hygiene step (#7790, the same
+// fix from the agent's side) is the backstop.
+//
+// task is the exiting task ({ repo, number, task_id }); callers that have
+// already cleared currentTask pass it explicitly.
+function preserveTaskLeftovers(task, reason) {
+  if (!task || !task.repo) return;
+  const dir = taskCheckoutDir(task.repo);
+  if (!dir) return;
+  const label = `${task.repo}#${task.number}`;
+  let status = '';
+  try {
+    status = execFileSync('git', ['-C', dir, 'status', '--porcelain', '--untracked-files=all'], {
+      encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    console.error(`Could not inspect the ${label} checkout at ${dir} after ${reason}: ${e.message} — a later task on ${task.repo} may start from a dirty tree`);
+    return;
+  }
+  const paths = String(status || '').split('\n').filter(Boolean);
+  if (paths.length === 0) return;
+  const message = `hive leftover ${task.task_id || 'unknown-task'} (${label}, ${reason})`;
+  try {
+    execFileSync('git', ['-C', dir, 'stash', 'push', '--include-untracked', '-m', message], {
+      encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    console.log(`Set aside ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason} as git stash "${message}" — recover with 'git -C ${dir} stash list'`);
+  } catch (e) {
+    console.error(`Could not stash the ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason}: ${e.message} — a later task on ${task.repo} will start from a dirty tree`);
+  }
+}
+
 // stopAgentForTaskExit ends the AGENT, not just the bookkeeping, when a task
 // stops being ours (kubestellar/hive#5353 cause B).
 //
@@ -3471,13 +3568,23 @@ function dropTaskCredential() {
 //  3. Relaunch, which sets cliReady=false and re-arms armCLIReadyWait(), so
 //     the next task's prompt is queued until a clean prompt is confirmed.
 //
+// Between 2 and 3 — once the agent is stopped and before anything new can
+// touch the tree — the task's shared checkout is swept for uncommitted
+// leftovers (preserveTaskLeftovers, #7790). That happens on every branch of
+// this function, including skipCLI and headless: the checkout stops being
+// this task's however the agent went away.
+//
 // Re-entrancy: callers that have ALREADY stopped or relaunched the pane pass
-// { skipCLI: true } and get only step 1 — nesting a second quit/relaunch into
-// a relaunch already in flight is how double-launches happen. Headless mode
-// has no pane at all; there the in-flight one-shot child is killed instead,
-// matching what the revoke handler does.
+// { skipCLI: true } and get only step 1 (plus the sweep) — nesting a second
+// quit/relaunch into a relaunch already in flight is how double-launches
+// happen. Headless mode has no pane at all; there the in-flight one-shot child
+// is killed instead, matching what the revoke handler does.
 //
 // opts.reason names the exit in the relaunch log line.
+//
+// opts.task is the exiting task, for a caller that has already cleared
+// currentTask (the revoke handler); everyone else leaves it unset and the
+// sweep reads currentTask, which is still set at that point on those paths.
 //
 // opts.noRelaunch runs steps 1 and 2 but not step 3 — for the signal-shutdown
 // path (kubestellar/hive#5655), where the PROCESS is exiting: relaunching
@@ -3492,20 +3599,27 @@ function stopAgentForTaskExit(opts) {
   const skipCLI = !!(opts && opts.skipCLI);
   const noRelaunch = !!(opts && opts.noRelaunch);
   const reason = (opts && opts.reason) || 'a task exit';
+  const task = (opts && opts.task) || currentTask;
   // Step 1, always — even when the pane is deliberately left alone. A task
   // that is no longer ours must not keep its credential under any branch.
   dropTaskCredential();
-  if (skipCLI) return;
+  if (skipCLI) {
+    // The caller already stopped the agent, so the tree is quiescent.
+    preserveTaskLeftovers(task, reason);
+    return;
+  }
   if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
     if (headlessChild) {
       try { headlessChild.kill('SIGKILL'); } catch (_) {}
       headlessChild = null;
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
     }
+    preserveTaskLeftovers(task, reason);
     return;
   }
   cliReady = false;
   quitLiveCLI();
+  preserveTaskLeftovers(task, reason);
   if (noRelaunch) return;
   try {
     console.log(`Relaunching ${BACKEND} after ${reason}: ${relaunchCLI()}`);
@@ -5656,6 +5770,11 @@ function handleMessage(data, hub) {
       // task's prompt into the fresh CLI — an agent working an issue the hub
       // has taken back, with the relay believing it holds nothing.
       discardPendingTask('the task was revoked');
+      // Held past the clear below so stopAgentForTaskExit() can still name
+      // the checkout it has to sweep (#7790): this is the exit path that
+      // produced the utah leftovers, and it is the one path that clears
+      // currentTask before stopping the agent.
+      const revokedTask = currentTask;
       currentTask = null;
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -5677,7 +5796,7 @@ function handleMessage(data, hub) {
       // Interactive mode sends no `ready` here (#5042): the relaunch's
       // readiness callback advertises once — and only once (#7732) — when the
       // fresh CLI is confirmed at its prompt with the relay still idle.
-      stopAgentForTaskExit({ reason: 'task revoke' });
+      stopAgentForTaskExit({ reason: 'task revoke', task: revokedTask });
       // Stay with the hub that just revoked — it's clearly alive and reachable.
       activeHubIndex = hubs.indexOf(hub);
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) sendTo(hub, { type: 'ready', seq: nextSeq() });
@@ -6033,6 +6152,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     quitLiveCLI,
     stopAgentForTaskExit,
     dropTaskCredential,
+    // Task-exit checkout sweep (hivecommons/hive#7790).
+    taskCheckoutDir,
+    preserveTaskLeftovers,
     CLI_GONE_CONFIRMATIONS,
     PANE_STALL_TIMEOUT_MS,
     // Backdate the stall clock so a test can cross the timeout without

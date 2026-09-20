@@ -34,7 +34,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '' } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -215,6 +215,18 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   const execFileSyncCalls = [];
   const fakeExecFileSync = (bin, args, opts) => {
     execFileSyncCalls.push({ bin, args, opts });
+    // #7790: the task-exit checkout sweep asks git for the tree's status and
+    // stashes what it finds. Recorded into `commands` alongside the tmux
+    // sends, so a test can assert the sweep runs AFTER the agent is stopped.
+    // `gitStatus` is what `git status --porcelain` prints (default: a clean
+    // tree); an Error instance makes every git call throw, standing in for a
+    // missing binary or a held index lock.
+    if (bin === 'git') {
+      if (commands.length < MAX_RECORDED_COMMANDS) commands.push(`git ${args.join(' ')}`);
+      if (gitStatus instanceof Error) throw gitStatus;
+      if (args.includes('status')) return gitStatus;
+      return '';
+    }
     if (bin === 'tmux' && args[0] === 'send-keys' && args.includes('-l')) {
       if (commands.length < MAX_RECORDED_COMMANDS) commands.push(`tmux ${args.join(' ')}`);
       if (failNextLiteralSend) {
@@ -260,6 +272,11 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.GOOSE_MODEL = '';
   process.env.HIVE_AGENT_SESSION = 'contributor';
   process.env.CONTRIBUTOR_MODE = mode;
+  // #7790: the task-exit sweep keys on this at load time. Pin it EMPTY so a
+  // developer running the suite inside a real contributor session (where it
+  // names a workspace full of live checkouts) gets the same hermetic run CI
+  // does; a test that wants a checkout on disk passes one via `env`.
+  process.env.HIVE_WORKSPACE_DIR = '';
   Object.assign(process.env, env);
 
   // Keep the relay's task-file/token writes out of the real prod paths.
@@ -1073,6 +1090,178 @@ test('#7733 omp task exit respawns a still-running TUI before typing the relaunc
     assert.ok(respawnIdx < launchIdx,
       `the pane must be respawned before relaunch is typed; got ${JSON.stringify(after)}`);
   } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7790 — a revoked/aborted task leaves the shared checkout
+// dirty, and every later task on that repo starts from it.
+//
+// The relay works every task on a repo out of ONE persistent checkout under
+// $HIVE_WORKSPACE_DIR/<owner>/<repo>, and the prompt tells each task to reuse
+// it. A task interrupted mid-edit left its uncommitted files on its branch;
+// on projectbluefin/utah one revoked task's three modified files were the
+// starting tree for the next four tasks. On task exit the relay now stashes
+// whatever the tree holds — never resets, never cleans — after the agent is
+// stopped, and only in a directory it can prove is the task's checkout.
+// ---------------------------------------------------------------------------
+
+// A fake checkout on disk: <workspace>/<repo>/.git. Only the marker is needed,
+// because git itself is stubbed; what these tests pin is WHICH directory the
+// relay sweeps, WHEN, and with WHAT command.
+function fakeWorkspaceWithCheckout(repo, { withGitMarker = true } = {}) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const ws = fs.mkdtempSync(path.join(scratchRoot, 'workspace-'));
+  const checkout = path.join(ws, repo);
+  fs.mkdirSync(withGitMarker ? path.join(checkout, '.git') : checkout, { recursive: true });
+  return { ws, checkout };
+}
+
+const DIRTY_TREE = ' M docs/skills/kernel-cache.md\n M scripts/verify-rpm-contract.py\n?? tests/new_test.py\n';
+
+test('#7790 a revoke stashes the uncommitted leftovers in the task checkout, after the agent is stopped', () => {
+  const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: DIRTY_TREE });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7790-revoke');
+    const before = relay.__commands.length;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't-7790-revoke', reason: 'hub restart' }));
+    const after = relay.__commands.slice(before);
+
+    const statusIdx = after.findIndex(c => c === `git -C ${checkout} status --porcelain --untracked-files=all`);
+    assert.ok(statusIdx >= 0, `expected the relay to inspect the task checkout; got ${JSON.stringify(after)}`);
+    const stashIdx = after.findIndex(c => c.startsWith(`git -C ${checkout} stash push --include-untracked -m `));
+    assert.ok(stashIdx >= 0, `expected the dirty tree to be stashed; got ${JSON.stringify(after)}`);
+    // The stash names what it holds, so an operator can find the work again.
+    assert.match(after[stashIdx], /hive leftover t-7790-revoke \(foo\/bar#421, task revoke\)/,
+      `stash message must name the task, the issue and the exit: ${after[stashIdx]}`);
+    // Ordering: the agent must be interrupted BEFORE the tree is touched — a
+    // stash racing a live editor is the one way this could lose work. The
+    // quit is the two Ctrl-Cs quitLiveCLI() sends (#2203); the relaunch's own
+    // wedged-shell recovery sends another one later, which is why this looks
+    // at the second and not the last.
+    const ctrlCs = after.map((c, i) => (/send-keys\s+-t\s+\S+\s+C-c\b/.test(c) ? i : -1)).filter(i => i >= 0);
+    assert.ok(ctrlCs.length >= 2 && ctrlCs[1] < statusIdx,
+      `the sweep must follow the two quit Ctrl-Cs; got ${JSON.stringify(after)}`);
+    // And the relaunch still happens after it: the sweep is inserted into the
+    // exit sequence, not a replacement for any of it.
+    const launchIdx = after.findIndex((c, i) => i > stashIdx && /send-keys\b/.test(c) && /claude/.test(c) && /Enter\b/.test(c) && !/C-c\b/.test(c));
+    assert.ok(launchIdx > stashIdx, `expected the CLI relaunch after the sweep; got ${JSON.stringify(after)}`);
+    // Stash, never destroy.
+    assert.ok(!after.some(c => /^git .*\b(reset|clean|checkout)\b/.test(c)),
+      `the sweep must never run a destructive git command; got ${JSON.stringify(after)}`);
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('#7790 a clean checkout is inspected but not stashed', () => {
+  const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: '' });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7790-clean');
+    const before = relay.__commands.length;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't-7790-clean', reason: 'hub restart' }));
+    const after = relay.__commands.slice(before);
+    assert.ok(after.includes(`git -C ${checkout} status --porcelain --untracked-files=all`),
+      `expected the checkout to be inspected; got ${JSON.stringify(after)}`);
+    assert.ok(!after.some(c => /^git .* stash /.test(c)),
+      `a clean tree must not produce an empty stash attempt; got ${JSON.stringify(after)}`);
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('#7790 the sweep runs on the failure and completion exits too, not only on revoke', () => {
+  // The checkout stops being this task's whatever the verdict. A completed
+  // task's stray file is just as much the next task's problem, and the failure
+  // path is what an aborted CLI goes through.
+  for (const exit of ['fail', 'finish']) {
+    const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
+    const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: DIRTY_TREE });
+    const log = console.log; const err = console.error; console.log = () => {}; console.error = () => {};
+    try {
+      relay.setCliReady(true);
+      assignTask(relay, `t-7790-${exit}`);
+      const before = relay.__commands.length;
+      if (exit === 'fail') {
+        relay.failCurrentTask('the CLI crashed', { kind: 'environment' });
+      } else {
+        relay.finishCurrentTask({ completionSignal: 'verdict', summary: 'done', tmuxLines: '', prURL: 'https://github.com/foo/bar/pull/1', noWork: null });
+      }
+      const after = relay.__commands.slice(before);
+      const stash = after.find(c => c.startsWith(`git -C ${checkout} stash push --include-untracked -m `));
+      assert.ok(stash, `[${exit}] expected the dirty checkout to be stashed on this exit path; got ${JSON.stringify(after)}`);
+      assert.match(stash, new RegExp(`hive leftover t-7790-${exit} \\(foo/bar#421, a task exit\\)`), `[${exit}] ${stash}`);
+    } finally { console.log = log; console.error = err; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+  }
+});
+
+test('#7790 headless mode sweeps the checkout after killing the one-shot child', () => {
+  const { ws, checkout } = fakeWorkspaceWithCheckout('x/y');
+  const relay = loadRelay({ backend: 'agy', mode: 'headless', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: DIRTY_TREE, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const task = { task_id: 't-7790-headless', task_gen: 3, kind: 'issue', repo: 'x/y', number: 9, title: 'revoke' };
+    relay.setCurrentTask(task);
+    relay.runHeadlessTask(task);
+    const child = relay.getHeadlessChild();
+    const before = relay.__commands.length;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: task.task_id, reason: 'operator stop' }));
+    assert.strictEqual(child.killed, true, 'revoke did not kill the child');
+    const after = relay.__commands.slice(before);
+    assert.ok(after.some(c => c.startsWith(`git -C ${checkout} stash push --include-untracked -m `) && /t-7790-headless \(x\/y#9, task revoke\)/.test(c)),
+      `expected the headless checkout to be stashed; got ${JSON.stringify(after)}`);
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('#7790 the sweep never touches a directory it cannot prove is the task checkout', () => {
+  // Three ways the relay could end up pointing git at somebody else's tree,
+  // each of which must produce NO git command at all:
+  //  - no HIVE_WORKSPACE_DIR: TASK_WORKSPACE_DIR falls back to the relay's
+  //    cwd, which in local mode is the operator's own hive checkout;
+  //  - the per-repo directory exists but is not itself a repository, so
+  //    `git -C` would act on whatever repository encloses it;
+  //  - a repo name that is not owner/name shaped.
+  const cases = [
+    { name: 'no workspace dir', ws: '', repo: 'foo/bar' },
+    { name: 'directory without .git', ws: fakeWorkspaceWithCheckout('foo/bar', { withGitMarker: false }).ws, repo: 'foo/bar' },
+    { name: 'malformed repo', ws: fakeWorkspaceWithCheckout('foo/bar').ws, repo: '../../etc' },
+  ];
+  for (const tc of cases) {
+    const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: tc.ws }, gitStatus: DIRTY_TREE });
+    const log = console.log; const err = console.error; console.log = () => {}; console.error = () => {};
+    try {
+      assert.strictEqual(relay.taskCheckoutDir(tc.repo), '', `[${tc.name}] must not resolve a checkout`);
+      const before = relay.__commands.length;
+      relay.stopAgentForTaskExit({ reason: 'test task exit', task: { task_id: 't', repo: tc.repo, number: 1 } });
+      const after = relay.__commands.slice(before);
+      assert.ok(!after.some(c => c.startsWith('git ')), `[${tc.name}] no git command may run; got ${JSON.stringify(after)}`);
+    } finally {
+      console.log = log; console.error = err; teardown(relay);
+      if (tc.ws) fs.rmSync(tc.ws, { recursive: true, force: true });
+    }
+  }
+});
+
+test('#7790 a git failure during the sweep is logged and the exit sequence continues', () => {
+  // A `git` the agent left mid-flight can still hold the index lock when the
+  // sweep runs; the relay must neither throw out of the exit path nor skip the
+  // relaunch that follows it.
+  const { ws } = fakeWorkspaceWithCheckout('foo/bar');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: new Error('fatal: Unable to create index.lock: File exists') });
+  const log = console.log; const err = console.error; console.log = () => {};
+  const errors = []; console.error = (...a) => errors.push(a.join(' '));
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7790-locked');
+    const before = relay.__commands.length;
+    assert.doesNotThrow(() => relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't-7790-locked', reason: 'hub restart' })));
+    const after = relay.__commands.slice(before);
+    assert.ok(errors.some(e => /index\.lock/.test(e) && /dirty tree/.test(e)), `expected the failure to be logged with its consequence; got ${JSON.stringify(errors)}`);
+    assert.ok(after.some(c => /send-keys\b/.test(c) && /claude/.test(c) && /Enter\b/.test(c) && !/C-c\b/.test(c)),
+      `the relaunch must still be typed after a failed sweep; got ${JSON.stringify(after)}`);
+  } finally { console.log = log; console.error = err; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
 });
 
 test('a pane that reaches real IDLE_COMPLETE between stall ticks is reported as a normal completion, PR and all', () => {

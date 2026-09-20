@@ -312,6 +312,15 @@ Before this, the prompt mentioned a branch exactly once ("push your branch to yo
 
 Watching the pane, the base is the thing worth a glance: it is stated in the prompt, and the agent is asked to confirm it on the opened PR before reporting done.
 
+### An interrupted task's uncommitted edits are stashed, not inherited
+
+The same persistent checkout has a second thing to inherit besides its branch: its **working tree**. A task that is revoked or aborted mid-edit — the hub restarted, an operator yanked it, the CLI crashed — is stopped by the relay with an interrupt, and until [#7790](https://github.com/hivecommons/hive/issues/7790) nothing then touched the tree. Its half-done edits stayed on its branch, and because every later task on that repo is told to reuse the checkout, each of them started from another task's uncommitted changes. Observed on projectbluefin/utah: one task revoked in a hub-restart cascade left three modified files behind, and the next four tasks on that repo all began from them. `git checkout -b` carries a dirty tree onto the new branch silently, so a literal `git add -A` would have shipped someone else's half-finished change under this contributor's name; the PRs that followed leaked nothing only because that agent happened to choose `git worktree add` each time.
+
+Two things now hold, from either side of the pane:
+
+- **The relay sweeps the checkout on every task exit** — completion, failure, revoke, shutdown, headless or interactive — *after* the agent is stopped. If `$HIVE_WORKSPACE_DIR/<owner>/<repo>` is a repository with uncommitted changes (untracked files included), they are set aside with `git stash push --include-untracked -m "hive leftover <task_id> (<repo>#<n>, <exit>)"`, never reset or cleaned: the leftovers are somebody's work, and `git -C <checkout> stash list` shows which task they came from. The sweep is best-effort and never fatal — a git still holding the index lock makes it log and move on — and it runs only against a directory the relay can prove is the task's checkout: `HIVE_WORKSPACE_DIR` must be set explicitly (the relay's own cwd in local mode is *your* hive checkout, and is never swept), and the per-repo directory must itself be a repository.
+- **The assignment prompt tells the agent to look before branching**: run `git status`, stash anything it did not write with `git stash push -u -m "hive leftover"` rather than discard or commit it, confirm the tree is clean, and prefer `git worktree add` for its task branch so the shared checkout is never its working tree. This half covers a contributor whose relay never sees the checkout.
+
 ## Multi-hub subscription
 
 A single relay can subscribe to multiple hives. Register with each hive first, then provide matching comma-separated lists:
