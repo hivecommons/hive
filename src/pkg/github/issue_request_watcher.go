@@ -284,6 +284,8 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			shapeErr = "issue request title contains unsubstituted template placeholder " + strconv.Quote(placeholder)
 		} else if placeholder, ok := issueUnsubstitutedTemplatePlaceholder(req.Body); ok {
 			shapeErr = "issue request body contains unsubstituted template placeholder " + strconv.Quote(placeholder)
+		} else if list, ok := issueshape.UnchosenOptionList(req.Body); ok {
+			shapeErr = "issue request body leaves the template's option list unchosen " + strconv.Quote(list) + "; pick one value"
 		} else if issueBodyHasMisEscapedNewlines(req.Body) {
 			shapeErr = "issue request body contains literal newline escape sequences; use real newlines or --body-file"
 		}

@@ -272,6 +272,19 @@ func TestIssueRequestWatcher_RejectsMalformedIssueContent(t *testing.T) {
 			errorSubstr: "unsubstituted template placeholder",
 		},
 		{
+			name:        "unchosen priority option list (#7898)",
+			title:       "[quality] proxy attribution branches untested",
+			body:        "## Finding\n\nhandleTransparentTLS's UID attribution has no tests.\n\n## Recommendation\n\nAdd them.\n\n## Priority\n- Impact: high/medium/low\n- Effort: high/medium/low",
+			wantBad:     true,
+			errorSubstr: "option list unchosen",
+		},
+		{
+			name:    "a chosen priority is legitimate",
+			title:   "[quality] proxy attribution branches untested",
+			body:    "## Finding\n\nhandleTransparentTLS's UID attribution has no tests.\n\n## Recommendation\n\nAdd them.\n\n## Priority\n- Impact: high\n- Effort: low",
+			wantBad: false,
+		},
+		{
 			name:        "mis-escaped markdown newlines",
 			title:       "[scanner] concrete defect",
 			body:        `## Finding\n\nDetails of the defect.\n\n## Recommendation\n\nFix it.`,

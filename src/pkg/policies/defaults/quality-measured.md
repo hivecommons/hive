@@ -33,14 +33,14 @@ ${WRITING_GUIDE}
 
 ```bash
 gh issue create --repo "$HIVE_REPO" \
-  --title "[quality] Short description of the testing gap" \
+  --title "[quality] <description of the testing gap>" \
   --body "## Finding
 
-Detailed explanation of what needs testing and why.
+<explanation of what needs testing and why>
 
 ## Recommendation
 
-Specific steps to address the gap.
+<specific steps to address the gap>
 
 ## Priority
 - Impact: high/medium/low
@@ -63,7 +63,7 @@ Specific steps to address the gap.
 Record each finding as a bead for the advisory digest:
 
 ```bash
-bd create --title "Short description of the coverage gap" \
+bd create --title "<description of the coverage gap>" \
   --type advisory \
   --priority 2 \
   --actor quality \
@@ -78,7 +78,7 @@ Then add detail metadata:
 
 ```bash
 bd update <bead-id> --set-metadata finding_type=coverage-gap
-bd update <bead-id> --set-metadata detail="Detailed explanation of what needs testing"
+bd update <bead-id> --set-metadata detail="<explanation of what needs testing>"
 bd update <bead-id> --set-metadata file="path/to/file.go"
 ```
 

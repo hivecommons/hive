@@ -13,7 +13,10 @@ import (
 )
 
 var (
-	angleBracketTokenRE            = regexp.MustCompile(`<([^>\n]+)>`)
+	angleBracketTokenRE = regexp.MustCompile(`<([^>\n]+)>`)
+	// unchosenOptionListRE matches a policy template's pick-one list left
+	// verbatim ("Impact: high/medium/low", "**Severity**: critical/high/medium/low").
+	unchosenOptionListRE           = regexp.MustCompile(`(?i)\b(?:critical/)?high/medium/low\b`)
 	templatePlaceholderContentRE   = regexp.MustCompile(`^(?:[a-z][a-z0-9]*(?:[ -][a-z0-9]+)+|analysis|fix)$`)
 	markdownHTMLTagsWithAttributes = map[string]bool{
 		"a": true, "br": true, "code": true, "dd": true, "del": true, "details": true,
@@ -78,4 +81,18 @@ func BodyHasMisEscapedNewlines(body string) bool {
 	return !strings.Contains(body, "\n") &&
 		strings.Count(body, `\n`) >= 2 &&
 		(strings.Contains(body, `\n\n`) || strings.Contains(body, `\n## `))
+}
+
+// UnchosenOptionList reports whether text still carries a policy template's
+// pick-one option list verbatim — "Impact: high/medium/low", "**Severity**:
+// critical/high/medium/low" — which means the author never chose one. The
+// hivecommons/hive#7898 issue was the quality template filed untouched:
+// prose placeholders ("Detailed explanation of what needs testing and why.")
+// carry no angle brackets, so UnsubstitutedTemplatePlaceholder let it
+// through; the unpicked priority list is the one template fragment that
+// survives any rewording of the prose. The returned string is the matched
+// list for use in an error message.
+func UnchosenOptionList(text string) (string, bool) {
+	m := unchosenOptionListRE.FindString(text)
+	return m, m != ""
 }

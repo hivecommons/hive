@@ -78,3 +78,27 @@ func TestComparisonProseIsNotAPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+func TestUnchosenOptionList(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"issue #7898 body verbatim", "## Priority\n- Impact: high/medium/low\n- Effort: high/medium/low\n", true},
+		{"sec-check severity list", "**Severity**: critical/high/medium/low", true},
+		{"case-insensitive", "Impact: HIGH/Medium/low", true},
+		{"a chosen value", "- Impact: high\n- Effort: low", false},
+		{"two of three is not the list", "risk is high/medium at most", false},
+		{"unrelated slashes", "see pkg/proxy/github_proxy.go and v4/v5 branches", false},
+		{"no list", "a perfectly ordinary sentence", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, got := UnchosenOptionList(c.text)
+			if got != c.want {
+				t.Fatalf("UnchosenOptionList(%q)=%v want %v", c.text, got, c.want)
+			}
+		})
+	}
+}
