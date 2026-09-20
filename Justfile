@@ -305,8 +305,7 @@ test-issue-classifier:
 # flag parsing, empty-body refusal, body sourcing, --issues normalization,
 # request JSON structure and the python3-less fallback escaper — hermetic via
 # HIVE_OPEN_PR_REQ_DIR and a throwaway git repo.
-# Wire this into .github/workflows/v2-ci.yml next to test_hive_open_issue.sh
-# so it runs in CI too (tracked in the issue that introduced the suite).
+# Wired into .github/workflows/v2-ci.yml next to test_hive_open_issue.sh.
 test-hive-open-pr:
     bash bin/test_hive_open_pr.sh
 

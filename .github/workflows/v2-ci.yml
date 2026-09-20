@@ -650,6 +650,10 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_open_issue.sh
 
+      - name: hive-open-pr helper tests
+        working-directory: .
+        run: bash bin/test_hive_open_pr.sh
+
       - name: hive-review helper tests
         working-directory: .
         run: bash bin/test_hive_review.sh
