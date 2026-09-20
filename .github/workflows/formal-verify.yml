@@ -1,8 +1,9 @@
 name: Formal Verify
 
-# Exhaustively re-verifies the Spin model of the escalation + reviewer-lane
-# lifecycle (src/formal/escalation/) whenever the modeled Go code or the model
-# itself changes. Reporting-only: this check is intentionally NOT required.
+# Exhaustively re-verifies the Spin models of the escalation + reviewer-lane
+# lifecycle (src/formal/escalation/) and contributor lease/reconnect protocol
+# (src/formal/contribute-lease/) whenever the modeled Go code or the models
+# themselves change. Reporting-only: this check is intentionally NOT required.
 # The run fails when a property that must hold is violated, or when a
 # documented counterexample (known design gap) can no longer be reproduced —
 # both mean the model and the code have drifted apart and a human should look.
@@ -11,6 +12,10 @@ on:
     paths:
       - 'src/pkg/escalation/**'
       - 'src/pkg/scheduler/reviewer_lane*'
+      - 'src/pkg/dashboard/contribute_ws.go'
+      - 'src/pkg/dashboard/contribute_leases.go'
+      - 'src/pkg/dashboard/contribute_select.go'
+      - 'bin/contributor-relay.js'
       - 'src/formal/**'
       - '.github/workflows/formal-verify.yml'
   workflow_dispatch:
@@ -33,3 +38,6 @@ jobs:
 
       - name: Verify escalation lifecycle model
         run: bash src/formal/escalation/run.sh
+
+      - name: Verify contributor lease/reconnect model
+        run: bash src/formal/contribute-lease/run.sh

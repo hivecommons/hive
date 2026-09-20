@@ -100,3 +100,14 @@ or narrowing the path gate merely to make CI green is not maintenance.
 Existing red quality PRs still take precedence under FIX-BEFORE-NEW. Enabling
 formal verification does not authorize the quality agent to abandon repair work
 and start a fresh model.
+
+## Current repository models
+
+- `src/formal/escalation/` models the escalation ledger and reviewer lane.
+- `src/formal/contribute-lease/` models the contributor lease/reconnect
+  protocol: task assignment, websocket drop, release cooldown, reconnect resume,
+  lease expiry, and reassignment for one issue and two contributors. It pins two
+  lease invariants: no issue is held by two contributors with valid leases at
+  once, and an abnormal disconnect that reconnects within the relay's first
+  backoff window is not booked as `abandoned_disconnect`. Its expected-fail rows
+  preserve the pre-fix #7773 and #7838 counterexamples.

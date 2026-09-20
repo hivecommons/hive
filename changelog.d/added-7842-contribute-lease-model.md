@@ -1,0 +1,1 @@
+- Add a Spin/Promela model for the contributor lease/reconnect protocol.
