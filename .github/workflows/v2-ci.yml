@@ -860,6 +860,19 @@ jobs:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: bash src/deploy/test_contributor_container_resources.sh
 
+      # #7836: container mode staged the contributor's ENTIRE ~/.claude — every
+      # transcript on the machine, the prompt history, paste cache, memory and
+      # CLAUDE.md — into the sandbox where third-party test suites run for
+      # real. Run the real recipe against a populated fake ~/.claude and a stub
+      # runtime, and assert what the container actually receives: the
+      # credential and settings files, nothing else. A source grep would pass
+      # on an allowlist that a later `cp -a` quietly undid.
+      - name: Contributor containers stage only the Claude credential and settings (#7836)
+        working-directory: .
+        env:
+          HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+        run: bash src/deploy/test_contributor_claude_staging.sh
+
       # #5388 item 3: the guard on the skip discipline itself.
       #
       # test_lib.sh only helps if the suites that source it ACTUALLY go fatal

@@ -80,6 +80,17 @@ The compose file mounts local contributor state read-only into the container:
 - `${HOME}/.config/hive` for Hive registration/config.
 - `${HOME}/.claude` and `${HOME}/.config/claude-code` for Claude-family CLI auth.
 
+`just contribute-hive claude` (the recommended path) does not mount `${HOME}/.claude`
+at all. It copies only `${HOME}/.claude/.credentials.json` and
+`${HOME}/.claude/settings.json` into a per-run staging directory, mounts that at
+`/home/dev/.claude`, and deletes it when the recipe exits. The rest of
+`${HOME}/.claude` — every Claude Code transcript on the machine, the prompt
+history, paste cache, per-project memory and your private `CLAUDE.md` — never
+leaves the host, because the agent in that container runs third-party
+repositories' test suites for real
+([#7836](https://github.com/hivecommons/hive/issues/7836)). The recipe prints a
+`Staged:` line naming exactly what it copied.
+
 Important environment variables:
 
 | Variable | Default | Meaning |

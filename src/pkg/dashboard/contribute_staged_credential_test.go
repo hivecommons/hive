@@ -7,8 +7,9 @@ import (
 
 // contribute_staged_credential_test.go pins the fix for kubestellar/hive#5088.
 //
-// Container mode gives the CLI a COPY of ~/.claude in an ephemeral staging
-// directory that the cleanup trap deletes on exit. That containment is
+// Container mode gives the CLI a COPY of the credential from ~/.claude (an
+// allowlist since #7836, see contribute_claude_staging_test.go) in an ephemeral
+// staging directory that the cleanup trap deletes on exit. That containment is
 // deliberate — it is what stops a permissions-bypassed agent writing to the
 // contributor's real credential (H6 / CWE-668) — and it stays.
 //
@@ -27,7 +28,7 @@ import (
 func contributeHiveClaudeStagingBlock(t *testing.T) string {
 	t.Helper()
 	src := justfileSource(t)
-	start := strings.Index(src, `stage_copy "${HOME}/.claude" ".claude"`)
+	start := strings.Index(src, `stage_claude_home "${HOME}/.claude" "${CLI_STAGE}/.claude"`)
 	if start < 0 {
 		t.Fatal("the claude CLI-staging case was not found in the Justfile")
 	}

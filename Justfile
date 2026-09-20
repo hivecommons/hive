@@ -1398,6 +1398,40 @@ contribute-hive backend="" mode="docker": check-version
           cp -a "$src" "$dst" 2>/dev/null || true
         fi
       }
+      # stage_claude_home <host-~/.claude> <stage-dir> : stage ONLY the files
+      # Claude Code needs to authenticate and run inside the container (#7836).
+      #
+      # ~/.claude is not just credentials. It holds every Claude Code transcript
+      # the contributor has ever had on this machine (projects/*/*.jsonl), the
+      # full prompt history (history.jsonl), the paste cache, file history,
+      # plans, per-project memory and the contributor's private CLAUDE.md —
+      # 137 MB on the reporting host, for a need of about 1 KB. Staging the
+      # directory with stage_copy handed all of it to an agent whose job is to
+      # run third-party repositories' test suites for real (#4918): any test
+      # fixture could `cat ~/.claude/history.jsonl`. So this copies an
+      # allowlist, file by file, and never a tree:
+      #   .credentials.json — the OAuth token; the one file the container must
+      #                       have, and exactly what the K8s path materializes
+      #                       for itself (contributor-agent.sh, #5103)
+      #   settings.json     — the contributor's own Claude Code configuration
+      #                       (proxy env, model, permissions); no history in it
+      # Claude Code recreates projects/, history.jsonl and the rest on first
+      # run. A missing source or file is fine: the container starts from an
+      # empty, writable ~/.claude and the #5088 credential gate says so. The
+      # staged list is printed so the exposure is visible rather than silent.
+      CLAUDE_STAGE_ALLOWLIST=".credentials.json settings.json"
+      stage_claude_home() {
+        local src="$1" dst="$2" f staged=""
+        mkdir -p "$dst"
+        for f in ${CLAUDE_STAGE_ALLOWLIST}; do
+          # -f, not -e: a directory named like an allowed file is not the file.
+          # cp -p keeps .credentials.json at the 0600 Claude Code expects.
+          if [ -f "${src}/${f}" ] && cp -p "${src}/${f}" "${dst}/${f}" 2>/dev/null; then
+            staged="${staged:+${staged} }${f}"
+          fi
+        done
+        echo "Staged:    ${staged:-nothing} from ${src} (allowlist: ${CLAUDE_STAGE_ALLOWLIST}; transcripts, history and memory stay on the host)"
+      }
       # claude_staged_credential_usable <path> : can the container authenticate
       # with the credential we just staged, without a human completing a login?
       #
@@ -1421,15 +1455,18 @@ contribute-hive backend="" mode="docker": check-version
       CLI_MOUNTS=""
       case "${BACKEND}" in
         claude)
-          stage_copy "${HOME}/.claude" ".claude"
+          # #7836: an allowlist of ~/.claude, never the directory — see
+          # stage_claude_home above for what the directory would have carried.
+          stage_claude_home "${HOME}/.claude" "${CLI_STAGE}/.claude"
           stage_copy "${HOME}/.config/claude-code" "claude-code"
-          mkdir -p "${CLI_STAGE}/.claude" "${CLI_STAGE}/claude-code"
+          mkdir -p "${CLI_STAGE}/claude-code"
           CLI_MOUNTS="-v ${CLI_STAGE}/.claude:/home/dev/.claude${VOLSUF} -v ${CLI_STAGE}/claude-code:/home/dev/.config/claude-code${VOLSUF}"
           # #5088: say so when the staged credential cannot authenticate.
           #
-          # The container gets a COPY of ~/.claude in an ephemeral staging dir
-          # that the cleanup trap deletes on exit (see the H6/CWE-668 note
-          # above). That containment is deliberate and stays. What it also does,
+          # The container gets a COPY of the credential (the allowlisted part
+          # of ~/.claude, #7836) in an ephemeral staging dir that the cleanup
+          # trap deletes on exit (see the H6/CWE-668 note above). That
+          # containment is deliberate and stays. What it also does,
           # silently, is throw away a login performed INSIDE the container — so
           # a contributor whose host credential has expired reaches the CLI's
           # login menu, completes the whole browser flow, works for a session,
@@ -1456,7 +1493,7 @@ contribute-hive backend="" mode="docker": check-version
               echo "      claude   # then /login, and quit once it reports you signed in" >&2
               echo "" >&2
               echo "  Then re-run this command." >&2
-              # The staging dir already holds a copy of ~/.claude, and the
+              # The staging dir already holds a copy of the credential, and the
               # cleanup trap that would remove it is not registered until just
               # before the container starts — exiting here without this rm would
               # leave that credential copy sitting in /tmp indefinitely.
@@ -1467,7 +1504,7 @@ contribute-hive backend="" mode="docker": check-version
             echo ""
             echo "    The CLI will come up at its login menu. You CAN log in there and it"
             echo "    will work — but only for this run: the container writes to a throwaway"
-            echo "    copy of ~/.claude that is deleted when this command exits (#5088), so"
+            echo "    ~/.claude that is deleted when this command exits (#5088), so"
             echo "    the next run starts from the login menu again."
             echo ""
             echo "    To log in once and keep it, quit this and run claude on the host:"
