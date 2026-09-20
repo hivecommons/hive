@@ -38,6 +38,7 @@ on:
     branches:
       - v4
     paths:
+      - '*.md'
       - 'src/docs/**'
       - 'src/**'
       - 'src/deploy/data/wiki/**'
@@ -57,6 +58,7 @@ on:
     branches:
       - v4
     paths:
+      - '*.md'
       - 'src/docs/**'
       - 'src/**'
       - 'src/deploy/data/wiki/**'
@@ -118,6 +120,14 @@ jobs:
       # containment rule would reject exactly the links that are correct here.
       - name: Check repo-root docs/ relative links and anchors
         run: python3 src/scripts/check-docs-links.py docs
+
+      # Repo-root markdown (CONTRIBUTING.md, README.md, ROADMAP.md, UPGRADE.md,
+      # ...) was on no step until #7829: CONTRIBUTING.md shipped a link to a
+      # docs/ path that never existed and nothing went red. --no-recurse keeps
+      # this to the root's own files; every subtree that matters has its own
+      # step above, and recursing from "." would also walk vendor/node_modules.
+      - name: Check repo-root *.md relative links and anchors
+        run: python3 src/scripts/check-docs-links.py . --no-recurse
 
       # The wiki vault is checked in --vault-root mode, which models the
       # DEPLOYED layout rather than this checkout. See the header comment and

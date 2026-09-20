@@ -238,6 +238,63 @@ else
 fi
 rm -f /tmp/out.$$
 
+# --- Case 11: emoji-leading heading slugs keep GitHub's leading hyphen -----
+# "### 🔒 Where agents run" renders as #-where-agents-run on GitHub; a link
+# to #where-agents-run scrolls nowhere, and the checker must say so (#7830).
+emoji="$tmp/emoji/docs"
+mkdir -p "$emoji"
+cat > "$emoji/a.md" <<'EOF'
+# A
+
+Good: [B](b.md#-where-agents-run). Bad: [B](b.md#where-agents-run).
+EOF
+cat > "$emoji/b.md" <<'EOF'
+# B
+
+### 🔒 Where agents run
+
+Text.
+EOF
+if (cd "$tmp/emoji" && python3 "$checker" docs) >/tmp/out.$$ 2>&1; then
+  note_fail "hyphen-stripped emoji-heading anchor should be reported as broken"
+else
+  if grep -q "no heading matching '#where-agents-run'" /tmp/out.$$ \
+     && ! grep -q "no heading matching '#-where-agents-run'" /tmp/out.$$; then
+    note_ok "emoji-leading heading slugs match GitHub (leading hyphen kept)"
+  else
+    note_fail "expected only '#where-agents-run' flagged:"; cat /tmp/out.$$
+  fi
+fi
+rm -f /tmp/out.$$
+
+# --- Case 12: --no-recurse checks only the directory's own files -----------
+# Repo-root markdown (CONTRIBUTING.md etc.) is checked with `. --no-recurse`;
+# the flag must find a break at the root and must NOT descend into subtrees
+# that have their own steps (#7829).
+root="$tmp/rootonly"
+mkdir -p "$root/sub"
+cat > "$root/TOP.md" <<'EOF'
+# Top
+
+See [runbook](docs/missing-runbook.md).
+EOF
+cat > "$root/sub/inner.md" <<'EOF'
+# Inner
+
+See [gone](also-missing.md).
+EOF
+if (cd "$root" && python3 "$checker" . --no-recurse) >/tmp/out.$$ 2>&1; then
+  note_fail "--no-recurse should still fail on a root-level broken link"
+else
+  if grep -q "checked 1 files" /tmp/out.$$ && grep -q "missing-runbook.md does not exist" /tmp/out.$$ \
+     && ! grep -q "also-missing.md" /tmp/out.$$; then
+    note_ok "--no-recurse checks root files only and reports their breaks"
+  else
+    note_fail "expected exactly the root break under --no-recurse:"; cat /tmp/out.$$
+  fi
+fi
+rm -f /tmp/out.$$
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-docs-links FAILED"
   exit 1

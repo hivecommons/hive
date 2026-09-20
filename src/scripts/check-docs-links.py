@@ -45,7 +45,7 @@ resolved and anchor-checked exactly as in src/docs/ mode. Outbound references
 from the wiki must use absolute https://github.com/hivecommons/hive/blob/v4/
 URLs, which work identically in the repo view and the deployed vault (#5308).
 
-Usage: src/scripts/check-docs-links.py [docs-dir] [--vault-root]
+Usage: src/scripts/check-docs-links.py [docs-dir] [--vault-root] [--no-recurse]
        (default docs-dir: src/docs)
 Exit 0 with a per-file summary; exit 1 and print every broken link if any.
 """
@@ -93,7 +93,12 @@ def slugify(heading: str) -> str:
     h = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", h)
     h = h.lower()
     h = re.sub(r"[^\w\s-]", "", h)
-    h = h.strip().replace(" ", "-")
+    # GitHub trims only the ends of the *original* heading, not the residue
+    # after punctuation removal: an emoji-leading "### 🔒 Where agents run"
+    # slugs to "#-where-agents-run" (leading hyphen kept) because the space
+    # after the emoji survives. Stripping here would bless a "#where-agents-run"
+    # link that scrolls nowhere on GitHub (#7830).
+    h = h.rstrip().replace(" ", "-")
     return h
 
 
@@ -203,11 +208,12 @@ def check_file(
 def main() -> int:
     args = sys.argv[1:]
     vault_mode = "--vault-root" in args
+    no_recurse = "--no-recurse" in args
     positional = [a for a in args if not a.startswith("--")]
-    unknown = [a for a in args if a.startswith("--") and a != "--vault-root"]
+    unknown = [a for a in args if a.startswith("--") and a not in ("--vault-root", "--no-recurse")]
     if unknown or len(positional) > 1:
         print(
-            "usage: check-docs-links.py [docs-dir] [--vault-root]",
+            "usage: check-docs-links.py [docs-dir] [--vault-root] [--no-recurse]",
             file=sys.stderr,
         )
         return 2
@@ -222,7 +228,11 @@ def main() -> int:
     # /data/wiki/ with nothing above it, so it doubles as the containment
     # boundary that models the deployed layout.
     vault_root = docs_dir.resolve() if vault_mode else None
-    md_files = sorted(docs_dir.rglob("*.md"))
+    # --no-recurse checks only the directory's own *.md files: the repo root's
+    # CONTRIBUTING/README/ROADMAP/UPGRADE are otherwise on no step (#7829), and
+    # recursing from "." would re-walk every tree that already has its own
+    # step plus node_modules/vendor noise.
+    md_files = sorted(docs_dir.glob("*.md") if no_recurse else docs_dir.rglob("*.md"))
     if not md_files:
         print(f"no Markdown files found under {docs_dir}")
         return 0

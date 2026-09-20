@@ -1,0 +1,1 @@
+- Docs link check now covers repo-root markdown (`CONTRIBUTING.md`, `README.md`, ...) via a new `--no-recurse` mode, and heading slugs keep GitHub's leading hyphen for emoji-led headings so `#-where-...` anchors are verified the way GitHub renders them (#7829, #7830).
