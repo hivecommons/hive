@@ -1035,4 +1035,20 @@ if [[ "$(seed_key hasCompletedOnboarding)" != "True" ]]; then
   exit 1
 fi
 
+# 5. hivecommons/hive#7866: the interactive tmux pane must advertise true colour.
+#    The test hook exits before the tmux session is created, so pin the contract
+#    at the source: COLORTERM is exported (operator value honoured) before
+#    `tmux new-session`, and tmux is told to pass RGB through.
+agent_src="$(dirname "$0")/contributor-agent.sh"
+colorterm_line="$(grep -n 'export COLORTERM="\${COLORTERM:-truecolor}"' "$agent_src" | cut -d: -f1 | head -1)"
+new_session_line="$(grep -n 'tmux new-session -d -s "\$TMUX_SESSION"' "$agent_src" | cut -d: -f1 | head -1)"
+if [[ -z "$colorterm_line" || -z "$new_session_line" || "$colorterm_line" -ge "$new_session_line" ]]; then
+  echo "#7866: COLORTERM must be exported (defaulting to truecolor) BEFORE tmux new-session; got colorterm=${colorterm_line:-none} new-session=${new_session_line:-none}" >&2
+  exit 1
+fi
+if ! grep -q "tmux set-option -s -a terminal-overrides ',\*:Tc'" "$agent_src"; then
+  echo "#7866: tmux must be told to pass RGB through (terminal-overrides ,*:Tc)" >&2
+  exit 1
+fi
+
 echo "contributor-agent codex + claude contract tests passed"

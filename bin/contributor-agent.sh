@@ -661,7 +661,16 @@ mkdir -p "$HIVE_WORKSPACE_DIR"
 # entirely rather than leave an idle tmux CLI sitting at a prompt.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  # hivecommons/hive#7866: nothing in the container advertises true colour —
+  # neither the runtime's `run` line nor tmux exports COLORTERM — so every TUI
+  # backend (omp, claude, codex) falls back to a flatter 256-colour palette than
+  # the same CLI shows on the host. Export COLORTERM before the server starts so
+  # the pane inherits it, and tell tmux to pass RGB through. Cosmetic only:
+  # `capture-pane -p` output is colour-free, so the relay's pane reads are
+  # unaffected. Honour an operator's own value if one is already set.
+  export COLORTERM="${COLORTERM:-truecolor}"
   tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
+  tmux set-option -s -a terminal-overrides ',*:Tc' 2>/dev/null || true
 fi
 
 # kubestellar/hive#4046: a long-lived tmux SERVER (this container can run one

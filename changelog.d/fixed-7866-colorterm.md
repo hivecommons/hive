@@ -1,0 +1,1 @@
+- Contributor container: the interactive tmux pane now exports `COLORTERM=truecolor` (operator value honoured) and passes RGB through, so omp/claude/codex render the same palette in the container as on the host (#7866).
