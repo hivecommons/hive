@@ -222,7 +222,7 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 > 💡 **Tip: customize before you escalate.** Before moving from L3 to L4, take 30 minutes to edit each agent's policy template. Add your coding conventions, your preferred test framework, your off-limits directories. Agents follow instructions literally — the more specific you are, the better the output.
 
-### 🔒 Where agents actually run (read this before L3)
+### Where agents actually run (read this before L3)
 
 By L3, agents are writing code and running commands on your behalf — so it's worth knowing exactly where that happens. On the contributor path (`just contribute-hive <backend>`), agents run in a **tmux session on the host** by default: the backend CLI runs as your own user, with permission prompts bypassed, and nothing containing it to the assigned workspace unless the backend provides its own confinement.
 
