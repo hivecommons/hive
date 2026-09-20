@@ -1,0 +1,1 @@
+- Relay: a tmux session that disappears under the relay (an attached client ended the pane's shell while the CLI was relaunching) is now detected on the next readiness poll and recreated with the CLI relaunched into it; if it cannot be recreated the current task is failed as `environment` immediately instead of after the ten-minute readiness timeout. (#7863)

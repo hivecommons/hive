@@ -864,6 +864,23 @@ tmux kill-server    # ends ALL tmux sessions, then start the relay again
 
 Note that `tmux new-session -c <path>` does **not** fix this on an already-poisoned server: the pane is still forked into the deleted directory.
 
+## Troubleshooting: the tmux session itself is gone
+
+Symptom: the relay logs `CLI ready`, accepts a task, then reports the CLI as `starting` on every tick and eventually fails the task as `environment` — ten minutes later (`CLI_READY_TIMEOUT_MS`), having renewed its lease the whole time. `tmux ls` on the host shows no `contributor` session (or `no server running`).
+
+Cause: `tmux capture-pane` failing for *any* reason reads as an empty pane, and an empty pane classifies as `starting`. When the whole session disappears — typically an operator attached to the pane at the moment the CLI exited, so their client ended the shell in the ~1 s window before the relaunch command was typed — the relay had no way to tell "starting" from "gone" ([#7863](https://github.com/hivecommons/hive/issues/7863)).
+
+The relay now checks `tmux has-session` at the top of every readiness poll. If the session is missing it recreates it with the entrypoint's name, geometry and working directory (`tmux new-session -d -s <session> -x 200 -y 50 -c <AGENT_CWD>`), types the CLI launch into it, and logs loudly:
+
+```
+tmux session 'contributor' no longer exists — ... recreating it (#7863).
+Recreated tmux session 'contributor' and relaunched claude; waiting for it to become ready.
+```
+
+If the session cannot be recreated (tmux binary gone, server socket unwritable), a task currently held by the relay is failed **on that poll** with `failure_kind: environment`, so the hub can hand it to another contributor instead of waiting out the lease. The relay keeps polling, so a session an operator creates by hand is picked up on the next tick.
+
+Note that this is different from the poisoned-server case above: a recreated session inherits the server's working directory, so if `pane_current_path` shows `(deleted)` you still need `tmux kill-server`.
+
 ## Protocol compatibility
 
 Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/hivecommons/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:

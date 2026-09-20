@@ -2052,12 +2052,84 @@ function renderBoxedBanner(lines) {
     .concat([`\u255a${rule}\u255d`]);
 }
 
+// ── The tmux session itself can disappear (hivecommons/hive#7863) ────────────
+//
+// capturePaneText() returns '' when `tmux capture-pane` fails for ANY reason,
+// and the readiness classifier reads '' as `starting`. So when the whole tmux
+// server was gone — an operator's attached client ended the pane's shell in
+// the ~1 s window between the CLI exiting and the relaunch being typed — the
+// relay saw a CLI that was forever "starting": it accepted a task, renewed its
+// lease every tick for the full CLI_READY_TIMEOUT_MS (10 min), then failed it
+// as `environment` and sat idle until a human restarted it. Nothing in the
+// relay asked whether the session existed, and nothing could recreate it.
+//
+// tmuxSessionMissing() asks. recreateTmuxSession() rebuilds the session the
+// entrypoint would have — same name, same geometry (bin/contributor-agent.sh),
+// same cwd the launch command cds into — so the normal launch/readiness path
+// can resume. Both are best-effort probes on the readiness poll, so a failure
+// here is reported and retried on the next poll rather than thrown.
+const TMUX_SESSION_GEOMETRY = '-x 200 -y 50';
+
+function tmuxSessionMissing() {
+  try {
+    execSync(`tmux has-session -t ${TMUX_SESSION} 2>/dev/null`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    return false;
+  } catch (_) {
+    return true;
+  }
+}
+
+function recreateTmuxSession() {
+  const cwd = AGENT_CWD || process.cwd();
+  try {
+    execSync(`tmux new-session -d -s ${TMUX_SESSION} ${TMUX_SESSION_GEOMETRY}${cwd ? ` -c ${shellQuote(cwd)}` : ''}`,
+      { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    return true;
+  } catch (e) {
+    console.error(`Could not recreate tmux session '${TMUX_SESSION}': ${e && e.message ? e.message : e}`);
+    return false;
+  }
+}
+
+// typeLaunchCommand types the CLI launch into the pane. Shared by relaunchCLI()
+// and the #7863 session-recreate path, which must NOT go through relaunchCLI():
+// that re-arms armCLIReadyWait(), and the recreate runs from inside the wait
+// that is already armed.
+function typeLaunchCommand() {
+  const launchCmd = buildLaunchCommand();
+  execSync(`tmux send-keys -t ${TMUX_SESSION} ${shellQuote(launchCommandWithCwd(launchCmd))} Enter`, { timeout: 15000 });
+  return launchCmd;
+}
+
 function waitForCLI() {
   let loginMessageShown = false;
   let needsLoginTicks = 0;
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
+      // #7863: a missing SESSION is a hard condition, not `starting`. Handle it
+      // before classifying the (necessarily empty) capture.
+      if (tmuxSessionMissing()) {
+        console.error(`tmux session '${TMUX_SESSION}' no longer exists — the pane's shell was ended (an attached client closing it, or the server dying). The relay owns the session now: recreating it (#7863).`);
+        if (recreateTmuxSession()) {
+          try {
+            typeLaunchCommand();
+            console.error(`Recreated tmux session '${TMUX_SESSION}' and relaunched ${BACKEND}; waiting for it to become ready.`);
+          } catch (e) {
+            console.error(`Recreated tmux session '${TMUX_SESSION}' but could not type the ${BACKEND} launch: ${e && e.message ? e.message : e}`);
+          }
+        } else if (currentTask) {
+          // The task cannot be worked on this host right now; hand it back at
+          // once instead of holding its lease for CLI_READY_TIMEOUT_MS. The
+          // poll keeps going so a session an operator recreates by hand — or
+          // that the next poll manages to create — is picked up.
+          discardPendingTask('the tmux session is gone and could not be recreated');
+          failCurrentTask(`tmux session '${TMUX_SESSION}' is gone and could not be recreated`,
+            { skipReady: true, skipCLI: true, kind: 'environment' });
+        }
+        setTimeout(check, CLI_READY_POLL_MS);
+        return;
+      }
       const state = getCLIState();
       if (state === 'ready') {
         if (loginMessageShown) {
@@ -3213,11 +3285,10 @@ function launchCommandWithCwd(launchCmd) {
 }
 
 function relaunchCLI() {
-  const launchCmd = buildLaunchCommand();
   // The pane may be wedged in bash PS2 continuation; clear it or the relaunch
   // command is swallowed as more continuation text and never runs.
   recoverWedgedShell();
-  execSync(`tmux send-keys -t ${TMUX_SESSION} ${shellQuote(launchCommandWithCwd(launchCmd))} Enter`, { timeout: 15000 });
+  const launchCmd = typeLaunchCommand();
   // The CLI is NOT up yet. cliReady must stay false until the readiness
   // classifier positively confirms it, or a task prompt sent in the meantime
   // is typed as literal keystrokes into a bare shell (issue #2203, bug 2).
@@ -5581,6 +5652,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     tmuxSendKeys,
     flushPendingTask,
     relaunchCLI,
+    armCLIReadyWait,
+    tmuxSessionMissing,
+    recreateTmuxSession,
     failCurrentTask,
     finishCurrentTask,
     startProgressReporting,

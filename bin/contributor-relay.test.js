@@ -34,7 +34,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -50,8 +50,26 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // budget's behaviour on a throwing send is pinned rather than assumed.
   let failNextLiteralSend = false;
 
+  // #7863: models the tmux SERVER being gone. A boolean is flipped back to
+  // false by a successful `new-session`; a function is consulted fresh each
+  // time so a test can drive the transition itself.
+  let sessionGone = typeof sessionMissing === 'function' ? false : !!sessionMissing;
+  const tmuxSessionGone = () => (typeof sessionMissing === 'function' ? sessionMissing() : sessionGone);
+
   const fakeExecSync = (cmd) => {
     if (commands.length < MAX_RECORDED_COMMANDS) commands.push(cmd);
+    if (/\btmux has-session\b/.test(cmd)) {
+      if (tmuxSessionGone()) throw new Error('no server running on /tmp/tmux-1000/default');
+      return '';
+    }
+    if (/\btmux new-session\b/.test(cmd)) {
+      if (newSessionFails) throw new Error('tmux: cannot create session');
+      sessionGone = false;
+      return '';
+    }
+    if (tmuxSessionGone() && /\btmux (capture-pane|send-keys|display-message)\b/.test(cmd)) {
+      throw new Error('no server running on /tmp/tmux-1000/default');
+    }
     // Recorded BEFORE throwing: a test needs to see that the send was
     // ATTEMPTED, which is the difference between "spent the budget" and
     // "retried every tick".
@@ -10176,4 +10194,89 @@ test('#7841 the verdict watch waits out the task grace period without spending t
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
       'a verdict first seen during the grace period must still take the fast path once the grace period ends');
   } finally { console.log = log; teardown(relay); }
+});
+
+// ── hivecommons/hive#7863: the tmux session itself disappears ────────────────
+//
+// capturePaneText() returns '' when tmux fails, and '' classifies as
+// `starting`, so a relay whose whole tmux server was gone spent the full
+// CLI_READY_TIMEOUT_MS (10 min) renewing the lease of a task it could never
+// run. These pin the two new behaviours: the session is recreated and the CLI
+// relaunched within a single readiness poll; and when it cannot be recreated
+// the current task is failed as `environment` on that same poll, not ten
+// minutes later.
+
+test('#7863 a vanished tmux session is recreated and the CLI relaunched within one readiness poll', () => {
+  const { relay } = captureStartupWithImmediateTimers({ sessionMissing: true, cliStates: ['starting'] }, 1);
+  try {
+    const cmds = relay.__commands;
+    const hasIdx = cmds.findIndex(c => /tmux has-session/.test(c));
+    const newIdx = cmds.findIndex(c => /tmux new-session -d -s /.test(c));
+    const launchIdx = cmds.findIndex((c, i) => i > newIdx && /tmux send-keys/.test(c) && /claude|bob|pi|codex|copilot|gemini|opencode/.test(c));
+    assert.ok(hasIdx >= 0, 'waitForCLI never asked tmux whether the session exists');
+    assert.ok(newIdx > hasIdx, `no new-session after has-session failed: ${JSON.stringify(cmds.slice(0, 12))}`);
+    assert.ok(/-x 200 -y 50/.test(cmds[newIdx]), `recreated session lacks the entrypoint geometry: ${cmds[newIdx]}`);
+    assert.ok(launchIdx > newIdx, `CLI launch was not typed into the recreated session: ${JSON.stringify(cmds.slice(newIdx, newIdx + 6))}`);
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'recreating the session must not fail a task');
+  } finally {
+    teardown(relay);
+  }
+});
+
+test('#7863 tmuxSessionMissing/recreateTmuxSession follow the fake tmux server', () => {
+  // Function form: the load-time readiness poll must not be allowed to
+  // repair the session before the assertions run.
+  let gone = false;
+  const relay = loadRelay({ sessionMissing: () => gone });
+  try {
+    assert.strictEqual(relay.tmuxSessionMissing(), false);
+    gone = true;
+    assert.strictEqual(relay.tmuxSessionMissing(), true);
+    assert.strictEqual(relay.recreateTmuxSession(), true, 'new-session should succeed against the fake tmux');
+    assert.ok(relay.__commands.some(c => /tmux new-session -d -s contributor -x 200 -y 50 -c /.test(c)),
+      `new-session lacks name/geometry/cwd: ${relay.__commands.filter(c => /new-session/.test(c))}`);
+    gone = false;
+    assert.strictEqual(relay.tmuxSessionMissing(), false);
+  } finally {
+    teardown(relay);
+  }
+});
+
+test('#7863 a session that cannot be recreated fails the current task as environment immediately', () => {
+  const relay = loadRelay({ sessionMissing: true, newSessionFails: true, cliStates: ['starting'] });
+  try {
+    // The load-time poll ran with no task assigned: it must not have failed
+    // anything, and it must have tried (and failed) to rebuild the session.
+    assert.ok(relay.__commands.some(c => /tmux new-session/.test(c)), 'relay never tried to recreate the session');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+
+    assignTask(relay, 't-7863');
+    // Drive exactly one more readiness poll, synchronously.
+    const realSetTimeout = global.setTimeout;
+    let polls = 0;
+    global.setTimeout = (fn) => { if (polls++ === 0) fn(); return { unref() {} }; };
+    try {
+      relay.armCLIReadyWait();
+    } finally {
+      global.setTimeout = realSetTimeout;
+    }
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, got ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].task_id, 't-7863');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.match(failed[0].reason || failed[0].error || JSON.stringify(failed[0]), /tmux session .* could not be recreated/);
+    assert.strictEqual(relay.getCurrentTask && relay.getCurrentTask(), null, 'task must be released, not held for CLI_READY_TIMEOUT_MS');
+  } finally {
+    teardown(relay);
+  }
+});
+
+test('#7863 default harness (session present) never recreates the tmux session', () => {
+  const relay = loadRelay({ cliStates: ['ready'] });
+  try {
+    assert.ok(!relay.__commands.some(c => /tmux new-session/.test(c)), 'new-session issued although the session exists');
+  } finally {
+    teardown(relay);
+  }
 });
