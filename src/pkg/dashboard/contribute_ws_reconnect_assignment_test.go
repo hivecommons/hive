@@ -3,6 +3,9 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -352,6 +355,7 @@ func TestReconnect5322_ClearReleaseCooldownWillNotLaunderARealFailure(t *testing
 // must release exactly as before: the same cooldown, the same activity rows, the
 // same accounting. This test fails if the fix over-reaches into a real departure.
 func TestReconnect5322_GenuineDepartureStillReleases(t *testing.T) {
+	shortDisconnectGrace(t, 200*time.Millisecond)
 	s, ts := setupWSTest(t)
 	defer ts.Close()
 	s.deps = &Dependencies{GHAppAuth: newSucceedingAppAuth(t, "ghs_5322_gone")}
@@ -371,14 +375,180 @@ func TestReconnect5322_GenuineDepartureStillReleases(t *testing.T) {
 	if !s.contributeHub.isTaskInFailureCooldown(assign.Repo, assign.Number) {
 		t.Fatalf("#5322: a genuine departure no longer books the #2356 release cooldown on %s#%d — the duplicate-assign guard regressed", assign.Repo, assign.Number)
 	}
-	var sawRelease bool
-	for _, e := range s.contributeHub.RecentActivity() {
-		if e.Username == "leaver" && e.Action == "released: connection lost" {
-			sawRelease = true
+	// #7838: the visible booking waits out disconnectAbandonGrace so a blip
+	// can withdraw it. A genuine departure still gets its row — after the grace.
+	waitFor(t, func() bool { return sawReleasedRow(s.contributeHub, "leaver") },
+		"#5322: a genuine departure no longer records the #5097 \"released: connection lost\" activity row (even after the #7838 grace)")
+}
+
+func sawReleasedRow(h *ContributeWSHub, user string) bool {
+	for _, e := range h.RecentActivity() {
+		if e.Username == user && e.Action == "released: connection lost" {
+			return true
 		}
 	}
-	if !sawRelease {
-		t.Fatalf("#5322: a genuine departure no longer records the #5097 \"released: connection lost\" activity row")
+	return false
+}
+
+// shortDisconnectGrace shrinks the #7838 grace for a test and redirects the
+// run log to a temp file so abandonment rows can be counted.
+func shortDisconnectGrace(t *testing.T, grace time.Duration) string {
+	t.Helper()
+	origGrace := disconnectAbandonGrace
+	disconnectAbandonGrace = grace
+	path := filepath.Join(t.TempDir(), "task_runs.jsonl")
+	origPath := taskRunLogPath
+	taskRunLogPath = path
+	t.Cleanup(func() {
+		disconnectAbandonGrace = origGrace
+		taskRunLogPath = origPath
+	})
+	return path
+}
+
+func abandonedRowsFor(t *testing.T, path, taskID string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read run log: %v", err)
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec TaskRunRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("bad run row %q: %v", line, err)
+		}
+		if rec.TaskID == taskID && rec.Outcome == outcomeAbandoned {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReconnect7838_BlipInsideGraceWritesNoAbandonment is the #7838 regression:
+// the socket dies WITHOUT a close frame and the hub processes the death before
+// the relay has even started redialing (BASE_RECONNECT_DELAY_MS), so the #5322
+// re-adoption check finds nothing. The relay then reconnects and resumes the
+// same task inside the grace window. The #2356 hedge is booked and withdrawn as
+// before; what must NOT happen is an `abandoned_disconnect` run row or a
+// "released: connection lost" activity row for a task that never stopped.
+func TestReconnect7838_BlipInsideGraceWritesNoAbandonment(t *testing.T) {
+	runLog := shortDisconnectGrace(t, 400*time.Millisecond)
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+	s.deps = &Dependencies{GHAppAuth: newSucceedingAppAuth(t, "ghs_7838_blip")}
+	s.contributeHub.server = s
+	setStatusIssues(s, intgIssue(1042, "docs: something", "someone", nil))
+
+	conn, reg, assign := assignOverSocket(t, s, ts, "blipper", 1042)
+	cid := reg["contributor_id"]
+	old := waitForLiveConn(t, s.contributeHub, cid, 2*time.Second)
+
+	// 1006: no close frame; the defer runs as soon as the read errors.
+	_ = conn.UnderlyingConn().Close()
+	waitForOldConnGone(t, s.contributeHub, old, 5*time.Second)
+	if !s.contributeHub.isTaskInFailureCooldown(assign.Repo, assign.Number) {
+		t.Fatalf("#7838: the #2356 release hedge must still be booked immediately — it covers the grace window")
+	}
+	if sawReleasedRow(s.contributeHub, "blipper") {
+		t.Fatalf("#7838: \"released: connection lost\" was written before the grace window elapsed")
+	}
+	if n := abandonedRowsFor(t, runLog, assign.TaskID); n != 0 {
+		t.Fatalf("#7838: %d abandoned run row(s) written before the grace window elapsed", n)
+	}
+
+	// The relay redials ~1 s later (here: well inside the 400 ms grace) and
+	// re-asserts the task from the server lease.
+	conn2, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("redial: %v", err)
+	}
+	defer conn2.Close()
+	readMsg(t, conn2)
+	conn2.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	if m := readMsg(t, conn2); m.Type != "auth_ok" {
+		t.Fatalf("redial auth: got %s, want auth_ok", m.Type)
+	}
+	conn2.WriteJSON(WSMessage{Type: "task_accepted", TaskID: assign.TaskID})
+	conn2.WriteJSON(WSMessage{
+		Type: "task_progress", TaskID: assign.TaskID, TaskGen: assign.TaskGen,
+		Kind: assign.Kind, Repo: assign.Repo, Number: assign.Number,
+		Title: assign.Title, Status: "working",
+	})
+	waitForHeldTask(t, s.contributeHub, cid, assign.TaskID, 3*time.Second)
+
+	// Let the grace deadline pass, then check the ledger stayed clean.
+	deadline := time.NewTimer(disconnectAbandonGrace * 3)
+	defer deadline.Stop()
+	<-deadline.C
+	if sawReleasedRow(s.contributeHub, "blipper") {
+		t.Fatalf("#7838: a 1006 blip the relay recovered from inside the grace window still wrote \"released: connection lost\"")
+	}
+	if n := abandonedRowsFor(t, runLog, assign.TaskID); n != 0 {
+		t.Fatalf("#7838: a 1006 blip the relay recovered from inside the grace window still wrote %d abandoned_disconnect row(s)", n)
+	}
+	if s.contributeHub.isTaskInFailureCooldown(assign.Repo, assign.Number) {
+		t.Fatalf("#7838: the resume must still withdraw the #2356 hedge")
+	}
+}
+
+// TestReconnect7838_TaskFinishedInsideGraceWritesNoAbandonment: the task
+// resumes on a new socket and COMPLETES before the grace deadline, so at the
+// deadline no live connection holds it any more. The completion row is the
+// evidence; an abandonment row after it would be the contradictory pair the
+// issue reports.
+func TestReconnect7838_TaskFinishedInsideGraceWritesNoAbandonment(t *testing.T) {
+	runLog := shortDisconnectGrace(t, 600*time.Millisecond)
+	hub, _ := covK2Hub(t)
+	conn := lockScopeConn(hub, "finisher", "c-finisher")
+	task := &WSTaskAssign{TaskID: "ct-7838-finished", Kind: "issue", Repo: "myorg/repo1", Number: 1042}
+	conn.mu.Lock()
+	conn.currentTask = task
+	conn.mu.Unlock()
+
+	sess := &wsSession{h: hub, conn: func() *websocket.Conn { srv, _ := wsPipe(t); return srv }(), contributor: conn}
+	sess.releaseOnDisconnect()
+
+	// The task finishes on its new socket inside the window.
+	hub.appendTaskRun(TaskRunRecord{TaskID: task.TaskID, Repo: task.Repo, Number: task.Number,
+		Username: "finisher", Outcome: outcomeCompleted, CompletionSignal: completionSignalVerdict, Verdict: completionVerdictShipped})
+
+	deadline := time.NewTimer(disconnectAbandonGrace * 3)
+	defer deadline.Stop()
+	<-deadline.C
+	if n := abandonedRowsFor(t, runLog, task.TaskID); n != 0 {
+		t.Fatalf("#7838: a task that completed inside the grace window was still booked abandoned (%d row(s))", n)
+	}
+	if sawReleasedRow(hub, "finisher") {
+		t.Fatalf("#7838: \"released: connection lost\" written for a task that completed inside the grace window")
+	}
+}
+
+// TestReconnect7838_ZeroGraceBooksImmediately pins the escape hatch: with the
+// grace disabled the pre-#7838 synchronous booking is byte-for-byte restored.
+func TestReconnect7838_ZeroGraceBooksImmediately(t *testing.T) {
+	runLog := shortDisconnectGrace(t, 0)
+	hub, _ := covK2Hub(t)
+	conn := lockScopeConn(hub, "gone", "c-gone")
+	task := &WSTaskAssign{TaskID: "ct-7838-zero", Kind: "issue", Repo: "myorg/repo1", Number: 7}
+	conn.mu.Lock()
+	conn.currentTask = task
+	conn.mu.Unlock()
+
+	sess := &wsSession{h: hub, conn: func() *websocket.Conn { srv, _ := wsPipe(t); return srv }(), contributor: conn}
+	sess.releaseOnDisconnect()
+
+	if !sawReleasedRow(hub, "gone") {
+		t.Fatalf("zero grace: the activity row must be written synchronously")
+	}
+	if n := abandonedRowsFor(t, runLog, task.TaskID); n != 1 {
+		t.Fatalf("zero grace: want exactly one abandoned row, got %d", n)
 	}
 }
 

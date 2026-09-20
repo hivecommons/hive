@@ -260,6 +260,7 @@ section requires for lookups.
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `HIVE_HUB_OAUTH_CLIENT_ID` | Required to enable hub OAuth | none | Enables hub `/login` and OAuth callback routes. |
+| `HIVE_CONTRIBUTE_DISCONNECT_GRACE` | No | `5s` | Go duration the contribute hub waits after a contributor socket dies before booking the task as `abandoned_disconnect` (activity row + run-log row). A relay that reconnects and resumes the task — or finishes it — inside the window withdraws the booking; the short #2356 release cooldown is still booked immediately. `0` restores the pre-[#7838](https://github.com/hivecommons/hive/issues/7838) synchronous booking. |
 | `HIVE_HUB_OAUTH_CLIENT_SECRET` | Required when hub OAuth is enabled | none | OAuth client secret used during callback token exchange. |
 | `HIVE_HUB_SLACK_BOT_TOKEN` | No | none | Slack bot token for hub Slack notifications. |
 | `HIVE_NTFY_SERVER` | No | none | ntfy server for hub auth-audit alerts. |

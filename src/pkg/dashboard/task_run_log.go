@@ -232,7 +232,13 @@ func deriveScenario(outcome, completionSignal, failureKind, abandonCause string)
 // contract: every failure path logs and returns — a task must never fail (or
 // block its read loop meaningfully) on telemetry.
 func (h *ContributeWSHub) appendTaskRun(rec TaskRunRecord) {
-	rec.TS = time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
+	rec.TS = now.Format(time.RFC3339)
+	// #7838: a terminal row for a task lets a disconnect booking still inside
+	// its grace window stand down.
+	if rec.Outcome == outcomeCompleted || rec.Outcome == outcomeFailed {
+		h.noteTaskFinished(rec.TaskID, now)
+	}
 	rec.Scenario = deriveScenario(rec.Outcome, rec.CompletionSignal, rec.FailureKind, rec.AbandonCause)
 	if rec.Session == "" {
 		rec.Session = rec.TaskID

@@ -691,6 +691,14 @@ type ContributeWSHub struct {
 	// settleVerifier is the #7871 API-check seam; nil means "use
 	// deps.GHClient.VerifySettlingRef". Tests substitute a fixture.
 	settleVerifier ghpkg.SettleVerifier
+
+	// recentlyFinished records, by task id, when a completed/failed run row was
+	// written (#7838). Consulted by the deferred disconnect booking so a task
+	// that resumed on a new socket AND finished inside the grace window is
+	// not booked abandoned after the fact. Pruned lazily on insert; entries
+	// live for recentlyFinishedTTL. Guarded by finishedMu.
+	finishedMu       sync.Mutex
+	recentlyFinished map[string]time.Time
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -762,6 +770,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		contributorFailureStreaks: make(map[string]contributorFailureStreak),
 		leases:                    make(map[string]*taskLease),
 		yankExclusions:            make(map[string]time.Time),
+		recentlyFinished:          make(map[string]time.Time),
 		logger:                    logger,
 		server:                    server,
 		sse:                       newSSERegistry(),
@@ -1931,32 +1940,120 @@ func (s *wsSession) releaseOnDisconnect() {
 			// no identity and is skipped by the helper, which is what the old
 			// Number > 0 guard was for.
 			h.bookReleaseCooldownKey(abandonedTask.identityKey())
-			// #5097: make the abandonment VISIBLE. Until now this path recorded
-			// nothing an operator could see — the issue showed a "picked up" with
-			// no terminal event ever following it, which is indistinguishable in
-			// the feed from an issue nobody touched. Four issues were opened and
-			// dropped in ten minutes on a flapping session and the hub's own
-			// history showed only that they were picked up.
-			//
-			// Deliberately NOT the "failed" verb: #4260 established that a dropped
-			// socket is not a failure of the work, and booking it as one is what
-			// turned three dropped sockets into a quarantine of an issue nobody had
-			// failed. This is a release, and it says so.
-			h.addActivity(s.contributor.profile.GitHubUsername, "released: connection lost",
-				s.contributor.role, s.contributor.cliBackend, s.contributor.model,
-				s.contributor.reasoningEffort, taskDescOf(abandonedTask))
-			// #7317: the durable half of the same visibility argument #5097
-			// makes above. The activity rail is capped and drops off; the run
-			// log is what an operator reads an hour later. Note this runs only
-			// on a REAL abandonment — the #5322 re-adoption check above has
-			// already set abandonedTask to nil for a ghost socket, so a
-			// reconnect that resumed its task writes no abandonment row.
-			h.appendAbandonedRun(s.contributor, abandonedTask, abandonCauseDisconnect, abandonedTaskAt)
+			// #7838: the VISIBLE booking — the activity row and the run-log
+			// row — waits out a grace window first. The #5322 check above is
+			// zero-width for a 1006: the hub processes the dead socket the
+			// instant its read fails, while the relay does not even start
+			// redialing for BASE_RECONNECT_DELAY_MS, so on a real blip the
+			// release always won the race and every blip wrote an
+			// `abandoned_disconnect` row for a task that resumed one second
+			// later. The cooldown above is booked NOW regardless — it is the
+			// #2356 double-assign hedge and must cover the window — but the
+			// ledger waits: if a live connection re-adopts the task, or the
+			// task finishes, before the deadline, nothing is written.
+			h.bookAbandonmentAfterGrace(s.contributor, abandonedTask, abandonedTaskAt)
 		}
 		h.logger.Info("[contribute-ws] disconnected", "username", s.contributor.profile.GitHubUsername)
 		h.addActivity(s.contributor.profile.GitHubUsername, "left", s.contributor.role, s.contributor.cliBackend, s.contributor.model, s.contributor.reasoningEffort, "", s.contributor.advisor())
 	}
 	_ = s.conn.Close()
+}
+
+// disconnectAbandonGrace is how long a disconnect release waits before booking
+// the abandonment visibly (#7838). It must outlast the relay's first reconnect
+// attempt — BASE_RECONNECT_DELAY_MS (1 s) plus dial, TLS, auth and the resume
+// task_progress — with margin for a second blip in the same flap, as observed
+// live. Overridable via HIVE_CONTRIBUTE_DISCONNECT_GRACE (a Go duration; "0"
+// restores the immediate booking).
+const (
+	defaultDisconnectAbandonGrace = 5 * time.Second
+	disconnectAbandonGraceEnv     = "HIVE_CONTRIBUTE_DISCONNECT_GRACE"
+	// recentlyFinishedTTL bounds the #7838 finished-task memory. It only has to
+	// cover one grace window; a minute is generous and keeps the map tiny.
+	recentlyFinishedTTL = time.Minute
+)
+
+// disconnectAbandonGrace is a variable so tests can shrink it.
+var disconnectAbandonGrace = func() time.Duration {
+	if v := os.Getenv(disconnectAbandonGraceEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return defaultDisconnectAbandonGrace
+}()
+
+// bookAbandonmentAfterGrace writes the activity row and the run-log row for a
+// task released on disconnect (#5097/#7317), after disconnectAbandonGrace has
+// passed without the task being re-adopted on a live connection (#5322) or
+// finished (#7838). With a zero grace it books synchronously, exactly as the
+// pre-#7838 path did.
+//
+// Deliberately NOT the "failed" verb: #4260 established that a dropped socket
+// is not a failure of the work, and booking it as one is what turned three
+// dropped sockets into a quarantine of an issue nobody had failed. This is a
+// release, and it says so.
+func (h *ContributeWSHub) bookAbandonmentAfterGrace(c *ContributorConnection, task *WSTaskAssign, assignedAt time.Time) {
+	if h == nil || c == nil || c.profile == nil || task == nil {
+		return
+	}
+	book := func() {
+		// A hub shutting down inside the window does not need the row.
+		select {
+		case <-h.stopCh:
+			return
+		default:
+		}
+		if h.taskReadoptedByLiveConnection(c, task) {
+			h.logger.Info("[contribute-ws] disconnect release withdrawn: task re-adopted on a live connection within the grace window (#7838)",
+				"username", c.profile.GitHubUsername, "task", task.TaskID, "repo", task.Repo, "number", task.Number)
+			return
+		}
+		if h.taskFinishedRecently(task.TaskID) {
+			h.logger.Info("[contribute-ws] disconnect release withdrawn: task finished within the grace window (#7838)",
+				"username", c.profile.GitHubUsername, "task", task.TaskID, "repo", task.Repo, "number", task.Number)
+			return
+		}
+		h.addActivity(c.profile.GitHubUsername, "released: connection lost",
+			c.role, c.cliBackend, c.model, c.reasoningEffort, taskDescOf(task))
+		h.appendAbandonedRun(c, task, abandonCauseDisconnect, assignedAt)
+	}
+	if disconnectAbandonGrace <= 0 {
+		book()
+		return
+	}
+	time.AfterFunc(disconnectAbandonGrace, book)
+}
+
+// noteTaskFinished records that a completed/failed run row was written for a
+// task id (#7838). Called from appendTaskRun; prunes stale entries as it goes.
+func (h *ContributeWSHub) noteTaskFinished(taskID string, at time.Time) {
+	if h == nil || taskID == "" {
+		return
+	}
+	h.finishedMu.Lock()
+	defer h.finishedMu.Unlock()
+	if h.recentlyFinished == nil {
+		h.recentlyFinished = make(map[string]time.Time)
+	}
+	for id, t := range h.recentlyFinished {
+		if at.Sub(t) > recentlyFinishedTTL {
+			delete(h.recentlyFinished, id)
+		}
+	}
+	h.recentlyFinished[taskID] = at
+}
+
+// taskFinishedRecently reports whether a completed/failed run row was written
+// for the task id inside recentlyFinishedTTL.
+func (h *ContributeWSHub) taskFinishedRecently(taskID string) bool {
+	if h == nil || taskID == "" {
+		return false
+	}
+	h.finishedMu.Lock()
+	defer h.finishedMu.Unlock()
+	t, ok := h.recentlyFinished[taskID]
+	return ok && time.Since(t) <= recentlyFinishedTTL
 }
 
 // handleAuthResponse is the handshake phase: it verifies the registration token
