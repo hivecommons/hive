@@ -570,6 +570,14 @@ type HoldItem struct {
 	// round-trip unchanged.
 	CreatedAt   time.Time   `json:"created_at,omitzero"`
 	ReviewClass ReviewClass `json:"review_class,omitempty"`
+	// URL and Labels let the repo card show a held item as a pill of its own
+	// — a link to the thing, and the label(s) that hold it, so the tooltip
+	// can say WHY it is parked (`hold` alone, or alongside `needs-human`)
+	// instead of only that it is (hivecommons/hive#7896). Held issues have
+	// no other record than this one; held PRs also ride in PRResult.Held in
+	// full. Both are omitted when unset so older snapshots round-trip.
+	URL    string   `json:"url,omitempty"`
+	Labels []string `json:"labels,omitempty"`
 }
 
 type IssueCluster struct {
@@ -816,6 +824,8 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 				Title:     issue.GetTitle(),
 				Type:      "issue",
 				CreatedAt: issue.GetCreatedAt().Time,
+				URL:       issue.GetHTMLURL(),
+				Labels:    labels,
 			})
 			continue
 		}
@@ -915,6 +925,8 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 				Type:        "pr",
 				CreatedAt:   pr.GetCreatedAt().Time,
 				ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
+				URL:         pr.GetHTMLURL(),
+				Labels:      labels,
 			})
 			// Also keep the full PR so the CI-repair path can see whether a
 			// held PR is red (hivecommons/hive#7438). Drafts stay out, exactly

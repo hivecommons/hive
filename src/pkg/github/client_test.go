@@ -78,6 +78,7 @@ type wireIssue struct {
 	Labels    []wireLabel `json:"labels"`
 	Assignees []wireUser  `json:"assignees"`
 	CreatedAt string      `json:"created_at"`
+	HTMLURL   string      `json:"html_url,omitempty"`
 	// Setting PullRequest makes IsPullRequest() return true.
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 }

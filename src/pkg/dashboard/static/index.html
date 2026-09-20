@@ -1277,12 +1277,29 @@
     }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
     .repo-name a:hover { text-decoration: underline !important; }
-    .repo-stats { display: flex; gap: 16px; font-size: 0.8rem; }
+    /* The two stat columns (issues | PRs) and the two pill columns under
+       them share one grid, so a pill sits under the number it counts
+       toward. Kind is said by POSITION (and the column's tint: blue
+       issues, purple PRs); colour WITHIN a column says state. Before this,
+       every pill went into one wrapped row, and three issue pills under a
+       "3 PRs" number read as the PRs (hivecommons/hive#7896). */
+    .repo-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.8rem; }
     .repo-stat .num { font-weight: 700; font-size: 1rem; }
     .repo-stat .label { color: var(--muted); font-size: 0.7rem; }
     .repo-stat a:hover { text-decoration: underline !important; }
     .repo-stat a:hover .label { color: var(--fg); }
-    .repo-issues { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+    .repo-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+    .repo-pill-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 0 auto; max-width: 100%; }
+    /* A held pill: the item is in its column (it IS one of the repo's issues
+       / PRs, and the count includes it) but parked behind a hold label, so
+       it is waiting on a human rather than on an agent. Neutral grey with a
+       dashed border — deliberately NOT the alert orange of needs-human nor
+       any merge-state tint: "held" is a state an operator put it in, not a
+       failure. The ⏸ chip beside it names the state and the tooltip says
+       which label holds it. */
+    .repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }
+    .pill-held-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
     /* .repo-issue-pill / .repo-pr-pill — pill recipe; link hovers deepen the tint */
     .repo-issue-pill { --pill-c: var(--blue); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
@@ -1295,7 +1312,7 @@
        always-visible Plan button never overflow the fixed-width repo card. */
     .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 0 1 auto; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
-    .repo-pr-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
+    .repo-pr-pill.pill-icon, .repo-issue-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
@@ -8214,6 +8231,40 @@
       }
     }
 
+    // Which of an item's labels put it on hold (hivecommons/hive#7896). Same
+    // rule as github.HasHoldLabel on the server: any label CONTAINING one of
+    // the hold spellings holds the item. The matching labels are returned by
+    // name so the tooltip can say which label an operator has to remove.
+    const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
+    function holdLabels(labels) {
+      return (labels || []).map(l => String(l)).filter(l => {
+        const lower = l.toLowerCase();
+        return HOLD_LABEL_SPELLINGS.some(s => lower.includes(s));
+      });
+    }
+
+    // The tooltip text for a held pill: WHY the item is parked, from what
+    // the snapshot carries (labels and, for a PR, whether a hive agent
+    // opened it). Two holds an operator meets look alike on the card and
+    // are not: `hold` on an agent's own PR is usually the ACMM level gate
+    // ("held for human review"), which the hive lifts itself once policy no
+    // longer requires the checkpoint; `needs-human` beside the hold is the
+    // escalation ledger saying automated fix attempts are exhausted, and
+    // that one only a person can clear. The labels are the single source of
+    // truth here, exactly as they are for the needs-human pill. Returned
+    // without wrapping so the state chip can show it as-is and the pill can
+    // append it in parentheses after the title.
+    function heldReason(item) {
+      const labels = (item && item.labels ? item.labels : []).map(l => String(l));
+      const held = holdLabels(labels);
+      const needsHuman = labels.includes('needs-human');
+      const parts = [];
+      parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
+      if (item && item.hive_attributed) parts.push('opened by a hive agent — a `hold` here is usually the ACMM level gate, which the hive releases itself once policy allows; a human may remove the label sooner');
+      if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
+      return parts.join('; ');
+    }
+
     function renderRepos(repos) {
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
@@ -8242,7 +8293,10 @@
       // section-level signal — nine parked PRs sat invisible to the operator
       // for a week (kubestellar/console, 2026-09-01). Hidden at zero so a
       // healthy hive shows nothing extra.
-      const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length, 0);
+      // Held PRs count too: a hold+needs-human PR (a Renovate bump the
+      // ledger gave up on) is waiting on a person exactly as much as an
+      // unheld one is, and it now has a pill on the card to match.
+      const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).concat(r.heldPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length, 0);
       const nhEl = document.getElementById('repos-needs-human');
       if (nhEl) {
         if (needHumanTotal > 0) {
@@ -8269,6 +8323,20 @@
           // epic is actually scheduled — below that the button is hidden.
           const planBtn = showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '';
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
+        }).join('');
+        // Held issues (hivecommons/hive#7896): in the issue column, because
+        // the issues number counts them, but tinted held and without the
+        // Plan action — decomposing a parked issue would put it back in the
+        // automated lane the hold took it out of. A held issue is only a
+        // HoldItem on the wire (no author); the URL is built from the repo
+        // when an older snapshot omits it.
+        const heldIssuePills = (r.heldIssues || []).map(i => {
+          const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
+          const age = pillAge(i.created_at);
+          const heldTip = heldReason(i);
+          const tip = (i.title || '') + (age ? ' (' + age + ')' : '') + ' (' + heldTip + ')';
+          const url = i.url || (repoUrl + '/issues/' + i.number);
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a><span class="repo-issue-pill held pill-held-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⏸</span></span>`;
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
@@ -8336,8 +8404,47 @@
           // the operator must see.
           return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}</span>`;
         }).join('');
-        const allPills = issuePills + prPills;
-        const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
+        // Held PRs (hivecommons/hive#7896): in the PR column, tinted held.
+        // The card's PRs number is the repo's TOTAL open PR count, and a
+        // hold label moves a PR out of the actionable list the pills were
+        // drawn from — so a repo whose every open PR was held (an ACMM level
+        // gate, a Renovate bump escalated needs-human) said "3 PRs" and
+        // listed nothing, hiding exactly the PRs that were waiting on the
+        // operator. No Queue auto-merge here, ever: a held PR is out of the
+        // automated lane by definition. The action-chip slot carries the
+        // state instead — ⚠ when needs-human is also on it (the escalation
+        // kind of hold), ⏸ otherwise (a plain hold, level gate or manual).
+        // The hive's own review pill still shows, since "did the hive look
+        // at this?" is what the human about to review it wants to know.
+        const heldPrPills = (r.heldPrs || []).map(p => {
+          const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
+          const prAge = pillAge(p.created_at);
+          const labels = (p.labels || []).map(l => String(l));
+          const needsHuman = labels.includes('needs-human');
+          const reviewClass = p.review_class ? String(p.review_class) : '';
+          const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
+          const heldTip = heldReason(p);
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + ' (' + heldTip + ')';
+          const url = p.url || (repoUrl + '/pull/' + p.number);
+          const reviewTip = reviewPillTip(p);
+          const reviewPill = p.review_url
+            ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
+            : '';
+          const stateBadge = needsHuman
+            ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
+            : `<span class="repo-pr-pill held pill-held-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⏸</span>`;
+          // needs-human wins the tint here as it does on the actionable
+          // pill; the dashed border says "held" in both cases.
+          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill held${needsHuman ? ' needs-human' : ''}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span></a>${reviewPill}${stateBadge}</span>`;
+        }).join('');
+        // Two columns under the two numbers: issue pills (actionable, then
+        // held) under "issues", PR pills (actionable, then held) under
+        // "PRs". Position says what a pill is; tint says what state it is in.
+        const issueCol = issuePills + heldIssuePills;
+        const prCol = prPills + heldPrPills;
+        const pillsHtml = (issueCol || prCol)
+          ? `<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
+          : '';
         return `
         <div class="repo-card">
           <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>

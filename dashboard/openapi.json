@@ -385,6 +385,20 @@
                               "type": "object"
                             },
                             "description": "Untyped in the Go source ([]any) \u2014 populated from forge PR records whose shape is not fixed by a Go struct."
+                          },
+                          "heldIssues": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            },
+                            "description": "Issues parked behind a hold label, display-only (#7896). Untyped in the Go source ([]any) \u2014 populated from the hold list's items (number, title, url, labels, created_at)."
+                          },
+                          "heldPrs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            },
+                            "description": "Non-draft PRs parked behind a hold label, display-only (#7896) \u2014 kept apart from openPrs so the hold gate is untouched. Untyped in the Go source ([]any) \u2014 the same PR record shape as openPrs."
                           }
                         },
                         "required": [

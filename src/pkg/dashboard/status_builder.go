@@ -1375,29 +1375,38 @@ func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.Merg
 // A PR with no entry is left untouched: absent means "no review recorded",
 // which the frontend renders as no pill rather than as "not reviewed", since
 // the ledger only goes back as far as its retention window.
+//
+// Held PRs get the same stamp: a hold parks a PR for a human, and "has the
+// hive already reviewed this one?" is exactly what that human wants to know
+// before they look (hivecommons/hive#7896).
 func AttachReviewLinks(payload *StatusPayload, links map[string]github.ReviewLink) {
 	if payload == nil || len(links) == 0 {
 		return
 	}
 	for ri := range payload.Repos {
-		for pi, entry := range payload.Repos[ri].OpenPrs {
-			fp, ok := entry.(FrontendPR)
-			if !ok {
-				continue
-			}
-			link, ok := lookupReviewLink(links, payload.Repos[ri].Full, fp.Repo, fp.Number)
-			if !ok || link.URL == "" {
-				continue
-			}
-			fp.ReviewURL = link.URL
-			fp.ReviewState = link.State
-			fp.ReviewCount = link.Count
-			if !link.At.IsZero() {
-				at := link.At
-				fp.ReviewedAt = &at
-			}
-			payload.Repos[ri].OpenPrs[pi] = fp
+		attachReviewLinksTo(payload.Repos[ri].OpenPrs, payload.Repos[ri].Full, links)
+		attachReviewLinksTo(payload.Repos[ri].HeldPrs, payload.Repos[ri].Full, links)
+	}
+}
+
+func attachReviewLinksTo(prs []any, full string, links map[string]github.ReviewLink) {
+	for pi, entry := range prs {
+		fp, ok := entry.(FrontendPR)
+		if !ok {
+			continue
 		}
+		link, ok := lookupReviewLink(links, full, fp.Repo, fp.Number)
+		if !ok || link.URL == "" {
+			continue
+		}
+		fp.ReviewURL = link.URL
+		fp.ReviewState = link.State
+		fp.ReviewCount = link.Count
+		if !link.At.IsZero() {
+			at := link.At
+			fp.ReviewedAt = &at
+		}
+		prs[pi] = fp
 	}
 }
 
@@ -1781,6 +1790,8 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 
 	issuesByRepo := make(map[string][]any)
 	prsByRepo := make(map[string][]any)
+	heldIssuesByRepo := make(map[string][]any)
+	heldPrsByRepo := make(map[string][]any)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
@@ -1788,6 +1799,19 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		for _, pr := range actionable.PRs.Items {
 			prsByRepo[pr.Repo] = append(prsByRepo[pr.Repo], FrontendPR{PullRequest: pr})
+		}
+		// Held items ride beside the actionable ones so the card can show
+		// what its own counts include (hivecommons/hive#7896). PRs.Held is
+		// the full PullRequest (labels, author, URL); a held issue exists
+		// only as its HoldItem, and Hold.Items also lists the held PRs, so
+		// only the issue entries are taken from it.
+		for _, pr := range actionable.PRs.Held {
+			heldPrsByRepo[pr.Repo] = append(heldPrsByRepo[pr.Repo], FrontendPR{PullRequest: pr})
+		}
+		for _, item := range actionable.Hold.Items {
+			if item.Type == "issue" {
+				heldIssuesByRepo[item.Repo] = append(heldIssuesByRepo[item.Repo], item)
+			}
 		}
 	}
 
@@ -1819,12 +1843,20 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			Mode:             repoMode(govState, repoName, full),
 			ActionableIssues: issuesByRepo[repoName],
 			OpenPrs:          prsByRepo[repoName],
+			HeldIssues:       heldIssuesByRepo[repoName],
+			HeldPrs:          heldPrsByRepo[repoName],
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}
 		if r.OpenPrs == nil {
 			r.OpenPrs = []any{}
+		}
+		if r.HeldIssues == nil {
+			r.HeldIssues = []any{}
+		}
+		if r.HeldPrs == nil {
+			r.HeldPrs = []any{}
 		}
 		repos = append(repos, r)
 	}

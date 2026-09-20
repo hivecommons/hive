@@ -725,13 +725,30 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name             string `json:"name"`
-	Full             string `json:"full"`
-	Issues           int    `json:"issues"`
-	PRs              int    `json:"prs"`
-	Mode             string `json:"mode,omitempty"`
-	ActionableIssues []any  `json:"actionableIssues"`
-	OpenPrs          []any  `json:"openPrs"`
+	Name   string `json:"name"`
+	Full   string `json:"full"`
+	Issues int    `json:"issues"`
+	PRs    int    `json:"prs"`
+	Mode   string `json:"mode,omitempty"`
+	// ActionableIssues and OpenPrs are the items the agents may act on: the
+	// enumeration's actionable sets, minus anything held or exempt. Every
+	// automated consumer — the contribute queue, the mergeable counter, the
+	// PR list behind /api/prs — reads these two and only these two.
+	ActionableIssues []any `json:"actionableIssues"`
+	OpenPrs          []any `json:"openPrs"`
+	// HeldIssues and HeldPrs are the repo's items parked behind a hold label
+	// (github.HoldLabels): the enumeration moves them out of the actionable
+	// sets, so they used to be invisible on the card even though the Issues /
+	// PRs numbers counted them — a card reading "3 PRs" with no PR pill under
+	// it (hivecommons/hive#7896). They are display-only: kept apart from
+	// OpenPrs on purpose so the hold gate stays exactly where it was and no
+	// automated consumer can pick a held item up by reading the snapshot.
+	// HeldPrs carries github.PullRequest values (from PRs.Held, so drafts are
+	// excluded exactly as they are from OpenPrs); HeldIssues carries
+	// github.HoldItem values, which is all the enumeration keeps for a held
+	// issue.
+	HeldIssues []any `json:"heldIssues"`
+	HeldPrs    []any `json:"heldPrs"`
 }
 
 type FrontendBeads struct {
