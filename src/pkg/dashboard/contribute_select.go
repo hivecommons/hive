@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -35,6 +36,12 @@ const (
 	// tier requests), so no task_assign can be honestly issued. Previously this
 	// path returned nil and the contributor waited forever with no explanation.
 	taskUnavailableTokenMintFailed = "token_mint_failed"
+	// taskUnavailableRepoUnmintable: every admissible candidate this pass lives in
+	// a repository the GitHub App installation cannot mint a token for — renamed,
+	// deleted, or removed from the installation (#7869). Distinct from
+	// token_mint_failed so an operator reading the reason knows to fix the repo
+	// list rather than the App credential.
+	taskUnavailableRepoUnmintable = "repo_unmintable"
 	// taskUnavailableTierDisabled: the contributor's TrustTier is listed in
 	// hub.disabled_tiers, so the operator has switched that tier off.
 	taskUnavailableTierDisabled = "tier_disabled"
@@ -317,7 +324,69 @@ func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
 	return ""
 }
 
+// mintFailureRepoCooldown is how long a repository stays excluded from selection
+// after the App refused to mint a token scoped to it (#7869). A renamed repo
+// stays broken until the operator fixes the repo list, so the block is long
+// enough that the fleet is not re-discovering it on every 30 s retry; it is short
+// enough that the fix takes effect without a restart.
+const mintFailureRepoCooldown = 10 * time.Minute
+
+// maxUnmintableRepoRetries bounds how many repo-scoped mint failures one
+// selectTask call will absorb by moving to the next candidate before it gives up
+// and reports the pass as unavailable. Each retry costs one GitHub round-trip.
+const maxUnmintableRepoRetries = 3
+
+// markRepoUnmintable records that a token scoped to repo could not be minted, so
+// selection skips the repo's items until the cooldown lapses (#7869).
+func (h *ContributeWSHub) markRepoUnmintable(repo string, now time.Time) {
+	h.unmintableMu.Lock()
+	defer h.unmintableMu.Unlock()
+	if h.unmintableRepos == nil {
+		h.unmintableRepos = make(map[string]time.Time)
+	}
+	h.unmintableRepos[repo] = now.Add(mintFailureRepoCooldown)
+}
+
+// repoUnmintable reports whether repo is inside its post-mint-failure cooldown,
+// dropping the record once it has lapsed so a fixed repo is re-offered.
+func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
+	h.unmintableMu.Lock()
+	defer h.unmintableMu.Unlock()
+	until, ok := h.unmintableRepos[repo]
+	if !ok {
+		return false
+	}
+	if !now.Before(until) {
+		delete(h.unmintableRepos, repo)
+		return false
+	}
+	return true
+}
+
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
+	// #7869: one selection may drop a candidate whose repository the App cannot
+	// mint a token for and scan again; skippedUnmintable counts those drops so the
+	// re-scan is bounded and an empty re-scan can name the real cause.
+	skippedUnmintable := 0
+	for {
+		msg := h.selectTaskPass(c, &skippedUnmintable)
+		if msg == nil && skippedUnmintable > 0 && skippedUnmintable <= maxUnmintableRepoRetries {
+			continue
+		}
+		if msg != nil && skippedUnmintable > 0 && msg.Type == "task_unavailable" &&
+			(msg.Reason == taskUnavailableNoMatchingWork || msg.Reason == taskUnavailableTokenMintFailed) {
+			// Nothing else admissible after excluding the repo(s): say so, so the
+			// operator fixes the repo list rather than the App credential.
+			msg.Reason = taskUnavailableRepoUnmintable
+		}
+		return msg
+	}
+}
+
+// selectTaskPass is one selection scan. It returns nil ONLY when it dropped a
+// candidate for a repo-scoped mint failure and the caller should scan again
+// (#7869); every other outcome is a message.
+func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmintable *int) *WSMessage {
 	// selectMu makes offer→claim atomic: scan the candidates, pick one, commit
 	// it to the connection, so two contributors are never handed the same item.
 	// It guards IN-MEMORY state only. The GitHub round-trips that decorate a
@@ -619,6 +688,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			continue
 		}
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
+			continue
+		}
+		if h.repoUnmintable(repo.Full, time.Now()) {
+			// #7869: the App could not mint a token scoped to this repo moments ago
+			// (renamed / deleted / dropped from the installation). Offering its items
+			// would fail the same way; skip the whole repo until the cooldown lapses.
+			h.logger.Info("[contribute-ws] skip: repo excluded after a repo-scoped token mint failure",
+				"repo", repo.Full, "items", len(repo.ActionableIssues))
 			continue
 		}
 		for _, raw := range repo.ActionableIssues {
@@ -961,20 +1038,38 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// scoped to the chosen issue's REPOSITORY, not the whole installation.
 	ghToken, err := h.mintScopedToken(c.profile.TrustTier, chosen.repoFull)
 	if err != nil {
+		// #7775: the claim was committed before the mint; hand it back in full so
+		// the item is offerable again at once and no slot, lease or cooldown
+		// records a task that never shipped.
+		h.rollbackAssignment(c, taskID)
+
+		// #7869: since C4 the token is scoped to the CANDIDATE'S repository, so a
+		// 422/404 from GitHub means that repo — renamed, deleted, or removed from
+		// the installation — cannot be minted for, and nothing else in the pass
+		// need be affected. Exclude the repo for a cooldown and select again
+		// (bounded), rather than letting one stale repo-list entry wedge the hive
+		// behind an opaque token_mint_failed for every contributor.
+		if ghpkg.IsRepoScopeMintError(err) {
+			h.markRepoUnmintable(chosen.repoFull, time.Now())
+			h.logger.Warn("[contribute-ws] GitHub App cannot mint a token scoped to this repo — "+
+				"excluding it from selection; check the project repo list for a renamed or removed repository",
+				"repo", chosen.repoFull, "cooldown", mintFailureRepoCooldown.String(), "error", err)
+			*skippedUnmintable++
+			if *skippedUnmintable <= maxUnmintableRepoRetries {
+				return nil // selectTask scans again without this repo
+			}
+			return h.taskUnavailable(taskUnavailableRepoUnmintable)
+		}
+
 		// #2436 finding 1: a mint failure previously returned nil, stranding the
 		// contributor with no message (the log even said "skipping task" while
 		// abandoning the whole selection). Send an explicit token_mint_failed
 		// negative-ack so the failure is diagnosable instead of an indefinite
-		// hang. We do not fall through to another candidate: the mint is keyed on
-		// the contributor's tier, not the candidate, so every candidate in this
-		// pass would fail identically. Preserve the existing Warn log.
-		//
-		// #7775: the claim was committed before the mint; hand it back in full so
-		// the item is offerable again at once and no slot, lease or cooldown
-		// records a task that never shipped.
+		// hang. Any other mint error is keyed on the tier or the App, not the
+		// candidate, so every candidate in this pass would fail identically; do not
+		// fall through. Preserve the existing Warn log.
 		h.logger.Warn("[contribute-ws] failed to mint scoped token — task unavailable",
-			"tier", c.profile.TrustTier, "error", err)
-		h.rollbackAssignment(c, taskID)
+			"tier", c.profile.TrustTier, "repo", chosen.repoFull, "error", err)
 		return h.taskUnavailable(taskUnavailableTokenMintFailed)
 	}
 

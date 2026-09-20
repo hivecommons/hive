@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -415,6 +416,24 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	a.logger.Info("scoped token minted", "tier", tier, "repos", len(repos), "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
 	return installToken.GetToken(), nil
+}
+
+// IsRepoScopeMintError reports whether an installation-token mint failed
+// because of the REPOSITORY the token was scoped to, not the tier or the App.
+// GitHub answers a token request naming a repository the installation cannot
+// see with 422 ("There is at least one repository that does not exist or is
+// not accessible to the parent installation") — the shape a renamed repo, a
+// deleted repo, or a repo removed from the installation all take (hivecommons/hive#7869).
+// A 404 is the same class from an older API surface. Every other failure (bad
+// key, permission the installation has not accepted, network, 5xx) is not
+// repo-specific and would recur for any candidate.
+func IsRepoScopeMintError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	return ghErr.Response.StatusCode == http.StatusUnprocessableEntity ||
+		ghErr.Response.StatusCode == http.StatusNotFound
 }
 
 // AgentTokenCachePath returns the per-agent token cache file path.

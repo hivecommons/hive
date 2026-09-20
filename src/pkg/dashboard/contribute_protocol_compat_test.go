@@ -251,9 +251,9 @@ func TestProtocolCompatIsNotReadBySelection(t *testing.T) {
 	if !strings.Contains(string(raw), "peerProtocolCompat(") {
 		t.Fatal("the hub no longer derives the protocol comparison — if it moved, re-point this test rather than deleting it")
 	}
-	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
+	for _, name := range []string{"selectTask", "selectTaskPass", "RequeueContributorTask"} {
 		body := selectionFuncBody(t, selectionSources(t), name)
-		if name == "selectTask" && !strings.Contains(body, "candidates") {
+		if name == "selectTaskPass" && !strings.Contains(body, "candidates") {
 			t.Fatal("extracted selectTask body has no candidate collection — extraction is wrong; fix the test")
 		}
 		for _, forbidden := range []string{"peerProtocolCompat", "classifyPeerProtocol", "ProtocolCompat", "RelayProtocolVersion", "protoPeer"} {

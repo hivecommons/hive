@@ -587,10 +587,10 @@ func TestSelectionPathsDoNotReadDeclaredCapabilities(t *testing.T) {
 		t.Fatal("contribute_ws.go no longer stores declared capabilities — the DECLARE-half storage moved; update this test deliberately")
 	}
 
-	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
+	for _, name := range []string{"selectTask", "selectTaskPass", "RequeueContributorTask"} {
 		body := selectionFuncBody(t, selectionSources(t), name)
 		// Positive control (b): the extraction really captured the selection body.
-		if name == "selectTask" && !strings.Contains(body, "candidates") {
+		if name == "selectTaskPass" && !strings.Contains(body, "candidates") {
 			t.Fatal("extracted selectTask body has no candidate collection — extraction is wrong; fix the test")
 		}
 		if strings.Contains(strings.ToLower(body), "capabilit") {

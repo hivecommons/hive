@@ -515,8 +515,14 @@ func (c *ContributorConnection) advisor() advisorInfo {
 type ContributeWSHub struct {
 	connections map[string]*ContributorConnection
 	mu          sync.RWMutex
-	logger      *slog.Logger
-	seq         int
+	// unmintableRepos maps "owner/repo" to the instant its post-mint-failure
+	// exclusion lapses (#7869); guarded by its own mutex because it is consulted
+	// inside selectTask's candidate scan, which runs under selectMu, and written
+	// after the unlock.
+	unmintableRepos map[string]time.Time
+	unmintableMu    sync.Mutex
+	logger          *slog.Logger
+	seq             int
 	// taskGen is the monotonically increasing source of assignment GENERATION tokens
 	// (kubestellar/hive#2568, the Gate). nextTaskGen() hands out a fresh value for
 	// every assignment and every release, so a generation is never reused across the

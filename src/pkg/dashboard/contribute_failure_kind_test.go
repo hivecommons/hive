@@ -200,7 +200,7 @@ func TestSelectionPathsDoNotReadFailureKind(t *testing.T) {
 		t.Fatal("contribute_ws.go no longer stores the last failure — storage moved; re-point this test deliberately")
 	}
 
-	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
+	for _, name := range []string{"selectTask", "selectTaskPass", "RequeueContributorTask"} {
 		body := selectionFuncBody(t, selectionSources(t), name)
 		lower := strings.ToLower(body)
 		for _, forbidden := range []string{"lastfailure", "failurekind", "failure_kind"} {
