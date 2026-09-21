@@ -937,30 +937,99 @@ _identity_footer() {
   echo -e "$parts"
 }
 
-# Inject identity footer into --body argument if present, otherwise append --body.
+# Inject the identity footer into whichever body flag the caller used, and
+# append `--body <footer>` only when there is genuinely no body at all.
+#
+# EVERY SPELLING gh ACCEPTS MUST BE LISTED HERE. On the commands this runs for
+# (issue/pr create, issue/pr comment, pr review) gh spells the body two ways,
+# each in three forms: `--body`/`-b` and `--body-file`/`-F`, separated,
+# attached, or `=`-joined — plus `-` for "read the body from stdin".
+# Recognising only `--body` and `--body=` was silently wrong in BOTH directions
+# (hivecommons/hive#7937), because an unrecognised body flag falls through to
+# the "no body found" branch below, which ADDS A SECOND BODY FLAG:
+#
+#   gh pr comment -F notes.md  → gh received --body-file AND --body and refused
+#                                the call ("specify only one of --body or
+#                                --body-file"): the comment was never posted.
+#                                Observed live, 2026-09-21.
+#   gh pr comment -b 'text'    → gh received two --body flags and keeps the
+#                                LAST, so the comment posted as the footer
+#                                ALONE and the agent's text was dropped with no
+#                                error at all.
+#
+# `-F` is precisely what an agent reaches for when the body is long or contains
+# quotes and backticks — i.e. the comments most worth posting correctly.
+#
+# A file body is read here and re-emitted as `--body` rather than rewritten to
+# a temporary `--body-file`: most call sites below end in `exec`, so no EXIT
+# trap could ever clean such a temp file up, and argv size is not the binding
+# constraint — GitHub caps a body at 65536 characters, and the relay this hands
+# off to already passes the whole body through argv itself (hive-open-issue.sh
+# does `BODY="$(cat "$BODY_FILE")"`). Reading stdin here is also what makes
+# `-F -` work at all: the body must be consumed exactly once, and the process
+# that would otherwise read it is replaced by that same `exec`.
 _inject_identity() {
   local footer
   footer="$(_identity_footer)"
   local new_args=()
   local body_found=false
   local i=0
+  local arg body_val body_ref consumed from_file have_body
   while [ $i -lt ${#args[@]} ]; do
-    if [ "${args[$i]}" = "--body" ] && [ $((i+1)) -lt ${#args[@]} ]; then
-      new_args+=("--body")
-      new_args+=("${args[$((i+1))]}
-${footer}")
-      body_found=true
-      i=$((i+2))
-    elif [[ "${args[$i]}" == --body=* ]]; then
-      local body_val="${args[$i]#--body=}"
-      new_args+=("--body=${body_val}
-${footer}")
-      body_found=true
+    arg="${args[$i]}"
+    body_val=""
+    body_ref=""
+    consumed=1
+    from_file=false
+    have_body=false
+    case "$arg" in
+      --body|-b)
+        if [ $((i+1)) -lt ${#args[@]} ]; then
+          body_val="${args[$((i+1))]}"; have_body=true; consumed=2
+        fi ;;
+      --body=*) body_val="${arg#--body=}"; have_body=true ;;
+      # Attached short form: gh's flag parser reads `-btext` as `-b text`
+      # (and `-Fnotes.md` as `-F notes.md`), so this must too.
+      -b?*)     body_val="${arg#-b}";      have_body=true ;;
+      --body-file|-F)
+        if [ $((i+1)) -lt ${#args[@]} ]; then
+          body_ref="${args[$((i+1))]}"; have_body=true; from_file=true; consumed=2
+        fi ;;
+      --body-file=*) body_ref="${arg#--body-file=}"; have_body=true; from_file=true ;;
+      -F?*)          body_ref="${arg#-F}";           have_body=true; from_file=true ;;
+    esac
+
+    if ! $have_body; then
+      new_args+=("$arg")
       i=$((i+1))
-    else
-      new_args+=("${args[$i]}")
-      i=$((i+1))
+      continue
     fi
+
+    if $from_file; then
+      if [ "$body_ref" = "-" ]; then
+        body_val="$(cat)"
+      elif ! body_val="$(cat -- "$body_ref" 2>/dev/null)"; then
+        # Unreadable file: pass the caller's flag through untouched so gh (or
+        # the relay) reports the missing file in its own words. It still counts
+        # as a body, so we do not stack a second body flag on top of the error
+        # and turn a clear "file not found" into a confusing flag conflict.
+        new_args+=("$arg")
+        if [ "$consumed" -eq 2 ]; then
+          new_args+=("${args[$((i+1))]}")
+        fi
+        body_found=true
+        i=$((i+consumed))
+        continue
+      fi
+    fi
+
+    # Normalized to the separated `--body` form. gh, hive-open-issue and
+    # hive-open-pr all accept it, and emitting one shape keeps the six input
+    # spellings from multiplying into six output spellings.
+    new_args+=("--body" "${body_val}
+${footer}")
+    body_found=true
+    i=$((i+consumed))
   done
   if ! $body_found; then
     new_args+=("--body" "${footer}")
@@ -1129,7 +1198,11 @@ if [[ -n "$AGENT_NAME" ]]; then
         exec hive-review "${args[@]}"
       fi
       # No relay available: fall through to real gh so a review is never lost.
-      exec "$REAL_GH" "$@"
+      # `"${args[@]}"`, not `"$@"`: the injected identity belongs on this review
+      # as much as on the relayed one, and since _inject_identity now reads a
+      # `--body-file -` body itself (#7937), the original argv's `-` would find
+      # stdin already at EOF and submit an empty review body.
+      exec "$REAL_GH" "${args[@]}"
       ;;
     issue/comment|pr/comment)
       _inject_identity

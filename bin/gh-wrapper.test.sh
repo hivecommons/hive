@@ -28,6 +28,22 @@ mkdir -p "$WORK_DIR"
 
 cat >"$MOCK_GH" <<'MOCK'
 #!/usr/bin/env bash
+# Record this invocation's argv when asked. One file per argument, byte for
+# byte: bodies are multi-line and contain quotes, backticks and emoji, so any
+# line- or quote-based recording would corrupt exactly what the body tests
+# need to read back.
+if [[ -n "${MOCK_GH_ARGV_DIR:-}" ]]; then
+  _n=$(( $(cat "${MOCK_GH_ARGV_DIR}/count" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$_n" >"${MOCK_GH_ARGV_DIR}/count"
+  _d="${MOCK_GH_ARGV_DIR}/inv-${_n}"
+  mkdir -p "$_d"
+  printf '%s\n' "$#" >"${_d}/argc"
+  _i=0
+  for _a in "$@"; do
+    printf '%s' "$_a" >"${_d}/arg-${_i}"
+    _i=$((_i + 1))
+  done
+fi
 if [[ "${1:-}" = "api" && "${2:-}" = "user" ]]; then
   if [[ "${MOCK_GH_FAIL_IDENTITY:-}" = "true" ]]; then
     echo "mock identity failure" >&2
@@ -488,6 +504,235 @@ _run_test_env_only 1 "issue list with env mode and agent-selected marker (blocke
 
 _run_test_marker_only 0 "issue list with marker present and no env var (allowed, marker alone grants contributor mode)" \
   issue list --repo test/repo
+
+echo ""
+echo "=== Identity footer injection knows every body spelling (#7937) ==="
+
+# The wrapper used to recognise exactly two spellings of the body, --body and
+# --body=, and to ADD `--body <footer>` when it saw neither. Every other
+# spelling therefore reached gh with TWO body flags:
+#
+#   -F <file> → "specify only one of --body or --body-file"; nothing posted.
+#   -b <text> → two --body flags, gh keeps the LAST, so the comment posted as
+#               the footer alone and the agent's text vanished silently.
+#
+# These cases assert on the argv the wrapper actually hands to gh, because the
+# second failure mode exits 0: a test that only checked the exit code would
+# have passed throughout the bug's life and would pass again if it came back.
+BODY_AGENT="ghwrapper-test-7937-$$"
+CAPTURE_SEQ=0
+CAPTURE_DIR=""
+
+BODY_FILE="${WORK_DIR}/comment-body.md"
+printf '%s\n' \
+  'Multi-paragraph review note.' \
+  '' \
+  'Second paragraph with `backticks` and "quotes".' >"$BODY_FILE"
+STDIN_BODY_FILE="${WORK_DIR}/stdin-body.md"
+printf '%s\n' 'Body piped through stdin.' >"$STDIN_BODY_FILE"
+MISSING_BODY_FILE="${WORK_DIR}/no-such-body.md"
+rm -f "$MISSING_BODY_FILE"
+
+# Run the wrapper with argv recording on, leaving the recorded invocations in
+# $CAPTURE_DIR.
+#
+# Contributor mode deliberately: the comment and create arms relay through
+# `hive-open-issue` when it is on PATH and the agent is NOT a contributor, and
+# `exec`ing the relay replaces the process before the mock could record the
+# rewritten argv — so on a machine that has hive installed these cases would
+# measure nothing. `_inject_identity` runs BEFORE that fork, so the argv
+# asserted here is the same argv the relay would have received. The hermetic
+# agent name, empty mode and ACMM 0 are for the reason documented on
+# GATE_AGENT above: /tmp/.hive-mode-<agent> is a world-writable path.
+_capture_run() {
+  local stdin_file="$1"
+  shift
+  CAPTURE_SEQ=$((CAPTURE_SEQ + 1))
+  CAPTURE_DIR="${WORK_DIR}/argv-${CAPTURE_SEQ}"
+  mkdir -p "$CAPTURE_DIR"
+  touch "${WORK_DIR}/contributor-marker"
+  env \
+    HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
+    HIVE_AGENT="$BODY_AGENT" \
+    HIVE_AGENT_DISPLAY_NAME="$BODY_AGENT" \
+    HIVE_AGENT_ID="$BODY_AGENT" \
+    HIVE_AGENT_MODE="" \
+    HIVE_ACMM_LEVEL="0" \
+    MOCK_GH_LOGIN="test-bot[bot]" \
+    GH_TOKEN="test-token-mock" \
+    MOCK_GH_ARGV_DIR="$CAPTURE_DIR" \
+    bash "$TEST_WRAPPER" "$@" <"$stdin_file" >/dev/null 2>&1 || true
+  rm -f "${WORK_DIR}/contributor-marker"
+}
+
+# Print the directory of the recorded `gh <subcmd> <action> ...` invocation.
+# Matching on the first two arguments skips the wrapper's own bookkeeping
+# calls (`gh api user`, `gh label create`, the post-comment `gh pr edit`).
+_capture_invocation() {
+  local want_sub="$1" want_act="$2" total n d
+  total="$(cat "${CAPTURE_DIR}/count" 2>/dev/null || echo 0)"
+  for ((n = 1; n <= total; n++)); do
+    d="${CAPTURE_DIR}/inv-${n}"
+    [[ -f "${d}/arg-1" ]] || continue
+    if [[ "$(cat "${d}/arg-0")" == "$want_sub" && "$(cat "${d}/arg-1")" == "$want_act" ]]; then
+      printf '%s' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Count the arguments gh would read as a body flag, in every spelling.
+_count_body_flags() {
+  local d="$1" argc i a n=0
+  argc="$(cat "${d}/argc")"
+  for ((i = 0; i < argc; i++)); do
+    a="$(cat "${d}/arg-${i}")"
+    case "$a" in
+      --body|--body=*|-b|-b?*|--body-file|--body-file=*|-F|-F?*) n=$((n + 1)) ;;
+    esac
+    # Skip a separated value so a body that happens to start with "-b" is not
+    # counted as another flag.
+    case "$a" in
+      --body|-b|--body-file|-F) i=$((i + 1)) ;;
+    esac
+  done
+  printf '%s' "$n"
+}
+
+# Print the value of the first --body argument (separated or =-joined).
+_capture_body() {
+  local d="$1" argc i a
+  argc="$(cat "${d}/argc")"
+  for ((i = 0; i < argc; i++)); do
+    a="$(cat "${d}/arg-${i}")"
+    case "$a" in
+      --body)
+        if ((i + 1 < argc)); then
+          cat "${d}/arg-$((i + 1))"
+          return 0
+        fi ;;
+      --body=*) printf '%s' "${a#--body=}"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+_show_args() {
+  local d="$1" argc i
+  argc="$(cat "${d}/argc")"
+  for ((i = 0; i < argc; i++)); do printf '[%s] ' "$(cat "${d}/arg-${i}")"; done
+}
+
+_body_fail() {
+  echo "FAIL: $1"
+  shift
+  local line
+  for line in "$@"; do echo "  $line"; done
+  FAILED=$((FAILED + 1))
+}
+
+# Assert the recorded `gh <sub> <act>` call carries exactly ONE body flag, that
+# it is a --body, and that its value contains the footer plus every expected
+# substring of the caller's own text.
+_expect_injected_body() {
+  local desc="$1" sub="$2" act="$3"
+  shift 3
+  local inv flags body want
+  if ! inv="$(_capture_invocation "$sub" "$act")"; then
+    _body_fail "$desc" "no recorded 'gh ${sub} ${act}' invocation — the call never reached gh"
+    return 1
+  fi
+  flags="$(_count_body_flags "$inv")"
+  if [[ "$flags" != "1" ]]; then
+    _body_fail "$desc" "expected exactly 1 body flag, got ${flags}" "argv: $(_show_args "$inv")"
+    return 1
+  fi
+  if ! body="$(_capture_body "$inv")"; then
+    _body_fail "$desc" "the single body flag is not a --body" "argv: $(_show_args "$inv")"
+    return 1
+  fi
+  for want in "$@" '**Hive Agent**' "$BODY_AGENT"; do
+    if ! grep -qF -- "$want" <<<"$body"; then
+      _body_fail "$desc" "body is missing: ${want}" "body: ${body}"
+      return 1
+    fi
+  done
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+_capture_run /dev/null pr comment 42 --repo test/repo -F "$BODY_FILE"
+_expect_injected_body "pr comment -F <file> keeps the body and adds the footer (the reported failure)" \
+  pr comment 'Multi-paragraph review note.' 'Second paragraph with `backticks`'
+
+_capture_run /dev/null pr comment 42 --repo test/repo --body-file "$BODY_FILE"
+_expect_injected_body "pr comment --body-file <file> keeps the body and adds the footer" \
+  pr comment 'Multi-paragraph review note.'
+
+_capture_run /dev/null pr comment 42 --repo test/repo --body-file="$BODY_FILE"
+_expect_injected_body "pr comment --body-file=<file> keeps the body and adds the footer" \
+  pr comment 'Multi-paragraph review note.'
+
+_capture_run /dev/null pr comment 42 --repo test/repo "-F${BODY_FILE}"
+_expect_injected_body "pr comment -F<file> (attached short form) keeps the body and adds the footer" \
+  pr comment 'Multi-paragraph review note.'
+
+_capture_run "$STDIN_BODY_FILE" issue comment 42 --repo test/repo -F -
+_expect_injected_body "issue comment -F - reads stdin once and adds the footer" \
+  issue comment 'Body piped through stdin.'
+
+_capture_run /dev/null pr comment 42 --repo test/repo -b 'Short comment via the short flag.'
+_expect_injected_body "pr comment -b <text> keeps the text (it used to post the footer alone)" \
+  pr comment 'Short comment via the short flag.'
+
+_capture_run /dev/null pr comment 42 --repo test/repo -b'Attached short flag text.'
+_expect_injected_body "pr comment -b<text> (attached short form) keeps the text" \
+  pr comment 'Attached short flag text.'
+
+_capture_run /dev/null pr create --repo test/repo --title 'a fix' -F "$BODY_FILE"
+_expect_injected_body "pr create -F <file> keeps the body and adds the footer" \
+  pr create 'Multi-paragraph review note.'
+
+# `pr review` reaches gh with the INJECTED argv, not the original: the review
+# deserves the same footer, and after the wrapper has consumed a `-F -` body
+# the original `-` would hand gh a stdin that is already at EOF.
+_capture_run /dev/null pr review 42 --repo test/repo --comment -F "$BODY_FILE"
+_expect_injected_body "pr review -F <file> reaches gh with the injected body" \
+  pr review 'Multi-paragraph review note.'
+
+# The two spellings that always worked must keep working.
+_capture_run /dev/null pr comment 42 --repo test/repo --body 'Long flag body.'
+_expect_injected_body "pr comment --body <text> still gets exactly one footer" \
+  pr comment 'Long flag body.'
+
+_capture_run /dev/null pr comment 42 --repo test/repo --body='Equals form body.'
+_expect_injected_body "pr comment --body=<text> still gets exactly one footer" \
+  pr comment 'Equals form body.'
+
+# No body at all is still the case that MUST add one.
+_capture_run /dev/null pr comment 42 --repo test/repo
+_expect_injected_body "pr comment with no body flag still gets --body <footer>" \
+  pr comment '**SHA:**'
+
+# An unreadable body file stays the caller's error: the wrapper must not stack
+# a --body on top of it and turn "file not found" into a flag conflict.
+_capture_run /dev/null pr comment 42 --repo test/repo -F "$MISSING_BODY_FILE"
+if inv="$(_capture_invocation pr comment)"; then
+  flags="$(_count_body_flags "$inv")"
+  if [[ "$flags" == "1" ]] && ! _capture_body "$inv" >/dev/null 2>&1; then
+    echo "PASS: pr comment -F <missing file> passes the flag through without adding a second body"
+    PASSED=$((PASSED + 1))
+  else
+    _body_fail "pr comment -F <missing file> passes the flag through without adding a second body" \
+      "expected 1 body flag and no --body, got ${flags} body flag(s)" \
+      "argv: $(_show_args "$inv")"
+  fi
+else
+  _body_fail "pr comment -F <missing file> passes the flag through without adding a second body" \
+    "no recorded 'gh pr comment' invocation"
+fi
 
 echo ""
 echo "Results: ${PASSED} passed, ${FAILED} failed"
