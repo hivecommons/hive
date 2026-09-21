@@ -1,0 +1,1 @@
+- Trusted CI lanes now target the repository self-hosted runner pool while fork pull requests and privileged release/runtime lanes remain on GitHub-hosted runners.

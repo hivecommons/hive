@@ -1,0 +1,1 @@
+- Show typed `<redacted:kind>` markers on sandbox tool output while leaving logs unchanged, and stop scrubbing Bearer format placeholders as secrets (#8067)

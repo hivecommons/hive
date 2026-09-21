@@ -1,0 +1,1 @@
+- The self-authored automerge sweep now skips held, exempt, draft, closed, non-App-authored, and headless PRs from the list response before spending a pull-request GET, aggregates skip logging per tick, and adapts its interval to unusually large post-filter candidate backlogs.

@@ -1,0 +1,1 @@
+- Hold-gated PR coordination now explicitly requires fresh `origin/<base>` branches and is covered by regression tests for docs/planning PRs that gain foreign commits while held, so branch drift is surfaced for re-review instead of quietly re-entering merge lanes ([#5589](https://github.com/kubestellar/hive/issues/5589)).

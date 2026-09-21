@@ -1,0 +1,1 @@
+- Contributor assignment prompts now use valid `gh repo fork` clone syntax with an explicit destination and remote layout, and contributors who own or can push to a repository are sent through a direct-clone workflow instead of an impossible self-fork ([#6654](https://github.com/hivecommons/hive/issues/6654)).

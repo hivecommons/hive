@@ -1,0 +1,1 @@
+- Pinned the live-fleet health detector seams so provider quota, provider spend limits, and missed-cadence agent stalls keep surfacing actionable fleet verdicts instead of falling back to generic blocked/no-output states.

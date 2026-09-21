@@ -1,0 +1,1 @@
+- Delete the dead `LoadStatsConfigWithCfg` and `buildBeads` helpers from `pkg/dashboard/status_builder.go` and their test-only pins; the live status path uses `loadStatsConfig` and `BuildBeadsFromConfig`. (#6157)

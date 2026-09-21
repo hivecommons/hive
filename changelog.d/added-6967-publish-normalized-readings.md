@@ -1,0 +1,1 @@
+- ✨ Publish normalized rotation quota readings to where the contributor quota guard reads them (kubestellar/hive#6967): the Go probers atomically write a per-pool reading, a probe error publishes `unknown` (never a fabricated healthy reading), and a supported subscription backend with a configured pool directory now holds on a missing/torn reading instead of running inert.

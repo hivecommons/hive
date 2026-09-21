@@ -1,0 +1,1 @@
+- Removed dead pkg/dashboard/api.go wrappers (refreshAndPersistSync, fetchInferenceModelsForBackend, fetchModelsFromEndpoints, maskToken); live code already calls the Detailed variants directly.

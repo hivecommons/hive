@@ -1,0 +1,1 @@
+- The hub SaaS dashboard SPA now lives in `src/pkg/hub/assets/dashboard.html` (served via `go:embed`) instead of four Go raw-string constants, so editors, JS linters, and CI can see the frontend; the served bytes are unchanged ([#6456](https://github.com/hivecommons/hive/issues/6456)).

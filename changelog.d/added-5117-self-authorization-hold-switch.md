@@ -1,0 +1,1 @@
+- Added hive-wide and per-repo `self_authorization_hold` switches for the #5117 self-authorization hold, defaulting on while allowing opted-out repos to skip new holds and safely release existing #5117-marked holds without touching human holds.

@@ -1,0 +1,1 @@
+- Routed the remaining merge-queue and plan-from-label ACMM gates through the tool-approval desk when enabled, preserving legacy decisions while adding the explicit RFC #4000 operation surface.

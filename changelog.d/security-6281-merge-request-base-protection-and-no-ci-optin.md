@@ -1,0 +1,1 @@
+- The merge-request watcher now refuses unprotected base branches by default and requires an explicit per-repo no-CI opt-in before absent CI can pass ([#6281](https://github.com/hivecommons/hive/issues/6281)).

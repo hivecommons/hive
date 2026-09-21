@@ -1,0 +1,1 @@
+- `ioscan` canary egress checks now detect canary tokens hidden with base64, hex, URL encoding, reversal, case changes, or whitespace splitting, closing an encoded-exfiltration bypass ([#6686](https://github.com/hivecommons/hive/issues/6686)).

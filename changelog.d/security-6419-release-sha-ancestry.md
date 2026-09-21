@@ -1,0 +1,1 @@
+- Refuse a `workflow_dispatch` `release_sha` for `docker.yml` that is not an ancestor of the dispatched branch, closing a path where any `actions: write` principal could publish an unreviewed commit under a release line's moving tags ([#6419](https://github.com/hivecommons/hive/issues/6419))

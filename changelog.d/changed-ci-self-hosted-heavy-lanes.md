@@ -1,0 +1,1 @@
+- Trusted Go test shards now join the self-hosted runner pool for same-repository CI while fork pull requests remain on hosted runners.

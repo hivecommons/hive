@@ -1,0 +1,1 @@
+- Teach Podman Quadlet spokes to report their own image and tracking mode so release status resolves without a Kubernetes Deployment. (#8066)

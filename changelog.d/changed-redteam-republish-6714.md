@@ -1,0 +1,1 @@
+- Republished the ioscan red-team results after #6714 closed the U05 (fullwidth capital) and U08 (soft hyphen) gaps: the Unicode family is now 8/8 blocked and the overall miss rate drops from 19/43 (44%) to 17/43 (40%). The stability ratchet (`TestRedTeamCorpusOutcomesAreStable`) caught the improvement, as designed.

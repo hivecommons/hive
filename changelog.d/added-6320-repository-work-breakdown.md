@@ -1,0 +1,1 @@
+- Repository cards now preserve raw GitHub issue and pull-request totals while showing the actionable, hold, advisory, dependency-dashboard, draft, filtered, and fallback work that comprises them ([#6320](https://github.com/hivecommons/hive/issues/6320)).

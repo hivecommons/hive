@@ -1,0 +1,1 @@
+- Repository references now point at hivecommons/hive and the transferred GHCR image namespace so operators copy current clone, badge, deployment, and update commands.

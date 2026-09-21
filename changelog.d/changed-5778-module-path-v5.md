@@ -1,0 +1,1 @@
+- The v5 Go module and repository references now use `github.com/hivecommons/hive`, completing the module-path migration away from GitHub redirects from the former `kubestellar/hive` location ([#5778](https://github.com/hivecommons/hive/issues/5778)).

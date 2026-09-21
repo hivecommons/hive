@@ -1,0 +1,1 @@
+- Dispatch Docker image publishing for the exact commit produced by automated release merges, so release SHAs and moving release-line tags no longer remain unpublished.

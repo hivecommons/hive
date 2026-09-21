@@ -1,0 +1,1 @@
+- Dashboard startup coverage on v5 now waits longer for `/api/health` and reports early listener failures, matching the v4 hardening for noisy race-enabled shuffled CI runs ([#5775](https://github.com/hivecommons/hive/issues/5775)).

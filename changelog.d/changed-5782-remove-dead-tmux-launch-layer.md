@@ -1,0 +1,1 @@
+- Removed the unreachable legacy tmux-driving launch helpers and their coverage-only tests so pkg/agent keeps only the live per-agent terminal path.

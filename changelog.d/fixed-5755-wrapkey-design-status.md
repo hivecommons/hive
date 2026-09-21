@@ -1,0 +1,1 @@
+- The design index no longer points operators at removed wrapkey source files or implies wrapped master delivery is partly shipped; it now records the feature as design-only after the unwired primitives were removed ([#5755](https://github.com/kubestellar/hive/issues/5755)).

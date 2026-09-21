@@ -1,0 +1,1 @@
+- Inference gateway routing (litellm route resolution, watsonx gateway lookup and auth, endpoint list parsing, local litellm proxy supervision) moved from `package main` into a new `pkg/inference`, so it is testable and reusable outside the `hive` binary. No behavior change. (#7238)

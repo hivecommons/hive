@@ -1,0 +1,1 @@
+- Fixed v5 spokes heartbeating with an empty `Reporter` and zero `StartedAt` (the boot split left `boot.reporterName`/`boot.processStartedAt` unassigned), which also left the restart min-uptime guard inert. Identity is now set alongside `startTime` in `bootConfigWith`.

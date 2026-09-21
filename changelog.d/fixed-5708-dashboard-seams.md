@@ -1,0 +1,1 @@
+- Dashboard low-coverage seams now let tests exercise GHCR tag checks plus sidebar and audit disk persistence against injected clients and file paths, improving confidence in registry and operator-configuration code without live GHCR or `/data` access ([#5708](https://github.com/kubestellar/hive/issues/5708)).

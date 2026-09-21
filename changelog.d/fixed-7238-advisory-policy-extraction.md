@@ -1,0 +1,1 @@
+- Advisory digest posting policy (primary-repo selection, pinned-issue resolution, build/post decisions and the update-interval gate) moved from `package main` into `pkg/advisory`, so it is testable and reusable outside the `hive` binary. No behavior change. (#7238)

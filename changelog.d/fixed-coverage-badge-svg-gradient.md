@@ -1,0 +1,1 @@
+- The coverage percentage read from an SVG badge is now taken from the badge's text, not its markup: a shields-style badge opens with a gradient whose `y2="100%"` attribute was matched first, so a repo at 98.5% showed 100 on the dashboard (follow-up to [#7038](https://github.com/hivecommons/hive/pull/7038)).

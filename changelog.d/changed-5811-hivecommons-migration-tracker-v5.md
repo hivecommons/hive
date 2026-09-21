@@ -1,0 +1,1 @@
+- The HiveCommons migration tracker is available on v5 with the completed repository transfer, Go module rename, GHCR package transfer, and sequenced closeout checklist for the remaining migration breakages ([#5811](https://github.com/hivecommons/hive/issues/5811), [#5817](https://github.com/hivecommons/hive/issues/5817)).

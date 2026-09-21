@@ -1,0 +1,1 @@
+- Fail closed on retryable GitHub dedupe and label-ensure failures before creating agent-filed issues.

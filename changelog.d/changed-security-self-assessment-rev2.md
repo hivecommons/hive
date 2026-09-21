@@ -1,0 +1,1 @@
+- Revised the security self-assessment in response to CNCF TAG-Security review: added a deployer-facing threat section, stated that `ioscan` has not been red-teamed and has no measured detection rate, re-scoped log scrubbing as log hygiene rather than an exfiltration control, corrected the SBOM and adopter claims, and replaced the open-questions list with answers.

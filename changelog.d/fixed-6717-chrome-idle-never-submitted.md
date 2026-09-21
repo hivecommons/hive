@@ -1,0 +1,1 @@
+- The contributor relay no longer reports chrome-idle as a completed task unless it has seen the agent actually produce task output; an idle pane with an unsubmitted prompt is failed so the hub can re-offer the issue instead of parking it as done.
