@@ -356,13 +356,13 @@ func TestSuspendedConfigurationDoesNotQualify(t *testing.T) {
 	lane := LanePolicy{Floor: T1, DailyCap: 3}
 
 	c := approved(T1)
-	if ok, reason := Qualifies(c, lane, tm, now); !ok {
+	if ok, reason := Qualifies(c, lane, noItem, tm, now); !ok {
 		t.Fatalf("the donor did not qualify before any outcomes: %q", reason)
 	}
 
 	rows := ledger(OutcomeClosedUnmerged, OutcomeClosedUnmerged)
 	c.Suspended = Suspended(rows)
-	ok, reason := Qualifies(c, lane, tm, now)
+	ok, reason := Qualifies(c, lane, noItem, tm, now)
 	if ok {
 		t.Error("a suspended configuration qualified")
 	}
@@ -384,7 +384,7 @@ func TestSuspendedConfigurationDoesNotQualify(t *testing.T) {
 	// losing the rows that suspended them.
 	cleared := append(rows, row(OutcomeCleared, 99))
 	c.Suspended = Suspended(cleared)
-	if ok, reason := Qualifies(c, lane, tm, now); !ok {
+	if ok, reason := Qualifies(c, lane, noItem, tm, now); !ok {
 		t.Errorf("a cleared configuration did not qualify: %q", reason)
 	}
 	if len(cleared) != 3 {
