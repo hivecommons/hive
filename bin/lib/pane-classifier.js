@@ -725,12 +725,22 @@ function paneShowsUnretryableAPIError(text) {
 // Without this, a mid-session credential expiry — the exact scenario #5088
 // reported — rendered "● Please run /login · API Error: 401 …" above the idle
 // prompt and was booked as a COMPLETED task.
+//
+// omp's spelling of the same condition (hivecommons/hive#7922) is
+// "Error: No API key found for <provider>. Use /login, set an API key
+// environment variable, or create ~/.omp/agent/agent.db" — thrown at the
+// turn that tried to use a provider whose stored credential omp has disabled
+// (a revoked OAuth refresh token) or never had. Same shape, same remedy: a
+// person signs in. Both halves are required, so prose that merely mentions
+// an API key is not a login wall; omp emits them as two lines, and a TUI
+// may join or wrap them, so the second half may sit on the same line or the
+// next.
 function paneShowsLoginRequiredError(text) {
-  const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
-  return lines.some((line) => {
-    const lower = line.toLowerCase();
+  const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n').map((line) => line.toLowerCase());
+  return lines.some((lower, i) => {
     if (lower.includes('please run /login')) return true;
-    return lower.includes('api error:') && /\b401\b/.test(line);
+    if (/no api key found for \S+/.test(lower) && (lower.includes('use /login') || (lines[i + 1] || '').includes('use /login'))) return true;
+    return lower.includes('api error:') && /\b401\b/.test(lower);
   });
 }
 

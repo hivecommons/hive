@@ -128,3 +128,88 @@ func TestOmpPreflightReportsWhatContainerModeStages(t *testing.T) {
 		t.Error("the omp preflight still tells contributors to authenticate through an environment or profile instead of signing in on the host")
 	}
 }
+
+// contributeHiveCleanupContainerBlock returns the body of contribute-hive's
+// cleanup_container trap, which runs when the recipe exits for any reason.
+func contributeHiveCleanupContainerBlock(t *testing.T) string {
+	t.Helper()
+	src := justfileSource(t)
+	start := strings.Index(src, "cleanup_container() {")
+	if start < 0 {
+		t.Fatal("contribute-hive has no cleanup_container function")
+	}
+	end := strings.Index(src[start:], "trap cleanup_container EXIT")
+	if end < 0 {
+		t.Fatal("cleanup_container is never registered as the EXIT trap")
+	}
+	return src[start : start+end]
+}
+
+// TestOmpRefreshedCredentialIsCopiedBackBeforeTheStageIsDeleted pins the
+// container-mode half of hivecommons/hive#7922. The staged omp credential is
+// a COPY of a single-use OAuth refresh token: once omp inside the container
+// refreshes it, the host's row holds a revoked token, and the host's omp —
+// and every later launch, which stages that row — is broken until someone
+// logs in again. The cleanup trap must therefore copy the container's
+// refreshed row back to the host store AFTER the container is gone (its omp
+// no longer writing) and BEFORE the staging copy is removed.
+func TestOmpRefreshedCredentialIsCopiedBackBeforeTheStageIsDeleted(t *testing.T) {
+	block := contributeHiveCleanupContainerBlock(t)
+
+	stop := strings.Index(block, `"$RUNTIME" rm -f "${CONTAINER_NAME}"`)
+	sync := strings.Index(block, `node bin/omp-backend.js --sync-back "${HOME}/.omp" "${CLI_STAGE}/.omp"`)
+	remove := strings.Index(block, `rm -rf "${CLI_STAGE}"`)
+	switch {
+	case sync < 0:
+		t.Fatal("cleanup_container never runs bin/omp-backend.js --sync-back, so an OAuth credential the container's omp refreshed is deleted with the staging dir and the host keeps a revoked refresh token (#7922)")
+	case stop < 0 || remove < 0:
+		t.Fatal("cleanup_container no longer stops the container and removes ${CLI_STAGE} in the expected form")
+	case sync < stop:
+		t.Error("--sync-back must run after the container is stopped: its omp may still be rotating the row")
+	case remove < sync:
+		t.Error("--sync-back must run before ${CLI_STAGE} is removed: the refreshed credential lives there")
+	}
+	if !strings.Contains(block, `"${BACKEND}" = "omp"`) && !strings.Contains(block, `"${BACKEND}" == "omp"`) {
+		t.Error("the copy-back must be gated on the omp backend; no other backend's stage holds an omp store")
+	}
+	// The trap must not abort on a failed sync: the staging copy holds the
+	// credential and has to be deleted whatever happened. #7923 reports the
+	// failure and the fix (/login) instead of swallowing it; either way the
+	// rm -rf below must still run.
+	if sync >= 0 && !strings.Contains(block[sync:remove], "|| true") && !strings.Contains(block[sync:remove], "|| echo") {
+		t.Error("a failed --sync-back must not stop cleanup_container from removing ${CLI_STAGE}")
+	}
+}
+
+// TestOmpRefreshedCredentialIsCopiedBackWhileTheContainerRuns: the exit-time
+// copy alone leaves the host with a revoked token for the whole run — long
+// enough for a second container launched from the same host, or the host's
+// own omp, to fail on it. A timer narrows that window, and the trap stops the
+// timer before its own final sync so the two never race over one row.
+func TestOmpRefreshedCredentialIsCopiedBackWhileTheContainerRuns(t *testing.T) {
+	src := justfileSource(t)
+	start := strings.Index(src, "HIVE_OMP_CREDENTIAL_SYNC_SECONDS")
+	if start < 0 {
+		t.Fatal("contribute-hive has no HIVE_OMP_CREDENTIAL_SYNC_SECONDS timer for copying a refreshed omp credential back while the container runs (#7922)")
+	}
+	end := strings.Index(src[start:], "OMP_SYNC_PID=$!")
+	if end < 0 {
+		t.Fatal("the omp credential sync loop is not started in the background with its pid recorded in OMP_SYNC_PID")
+	}
+	loop := src[start : start+end]
+	if !strings.Contains(loop, `node bin/omp-backend.js --sync-back "${HOME}/.omp" "${CLI_STAGE}/.omp"`) {
+		t.Error("the timer loop must run the same --sync-back the cleanup trap does")
+	}
+	if !strings.Contains(loop, `-gt 0`) {
+		t.Error("HIVE_OMP_CREDENTIAL_SYNC_SECONDS=0 must disable the timer (exit-time sync only)")
+	}
+	cleanup := contributeHiveCleanupContainerBlock(t)
+	kill := strings.Index(cleanup, `kill "${OMP_SYNC_PID}"`)
+	sync := strings.Index(cleanup, "--sync-back")
+	if kill < 0 {
+		t.Fatal("cleanup_container must stop the sync timer (kill OMP_SYNC_PID)")
+	}
+	if sync >= 0 && kill > sync {
+		t.Error("cleanup_container must stop the timer before its own final --sync-back, so the two do not race over the same host row")
+	}
+}

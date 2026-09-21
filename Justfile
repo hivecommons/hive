@@ -1580,7 +1580,20 @@ contribute-hive backend="" mode="docker": check-version
           # --stage, keeps only the selected provider's credential rows:
           # AGENT_MODEL=provider/model names it, otherwise config.yml's
           # modelRoles do. Same H6 boundary as every other backend: the
-          # container writes to the throwaway copy, never to ${HOME}/.omp.
+          # container writes to the throwaway copy, never to ${HOME}/.omp —
+          # with ONE narrow, host-driven exception (#7922): an OAuth
+          # credential is a single-use refresh token, so when omp in the
+          # container refreshes it, the host's copy is revoked. The host
+          # writes the refreshed row back into ${HOME}/.omp/agent/agent.db
+          # (bin/omp-backend.js --sync-back: only the selected provider's
+          # existing row, only its credential columns, only when strictly
+          # newer) on a timer below and once more in cleanup_container.
+          # Nothing else the container writes to the staged copy ever
+          # reaches the host. --stage also refuses to start when the
+          # selected provider's stored credential is already disabled,
+          # naming omp's recorded cause and the fix (/login on the host),
+          # instead of starting a container whose omp would silently fall
+          # back to some other provider's model.
           if [ -d "${HOME}/.omp/agent" ]; then
             if ! node bin/omp-backend.js --stage "${HOME}/.omp" "${CLI_STAGE}/.omp" "${AGENT_MODEL:-}"; then
               echo "ERROR: could not stage ${HOME}/.omp for the container (see above)." >&2
@@ -1680,6 +1693,7 @@ contribute-hive backend="" mode="docker": check-version
       # container that dies during startup leaves nothing to diagnose
       # (the user just sees "no such container"). We remove it ourselves
       # in the cleanup trap below, after the logs have been read.
+      OMP_SYNC_PID=""
       cleanup_container() {
         "$RUNTIME" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
         # #7922: omp's OAuth refresh tokens are single-use. When the container
@@ -1689,7 +1703,14 @@ contribute-hive backend="" mode="docker": check-version
         # the copy is destroyed. Narrow by construction: only the selected
         # provider's existing row, only its credential columns, only when
         # strictly newer — never config.yml or anything else the container
-        # wrote (see syncBackOmp in bin/omp-backend.js).
+        # wrote (see syncBackOmp in bin/omp-backend.js). Stop the timer-driven
+        # pass (started below) first, so the two never run over the same row
+        # at once; a pass already mid-write is harmless — the UPDATE is
+        # guarded on updated_at, so the second writer finds nothing to do.
+        if [ -n "${OMP_SYNC_PID}" ]; then
+          kill "${OMP_SYNC_PID}" 2>/dev/null || true
+          wait "${OMP_SYNC_PID}" 2>/dev/null || true
+        fi
         if [ "${BACKEND}" = "omp" ] && [ -n "${CLI_STAGE:-}" ] && [ -f "${CLI_STAGE}/.omp/agent/agent.db" ]; then
           node bin/omp-backend.js --sync-back "${HOME}/.omp" "${CLI_STAGE}/.omp" "${AGENT_MODEL:-}" \
             || echo "⚠  could not write the container's refreshed omp sign-in back to ${HOME}/.omp; if omp on the host now fails to refresh, run omp and /login again (#7922)." >&2
@@ -1807,6 +1828,31 @@ contribute-hive backend="" mode="docker": check-version
           echo "Container kept: ${RUNTIME} logs ${CONTAINER_NAME}"
         fi
         exit 1
+      fi
+
+      # #7922: while the container runs, copy back an OAuth credential its omp
+      # refreshed, so the window in which the host holds a revoked refresh
+      # token is minutes rather than the whole run — a second container
+      # launched from this host meanwhile, or the host's own omp, would
+      # otherwise stage/refresh the dead token. The staged store is a bind
+      # mount, so the host reads it in place. This is the same --sync-back
+      # cleanup_container runs at exit, with the same narrowing (only the
+      # selected provider's existing row, only when strictly newer); its
+      # per-pass status line is dropped here so it does not interleave with
+      # the relay logs below, and only a failure is reported. Set
+      # HIVE_OMP_CREDENTIAL_SYNC_SECONDS to change the cadence, or to 0 to
+      # sync only at exit (cleanup_container).
+      if [[ "${BACKEND}" == "omp" && -f "${CLI_STAGE}/.omp/agent/agent.db" ]]; then
+        OMP_SYNC_SECONDS="${HIVE_OMP_CREDENTIAL_SYNC_SECONDS:-300}"
+        if [[ "${OMP_SYNC_SECONDS}" =~ ^[0-9]+$ && "${OMP_SYNC_SECONDS}" -gt 0 ]]; then
+          (
+            while sleep "${OMP_SYNC_SECONDS}"; do
+              node bin/omp-backend.js --sync-back "${HOME}/.omp" "${CLI_STAGE}/.omp" "${AGENT_MODEL:-}" >/dev/null \
+                || echo "⚠  could not write the container's refreshed omp sign-in back to ${HOME}/.omp; if omp on the host now fails to refresh, run omp and /login again (#7922)." >&2
+            done
+          ) &
+          OMP_SYNC_PID=$!
+        fi
       fi
 
       # Open the CLI session in a new terminal window

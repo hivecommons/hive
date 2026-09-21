@@ -1267,14 +1267,83 @@ function ompSessionFiles() {
   return files;
 }
 
-// detectOmpSelection returns { model, effort, advisorModel, advisorEffort },
-// each '' when not found. Never throws: every read is best-effort, and a
-// missing sessions directory simply means "not running yet", which the
-// config.yml fallback still answers.
+// ompProviderCredentialState reads the credential store omp runs against —
+// in container mode the staged copy (#7678), locally the host's own — and
+// says whether `provider` has a credential omp will use (hivecommons/hive
+// #7922). omp reads only rows whose disabled_cause IS NULL: a row it disabled
+// after a failed refresh ("oauth refresh failed: … invalid_grant …", the
+// mark a revoked single-use refresh token leaves) is invisible to it, and
+// omp then quietly resolves some other provider's model — the host's ollama
+// entries, in the incident — while the config still names the original.
+//   usable    at least one row for the provider that omp will read
+//   disabled  the provider has rows and omp has disabled every one of them
+//   absent    no row at all (an API key in the environment may still serve)
+//   unknown   no node:sqlite, no store, an old schema, or a read error
+// Only `disabled` is definitive evidence that the configured model cannot
+// run, and it is the only state anything acts on.
+function ompProviderCredentialState(provider) {
+  const unknown = { state: 'unknown', cause: '' };
+  let sqlite;
+  try { sqlite = require('node:sqlite'); } catch (_) { return unknown; }
+  const dbFile = path.join(OMP_AGENT_DIR, 'agent.db');
+  if (!fs.existsSync(dbFile)) return unknown;
+  let rows;
+  try {
+    const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+    try {
+      const columns = db.prepare('PRAGMA table_info(auth_credentials)').all().map((c) => String(c.name));
+      if (!columns.includes('disabled_cause')) return unknown;
+      rows = db.prepare('SELECT disabled_cause FROM auth_credentials WHERE lower(provider) = ?').all(provider.toLowerCase());
+    } finally { db.close(); }
+  } catch (_) { return unknown; }
+  if (rows.length === 0) return { state: 'absent', cause: '' };
+  if (rows.some((r) => r.disabled_cause === null || r.disabled_cause === undefined)) return { state: 'usable', cause: '' };
+  // The cause is printed to the relay log, which the host tails: in container
+  // mode the store is the container's writable copy, so strip control
+  // characters (terminal escapes included) and cap it, as for any declared
+  // value — just with room for the provider's whole error message.
+  // eslint-disable-next-line no-control-regex
+  const cause = Array.from(String(rows[0].disabled_cause).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim());
+  return { state: 'disabled', cause: cause.length > 400 ? `${cause.slice(0, 400).join('')}…` : cause.join('') };
+}
+
+// ompConfiguredProviderBlocked returns { provider, model, cause } when the
+// model omp is configured to run — `selection` if given, else AGENT_MODEL
+// when it names a provider, else config.yml's modelRoles.default — belongs
+// to a provider whose stored credential omp has disabled (#7922), and null
+// otherwise. This is the check that keeps the relay from advertising `ready`
+// (and the configured model) for an omp that will actually answer with
+// whatever it fell back to.
+function ompConfiguredProviderBlocked(selection) {
+  if (selection === undefined) {
+    const fromEnv = splitOmpSelection(MODEL).model;
+    selection = fromEnv.includes('/') ? fromEnv : splitOmpSelection(parseOmpConfig(path.join(OMP_AGENT_DIR, 'config.yml')).defaultSelection).model;
+  }
+  const slash = typeof selection === 'string' ? selection.indexOf('/') : -1;
+  if (slash <= 0) return null;
+  const provider = selection.slice(0, slash);
+  const cred = ompProviderCredentialState(provider);
+  if (cred.state !== 'disabled') return null;
+  return { provider, model: selection, cause: cred.cause };
+}
+
+// detectOmpSelection returns { model, effort, advisorModel, advisorEffort,
+// source }, each '' when not found. `source` says where the primary came
+// from: 'transcript' (a session's model_change record — what omp actually
+// resolved), 'config' (config.yml's default, which is only what omp WILL
+// resolve if that provider's credential works), or ''. Never throws: every
+// read is best-effort, and a missing sessions directory simply means "not
+// running yet", which the config.yml fallback still answers.
+//
+// A configured model whose provider credential omp has disabled (#7922) is
+// NOT reported: omp writes no session until its first turn, so before then
+// the config was the only source, and the hub was told `claude-sonnet-5`
+// for a container whose omp had silently fallen back to a local 30B model.
+// Better no model than a confidently wrong one, as for looksLikeModelName.
 function detectOmpSelection() {
   const config = parseOmpConfig(path.join(OMP_AGENT_DIR, 'config.yml'));
   const configured = splitOmpSelection(config.defaultSelection);
-  const out = { model: configured.model, effort: configured.effort, advisorModel: '', advisorEffort: '' };
+  const out = { model: configured.model, effort: configured.effort, advisorModel: '', advisorEffort: '', source: configured.model ? 'config' : '' };
 
   let newest = null;
   try { newest = newestByMtime(ompSessionFiles()); } catch (_) {}
@@ -1288,6 +1357,7 @@ function detectOmpSelection() {
           const running = splitOmpSelection(obj.model);
           if (running.model) {
             out.model = running.model;
+            out.source = 'transcript';
             // A session record carries the model but not the level; keep the
             // configured effort only when it was configured for this model.
             out.effort = running.effort || (configured.model === running.model ? configured.effort : '');
@@ -1296,6 +1366,11 @@ function detectOmpSelection() {
         }
       }
     } catch (_) {}
+  }
+  if (out.source === 'config' && ompConfiguredProviderBlocked(out.model)) {
+    out.model = '';
+    out.effort = '';
+    out.source = '';
   }
 
   const advisorFromConfig = splitOmpSelection(config.advisorSelection);
@@ -1367,6 +1442,7 @@ function detectRunningSelection() {
       effort: sanitizeDeclaredValue(sel.effort || ''),
       advisorModel: sanitizeDeclaredValue(sel.advisorModel || ''),
       advisorEffort: sanitizeDeclaredValue(sel.advisorEffort || ''),
+      source: sel.source === 'transcript' || sel.source === 'config' ? sel.source : '',
     };
   } catch (_) { return null; }
 }
@@ -1383,7 +1459,12 @@ function refreshDetectedModel() {
   const m = sel ? (MODEL ? '' : sel.model) : detectRunningModel();
   if (m && m !== detectedModel) {
     detectedModel = m;
-    console.log(`Detected running model from ${BACKEND} session transcript: ${m}`);
+    // Say where the value came from (#7922): a config.yml default is what omp
+    // is SET to run, not evidence of what it resolved — the transcript is.
+    const from = sel && sel.source === 'config'
+      ? `${BACKEND} config.yml (no session transcript yet)`
+      : `${BACKEND} session transcript`;
+    console.log(`Detected running model from ${from}: ${m}`);
   }
   if (sel) {
     detectedEffort = sel.effort;
@@ -1979,10 +2060,33 @@ function blockingPromptKey(text) {
 // getCLIState captures the pane and hands it to the pure readiness classifier
 // (classifyReadiness in bin/lib/pane-classifier.js). Kept as the one place
 // that couples the CAPTURE (tmux) to the CLASSIFICATION (pure).
+// The last disabled-credential cause the omp gate below logged, so a poll
+// that finds the same one every CLI_READY_POLL_MS says it once.
+let ompBlockedCauseLogged = '';
+
 function getCLIState() {
   try {
     const text = capturePaneText();
-    return classifyReadiness(text, BACKEND);
+    const state = classifyReadiness(text, BACKEND);
+    // #7922: an omp whose configured provider credential is DISABLED draws
+    // exactly the chrome a ready one does — it has already, silently, picked
+    // some other provider's model (the incident: `qwen3-coder:30b` in the
+    // footer, `claude-sonnet-5` reported to the hub). The pane cannot tell
+    // the two apart; the credential store can. Withhold `ready`, as for a
+    // login prompt: the remedy is the same sign-in, on the host in
+    // container mode, and the login banner names it.
+    if (state === 'ready' && BACKEND === 'omp') {
+      const blocked = ompConfiguredProviderBlocked();
+      if (blocked) {
+        if (ompBlockedCauseLogged !== blocked.cause) {
+          ompBlockedCauseLogged = blocked.cause;
+          console.log(`omp is configured for ${blocked.model}, but the stored ${blocked.provider} credential is disabled: ${blocked.cause}`);
+          console.log(`omp would run some other provider's model in its place without saying so, so this relay is not advertising ready. Sign in to ${blocked.provider} again where omp's credential store lives (on the host, for container mode: run omp, then /login) and restart.`);
+        }
+        return 'needs-login';
+      }
+    }
+    return state;
   } catch (_) {
     return 'starting';
   }
@@ -6264,6 +6368,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     detectOmpSelection,
     splitOmpSelection,
     parseOmpConfig,
+    // #7922: the omp credential-store gate behind getCLIState().
+    ompProviderCredentialState,
+    ompConfiguredProviderBlocked,
     advisorFields,
     SELECTION_DETECTORS,
     OMP_EFFORT_LEVELS,

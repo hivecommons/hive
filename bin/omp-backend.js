@@ -30,6 +30,25 @@
 // to be signed into. Selection is AGENT_MODEL when it is spelled
 // provider/model; otherwise the providers named by config.yml's modelRoles,
 // which is what omp itself will run when no model is passed.
+//
+// A staged OAuth record is a COPY, and OAuth refresh tokens are single-use
+// (hivecommons/hive#7922): the first client to refresh gets a new refresh
+// token and the old one is revoked. So once omp inside the container has
+// refreshed — its access token expires mid-run — the host's row holds a
+// revoked token. The host's own omp then fails its next refresh and marks the
+// row `disabled_cause = "oauth refresh failed: … invalid_grant …"`, and every
+// later launch stages either the revoked token or the disabled row; omp in
+// the container ignores a disabled row and silently falls back to whatever
+// other provider it can reach. Two things here close that:
+//   --sync-back  writes the selected provider's credential row back over the
+//                host row it was staged from, only when the container's copy
+//                is strictly newer (syncBackOmp below). contribute-hive runs
+//                it on a timer while the container runs and once more, after
+//                the container has stopped, before the stage dir is deleted.
+//   --stage      refuses to launch when a selected provider's stored
+//                credential is disabled, naming the cause and the remedy
+//                (sign in again on the host), instead of starting a container
+//                that will fall back silently.
 
 const fs = require('fs');
 const path = require('path');
@@ -123,30 +142,67 @@ function quoteSql(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+// How long a read or write waits on a store another process is writing to:
+// the host's omp, or — for the timer-driven sync-back (#7922) — the
+// container's, through the bind mount. Without it a read that lands on
+// omp's own transaction fails outright with SQLITE_BUSY.
+const OMP_BUSY_TIMEOUT_MS = 5000;
+
+// printableCause makes a disabled_cause safe to print. The store may have
+// been written by an untrusted container (the staged copy, and a host row
+// --sync-back wrote from it), and the cause is the one column that reaches
+// the host's terminal: strip control characters (terminal escapes included)
+// and cap the length, so the worst it can be is a long string.
+function printableCause(value) {
+  if (value === null || value === undefined) return '';
+  // eslint-disable-next-line no-control-regex
+  const text = String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+}
+
 // queryRows runs one read-only SELECT against dbFile through whichever
 // SQLite the host has (node:sqlite, else the sqlite3 CLI) and returns the
-// rows as plain objects.
+// rows as plain objects. The SQL is passed to the CLI on stdin, never argv,
+// so a statement can carry a credential value without it showing up in the
+// process table.
 function queryRows(dbFile, sql) {
   const sqlite = nodeSqlite();
   if (sqlite) {
     const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
-    try { return db.prepare(sql).all(); } finally { db.close(); }
+    try {
+      db.exec(`PRAGMA busy_timeout = ${OMP_BUSY_TIMEOUT_MS}`);
+      return db.prepare(sql).all();
+    } finally { db.close(); }
   }
-  const r = spawnSync('sqlite3', ['-readonly', '-json', dbFile, sql], { encoding: 'utf8' });
+  // `.timeout` is the shell's own command, so unlike a PRAGMA it prints no
+  // row of its own into the -json output.
+  const r = spawnSync('sqlite3', ['-readonly', '-json', dbFile], { encoding: 'utf8', input: `.timeout ${OMP_BUSY_TIMEOUT_MS}\n${sql};\n` });
   if (r.error || r.status !== 0) throw new Error(`sqlite3 could not read ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
   return r.stdout.trim() ? JSON.parse(r.stdout) : [];
 }
 
-// execStatements runs write statements against dbFile in order.
+// execStatements runs write statements against dbFile in order. Same stdin
+// rule as queryRows: the sync-back's UPDATE carries the credential itself.
 function execStatements(dbFile, statements) {
   const sqlite = nodeSqlite();
   if (sqlite) {
     const db = new sqlite.DatabaseSync(dbFile);
-    try { for (const sql of statements) db.exec(sql); } finally { db.close(); }
+    try {
+      db.exec(`PRAGMA busy_timeout = ${OMP_BUSY_TIMEOUT_MS}`);
+      for (const sql of statements) db.exec(sql);
+    } finally { db.close(); }
     return;
   }
-  const r = spawnSync('sqlite3', [dbFile, statements.join('; ')], { encoding: 'utf8' });
+  const r = spawnSync('sqlite3', [dbFile], { encoding: 'utf8', input: `.timeout ${OMP_BUSY_TIMEOUT_MS}\n${statements.join(';\n')};\n` });
   if (r.error || r.status !== 0) throw new Error(`sqlite3 could not write ${dbFile}: ${(r.stderr || r.error?.message || '').trim()}`);
+}
+
+// hasDisabledCauseColumn: omp added `disabled_cause` to auth_credentials
+// alongside its refresh-failure handling. A store from an older omp has no
+// such column; a row there can only ever count as usable, and the column is
+// left out of what --sync-back writes.
+function hasDisabledCauseColumn(dbFile) {
+  return queryRows(dbFile, `PRAGMA table_info(${OMP_AUTH_TABLE})`).some((c) => String(c.name) === 'disabled_cause');
 }
 
 // listProviderRows reads the non-secret columns of every credential row:
@@ -156,11 +212,12 @@ function execStatements(dbFile, statements) {
 // container cannot use, and staging it only moves the failure into a pane
 // nobody is watching.
 function listProviderRows(dbFile) {
-  const sql = `SELECT provider, credential_type, disabled_cause FROM ${OMP_AUTH_TABLE} ORDER BY provider, credential_type`;
+  const causeColumn = hasDisabledCauseColumn(dbFile) ? 'disabled_cause' : 'NULL AS disabled_cause';
+  const sql = `SELECT provider, credential_type, ${causeColumn} FROM ${OMP_AUTH_TABLE} ORDER BY provider, credential_type`;
   return queryRows(dbFile, sql).map((r) => ({
     provider: String(r.provider),
     credentialType: String(r.credential_type),
-    disabledCause: r.disabled_cause == null ? '' : String(r.disabled_cause),
+    disabledCause: printableCause(r.disabled_cause),
   }));
 }
 
@@ -406,7 +463,12 @@ function stageOmp(ompDir, stageDir, model) {
 // ── Sync back (contribute-hive cleanup, container mode) ─────────────────────
 
 // syncBackOmp copies a refreshed credential out of the staged store into the
-// host's, after the container has stopped (hivecommons/hive#7922).
+// host's (hivecommons/hive#7922): after the container has stopped, and —
+// because the staged store is a bind mount the host can read in place — on a
+// timer while it runs, so the window in which the host holds a revoked token
+// is minutes rather than the whole run. contribute-hive kills the timer
+// before the exit pass, so the two never run over the same row at once; each
+// pass is idempotent and monotonic either way (strictly-newer only).
 //
 // The container runs against a COPY of an OAuth record, and OAuth refresh
 // tokens are single-use: the first client to refresh receives a new refresh
@@ -433,7 +495,10 @@ function syncBackOmp(ompDir, stageDir, model) {
   const stagedDb = path.join(stageDir, 'agent', 'agent.db');
   if (!fs.existsSync(stagedDb) || !fs.existsSync(hostDb) || !report.sqlite) return report;
   const keep = report.selection.source === 'none' ? null : new Set(report.selection.providers);
-  const cols = 'provider, credential_type, identity_key, data, disabled_cause, updated_at';
+  // An older omp store has no disabled_cause column (it arrived with omp's
+  // refresh-failure handling); read NULL for it and leave it out of the write.
+  const withCause = hasDisabledCauseColumn(hostDb) && hasDisabledCauseColumn(stagedDb);
+  const cols = `provider, credential_type, identity_key, data, ${withCause ? 'disabled_cause' : 'NULL AS disabled_cause'}, updated_at`;
   const staged = queryRows(stagedDb, `SELECT ${cols} FROM ${OMP_AUTH_TABLE}`);
   const host = queryRows(hostDb, `SELECT ${cols} FROM ${OMP_AUTH_TABLE}`);
   const rowKey = (r) => `${String(r.provider).toLowerCase()}\u0000${r.credential_type}\u0000${r.identity_key == null ? '' : r.identity_key}`;
@@ -448,8 +513,8 @@ function syncBackOmp(ompDir, stageDir, model) {
     const where = `lower(provider) = ${quoteSql(provider)} AND credential_type = ${quoteSql(s.credential_type)} AND ` +
       (s.identity_key == null ? 'identity_key IS NULL' : `identity_key = ${quoteSql(s.identity_key)}`) +
       ` AND updated_at < ${Number(s.updated_at)}`;
-    const cause = s.disabled_cause == null ? 'NULL' : quoteSql(s.disabled_cause);
-    statements.push(`UPDATE ${OMP_AUTH_TABLE} SET data = ${quoteSql(s.data)}, disabled_cause = ${cause}, updated_at = ${Number(s.updated_at)} WHERE ${where}`);
+    const cause = withCause ? `, disabled_cause = ${s.disabled_cause == null ? 'NULL' : quoteSql(s.disabled_cause)}` : '';
+    statements.push(`UPDATE ${OMP_AUTH_TABLE} SET data = ${quoteSql(s.data)}${cause}, updated_at = ${Number(s.updated_at)} WHERE ${where}`);
     report.syncedProviders.push(provider);
   }
   if (statements.length) execStatements(hostDb, ['BEGIN', ...statements, 'COMMIT']);

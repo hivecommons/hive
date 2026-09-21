@@ -413,6 +413,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_SKIP_VERSION_CHECK` | No | `false` | Skips `just` version freshness check when set to `true`. |
 | `HIVE_SKIP_PULL` | No | `false` | Skips contributor image pull when set to `true`. |
 | `HIVE_KEEP_CONTAINER` | No | remove failed contributor container | Keeps failed contributor containers for debugging when set to `true`. |
+| `HIVE_OMP_CREDENTIAL_SYNC_SECONDS` | No | `300` | How often `just contribute-hive omp` (container mode) copies an OAuth credential the container's omp refreshed back into the host's `~/.omp/agent/agent.db` while the container runs; the same copy-back always runs once more when the container exits. An OAuth refresh token is single-use, so without this the host's copy is revoked by the container's first refresh ([#7922](https://github.com/hivecommons/hive/issues/7922)). Set `0` to sync only at exit. |
 | `HIVE_PROJECT_CONFIG` | No | `/etc/hive/hive-project.yaml` | Path read by `bin/hive-config.sh` for deterministic pipeline/project metadata. |
 | `HIVE_PROJECT_YAML` | No | `/etc/hive/hive-project.yaml`, then first example found | Path read directly by pipeline stages, and by the `hive` binary for the one project-file key it consumes, `classification.review_bots` (see [review-bot-threads.md](review-bot-threads.md)). |
 | `HIVE_RUNTIME_CONFIG` | No | `/etc/hive/hive-runtime.yaml` | Runtime overlay read by `bin/hive-config.sh`. |

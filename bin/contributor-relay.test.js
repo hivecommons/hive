@@ -1491,10 +1491,24 @@ function makeFakeOmpHome(root, { providers = ['anthropic', 'openai-codex', 'goog
     id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
     data TEXT NOT NULL, disabled_cause TEXT DEFAULT NULL, identity_key TEXT DEFAULT NULL,
     created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)`);
+  // omp 18.2.x keeps a change counter that its triggers bump on every write
+  // to auth_credentials; a running omp polls it to notice a change made by
+  // another process. The write-back (#7922) must go through those triggers.
+  db.exec(`CREATE TABLE auth_change_revision (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL);
+    INSERT INTO auth_change_revision (id, revision) VALUES (1, 0);
+    CREATE TRIGGER auth_change_revision_auth_credentials_insert AFTER INSERT ON auth_credentials BEGIN UPDATE auth_change_revision SET revision = revision + 1 WHERE id = 1; END;
+    CREATE TRIGGER auth_change_revision_auth_credentials_update AFTER UPDATE ON auth_credentials BEGIN UPDATE auth_change_revision SET revision = revision + 1 WHERE id = 1; END;
+    CREATE TRIGGER auth_change_revision_auth_credentials_delete AFTER DELETE ON auth_credentials BEGIN UPDATE auth_change_revision SET revision = revision + 1 WHERE id = 1; END;`);
   const insert = db.prepare('INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, ?, ?)');
   for (const p of providers) insert.run(p, 'oauth', JSON.stringify({ access: `${p}-access-token`, refresh: `${p}-refresh-token` }));
   db.close();
   return agentDir;
+}
+
+function authChangeRevision(dbFile) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(dbFile, { readOnly: true });
+  try { return db.prepare('SELECT revision FROM auth_change_revision WHERE id = 1').get().revision; } finally { db.close(); }
 }
 
 function providersIn(dbFile) {
@@ -1783,6 +1797,143 @@ test('omp preflight describes what container mode will stage, and names a missin
     assert.match(text, /container mode stages: openai-codex \(selected by AGENT_MODEL\)/);
     // Credential VALUES never appear in the preflight output.
     assert.ok(!/access-token|refresh-token/.test(text), text);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7922, the hardening around the sync-back above (#7931):
+// the timer-driven pass reads a store the container's omp is writing to
+// through the bind mount, the sqlite3 CLI fallback carries the credential
+// itself in its SQL, the disabled_cause text is the one column a container
+// can write that reaches the host's terminal, and an older omp store has no
+// disabled_cause column at all.
+// ---------------------------------------------------------------------------
+
+// disableOmpCredential marks every row of `provider` the way omp does after a
+// failed refresh.
+function disableOmpCredential(dbFile, provider, cause) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(dbFile);
+  try {
+    db.prepare('UPDATE auth_credentials SET disabled_cause = ?, updated_at = ? WHERE provider = ?').run(cause, 1789760497, provider);
+  } finally { db.close(); }
+}
+
+// containerRefreshes models omp inside the container rotating the staged
+// OAuth record: a new access and refresh token, updated_at moved on.
+function containerRefreshes(stagedDb, provider, { data, updatedAt = 1789765000 } = {}) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(stagedDb);
+  try {
+    db.prepare('UPDATE auth_credentials SET data = ?, updated_at = ? WHERE provider = ?')
+      .run(data ?? JSON.stringify({ access: `${provider}-access-token-2`, refresh: `${provider}-refresh-token-2`, expires: 1789770000000 }), updatedAt, provider);
+  } finally { db.close(); }
+}
+
+const OMP_INVALID_GRANT = 'oauth refresh failed: OAuthError: anthropic token refresh failed: 400 {"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}';
+
+test('#7922: the sync-back works through the sqlite3 CLI, with the credential fed on stdin rather than argv', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const cli = require('child_process').spawnSync('sqlite3', ['-version'], { encoding: 'utf8' });
+  if (cli.error || cli.status !== 0) { console.log('SKIP: no sqlite3 CLI on PATH; the omp sync-back fallback is not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-sync-cli-'));
+  const prior = process.env.HIVE_OMP_BACKEND_SQLITE;
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    disableOmpCredential(hostDb, 'anthropic', OMP_INVALID_GRANT);
+    process.env.HIVE_OMP_BACKEND_SQLITE = 'sqlite3';
+    assert.strictEqual(ompBackend.sqliteBackend(), 'sqlite3');
+    // The disabled row is visible through the CLI reader too, so the launch
+    // refusal does not depend on node:sqlite.
+    assert.throws(() => ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'refused', '.omp'), 'anthropic/claude-sonnet-5'), /disabled on this host: anthropic .*invalid_grant/);
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    ompBackend.stageOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna');
+    // A token with the one character that matters to a SQL literal.
+    const rotated = JSON.stringify({ access: "codex-access-it's", refresh: "codex-refresh-o'clock", expires: 1789770000000 });
+    containerRefreshes(path.join(stage, 'agent', 'agent.db'), 'openai-codex', { data: rotated });
+    const revisionBefore = authChangeRevision(hostDb);
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna');
+    assert.deepStrictEqual(report.syncedProviders, ['openai-codex'], JSON.stringify(report.skipped));
+    delete process.env.HIVE_OMP_BACKEND_SQLITE;
+    const row = credentialRow(hostDb, 'openai-codex');
+    assert.strictEqual(row.data, rotated);
+    assert.strictEqual(row.disabled_cause, null);
+    assert.strictEqual(row.updated_at, 1789765000);
+    // The write goes through omp's own change counter (its triggers fire on
+    // UPDATE), so a host omp that is running picks the new token up.
+    assert.strictEqual(authChangeRevision(hostDb), revisionBefore + 1);
+  } finally {
+    if (prior === undefined) delete process.env.HIVE_OMP_BACKEND_SQLITE; else process.env.HIVE_OMP_BACKEND_SQLITE = prior;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('#7922: a disabled_cause is printed without control characters and capped, wherever it came from', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-cause-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    // The cause text can originate in the container (its staged copy is
+    // what --sync-back reads), so treat it as hostile: a terminal escape, a
+    // bell, and a kilobyte of padding.
+    const hostile = 'oauth refresh failed: 400 invalid_grant\x1b[2J\x07' + 'x'.repeat(1000);
+    disableOmpCredential(path.join(agentDir, 'agent.db'), 'anthropic', hostile);
+    const described = ompBackend.describeOmpHost(hostOmp, 'anthropic/claude-sonnet-5');
+    assert.deepStrictEqual(described.disabledProviders.map((d) => d.provider), ['anthropic']);
+    const text = ompBackend.describeLines(described).join('\n');
+    assert.match(text, /anthropic sign-in on this host is disabled — oauth refresh failed: 400 invalid_grant/);
+    // eslint-disable-next-line no-control-regex
+    assert.ok(!/[\x00-\x08\x0b-\x1f\x7f]/.test(text), 'control characters from the store must never reach the host terminal');
+    assert.ok(described.disabledProviders[0].cause.length <= 401, `the cause must be capped, got ${described.disabledProviders[0].cause.length} chars`);
+    let thrown;
+    try { ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage', '.omp'), 'anthropic/claude-sonnet-5'); } catch (err) { thrown = err; }
+    assert.ok(thrown, 'staging a disabled sign-in must refuse');
+    // eslint-disable-next-line no-control-regex
+    assert.ok(!/[\x00-\x1f\x7f]/.test(thrown.message), thrown.message);
+    assert.ok(thrown.message.length < 700, `the refusal must be capped, got ${thrown.message.length} chars`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('#7922: an omp store from before disabled_cause existed still describes, stages and syncs back', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-old-schema-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    // Rebuild auth_credentials the way an older omp laid it out: no
+    // disabled_cause column.
+    let db = new sqlite.DatabaseSync(hostDb);
+    db.exec(`CREATE TABLE old_auth AS SELECT id, provider, credential_type, data, identity_key, created_at, updated_at FROM auth_credentials;
+      DROP TABLE auth_credentials;
+      ALTER TABLE old_auth RENAME TO auth_credentials;
+      UPDATE auth_credentials SET updated_at = 1000`);
+    db.close();
+    const described = ompBackend.describeOmpHost(hostOmp, 'anthropic/claude-sonnet-5');
+    assert.deepStrictEqual(described.keptProviders, ['anthropic']);
+    assert.deepStrictEqual(described.disabledProviders, []);
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    const staged = ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-sonnet-5');
+    assert.deepStrictEqual(staged.keptProviders, ['anthropic']);
+    const stagedDb = path.join(stage, 'agent', 'agent.db');
+    assert.deepStrictEqual(providersIn(stagedDb), ['anthropic']);
+    containerRefreshes(stagedDb, 'anthropic', { updatedAt: 2000 });
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-sonnet-5');
+    assert.deepStrictEqual(report.syncedProviders, ['anthropic'], JSON.stringify(report.skipped));
+    db = new sqlite.DatabaseSync(hostDb, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT data, updated_at FROM auth_credentials WHERE provider = 'anthropic'").get();
+      assert.strictEqual(row.updated_at, 2000);
+      assert.ok(String(row.data).includes('anthropic-refresh-token-2'));
+    } finally { db.close(); }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -4791,6 +4942,7 @@ test('#7760: omp primary and advisor are detected from config.yml and the sessio
     assert.deepStrictEqual(relay.detectOmpSelection(), {
       model: 'openai-codex/gpt-5.6-terra', effort: 'medium',
       advisorModel: 'anthropic/claude-opus-5', advisorEffort: 'high',
+      source: 'transcript',
     });
     assert.strictEqual(relay.refreshDetectedModel(), 'openai-codex/gpt-5.6-terra');
     assert.strictEqual(relay.effectiveReasoningEffort(), 'medium', 'the :level suffix is the effort, from the config spelling');
@@ -4896,6 +5048,199 @@ test('#7760: a mid-task /model switch in omp reaches task_progress, with the adv
     assert.strictEqual(prog.advisor_model, 'anthropic/claude-opus-5');
     assert.strictEqual(prog.advisor_reasoning_effort, 'high');
   } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7922, the relay half: omp with a DISABLED credential for
+// its configured provider draws a ready pane and quietly runs some other
+// provider's model, while the relay — reading config.yml because omp had not
+// written a session yet — told the hub `claude-sonnet-5` and advertised ready.
+// The credential store is the one thing that can tell the two apart.
+// ---------------------------------------------------------------------------
+
+// writeOmpCredentialStore creates agent.db next to an omp fixture's
+// config.yml, in omp's own schema, with one row per entry.
+function writeOmpCredentialStore(agentDir, rows) {
+  const sqlite = require('node:sqlite');
+  const db = new sqlite.DatabaseSync(path.join(agentDir, 'agent.db'));
+  try {
+    db.exec(`CREATE TABLE auth_credentials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+      data TEXT NOT NULL, disabled_cause TEXT DEFAULT NULL, identity_key TEXT DEFAULT NULL,
+      created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)`);
+    const insert = db.prepare('INSERT INTO auth_credentials (provider, credential_type, data, disabled_cause) VALUES (?, ?, ?, ?)');
+    for (const r of rows) insert.run(r.provider, r.credentialType || 'oauth', JSON.stringify({ access: 'a', refresh: 'r' }), r.disabledCause ?? null);
+  } finally { db.close(); }
+}
+
+const OMP_READY_PANE = fs.readFileSync(path.join(__dirname, 'testdata', 'pane-fixtures', 'omp_ready.pane.txt'), 'utf8');
+const OMP_SONNET_CONFIG = 'modelRoles:\n  default: anthropic/claude-sonnet-5:high\n';
+const OMP_REVOKED = 'oauth refresh failed: OAuthError: anthropic token refresh failed: 400 {"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}';
+
+test('#7922: a ready-looking omp whose configured provider credential is disabled is not ready, and no model is reported for it', () => {
+  let sqliteOk = true;
+  try { require('node:sqlite'); } catch (_) { sqliteOk = false; }
+  if (!sqliteOk) { console.log('SKIP: node:sqlite unavailable on this Node; the omp credential gate is not exercised'); return; }
+  const fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }, { provider: 'openai-codex' }]);
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.deepStrictEqual(relay.ompProviderCredentialState('anthropic'), { state: 'disabled', cause: OMP_REVOKED });
+    assert.deepStrictEqual(relay.ompProviderCredentialState('openai-codex'), { state: 'usable', cause: '' });
+    assert.deepStrictEqual(relay.ompProviderCredentialState('ollama'), { state: 'absent', cause: '' });
+    assert.deepStrictEqual(relay.ompConfiguredProviderBlocked(), { provider: 'anthropic', model: 'anthropic/claude-sonnet-5', cause: OMP_REVOKED });
+    // The pane alone says ready — it is the same chrome a working omp draws.
+    assert.strictEqual(paneClassifier.classifyReadiness(OMP_READY_PANE, 'omp'), 'ready');
+    // The relay does not take its word for it.
+    assert.strictEqual(relay.getCLIState(), 'needs-login', 'a disabled credential for the configured provider withholds ready, exactly as a login prompt does');
+    // And the hub is not told claude-sonnet-5 for an omp that cannot run it.
+    const sel = relay.detectOmpSelection();
+    assert.strictEqual(sel.model, '', 'the config.yml default is what omp is SET to run, not evidence that it is');
+    assert.strictEqual(sel.source, '');
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, '');
+    assert.strictEqual(auth.reasoning_effort, undefined);
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7922: the omp credential gate stands aside whenever it lacks definitive evidence', () => {
+  let sqliteOk = true;
+  try { require('node:sqlite'); } catch (_) { sqliteOk = false; }
+  if (!sqliteOk) { console.log('SKIP: node:sqlite unavailable on this Node; the omp credential gate is not exercised'); return; }
+  // A usable row: ready, and the configured model is reported from config.
+  let fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic' }]);
+  let relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.ompConfiguredProviderBlocked(), null);
+    assert.strictEqual(relay.getCLIState(), 'ready');
+    assert.deepStrictEqual(relay.detectOmpSelection(), { model: 'anthropic/claude-sonnet-5', effort: 'high', advisorModel: '', advisorEffort: '', source: 'config' });
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // No row at all for the provider: an API key in the environment may still
+  // serve it, so this is not evidence either way.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'openai-codex' }]);
+  relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.ompConfiguredProviderBlocked(), null);
+    assert.strictEqual(relay.getCLIState(), 'ready');
+    assert.strictEqual(relay.detectOmpSelection().model, 'anthropic/claude-sonnet-5');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // No store at all (omp never set up, or an image without node:sqlite's
+  // schema): unknown, and the pane classification stands as it was.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.deepStrictEqual(relay.ompProviderCredentialState('anthropic'), { state: 'unknown', cause: '' });
+    assert.strictEqual(relay.getCLIState(), 'ready');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // A second account for the same provider that still works keeps the
+  // provider usable: omp reads that row.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }, { provider: 'anthropic' }]);
+  relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.ompConfiguredProviderBlocked(), null);
+    assert.strictEqual(relay.getCLIState(), 'ready');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // The gate is omp's alone: another backend with the same files sees nothing.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }]);
+  relay = loadRelay({ backend: 'claude', model: '', paneText: 'bypass permissions · claude\n', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'ready');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // The cause is the container's own text and is logged where the host tails
+  // it: control characters are stripped and it is capped.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: 'oauth refresh failed:\x1b[2J\x07 ' + 'x'.repeat(1000) }]);
+  relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    const cred = relay.ompProviderCredentialState('anthropic');
+    assert.strictEqual(cred.state, 'disabled');
+    assert.ok(!/[\x00-\x1f\x7f]/.test(cred.cause), 'control characters from the store must never reach the log');
+    assert.ok(cred.cause.startsWith('oauth refresh failed:'), cred.cause.slice(0, 40));
+    assert.ok(cred.cause.length <= 401, `the cause must be capped at 400 code points plus an ellipsis, got ${cred.cause.length}`);
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7922: AGENT_MODEL names the provider the gate checks, and a session transcript still reports what omp actually resolved', () => {
+  let sqliteOk = true;
+  try { require('node:sqlite'); } catch (_) { sqliteOk = false; }
+  if (!sqliteOk) { console.log('SKIP: node:sqlite unavailable on this Node; the omp credential gate is not exercised'); return; }
+  // config.yml says anthropic (disabled), AGENT_MODEL says openai-codex
+  // (usable): the operator's explicit choice is what omp runs, so it is
+  // what is checked.
+  let fx = makeOmpFixture({ config: OMP_SONNET_CONFIG });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }, { provider: 'openai-codex' }]);
+  let relay = loadRelay({ backend: 'omp', model: 'openai-codex/gpt-5.6-terra', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.strictEqual(relay.ompConfiguredProviderBlocked(), null);
+    assert.strictEqual(relay.getCLIState(), 'ready');
+    assert.strictEqual(relay.refreshDetectedModel(), 'openai-codex/gpt-5.6-terra');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+  // ...and the other way round.
+  fx = makeOmpFixture({ config: 'modelRoles:\n  default: openai-codex/gpt-5.6-terra\n' });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }, { provider: 'openai-codex' }]);
+  relay = loadRelay({ backend: 'omp', model: 'anthropic/claude-sonnet-5', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    assert.deepStrictEqual(relay.ompConfiguredProviderBlocked(), { provider: 'anthropic', model: 'anthropic/claude-sonnet-5', cause: OMP_REVOKED });
+    assert.strictEqual(relay.getCLIState(), 'needs-login');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+
+  // Once omp has written a session, its model_change record is what it
+  // resolved — the fallback model, in the incident — and that is reported
+  // as-is: true, and the opposite of the config default. The gate still
+  // holds, because the configured provider is still unusable.
+  fx = makeOmpFixture({ config: OMP_SONNET_CONFIG, session: [{ type: 'model_change', model: 'ollama/qwen3-coder:30b' }] });
+  writeOmpCredentialStore(fx.agentDir, [{ provider: 'anthropic', disabledCause: OMP_REVOKED }]);
+  relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', paneText: OMP_READY_PANE, env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  try {
+    const sel = relay.detectOmpSelection();
+    assert.strictEqual(sel.model, 'ollama/qwen3-coder:30b');
+    assert.strictEqual(sel.source, 'transcript');
+    assert.strictEqual(sel.effort, '', 'the configured :high belonged to the configured model, not the one running');
+    assert.strictEqual(relay.getCLIState(), 'needs-login');
+  } finally { teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7922: the detected-model log names config.yml as its source when no session transcript exists yet', () => {
+  const fx = makeOmpFixture({ config: 'modelRoles:\n  default: openai-codex/gpt-5.6-terra:medium\n' });
+  const relay = loadRelay({ backend: 'omp', model: '', reasoningEffort: '', env: { HIVE_OMP_AGENT_DIR: fx.agentDir } });
+  const logged = [];
+  const origLog = console.log;
+  console.log = (...args) => { logged.push(args.join(' ')); };
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'openai-codex/gpt-5.6-terra');
+    assert.ok(logged.some((l) => l === 'Detected running model from omp config.yml (no session transcript yet): openai-codex/gpt-5.6-terra'), JSON.stringify(logged));
+    fs.mkdirSync(path.join(fx.agentDir, 'sessions', 'x'), { recursive: true });
+    fs.writeFileSync(path.join(fx.agentDir, 'sessions', 'x', 's.jsonl'), JSON.stringify({ type: 'model_change', model: 'anthropic/claude-opus-5' }) + '\n');
+    assert.strictEqual(relay.refreshDetectedModel(), 'anthropic/claude-opus-5');
+    assert.ok(logged.some((l) => l === 'Detected running model from omp session transcript: anthropic/claude-opus-5'), JSON.stringify(logged));
+  } finally { console.log = origLog; teardown(relay); fs.rmSync(fx.root, { recursive: true, force: true }); }
+});
+
+test('#7922: omp\'s "No API key found for <provider>. Use /login" is a login wall, not a completed turn', () => {
+  const footer = '\n 󰵗  󰪣 Sonnet 5   ~/work  󰙺 ────2%────────────\n╰─\n';
+  const oneLine = 'Error: No API key found for anthropic. Use /login, set an API key environment variable, or create /home/dev/.omp/agent/agent.db' + footer;
+  const twoLines = 'Error: No API key found for anthropic.\nUse /login, set an API key environment variable, or create /home/dev/.omp/agent/agent.db' + footer;
+  assert.strictEqual(paneClassifier.paneShowsLoginRequiredError(oneLine), true);
+  assert.strictEqual(paneClassifier.paneShowsLoginRequiredError(twoLines), true, 'omp emits the message as two lines; a TUI may keep them apart');
+  // Both halves are required: prose about API keys, or a /login tip, is not
+  // the error.
+  assert.strictEqual(paneClassifier.paneShowsLoginRequiredError('I found no API key for anthropic in the repo, which is expected.' + footer), false);
+  assert.strictEqual(paneClassifier.paneShowsLoginRequiredError('Tip: use /login to add another account.' + footer), false);
+  const relay = loadRelay({ backend: 'omp', paneText: oneLine });
+  try {
+    assert.strictEqual(relay.classifyTmuxPane(oneLine), relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      'a task whose turn died at the credential must wait for a person, not be booked complete');
+  } finally { teardown(relay); }
 });
 
 test('#7760: a backend without a selection detector reports no advisor fields', () => {
