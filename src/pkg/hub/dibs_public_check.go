@@ -40,7 +40,7 @@ const (
 // to 5000/h. No hub-level GitHub token env existed before this (the hub's App
 // credentials are per-installation), so this is a new, optional knob; unset
 // means unauthenticated checks, which the TTL math above fits.
-const dibsHubGitHubTokenEnv = "HIVE_HUB_GITHUB_TOKEN"
+const dibsHubGitHubTokenEnv = hubGitHubTokenEnv
 
 // dibsPublicVerdict is one cached answer: whether the repo was public when
 // last checked, and when the answer stops being trusted.

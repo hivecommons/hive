@@ -2811,6 +2811,36 @@
        the three arrows line up in a column; sized for the longest channel name
        ("candidate") at 0.6rem. */
     var CHANNEL_NAME_MIN_W_PX = 62;
+    /* fmtChannelStamp renders a channel row's committed_at (RFC3339 UTC from
+       the server) in the viewer's local time, minute precision: the row is
+       answering "WHEN is this build from", not "which second". '' when the
+       server had no date, so the row shows nothing rather than "Invalid Date". */
+    function fmtChannelStamp(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      var p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+        ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+    /* fmtChannelLag renders how much OLDER one channel's build is than
+       another's, from their two committed_at stamps: "3d 4h", "5h 12m", "45m".
+       '' when either stamp is missing or the difference is not positive, so a
+       row never claims to be older than something it is level with. */
+    function fmtChannelLag(olderIso, newerIso) {
+      if (!olderIso || !newerIso) return '';
+      var a = new Date(olderIso).getTime(), b = new Date(newerIso).getTime();
+      if (isNaN(a) || isNaN(b) || b <= a) return '';
+      var MIN = 60000, HOUR = 3600000, DAY = 86400000;
+      var ms = b - a;
+      if (ms < HOUR) return Math.max(1, Math.floor(ms / MIN)) + 'm';
+      if (ms < DAY) {
+        var h = Math.floor(ms / HOUR), m = Math.floor((ms % HOUR) / MIN);
+        return m > 0 ? h + 'h ' + m + 'm' : h + 'h';
+      }
+      var dd = Math.floor(ms / DAY), hh = Math.floor((ms % DAY) / HOUR);
+      return hh > 0 ? dd + 'd ' + hh + 'h' : dd + 'd';
+    }
 
     /* A registry digest is "sha256:<64 hex>" — far too long for a table cell.
        Show the same 7 hex chars a short git SHA uses, keeping the full digest
@@ -5705,6 +5735,13 @@
              target comes from the server's digest match, and a channel with no
              match renders its digest (or "unknown") instead of a branch. */
           var chLines = '';
+          /* committed_at by channel, so a row can measure its age against the
+             channel it is compared to without a second pass. */
+          var chStampByName = {};
+          for (var si = 0; si < _channelTargets.length; si++) {
+            var sct = _channelTargets[si] || {};
+            if (sct.channel && sct.committed_at) chStampByName[sct.channel] = sct.committed_at;
+          }
           for (var ci = 0; ci < _channelTargets.length; ci++) {
             var ct = _channelTargets[ci] || {};
             var ctTarget;
@@ -5747,14 +5784,33 @@
                 dTitle = (ct.behind ? ct.behind + ' commit(s) behind ' : '') +
                   (ct.ahead ? ct.ahead + ' commit(s) ahead of ' : '') + ct.compare_to;
               }
+              /* Time behind, ONLY for a row that is a plain ancestor of its
+                 upstream ("behind"): there the two stamps sit on one line of
+                 history and their difference is exactly how long the promoted
+                 build has been waiting. Diverged pairs (candidate on v5 vs
+                 edge on v6) share no such line, so a time gap would be
+                 comparing two unrelated clocks — commit counts only there. */
+              var ctLag = '';
+              if (ct.compare_status === 'behind' && ct.behind) {
+                ctLag = fmtChannelLag(ct.committed_at, chStampByName[ct.compare_to]);
+                if (ctLag) dTitle += '; the build promoted here is ' + ctLag + ' older than ' + ct.compare_to + "'s";
+              }
               if (!dBits.length) {
                 /* identical, or a status with no counts: say so in words
                    rather than rendering an empty pair of arrows. */
                 ctDist = '<span style="font-size:0.6rem;color:var(--muted);opacity:0.7" title="' + escAttr(dTitle) + '">in sync with ' + esc(ct.compare_to) + '</span>';
               } else {
                 ctDist = '<span style="font-size:0.6rem;font-family:monospace;display:inline-flex;gap:4px" title="' + escAttr(dTitle) + '">' + dBits.join('') +
+                  (ctLag ? '<span style="color:#fbbf24;opacity:0.85">' + esc(ctLag) + '</span>' : '') +
                   '<span style="color:var(--muted);opacity:0.6;font-family:inherit">vs ' + esc(ct.compare_to) + '</span></span>';
               }
+            }
+            /* When the channel's build landed, in the viewer's local time.
+               Sits right after the SHA so the row reads "<sha> @ <when>: <msg>"
+               and the stamps of adjacent rows line up for eyeballing. */
+            var ctStamp = fmtChannelStamp(ct.committed_at);
+            if (ctStamp) {
+              ctTarget += '<span style="font-size:0.6rem;font-family:monospace;color:var(--muted);opacity:0.75;margin-left:6px" title="Committed ' + escAttr(ct.committed_at) + ' (UTC)">' + esc(ctStamp) + '</span>';
             }
             chLines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + ctDist + '</div>';
           }

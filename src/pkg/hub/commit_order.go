@@ -55,6 +55,7 @@ var fetchCommitCompareStatus = func(base, head string, logger *slog.Logger) (str
 		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

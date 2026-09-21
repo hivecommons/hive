@@ -242,6 +242,7 @@ func listRepoBranches(client *http.Client) []string {
 	for page := 0; url != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
+		authGitHubRequest(req)
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil
@@ -842,6 +843,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	branchURL := fmt.Sprintf("%s/repos/hivecommons/hive/branches/%s", githubAPIBase, branch)
 	req, _ := http.NewRequest("GET", branchURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: branch API request failed", "branch", branch, "error", err)
@@ -971,6 +973,7 @@ func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logg
 	runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
 	req, _ := http.NewRequest("GET", runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: workflow runs request failed", "sha", fullSHA, "error", err)
@@ -1019,6 +1022,7 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, fullSHA)
 	req, _ := http.NewRequest("GET", commitURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return ""

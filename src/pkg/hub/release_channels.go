@@ -121,6 +121,13 @@ type ChannelTarget struct {
 	// Behind is how many commits CompareTo has that this channel does not —
 	// i.e. what is queued to be promoted into this channel.
 	Behind int `json:"behind,omitempty"`
+
+	// CommittedAt is when SHA landed (committer date, RFC3339 UTC), or "" when
+	// unknown. Lets the dashboard stamp each channel row and, for a row that
+	// is purely behind its upstream, say how OLD the promoted build is
+	// relative to what is waiting — a commit count alone cannot tell "12
+	// commits from this morning" apart from "12 commits over three weeks".
+	CommittedAt string `json:"committed_at,omitempty"`
 }
 
 // channelDigestTTL bounds how stale a channel→digest association may be. A
@@ -262,6 +269,7 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 	// Distances come last: every channel's SHA must be known before any row can
 	// be measured against another.
 	annotateChannelDistances(out, logger)
+	annotateChannelCommitDates(out, logger)
 	return out
 }
 

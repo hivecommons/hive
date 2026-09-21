@@ -62,9 +62,14 @@ How to read it:
 - `↓N vs candidate` (amber) — N commits are on `candidate` that `stable` does not have: the promotion backlog for that hop.
 - `↑N` (blue) — N commits are on this channel that its upstream does not have. Both arrows can appear at once: the channels follow different branches, and a branch synced from another both carries commits the other lacks and misses commits merged since the sync. GitHub's compare API reports this as *diverged*, and the UI shows **both** counts rather than collapsing them into a direction that does not exist. The tooltip spells out the full sentence.
 - `in sync with candidate` — the two stages resolve to the same commit (or the compare returned no counts).
+- `↓N 3d 5h vs candidate` — when a row is a plain ancestor of its upstream (compare status *behind*), the amber duration after the count is how much **older** the promoted build is than the upstream's: the difference between the two rows' commit timestamps. It appears only for that pure-behind case. A *diverged* pair (`candidate` on v5 vs `edge` on v6) shares no single line of history, so a time gap there would compare two unrelated clocks — those rows show commit counts only.
 - **No distance shown at all** — the compare could not be resolved. This is deliberate: rendering `0` would read as "level with upstream", the one answer that must never be guessed, since it turns a stalled promotion into a healthy-looking row.
 
+Each row also carries the **commit timestamp** of the build it points at (`<sha> 2026-09-21 16:51`, viewer's local time, minute precision; the tooltip has the UTC RFC3339 value). It is the committer date of that SHA, fetched hub-side (`pkg/hub/channel_commit_date.go`) and cached permanently. A row whose date could not be fetched shows no stamp rather than a placeholder.
+
 Distances are computed hub-side (`pkg/hub/channel_distance.go`) via GitHub's compare API and cached permanently: the distance between two fixed commits is immutable, and a moved channel is a new SHA pair, so entries become unreferenced rather than stale — there is no TTL after which a shown distance could be wrong.
+
+Both reads, like every other hub-originated `api.github.com` call (branch tips, commit messages, workflow runs), are made anonymously unless **`HIVE_HUB_GITHUB_TOKEN`** is set on the hub. The anonymous budget is 60 requests/hour per source IP and the branch poller alone exhausts it once the hub tracks more than a couple of branches; GitHub then answers `403`/`429`, the compares fail, and the distance column and timestamps silently disappear (the hub logs `channel distance: compare failed … HTTP 403`). Set the token (a fine-grained or classic token with public-repo read; 5000 requests/hour) and the rows come back on the next 5-minute channel refresh. See [`env-vars.md`](env-vars.md).
 
 ## Persistence: the tracked channel is durable
 

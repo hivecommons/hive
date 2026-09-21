@@ -47,14 +47,49 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 	fetchCommitCompareCounts = func(base, head string, _ *slog.Logger) (channelDistance, error) {
 		return channelDistance{}, fmt.Errorf("compare not stubbed in this test")
 	}
+	// Commit dates are a FOURTH read (channel_commit_date.go). Same default:
+	// unknown, so rows carry no timestamp unless a test opts in via
+	// stubChannelCommitDates.
+	resetChannelCommitDateCache()
+	origDate := fetchCommitDate
+	fetchCommitDate = func(string, *slog.Logger) (time.Time, error) {
+		return time.Time{}, fmt.Errorf("commit date not stubbed in this test")
+	}
 	t.Cleanup(func() {
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
 		channelCommitMessage = origMsg
 		fetchCommitCompareCounts = origDist
+		fetchCommitDate = origDate
 		resetChannelDistanceCache()
+		resetChannelCommitDateCache()
 		resetChannelTargetCache()
 	})
+}
+
+// stubChannelCommitDates points fetchCommitDate at a fixed SHA→date table for
+// one test, keyed by short SHA.
+func stubChannelCommitDates(t *testing.T, by map[string]time.Time) {
+	t.Helper()
+	resetChannelCommitDateCache()
+	orig := fetchCommitDate
+	fetchCommitDate = func(sha string, _ *slog.Logger) (time.Time, error) {
+		d, ok := by[shortSHA(sha)]
+		if !ok {
+			return time.Time{}, fmt.Errorf("no stubbed date for %s", sha)
+		}
+		return d, nil
+	}
+	t.Cleanup(func() {
+		fetchCommitDate = orig
+		resetChannelCommitDateCache()
+	})
+}
+
+func resetChannelCommitDateCache() {
+	commitDateMu.Lock()
+	commitDateBySHA = map[string]time.Time{}
+	commitDateMu.Unlock()
 }
 
 // stubChannelDistances points fetchCommitCompareCounts at a fixed
