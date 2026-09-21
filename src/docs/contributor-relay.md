@@ -371,6 +371,12 @@ Before this, the prompt mentioned a branch exactly once ("push your branch to yo
 
 Watching the pane, the base is the thing worth a glance: it is stated in the prompt, and the agent is asked to confirm it on the opened PR before reporting done.
 
+### The assigning hive's writing guide travels with the task
+
+If the hive that handed you the task sets [`project.writing_guide`](agent-configuration.md#writing-guide-how-issues-and-prs-should-read-projectwriting_guide), the assignment prompt carries it, immediately before the instruction to open the PR ([#8124](https://github.com/hivecommons/hive/issues/8124)). It is the repo owner's instruction for how the PR body should *read* — length, structure, register — and it never overrides what the repository's own `AGENTS.md` and `CONTRIBUTING` require, or what the prompt asks the body to contain.
+
+The guide belongs to the hive that owns the task, not to your relay, because `task_assign` is built by that hub. A relay subscribed to two hives therefore gets each hive's guide on that hive's tasks, which is the right shape: the owner of the repository the PR lands in is who decides how PRs there read. A hive that sets no guide ships the prompt it always has.
+
 ### An interrupted task's uncommitted edits are stashed, not inherited
 
 The same persistent checkout has a second thing to inherit besides its branch: its **working tree**. A task that is revoked or aborted mid-edit — the hub restarted, an operator yanked it, the CLI crashed — is stopped by the relay with an interrupt, and until [#7790](https://github.com/hivecommons/hive/issues/7790) nothing then touched the tree. Its half-done edits stayed on its branch, and because every later task on that repo is told to reuse the checkout, each of them started from another task's uncommitted changes. Observed on projectbluefin/utah: one task revoked in a hub-restart cascade left three modified files behind, and the next four tasks on that repo all began from them. `git checkout -b` carries a dirty tree onto the new branch silently, so a literal `git add -A` would have shipped someone else's half-finished change under this contributor's name; the PRs that followed leaked nothing only because that agent happened to choose `git worktree add` each time.

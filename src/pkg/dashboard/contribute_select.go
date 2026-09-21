@@ -1117,9 +1117,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// itself carries the #2545 workspace-clone instruction (real checkout into
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
 	canPush := h.contributorCanPush(chosen.repoFull, ownUsername)
-	prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, canPush)
+	// #8124: the guide is THIS hive's project.writing_guide, resolved here
+	// rather than inside the builder — the builder stays a pure function of task
+	// metadata, and the assigning hub is the only party that should decide how
+	// PRs in its repos read. A relay subscribed to two hives therefore gets each
+	// hive's guide on that hive's tasks. Unset renders nothing.
+	guide := h.writingGuideSection()
+	prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, canPush, guide)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush)
+		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide)
 	}
 	// #4105: tell the agent up front — from the hub's own handshake-recorded
 	// invocation values — the exact attribution trailer its PR body must end

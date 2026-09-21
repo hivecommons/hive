@@ -109,8 +109,14 @@ func (h *ContributeWSHub) roleKickPrompt(role string) string {
 	return h.server.deps.Scheduler.BuildAgentMessageFromLastActionable(role)
 }
 
-func buildRoleTaskPromptForContributor(ref worksource.Ref, title, role, agentPrompt string, canPush bool) string {
-	base := buildTaskPromptForContributor(ref, title, canPush)
+// buildRoleTaskPromptForContributor wraps the ordinary assignment prompt in the
+// spoke-agent role framing. guide is the assigning hive's rendered
+// project.writing_guide (hivecommons/hive#8124); it is threaded through to the
+// wrapped prompt rather than added here, so a role-delegated task carries the
+// guide in the same place an ordinary task does — next to the open-the-PR step,
+// not above the role preamble.
+func buildRoleTaskPromptForContributor(ref worksource.Ref, title, role, agentPrompt string, canPush bool, guide string) string {
+	base := buildTaskPromptForContributor(ref, title, canPush, guide)
 	role = normalizeAgentRole(role)
 	if role == "" {
 		return base

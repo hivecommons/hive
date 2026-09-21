@@ -57,8 +57,10 @@ project:
   # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
   # before the body template the agent fills in — next to the template, which
   # is where a style rule has to sit to be followed (a rule in AGENTS.md
-  # arrives as background and loses to the template). Empty (the default)
-  # renders nothing. See src/docs/agent-configuration.md.
+  # arrives as background and loses to the template). Also carried into the
+  # contributor relay's task prompt, so PRs a contributor opens for your repos
+  # read the same way your own agents' do. Empty (the default) renders nothing.
+  # See src/docs/agent-configuration.md.
   # writing_guide: |
   #   A person who was not in your head will read this. Write for them.
   #   Open with two or three short sentences: what changed, why, and what

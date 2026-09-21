@@ -43,14 +43,24 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 // Repository instructions always name the GitHub repo; external work is planned
 // elsewhere but still landed as a PR here.
 func buildTaskPromptForRef(ref worksource.Ref, title string) string {
-	return buildTaskPromptForContributor(ref, title, false)
+	return buildTaskPromptForContributor(ref, title, false, "")
 }
 
 // buildTaskPromptForContributor renders the checkout workflow selected for the
 // contributor's actual access to the target repository. canPush is resolved by
 // contributorCanPush immediately before dispatch; the credential remains
 // separate from this pure, preview-safe prompt builder.
-func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush bool) string {
+//
+// guide is the ASSIGNING hive's project.writing_guide, already rendered by
+// config.ProjectConfig.WritingGuideSection() — the owner's instruction for how
+// the PR body should read (hivecommons/hive#8124, extending #7667). It arrives
+// as a parameter rather than being read from config here so the builder stays
+// pure and preview-safe; the two dispatch call sites pass
+// s.deps.Config.Project.WritingGuideSection(). It is the hive's setting and not
+// the contributor's, which is the right shape: a relay subscribed to two hives
+// gets each hive's guide on that hive's tasks, because the repo owner is who
+// decides how PRs in their repo read. Empty renders nothing.
+func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush bool, guide string) string {
 	repoFull := ref.Repo
 	issueRef := ref.Key()
 	if issueRef == "" {
@@ -74,7 +84,19 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
 	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()), canPush)
+		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide)
+}
+
+// writingGuideSection renders this hub's own project.writing_guide for the
+// assignment prompt, or "" when the hive has not set one
+// (hivecommons/hive#8124). Nil-safe at every hop for the same reason
+// roleKickPrompt is: the hub is constructed in tests without a full dependency
+// graph, and a missing config means "no guide", never a panic on dispatch.
+func (h *ContributeWSHub) writingGuideSection() string {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return ""
+	}
+	return h.server.deps.Config.Project.WritingGuideSection()
 }
 
 // taskIDSegment is the per-item component of a task id. For GitHub-backed work
@@ -256,10 +278,10 @@ func taskBaseBranch(title, repoFull, hubBranch string) string {
 // resolve one at all, which changes the wording below but never licenses
 // inheriting whatever branch the checkout happens to be on.
 func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch string) string {
-	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch, false)
+	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch, false, "")
 }
 
-func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool) string {
+func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide string) string {
 	// The workspace contract (kubestellar/hive#2545): your tmux pane already
 	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
 	// launches the session with -c pointed there), but nothing had put a repo
@@ -365,6 +387,29 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 		"'git worktree add' for your task branch so the shared checkout is never your " +
 		"working tree. "
 
+	// hivecommons/hive#8124: project.writing_guide reaches every issue and PR a
+	// RESIDENT agent files, through ${WRITING_GUIDE} in the default policy
+	// templates (#7667/#7670), but this prompt is built in Go and carried none
+	// of it — so an owner who set a guide got it on the quality lane's PRs and
+	// not on the PRs a contributor opened for the same repository.
+	//
+	// Position is the whole point of the setting, and it is the same position
+	// here as there: immediately before the step that writes the thing it
+	// governs. In a policy template that is the `--body` the agent is told to
+	// fill in; on this path it is the open-the-PR instruction below. A style
+	// rule that arrives as background loses to the instruction sitting next to
+	// the task (#7667), which is why it is not appended as a footer or folded
+	// in with the AGENTS.md precedence paragraph above.
+	//
+	// Set off on its own lines because the guide is free text the owner wrote —
+	// possibly several paragraphs — and the rest of this prompt is one running
+	// sequence of sentences. Empty renders nothing, so a hive that never set a
+	// guide gets a byte-identical prompt, exactly as on the template path.
+	guideHint := ""
+	if g := strings.TrimSpace(guide); g != "" {
+		guideHint = "\n\n" + g + "\n\n"
+	}
+
 	return fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+
 			"%sThen 'cd' into that checkout, read the issue, "+
@@ -402,6 +447,10 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"Commit with 'git commit -s' so every commit carries a Signed-off-by "+
 			"trailer — the DCO check blocks the merge without it, and the trailer's "+
 			"email must match the commit author's email. "+
+			// #8124: the assigning hive's writing guide, immediately before the
+			// instruction to open the PR whose body it governs. Empty renders
+			// nothing.
+			"%s"+
 			// Open it READY, not draft. A draft trips the repo's
 			// do-not-merge/work-in-progress automation and tide will not merge
 			// one, so a draft left behind is a PR nobody is waiting on and
@@ -515,7 +564,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"appear after your verdict, you may be asked once to address the "+
 			"ones that apply and print the HIVE_VERDICT line again — do so; that "+
 			"second line is expected, and it is final.",
-		repoFull, issueRef, title, sourceHint, checkoutHint, baseHint, pushHint,
+		repoFull, issueRef, title, sourceHint, checkoutHint, baseHint, guideHint, pushHint,
 	)
 }
 

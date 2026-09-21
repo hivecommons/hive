@@ -14,7 +14,7 @@ import (
 
 func TestTaskPromptForkCheckoutUsesSupportedGHSyntax(t *testing.T) {
 	prompt := buildTaskPromptForContributor(
-		worksource.Ref{Repo: "acme/widgets", Number: 42}, "fix checkout", false)
+		worksource.Ref{Repo: "acme/widgets", Number: 42}, "fix checkout", false, "")
 
 	want := "gh repo fork acme/widgets --clone=true -- $HIVE_WORKSPACE_DIR/acme/widgets"
 	if !strings.Contains(prompt, want) {
@@ -30,7 +30,7 @@ func TestTaskPromptForkCheckoutUsesSupportedGHSyntax(t *testing.T) {
 
 func TestTaskPromptPushCheckoutSkipsImpossibleFork(t *testing.T) {
 	prompt := buildTaskPromptForContributor(
-		worksource.Ref{Repo: "alice/widgets", Number: 42}, "fix checkout", true)
+		worksource.Ref{Repo: "alice/widgets", Number: 42}, "fix checkout", true, "")
 
 	want := "gh repo clone alice/widgets $HIVE_WORKSPACE_DIR/alice/widgets -- --origin upstream"
 	if !strings.Contains(prompt, want) {
@@ -64,7 +64,7 @@ func TestTaskPromptReusedCheckoutMustBeCleanBeforeBranching(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prompt := buildTaskPromptForContributor(
-				worksource.Ref{Repo: "acme/widgets", Number: 42}, "fix checkout", tc.canPush)
+				worksource.Ref{Repo: "acme/widgets", Number: 42}, "fix checkout", tc.canPush, "")
 
 			for _, want := range []string{
 				// Name the hazard, so an agent that finds a dirty tree knows it
