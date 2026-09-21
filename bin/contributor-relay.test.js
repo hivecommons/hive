@@ -8922,6 +8922,131 @@ test('#7879 postVerdictNoteBlocks joins a note\'s continuation lines, skips nits
   } finally { teardown(relay); }
 });
 
+// ---------------------------------------------------------------------------
+// #7935 — the follow-up names the notes, not just the event.
+//
+// projectbluefin/utah#24 → utah#225: the turn carried mid-turn ⟦blocker⟧s the
+// agent had already resolved AND two fresh ⟦concern⟧s under the verdict. The
+// nudge said only "advisor notes were posted after your verdict", the agent
+// read that as the notes it had already handled, searched the hub and the PR
+// for newer ones, found nothing and re-printed the verdict — and the wrong
+// file citation the advisor had flagged shipped.
+// ---------------------------------------------------------------------------
+
+test('#7935 postVerdictQuotableNotes returns the blocks the triggering concern lines belong to', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    const m = relay.POST_VERDICT_REVIEW_MARKERS.omp;
+    const v = 'HIVE_VERDICT: complete';
+    const lines = [
+      v,
+      ' ⓘ Advisor 1 note', '   ▎ ⟦concern⟧ first', '   ▎ continued',
+      ' ⓘ Advisor 2 note', '   ▎ ⟦blocker⟧ second',
+      ' ⓘ Advisor 3 note', '   ▎ ⟦nit⟧ ignored',
+    ];
+    const all = relay.postVerdictConcerns(lines, v, m);
+    assert.deepStrictEqual(relay.postVerdictQuotableNotes(lines, v, m, all),
+      ['⟦concern⟧ first continued', '⟦blocker⟧ second'], 'every triggering note, continuation lines joined');
+    // The #7879 second round narrows `concerns` to the new blockers; the
+    // quoted set must narrow with it rather than re-quoting the concern the
+    // agent has already been asked about once.
+    assert.deepStrictEqual(relay.postVerdictQuotableNotes(lines, v, m, all.filter(l => /blocker/.test(l))),
+      ['⟦blocker⟧ second']);
+    assert.deepStrictEqual(relay.postVerdictQuotableNotes(lines, v, m, []), [], 'nothing triggered, nothing quoted');
+    // A marker line the block parser did not attach to a block (here it is
+    // flush-left, so it never opens a body) still gets quoted, stripped of
+    // its gutter glyph — quoting something beats quoting nothing.
+    const flat = [v, ' ⓘ Advisor 1 note', '⟦concern⟧ flush left'];
+    assert.deepStrictEqual(relay.postVerdictQuotableNotes(flat, v, m, relay.postVerdictConcerns(flat, v, m)),
+      ['⟦concern⟧ flush left']);
+
+    const entries = relay.postVerdictNoteBlockEntries(lines, v, m);
+    assert.deepStrictEqual(entries.map(e => e.text), relay.postVerdictNoteBlocks(lines, v, m),
+      'postVerdictNoteBlocks is the same walk, text only');
+    assert.deepStrictEqual(entries[0].markerLines, ['   ▎ ⟦concern⟧ first']);
+  } finally { teardown(relay); }
+});
+
+test('#7935 buildPostVerdictReviewMessage quotes the notes, stays one line, and cannot echo a verdict', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    const msg = relay.buildPostVerdictReviewMessage(['⟦concern⟧ Wrong citation in building.md', '⟦blocker⟧ Base branch is wrong']);
+    assert.ok(msg.startsWith(relay.POST_VERDICT_REVIEW_ANCHOR),
+      'the anchor postVerdictReviewAnswered() matches stays a verbatim prefix');
+    assert.ok(msg.includes('Wrong citation in building.md') && msg.includes('Base branch is wrong'),
+      `both notes are named: ${JSON.stringify(msg)}`);
+    assert.ok(msg.endsWith(relay.POST_VERDICT_REVIEW_INSTRUCTION), 'and the instruction still closes it');
+    assert.ok(!/\n/.test(msg), 'typed as one line — tmuxSendNudge submits on newline');
+
+    // The message is echoed back onto the pane and a long echo wraps, so a
+    // quoted `HIVE_VERDICT: complete` could land at the start of a row and be
+    // read as the second verdict the follow-up is waiting for.
+    const withSentinel = relay.buildPostVerdictReviewMessage(['⟦blocker⟧ Your HIVE_VERDICT: complete line claims a PR that is not open']);
+    assert.ok(!/HIVE_VERDICT:/.test(withSentinel),
+      `the echoed request must not itself read as a verdict: ${JSON.stringify(withSentinel)}`);
+    assert.ok(withSentinel.includes('claims a PR that is not open'), 'the rest of the note survives');
+    assert.strictEqual(relay.sanitizePostVerdictNote('a\tb\ncd'), 'a b c d', 'control characters and newlines collapse to spaces');
+
+    // Bounds: long notes are truncated, and past the cap the count is stated
+    // rather than the notes silently dropped.
+    const long = `⟦concern⟧ ${'x'.repeat(relay.POST_VERDICT_NOTE_MAX_CHARS * 2)}`;
+    const truncated = relay.buildPostVerdictReviewMessage([long]);
+    assert.ok(truncated.includes('…'), 'an over-long note is truncated with an ellipsis');
+    assert.ok(!truncated.includes('x'.repeat(relay.POST_VERDICT_NOTE_MAX_CHARS)), 'and really is shorter than the note');
+    const many = Array.from({ length: relay.POST_VERDICT_NOTES_MAX_QUOTED + 2 }, (_, i) => `⟦concern⟧ note ${i}`);
+    const capped = relay.buildPostVerdictReviewMessage(many);
+    assert.ok(capped.includes('and 2 more notes'), `the omitted notes are counted: ${JSON.stringify(capped)}`);
+    assert.ok(!capped.includes(`note ${relay.POST_VERDICT_NOTES_MAX_QUOTED + 1}`), 'and are not quoted');
+
+    // Nothing quotable degrades to exactly the pre-#7935 wording.
+    assert.strictEqual(relay.buildPostVerdictReviewMessage([]), relay.POST_VERDICT_REVIEW_MESSAGE);
+    assert.strictEqual(relay.buildPostVerdictReviewMessage(['   ']), relay.POST_VERDICT_REVIEW_MESSAGE);
+    assert.strictEqual(relay.buildPostVerdictReviewMessage(undefined), relay.POST_VERDICT_REVIEW_MESSAGE);
+  } finally { teardown(relay); }
+});
+
+test('#7935 the follow-up the relay types names the notes below the verdict, not the ones already handled', () => {
+  // The utah#225 pane shape: a mid-turn blocker the agent resolved before
+  // printing the verdict, then the two concerns the relay is actually asking
+  // about. Pre-fix the relay typed POST_VERDICT_REVIEW_MESSAGE verbatim and
+  // the agent matched it to the note above.
+  const HANDLED_MID_TURN = [
+    ' ⓘ Advisor 1 note',
+    '   ▎ ⟦blocker⟧ The skill index under docs/skills is stale; regenerate it before you cite it.',
+  ];
+  const BELOW_THE_VERDICT = [
+    ' ⓘ Advisor 1 note',
+    '   ▎ ⟦concern⟧ Before picking a slice: there are 54 open PRs on this repo and several',
+    '   ▎ already target these files.',
+    ' ⓘ Advisor 2 note',
+    '   ▎ ⟦concern⟧ Wrong citation in the new building.md text: iso/scripts/luks-e2e.sh writes',
+    '   ▎ the record itself; scripts/update-e2e-readme.py does not refresh it.',
+  ];
+  let pane = ompPane(' ⠋ Editing docs/building.md', '╰─');
+  const relay = loadRelay({ backend: 'omp', paneText: () => pane, prMeta: new Error('gh: offline') });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7935-quoted-notes', 24);
+    const before = relay.__tmuxSends().length;
+    pane = ompPane(' Opened https://github.com/foo/bar/pull/225', HANDLED_MID_TURN,
+      OMP_UTAH14_VERDICT, BELOW_THE_VERDICT, OMP_UTAH14_TAIL);
+    relay.__crashTick();
+    const sends = relay.__tmuxSends().slice(before).filter(c => c.includes(relay.POST_VERDICT_REVIEW_ANCHOR));
+    assert.strictEqual(sends.length, 1, `exactly one follow-up is typed: ${JSON.stringify(relay.__tmuxSends().slice(before))}`);
+    const typed = sends[0];
+    assert.ok(typed.includes('Wrong citation in the new building.md text'),
+      `the flagged note is quoted into the prompt: ${JSON.stringify(typed)}`);
+    assert.ok(typed.includes('scripts/update-e2e-readme.py does not refresh it'),
+      'including its continuation lines, not just the marker line');
+    assert.ok(typed.includes('there are 54 open PRs on this repo'), 'both notes below the verdict are quoted');
+    assert.ok(!typed.includes('The skill index under docs/skills is stale'),
+      'the mid-turn note the agent already handled is above the verdict and must NOT be quoted');
+    assert.ok(!typed.includes(relay.POST_VERDICT_REVIEW_MESSAGE),
+      'the bare event-only wording is what #7935 replaced');
+    assert.ok(!/\n/.test(typed), 'still one line');
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#7759 postVerdictConcerns reads only bracketed concerns inside a note block below the verdict', () => {
   const relay = loadRelay({ backend: 'omp' });
   try {

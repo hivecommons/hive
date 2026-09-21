@@ -221,9 +221,90 @@ const AUTONOMY_NUDGE_MESSAGE =
 // SECOND one when it sits below that echo. Keep it at the very start, short
 // enough to survive tmux wrapping at any sane pane width, and keep
 // POST_VERDICT_REVIEW_ANCHOR a verbatim prefix of it.
+//
+// What actually gets typed is buildPostVerdictReviewMessage() below, which
+// quotes the notes in question (#7935); this constant is the wording it falls
+// back to when there is nothing quotable.
 const POST_VERDICT_REVIEW_MESSAGE =
   'Advisor notes were posted after your verdict. Address the concerns that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.';
 const POST_VERDICT_REVIEW_ANCHOR = 'Advisor notes were posted after your verdict';
+// The instruction half of the message, reused verbatim by the quoting form
+// below so the two spellings cannot drift.
+const POST_VERDICT_REVIEW_INSTRUCTION =
+  'Address the ones that apply to your change, skip nits and anything already handled, then print the HIVE_VERDICT line again on its own line.';
+
+// #7935: the message above names the EVENT ("notes were posted") but not the
+// NOTES. That is unambiguous only when the pane holds exactly the notes the
+// relay means. It usually does not: an advisor that reviews every turn has
+// already posted 1–3 mid-turn notes the agent read and acted on, so "advisor
+// notes were posted after your verdict" reads perfectly well as "the ones you
+// already handled". Observed on projectbluefin/utah#24: the agent matched the
+// nudge to two mid-turn ⟦blocker⟧s it had resolved, searched the hub and the
+// PR for anything newer, found nothing, and re-printed the verdict — and the
+// wrong-file citation the advisor had actually flagged shipped in utah#225.
+// The relay has the notes in hand when it types the nudge (it already logs
+// them), so it quotes them.
+//
+// Quoted as ONE line, joined with ` | `: the nudge path types a literal
+// keystroke burst (tmuxSendNudge) with no bracketed-paste settle behind it, so
+// an embedded newline risks submitting the first line on its own and typing
+// the rest into a working agent. A single line has no such failure mode.
+const POST_VERDICT_NOTE_JOINER = ' | ';
+// Per-note and per-message bounds. A note block is the advisor's own prose and
+// can run long; the point of quoting is to identify WHICH note, and the full
+// text is on the pane right above the nudge either way.
+const POST_VERDICT_NOTE_MAX_CHARS = 400;
+const POST_VERDICT_NOTES_MAX_QUOTED = 4;
+
+// sanitizePostVerdictNote makes one advisor note safe to type back into the
+// pane: one line, no control characters, and — the load-bearing part — no
+// live `HIVE_VERDICT:` sentinel.
+//
+// The CLI echoes what it is typed, and a long echo WRAPS, so any fragment of
+// the nudge can land at the start of a pane row. hiveVerdictLineRe() anchors
+// at line start, so an advisor note quoting the agent's own
+// `HIVE_VERDICT: complete` line would be read back by detectHiveVerdict() as
+// the SECOND verdict the follow-up is waiting for and finalize the task on the
+// spot — the follow-up answering itself. Dropping the colon defuses it (the
+// regex requires `HIVE_VERDICT:`) and still reads as prose. The existing
+// "the echoed request must not itself read as a verdict" pin on the static
+// message is the same rule; this is it applied to text the relay did not write.
+function sanitizePostVerdictNote(text) {
+  return String(text == null ? '' : text)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/HIVE_VERDICT\s*:/gi, 'HIVE_VERDICT')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncatePostVerdictNote(text) {
+  return text.length > POST_VERDICT_NOTE_MAX_CHARS
+    ? `${text.slice(0, POST_VERDICT_NOTE_MAX_CHARS - 1).trimEnd()}…`
+    : text;
+}
+
+// buildPostVerdictReviewMessage renders the follow-up with the notes that
+// earned it quoted inline. Falls back to the bare POST_VERDICT_REVIEW_MESSAGE
+// when there is nothing quotable, so a pane shape the block parser cannot read
+// degrades to exactly the pre-#7935 behaviour rather than to a truncated
+// sentence. POST_VERDICT_REVIEW_ANCHOR stays a verbatim prefix either way,
+// which is what keeps postVerdictReviewAnswered() and
+// paneHoldsUnsubmittedPrompt() unchanged.
+function buildPostVerdictReviewMessage(notes) {
+  const quotable = (Array.isArray(notes) ? notes : [])
+    .map(n => truncatePostVerdictNote(sanitizePostVerdictNote(n)))
+    .filter(Boolean);
+  if (quotable.length === 0) return POST_VERDICT_REVIEW_MESSAGE;
+  const shown = quotable.slice(0, POST_VERDICT_NOTES_MAX_QUOTED);
+  const omitted = quotable.length - shown.length;
+  const quoted = shown.map((n, i) => `(${i + 1}) "${n}"`).join(POST_VERDICT_NOTE_JOINER);
+  const more = omitted > 0
+    ? ` (and ${omitted} more note${omitted === 1 ? '' : 's'} below your verdict on the pane)`
+    : '';
+  return `${POST_VERDICT_REVIEW_ANCHOR} — these ones, not any note you already handled earlier in this turn: ` +
+    `${quoted}${more}. ${POST_VERDICT_REVIEW_INSTRUCTION}`;
+}
 // #7879: hard cap on review follow-ups per task. The first is earned by any
 // new ⟦blocker⟧/⟦concern⟧ under the verdict; the second ONLY by a ⟦blocker⟧
 // that was not on the pane at the previous verdict. Never a third.
@@ -3221,6 +3302,20 @@ function postVerdictConcerns(lines, verdictLine, markers) {
 // with notes still unaddressed: the information already exists on the pane
 // and used to die with the relaunch.
 function postVerdictNoteBlocks(lines, verdictLine, markers) {
+  return postVerdictNoteBlockEntries(lines, verdictLine, markers).map(e => e.text);
+}
+
+// postVerdictNoteBlockEntries is postVerdictNoteBlocks with the raw marker
+// lines each block was flagged by kept alongside its text:
+// `{ text, markerLines }`, in pane order.
+//
+// #7935: the follow-up quotes the notes that earned it, and the notes that
+// earned it are chosen by postVerdictConcerns() — which yields raw marker
+// LINES, filtered against the previous tick's snapshot and (on the second
+// round) down to ⟦blocker⟧s. Keeping the marker lines is what lets the caller
+// intersect the two views and quote exactly the notes it is asking about,
+// rather than every flagged block below the verdict.
+function postVerdictNoteBlockEntries(lines, verdictLine, markers) {
   if (!markers || !Array.isArray(lines) || typeof verdictLine !== 'string') return [];
   const at = lines.lastIndexOf(verdictLine);
   if (at < 0) return [];
@@ -3228,21 +3323,45 @@ function postVerdictNoteBlocks(lines, verdictLine, markers) {
   let current = null;
   const flush = () => {
     if (current && current.flagged && current.text.length) {
-      blocks.push(current.text.join(' ').replace(/\s+/g, ' ').trim());
+      blocks.push({
+        text: current.text.join(' ').replace(/\s+/g, ' ').trim(),
+        markerLines: current.markerLines,
+      });
     }
     current = null;
   };
   for (let i = at + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (markers.note.test(line)) { flush(); current = { flagged: false, text: [] }; continue; }
+    if (markers.note.test(line)) { flush(); current = { flagged: false, text: [], markerLines: [] }; continue; }
     if (!current) continue;
     // A note's body is indented; the first flush-left line ends it.
     if (!/^\s/.test(line) || line.trim() === '') { flush(); continue; }
-    if (markers.concern.test(line)) current.flagged = true;
+    if (markers.concern.test(line)) { current.flagged = true; current.markerLines.push(line); }
     current.text.push(line.replace(/^[\s▎│|]+/, '').trim());
   }
   flush();
   return blocks;
+}
+
+// postVerdictQuotableNotes picks the note text the follow-up should quote for
+// a given set of triggering concern lines (#7935).
+//
+// A concern line and a note block are two readings of the same pane region and
+// they can disagree: postVerdictConcerns() accepts a marker line anywhere
+// under a note header, while a block needs indented body lines. When the
+// intersection is empty — an advisor rendering the relay has not seen — fall
+// back to the concern lines themselves, which are always at least the marker
+// and its first sentence. Quoting something beats quoting nothing; that is the
+// whole point of #7935.
+function postVerdictQuotableNotes(lines, verdictLine, markers, concernLines) {
+  const wanted = new Set(Array.isArray(concernLines) ? concernLines : []);
+  if (wanted.size === 0) return [];
+  const matched = postVerdictNoteBlockEntries(lines, verdictLine, markers)
+    .filter(e => e.markerLines.some(l => wanted.has(l)))
+    .map(e => e.text)
+    .filter(Boolean);
+  if (matched.length) return matched;
+  return Array.from(wanted).map(l => l.replace(/^[\s▎│|]+/, '').trim()).filter(Boolean);
 }
 
 // postVerdictReviewAnswered reports whether a verdict on the pane is the
@@ -4962,6 +5081,14 @@ function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previo
   if (secondRound) concerns = concerns.filter(line => markers.blocker && markers.blocker.test(line));
   if (concerns.length === 0) return false;
 
+  // #7935: the notes the relay is asking about go INTO the message, so the
+  // agent cannot match "advisor notes were posted" to notes it already
+  // handled earlier in the turn. Both rounds get them; the second round's
+  // `concerns` are already narrowed to the new ⟦blocker⟧s, so quoting them is
+  // the same operation.
+  const quotedNotes = postVerdictQuotableNotes(paneScanLines, verdict.line, markers, concerns);
+  const message = buildPostVerdictReviewMessage(quotedNotes);
+
   postVerdictReviewCount++;
   postVerdictReviewRequested = true;
   console.log(secondRound
@@ -4970,7 +5097,7 @@ function maybeRequestPostVerdictReview(paneScanLines, tmuxLines, verdict, previo
     : `Task ${currentTask.task_id}: ${concerns.length} advisor concern(s) were posted under its HIVE_VERDICT line — ` +
       `asking the agent once to address them and re-print the verdict (#7759): ${concerns.map(c => JSON.stringify(c.trim())).join(' ')}`);
   try {
-    tmuxSendNudge(POST_VERDICT_REVIEW_MESSAGE);
+    tmuxSendNudge(message);
   } catch (e) {
     console.error('Failed to send the post-verdict review follow-up; finalizing on the verdict as-is:', e.message);
     return false;
@@ -6174,7 +6301,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // Post-verdict review follow-up (hivecommons/hive#7759).
     POST_VERDICT_REVIEW_MESSAGE,
     POST_VERDICT_REVIEW_ANCHOR,
+    POST_VERDICT_REVIEW_INSTRUCTION,
     POST_VERDICT_REVIEW_MARKERS,
+    // The notes the follow-up quotes (hivecommons/hive#7935).
+    buildPostVerdictReviewMessage,
+    sanitizePostVerdictNote,
+    postVerdictNoteBlockEntries,
+    postVerdictQuotableNotes,
+    POST_VERDICT_NOTE_MAX_CHARS,
+    POST_VERDICT_NOTES_MAX_QUOTED,
     postVerdictConcerns,
     postVerdictReviewAnswered,
     maybeRequestPostVerdictReview,
