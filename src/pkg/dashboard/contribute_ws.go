@@ -11,6 +11,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -54,7 +55,15 @@ const (
 	// human-steered session never silently loses push access. See #2393 item 2.
 	wsTokenRefreshPeriod = 50 * time.Minute
 	wsAuthTimeout        = 30 * time.Second
-	wsMaxMessageSize     = 64 * 1024
+	// wsMaxMessageSize is the largest frame the hub will read from a relay,
+	// installed with conn.SetReadLimit below. It is a HARD bound: gorilla does
+	// not truncate an oversized message, it closes the connection with 1009
+	// "message too big" and the frame is lost — which, for a task_complete, is a
+	// completed task the hub never hears about and hands out again
+	// (hivecommons/hive#7932). Advertised to relays on auth_ok as
+	// max_message_bytes so the sending side can trim to it rather than discover
+	// it by being disconnected; raise the two together, never one alone.
+	wsMaxMessageSize = 64 * 1024
 	// repoPermissionTimeout bounds the user-specific permission lookup performed
 	// before rendering an assignment prompt. A slow GitHub API must not hold the
 	// contributor's ready request indefinitely; lookup failure safely falls back
@@ -353,13 +362,21 @@ type WSMessage struct {
 	// probing (e.g. token_refresh, task_unavailable_reasons). Additive; old
 	// clients ignore the unknown field.
 	ServerCapabilities []string `json:"server_capabilities,omitempty"`
-	Role               string   `json:"role,omitempty"`
-	ContribLabels      []string `json:"contributor_labels,omitempty"`
-	Status             string   `json:"status,omitempty"`
-	Result             string   `json:"result,omitempty"`
-	Summary            string   `json:"summary,omitempty"`
-	TmuxOutput         []string `json:"tmux_output,omitempty"`
-	AcceptedModels     []string `json:"accepted_models,omitempty"`
+	// MaxMessageBytes is the hub's WebSocket read limit (wsMaxMessageSize),
+	// advertised on auth_ok (hivecommons/hive#7932). It is the one server bound a
+	// relay cannot discover by behaving well: exceeding it is answered with a
+	// 1009 close, not a reply, and the frame that tripped it is gone. Stating it
+	// lets a relay trim an oversized audit tail to fit instead of losing a whole
+	// task_complete — and lets a hub that raises the ceiling carry its relays up
+	// with it. Additive; a relay that ignores it keeps whatever default it ships.
+	MaxMessageBytes int      `json:"max_message_bytes,omitempty"`
+	Role            string   `json:"role,omitempty"`
+	ContribLabels   []string `json:"contributor_labels,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	Result          string   `json:"result,omitempty"`
+	Summary         string   `json:"summary,omitempty"`
+	TmuxOutput      []string `json:"tmux_output,omitempty"`
+	AcceptedModels  []string `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -1777,6 +1794,18 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
+			// #7932: an oversized client frame arrives here as ErrReadLimit, and
+			// gorilla has already sent the peer a 1009 close. It is not a
+			// *CloseError, so IsUnexpectedCloseError below does not match it and
+			// the hub used to drop the connection with NOTHING in its log while
+			// the relay logged "code=1009 message too big" and reconnected into
+			// the same loop. Name the bound here so both halves of that story can
+			// be read side by side.
+			if errors.Is(err, websocket.ErrReadLimit) {
+				h.logger.Warn("[contribute-ws] contributor frame exceeded the read limit; connection closed",
+					"id", connID, "limit_bytes", wsMaxMessageSize)
+				return
+			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				h.logger.Warn("[contribute-ws] read error", "id", connID, "error", err)
 			}
@@ -2265,6 +2294,8 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		// probing. Additive — an existing client ignores these unknown fields.
 		ProtocolVersion:    contributorProtocolVersion,
 		ServerCapabilities: serverCapabilities(),
+		// #7932: state the read limit rather than enforcing it silently.
+		MaxMessageBytes: wsMaxMessageSize,
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true

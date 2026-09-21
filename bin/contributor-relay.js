@@ -260,6 +260,53 @@ function parsePositiveIntegerEnv(name, fallback) {
 // audit trail, mirroring TMUX_TAIL_LINES on the interactive path.
 const HEADLESS_MAX_OUTPUT_BYTES = parsePositiveIntegerEnv(HEADLESS_MAX_OUTPUT_ENV, DEFAULT_HEADLESS_MAX_OUTPUT_BYTES);
 
+// #7932: the hub reads a contributor frame under a hard cap — wsMaxMessageSize
+// in src/pkg/dashboard/contribute_ws.go, 64 KiB — installed with
+// conn.SetReadLimit. gorilla/websocket does not truncate an oversized message:
+// it closes the connection with 1009 "message too big" and the frame is LOST.
+// For a task_complete that is a reconnect loop rather than a dropped log line —
+// the completion never lands, the hub's lease outlives the close, the same task
+// is handed back, and the agent redoes work it already shipped (four times over
+// against projectbluefin/utah#24 on the live Bluefin hub, one of the runs having
+// opened a real PR).
+//
+// It is a headless-mode failure in practice. The interactive path's tmux_output
+// is fifteen terminal ROWS, which cannot be large. A JSON-streaming backend such
+// as pi (`--mode json`) emits one whole tool_execution_end event — embedded diff
+// and all — per LINE, so the same fifteen lines is routinely hundreds of KiB.
+// The bound therefore belongs on BYTES, at the point every frame passes through
+// (sendTo), not on a line count at each call site that happens to build a tail.
+const DEFAULT_HUB_MAX_FRAME_BYTES = 64 * 1024;
+// Headroom kept under the hub's ceiling. The read limit measures the decoded
+// payload, which is exactly the JSON we serialize, so the arithmetic is not in
+// question — but a hub deployed with a slightly different bound, or a proxy that
+// counts a frame's overhead against it, must not put us back on the wrong side
+// of a hard close. What the slack costs is audit tail; what it buys is that a
+// completion always lands.
+const WS_FRAME_HEADROOM_BYTES = 4 * 1024;
+// Floor for a hub-advertised limit, so a hub advertising something smaller than
+// the headroom cannot leave the relay with a zero or negative budget.
+const MIN_WS_FRAME_BYTES = 4 * 1024;
+// Budget for a hub that does not advertise its limit (every hub released before
+// #7932). 64 KiB has been the hub's value for the life of the protocol.
+const WS_FRAME_BYTES = DEFAULT_HUB_MAX_FRAME_BYTES - WS_FRAME_HEADROOM_BYTES;
+// How much captured output any single frame carries. Far below the frame budget
+// on purpose: tmux_output is an audit TAIL — the last thing the agent printed,
+// read by a human on the ops surface — not a transcript. 8 KiB is several
+// screens of ordinary CLI output and still leaves the frame budget almost
+// entirely to the fields that carry meaning (pr_url, verdict, summary).
+const OUTPUT_TAIL_MAX_BYTES = 8 * 1024;
+const OUTPUT_TAIL_TRUNCATED_MARKER = '[relay: output tail truncated to fit the hub frame limit]';
+const TEXT_TRUNCATED_SUFFIX = ' […truncated]';
+// Frame fields that are pure payload: truncating one changes how much of the
+// story the frame tells, never what the frame MEANS. An allowlist, not a
+// denylist — type, task_id, task_gen, result, verdict, pr_url and every other
+// protocol field must survive a clamp intact, and a field nobody has thought
+// about yet is protocol until someone says otherwise. Ordered most-expendable
+// first: the tail before the human-readable summary, the summary before the
+// reason a task failed.
+const FRAME_TRUNCATABLE_FIELDS = ['tmux_output', 'prompt', 'summary', 'title', 'reason', 'verdict_reason'];
+
 const TMUX_TAIL_LINES = 15;
 const NEEDS_LOGIN_CONFIRM_TICKS = 3;
 // #6667: the window detectPRURL scans is NOT the 15-line protocol payload.
@@ -450,6 +497,10 @@ const hubs = rawHubList.map((url, i) => ({
   // (#2545). Maintained in sendTo() and the answer handlers, never at a
   // `ready` call site — see armCLIReadyWait for the one reader.
   readyOutstanding: false,
+  // #7932: the largest frame this hub will read, less headroom. Replaced on
+  // auth_ok by whatever the hub advertises; the default is the 64 KiB every
+  // hub released before that advertisement enforces silently.
+  maxFrameBytes: WS_FRAME_BYTES,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -626,6 +677,124 @@ function releaseQuotaHold(why) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// #7932 — frame-size clamping. Everything below is pure: it takes a frame and
+// a byte budget and returns a frame that fits, leaving the frame untouched
+// (same object identity) when it already did.
+// ---------------------------------------------------------------------------
+
+function utf8Bytes(text) {
+  return Buffer.byteLength(String(text), 'utf8');
+}
+
+function frameByteLength(msg) {
+  return utf8Bytes(JSON.stringify(msg));
+}
+
+// hubFrameBytes is the budget for one frame to THIS hub: what it advertised on
+// auth_ok, less the headroom, or the long-standing 64 KiB default for a hub
+// that advertises nothing.
+function hubFrameBytes(hub) {
+  return (hub && hub.maxFrameBytes) || WS_FRAME_BYTES;
+}
+
+// truncateTextTail keeps the LAST maxBytes of a string. A split multi-byte
+// character decodes to U+FFFD, exactly as it does in createBoundedOutputCapture
+// — the tail is for a human to read, not to parse.
+function truncateTextTail(text, maxBytes) {
+  const buf = Buffer.from(String(text), 'utf8');
+  if (buf.length <= maxBytes) return buf.toString('utf8');
+  if (maxBytes <= 0) return '';
+  return buf.subarray(buf.length - maxBytes).toString('utf8');
+}
+
+// truncateTextHead keeps the FIRST maxBytes of a string, marking the cut. Used
+// for summaries and failure reasons, where the opening words are the ones that
+// say what happened; the tail-keeping form above is for captured output, where
+// the last thing printed is the interesting one.
+function truncateTextHead(text, maxBytes) {
+  const buf = Buffer.from(String(text), 'utf8');
+  if (buf.length <= maxBytes) return String(text);
+  const room = maxBytes - utf8Bytes(TEXT_TRUNCATED_SUFFIX);
+  if (room <= 0) return '';
+  return buf.subarray(0, room).toString('utf8') + TEXT_TRUNCATED_SUFFIX;
+}
+
+function tailArrayBytes(lines) {
+  // +1 per line for the newline a reader will put back between them.
+  return lines.reduce((total, line) => total + utf8Bytes(line) + 1, 0);
+}
+
+// truncateTailLines bounds an output-tail array to maxBytes, keeping the LAST
+// lines and marking the cut. Returns the input array itself when it already
+// fits, so a frame that never needed clamping is byte-identical to the one the
+// relay sent before this existed.
+function truncateTailLines(lines, maxBytes) {
+  if (!Array.isArray(lines)) return lines;
+  if (tailArrayBytes(lines) <= maxBytes) return lines;
+  const budget = maxBytes - utf8Bytes(OUTPUT_TAIL_TRUNCATED_MARKER) - 1;
+  if (budget <= 0) return [];
+  const kept = [];
+  let used = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = String(lines[i]);
+    const cost = utf8Bytes(line) + 1;
+    if (used + cost > budget) {
+      // A SINGLE line can be larger than the whole budget — that is the pi
+      // case this fix exists for, one tool_execution_end event with a diff
+      // inside it. Keep that line's tail rather than reporting nothing at all.
+      if (!kept.length) {
+        const room = budget - used;
+        if (room > 0) kept.unshift(truncateTextTail(line, room));
+      }
+      break;
+    }
+    kept.unshift(line);
+    used += cost;
+  }
+  return [OUTPUT_TAIL_TRUNCATED_MARKER].concat(kept);
+}
+
+function truncateFrameField(value, maxBytes) {
+  return Array.isArray(value)
+    ? truncateTailLines(value, Math.max(maxBytes, 0))
+    : truncateTextHead(value, Math.max(maxBytes, 0));
+}
+
+// clampFrame returns a frame that fits maxFrameBytes, shrinking only the
+// payload fields in FRAME_TRUNCATABLE_FIELDS. Two separate bounds, because they
+// answer different questions: tmux_output is held to OUTPUT_TAIL_MAX_BYTES on
+// EVERY frame (how much audit tail is worth sending), and the whole frame is
+// held to maxFrameBytes (what the hub will accept at all).
+function clampFrame(msg, maxFrameBytes) {
+  if (!msg || typeof msg !== 'object') return msg;
+  let clamped = msg;
+  if (Array.isArray(msg.tmux_output)) {
+    const bounded = truncateTailLines(msg.tmux_output, OUTPUT_TAIL_MAX_BYTES);
+    if (bounded !== msg.tmux_output) clamped = { ...clamped, tmux_output: bounded };
+  }
+  if (frameByteLength(clamped) <= maxFrameBytes) return clamped;
+  for (const field of FRAME_TRUNCATABLE_FIELDS) {
+    const value = clamped[field];
+    if (value === undefined || value === null) continue;
+    const rest = { ...clamped };
+    delete rest[field];
+    // What is left once the rest of the frame and this field's own JSON wrapper
+    // (`,"<field>":""`) are paid for. Measured against the SERIALIZED frame
+    // afterwards rather than trusted: JSON escaping expands a byte of raw
+    // output into as many as six, so the first estimate can still be over.
+    let room = maxFrameBytes - frameByteLength(rest) - field.length - 8;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      clamped = { ...clamped, [field]: truncateFrameField(value, room) };
+      if (frameByteLength(clamped) <= maxFrameBytes) break;
+      if (room <= 0) break;
+      room = Math.floor(room / 2);
+    }
+    if (frameByteLength(clamped) <= maxFrameBytes) return clamped;
+  }
+  return clamped;
+}
+
 function sendTo(hub, msg) {
   // #5715: a local-only task (the synthetic pr-review cycle) has no
   // server-issued lease, so an ownership frame naming it can only ever be
@@ -646,7 +815,25 @@ function sendTo(hub, msg) {
   // already in flight must still reach the hub.
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
-    hub.ws.send(JSON.stringify(msg));
+    // #7932: a frame the hub cannot read is a frame that never arrives — it is
+    // answered with a 1009 close, not an error the relay can see. Bound it HERE,
+    // at the one point every frame passes through, rather than at each call site
+    // that builds a tail: the oversized frame was built by a call site that had
+    // no idea a limit existed, and a guard per call site is the shape that lets
+    // the next one reintroduce it.
+    const budget = hubFrameBytes(hub);
+    const framed = clampFrame(msg, budget);
+    const payload = JSON.stringify(framed);
+    if (framed !== msg) {
+      console.warn(`Trimmed the ${msg.type} frame for ${hub.url || 'the hub'} to ${utf8Bytes(payload)} bytes (limit ${budget}) — the captured output it carries is shortened, the task result is not`);
+    }
+    if (utf8Bytes(payload) > budget) {
+      // Unreachable while the protocol fields themselves are small, which is
+      // every frame this relay builds. Say so loudly rather than let the hub
+      // answer it with a close nobody can attribute.
+      console.error(`Frame ${msg.type} is still ${utf8Bytes(payload)} bytes after trimming (limit ${budget}) — the hub may close the connection with code 1009`);
+    }
+    hub.ws.send(payload);
     // #7732: recorded only for a frame that actually left, so a `ready`
     // dropped on a closed socket does not look like an open question.
     if (msg && msg.type === 'ready') hub.readyOutstanding = true;
@@ -5602,6 +5789,14 @@ function handleMessage(data, hub) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
+      // #7932: the one server bound the relay cannot discover by behaving well
+      // — exceeding it is answered with a connection close, not a reply. Take
+      // the hub at its word when it states the limit, so a hub that raises its
+      // ceiling raises the relay's with it and the two halves cannot drift.
+      // A hub that says nothing keeps the 64 KiB default that has always held.
+      hub.maxFrameBytes = Number.isFinite(msg.max_message_bytes) && msg.max_message_bytes > 0
+        ? Math.max(msg.max_message_bytes - WS_FRAME_HEADROOM_BYTES, MIN_WS_FRAME_BYTES)
+        : WS_FRAME_BYTES;
       // #2547 (peer-compatibility): both sides have STATED a version since #2567,
       // but neither COMPARED them, so "an old relay against a new hub" was still
       // only detectable by watching it misbehave. Say it once, plainly, on the
@@ -6225,6 +6420,21 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     DEFAULT_HEADLESS_MAX_OUTPUT_BYTES,
     HEADLESS_MAX_OUTPUT_BYTES,
     HEADLESS_MAX_OUTPUT_ENV,
+    // Frame-size clamping (hivecommons/hive#7932).
+    DEFAULT_HUB_MAX_FRAME_BYTES,
+    WS_FRAME_HEADROOM_BYTES,
+    WS_FRAME_BYTES,
+    MIN_WS_FRAME_BYTES,
+    OUTPUT_TAIL_MAX_BYTES,
+    OUTPUT_TAIL_TRUNCATED_MARKER,
+    TEXT_TRUNCATED_SUFFIX,
+    FRAME_TRUNCATABLE_FIELDS,
+    clampFrame,
+    truncateTailLines,
+    truncateTextHead,
+    truncateTextTail,
+    hubFrameBytes,
+    frameByteLength,
     armTaskProgressLease,
     onTaskProgressLeaseExpired,
     getTaskTimeoutHandle: () => taskTimeoutHandle,

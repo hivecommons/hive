@@ -266,6 +266,13 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
 
   const prevEnv = { ...process.env };
   process.env.HIVE_REGISTRATION_TOKEN = 'test-token';
+  // Pinned for the same hermetic-run reason as HIVE_WORKSPACE_DIR below: a
+  // developer running this suite inside a real contributor container inherits
+  // that container's multi-hub HIVE_HUB, which against the single test token
+  // set just above trips the relay's one-token-per-hub FATAL at require() time
+  // and takes the whole run down before its first assertion. A test that wants
+  // several hubs passes them through `env` (MULTI_HUB_ENV).
+  process.env.HIVE_HUB = '';
   process.env.AGENT_BACKEND = backend;
   process.env.AGENT_MODEL = model;
   process.env.AGENT_REASONING_EFFORT = reasoningEffort;
@@ -8084,6 +8091,10 @@ function runShutdownChild(exitVia) {
       CONTRIBUTOR_MODE: 'headless',
       AGENT_BACKEND: 'claude',
       HIVE_REGISTRATION_TOKEN: 'test-token',
+      // Same hermetic-run pin loadRelay makes: this child inherits the whole
+      // environment, and a real contributor container's multi-hub HIVE_HUB
+      // against the single token above is a FATAL at require() time.
+      HIVE_HUB: '',
       RELAY_UNDER_TEST: RELAY_PATH,
       RELAY_EXIT_VIA: exitVia,
       HIVE_GH_TOKEN_CACHE: tokenPath,
@@ -10560,6 +10571,142 @@ test('#6717 a placeholder still on a pane that has since produced output does no
     assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1,
       'and the task must still complete normally');
   } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7932 — a task_complete the hub cannot read is a task that
+// gets done twice.
+//
+// The hub reads contributor frames under a hard 64 KiB limit (wsMaxMessageSize,
+// src/pkg/dashboard/contribute_ws.go). gorilla/websocket does not truncate an
+// oversized message: it closes the connection with 1009 and the frame is gone.
+// The relay sent the captured-output tail as fifteen LINES with no byte bound,
+// and a JSON-streaming backend like pi puts a whole tool_execution_end event —
+// embedded diff and all — on one line, so a successful headless task reported
+// its completion in a frame the hub refused. The hub's lease outlived the
+// close, the same task came back, and the agent redid work it had already
+// shipped (four times over on the live Bluefin hub).
+// ---------------------------------------------------------------------------
+
+// The hub's own read limit, mirrored here deliberately rather than read off the
+// relay's exports: this is the number the SERVER enforces (wsMaxMessageSize,
+// src/pkg/dashboard/contribute_ws.go), and the assertion below is about what
+// the hub will accept, not about what the relay believes.
+const HUB_WS_MAX_MESSAGE_BYTES = 64 * 1024;
+
+// One pi-shaped output line: a single JSON event carrying a diff, far past the
+// hub's whole frame budget on its own.
+function hugeJSONEventLine(bytes) {
+  return JSON.stringify({ type: 'tool_execution_end', tool: 'edit', diff: 'x'.repeat(bytes) });
+}
+
+test('#7932 a headless task_complete fits the hub frame limit even when one output line is huge', () => {
+  const stdout = `${hugeJSONEventLine(400 * 1024)}\nopened https://github.com/foo/bar/pull/9\n`;
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { stdout } });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    assignHeadlessTask(relay);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'exit 0 must still report task_complete');
+    const bytes = Buffer.byteLength(JSON.stringify(complete), 'utf8');
+    assert.ok(bytes <= HUB_WS_MAX_MESSAGE_BYTES,
+      `the frame the hub reads is ${bytes} bytes, past its ${HUB_WS_MAX_MESSAGE_BYTES}-byte read limit — this is the 1009 close`);
+    assert.ok(bytes <= relay.WS_FRAME_BYTES, `frame is ${bytes} bytes, past the relay's own ${relay.WS_FRAME_BYTES}-byte budget`);
+    // What the frame MEANS survives the trim; only how much of the tail it
+    // carries is shortened.
+    assert.strictEqual(complete.task_id, 'ct-h-1');
+    assert.strictEqual(complete.result, 'completed');
+    assert.strictEqual(complete.pr_url, 'https://github.com/foo/bar/pull/9',
+      'the PR this task opened must survive — losing it is how a shipped task looks unshipped');
+    assert.strictEqual(complete.tmux_output[0], relay.OUTPUT_TAIL_TRUNCATED_MARKER,
+      'the trim must be visible in the audit tail, not silent');
+    assert.ok(complete.tmux_output.join('\n').includes('pull/9'),
+      'the tail keeps its END — the last thing printed is the part worth reporting');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#7932 a frame that already fits is sent through untouched', () => {
+  const relay = loadRelay({});
+  try {
+    const msg = { type: 'task_progress', seq: 3, task_id: 't1', status: 'working', tmux_output: ['line one', 'line two'] };
+    assert.strictEqual(relay.clampFrame(msg, relay.WS_FRAME_BYTES), msg,
+      'the interactive path sends fifteen terminal rows: no copy, no marker, no behaviour change');
+  } finally { teardown(relay); }
+});
+
+test('#7932 clamping shortens payload and never protocol fields', () => {
+  const relay = loadRelay({});
+  try {
+    const msg = {
+      type: 'task_complete', seq: 4, task_id: 'ct-1', task_gen: 7, result: 'completed',
+      pr_url: 'https://github.com/foo/bar/pull/9', verdict: 'no_work_needed',
+      verdict_reason: 'merged PRs already cover it',
+      summary: 'Headless one-shot invocation exited 0',
+      tmux_output: [hugeJSONEventLine(300 * 1024)],
+    };
+    const out = relay.clampFrame(msg, relay.WS_FRAME_BYTES);
+    assert.ok(relay.frameByteLength(out) <= relay.WS_FRAME_BYTES);
+    for (const field of ['type', 'seq', 'task_id', 'task_gen', 'result', 'pr_url', 'verdict', 'verdict_reason', 'summary']) {
+      assert.deepStrictEqual(out[field], msg[field], `${field} is protocol, not payload — it must survive intact`);
+    }
+    assert.ok(relay.frameByteLength({ tmux_output: out.tmux_output }) <= relay.OUTPUT_TAIL_MAX_BYTES * 2,
+      'the tail is held to its own, much smaller bound: it is an audit trail, not a transcript');
+  } finally { teardown(relay); }
+});
+
+test('#7932 a single line bigger than the whole budget is kept as its tail, not dropped', () => {
+  const relay = loadRelay({});
+  try {
+    const line = `${'A'.repeat(4096)}THE-LAST-TWENTY-CHAR`;
+    const budget = Buffer.byteLength(relay.OUTPUT_TAIL_TRUNCATED_MARKER, 'utf8') + 21;
+    const out = relay.truncateTailLines([line], budget);
+    assert.deepStrictEqual(out, [relay.OUTPUT_TAIL_TRUNCATED_MARKER, 'THE-LAST-TWENTY-CHAR'],
+      'pi emits the whole event as ONE line — dropping it reports nothing at all');
+  } finally { teardown(relay); }
+});
+
+test('#7932 a frame oversized on a field other than the tail is trimmed too', () => {
+  const relay = loadRelay({});
+  try {
+    const msg = { type: 'task_failed', seq: 2, task_id: 'ct-2', task_gen: 3, reason: `boom: ${'z'.repeat(200 * 1024)}` };
+    const out = relay.clampFrame(msg, relay.WS_FRAME_BYTES);
+    assert.ok(relay.frameByteLength(out) <= relay.WS_FRAME_BYTES);
+    assert.strictEqual(out.task_id, 'ct-2');
+    assert.strictEqual(out.task_gen, 3);
+    assert.ok(out.reason.startsWith('boom: '),
+      'a failure reason keeps its HEAD: the opening words are the ones that say what happened');
+    assert.ok(out.reason.endsWith(relay.TEXT_TRUNCATED_SUFFIX), 'and the cut is marked');
+  } finally { teardown(relay); }
+});
+
+test('#7932 the relay clamps to the limit the hub advertises on auth_ok', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    assert.strictEqual(relay.hubFrameBytes(hubs[0]), relay.WS_FRAME_BYTES,
+      'before auth_ok a hub gets the 64 KiB every released hub enforces');
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', max_message_bytes: 256 * 1024 }), hubs[0]);
+    assert.strictEqual(relay.hubFrameBytes(hubs[0]), 256 * 1024 - relay.WS_FRAME_HEADROOM_BYTES,
+      'a hub that raises its ceiling raises the relay budget with it');
+
+    // A hub advertising less than the headroom must not leave a zero or
+    // negative budget — that would clamp every frame down to nothing.
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', max_message_bytes: 1024 }), hubs[1]);
+    assert.strictEqual(relay.hubFrameBytes(hubs[1]), relay.MIN_WS_FRAME_BYTES);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7932 a hub that advertises no limit keeps the default budget', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
+    assert.strictEqual(relay.hubFrameBytes(hubs[0]), relay.WS_FRAME_BYTES,
+      'every hub released before #7932 states nothing and still reads exactly 64 KiB');
+  } finally { console.log = log; teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------

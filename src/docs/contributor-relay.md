@@ -755,6 +755,17 @@ is still bounded by the pane-stall detector and the absolute duration ceiling
 above; genuine idle completion — the same chrome with no retry line — is
 detected exactly as before.
 
+### A frame the hub cannot read is a task that gets done twice
+
+[#7932](https://github.com/hivecommons/hive/issues/7932). The hub reads contributor frames under a hard 64 KiB limit — `wsMaxMessageSize`, installed with `conn.SetReadLimit` (`pkg/dashboard/contribute_ws.go`). gorilla/websocket does not truncate an oversized message: it closes the connection with `1009 message too big` and the frame is **lost**. For a `task_complete` that is not a dropped log line, it is a reconnect loop — the completion never lands, the hub's lease outlives the close, the same task is handed back, and the agent redoes work it already shipped. Observed live on the Bluefin spoke: four `(exit 0)` completions against the same two issues, one of which had already opened a real PR, each followed by `closed (code=1009 message too big). Reconnecting in 1000ms…`.
+
+It is a headless-mode failure in practice. The interactive path sends `TMUX_TAIL_LINES` of *terminal rows*, which cannot be large. A JSON-streaming backend such as pi (`--mode json`) puts a whole `tool_execution_end` event — embedded diff and all — on one **line**, so the same fifteen lines is routinely hundreds of KiB. The bound therefore belongs on bytes, not on a line count:
+
+- **The relay trims at the choke point.** `sendTo()` — the one function every frame passes through — clamps each frame before it is written. `tmux_output` is held to `OUTPUT_TAIL_MAX_BYTES` (8 KiB) on every frame, because it is an audit *tail* for a human to read, not a transcript; the whole serialized frame is then held to the hub's budget, shrinking only the payload fields (`tmux_output`, `prompt`, `summary`, `title`, `reason`, `verdict_reason`) and never the protocol ones. `task_id`, `task_gen`, `result`, `pr_url` and `verdict` survive a clamp intact: a trimmed frame says less, never something different. A trim is logged, and a truncated tail carries a visible marker line rather than being silently shortened.
+- **A single line can be larger than the whole budget**, which is exactly the pi case, so the trim keeps that line's tail rather than dropping the only line there is.
+- **The hub states its limit instead of enforcing it silently.** `auth_ok` now carries `max_message_bytes`, and the relay clamps to whatever the hub advertises (less a small headroom), falling back to 64 KiB for any hub that says nothing — which is every hub released before this. Raise the two together: a hub that raises its ceiling now carries its relays up with it, and the number cannot drift between the halves.
+- **Tripping the limit is logged on the hub too.** `ErrReadLimit` is not a `*CloseError`, so `IsUnexpectedCloseError` never matched it and the hub used to drop the connection with nothing in its log while the relay logged the 1009 at the other end of the same socket. It now names the bound that was exceeded.
+
 ### Provider quota parks the relay instead of burning a task per window
 
 An exhausted provider quota and an authorization refusal are both unretryable — repeating the request changes nothing either way — and the relay treated them identically: fail the task, advertise `ready`, take the next one. For a 403 that is right. For quota it is a loop, because quota is a property of the provider **account**, not of the task: it applies to every task this contributor could be given, and it **expires**.
