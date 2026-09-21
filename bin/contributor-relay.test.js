@@ -34,8 +34,12 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.js');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '' } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', backendPermShell = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null, attachedClients = false, attachedIdleMs = 0, clientActivityRaw = null, listClientsThrows = false, prMeta = null, sessionMissing = false, newSessionFails = false, gitStatus = '', ghIssueEditFailures = 0 } = {}) {
   const commands = [];
+  // #7924: how many `gh issue edit` calls fail before one succeeds — models a
+  // label the repository does not define (the first add fails, the relay
+  // creates it, the retry lands) or a gh that is down for good.
+  let issueEditFailuresLeft = ghIssueEditFailures;
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
   const execFileCalls = [];
@@ -152,6 +156,12 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
       if (answer instanceof Error) throw answer;
       if (answer) return JSON.stringify(answer);
       return '';
+    }
+    if (/gh issue edit/.test(cmd) && issueEditFailuresLeft > 0) {
+      issueEditFailuresLeft--;
+      const e = new Error('Command failed: gh issue edit');
+      e.stdout = "failed to update https://github.com/foo/bar/issues/100: 'blocked' not found";
+      throw e;
     }
     return '';
   };
@@ -11098,5 +11108,184 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
       'no repo, nothing to synthesize against');
     assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — fixes #198'], 'foo/bar'), [],
       'a bare #N is an issue reference');
+  } finally { teardown(relay); }
+});
+
+// ── hivecommons/hive#7924: the `blocked` verdict ─────────────────────────────
+//
+// utah#100 ended in a correct no_work_needed whose reason was "nothing here can
+// change until utah-packages' factory publishes an image" — a blocked-on-
+// another-repo state. Booked as an ordinary no-PR completion, the hub re-ran
+// the same research on the 4h backoff and learned nothing from the reason.
+// The relay now reads `HIVE_VERDICT: blocked — <reason>` (and the older
+// sentinel spelled `no_work_needed — blocked: <reason>`) as its own verdict,
+// reports it to the hub, and — when the task credential can write issues —
+// applies the repo's `blocked` label so the existing admission gate holds the
+// issue until a human clears it.
+
+const BLOCKED_REASON = "nautilus's dependency closure now has recipes on utah-packages main, but no factory build has published since they merged";
+
+test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the other two', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectCompletionVerdict([`HIVE_VERDICT: blocked — ${BLOCKED_REASON}`], null);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.reason, BLOCKED_REASON);
+    assert.strictEqual(relay.detectNoWorkVerdict([`● HIVE_VERDICT: blocked — ${BLOCKED_REASON}`]).verdict, 'blocked',
+      'the "nothing to ship" scan the headless path uses sees it too');
+    assert.ok(relay.isNoWorkVerdict(v) && relay.isNoWorkVerdict({ verdict: 'no_work_needed' }) && !relay.isNoWorkVerdict({ verdict: 'complete' }));
+    // The prompt's own placeholder, wrapped to a line start, is not a verdict.
+    assert.strictEqual(relay.detectCompletionVerdict(['HIVE_VERDICT: blocked — <what it is waiting on>'], null), null);
+    // Token boundary: prose that starts with the word is not the sentinel.
+    assert.strictEqual(relay.detectCompletionVerdict(['HIVE_VERDICT: blockedness is a state of mind'], null), null);
+    assert.strictEqual(relay.detectCompletionVerdict(['blocked — waiting on the factory'], null), null, 'no marker, no verdict');
+    assert.deepStrictEqual(relay.HIVE_VERDICT_TOKENS, ['complete', 'no_work_needed', 'blocked']);
+  } finally { teardown(relay); }
+});
+
+test('#7924 no_work_needed — blocked: <reason> is the blocked verdict with the marker stripped', () => {
+  const relay = loadRelay({});
+  try {
+    for (const sep of [': ', ':', ' — ', ' - ', ' – ']) {
+      const v = relay.detectNoWorkVerdict([`HIVE_VERDICT: no_work_needed — blocked${sep}${BLOCKED_REASON}`]);
+      assert.strictEqual(v.verdict, 'blocked', `separator ${JSON.stringify(sep)}`);
+      assert.strictEqual(v.reason, BLOCKED_REASON, `separator ${JSON.stringify(sep)}`);
+    }
+    // Only the marker as the FIRST word promotes; a reason that merely
+    // mentions being blocked is still no_work_needed, verbatim.
+    const plain = relay.detectNoWorkVerdict(['HIVE_VERDICT: no_work_needed — the remainder is blocked on a maintainer decision']);
+    assert.strictEqual(plain.verdict, 'no_work_needed');
+    assert.strictEqual(plain.reason, 'the remainder is blocked on a maintainer decision');
+  } finally { teardown(relay); }
+});
+
+test('#7924 a blocked verdict followed by a narrated PR-less complete keeps blocked (#7861 rule)', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectCompletionVerdict([
+      `HIVE_VERDICT: blocked — ${BLOCKED_REASON}`,
+      'HIVE_VERDICT: complete — done researching',
+    ], null);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.reason, BLOCKED_REASON);
+    // And a previous task's blocked line is a baseline, never this task's verdict.
+    const prev = 'HIVE_VERDICT: blocked — previous task';
+    const next = relay.detectCompletionVerdict([prev, 'work', 'HIVE_VERDICT: complete — shipped PR #9'], prev);
+    assert.strictEqual(next.verdict, 'complete');
+  } finally { teardown(relay); }
+});
+
+test('#7924 end to end: blocked reaches the hub as its own verdict and the relay applies the blocked label with the task credential', () => {
+  const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  try {
+    // The hub says what the task credential can do (per trust tier, on auth_ok).
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-7924-blocked', 100);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the verdict completes the task on the tick, like the other two');
+    // On the wire: the no_work_needed an older hub already books, plus the
+    // blocked marker a #7924 hub reads — never a token an old hub would
+    // normalize to idle.
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_blocked, true);
+    assert.strictEqual(completed[0].verdict_reason, BLOCKED_REASON);
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.ok(!completed[0].pr_url);
+    assert.match(completed[0].summary, /reported blocked/);
+    const edits = relay.__commands.filter(c => /gh issue edit/.test(c));
+    assert.strictEqual(edits.length, 1, `exactly one label call: ${JSON.stringify(edits)}`);
+    assert.ok(edits[0].includes("'https://github.com/foo/bar/issues/100'") && edits[0].includes(`--add-label '${relay.BLOCKED_WORKFLOW_LABEL}'`), edits[0]);
+    assert.strictEqual(relay.BLOCKED_WORKFLOW_LABEL, 'blocked', 'must match blockedWorkflowLabel in contribute_admission.go');
+    assert.strictEqual(relay.__commands.filter(c => /gh label create/.test(c)).length, 0, 'the label existed; nothing to create');
+    assert.strictEqual(relay.__commands.filter(c => /gh issue comment/.test(c)).length, 0, 'the reason comment is the agent\'s (prompt contract), not the relay\'s');
+    // The label is never lifted by the relay.
+    assert.ok(!relay.__commands.some(c => /--remove-label/.test(c)));
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7924 without issues:write the relay leaves the label alone and the verdict still reaches the hub', () => {
+  const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
+  for (const perms of [undefined, [], ['metadata:read', 'pulls:read']]) {
+    const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+    const log = console.log; console.log = () => {};
+    try {
+      const auth = { type: 'auth_ok', contributor_id: 'c1', trust_tier: 'advisor' };
+      if (perms) auth.permissions = perms;
+      relay.handleMessage(JSON.stringify(auth));
+      dispatchTask(relay, 'ct-7924-noperm', 101);
+      relay.__crashTick();
+      const completed = relay.__sent.filter(m => m.type === 'task_complete');
+      assert.strictEqual(completed.length, 1);
+      assert.strictEqual(completed[0].verdict, 'no_work_needed', `perms=${JSON.stringify(perms)}`);
+      assert.strictEqual(completed[0].verdict_blocked, true, `perms=${JSON.stringify(perms)}`);
+      assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
+        `perms=${JSON.stringify(perms)}: no label attempt without issues:write`);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('#7924 a label the repository does not define is created once and the add retried once; a second failure costs only a log line', () => {
+  const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
+  // First add fails (label missing) → create → retry lands.
+  let relay = loadRelay({ backend: 'copilot', paneText: PANE, ghIssueEditFailures: 1 });
+  let log = console.log; console.log = () => {};
+  let err = console.error; console.error = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write', 'contents:write', 'pulls:write'] }));
+    dispatchTask(relay, 'ct-7924-create', 102);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 1);
+    const cmds = relay.__commands.filter(c => /gh (issue edit|label create)/.test(c));
+    assert.deepStrictEqual(cmds.map(c => (/gh label create/.test(c) ? 'create' : 'edit')), ['edit', 'create', 'edit'], JSON.stringify(cmds));
+    assert.ok(cmds[1].includes("--repo 'foo/bar'") && cmds[1].includes("'blocked'"), cmds[1]);
+  } finally { console.log = log; console.error = err; teardown(relay); }
+
+  // Every add fails: bounded at one create + one retry, and the completion
+  // still goes out with the verdict.
+  relay = loadRelay({ backend: 'copilot', paneText: PANE, ghIssueEditFailures: 99 });
+  log = console.log; console.log = () => {};
+  err = console.error; const errors = []; console.error = (m) => errors.push(String(m));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-7924-fail', 103);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'a refused label never costs the completion');
+    assert.strictEqual(completed[0].verdict_blocked, true);
+    assert.strictEqual(relay.__commands.filter(c => /gh issue edit/.test(c)).length, 2, 'one add, one retry, never more');
+    assert.ok(errors.some(m => /Could not apply the 'blocked' label to foo\/bar#103/.test(m)), JSON.stringify(errors));
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#7924 a plain no_work_needed carries no blocked marker and gets no label — the pre-#7924 wire shape is unchanged', () => {
+  const PANE = `HIVE_VERDICT: no_work_needed — already fixed on main by #12\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-7924-plain', 105);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.ok(!('verdict_blocked' in completed[0]), `no marker on a plain no_work_needed: ${JSON.stringify(completed[0])}`);
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7924 the label is for GitHub issue tasks only', () => {
+  const relay = loadRelay({});
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    // A Linear/Jira item projected through the GitHub-shaped assignment.
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 0, external_id: 'ENG-12', task_key: 'linear:ENG-12' }, 'r');
+    // A review cycle has no issue.
+    relay.markIssueBlocked({ task_id: 't', kind: 'review', repo: 'foo/bar', number: 0 }, 'r');
+    relay.markIssueBlocked(null, 'r');
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
   } finally { teardown(relay); }
 });

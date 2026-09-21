@@ -41,10 +41,20 @@ const noPRStreakResetAfter = 14 * 24 * time.Hour
 // task_complete (#3987). Anything else — including an absent field, which is
 // what every relay written before this sends — normalizes to idle, i.e.
 // byte-for-byte today's behavior (see normalizeCompletionVerdict).
+//
+// completionVerdictBlocked (hivecommons/hive#7924) is no_work_needed's
+// sibling: nothing in the task's repo can change until something OUTSIDE it
+// lands — another repo's release or factory build, a dependency that has not
+// published. utah#100 reached exactly that conclusion and, booked as a plain
+// no_work_needed, was re-offered on the short no-PR backoff to re-discover
+// "still no factory build". A blocked verdict is held for the FULL with-PR
+// cooldown instead (markTaskCompletedVerdictKeySignal) and its ledger row
+// carries the marker, so an operator can see what the issue is waiting on.
 const (
 	completionVerdictShipped      = "shipped"
 	completionVerdictIdle         = "idle"
 	completionVerdictNoWorkNeeded = "no_work_needed"
+	completionVerdictBlocked      = "blocked"
 )
 
 // noWorkReasonMaxLen caps the client-supplied VerdictReason before it is stored
@@ -210,12 +220,15 @@ func (h *ContributeWSHub) noWorkVerdictsPath() string {
 // verdict). SuppressHours snapshots the operator's with-PR cooldown at record
 // time so a later config change cannot retroactively stretch an old verdict;
 // 0 (an older entry) falls back to the completedTaskCooldownHours default.
-// Reporter/Reason are audit-only.
+// Reporter/Reason are audit-only. Blocked marks a blocked verdict (#7924):
+// the reason names an external dependency the issue is waiting on, not a
+// settlement — an operator reading the ledger sees which it is.
 type noWorkVerdictRecord struct {
 	RecordedAt    time.Time `json:"recorded_at"`
 	SuppressHours float64   `json:"suppress_hours,omitempty"`
 	Reporter      string    `json:"reporter,omitempty"`
 	Reason        string    `json:"reason,omitempty"`
+	Blocked       bool      `json:"blocked,omitempty"`
 }
 
 // suppressWindow is how long, from RecordedAt, this verdict withholds the
@@ -294,18 +307,37 @@ func (h *ContributeWSHub) saveNoWorkVerdicts() {
 // SERVER-side PR verification outcome to the verdict the hub acts on (#3987).
 // A VERIFIED PR always wins ("shipped") regardless of what the client claimed —
 // the self-reported field can neither hide nor fabricate shipped work. With no
-// verified PR, only an exact (case-insensitive) no_work_needed is honoured;
-// anything else — absent, unknown, or a claimed "shipped" whose PR failed
-// verification — normalizes to idle, which is byte-for-byte today's behavior,
-// so relays that never learn the field keep working unchanged.
-func normalizeCompletionVerdict(reported, verifiedPR string) string {
+// verified PR, only an exact (case-insensitive) no_work_needed or blocked is
+// honoured; anything else — absent, unknown, or a claimed "shipped" whose PR
+// failed verification — normalizes to idle, which is byte-for-byte today's
+// behavior, so relays that never learn the field keep working unchanged.
+//
+// blocked (#7924) is accepted in two spellings: the verdict itself, or
+// no_work_needed with the WSMessage.VerdictBlocked marker set. The relay sends
+// the second — a hub older than this one then still sees the no_work_needed it
+// already books, rather than an unknown token it would normalize to idle.
+func normalizeCompletionVerdict(reported string, blocked bool, verifiedPR string) string {
 	if verifiedPR != "" {
 		return completionVerdictShipped
 	}
-	if strings.EqualFold(strings.TrimSpace(reported), completionVerdictNoWorkNeeded) {
+	reported = strings.TrimSpace(reported)
+	if strings.EqualFold(reported, completionVerdictBlocked) {
+		return completionVerdictBlocked
+	}
+	if strings.EqualFold(reported, completionVerdictNoWorkNeeded) {
+		if blocked {
+			return completionVerdictBlocked
+		}
 		return completionVerdictNoWorkNeeded
 	}
 	return completionVerdictIdle
+}
+
+// isNoWorkFamilyVerdict reports whether a normalized verdict is an affirmative
+// "nothing to ship" conclusion — no_work_needed or its blocked sibling — as
+// opposed to shipped work or a bare return to idle.
+func isNoWorkFamilyVerdict(verdict string) bool {
+	return verdict == completionVerdictNoWorkNeeded || verdict == completionVerdictBlocked
 }
 
 // Completion-signal vocabulary (kubestellar/hive#5376). Originally diagnostic
@@ -336,8 +368,8 @@ const (
 //
 //   - a verified PR URL — the strongest, and the only one that is not
 //     self-reported;
-//   - an affirmative no_work_needed verdict — the agent reached a conclusion
-//     and said so;
+//   - an affirmative no_work_needed (or blocked, #7924) verdict — the agent
+//     reached a conclusion and said so;
 //   - an "unknown" completion signal. This is the conservative half of the
 //     predicate and it is deliberate: the field is absent from every relay
 //     predating #5376 and from the headless path, both of which normalize
@@ -362,7 +394,7 @@ func isEvidenceLessCompletion(prURL, verdict, signal string) bool {
 	if strings.TrimSpace(prURL) != "" {
 		return false
 	}
-	if verdict == completionVerdictNoWorkNeeded {
+	if isNoWorkFamilyVerdict(verdict) {
 		return false
 	}
 	switch normalizeCompletionSignal(signal) {
@@ -666,7 +698,8 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 // isSuppressedByNoWorkVerdict). The regular escalating no-PR cooldown is still
 // booked as the backstop, so behavior for relays that never learn the verdict
 // field — and for hubs where the verdict is later voided — is unchanged.
-// reporter/reason are audit-only and stored with the verdict.
+// A blocked verdict (#7924) books the full with-PR cooldown outright instead
+// of the ladder. reporter/reason are audit-only and stored with the verdict.
 func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prURL, verdict, reporter, reason string) {
 	h.markTaskCompletedVerdictKey(worksource.Ref{Repo: repo, Number: number}.Key(), prURL, verdict, reporter, reason)
 }
@@ -729,6 +762,29 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// A flat base cooldown keeps the issue out of a tight re-offer loop
 		// (#2492/#2557) while leaving it offerable.
 		cooldown = completedNoPRCooldownHours * time.Hour
+	} else if verdict == completionVerdictBlocked {
+		// #7924: blocked on something outside the repo. Nothing a retry can
+		// do until that lands, so the no-PR ladder's first rungs (4h, 8h, …)
+		// are pure cost: every retry re-runs the same research to re-find the
+		// same external dependency. Book the FULL with-PR cooldown at once —
+		// one wasted cycle per cooldown period at worst — and record the
+		// verdict with its marker so the ledger says what the issue is
+		// waiting on. The relay, when its credential allows, also applies the
+		// repo's `blocked` label, and that admission gate then holds the issue
+		// past this cooldown until a human clears it. The no-PR streak is
+		// left alone: it exists to escalate, and this is already the ceiling.
+		cooldown = withPRCooldown
+		if len(reason) > noWorkReasonMaxLen {
+			reason = reason[:noWorkReasonMaxLen]
+		}
+		h.noWorkVerdicts[key] = noWorkVerdictRecord{
+			RecordedAt:    time.Now(),
+			SuppressHours: withPRCooldown.Hours(),
+			Reporter:      reporter,
+			Reason:        reason,
+			Blocked:       true,
+		}
+		verdictLedgerDirty = true
 	} else {
 		// #3980: repeated no-PR completions escalate geometrically (4h → 8h →
 		// …, capped at the with-PR cooldown) so a "nothing to ship" loop —

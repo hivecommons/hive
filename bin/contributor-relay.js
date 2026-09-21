@@ -1790,14 +1790,17 @@ function runHeadlessTask(task) {
       // the claim with "shipped" anyway). #6662: only a PR THIS TASK OPENED
       // does; see resolveTaskPR.
       const noWork = prFinding.suppressesVerdict ? null : detectNoWorkVerdict(outTail);
-      if (noWork) console.log(`Detected no_work_needed verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
+      if (noWork) console.log(`Detected ${noWork.verdict} verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, task_gen: task.task_gen, result: 'completed', pr_url: prURL });
+      // #7924: the label goes on with the task credential, so it must be
+      // applied BEFORE stopAgentForTaskExit drops it below.
+      if (noWork && noWork.verdict === HIVE_VERDICT_BLOCKED) markIssueBlocked(task, noWork.reason);
       // #5353: the one-shot child has already exited (this callback is its
       // exit), so there is no process to stop — but the task-scoped token it
       // was given stays valid for the rest of wsTokenTTL. Drop it with the
       // task, so a credential never outlives the assignment it belongs to.
       stopAgentForTaskExit();
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined, ...effectiveSelectionFields() });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, ...verdictWireFields(noWork), ...effectiveSelectionFields() });
       currentTask = null;
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -2618,7 +2621,7 @@ function tmuxSendKeys(text) {
     // The baseline is the NEWEST sentinel, whatever kind: #7861's preference
     // must not apply here, or a previous task's trailing "complete" would sit
     // above the baseline and complete the next task on its first tick.
-    const priorVerdict = detectHiveVerdict(deliveryBaselineLines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
+    const priorVerdict = detectHiveVerdict(deliveryBaselineLines, HIVE_VERDICT_TOKENS);
     deliveredVerdictBaseline = priorVerdict ? priorVerdict.line : null;
     const MAX_SEND_RETRIES = 3;
     const RETRY_DELAY_MS = 10000;
@@ -2994,7 +2997,7 @@ function resolveTaskPR(lines, opts) {
 //
 //   HIVE_VERDICT: <verdict> — <short reason>
 //
-// Two verdicts are defined:
+// Three verdicts are defined:
 //
 //   no_work_needed  (#3987) — the agent affirmatively determined there is
 //     NOTHING shippable (the remainder is gated on an unanswered maintainer
@@ -3002,6 +3005,20 @@ function resolveTaskPR(lines, opts) {
 //     verdict/verdict_reason so the hub parks the issue for the long
 //     offer-suppression window instead of re-offering it every short-cooldown
 //     period forever (the #2547 shape that escalation only bounded).
+//
+//   blocked         (hivecommons/hive#7924) — no_work_needed's sibling for
+//     the case where nothing in THIS repo can change until something outside
+//     it lands: another repo's release or build, a dependency that has not
+//     published, an external service. utah#100 reached exactly that verdict
+//     (the packages had recipes but no factory image carried them yet) and,
+//     booked as a plain no_work_needed, the hub re-ran the same ten minutes
+//     of research on the 4h backoff and threw the finding away. Reported as
+//     verdict 'blocked'; the hub holds the issue for the full with-PR
+//     cooldown, and when the task credential can write issues the relay
+//     applies the repo's `blocked` label (markIssueBlocked below) so the
+//     hub's existing admission gate withholds it until a human clears the
+//     label. `no_work_needed — blocked: <reason>` is accepted as the same
+//     verdict, for an agent that reaches for the older sentinel first.
 //
 //   complete        (#5376) — the agent is DONE with the task, whatever it
 //     shipped. This is the completion signal the interactive relay lacked:
@@ -3012,14 +3029,47 @@ function resolveTaskPR(lines, opts) {
 //     chrome. Chrome is a vendor's cosmetic output; this line is the agent's
 //     own statement. Only the second is a contract.
 //
-// Both are parsed by ONE anchored, echo-guarded scanner below, deliberately:
-// the anti-false-positive handling is the hard-won part and there must not be
-// a second copy of it to drift.
+// All three are parsed by ONE anchored, echo-guarded scanner below,
+// deliberately: the anti-false-positive handling is the hard-won part and
+// there must not be a second copy of it to drift.
 //
 // The marker spelling must stay in sync with buildTaskPrompt in
-// src/pkg/dashboard/contribute_ws.go.
+// src/pkg/dashboard/contribute_task_prompt.go.
 const HIVE_VERDICT_NO_WORK = 'no_work_needed';
 const HIVE_VERDICT_COMPLETE = 'complete';
+const HIVE_VERDICT_BLOCKED = 'blocked';
+// Every sentinel the scanner recognises, for the callers that want "any
+// verdict at all" (completion, the #5650 delivery baseline, PR-URL ranking).
+const HIVE_VERDICT_TOKENS = [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED];
+// The `no_work_needed — blocked: <reason>` spelling (#7924): the older
+// sentinel with the blocked marker as the reason's first word. Read as the
+// blocked verdict, with the marker stripped from the reason.
+const NO_WORK_BLOCKED_REASON_RE = /^blocked\s*[:—–-]\s*/i;
+
+// isNoWorkVerdict says whether a verdict object is one of the "nothing to
+// ship" family — no_work_needed or blocked — which the hub books the same way
+// (task_complete verdict/verdict_reason) and a confirmed PR overrides the same
+// way (resolveTaskPR's suppressesVerdict).
+function isNoWorkVerdict(v) {
+  return !!v && (v.verdict === HIVE_VERDICT_NO_WORK || v.verdict === HIVE_VERDICT_BLOCKED);
+}
+
+// verdictWireFields renders a "nothing to ship" verdict (or null) as the
+// task_complete fields the hub reads. A blocked verdict goes on the wire as
+// `verdict: no_work_needed` plus `verdict_blocked: true` — the marker, not a
+// new token — so a hub that predates #7924 sees exactly the no_work_needed it
+// already books (long offer-suppression), instead of an unknown verdict it
+// would normalize to a bare idle and re-offer on the short cooldown. A hub
+// that knows the marker books it as blocked (normalizeCompletionVerdict in
+// src/pkg/dashboard/contribute_ledgers.go).
+function verdictWireFields(noWork) {
+  if (!isNoWorkVerdict(noWork)) return {};
+  return {
+    verdict: HIVE_VERDICT_NO_WORK,
+    verdict_reason: noWork.reason,
+    verdict_blocked: noWork.verdict === HIVE_VERDICT_BLOCKED ? true : undefined,
+  };
+}
 
 // hiveVerdictLineRe builds the one regex that recognises a sentinel line, for
 // any subset of the verdict tokens. Groups: 1 = optional Markdown emphasis
@@ -3049,12 +3099,12 @@ function hiveVerdictLineRe(wanted) {
 }
 
 // isHiveVerdictLine says whether one pane line is a sentinel the agent
-// printed (either verdict), with the same anchoring and the same echo
+// printed (any verdict), with the same anchoring and the same echo
 // exclusion detectHiveVerdict() applies. detectPRURLs() uses it to rank a PR
 // URL the agent named IN its verdict above one it merely printed (#7789).
 function isHiveVerdictLine(line) {
   if (typeof line !== 'string') return false;
-  const m = hiveVerdictLineRe([HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]).exec(line);
+  const m = hiveVerdictLineRe(HIVE_VERDICT_TOKENS).exec(line);
   if (!m) return false;
   // The prompt's own "<short reason>" placeholder, wrapped to a line start.
   return !(m[3] || '').trim().startsWith('<');
@@ -3106,20 +3156,30 @@ function detectHiveVerdicts(lines, wanted) {
     // visual line start; its giveaway is the literal "<short reason>"
     // placeholder. Never treat that echo as a real verdict.
     if (reason.startsWith('<')) continue;
+    let verdict = m[2].toLowerCase();
+    // #7924: `no_work_needed — blocked: <reason>` is the blocked verdict in
+    // the older sentinel's clothing. Promote it whenever the caller would
+    // have accepted a no_work_needed at all: the two are booked as one
+    // family (isNoWorkVerdict), so no caller that wants one rejects the other.
+    if (verdict === HIVE_VERDICT_NO_WORK && NO_WORK_BLOCKED_REASON_RE.test(reason)) {
+      verdict = HIVE_VERDICT_BLOCKED;
+      reason = reason.replace(NO_WORK_BLOCKED_REASON_RE, '').trim();
+    }
     // `line` is the RAW pane line this verdict was read from. progressTick()
     // compares it against the line that was already on the pane when the task's
     // prompt was delivered, which is how a verdict gets attributed to a task at
     // all (#5650).
-    found.push({ verdict: m[2].toLowerCase(), reason, line: lines[i], index: i });
+    found.push({ verdict, reason, line: lines[i], index: i });
   }
   return found;
 }
 
-// Best-effort scan for the no_work_needed sentinel. Unchanged in behaviour
-// from #3987/#4265; it now shares the scanner above. Returns null when no
-// marker is found — the hub then treats the completion exactly as an idle one.
+// Best-effort scan for the "nothing to ship" sentinels — no_work_needed, and
+// since #7924 its blocked sibling. Unchanged in behaviour from #3987/#4265
+// for the first; it shares the scanner above. Returns null when no marker is
+// found — the hub then treats the completion exactly as an idle one.
 function detectNoWorkVerdict(lines) {
-  return detectHiveVerdict(lines, [HIVE_VERDICT_NO_WORK]);
+  return detectHiveVerdict(lines, [HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED]);
 }
 
 // detectCompletionVerdict reports whether the agent SAID it finished (#5376).
@@ -3146,15 +3206,15 @@ function detectNoWorkVerdict(lines) {
 // preferred — and when the newest line IS the baseline the caller discards it,
 // so the answer must stay the newest line, exactly as before.
 function detectCompletionVerdict(lines, baselineLine = deliveredVerdictBaseline) {
-  const all = detectHiveVerdicts(lines, [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK]);
+  const all = detectHiveVerdicts(lines, HIVE_VERDICT_TOKENS);
   if (all.length === 0) return null;
   const newest = withoutPaneIndex(all[0]);
   if (newest.verdict !== HIVE_VERDICT_COMPLETE || newest.line === baselineLine) return newest;
   const baselineAt = typeof baselineLine === 'string' ? lines.lastIndexOf(baselineLine) : -1;
   for (let i = 1; i < all.length; i++) {
     if (all[i].index <= baselineAt) break;
-    if (all[i].verdict === HIVE_VERDICT_NO_WORK) {
-      console.log(`Both HIVE_VERDICT lines are on the pane for this task — keeping no_work_needed over the complete printed after it; a PR this task opened still overrides it (#7861)`);
+    if (isNoWorkVerdict(all[i])) {
+      console.log(`Both HIVE_VERDICT lines are on the pane for this task — keeping ${all[i].verdict} over the complete printed after it; a PR this task opened still overrides it (#7861)`);
       return withoutPaneIndex(all[i]);
     }
   }
@@ -4448,11 +4508,77 @@ function postUnaddressedNotesComment(prURL, notes) {
   }
 }
 
+// BLOCKED_WORKFLOW_LABEL is the hub's canonical "waiting on something outside
+// this repo" overlay: an issue carrying it is withheld from every offer
+// surface until a human removes it (blockedWorkflowLabel in
+// src/pkg/dashboard/contribute_admission.go). Keep the two spellings in sync.
+const BLOCKED_WORKFLOW_LABEL = 'blocked';
+
+// hubGrantsIssuesWrite reports whether the credential this hub mints for the
+// task can write to issues — the hub says so on auth_ok (`permissions`, per
+// trust tier). Without it the label call would only fail with a 403, so the
+// relay does not try and the hub's cooldown is the whole hold.
+function hubGrantsIssuesWrite(hub) {
+  return !!hub && Array.isArray(hub.permissions) && hub.permissions.includes('issues:write');
+}
+
+// markIssueBlocked closes the loop on a `blocked` verdict (hivecommons/hive
+// #7924): it applies BLOCKED_WORKFLOW_LABEL to the task's issue with the task
+// credential, so the hub's existing admission gate takes over from the
+// verdict's cooldown and the finding survives on GitHub for a human, the
+// scanner, or another spoke — instead of living only in this hub's ledger.
+// The agent is asked by the task prompt to leave the reason as a comment in
+// its own attribution style; this is the half that needs no model.
+//
+// Lifting the label stays human: the relay never removes it.
+//
+// Only a GitHub-backed issue task qualifies (a Linear/Jira item has no GitHub
+// issue to label; a review cycle has no issue at all), and only when the hub
+// granted issues:write. Best-effort and bounded like postUnaddressedNotesComment:
+// a gh that is missing, offline or refused costs a log line, never the
+// completion. gh refuses to add a label the repository does not define, so a
+// first failure creates the label and retries exactly once.
+function markIssueBlocked(task, reason) {
+  if (!task || task.kind !== 'issue' || !task.repo || !(task.number > 0) || task.external_id) return;
+  const hub = task._hub || hubs[activeHubIndex];
+  if (!hubGrantsIssuesWrite(hub)) {
+    console.log(`Task ${task.task_id}: blocked verdict on ${task.repo}#${task.number}, but the task credential does not carry issues:write — leaving the '${BLOCKED_WORKFLOW_LABEL}' label to a human; the hub's cooldown holds the issue (#7924)`);
+    return;
+  }
+  let token = null;
+  try { token = fs.readFileSync(GH_TOKEN_CACHE, 'utf8').trim() || null; } catch (_) {}
+  const env = token ? { ...process.env, GH_TOKEN: token } : process.env;
+  const issueURL = `https://github.com/${task.repo}/issues/${task.number}`;
+  const addLabel = () => execSync(
+    `gh issue edit ${shellQuote(issueURL)} --add-label ${shellQuote(BLOCKED_WORKFLOW_LABEL)} 2>&1`,
+    { encoding: 'utf8', timeout: 20000, env });
+  const describe = e => ((e && (e.stdout || e.message)) || 'unknown error').toString().trim();
+  try {
+    addLabel();
+  } catch (first) {
+    try {
+      execSync(
+        `gh label create ${shellQuote(BLOCKED_WORKFLOW_LABEL)} --repo ${shellQuote(task.repo)} ` +
+        `--description ${shellQuote('Waiting on something outside this repository; not contributor work until a human clears the label')} ` +
+        '--color d93f0b 2>&1',
+        { encoding: 'utf8', timeout: 20000, env });
+      addLabel();
+    } catch (second) {
+      console.error(`Could not apply the '${BLOCKED_WORKFLOW_LABEL}' label to ${task.repo}#${task.number}: ${describe(first)}; after creating the label: ${describe(second)} — the hub's cooldown still holds the issue (#7924)`);
+      return;
+    }
+  }
+  console.log(`Applied the '${BLOCKED_WORKFLOW_LABEL}' label to ${task.repo}#${task.number} (#7924): ${reason || '(no reason given)'} — a human lifts it when the dependency clears`);
+}
+
 function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
   if (!currentTask) return;
   // #7879: the PR comment must go out BEFORE stopAgentForTaskExit drops the
   // task credential below — it is posted with the same token the agent used.
   if (prURL && unaddressedNotes.length) postUnaddressedNotesComment(prURL, unaddressedNotes);
+  // #7924: same ordering for the blocked label — it is applied with the task
+  // credential, which is about to be dropped.
+  if (noWork && noWork.verdict === HIVE_VERDICT_BLOCKED) markIssueBlocked(currentTask, noWork.reason);
   // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
   // chrome, and it is wrong often enough to have produced thirteen separate
   // issues. When it is wrong, the agent is still mid-turn — and reporting
@@ -4473,7 +4599,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // launches in flight. Its credential is still dropped.
   const bobAlreadyExited = BACKEND === 'bob' && !bobIsRunning();
   stopAgentForTaskExit({ skipCLI: bobAlreadyExited });
-  send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
+  send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary, tmux_output: tmuxLines, pr_url: prURL, completion_signal: completionSignal, ...verdictWireFields(noWork) });
   // bob exits after each turn, so the pane is now a bare shell. Bring it
   // back up before the next task, or the prompt would be typed into bash
   // ("-bash: <prompt>: command not found") and silently lost.
@@ -4742,7 +4868,7 @@ function onTaskProgressLeaseExpired() {
     console.warn(`Task ${currentTask.task_id}: no pane change for ${MAX_TASK_DURATION_MS / 60000}min, but ${evidence} — the agent finished and the tick loop never credited it. Completing it instead of handing it back as an environment failure (#7662).`);
     resetChromeIdleGrace();
     cliRestartCounts.delete(taskKey(currentTask));
-    const noWork = !completionVerdict || prFinding.suppressesVerdict || completionVerdict.verdict !== HIVE_VERDICT_NO_WORK
+    const noWork = !completionVerdict || prFinding.suppressesVerdict || !isNoWorkVerdict(completionVerdict)
       ? null
       : completionVerdict;
     finishCurrentTask({
@@ -5408,10 +5534,10 @@ function progressTick() {
     // contradicts "nothing shippable"; a PR a maintainer merged last month
     // corroborates it, and is in the pane precisely because the agent had to
     // cite it to justify the verdict. resolveTaskPR() draws that line.
-    const noWork = prFinding.suppressesVerdict || !completionVerdict || completionVerdict.verdict !== HIVE_VERDICT_NO_WORK
+    const noWork = prFinding.suppressesVerdict || !completionVerdict || !isNoWorkVerdict(completionVerdict)
       ? null
       : completionVerdict;
-    if (noWork) console.log(`Detected no_work_needed verdict for ${currentTask.task_id}: ${noWork.reason || '(no reason)'}`);
+    if (noWork) console.log(`Detected ${noWork.verdict} verdict for ${currentTask.task_id}: ${noWork.reason || '(no reason)'}`);
     // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
     // chrome, and it is wrong often enough to have produced thirteen separate
     // issues. When it is wrong, the agent is still mid-turn — and reporting
@@ -5426,7 +5552,7 @@ function progressTick() {
     // receives is still the agent's own output and not launch chrome.
     //
     let completionSummary = noWork
-      ? 'Agent returned to idle (reported no_work_needed)'
+      ? `Agent returned to idle (reported ${noWork.verdict})`
       : (verdictCompletes
         ? 'Agent reported the task complete (HIVE_VERDICT)'
         : `Agent returned to idle (no verdict emitted; pane idle for ${CHROME_IDLE_GRACE_TICKS} consecutive checks)`);
@@ -5616,6 +5742,10 @@ function handleMessage(data, hub) {
       warnOnProtocolDrift(hub, msg.protocol_version);
       hub.authenticated = true;
       hub.authFailed = false;
+      // #7924: the permission set the hub mints task credentials with, per
+      // trust tier. Read by markIssueBlocked to decide whether a label call
+      // can succeed at all. An older hub sends none → no label attempts.
+      hub.permissions = Array.isArray(msg.permissions) ? msg.permissions.slice() : [];
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
       // #7732: a fresh session. Whatever this hub was asked before it
       // re-authenticated is not a question it is still going to answer.
@@ -6209,6 +6339,11 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     CHROME_IDLE_GRACE_TICKS,
     HIVE_VERDICT_COMPLETE,
     HIVE_VERDICT_NO_WORK,
+    HIVE_VERDICT_BLOCKED,
+    HIVE_VERDICT_TOKENS,
+    BLOCKED_WORKFLOW_LABEL,
+    isNoWorkVerdict,
+    markIssueBlocked,
     detectHiveVerdict,
     detectHiveVerdicts,
     detectCompletionVerdict,

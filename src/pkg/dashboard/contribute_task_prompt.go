@@ -437,6 +437,36 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"a single line of plain text, no Markdown formatting, in the exact form "+
 			"'HIVE_VERDICT: no_work_needed — <short reason>' "+
 			"and stop. "+
+			// hivecommons/hive#7924: the blocked sentinel. utah#100 reached a
+			// correct "nothing here can change until utah-packages' factory
+			// publishes" and printed no_work_needed for it; the hub booked an
+			// ordinary no-PR completion and re-ran the same research on the 4h
+			// backoff. A verdict that SAYS blocked is held for the full cooldown
+			// and, when the credential allows, labelled `blocked` by the relay
+			// (markIssueBlocked in bin/contributor-relay.js) so the existing
+			// admission gate takes over. Keep the spelling in sync with the relay.
+			"If instead nothing in this repository can change until something OUTSIDE "+
+			"it lands — another repository's release or build, a dependency that has "+
+			"not published yet, an external service — print "+
+			"'HIVE_VERDICT: blocked — <what it is waiting on>' "+
+			"instead of no_work_needed and stop: hive then holds the issue for the "+
+			"full cooldown and applies the repository's 'blocked' label, which a human "+
+			"lifts when the dependency clears. "+
+			// #7924 (second half): leave the finding on GitHub, not just in this
+			// hub's ledger. fsdk-containers#299 was correctly no_work_needed
+			// (fix in open PR #289) with nothing linking the two on GitHub —
+			// no text ref, no sidebar link — so the merge could not close it and
+			// the next cycle had to re-verify. The comment creates the
+			// cross-reference and tells a human why; the relay does the label.
+			"Before printing either of those two lines, if your GH_TOKEN can write to "+
+			"issues (it can for issue tasks; a 403 means it cannot, in which case skip "+
+			"this), leave ONE comment on the issue naming exactly what covers or blocks "+
+			"it — the open or merged PR, the commit, or the external dependency — so "+
+			"the finding survives on GitHub and the PR is cross-referenced to the "+
+			"issue; sign it the same way as a PR body. Never edit someone else's PR "+
+			"body to add 'Fixes #N': if that PR's merge should close this issue, say so "+
+			"in a comment on the PR instead, noting that only a maintainer editing the "+
+			"body makes the merge close it. "+
 			// #5376: the completion sentinel. The interactive relay used to
 			// infer "this task is done" from the CLI's own terminal chrome —
 			// per-backend regexes over the last fifteen lines of the tmux pane.
@@ -477,8 +507,8 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"bots to report before printing the verdict — hive reviews and "+
 			"follows up on open PRs separately, so any wait here only holds the "+
 			"task. "+
-			"If you printed the no_work_needed line above, that already counts "+
-			"as your completion — do not print both. "+
+			"If you printed the no_work_needed or blocked line above, that already "+
+			"counts as your completion — do not print both. "+
 			// #7759: the one sanctioned second verdict. A CLI that runs a
 			// passive reviewer (omp's --advisor) posts its notes on the agent's
 			// FINAL turn under the sentinel, after the agent has stopped, so
@@ -510,7 +540,9 @@ func attributionPromptInstruction(meta ghpkg.InvocationMeta) string {
 	if trailer == "" {
 		return ""
 	}
-	return " At the bottom of your PR body, include exactly this line: '" + trailer + "'."
+	// #7924: the same trailer signs an issue comment the agent leaves at a
+	// no_work_needed/blocked verdict, so a reader can tell which hive said it.
+	return " At the bottom of your PR body — and of any issue comment you leave — include exactly this line: '" + trailer + "'."
 }
 
 // promptInvocationMeta snapshots the hub's own handshake-recorded invocation

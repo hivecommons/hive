@@ -386,7 +386,19 @@ type WSMessage struct {
 	// never closes or labels anything on GitHub, and never touches the hive
 	// agent pipeline's selection. A verified PR overrides any claimed value
 	// (normalizeCompletionVerdict).
+	//
+	// "blocked" (hivecommons/hive#7924) is also accepted: no_work_needed's
+	// sibling for an issue nothing in its repo can move until something
+	// outside it lands. The relay spells it as no_work_needed plus
+	// VerdictBlocked below, so an older hub keeps its existing behaviour.
 	Verdict string `json:"verdict,omitempty"`
+	// VerdictBlocked marks a no_work_needed verdict as blocked (#7924): the
+	// reason names an external dependency the issue is waiting on, not a
+	// settlement. The hub books it for the full with-PR cooldown instead of
+	// the escalating no-PR ladder and records the marker on the ledger row.
+	// Any GitHub label for it is the RELAY's doing, with the task credential;
+	// the hub itself still labels nothing.
+	VerdictBlocked bool `json:"verdict_blocked,omitempty"`
 	// VerdictReason optionally carries a machine-readable reason for a
 	// no_work_needed verdict ("maintainer_gated", "already_covered", or free
 	// text the relay scraped from the agent's output). Audit-only: it is
@@ -2806,10 +2818,11 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				}
 			}
 			// #3987: normalize the completion's verdict. A verified PR always
-			// wins (shipped); with none, only an explicit no_work_needed is
-			// honoured and everything else — including the absent field every
-			// pre-#3987 relay sends — is idle, i.e. today's exact semantics.
-			verdict := normalizeCompletionVerdict(msg.Verdict, verifiedPR)
+			// wins (shipped); with none, only an explicit no_work_needed (or
+			// its blocked sibling, #7924) is honoured and everything else —
+			// including the absent field every pre-#3987 relay sends — is
+			// idle, i.e. today's exact semantics.
+			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, verifiedPR)
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied
 				// only for a VERIFIED PR; an unverified or no-PR completion gets
@@ -2827,7 +2840,11 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// suppressed for the merged-claim window rather than one
 				// cooldown. Off the read loop like reconcilePRAttribution:
 				// several GitHub round trips must not stall this
-				// contributor's pongs.
+				// contributor's pongs. A blocked verdict (#7924) is
+				// deliberately NOT settled from: its reason names what the
+				// issue is WAITING ON — typically a PR or build in another
+				// repo — not what settled it, and recording that as a
+				// settlement would be the wrong fact in the claim ledger.
 				if verdict == completionVerdictNoWorkNeeded {
 					go h.settleIssueFromVerdict(completedTask.Repo, completedTask.Number,
 						strings.TrimSpace(msg.VerdictReason), taskAssignedAt,
