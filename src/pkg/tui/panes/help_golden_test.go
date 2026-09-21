@@ -66,10 +66,10 @@ func TestHelpOverlayGolden(t *testing.T) {
 func TestHelpListsEveryDesignDocBinding(t *testing.T) {
 	bindings := panes.HelpBindings()
 
-	// The nine rows of src/docs/design/tui.md §4.
+	// The ten rows of src/docs/design/tui.md §4.
 	wantKeys := []string{
 		"tab / shift+tab", "?", "q / ctrl+c", "j / k, ↓ / ↑",
-		"p", "m", "K", "A", "a",
+		"p", "m", "K", "A", "a", "H",
 	}
 	if len(bindings) != len(wantKeys) {
 		t.Fatalf("HelpBindings() has %d rows, want %d — the design doc's §4 table", len(bindings), len(wantKeys))
@@ -108,6 +108,7 @@ func TestHelpMarksOnlyWiredBindingsAvailable(t *testing.T) {
 		"K":               true, // T21
 		"a":               true, // T22
 		"A":               true, // T19
+		"H":               true, // #8128
 	}
 	for _, b := range panes.HelpBindings() {
 		if got := b.Available; got != wantAvailable[b.Keys] {

@@ -410,6 +410,8 @@ The active profile is written first in each list, which is the hub the relay sol
 
 The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
 
+The same list is a pane in the terminal dashboard: `hivectl tui`, then `H`, opens the [Hives overlay](hivectl.md#hives-switching-the-hive-you-contribute-to) — the same rows in the same order, with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls the same functions the commands above do, so either surface leaves `profiles.yml` and the generated `contributor.env` in the same state.
+
 See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`).
 
 ## Moving the relay to another machine

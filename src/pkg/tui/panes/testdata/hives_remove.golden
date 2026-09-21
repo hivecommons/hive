@@ -1,0 +1,15 @@
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Hives                                                                                      ┃
+┃ active: acme                                                                               ┃
+┃                                                                                            ┃
+┃ Remove hive "acme" (wss://acme.hive.hivecommons.dev/contribute)?                           ┃
+┃                                                                                            ┃
+┃ This discards its registration token, which the hub cannot reprint:                        ┃
+┃ re-adding this hive means registering again, or moving the identity with                   ┃
+┃ 'just contribute-move'. The previous contributor.env is kept at .bak.                      ┃
+┃                                                                                            ┃
+┃ Type the hive name (acme) to confirm:                                                      ┃
+┃   [acm]                                                                                    ┃
+┃                                                                                            ┃
+┃ type the name  backspace edit  enter remove  esc cancel                                    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

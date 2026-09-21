@@ -52,6 +52,10 @@ func HelpBindings() []Binding {
 		// reaches remote and containerized hives through the dashboard's
 		// terminal proxy, with local tmux kept as the co-located fast path.
 		{Keys: "a", Action: "Attach to the selected agent's tmux session", Scope: "Agents pane", Available: true},
+		// Global like `A`, and for a stronger reason: the hives list is the set
+		// of hives this MACHINE lends a CLI to, not a property of the hive the
+		// rest of the frame describes.
+		{Keys: "H", Action: "Open the Hives overlay (switch, add, remove, rename)", Scope: "global", Available: true},
 	}
 }
 

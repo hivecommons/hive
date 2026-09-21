@@ -373,16 +373,19 @@ simply keeps its last successful snapshot rather than showing an error.
 | `K` | Kick the selected agent now | Agents pane |
 | `A` | Open the ACMM level overlay | global |
 | `a` | Attach to the selected agent's tmux session (local, or via the dashboard's terminal proxy) | Agents pane |
+| `H` | Open the Hives overlay — your contributor profiles, with `enter` to switch | global |
 | `?` | Toggle the help overlay (lists this table; dismisses on any key) | global |
 | `q` / `ctrl+c` | Quit | global |
 
-Case is meaningful and deliberate: `K` (kick) and `A` (ACMM) are the two
-actions with the widest blast radius bound to a bare key, so each sits on the
-shifted member of a pair whose lowercase twin (`k` navigate, `a` attach) is
-pressed constantly during normal use — a missed shift never fires the bigger
-action by accident. Actions apply to the selection in the **focused** pane
-only; pressing `p`/`m`/`K`/`a` while a pane other than Agents is focused is a
-no-op, never a guess at "the current agent".
+Case is meaningful and deliberate: `K` (kick), `A` (ACMM) and `H` (hives) are
+the actions with the widest blast radius bound to a bare key, so each sits on
+the shifted member of a pair whose lowercase twin (`k` navigate, `a` attach,
+`h` unbound) is pressed constantly during normal use — a missed shift never
+fires the bigger action by accident. Actions apply to the selection in the
+**focused** pane only; pressing `p`/`m`/`K`/`a` while a pane other than Agents
+is focused is a no-op, never a guess at "the current agent". `A` and `H` are
+the exceptions and are global: an ACMM level is a property of the whole hive,
+and the hives list is not a property of this hive at all.
 
 **Every overlay below is modal**: while one is open it consumes *every* key,
 including `q`, `tab`, and the other action letters — closing or resolving the
@@ -490,6 +493,54 @@ the session (however it ends, on either path) restores the TUI and
 immediately refreshes the fleet, since the agent's state may have moved while
 attached. If the connection drops mid-session rather than closing cleanly,
 the footer says so — your last keystrokes may not have arrived.
+
+#### Hives: switching the hive you contribute to
+
+`H` opens the **Hives** overlay from anywhere. It is the one view in the TUI
+that is not a dashboard client: it lists the hives *this machine* can lend a
+CLI to — the named profiles in `~/.config/hive/profiles.yml` — rather than
+anything the hive on screen knows about, which is why it is global rather than
+addressed at a pane. The rows are the ones
+[`hivectl hives list`](#hives--named-profiles-for-the-hives-you-contribute-to)
+prints, in the same order (active first, marked `*`), because the overlay calls
+the same `pkg/hivectl` functions the CLI does — there is no second
+implementation of the profiles file here.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `↓` / `↑` | Move the cursor |
+| `enter` | Make the selected hive active — the same effect as `hivectl hives use` |
+| `a` | Add a hive: a two-field form (name, hub URL), then the registration POST |
+| `d` | Remove the selected hive — asks you to type its name, as the CLI does |
+| `r` | Rename the selected hive |
+| `esc` | Close the overlay, or back out of an open form |
+
+The **REACHABLE** column is the same probe `hivectl hives list --check` runs,
+issued per distinct hub once the list is on screen. Nothing waits on it: the
+rows render first and each hub's answer replaces `checking…` with `yes` or `no`
+as it lands, so one dead hive costs the others nothing and cannot hold up the
+overlay.
+
+Opening the overlay migrates a legacy positional `contributor.env` exactly as
+the first `hivectl hives` command would, and leaves that file byte-identical
+until something actually changes. Every mutation then writes `profiles.yml`
+first and regenerates `contributor.env` from it, so the relay keeps reading the
+variables it always has. **`enter` does not move a running relay** — like the
+CLI, it reorders the projection, and the relay picks the new hub up at its next
+start (`just contribute-stop` then `just contribute-hive`). Switching a live
+relay is [#8097](https://github.com/hivecommons/hive/issues/8097) phase 2.
+
+Two safety properties carry over from the CLI, unchanged:
+
+- **Removal is gated on typing the hive's name**, because it discards a
+  registration token the hub cannot reprint. Anything else typed is a no-op.
+- **Registration tokens are never rendered.** The overlay's row type has no
+  field for one; what reaches the frame is the name, hub, contributor id,
+  session label and probe result.
+
+Like every other overlay it is modal — and more strictly, because its add and
+rename screens are **text fields**: while one is composing, ordinary letters
+(including `q`, `p`, `a` and `K`) are characters being typed, not bindings.
 
 #### Connection status and the poll fallback
 
@@ -636,6 +687,10 @@ Notes:
   running keeps its current hub until `just contribute-stop` and
   `just contribute-hive`. Switching a live relay is
   [#8097](https://github.com/hivecommons/hive/issues/8097) phase 2.
+- **The same list is in the TUI.** `hivectl tui`, then `H`, opens the
+  [Hives overlay](#hives-switching-the-hive-you-contribute-to): the same rows,
+  with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls
+  these same functions, so either surface leaves the files in the same state.
 - **`add` is the registration half of `contribute-setup` only.** It POSTs to
   `<hub>/api/contribute/register` and appends the result; it does not run the
   `gh` login or the backend CLI preflight, so a first-time machine still wants

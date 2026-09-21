@@ -160,7 +160,15 @@ const (
 // free: lipgloss's Width() wraps rather than truncates, so it has to be clipped
 // before it is padded or it becomes a second footer row. See View, and
 // TestFooterIsClippedNotWrappedAtTheMinimumWidth.
-const footerText = "tab focus  p pause/resume  m model  A acmm  K kick  a attach  ? help  q quit"
+//
+// `p pause` is the terse spelling of a toggle whose help row says "Pause or
+// resume". It was shortened when `H hives` was added, because the strip had
+// grown to exactly 80 columns and one more binding would have pushed it past
+// the commonest terminal width — where it is not dropped but CLIPPED, so the
+// binding that falls off the right edge is simply invisible. The footer is
+// terse by design (`tab focus` already stands for tab and shift+tab); the help
+// overlay is where a binding is spelled out in full.
+const footerText = "tab focus  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit"
 
 // confirmState is the pause/resume dialog. It remains present while the HTTP
 // command is in flight so every other key stays behind the modal, and it also
@@ -300,6 +308,23 @@ type model struct {
 	// pattern as pickerSeq/pickerID.
 	acmmSeq uint64
 	acmmID  uint64
+
+	// hives is non-nil while the Hives overlay is open (#8128). It owns every
+	// key while visible, and owns them harder than the others: two of its
+	// screens are text fields, so a key that leaked out would both fail to type
+	// and fire the action its letter is bound to.
+	hives *panes.HivesOverlay
+
+	// hivesSeq and hivesID retire superseded Hives overlays, so a profile read,
+	// a hub probe or a completed write cannot land on an overlay the operator
+	// closed and reopened. Same pattern as acmmSeq/acmmID.
+	hivesSeq uint64
+	hivesID  uint64
+
+	// hivesEnv is where the contributor's hive profiles live and how a new one
+	// is registered. It is the TUI's one non-dashboard data source; see
+	// hives.go for why it goes through pkg/hivectl rather than the API client.
+	hivesEnv hivesEnv
 
 	// actionSeq identifies each confirmed HTTP call. Agent and verb alone are
 	// not enough: an operator can dismiss an in-flight request and open the
@@ -453,6 +478,7 @@ func newModel() model {
 		api:               client.New(),
 		reconcileInterval: pollInterval,
 		activityInterval:  pollInterval,
+		hivesEnv:          defaultHivesEnv(),
 	}
 }
 
@@ -615,6 +641,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleACMMPacks(msg)
 	case acmmApplyMsg:
 		return m.handleACMMApply(msg)
+	case hivesLoadedMsg:
+		return m.handleHivesLoaded(msg)
+	case hivesProbeMsg:
+		return m.handleHivesProbe(msg)
+	case hivesActionMsg:
+		return m.handleHivesAction(msg)
 	case attachReadyMsg:
 		if msg.err != nil {
 			m.attachPending = false
@@ -658,6 +690,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// to type and fire an action the operator did not mean.
 		if m.acmm != nil {
 			return m.updateACMM(msg)
+		}
+		// The Hives overlay is modal for the same reason again. Two of its
+		// screens are TEXT FIELDS, so while one is composing, ordinary letters
+		// — including `a`, `d`, `p` and `q`, all of which occur in hub URLs and
+		// hive names — are characters being typed, not bindings.
+		if m.hives != nil {
+			return m.updateHives(msg)
 		}
 		// The help overlay is modal and dismisses on ANY key, so it is handled
 		// before the global bindings rather than as one of them. Order is the
@@ -739,6 +778,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.acmm = &overlay
 			m.footerStatus = ""
 			return m, m.fetchACMM(m.acmmID)
+		case "H":
+			// GLOBAL, like A and for a stronger reason: the hives list is not a
+			// property of THIS hive at all — it is the set of hives this machine
+			// can lend a CLI to — so there is no pane or row it could sensibly
+			// be addressed at. Shifted, like the other two overlays, because
+			// its lowercase twin would be one missed shift away from a list
+			// whose keys include a removal.
+			return m.openHives()
 		case "K":
 			if m.focus != 0 || m.kickPending != "" {
 				return m, nil
@@ -915,6 +962,9 @@ func (m model) View() string {
 	}
 	if m.acmm != nil {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.acmm.View(m.width))
+	}
+	if m.hives != nil {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
 	}
 	if m.helpVisible {
 		// Place, not Join: the overlay sits ON the frame rather than taking

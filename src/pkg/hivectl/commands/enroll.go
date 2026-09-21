@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -198,23 +197,9 @@ func (ghCLI) Verify(ctx context.Context, host, repo string) (string, error) {
 	return strings.TrimSpace(token), nil
 }
 
-var runGH = func(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	cmd.Env = withoutGitHubToken(os.Environ())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
-}
-
-func withoutGitHubToken(env []string) []string {
-	out := env[:0]
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "GITHUB_TOKEN=") || strings.HasPrefix(kv, "GH_TOKEN=") {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
+// runGH is this package's seam over the `gh` CLI. The subprocess itself —
+// including the GITHUB_TOKEN/GH_TOKEN stripping that keeps `gh auth` the single
+// source of who we are — lives in hivectl.RunGH, which the hives commands and
+// the TUI's Hives pane share; this var stays so enroll's tests can replace the
+// call without reaching into the shared package.
+var runGH = hivectl.RunGH

@@ -1,0 +1,12 @@
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Hives                                                                                      ┃
+┃ active: acme                                                                               ┃
+┃                                                                                            ┃
+┃    NAME         HUB                                        CONTRIB ID   SESSION REACHABLE  ┃
+┃ ▸ *acme         wss://acme.hive.hivecommons.dev/contribute contrib_a1b2 —       yes        ┃
+┃    acme-review  wss://acme.hive.hivecommons.dev/contribute contrib_a1b2 review  yes        ┃
+┃    lab          wss://lab.example.test/contribute          —            —       no         ┃
+┃ 1 of 3   * = active: the hub the relay solicits from first.                                ┃
+┃                                                                                            ┃
+┃ j/k move  enter use  a add  d remove  r rename  esc close                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

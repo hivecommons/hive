@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -26,6 +24,12 @@ import (
 // different URL from --server. So they build their own store and HTTP client
 // rather than going through commandEnv.client(), and --server/--token-env do
 // not apply to them.
+//
+// The file format, the five mutations and the two hub calls all live in
+// pkg/hivectl (profiles.go, profiles_ops.go, contribute.go), not here. This
+// file is the CLI SURFACE over them: flags, prompts, output and the advice each
+// failure comes with. The TUI's Hives pane (#8128) is a second surface over the
+// same functions rather than a second implementation of any of it.
 
 // hubRegistrar performs the registration half of `just contribute-setup`:
 // POST <hub>/api/contribute/register with a GitHub username. Injected so tests
@@ -34,12 +38,10 @@ type hubRegistrar interface {
 	Register(ctx context.Context, hubHTTPBase, githubUser string) (hubRegistration, error)
 }
 
-// hubRegistration is the hub's answer to a register call.
-type hubRegistration struct {
-	RegistrationToken string `json:"registration_token"`
-	ContributorID     string `json:"contributor_id"`
-	Message           string `json:"message"`
-}
+// hubRegistration is the hub's answer to a register call, as this package's
+// seam sees it. It is hivectl.Registration under another name so the injected
+// interface above does not force every test double to import the shared type.
+type hubRegistration = hivectl.Registration
 
 // hivesDeps are the seams `hivectl hives` is tested through.
 type hivesDeps struct {
@@ -82,7 +84,7 @@ func defaultHivesDeps(timeout time.Duration) (*hivesDeps, error) {
 	return &hivesDeps{
 		store:      store,
 		registrar:  httpRegistrar{timeout: timeout},
-		githubUser: githubUserFromCLI,
+		githubUser: hivectl.GitHubLogin,
 		now:        time.Now,
 	}, nil
 }
@@ -122,18 +124,11 @@ func loadProfiles(cmd *cobra.Command, deps *hivesDeps, allowEmpty bool) (*hivect
 	return set, nil
 }
 
-// commit saves the profiles and regenerates contributor.env from them.
-//
-// Order matters: profiles.yml is the source of truth, so it is written first.
-// If the projection then fails, the credentials are already safe on disk and
-// re-running any mutating command regenerates the env file — whereas writing
-// the projection first and failing to save would leave a contributor.env
-// describing hives no file records.
+// commit saves the profiles and regenerates contributor.env from them. The
+// ordering rule it depends on lives with the store (ProfileStore.Commit), so
+// the TUI's pane cannot get it wrong differently.
 func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
-	if err := deps.store.Save(set); err != nil {
-		return err
-	}
-	return deps.store.WriteEnvProjection(set)
+	return deps.store.Commit(set)
 }
 
 // ── list ────────────────────────────────────────────────────────────────────
@@ -245,30 +240,9 @@ func dashIfEmpty(value string) string {
 }
 
 // probeHub reports whether the hub answered its contributor status endpoint.
-// Any failure — DNS, TLS, timeout, non-2xx — is "not reachable"; this is a
-// convenience column, not a diagnostic, and the operator's next step is the
-// same either way.
+// The probe itself is hivectl.ProbeHub, shared with the TUI's Hives pane.
 func probeHub(ctx context.Context, hub string, timeout time.Duration) bool {
-	base, err := hivectl.HubHTTPBase(hub)
-	if err != nil {
-		return false
-	}
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/contribute/status", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	return hivectl.ProbeHub(ctx, hub, timeout)
 }
 
 // ── add ─────────────────────────────────────────────────────────────────────
@@ -382,9 +356,8 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 		}
 	}
 
-	set.Profiles = append(set.Profiles, profile)
-	if opts.activate || set.Active == "" {
-		set.Active = profile.Name
+	if err := set.Add(profile, opts.activate); err != nil {
+		return err
 	}
 	if err := commit(deps, set); err != nil {
 		return err
@@ -468,12 +441,10 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 	if err != nil {
 		return err
 	}
-	target, _ := set.Find(name)
-	if target == nil {
+	target, already, err := set.Use(name)
+	if err != nil {
 		return unknownHiveError(name, set)
 	}
-	already := strings.EqualFold(set.Active, target.Name)
-	set.Active = target.Name
 	if err := commit(deps, set); err != nil {
 		return err
 	}
@@ -513,20 +484,15 @@ func (e *commandEnv) runHivesRename(cmd *cobra.Command, oldName, newName string)
 	if err != nil {
 		return err
 	}
-	target, _ := set.Find(oldName)
-	if target == nil {
+	if existing, _ := set.Find(oldName); existing == nil {
 		return unknownHiveError(oldName, set)
 	}
-	// A pure case change ("acme" -> "Acme") collides with itself under the
-	// case-insensitive uniqueness rule, so it is only a clash when it lands on
-	// a DIFFERENT profile.
-	if clash, _ := set.Find(newName); clash != nil && clash != target {
-		return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s)", clash.Name, clash.Hub)}
-	}
-	wasActive := strings.EqualFold(set.Active, target.Name)
-	target.Name = newName
-	if wasActive {
-		set.Active = newName
+	target, err := set.Rename(oldName, newName)
+	if err != nil {
+		if clash, _ := set.Find(newName); errors.Is(err, hivectl.ErrProfileExists) && clash != nil {
+			return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s)", clash.Name, clash.Hub)}
+		}
+		return &usageError{message: err.Error()}
 	}
 	if err := commit(deps, set); err != nil {
 		return err
@@ -565,14 +531,15 @@ func (e *commandEnv) runHivesRemove(cmd *cobra.Command, name string, yes bool) e
 	if err != nil {
 		return err
 	}
-	target, index := set.Find(name)
+	target, _ := set.Find(name)
 	if target == nil {
 		return unknownHiveError(name, set)
 	}
 	resolved := target.Name
 	hub := target.Hub
-	wasActive := strings.EqualFold(set.Active, resolved)
 	if !yes {
+		// The prompt comes BEFORE the mutation, so declining leaves the set
+		// exactly as it was loaded and nothing is written.
 		confirmed, err := confirmRemoval(cmd, resolved, hub)
 		if err != nil {
 			return err
@@ -582,12 +549,9 @@ func (e *commandEnv) runHivesRemove(cmd *cobra.Command, name string, yes bool) e
 			return nil
 		}
 	}
-	set.Profiles = append(set.Profiles[:index], set.Profiles[index+1:]...)
-	if wasActive {
-		set.Active = ""
-		if len(set.Profiles) > 0 {
-			set.Active = set.Profiles[0].Name
-		}
+	_, wasActive, err := set.Remove(resolved)
+	if err != nil {
+		return unknownHiveError(name, set)
 	}
 	if err := commit(deps, set); err != nil {
 		return err
@@ -628,71 +592,12 @@ func unknownHiveError(name string, set *hivectl.ProfileSet) error {
 	return fmt.Errorf("%w: %q (configured: %s)", hivectl.ErrProfileNotFound, name, strings.Join(known, ", "))
 }
 
-// httpRegistrar is the production hubRegistrar.
+// httpRegistrar is the production hubRegistrar: the timeout this command run
+// was given, bound to the shared registration call.
 type httpRegistrar struct {
 	timeout time.Duration
 }
 
 func (r httpRegistrar) Register(ctx context.Context, base, githubUser string) (hubRegistration, error) {
-	timeout := r.timeout
-	if timeout <= 0 {
-		timeout = 15 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// SECURITY (#4408, H7/CWE-522): no Authorization header and no GitHub PAT
-	// is sent. The hub URL can come from a registry entry, so forwarding a
-	// token here would let a poisoned registry harvest it. The endpoint
-	// identifies the contributor by github_username alone and ignores bearer
-	// credentials — the same contract `just contribute-setup` relies on.
-	body, err := json.Marshal(map[string]string{"github_username": githubUser})
-	if err != nil {
-		return hubRegistration{}, fmt.Errorf("encode registration request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/contribute/register", bytes.NewReader(body))
-	if err != nil {
-		return hubRegistration{}, fmt.Errorf("build registration request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return hubRegistration{}, fmt.Errorf("register with %s failed: %w\n  is the hub reachable? try: curl -sf %s/api/contribute/status", base, err, base)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return hubRegistration{}, fmt.Errorf("read registration response from %s: %w", base, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return hubRegistration{}, fmt.Errorf("register with %s returned HTTP %d: %s", base, resp.StatusCode, truncateForMessage(string(payload)))
-	}
-	var reg hubRegistration
-	if err := json.Unmarshal(payload, &reg); err != nil {
-		return hubRegistration{}, fmt.Errorf("hub %s returned a non-JSON registration response: %s", base, truncateForMessage(string(payload)))
-	}
-	return reg, nil
-}
-
-func truncateForMessage(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) > 200 {
-		return s[:200] + "…"
-	}
-	return s
-}
-
-// githubUserFromCLI asks the already-installed gh CLI who is signed in. The
-// contributor flow requires gh anyway (contribute-setup signs in with it), so
-// this reuses that identity instead of asking the operator to retype it.
-func githubUserFromCLI(ctx context.Context) (string, error) {
-	out, err := runGH(ctx, "api", "user", "--jq", ".login")
-	if err != nil {
-		return "", fmt.Errorf("could not determine your GitHub login from 'gh' (%w)\n  pass --github-user <login>, or sign in with: gh auth login --web --scopes repo,read:org", err)
-	}
-	user := strings.TrimSpace(out)
-	if user == "" {
-		return "", errors.New("'gh api user' returned no login; pass --github-user <login>")
-	}
-	return user, nil
+	return hivectl.Register(ctx, base, githubUser, r.timeout)
 }

@@ -682,28 +682,26 @@ func TestDefaultHivesDepsWiresTheProductionPieces(t *testing.T) {
 	}
 }
 
-func TestGitHubUserFromCLI(t *testing.T) {
-	oldRunGH := runGH
-	t.Cleanup(func() { runGH = oldRunGH })
-
-	runGH = func(_ context.Context, args ...string) (string, error) {
+// The GitHub-login lookup itself moved to pkg/hivectl with the `gh`
+// subprocess; it is pinned there (TestGitHubLogin). What this asserts is the
+// WIRING — that the production deps resolve the login through that shared
+// function rather than through a second copy of the lookup.
+func TestDefaultHivesDepsUsesTheSharedGitHubLogin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	deps, err := defaultHivesDeps(3 * time.Second)
+	if err != nil {
+		t.Fatalf("defaultHivesDeps: %v", err)
+	}
+	old := hivectl.RunGH
+	t.Cleanup(func() { hivectl.RunGH = old })
+	hivectl.RunGH = func(_ context.Context, args ...string) (string, error) {
 		if strings.Join(args, " ") != "api user --jq .login" {
 			t.Errorf("unexpected gh invocation: %v", args)
 		}
 		return "octocat\n", nil
 	}
-	if user, err := githubUserFromCLI(context.Background()); err != nil || user != "octocat" {
-		t.Errorf("githubUserFromCLI = %q, %v; want octocat", user, err)
-	}
-
-	runGH = func(context.Context, ...string) (string, error) { return "  \n", nil }
-	if _, err := githubUserFromCLI(context.Background()); err == nil || !strings.Contains(err.Error(), "--github-user") {
-		t.Errorf("empty login should name the --github-user fallback, got %v", err)
-	}
-
-	runGH = func(context.Context, ...string) (string, error) { return "", errors.New("not logged in") }
-	if _, err := githubUserFromCLI(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
-		t.Errorf("a gh failure should point at gh auth login, got %v", err)
+	if user, err := deps.githubUser(context.Background()); err != nil || user != "octocat" {
+		t.Errorf("deps.githubUser = %q, %v; want octocat", user, err)
 	}
 }
 
@@ -759,15 +757,5 @@ func TestAlreadyRegisteredErrorDefaultsTheMessage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--token-stdin") || !strings.Contains(err.Error(), "contribute-move") {
 		t.Errorf("error should name both ways forward: %v", err)
-	}
-}
-
-func TestTruncateForMessage(t *testing.T) {
-	long := strings.Repeat("x", 250)
-	if got := truncateForMessage("  " + long + "  "); len(got) != 200+len("…") || !strings.HasSuffix(got, "…") {
-		t.Errorf("long payload not truncated to 200 runes plus ellipsis: %d", len(got))
-	}
-	if got := truncateForMessage("  short  "); got != "short" {
-		t.Errorf("short payload should only be trimmed, got %q", got)
 	}
 }

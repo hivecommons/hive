@@ -219,7 +219,7 @@ target for T3 (grid) and T5/T7/T9/T11 (pane contents); it is not a golden file.
 │  ─────────────────────────────────    │  11:57:03  bead bd-1042 closed       │
 │  total         1.7M     131.5k $5.80  │  11:55:44  governor QUIET → BUSY     │
 ├───────────────────────────────────────┴──────────────────────────────────────┤
-│ tab focus  j/k move  p pause  m model  K kick  A acmm  a attach  ? help  q quit│
+│tab focus  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit│
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -249,6 +249,7 @@ Notes the sketch encodes, for the tasks that implement it:
 | `K` | Kick the selected agent now | Agents pane | T21 |
 | `A` | Open the ACMM level overlay | global | T19 |
 | `a` | Attach to the selected agent's tmux session (**local only**) | Agents pane | T22 |
+| `H` | Open the Hives overlay: the contributor profiles this machine can lend a CLI to, with `enter` to switch, `a` add, `d` remove, `r` rename | global | [#8128](https://github.com/hivecommons/hive/issues/8128) |
 | `?` | Toggle the help overlay | global | T23 |
 | `q` / `ctrl+c` | Quit | global | T1 |
 
@@ -267,6 +268,12 @@ Conventions these bindings assume:
   the same screen.
 - `q` quits from the top level only once overlays exist; an open overlay should
   consume it (T23).
+- **One overlay is not about this hive.** `H` lists the hives the MACHINE can
+  lend a CLI to — the contributor profiles in `~/.config/hive/profiles.yml`, not
+  anything the dashboard API knows about — so it is global rather than addressed
+  at a pane, and it reads and writes through `pkg/hivectl`, the same functions
+  `hivectl hives` uses. It is also the only overlay with text fields: while one
+  is composing, ordinary letters are characters, not bindings.
 
 ---
 

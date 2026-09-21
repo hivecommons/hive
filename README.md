@@ -534,7 +534,8 @@ See also the [roadmap](ROADMAP.md) (release-line trajectory, with the [detailed 
 
 `hivectl tui` is a full-screen, keyboard-driven terminal view of the fleet —
 agents, governor, token spend, and activity in a live 2×2 grid, with
-pause/resume, model apply, kick, and ACMM level actions. It is **not a second
+pause/resume, model apply, kick, ACMM level, and hive-profile switching
+actions. It is **not a second
 Hive runtime**: it is another client of the same dashboard API the web
 dashboard at `:3001` uses, over the same auth token and the same SSE stream.
 
