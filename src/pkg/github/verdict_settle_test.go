@@ -320,13 +320,21 @@ func TestClaimLedger_AuthoritativeReconcileCarriesVerdictClaimsUntilTTL(t *testi
 		t.Fatal("displaced verdict claim must not resurrect")
 	}
 
-	// TTL retires a carried verdict claim like any other.
+	// #8003: the 72h ledger TTL no longer retires a carried verdict claim —
+	// the settling PR is still merged at 72h, so the clock alone was
+	// re-offering the issue every three days. Only settledClaimRetention,
+	// measured from the verdict, does.
 	if err := l.Record(verdict); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(claimLedgerTTL + time.Minute)
 	l.Reconcile(nil, true)
+	if _, ok := l.Lookup("o/r", 533); !ok {
+		t.Fatal("verdict claim past the 72h TTL must still be carried (#8003)")
+	}
+	now = now.Add(settledClaimRetention)
+	l.Reconcile(nil, true)
 	if _, ok := l.Lookup("o/r", 533); ok {
-		t.Fatal("verdict claim past the TTL must be retired")
+		t.Fatal("verdict claim past settledClaimRetention must be retired")
 	}
 }

@@ -83,6 +83,29 @@ const (
 	// claimLedgerTTL so every bound on a claim's influence agrees.
 	mergedClaimScanWindow = claimLedgerTTL
 
+	// settledClaimRetention bounds how long a SETTLED claim — a strong claim
+	// from a merged PR, or a verified no_work_needed verdict (#7871) — is
+	// carried forward by Reconcile after the scan stops re-finding it
+	// (hivecommons/hive#8003). Before this the merged-PR settle scan looked
+	// back mergedClaimScanWindow and the ledger TTL was the same 72h, so a
+	// fix that merged without a closing keyword suppressed its still-open
+	// issue for exactly three days and then the CLOCK released it: the issue
+	// went back into the offer pool, an agent re-verified "already fixed",
+	// and the verdict claim it produced sat on the same clock — one wasted
+	// task cycle per 72h for as long as nobody closed the issue. A merged PR
+	// does not un-merge, so nothing about that evidence decays at 72h; the
+	// only thing that ends it is the issue closing, and the contribute queue
+	// only ever consults claims for OPEN issues. Retention is the bound on
+	// ledger growth for issues that did close, not on the claim's truth.
+	settledClaimRetention = 30 * 24 * time.Hour
+
+	// SettledClaimStaleAfter is how long a settled claim may hold an issue
+	// before the hold itself is the problem a human needs to see (#8003): the
+	// fix landed, the issue is still open, and the next step — close it, or
+	// say what remains — is a maintainer's, not an agent's. The contribute
+	// queue withholds such an issue under its own reason past this age.
+	SettledClaimStaleAfter = 7 * 24 * time.Hour
+
 	// ClaimLedgerPath is the on-PVC location of the persisted claim ledger.
 	// /data is the hive's PersistentVolumeClaim mount, so the ledger survives
 	// the pod restarts that caused the incident this guard exists to prevent.
@@ -187,6 +210,51 @@ type IssueClaim struct {
 // ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
 // verified no_work_needed verdict reason (hivecommons/hive#7871).
 const ClaimSourceVerdict = "verdict"
+
+// Settled reports whether the claim describes work that has already LANDED:
+// a strong (closing, hive-or-anyone) claim from a merged PR, or a verified
+// no_work_needed verdict. Settled claims are the ones Reconcile carries
+// forward past the scan window (#8003) — the settling PR cannot un-merge, so
+// the scan ceasing to list it is not evidence the issue reopened for work.
+// A merged WEAK claim is not settled: it never asserted it closed the issue,
+// and FilterClaimedIssues releases it with context instead.
+func (c IssueClaim) Settled() bool {
+	if c.Source == ClaimSourceVerdict {
+		return true
+	}
+	return c.MergedPR && !c.Reference && !c.ExternalAuthor
+}
+
+// SettledAt is the instant the settled evidence was produced: the merge for
+// a merged-PR claim, otherwise the first observation. Zero for an unsettled
+// claim.
+func (c IssueClaim) SettledAt() time.Time {
+	if !c.Settled() {
+		return time.Time{}
+	}
+	if !c.MergedAt.IsZero() {
+		return c.MergedAt
+	}
+	if !c.FirstObservedAt.IsZero() {
+		return c.FirstObservedAt
+	}
+	return c.ObservedAt
+}
+
+// SettledStale reports whether a settled claim has held its issue for at
+// least SettledClaimStaleAfter as of now (#8003) — the point at which the
+// contribute queue stops describing the hold as "an open pull request
+// already claims this issue" and starts asking a maintainer to close it.
+func (c IssueClaim) SettledStale(now time.Time) bool {
+	at := c.SettledAt()
+	return !at.IsZero() && !now.Before(at.Add(SettledClaimStaleAfter))
+}
+
+// settledRetained reports whether a settled claim is still inside
+// settledClaimRetention as of now. Callers must have checked Settled().
+func settledRetained(c IssueClaim, now time.Time) bool {
+	return now.Before(c.SettledAt().Add(settledClaimRetention))
+}
 
 // claimRank orders claims by evidential strength, highest first. It exists so
 // insertLocked can resolve key collisions with a single comparison instead of a
@@ -1032,18 +1100,26 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 			}
 			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
 		}
-		// #7871: verdict-recovered claims describe a settling PR (or commit)
-		// that never referenced the issue, so the scan that just ran did not
-		// and will not see it. Replacing the map would forget the one verified
-		// fact the verdict produced and re-offer the issue on the next cycle.
-		// Carry them forward until the TTL retires them — the same bound a
-		// scan-found merged claim lives under (mergedClaimScanWindow) — and let
+		// Settled claims are carried forward (#7871, #8003). A verdict-
+		// recovered claim describes a settling PR (or commit) that never
+		// referenced the issue, so the scan that just ran did not and will not
+		// see it; a strong merged claim drops out of the scan the moment its
+		// PR is older than mergedClaimScanWindow. Neither absence is evidence
+		// the issue reopened for work — the PR is still merged — so replacing
+		// the map would forget the one verified fact and re-offer the issue,
+		// which is exactly the every-72h cycle #8003 reports. Carry them for
+		// settledClaimRetention from the merge/verdict, refreshing ObservedAt
+		// so the non-authoritative prune does not retire them either, and let
 		// insertLocked's rank rule decide when the scan DID find something.
-		cutoff := l.now().Add(-l.ttl)
+		now := l.now()
 		for key, c := range prev {
-			if c.Source != ClaimSourceVerdict || c.ObservedAt.Before(cutoff) {
+			if c.FirstObservedAt.IsZero() {
+				c.FirstObservedAt = c.ObservedAt
+			}
+			if !c.Settled() || !settledRetained(c, now) {
 				continue
 			}
+			c.ObservedAt = now
 			if _, live := l.claims[key]; live {
 				l.insertLocked(c)
 				continue
@@ -1065,8 +1141,17 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 // non-authoritative path so a permanently-failing API cannot pin a stale claim
 // forever. Callers must hold l.mu.
 func (l *ClaimLedger) pruneLocked() {
-	cutoff := l.now().Add(-l.ttl)
+	now := l.now()
+	cutoff := now.Add(-l.ttl)
 	for k, c := range l.claims {
+		if c.Settled() {
+			// #8003: a settled claim's evidence does not decay with the API's
+			// reachability; only its retention bound retires it here.
+			if !settledRetained(c, now) {
+				delete(l.claims, k)
+			}
+			continue
+		}
 		if c.ObservedAt.Before(cutoff) {
 			delete(l.claims, k)
 		}

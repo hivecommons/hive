@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -88,6 +89,13 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonMergedClaimStale: a merged pull request has
+	// claimed to fix this issue for at least SettledClaimStaleAfter and the
+	// issue is still open (#8003). Nothing an agent can do moves it — the
+	// next step is a maintainer closing it or saying what remains — so it is
+	// withheld under a reason that asks for exactly that, instead of reading
+	// as "an open pull request already claims this issue" forever.
+	contributorAdmissionReasonMergedClaimStale = "merged_claim_stale"
 	// contributorAdmissionReasonIssueChurn: the issue has already consumed
 	// enough pull requests (merged, closed, or both) that what remains is a
 	// maintainer's judgment call rather than dispatchable work (#7995).
@@ -134,8 +142,12 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 
 	claim, claimed := h.issueClaimedByOpenPR(candidate.repoFull, candidate.repoName, candidate.number)
 	if claimed {
+		reason := contributorAdmissionReasonOpenPRClaim
+		if claim.SettledStale(time.Now()) {
+			reason = contributorAdmissionReasonMergedClaimStale
+		}
 		return contributorAdmissionDecision{
-			reason: contributorAdmissionReasonOpenPRClaim,
+			reason: reason,
 			claim:  claim,
 		}
 	}

@@ -187,6 +187,37 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
+			// #8003: chairlift#55 — fixed by merged #133 four days ago, still
+			// open, re-offered every 72h. Withheld under its own reason that
+			// asks the maintainer to close it, not as "an open PR claims it".
+			name:   "merged claim stale — maintainer must close",
+			reason: contributorAdmissionReasonMergedClaimStale,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				mergedAt := time.Now().Add(-(ghpkg.SettledClaimStaleAfter + 24*time.Hour))
+				s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+					if number == 601 {
+						return ghpkg.IssueClaim{
+							PRNumber: 133,
+							PRURL:    "https://github.com/projectbluefin/dakota/pull/133",
+							PRAuthor: "mendezr",
+							MergedPR: true, MergedAt: mergedAt,
+							ObservedAt: mergedAt, FirstObservedAt: mergedAt,
+						}, true
+					}
+					return ghpkg.IssueClaim{}, false
+				}
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimURL != "https://github.com/projectbluefin/dakota/pull/133" {
+					t.Errorf("claim_url = %q, want the merged PR's URL", item.ClaimURL)
+				}
+				if !strings.Contains(item.Detail, "merged PR #133") || !strings.Contains(item.Detail, "days ago") ||
+					!strings.Contains(item.Detail, "close it or say what remains") {
+					t.Errorf("detail = %q, want the question put to the maintainer", item.Detail)
+				}
+			},
+		},
+		{
 			name:   "issue churn needs maintainer triage",
 			reason: contributorAdmissionReasonIssueChurn,
 			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
@@ -480,6 +511,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		withheldReasonContributorFilter,
 		withheldReasonAssignedToOther,
 		contributorAdmissionReasonIssueChurn,
+		contributorAdmissionReasonMergedClaimStale,
 	}
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {

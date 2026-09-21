@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -89,6 +90,7 @@ const (
 // rule applies to the WORDS as much as to the decisions).
 var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonOpenPRClaim:       "An open pull request already claims this issue",
+	contributorAdmissionReasonMergedClaimStale:  "Fixed by a merged pull request; the issue is still open — close it or say what remains",
 	contributorAdmissionReasonIssueChurn:        "Too many pull requests on one issue — needs maintainer triage",
 	contributorAdmissionReasonWorkflowBlocked:   "Workflow label: blocked",
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
@@ -122,6 +124,7 @@ func withheldReasonLabel(reason string) string {
 func isConvergenceWithheldReason(reason string) bool {
 	switch reason {
 	case contributorAdmissionReasonOpenPRClaim,
+		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
 		withheldReasonDisabledRepo,
 		withheldReasonTracker,
@@ -306,6 +309,12 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 			item.Detail = fmt.Sprintf("Existing pull request #%d", d.claim.PRNumber)
 		}
 		return item
+	case contributorAdmissionReasonMergedClaimStale:
+		item := newWithheldItem(c, d.reason)
+		item.ClaimURL = d.claim.PRURL
+		item.ClaimAuthor = d.claim.PRAuthor
+		item.Detail = mergedClaimStaleDetail(d.claim, time.Now())
+		return item
 	case contributorAdmissionReasonIssueChurn:
 		item := newWithheldItem(c, d.reason)
 		item.ChurnMerged = len(d.churn.Merged)
@@ -319,6 +328,29 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		return newWithheldItem(c, d.reason)
 	}
 	return withheldItemFromDecision(c.repoFull, c.ref, c.title, c.url, d.convergence)
+}
+
+// mergedClaimStaleDetail is the #8003 question put to a maintainer: which PR
+// fixed it, how long ago, and what the two possible answers are. The age is
+// in whole days because the point is "days, not hours" — the hold has already
+// outlasted every automatic bound.
+func mergedClaimStaleDetail(claim ghpkg.IssueClaim, now time.Time) string {
+	days := int(now.Sub(claim.SettledAt()).Hours() / 24)
+	unit := "days"
+	if days == 1 {
+		unit = "day"
+	}
+	by := "a merged pull request"
+	if claim.PRNumber > 0 {
+		by = fmt.Sprintf("merged PR #%d", claim.PRNumber)
+	}
+	if claim.Source == ghpkg.ClaimSourceVerdict {
+		by = "a verified no_work_needed verdict"
+		if claim.PRNumber > 0 {
+			by = fmt.Sprintf("a verified no_work_needed verdict citing merged PR #%d", claim.PRNumber)
+		}
+	}
+	return fmt.Sprintf("Fixed by %s %d %s ago; the issue is still open — close it or say what remains", by, days, unit)
 }
 
 // rejectingContributorFilter reports WHICH of the three contributor filters

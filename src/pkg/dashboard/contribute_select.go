@@ -785,6 +785,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
 						"merged", decision.claim.MergedPR,
 						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
+				case contributorAdmissionReasonMergedClaimStale:
+					// #8003: the fix landed days ago and the issue is still
+					// open. Logged as the question it is, so the Operations
+					// feed reads "close it" rather than "claimed by a PR".
+					h.logger.Info("[contribute-ws] skip: merged claim is stale — issue needs a maintainer to close it",
+						"repo", repo.Full, "number", number,
+						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
+						"settled_at", decision.claim.SettledAt(),
+						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
 				case contributorAdmissionReasonIssueChurn:
 					// #7995: not "somebody is on it" but "this issue has
 					// already eaten several PRs and nobody can say what is
