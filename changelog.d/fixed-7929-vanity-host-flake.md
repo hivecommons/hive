@@ -1,0 +1,1 @@
+- `TestHiveNameVanityHostUniquenessAcrossCalls` no longer fails on a single birthday-bound collision among 20 random 4-char suffixes (~1.1e-4 per run); it still fails immediately on a constant or low-entropy suffix ([#7929](https://github.com/hivecommons/hive/issues/7929))

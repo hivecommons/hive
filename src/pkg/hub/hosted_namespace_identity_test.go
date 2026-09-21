@@ -372,14 +372,22 @@ func TestHiveNameVanityHost(t *testing.T) {
 
 func TestHiveNameVanityHostUniquenessAcrossCalls(t *testing.T) {
 	// Two hives with the SAME sanitized name must not collide on the same
-	// host — the random suffix is what prevents that.
-	seen := map[string]bool{}
+	// host — the random suffix is what prevents that. A single duplicate in
+	// 20 draws from a 36^4 space is a legitimate ~1.1e-4 birthday event
+	// (#7929), so tolerate one collision and only fail when duplicates
+	// repeat — which a constant or low-entropy suffix regression trips on
+	// the very first run.
+	seen := map[string]int{}
+	dupes := 0
 	for i := 0; i < 20; i++ {
 		h := hiveNameVanityHost("TradingAsBuddies", "apps.example.com")
-		if seen[h] {
-			t.Fatalf("hiveNameVanityHost produced a duplicate host across calls: %q", h)
+		seen[h]++
+		if seen[h] > 1 {
+			dupes++
 		}
-		seen[h] = true
+	}
+	if dupes > 1 {
+		t.Fatalf("hiveNameVanityHost produced %d duplicate hosts across 20 calls — suffix entropy regression", dupes)
 	}
 }
 
