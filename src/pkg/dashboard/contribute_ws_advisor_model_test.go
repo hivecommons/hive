@@ -81,17 +81,21 @@ func TestAuthResponseRecordsAdvisorPair(t *testing.T) {
 	}
 
 	// And the activity rail's "joined" row carries it alongside the primary.
-	s.contributeHub.activityMu.Lock()
-	var joined *ActivityEntry
-	for i := range s.contributeHub.activity {
-		if s.contributeHub.activity[i].Username == "ompadvisor" && s.contributeHub.activity[i].Action == "joined" {
-			joined = &s.contributeHub.activity[i]
+	// The hub appends the "joined" row AFTER sending auth_ok (contribute_ws.go:
+	// handleAuth sends auth_ok, then calls addActivity), so an immediate check
+	// races the server goroutine under CI load — poll instead.
+	var joined ActivityEntry
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		s.contributeHub.activityMu.Lock()
+		defer s.contributeHub.activityMu.Unlock()
+		for i := range s.contributeHub.activity {
+			if s.contributeHub.activity[i].Username == "ompadvisor" && s.contributeHub.activity[i].Action == "joined" {
+				joined = s.contributeHub.activity[i]
+				return true
+			}
 		}
-	}
-	s.contributeHub.activityMu.Unlock()
-	if joined == nil {
-		t.Fatalf("no joined activity row for ompadvisor")
-	}
+		return false
+	}, "no joined activity row for ompadvisor")
 	if joined.AdvisorModel != "anthropic/claude-opus-5" || joined.AdvisorEffort != "high" {
 		t.Errorf("joined row advisor = %q/%q, want anthropic/claude-opus-5/high", joined.AdvisorModel, joined.AdvisorEffort)
 	}
