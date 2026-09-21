@@ -414,7 +414,11 @@
       box-sizing: border-box;
     }
     body.light-mode > .gh-rate-alert { margin-left: 0; }
-    body.light-mode .repo-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    /* Light mode packs the cards tighter (200px instead of 240px). The grid
+       said so with a narrower minmax(); the flex layout (#8000) says it with
+       a narrower default basis on the item. A card the operator has sized
+       carries its own inline flex-basis, which wins over this. */
+    body.light-mode .repo-card { flex-basis: 200px; }
     body.light-mode .beads { flex-wrap: wrap; }
     body.light-mode .agents { grid-template-columns: 1fr; }
 
@@ -720,6 +724,10 @@
          ~180px it lands on top of content at z-index 101 and silently eats
          taps. Drag-resize is meaningless on a drawer anyway. */
       .oc-sidebar-resize { display: none; }
+      /* Same reasoning for the per-repo-card handle (#8000): one card per row
+         at phone widths, so there is no width to trade between cards, and an
+         8px strip on the card edge would only eat taps meant for the pills. */
+      .repo-card-resize { display: none; }
       /* Per-agent and per-group actions are hover-reveal on desktop. Touch has
          no hover, so without this the ⚙/✕ buttons are unreachable in the drawer. */
       .oc-nav-item .oc-nav-actions,
@@ -1270,10 +1278,44 @@
     /* Repos */
     .repos { margin-bottom: 24px; }
     .repos h2 { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); margin-bottom: 8px; }
-    .repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+    /* Per-card width (hivecommons/hive#8000). This was
+       `grid-template-columns: repeat(auto-fit, minmax(240px, 1fr))`, and CSS
+       grid sizes TRACKS, not items: every card was exactly as wide as every
+       other one, so the card an operator is triaging could not be widened to
+       read its pill titles. Flex wrap sizes ITEMS, so one card can carry its
+       own flex-basis while the rest keep the shared default and reflow
+       around it.
+
+       `flex: 1 1 240px` reproduces what auto-fit did: a line takes as many
+       cards as fit at 240px and they share the leftover evenly, so an
+       untouched hive looks the same as before. `min-width: 0` lets a card
+       the operator dragged wider than the viewport shrink back to fit
+       instead of overflowing the page. */
+    .repo-grid { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
     .repo-card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 6px; padding: 12px; overflow: hidden;
+      position: relative; flex: 1 1 240px; min-width: 0;
+    }
+    /* A card the operator has sized keeps that width instead of sharing the
+       row's slack — that is the whole point of having set it. It still
+       shrinks if it is alone on a line narrower than the width chosen. */
+    .repo-card.repo-card-sized { flex-grow: 0; }
+    /* The drag handle: a full-height strip on the card's right edge, the
+       same col-resize affordance as the sidebar splitter. Transparent until
+       hovered/focused so six cards across do not read as a striped grid.
+       touch-action: none so a drag is a drag and not a page scroll. */
+    .repo-card-resize {
+      position: absolute; top: 0; right: 0; bottom: 0; width: 8px;
+      cursor: col-resize; touch-action: none; background: transparent;
+      border: 0; padding: 0; border-radius: 0 6px 6px 0;
+    }
+    .repo-card-resize:hover, .repo-card-resize.dragging {
+      background: color-mix(in srgb, var(--amber) 45%, transparent);
+    }
+    .repo-card-resize:focus-visible {
+      background: color-mix(in srgb, var(--amber) 45%, transparent);
+      outline: 2px solid var(--amber); outline-offset: -2px;
     }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
     .repo-name a:hover { text-decoration: underline !important; }
@@ -3417,7 +3459,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)" style="font-size:0.62em;vertical-align:middle;margin-left:8px;font-weight:400">🔄 Rescan</button> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)" style="font-size:0.62em;vertical-align:middle;margin-left:8px;font-weight:400">🔄 Rescan</button> <button class="btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset every repository card to the default width, discarding the widths you dragged (this browser only)" style="font-size:0.62em;vertical-align:middle;margin-left:6px;font-weight:400;display:none">↔️ Reset layout</button> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
@@ -8265,7 +8307,87 @@
       return parts.join('; ');
     }
 
+    // ── Per-repo card width (hivecommons/hive#8000) ───────────────────────
+    //
+    // Every card used to be exactly as wide as every other one, because the
+    // grid sized tracks rather than items. On a hive watching six repos with
+    // ~30 pills on a card, a pill column read `#192 Pa…`, `FIX #1109 fix…`,
+    // `TESTS #106…`, and the only way to find out what one was was to hover
+    // it, one at a time. An operator can now drag the card they are triaging
+    // wider — and the quiet ones narrower to make room.
+    //
+    // Per repo, not per column position: the width follows the repo when the
+    // list reorders, which is what "I widened arch-bootc" means. Per browser,
+    // not server-side: this is a view preference, not hive state, so it needs
+    // no write permission and no round trip.
+    const REPO_CARD_DEFAULT_W = 240;
+    const REPO_CARD_MIN_W = 180;
+    const REPO_CARD_MAX_W = 1400;
+    const REPO_CARD_NUDGE_W = 16;
+    const REPO_CARD_NUDGE_BIG_W = 64;
+    const REPO_CARD_WIDTH_KEY_PREFIX = 'hive-repo-card-widths:';
+
+    /** One stored map per hive, so two hives in one browser do not collide. */
+    function repoCardWidthKey() {
+      return REPO_CARD_WIDTH_KEY_PREFIX + (((window._lastStatus || {}).hiveId) || 'default');
+    }
+
+    /** px, clamped to the drag range; 0 means "no width set, use the default". */
+    function clampRepoCardWidth(w) {
+      const n = Math.round(Number(w));
+      if (!isFinite(n) || n <= 0) return 0;
+      return Math.max(REPO_CARD_MIN_W, Math.min(REPO_CARD_MAX_W, n));
+    }
+
+    /** The stored {repoFullName: width} map for this hive; always an object. */
+    function repoCardWidths() {
+      let raw = null;
+      try { raw = localStorage.getItem(repoCardWidthKey()); } catch { return {}; }
+      const parsed = safeJsonParse(raw || '{}', {});
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    }
+
+    /** Stored width for one repo, or 0 when it is at the default. */
+    function repoCardWidth(full) {
+      return clampRepoCardWidth(repoCardWidths()[full]);
+    }
+
+    // A reset deletes the entry rather than storing a zero, so a reset card
+    // follows the default width if the default ever changes — and so the
+    // whole key disappears once every card is back to default, which is what
+    // makes "is any card sized?" a cheap question.
+    function setRepoCardWidth(full, w) {
+      if (!full) return;
+      const widths = repoCardWidths();
+      const clamped = clampRepoCardWidth(w);
+      if (clamped) widths[full] = clamped; else delete widths[full];
+      try {
+        if (Object.keys(widths).length) localStorage.setItem(repoCardWidthKey(), JSON.stringify(widths));
+        else localStorage.removeItem(repoCardWidthKey());
+      } catch {}
+    }
+
+    // A pill title is cut twice: here, to MAX_PILL_TITLE_LEN characters, and
+    // again by the pill's own CSS ellipsis at whatever width the card has.
+    // Widening the card does nothing for a string already cut to 50
+    // characters, so the character budget has to grow with the card —
+    // otherwise the drag buys a wider card with the same ten-character clip.
+    const PILL_TITLE_BASE_LEN = 50;
+    const PILL_TITLE_MAX_LEN = 240;
+    function pillTitleLimit(cardWidth) {
+      const w = clampRepoCardWidth(cardWidth);
+      if (!w || w <= REPO_CARD_DEFAULT_W) return PILL_TITLE_BASE_LEN;
+      return Math.min(PILL_TITLE_MAX_LEN, Math.round(PILL_TITLE_BASE_LEN * w / REPO_CARD_DEFAULT_W));
+    }
+
+    // The card being dragged right now, or null. renderRepos() holds its
+    // repaint while this is set: a governor cycle landing mid-drag would
+    // replace the node under the pointer and drop the pointer capture with
+    // it, so the card would stop following the cursor.
+    let _repoResizeDrag = null;
+
     function renderRepos(repos) {
+      if (_repoResizeDrag) return;
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       // Definitive single-host badge in the section header: every repo in this
@@ -8307,11 +8429,21 @@
           nhEl.style.display = 'none';
         }
       }
+      // "Reset layout" only appears once there is a layout to reset (#8000) —
+      // a hive whose cards are all at the default has nothing for it to do.
+      const resetBtn = document.getElementById('repos-reset-layout-btn');
+      if (resetBtn) resetBtn.style.display = Object.keys(repoCardWidths()).length ? 'inline-block' : 'none';
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
-        const MAX_PILL_TITLE_LEN = 50;
+        // The card's width comes from the stored map on EVERY repaint, not
+        // from a one-time assignment on the element: this HTML replaces the
+        // grid's contents on every governor cycle, so a width set once on the
+        // node would be thrown away within the minute (#8000).
+        const cardRepo = r.full || r.name || '';
+        const cardW = repoCardWidth(cardRepo);
+        const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW);
         const issuePills = (r.actionableIssues || []).map(i => {
           const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
           const age = pillAge(i.created_at);
@@ -8445,8 +8577,14 @@
         const pillsHtml = (issueCol || prCol)
           ? `<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
           : '';
+        // role="separator" + aria-orientation="vertical" is the window-splitter
+        // pattern: a focusable handle that reports the width it controls, so
+        // the arrow-key nudge is announced rather than silent.
+        const resizeTip = 'Drag to set the width of the ' + cardRepo + ' card — double-click to reset it; ← / → nudge it when focused (Shift for a bigger step, Esc resets)';
+        const resizeHandle = `<div class="repo-card-resize" role="separator" aria-orientation="vertical" tabindex="0" data-repo="${esc(cardRepo)}" aria-label="${esc(resizeTip)}" title="${esc(resizeTip)}" aria-valuemin="${REPO_CARD_MIN_W}" aria-valuemax="${REPO_CARD_MAX_W}" aria-valuenow="${cardW || REPO_CARD_DEFAULT_W}"></div>`;
         return `
-        <div class="repo-card">
+        <div class="repo-card${cardW ? ' repo-card-sized' : ''}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
+          ${resizeHandle}
           <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
           <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a></div>
           <div class="repo-stats">
@@ -8456,6 +8594,139 @@
         </div>`;
       }).join(''));
     }
+
+    /**
+     * Paint one card at w px (0 = back to the default) and keep its handle's
+     * reported value in step. This is the live half of a drag; the stored map
+     * is what survives the repaint.
+     */
+    function applyRepoCardWidth(card, w) {
+      if (!card) return 0;
+      const clamped = clampRepoCardWidth(w);
+      if (clamped) {
+        card.style.flexBasis = clamped + 'px';
+        card.classList.add('repo-card-sized');
+      } else {
+        card.style.flexBasis = '';
+        card.classList.remove('repo-card-sized');
+      }
+      const handle = card.querySelector('.repo-card-resize');
+      if (handle) handle.setAttribute('aria-valuenow', String(clamped || REPO_CARD_DEFAULT_W));
+      return clamped;
+    }
+
+    // Repaint from the last status snapshot so the pill titles re-cut at the
+    // new width. It goes through renderRepos(), which re-reads the stored
+    // map — the same path the governor's repaint takes — so a width has
+    // exactly one source of truth however it was changed.
+    function repaintReposForWidth() {
+      renderRepos(((window._lastStatus || {}).repos) || []);
+    }
+
+    /** Header action: put every card back to the default width. */
+    function resetRepoCardWidths() {
+      try { localStorage.removeItem(repoCardWidthKey()); } catch {}
+      repaintReposForWidth();
+      showToast('Repository card widths reset to the default', 'info');
+    }
+
+    (function initRepoCardResize() {
+      const grid = document.getElementById('repos');
+      if (!grid) return;
+      const handleOf = (e) => (e.target && e.target.closest) ? e.target.closest('.repo-card-resize') : null;
+
+      // A repaint replaces every handle node, so a keyboard user would lose
+      // focus mid-nudge. Debounce it, then put focus back on the handle for
+      // the same repo. Held-down arrow keys therefore repaint once, not once
+      // per key repeat.
+      let repaintTimer = 0;
+      function scheduleRepaint(repo, refocus) {
+        clearTimeout(repaintTimer);
+        repaintTimer = setTimeout(() => {
+          repaintReposForWidth();
+          if (!refocus) return;
+          const again = Array.from(grid.querySelectorAll('.repo-card-resize')).find(h => h.dataset.repo === repo);
+          if (again) again.focus();
+        }, 200);
+      }
+
+      grid.addEventListener('pointerdown', (e) => {
+        const handle = handleOf(e);
+        if (!handle || e.button > 0) return;
+        const card = handle.closest('.repo-card');
+        if (!card) return;
+        _repoResizeDrag = {
+          handle, card,
+          repo: handle.dataset.repo || '',
+          startX: e.clientX,
+          startW: card.getBoundingClientRect().width,
+        };
+        try { handle.setPointerCapture(e.pointerId); } catch {}
+        handle.classList.add('dragging');
+        e.preventDefault();
+      });
+
+      grid.addEventListener('pointermove', (e) => {
+        if (!_repoResizeDrag) return;
+        // Persist what the drag ASKED for, not what the card measures: a card
+        // alone on a line narrower than the width chosen renders shrunk, and
+        // storing that measurement would silently ratchet the width down on
+        // every drag at a narrow viewport.
+        // Floored at the minimum here rather than left to clampRepoCardWidth:
+        // a drag that overshoots past zero means "as narrow as it goes", not
+        // "put this card back to the default".
+        const want = Math.max(REPO_CARD_MIN_W, _repoResizeDrag.startW + (e.clientX - _repoResizeDrag.startX));
+        _repoResizeDrag.w = applyRepoCardWidth(_repoResizeDrag.card, want);
+      });
+
+      function endDrag() {
+        const drag = _repoResizeDrag;
+        if (!drag) return;
+        _repoResizeDrag = null;
+        drag.handle.classList.remove('dragging');
+        // No pointermove at all is a click on the handle, not a resize: leave
+        // the card as it was rather than pinning it at its current width.
+        if (drag.w === undefined) return;
+        setRepoCardWidth(drag.repo, drag.w);
+        scheduleRepaint(drag.repo, false);
+      }
+      grid.addEventListener('pointerup', endDrag);
+      grid.addEventListener('pointercancel', endDrag);
+
+      // Double-click the handle resets just that card.
+      grid.addEventListener('dblclick', (e) => {
+        const handle = handleOf(e);
+        if (!handle) return;
+        e.preventDefault();
+        const repo = handle.dataset.repo || '';
+        applyRepoCardWidth(handle.closest('.repo-card'), 0);
+        setRepoCardWidth(repo, 0);
+        scheduleRepaint(repo, false);
+      });
+
+      // The handle is focusable, so it has to be operable from the keyboard —
+      // the same reason the rest of this page's controls are.
+      grid.addEventListener('keydown', (e) => {
+        const handle = handleOf(e);
+        if (!handle) return;
+        const card = handle.closest('.repo-card');
+        if (!card) return;
+        const step = e.shiftKey ? REPO_CARD_NUDGE_BIG_W : REPO_CARD_NUDGE_W;
+        const cur = card.getBoundingClientRect().width;
+        let next;
+        if (e.key === 'ArrowRight') next = cur + step;
+        else if (e.key === 'ArrowLeft') next = Math.max(REPO_CARD_MIN_W, cur - step);
+        else if (e.key === 'Home') next = REPO_CARD_MIN_W;
+        else if (e.key === 'End') next = REPO_CARD_MAX_W;
+        else if (e.key === 'Escape') next = 0;
+        else return;
+        e.preventDefault();
+        const repo = handle.dataset.repo || '';
+        applyRepoCardWidth(card, next);
+        setRepoCardWidth(repo, next);
+        scheduleRepaint(repo, true);
+      });
+    })();
 
     // Operator-initiated repository rescan. The REPOSITORIES cards repaint
     // from the governor's eval cycle, whose cadence stretches to minutes on a
