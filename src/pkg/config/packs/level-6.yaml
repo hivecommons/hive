@@ -2,7 +2,7 @@ level: 6
 name: Fully Autonomous
 description: 'Multi-loop with external orchestration. Agents open issues, create PRs,
   and auto-merge on green CI. No hold label. Adds outreach agent (+outreach) for community
-  engagement and external-facing actions. Twelve agents total, including opt-in telemetry and operations. Highest trust — governor
+  engagement and external-facing actions. Thirteen agents total, including opt-in telemetry and operations. Highest trust — governor
   at fastest cadence.
 
   '
@@ -34,6 +34,7 @@ governor:
       architect: 15m
       outreach: 30m
       sec-check: 15m
+      reviewer: 30m
       strategist: 30m
       telemetry: paused
       operations: paused
@@ -45,6 +46,7 @@ governor:
       architect: 30m
       outreach: 1h
       sec-check: 30m
+      reviewer: 30m
       strategist: 1h
       telemetry: paused
       operations: paused
@@ -56,6 +58,7 @@ governor:
       architect: 1h
       outreach: 2h
       sec-check: 1h
+      reviewer: 30m
       strategist: 2h
       telemetry: paused
       operations: paused
@@ -67,6 +70,7 @@ governor:
       architect: 2h
       outreach: 4h
       sec-check: 2h
+      reviewer: 30m
       strategist: 4h
       telemetry: paused
       operations: paused
@@ -307,6 +311,36 @@ agents:
 
     '
   knowledge_use: 'Full community knowledge access.
+
+    '
+- name: reviewer
+  display_name: reviewer
+  role: reviewer
+  description: 'Repo-grounded PR reviewer. Wakes on a cadence, works the open PR queue,
+    and posts review comments that help a human decide. Reads the repository at the
+    PR head and must cite file:line evidence for every finding. Flags duplicate PRs,
+    changes that should not land, and work the author was not equipped for, then
+    routes to a human. Never merges, approves, or closes.
+
+    '
+  emoji: 🔬
+  color: '#34495e'
+  sort_order: 26
+  backend: copilot
+  model: claude-fable-5
+  bead_role: worker
+  mode: ADVISORY
+  converse: true
+  kick_template: reviewer-queue.md
+  include_repos: true
+  clear_on_kick: true
+  on_demand: false
+  stale_timeout: 3600  # 1h — must exceed the 30m cadence
+  interactions: 'Reviews open PRs and routes requires_human / reject verdicts to a
+    maintainer via the triage label. Never merges.
+
+    '
+  knowledge_use: 'Reads the repository at the PR head; cites file:line evidence.
 
     '
 - name: brainstorm

@@ -445,7 +445,7 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template` and `mode` are updated so the agent's *policy* matches the level. A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 
-The L5 roster is the canonical worked example — eleven agents, eight on the governor timer, two opt-in agents paused in every governor mode, plus one on demand:
+The L5 roster is the canonical worked example — twelve agents, nine on the governor timer, two opt-in agents paused in every governor mode, plus one on demand:
 
 | Agent | | Mode | Cadence (all governor modes) |
 |---|---|---|---|
@@ -455,6 +455,7 @@ The L5 roster is the canonical worked example — eleven agents, eight on the go
 | quality 🧪 | test coverage | ISSUES_AND_PRS | 2h |
 | guide 🧭 | documentation | ISSUES_AND_PRS | 4h |
 | sec-check 🛡 | CVEs, vulnerabilities | ISSUES_AND_PRS | 4h |
+| reviewer 🔬 | repo-grounded PR review; routes to a human, never merges | ADVISORY | 30m |
 | architect 🏗 | RFCs, refactors | ISSUES_AND_PRS | 4h |
 | strategist 🧠 | cross-agent coordination | ISSUES_AND_PRS | 4h |
 | telemetry 📡 | managed-project instrumentation | ISSUES_AND_PRS | paused |

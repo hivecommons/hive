@@ -1,0 +1,1 @@
+- ACMM level-5 and level-6 packs now include the `reviewer` agent by default — the repo-grounded PR reviewer (ADVISORY, `reviewer-queue.md`, 30m cadence in every governor mode; never merges). Below L5 it stays opt-in, and hand-created reviewers keep their operator-owned model/backend/pause. (#8023)

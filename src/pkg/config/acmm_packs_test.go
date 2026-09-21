@@ -25,7 +25,7 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
 	expected := map[int]int{
-		1: 2, 2: 5, 3: 6, 4: 7, 5: 11, 6: 12,
+		1: 2, 2: 5, 3: 6, 4: 7, 5: 12, 6: 13, // reviewer joins at L5/L6 (#8023)
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]
@@ -155,7 +155,19 @@ func TestACMMPackManagedAgentNames(t *testing.T) {
 	}
 	// The union must not grow beyond what the packs define: an agent listed
 	// here is one whose operator-set mode a pack apply is allowed to discard.
-	if seen["reviewer"] {
-		t.Errorf("`reviewer` is in no pack yet appears in the managed set")
+	// reviewer joined the L5/L6 rosters in #8023; it is still absent below L5.
+	if !seen["reviewer"] {
+		t.Errorf("`reviewer` is in the L5/L6 packs (#8023) but missing from the managed set")
+	}
+	for _, lvl := range []int{1, 2, 3, 4} {
+		p, err := ACMMPackByLevel(lvl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range p.Agents {
+			if a.Name == "reviewer" {
+				t.Errorf("L%d pack must not carry reviewer (L5/L6 only, #8023)", lvl)
+			}
+		}
 	}
 }
