@@ -2,9 +2,13 @@ package dashboard
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -114,6 +118,48 @@ func TestApplyPackReconcilesOrphanAgent(t *testing.T) {
 		if _, ok := mode.Cadences["strategist"]; !ok {
 			t.Errorf("mode %q: strategist cadence missing after orphan reconcile", modeName)
 		}
+	}
+}
+
+func TestApplyPackLiveLookingUIDMapUsesHermeticIsolationMarkers(t *testing.T) {
+	dir := t.TempDir()
+	markerDir := filepath.Join(dir, "uid-isolation")
+	if err := os.MkdirAll(markerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(markerDir, "home.ready"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	uids := agent.NewUIDMap()
+	uids.Agents["supervisor"] = 2012
+	uids.IsolationMarkerDir = markerDir
+	uids.IsolationRevision = "1"
+	uidMapPath := filepath.Join(dir, "uid-map.json")
+	if err := uids.Save(uidMapPath); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newFullServerWithUIDMapPath(t, uidMapPath)
+	done := make(chan error, 1)
+	go func() {
+		_, err := srv.ApplyPack(5)
+		done <- err
+	}()
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ApplyPack(5): %v", err)
+		}
+	case <-timer.C:
+		t.Fatal("ApplyPack(5) did not complete with a hermetic UID-isolation marker dir")
+	}
+	if data, err := os.ReadFile(filepath.Join(markerDir, "agent-2012.ready")); err != nil {
+		t.Fatalf("supervisor marker was not published in hermetic dir: %v", err)
+	} else if string(data) != "1:2012\n" {
+		t.Fatalf("supervisor marker = %q, want %q", data, "1:2012\n")
 	}
 }
 

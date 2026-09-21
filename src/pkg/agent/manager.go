@@ -506,6 +506,7 @@ type Manager struct {
 	copilotAuthTokenRejected bool
 	claudeAuthToken          string
 	uidMap                   *UIDMap
+	uidMapPath               string
 	appAuth                  AppTokenMinter
 	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
@@ -672,10 +673,50 @@ func (m *Manager) GetACMMLevel() int {
 	return m.project.ACMMLevel
 }
 
+type ManagerOption func(*managerOptions)
+
+type managerOptions struct {
+	uidMapPath    string
+	uidMapPathSet bool
+}
+
+// WithUIDMapPath points a manager at a specific persisted UID map. Production
+// callers keep the default UIDMapPath; tests can inject a hermetic path.
+func WithUIDMapPath(path string) ManagerOption {
+	return func(opts *managerOptions) {
+		opts.uidMapPath = path
+		opts.uidMapPathSet = true
+	}
+}
+
+func (m *Manager) effectiveUIDMapPath() string {
+	if m.uidMapPath != "" {
+		return m.uidMapPath
+	}
+	return UIDMapPath
+}
+
 func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext) *Manager {
+	return NewManagerWithOptions(agents, logger, project)
+}
+
+func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, options ...ManagerOption) *Manager {
 	workDir := os.Getenv("HIVE_WORK_DIR")
 	if workDir == "" {
 		workDir = "/data/agents"
+	}
+	var opts managerOptions
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
+	}
+	loadUIDMapPath := UIDMapPath
+	if opts.uidMapPathSet {
+		loadUIDMapPath = opts.uidMapPath
+		if loadUIDMapPath == "" {
+			loadUIDMapPath = UIDMapPath
+		}
 	}
 
 	// Save COPILOT_GITHUB_TOKEN for explicit injection via tmux set-environment.
@@ -697,11 +738,11 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	claudeToken := claude.ReadAccessToken(claude.CredentialsPath)
 
 	var uidMap *UIDMap
-	if loaded, err := LoadUIDMap(UIDMapPath); err == nil {
+	if loaded, err := LoadUIDMap(loadUIDMapPath); err == nil {
 		uidMap = loaded
 		logger.Info("UID map loaded", "agents", len(uidMap.Agents), "iptables", uidMap.IptablesActive)
 	} else {
-		logger.Info("no UID map found, agents will share dev UID", "path", UIDMapPath)
+		logger.Info("no UID map found, agents will share dev UID", "path", loadUIDMapPath)
 	}
 
 	kickLogDir, kickLogRetention, kickLogMaxBytes := kickLogSettingsFromEnv()
@@ -717,6 +758,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
 		uidMap:                        uidMap,
+		uidMapPath:                    opts.uidMapPath,
 		kickLogDir:                    kickLogDir,
 		kickLogRetention:              kickLogRetention,
 		kickLogMaxBytes:               kickLogMaxBytes,
@@ -1089,7 +1131,7 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 		if agentUID > 0 {
 			tmuxSocket = "hive-" + name
 		}
-		_ = m.uidMap.Save(UIDMapPath)
+		_ = m.uidMap.Save(m.effectiveUIDMapPath())
 		// The boot-time migration walk has already finished; publish this
 		// agent's completion marker now or awaitUIDIsolation holds its launch
 		// forever. One tiny same-PVC write on a rare admin action — not the
@@ -1188,7 +1230,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 			if agentUID > 0 {
 				tmuxSocket = "hive-" + name
 			}
-			_ = m.uidMap.Save(UIDMapPath)
+			_ = m.uidMap.Save(m.effectiveUIDMapPath())
 			// Same contract as AddAgent: a reconcile-added agent gets its
 			// marker now, or its launch holds forever (the live adjudicator
 			// wedge came through exactly this path).

@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
@@ -16,6 +18,10 @@ import (
 )
 
 func newFullServer(t *testing.T) *Server {
+	return newFullServerWithUIDMapPath(t, filepath.Join(t.TempDir(), "uid-map.json"))
+}
+
+func newFullServerWithUIDMapPath(t *testing.T, uidMapPath string) *Server {
 	t.Helper()
 	orig := privateURLResolver
 	privateURLResolver = func(_ context.Context, _ string) ([]string, error) {
@@ -48,9 +54,11 @@ func newFullServer(t *testing.T) *Server {
 	scannerStore, _ := beads.NewStore(dir + "/scanner")
 	logger := slog.Default()
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{
+	mgr := agent.NewManagerWithOptions(cfg.Agents, logger, agent.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
-	})
+	}, agent.WithUIDMapPath(uidMapPath))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{
@@ -61,7 +69,7 @@ func newFullServer(t *testing.T) *Server {
 		OpenRouter:     testOpenRouterGateway{},
 		BeadStores:     map[string]*beads.Store{"scanner": scannerStore},
 		Logger:         logger,
-		Ctx:            context.Background(),
+		Ctx:            ctx,
 		RefreshFunc:    func() {},
 		PersistFunc:    func() {},
 		SkipReloadFunc: func() {},
