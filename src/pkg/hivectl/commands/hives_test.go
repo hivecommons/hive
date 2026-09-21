@@ -653,3 +653,121 @@ func TestHTTPRegistrarRejectsNonJSON(t *testing.T) {
 		t.Fatalf("error = %v, want a non-JSON complaint", err)
 	}
 }
+
+// The production wiring resolves the profile store under $HOME/.config/hive
+// and the GitHub login through gh. Both are exercised against a throwaway
+// HOME and a stubbed gh, so the default path is covered without touching the
+// developer's real credentials.
+func TestDefaultHivesDepsWiresTheProductionPieces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	deps, err := defaultHivesDeps(3 * time.Second)
+	if err != nil {
+		t.Fatalf("defaultHivesDeps: %v", err)
+	}
+	if deps.store == nil || deps.registrar == nil || deps.githubUser == nil || deps.now == nil {
+		t.Fatalf("defaultHivesDeps left a dependency nil: %+v", deps)
+	}
+	if reg, ok := deps.registrar.(httpRegistrar); !ok || reg.timeout != 3*time.Second {
+		t.Errorf("registrar = %#v, want httpRegistrar with the given timeout", deps.registrar)
+	}
+
+	// With no override installed, commandEnv.hivesDeps() takes the same path.
+	prev := hivesDepsFor
+	hivesDepsFor = nil
+	t.Cleanup(func() { hivesDepsFor = prev })
+	env := &commandEnv{options: &rootOptions{timeout: 3 * time.Second}}
+	got, err := env.hivesDeps()
+	if err != nil || got == nil {
+		t.Fatalf("hivesDeps() = %v, %v", got, err)
+	}
+}
+
+func TestGitHubUserFromCLI(t *testing.T) {
+	oldRunGH := runGH
+	t.Cleanup(func() { runGH = oldRunGH })
+
+	runGH = func(_ context.Context, args ...string) (string, error) {
+		if strings.Join(args, " ") != "api user --jq .login" {
+			t.Errorf("unexpected gh invocation: %v", args)
+		}
+		return "octocat\n", nil
+	}
+	if user, err := githubUserFromCLI(context.Background()); err != nil || user != "octocat" {
+		t.Errorf("githubUserFromCLI = %q, %v; want octocat", user, err)
+	}
+
+	runGH = func(context.Context, ...string) (string, error) { return "  \n", nil }
+	if _, err := githubUserFromCLI(context.Background()); err == nil || !strings.Contains(err.Error(), "--github-user") {
+		t.Errorf("empty login should name the --github-user fallback, got %v", err)
+	}
+
+	runGH = func(context.Context, ...string) (string, error) { return "", errors.New("not logged in") }
+	if _, err := githubUserFromCLI(context.Background()); err == nil || !strings.Contains(err.Error(), "gh auth login") {
+		t.Errorf("a gh failure should point at gh auth login, got %v", err)
+	}
+}
+
+func TestHivesListTableShowsReachabilityAndDashes(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer up.Close()
+
+	h := newHivesHarness(t)
+	h.seed(t, &hivectl.ProfileSet{
+		Active: "up",
+		Profiles: []hivectl.Profile{
+			{Name: "up", Hub: strings.Replace(up.URL, "http://", "ws://", 1) + "/contribute", RegistrationToken: "t1", ContributorID: "contrib_up"},
+			{Name: "down", Hub: "ws://127.0.0.1:0/contribute", RegistrationToken: "t2"},
+		},
+	})
+	if err := h.run(t, "", "hives", "list", "--check"); err != nil {
+		t.Fatalf("hives list --check: %v", err)
+	}
+	out := h.out.String()
+	for _, want := range []string{"REACHABLE", "* = active", "yes", "no"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table output lacks %q:\n%s", want, out)
+		}
+	}
+	// The profile with no contributor id or session prints dashes, not blanks.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "down") && !strings.Contains(line, "\t-\t-\t") {
+			t.Errorf("empty columns should print as dashes: %q", line)
+		}
+	}
+	if strings.Contains(out, "t1") || strings.Contains(out, "t2") {
+		t.Errorf("table output leaked a registration token:\n%s", out)
+	}
+}
+
+func TestUnknownHiveErrorListsWhatIsConfigured(t *testing.T) {
+	err := unknownHiveError("nope", &hivectl.ProfileSet{})
+	if !errors.Is(err, hivectl.ErrProfileNotFound) || !strings.Contains(err.Error(), "no hives are configured") {
+		t.Errorf("empty set: %v", err)
+	}
+	err = unknownHiveError("nope", &hivectl.ProfileSet{Profiles: []hivectl.Profile{{Name: "a"}, {Name: "b"}}})
+	if !strings.Contains(err.Error(), "configured: a, b") {
+		t.Errorf("populated set should list names: %v", err)
+	}
+}
+
+func TestAlreadyRegisteredErrorDefaultsTheMessage(t *testing.T) {
+	err := alreadyRegisteredError("octocat", "https://hub", "", "acme", "wss://hub/contribute")
+	if !strings.Contains(err.Error(), "the hub returned no registration token") {
+		t.Errorf("empty message should get the default wording: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--token-stdin") || !strings.Contains(err.Error(), "contribute-move") {
+		t.Errorf("error should name both ways forward: %v", err)
+	}
+}
+
+func TestTruncateForMessage(t *testing.T) {
+	long := strings.Repeat("x", 250)
+	if got := truncateForMessage("  " + long + "  "); len(got) != 200+len("…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("long payload not truncated to 200 runes plus ellipsis: %d", len(got))
+	}
+	if got := truncateForMessage("  short  "); got != "short" {
+		t.Errorf("short payload should only be trimmed, got %q", got)
+	}
+}
