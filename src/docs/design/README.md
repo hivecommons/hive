@@ -32,6 +32,20 @@ that status is the thing to check before treating a page as current behaviour:
   the spine. Phase PR A landed; Events API accelerator remains future work.
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
+- [Standby contributors: protocol, configuration, state machine, and the suspend rule](standby-contributors.md)
+  — **design only / proposed.** Step S0, the design gate, for
+  [RFC #7629](../../../docs/rfc-7629-standby-contributors.md) on the v6 line: a
+  lane paused for budget offers its queue to approved standby contributors,
+  behind a per-lane model floor. Specifies the four additive standby messages
+  gated on a `standby_v1` capability token, the per-lane `standby:` block and
+  hive-wide approved list, the lane and contributor-configuration state machines
+  with an owner per transition, matching and the suspend rule as pure functions
+  in a new `pkg/standby`, and the test plan each of S1 to S8 must satisfy. Its
+  load-bearing rule is that the floor has **no write API** — readable
+  everywhere, writable only in `hive.yaml` — so no surface can nudge an owner
+  toward lowering it. Answers the RFC's four open questions as recommendations,
+  and reuses `holdguard`'s commit-author drift for "reworked by a human first".
+  Nothing is implemented.
 - [Capability-aware contributor task assignment: the hub/relay decision boundary](capability-aware-assignment-boundary.md) — **proposed** (awaiting sign-off on #6825). Grounds RFC #6825 in the `v5` contributor protocol: the hub owns selection while the relay owns launch and veto, capability matching fails closed the way the quota guard's `unknown ⇒ HOLD` does, mixed-version behaviour reuses the #6954 `relay_capabilities`/`DeclaresCapability` matrix, and the #6541 in-flight quota park is resolved toward a first-class capacity verdict rather than `task_failed`/`environment`. Self-declared capability stays input, never authority. Leaves the tier vocabulary, evidence source, and lease-accounting for the park path as open questions for maintainers.
 - [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **declined** (RFC #6235 closed; #6111 on hold).
   Design for per-repo ACMM targets, gap-to-work reconciliation, explicit
