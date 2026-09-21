@@ -51,7 +51,18 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Matrix | #7617 | ⬜ |
 | Telegram | #7616 | ⬜ |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ⬜ |
-| Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ⬜ |
+| Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
+
+**Egress-only surfaces.** A surface with no inbound path conforms to the four
+inbound mechanisms (`ioscan`, `Converse`, the role floor, the mode ladder) by
+*unreachability* rather than by a check. That counts as conformance only where
+the unreachability is itself pinned, so the test must fail when the surface
+stops being egress-only — not merely pass today. The push / on-call row works
+this way: its test asserts outbound scrubbing behaviourally against all three
+providers, and parses the surface package to fail if an inbound entry point
+(an ntfy action handler, a PagerDuty webhook, a Pushover receipt callback) or
+a state-reaching dependency appears. When one does, the guards have to be
+wired and asserted for real before the row can go back to green.
 
 ## 3. Live exercise (per surface)
 

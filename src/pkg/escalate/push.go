@@ -21,6 +21,10 @@ type NtfySink struct {
 
 func (s *NtfySink) Name() string { return "ntfy" }
 func (s *NtfySink) Deliver(ctx context.Context, ev Event) error {
+	// Scrub here as well as in Dispatch: the sinks are exported and can be
+	// delivered to directly, so the guarantee must not depend on which door
+	// the event came through.
+	ev = scrubEvent(ev)
 	body := strings.TrimSpace(ev.Body + "\n" + ev.Link)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.URL, strings.NewReader(body))
 	if err != nil {
@@ -49,6 +53,7 @@ type PushoverSink struct {
 
 func (s *PushoverSink) Name() string { return "pushover" }
 func (s *PushoverSink) Deliver(ctx context.Context, ev Event) error {
+	ev = scrubEvent(ev)
 	endpoint := s.URL
 	if endpoint == "" {
 		endpoint = "https://api.pushover.net/1/messages.json"
@@ -75,6 +80,7 @@ type PagerDutySink struct {
 
 func (s *PagerDutySink) Name() string { return "pagerduty" }
 func (s *PagerDutySink) Deliver(ctx context.Context, ev Event) error {
+	ev = scrubEvent(ev)
 	endpoint := s.URL
 	if endpoint == "" {
 		endpoint = "https://events.pagerduty.com/v2/enqueue"

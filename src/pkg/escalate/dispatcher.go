@@ -79,6 +79,9 @@ func (d *Dispatcher) Dispatch(ev Event) {
 	if d == nil || !ev.valid() {
 		return
 	}
+	// Scrub once, on the way in, so every registered sink — and every future
+	// one — receives text that has already been through the shared scrubber.
+	ev = scrubEvent(ev)
 	d.mu.RLock()
 	if d.closed {
 		d.mu.RUnlock()
