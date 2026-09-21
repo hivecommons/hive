@@ -100,6 +100,7 @@ type ContributorConnection struct {
 	// routed or gated on. Empty for every single-model backend.
 	advisorModel  string
 	advisorEffort string
+	standby       map[string]StandbyConnectionState
 	role          string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
 	clientRole    string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
 	assignedRole  string // owner-selected role; "none" forces general work
@@ -215,6 +216,37 @@ type ContributorConnection struct {
 	// while calling send, so the two never nest. See hivecommons/hive
 	// contribute-ws concurrent-write fix.
 	writeMu sync.Mutex
+}
+
+type StandbyConnectionState struct {
+	Lane            string    `json:"lane"`
+	CLIBackend      string    `json:"cli_backend,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	AdvisorModel    string    `json:"advisor_model,omitempty"`
+	AdvisorEffort   string    `json:"advisor_reasoning_effort,omitempty"`
+	MaxConcurrent   int       `json:"max_concurrent,omitempty"`
+	DailyCap        int       `json:"daily_cap,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type WSStandby struct {
+	Lanes         []string        `json:"lanes,omitempty"`
+	MaxConcurrent int             `json:"max_concurrent,omitempty"`
+	DailyCap      int             `json:"daily_cap,omitempty"`
+	Accepted      []WSStandbyLane `json:"accepted,omitempty"`
+	Rejected      []WSStandbyLane `json:"rejected,omitempty"`
+}
+
+type WSStandbyLane struct {
+	Lane              string `json:"lane,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	Floor             string `json:"floor,omitempty"`
+	Tier              string `json:"tier,omitempty"`
+	DailyCapRemaining int    `json:"daily_cap_remaining,omitempty"`
+	Paused            bool   `json:"paused,omitempty"`
+	QueueDepth        int    `json:"queue_depth,omitempty"`
+	Qualified         bool   `json:"qualified,omitempty"`
 }
 
 // send serializes writes to this connection's websocket with writeMu, satisfying
@@ -373,14 +405,15 @@ type WSMessage struct {
 	// lets a relay trim an oversized audit tail to fit instead of losing a whole
 	// task_complete — and lets a hub that raises the ceiling carry its relays up
 	// with it. Additive; a relay that ignores it keeps whatever default it ships.
-	MaxMessageBytes int      `json:"max_message_bytes,omitempty"`
-	Role            string   `json:"role,omitempty"`
-	ContribLabels   []string `json:"contributor_labels,omitempty"`
-	Status          string   `json:"status,omitempty"`
-	Result          string   `json:"result,omitempty"`
-	Summary         string   `json:"summary,omitempty"`
-	TmuxOutput      []string `json:"tmux_output,omitempty"`
-	AcceptedModels  []string `json:"accepted_models,omitempty"`
+	MaxMessageBytes int        `json:"max_message_bytes,omitempty"`
+	Role            string     `json:"role,omitempty"`
+	Standby         *WSStandby `json:"standby,omitempty"`
+	ContribLabels   []string   `json:"contributor_labels,omitempty"`
+	Status          string     `json:"status,omitempty"`
+	Result          string     `json:"result,omitempty"`
+	Summary         string     `json:"summary,omitempty"`
+	TmuxOutput      []string   `json:"tmux_output,omitempty"`
+	AcceptedModels  []string   `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -1883,6 +1916,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleTaskComplete(msg)
 		case "task_failed":
 			s.handleTaskFailed(msg)
+		case "standby_declare":
+			s.handleStandbyDeclare(msg)
+		case "standby_release":
+			s.handleStandbyRelease(msg)
 		case "pong":
 			if s.contributor != nil {
 				s.contributor.mu.Lock()
@@ -2386,6 +2423,91 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	go h.heartbeatLoop(s.contributor)
 
 	return false
+}
+
+func (s *wsSession) handleStandbyDeclare(msg WSMessage) {
+	if s.contributor == nil {
+		return
+	}
+	standby := msg.Standby
+	if standby == nil {
+		standby = &WSStandby{}
+	}
+	lanes := normalizeStandbyLanes(standby.Lanes)
+	now := time.Now().UTC()
+	accepted := make([]WSStandbyLane, 0, len(lanes))
+	s.contributor.mu.Lock()
+	if s.contributor.standby == nil {
+		s.contributor.standby = map[string]StandbyConnectionState{}
+	}
+	for _, lane := range lanes {
+		s.contributor.standby[lane] = StandbyConnectionState{
+			Lane:            lane,
+			CLIBackend:      s.contributor.cliBackend,
+			Model:           s.contributor.model,
+			ReasoningEffort: s.contributor.reasoningEffort,
+			AdvisorModel:    s.contributor.advisorModel,
+			AdvisorEffort:   s.contributor.advisorEffort,
+			MaxConcurrent:   standby.MaxConcurrent,
+			DailyCap:        standby.DailyCap,
+			UpdatedAt:       now,
+		}
+		accepted = append(accepted, WSStandbyLane{Lane: lane, Reason: "accepted"})
+	}
+	s.contributor.mu.Unlock()
+	_ = s.contributor.send(WSMessage{
+		Type: "standby_ack",
+		Seq:  msg.Seq,
+		Standby: &WSStandby{
+			Accepted: accepted,
+		},
+	})
+}
+
+func (s *wsSession) handleStandbyRelease(msg WSMessage) {
+	if s.contributor == nil {
+		return
+	}
+	lanes := []string(nil)
+	if msg.Standby != nil {
+		lanes = normalizeStandbyLanes(msg.Standby.Lanes)
+	}
+	s.contributor.mu.Lock()
+	if len(lanes) == 0 || (len(lanes) == 1 && lanes[0] == "all") {
+		s.contributor.standby = nil
+	} else {
+		for _, lane := range lanes {
+			delete(s.contributor.standby, lane)
+		}
+	}
+	s.contributor.mu.Unlock()
+	_ = s.contributor.send(WSMessage{Type: "standby_ack", Seq: msg.Seq})
+}
+
+func normalizeStandbyLanes(lanes []string) []string {
+	if len(lanes) == 0 {
+		return []string{"all"}
+	}
+	out := make([]string, 0, len(lanes))
+	seen := map[string]struct{}{}
+	for _, lane := range lanes {
+		lane = strings.ToLower(strings.TrimSpace(lane))
+		if lane == "" {
+			continue
+		}
+		if len(lane) > 64 {
+			lane = lane[:64]
+		}
+		if _, ok := seen[lane]; ok {
+			continue
+		}
+		seen[lane] = struct{}{}
+		out = append(out, lane)
+	}
+	if len(out) == 0 {
+		return []string{"all"}
+	}
+	return out
 }
 
 // handleReady is the dispatch phase: a contributor with no task asks for work

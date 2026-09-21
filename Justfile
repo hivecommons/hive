@@ -853,6 +853,7 @@ contribute-hive backend="" mode="docker": check-version
       echo "Not set up yet. Run: just contribute-setup <cli>"
       exit 1
     fi
+
     if [[ ! -f "{{config_dir}}/gh-auth.env" ]]; then
       echo "Not set up yet. Run: just contribute-setup <cli>"
       exit 1
@@ -2035,6 +2036,13 @@ contribute-quota action="status":
     fi
     SCRIPT_DIR="{{justfile_directory()}}"
     node "${SCRIPT_DIR}/bin/contributor-quota-control.js" "{{action}}"
+
+# Start the contributor relay in standby mode. It authenticates, declares
+# standby_v1, and stays connected without requesting ordinary work.
+contribute-standby backend="" mode="docker":
+    #!/usr/bin/env bash
+    export HIVE_STANDBY=1
+    just contribute-hive "{{backend}}" "{{mode}}"
 
 
 # Generate a runnable K8s contributor workload (Namespace + ConfigMap + Secret + Deployment)

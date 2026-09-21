@@ -94,6 +94,13 @@ const PI_ENV = BACKEND === 'pi' ? { ...process.env } : {};
 let piInvocationState = 'untested';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
+const STANDBY_MODE = ['1', 'true', 'yes', 'on'].includes((process.env.HIVE_STANDBY || '').trim().toLowerCase());
+const STANDBY_LANES = (process.env.HIVE_STANDBY_LANES || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const STANDBY_MAX_CONCURRENT = Math.max(0, Number(process.env.HIVE_STANDBY_MAX_CONCURRENT || 1) || 0);
+const STANDBY_DAILY_CAP = Math.max(0, Number(process.env.HIVE_STANDBY_DAILY_CAP || 0) || 0);
 // HIVE_SESSION — optional session label (multi-session-per-account). One GitHub
 // account has one contributor identity per hub, and the hub keys task
 // leases/cooldowns/ownership on that identity, so two relays under the same
@@ -1164,7 +1171,7 @@ const RELAY_PROTOCOL_VERSION = '1.2';
 // contributorProtocolVersion), so RELAY_PROTOCOL_VERSION is deliberately NOT
 // bumped here and stays in step with the hub, keeping
 // TestRelayProtocolVersionMatchesHub honest.
-const RELAY_CAPABILITIES = ['quota_preflight_v1'];
+const RELAY_CAPABILITIES = ['quota_preflight_v1', 'standby_v1'];
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -6976,6 +6983,28 @@ function progressTick() {
   }
 }
 
+function declareStandby(hub) {
+  if (!STANDBY_MODE) return;
+  if (!hub || !hub.authenticated) return;
+  if (!Array.isArray(hub.serverCapabilities) || !hub.serverCapabilities.includes('standby_v1')) {
+    console.log(`Hub ${hub.url} does not advertise standby_v1 — standby disabled on this connection`);
+    return;
+  }
+  sendTo(hub, {
+    type: 'standby_declare',
+    seq: nextSeq(),
+    cli_backend: BACKEND,
+    model: refreshDetectedModel(),
+    reasoning_effort: effectiveReasoningEffort() || undefined,
+    ...advisorFields(),
+    standby: {
+      lanes: STANDBY_LANES.length ? STANDBY_LANES : undefined,
+      max_concurrent: STANDBY_MAX_CONCURRENT || undefined,
+      daily_cap: STANDBY_DAILY_CAP || undefined,
+    },
+  });
+}
+
 function handleMessage(data, hub) {
   // hub defaults to hubs[0] so existing single-hub callers (and the test
   // harness, which calls handleMessage(json) directly with no hub arg) keep
@@ -7048,6 +7077,7 @@ function handleMessage(data, hub) {
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
       hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
+      declareStandby(hub);
       // #7924: the permission set the hub mints task credentials with, per
       // trust tier. Read by markIssueBlocked to decide whether a label call
       // can succeed at all. An older hub sends none → no label attempts.
@@ -7077,6 +7107,8 @@ function handleMessage(data, hub) {
         sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
         sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
         startProgressReporting();
+      } else if (STANDBY_MODE) {
+        console.log('Authenticated in standby mode — staying connected without requesting ordinary work');
       } else if (!currentTask && hub === hubs[activeHubIndex]) {
         // Only the hub currently in the poll rotation asks for work. A hub
         // that authenticates while it's not its turn just sits connected
@@ -7119,6 +7151,20 @@ function handleMessage(data, hub) {
             sendTo(next, { type: 'ready', seq: nextSeq() });
           }
         }
+      }
+      break;
+
+    case 'standby_ack': {
+      const accepted = (msg.standby && Array.isArray(msg.standby.accepted)) ? msg.standby.accepted.length : 0;
+      const rejected = (msg.standby && Array.isArray(msg.standby.rejected)) ? msg.standby.rejected.length : 0;
+      console.log(`Standby acknowledged by ${hub.url}: ${accepted} accepted, ${rejected} rejected`);
+      break;
+    }
+
+    case 'standby_state':
+      if (msg.standby && Array.isArray(msg.standby.lanes)) {
+        const summary = msg.standby.lanes.map(l => `${l.lane || 'lane'}:${l.paused ? 'paused' : 'running'}:${l.qualified ? 'qualified' : 'not-qualified'}`).join(', ');
+        console.log(`Standby state from ${hub.url}: ${summary}`);
       }
       break;
 

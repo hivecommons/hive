@@ -77,6 +77,10 @@ const (
 	// decline after task metadata is offered but before the scoped credential is
 	// delivered. The decline is local capacity, not task failure.
 	capQuotaPreflight = "quota_preflight_v1"
+	// capStandbyV1: the hub accepts standby_declare / standby_release messages
+	// and records per-connection standby availability. Purely additive: relays
+	// that never advertise or send standby frames see today's traffic.
+	capStandbyV1 = "standby_v1"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -95,6 +99,7 @@ func serverCapabilities() []string {
 		capTokenRefreshFailed,
 		capQuotaPreflight,
 		capBlockedVerdict,
+		capStandbyV1,
 	}
 }
 

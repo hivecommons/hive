@@ -66,6 +66,26 @@ keeps the resource requests and limits rendered in its generated manifest.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
+## Standby mode
+
+Standby mode is additive to the contributor protocol. A relay started with
+`HIVE_STANDBY=1` still authenticates normally, then sends `standby_declare`
+after `auth_ok` when the hub advertises `standby_v1`. The declaration reuses the
+same configuration fields the relay already reports (`cli_backend`, `model`,
+`reasoning_effort`, and optional advisor fields) and may narrow the lanes with
+`HIVE_STANDBY_LANES=quality,ci-maintainer`.
+
+```bash
+HIVE_STANDBY=1 HIVE_STANDBY_LANES=quality just contribute-hive claude
+# or
+just contribute-standby claude
+```
+
+While S3 is live, standby is connection state only: the hub records the live
+declaration and acknowledges it, but nothing dispatches. Closing the socket
+releases standby implicitly; `standby_release` can release lanes without closing
+the ordinary contributor connection.
+
 ## Docker Compose workflow
 
 The containerized path is `src/compose-contributor.yaml` plus `src/Dockerfile.contributor`; the `just contribute-hive` recipe wraps it. From the repository root you can also run Compose directly after `just contribute-setup` has written `${HOME}/.config/hive/contributor.env`:
