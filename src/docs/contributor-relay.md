@@ -230,7 +230,7 @@ while keeping `--ask-for-approval`/`--sandbox` — prefer that over
 `HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1`, which removes the
 sandbox altogether.
 
-To change hubs for direct Compose, re-run the registration/setup flow for the target hub or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
+To change hubs for direct Compose, use `hivectl hives use <name>` — it regenerates `${HOME}/.config/hive/contributor.env` from your named profiles with the chosen hub first and the `HIVE_HUB`/`HIVE_REGISTRATION_TOKEN` lists always matched (see [hivectl.md](hivectl.md), "hives"; [#8097](https://github.com/hivecommons/hive/issues/8097)). Editing `contributor.env` by hand still works but must keep the positional lists aligned yourself.
 
 Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables (`HIVE_LITELLM_ENDPOINT`, `HIVE_LITELLM_API_KEY` — exported locally, never sent to the hive).
 

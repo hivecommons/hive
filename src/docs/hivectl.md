@@ -568,6 +568,33 @@ deterministically. Each omission is explained in a comment in the tape itself.
 Track any further work under the `hive tui` epic
 ([#4907](https://github.com/hivecommons/hive/issues/4907)).
 
+### hives — named hive profiles for contributors
+
+```bash
+hivectl hives list
+hivectl hives add myhive --hub wss://hive.example.dev/contribute --username octocat
+hivectl hives use myhive
+hivectl hives remove myhive
+hivectl hives rename myhive work
+```
+
+`hives` manages the hives this machine contributes to as named profiles
+([#8097](https://github.com/hivecommons/hive/issues/8097), phase 1). Profiles
+live in `~/.config/hive/profiles.yml` (mode 0600 — each entry holds that hub's
+registration token, which the hub can never reprint). The first `hives`
+command run against an old positional `contributor.env` migrates it in place,
+naming each entry after its hub host; a misaligned positional file is refused
+rather than guessed at. `contributor.env` remains as a generated projection
+for the relay, always written with the three positional lists aligned and the
+active profile first — which is where `bin/contributor-relay.js` starts
+soliciting, so `hives use` takes effect on the relay's next start. (A live
+switch without a restart is phase 2 of #8097.) `add` performs the registration
+half of `contribute-setup` — an unauthenticated `POST
+/api/contribute/register` keyed on your GitHub username; no bearer token is
+ever sent to the hub. Unlike the other command groups, `hives` works entirely
+on local files plus the target hub: it neither needs nor uses
+`HIVE_DASHBOARD_TOKEN` or `--server`.
+
 ### enroll — spoke-based lite repo enrollment
 
 ```bash
