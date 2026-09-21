@@ -321,3 +321,43 @@ func TestAllAuthorsStillReviewsAgentPRs(t *testing.T) {
 		t.Fatalf("agent-authored PR stopped being reviewed under AllAuthors: %+v", plan.ReviewKicks)
 	}
 }
+
+func TestRequiresHumanVerdictProducesHold(t *testing.T) {
+	pr := dispatchPR("sha1")
+	pr.Repo = "acme/hive"
+	opts := DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1")}}
+
+	agg := Aggregate{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictRequiresHuman, RequiresHuman: true,
+		Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman, PerspectiveSecurity: VerdictApprove},
+		Reasons:      []string{"correctness finding \"boot path\" is high (threshold high)"}}
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, DispatchState{}, opts)
+	if len(plan.State.Human) != 1 || plan.State.Human[0].Number != 7 || plan.State.Human[0].HeadSHA != "sha1" {
+		t.Fatalf("requires_human verdict did not produce a hold: %+v", plan.State.Human)
+	}
+	if !strings.Contains(plan.State.Human[0].Reason, "boot path") {
+		t.Fatalf("hold reason should carry the aggregate's reason, got %q", plan.State.Human[0].Reason)
+	}
+	if len(plan.ReviewKicks) != 0 || len(plan.FixKicks) != 0 {
+		t.Fatalf("settled requires_human verdict should not kick anything: reviews=%d fixes=%d", len(plan.ReviewKicks), len(plan.FixKicks))
+	}
+
+	// Re-planning must not duplicate the hold.
+	again := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, plan.State, opts)
+	if len(again.State.Human) != 1 {
+		t.Fatalf("hold duplicated on re-plan: %+v", again.State.Human)
+	}
+
+	// An aggregate with no perspectives is an unreviewed PR, not a decision.
+	empty := Aggregate{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictRequiresHuman, RequiresHuman: true, Reasons: []string{"no review reports were collected"}}
+	plan = PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{empty}}, DispatchState{}, opts)
+	if len(plan.State.Human) != 0 {
+		t.Fatalf("empty aggregate must not hold for human: %+v", plan.State.Human)
+	}
+
+	// An approve verdict never holds.
+	ok := Aggregate{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictApprove, Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: VerdictApprove}}
+	plan = PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{ok}}, DispatchState{}, opts)
+	if len(plan.State.Human) != 0 {
+		t.Fatalf("approve verdict must not hold for human: %+v", plan.State.Human)
+	}
+}
