@@ -24,6 +24,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/chat"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -188,6 +190,7 @@ func (b *matrixBackend) Whoami(ctx context.Context) (string, error) {
 }
 
 func (b *matrixBackend) Send(content string) error {
+	content = logscrub.ScrubString(content)
 	for _, part := range splitMatrixMessage(content) {
 		payload := matrixMessagePayload{
 			MsgType:       "m.text",
@@ -204,6 +207,7 @@ func (b *matrixBackend) Send(content string) error {
 }
 
 func (b *matrixBackend) SetTopic(topic string) error {
+	topic = logscrub.ScrubString(topic)
 	err := b.doJSON(context.Background(), http.MethodPut, "/rooms/"+pathEscape(b.roomID)+"/state/m.room.topic", topicPayload{Topic: topic}, nil)
 	var apiErr matrixAPIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
@@ -265,7 +269,8 @@ func (b *matrixBackend) Listen(ctx context.Context, deliver func(chat.Message)) 
 					continue
 				}
 				rememberEvent(seen, &seenOrder, event.EventID)
-				deliver(chat.Message{ID: event.EventID, Text: event.Content.Body, AuthorID: event.Sender, FromBot: event.Sender == b.userID})
+				text, _ := ioscan.EnforceInput(event.Content.Body)
+				deliver(chat.Message{ID: event.EventID, Text: text, AuthorID: event.Sender, FromBot: event.Sender == b.userID})
 			}
 		}
 		since = resp.NextBatch

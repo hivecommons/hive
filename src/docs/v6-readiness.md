@@ -48,7 +48,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Slack (Socket Mode) | #7585 | ✅ [`src/pkg/slack/conformance_v6_test.go`](../pkg/slack/conformance_v6_test.go) ([#8042](https://github.com/hivecommons/hive/issues/8042)) |
 | Discord (spine port + reliability) | #7572 / #7586 | ✅ [`src/pkg/discord/conformance_v6_test.go`](../pkg/discord/conformance_v6_test.go) ([#8043](https://github.com/hivecommons/hive/issues/8043)) |
 | Microsoft Teams | #7621 | ✅ [`src/pkg/msteams/conformance_v6_test.go`](../pkg/msteams/conformance_v6_test.go) ([#8044](https://github.com/hivecommons/hive/issues/8044)) |
-| Matrix | #7617 | ⬜ |
+| Matrix | #7617 | ✅ [`src/pkg/matrix/conformance_v6_test.go`](../pkg/matrix/conformance_v6_test.go) ([#8045](https://github.com/hivecommons/hive/issues/8045)) |
 | Telegram | #7616 | ✅ [`src/pkg/telegram/conformance_v6_test.go`](../pkg/telegram/conformance_v6_test.go) ([#8046](https://github.com/hivecommons/hive/issues/8046)) |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
 | Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
