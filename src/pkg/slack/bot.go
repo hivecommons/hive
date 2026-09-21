@@ -16,6 +16,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/chat"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -136,6 +138,7 @@ func (b *Bot) SetTopic(topic string) error { return b.slackBackend.SetTopic(topi
 func (b *slackBackend) Name() string { return "slack" }
 
 func (b *slackBackend) Send(content string) error {
+	content = logscrub.ScrubString(content)
 	for _, part := range splitSlackMessage(markdownToMrkdwn(content)) {
 		if err := b.postJSON("/chat.postMessage", map[string]string{"channel": b.channelID, "text": part}); err != nil {
 			return err
@@ -246,7 +249,8 @@ func (b *slackBackend) consumeSocket(ctx context.Context, deliver func(chat.Mess
 		if id == "" {
 			id = e.TS
 		}
-		deliver(chat.Message{ID: id, Text: e.Text, AuthorID: e.User, FromBot: e.BotID != "" || e.Subtype == "bot_message"})
+		text, _ := ioscan.EnforceInput(e.Text)
+		deliver(chat.Message{ID: id, Text: text, AuthorID: e.User, FromBot: e.BotID != "" || e.Subtype == "bot_message"})
 	}
 }
 
