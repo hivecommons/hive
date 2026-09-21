@@ -21,10 +21,12 @@ Recognized patterns are:
 - JWT-like strings beginning with `eyJ` and containing three base64url segments.
 - Hive canary values (`HIVE-CANARY-` followed by 48 hex characters).
 - AWS access key IDs (`AKIA`/`ASIA` followed by 16 uppercase alphanumerics).
-- `Bearer` authorization values of 16 characters or more.
+- `Bearer` authorization values of 16 characters or more. Format placeholders and shell/template variables such as `%s`, `%q`, `%v`, `$TOKEN`, `${TOKEN}`, and `{{ .Token }}` are not secrets and are left unchanged.
 - PEM private-key blocks — RSA, EC, OpenSSH, DSA, encrypted, and PGP private-key blocks — redacted whole, including multi-line bodies.
 
 The GitHub and JWT shapes live in the exported `logscrub.TokenPattern`, which other packages (for example `pkg/ioscan`) reuse rather than duplicating; keep that the single source of truth.
+
+Agent-facing sandbox stdout/stderr uses the same Go patterns with typed markers instead of the log marker: a masked span is shown as `<redacted:kind>`, for example `<redacted:bearer-token>`. That marker means the agent did not see the original bytes and must not quote the marker as code or infer what the hidden span contained. Logs and audit-shaped Go outputs continue to use `[REDACTED]`.
 
 The cost endpoint also redacts the configured gateway API key from native-cost probe errors before returning the error text.
 

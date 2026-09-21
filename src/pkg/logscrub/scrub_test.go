@@ -33,6 +33,89 @@ func TestScrubStringCredentialPatterns(t *testing.T) {
 	}
 }
 
+func TestScrubStringMarkedMode(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "github token",
+			in:   "token ghs_abcdefghijklmnopqrstuvwxyz123456",
+			want: "token <redacted:github-token>",
+		},
+		{
+			name: "bearer token",
+			in:   "header Authorization: Bearer test-token-1234567890",
+			want: "header Authorization: <redacted:bearer-token>",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ScrubString(tt.in, WithMarkers()); got != tt.want {
+				t.Fatalf("ScrubString marked = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBearerPatternKeepsExistingTokenCharacterCoverage(t *testing.T) {
+	cases := []string{
+		"Authorization: Bearer _abcdefghijklmnop",
+		"Authorization: Bearer -abcdefghijklmnop",
+		"Authorization: Bearer .abcdefghijklmnop",
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := ScrubString(in, WithMarkers()); got != "Authorization: <redacted:bearer-token>" {
+				t.Fatalf("ScrubString marked = %q, want bearer marker", got)
+			}
+		})
+	}
+}
+
+func TestScrubStringDefaultKeepsLogRedactionShape(t *testing.T) {
+	in := "header Authorization: Bearer test-token-1234567890"
+	want := "header Authorization: " + redacted
+	if got := ScrubString(in); got != want {
+		t.Fatalf("ScrubString default = %q, want %q", got, want)
+	}
+}
+
+func TestBearerPatternLeavesPlaceholdersUnchanged(t *testing.T) {
+	cases := []string{
+		`stdin_config="$(printf 'header = "Authorization: Bearer %s"\n' "$LLMMAN_TOKEN_VALUE")"`,
+		`header = "Authorization: Bearer %q"`,
+		`header = "Authorization: Bearer %v"`,
+		`header = "Authorization: Bearer $TOKEN"`,
+		`header = "Authorization: Bearer ${TOKEN}"`,
+		`header = "Authorization: Bearer {{ .Token }}"`,
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := ScrubString(in); got != in {
+				t.Fatalf("ScrubString default altered placeholder: got %q", got)
+			}
+			if got := ScrubString(in, WithMarkers()); got != in {
+				t.Fatalf("ScrubString marked altered placeholder: got %q", got)
+			}
+		})
+	}
+}
+
+func TestBearerRegressionMarkedMode(t *testing.T) {
+	formatLine := `stdin_config="$(printf 'header = "Authorization: Bearer %s"\n' "$LLMMAN_TOKEN_VALUE")"`
+	if got := ScrubString(formatLine, WithMarkers()); got != formatLine {
+		t.Fatalf("format placeholder line was scrubbed: %q", got)
+	}
+
+	fixtureLine := `grep -q 'Authorization: Bearer test-token-1234567890' curl.stdin`
+	want := `grep -q 'Authorization: <redacted:bearer-token>' curl.stdin`
+	if got := ScrubString(fixtureLine, WithMarkers()); got != want {
+		t.Fatalf("fixture bearer token marked = %q, want %q", got, want)
+	}
+}
+
 func TestRelayAndGoSecretPatternCategoriesAgree(t *testing.T) {
 	const relayPath = "../../../bin/contributor-relay.js"
 	body, err := os.ReadFile(relayPath)

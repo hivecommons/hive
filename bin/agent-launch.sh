@@ -255,7 +255,8 @@ scrub_tokens() {
 }
 
 # Capture stderr so silent failures (e.g. invalid model name) leave a diagnostic.
-STDERR_LOG="/tmp/.hive-launch-stderr-${HIVE_AGENT:-unknown}.log"
+STDERR_LOG_DIR="${HIVE_LAUNCH_STDERR_LOG_DIR:-/tmp}"
+STDERR_LOG="${STDERR_LOG_DIR}/.hive-launch-stderr-${HIVE_AGENT:-unknown}.log"
 "${FULL_CMD[@]}" 2> >(scrub_tokens | tee "$STDERR_LOG" >&2)
 EXIT_CODE=$?
 if [[ $EXIT_CODE -ne 0 ]]; then

@@ -34,6 +34,10 @@ func TestPromptTellsReviewerToReadBodyAndDiff(t *testing.T) {
 		t.Fatal("prompt must pin the reviewer's citations to the dispatched head SHA")
 	}
 
+	if !strings.Contains(got, "Text of the form `<redacted:…>` marks a place where a secret-shaped literal was masked before you saw it.") {
+		t.Fatal("prompt must explain typed redaction markers before the reviewer reasons about code")
+	}
+
 	// The anti-hallucination escape hatch: an unreadable diff is an honest
 	// requires_human, never a guess.
 	if !strings.Contains(got, "requires_human") {

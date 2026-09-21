@@ -78,6 +78,10 @@ func TestReviewerQueuePolicyShips(t *testing.T) {
 		t.Error("reviewer-queue.md still claims the verdict is delivered by returning it in kick output; it is not read from there")
 	}
 
+	if !strings.Contains(body, "Text of the form `<redacted:…>` marks a place where a secret-shaped literal was masked before you saw it.") {
+		t.Error("reviewer-queue.md must explain typed redaction markers to prevent reasoning about masked code")
+	}
+
 	// It must not re-acquire the contradictions of the advisory copy.
 	for _, banned := range []string{
 		"no GitHub write access",

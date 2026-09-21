@@ -100,8 +100,11 @@ func TestSandboxExecutorScrubsLaunchOutput(t *testing.T) {
 				if strings.Contains(text, syntheticJWT) {
 					t.Errorf("%s leaked the synthetic JWT: %q", what, text)
 				}
-				if !strings.Contains(text, "[REDACTED]") {
-					t.Errorf("%s shows no redaction marker — scrub did not run: %q", what, text)
+				if !strings.Contains(text, "<redacted:") {
+					t.Errorf("%s shows no typed redaction marker — scrub did not run: %q", what, text)
+				}
+				if strings.Contains(text, "[REDACTED]") {
+					t.Errorf("%s used the log redaction marker on agent-facing output: %q", what, text)
 				}
 				if !strings.Contains(text, plainMarker) {
 					t.Errorf("%s dropped non-secret output: %q", what, text)
@@ -141,10 +144,10 @@ func requireScriptDeps(t *testing.T) {
 func runAgentLaunch(t *testing.T, agentID string, extraEnv []string, args ...string) (string, string) {
 	t.Helper()
 	script := agentLaunchScriptPath(t)
-	stderrLog := "/tmp/.hive-launch-stderr-" + agentID + ".log"
-	t.Cleanup(func() { _ = os.Remove(stderrLog) })
+	stderrLogDir := t.TempDir()
+	stderrLog := filepath.Join(stderrLogDir, ".hive-launch-stderr-"+agentID+".log")
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Env = append(os.Environ(), append([]string{"HIVE_AGENT=" + agentID}, extraEnv...)...)
+	cmd.Env = append(os.Environ(), append([]string{"HIVE_AGENT=" + agentID, "HIVE_LAUNCH_STDERR_LOG_DIR=" + stderrLogDir}, extraEnv...)...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	cmd.Stdout = nil

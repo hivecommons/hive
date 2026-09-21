@@ -114,6 +114,8 @@ output and move on to the next PR.
 
 **Read the code. Do not infer it.**
 
+Text of the form `<redacted:…>` marks a place where a secret-shaped literal was masked before you saw it. It is not what the file contains. Never report the masked span as a defect, quote it as code, or reason about its content; if a finding depends on it, say the span was masked and ask a human to check the original.
+
 This is not style advice. It was measured. Three reviewer configurations were
 scored against six merged PRs with known post-merge defects, with ground truth
 written down in advance and false positives counted:

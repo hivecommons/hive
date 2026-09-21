@@ -167,6 +167,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 func buildReadInstruction(pr PullRequest) string {
 	var b strings.Builder
 	b.WriteString("READ THE PR BEFORE YOU JUDGE IT.\n")
+	b.WriteString("Text of the form `<redacted:…>` marks a place where a secret-shaped literal was masked before you saw it. It is not what the file contains. Never report the masked span as a defect, quote it as code, or reason about its content; if a finding depends on it, say the span was masked and ask a human to check the original.\n")
 	fmt.Fprintf(&b, "  gh pr view %d --repo %s --json title,body,author,files,baseRefName\n", pr.Number, pr.Repo)
 	fmt.Fprintf(&b, "  gh pr diff %d --repo %s\n", pr.Number, pr.Repo)
 	b.WriteString("The body states what the author INTENDED; the diff is what they actually did. You need both — most of the findings worth reporting live in the gap between them.\n")

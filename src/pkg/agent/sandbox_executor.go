@@ -142,10 +142,12 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	// stderr scrubber) can emit token-shaped values on stdout/stderr — e.g.
 	// during an auth failure. Scrub with the canonical logscrub patterns at
 	// this single boundary, BEFORE the output is persisted to the transcript
-	// or returned in the kick result, so both the normal backend path and the
-	// launch_cmd path are covered structurally.
-	sres.Stdout = logscrub.ScrubString(sres.Stdout)
-	sres.Stderr = logscrub.ScrubString(sres.Stderr)
+	// or returned in the kick result. Use typed markers here because this is
+	// agent-facing text: the model must know a span was masked, not reason about
+	// a generic replacement as if it were repository content. The normal backend
+	// path and the launch_cmd path are both covered structurally.
+	sres.Stdout = logscrub.ScrubString(sres.Stdout, logscrub.WithMarkers())
+	sres.Stderr = logscrub.ScrubString(sres.Stderr, logscrub.WithMarkers())
 	res.Sandbox = sres
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		res.TimedOut = true
