@@ -1,12 +1,12 @@
-# v4 stable soak and promotion policy
+# Stable soak and promotion policy (v5 line)
 
-This policy is enforced by CI: every successful `v4` image build retags
+This policy is enforced by CI: every successful `v5` image build retags
 `candidate`, while a separate scheduled or manually dispatched promotion
 workflow advances `stable` by digest only after the gate below passes.
 
 ## Goals
 
-- Keep `candidate` fast: it should move on every green `v4` release build.
+- Keep `candidate` fast: it should move on every green `v5` release build.
 - Make `stable` deliberate: it should advance only after observable soak, or by a
   documented emergency exception.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
@@ -14,7 +14,7 @@ workflow advances `stable` by digest only after the gate below passes.
 
 ## Proposed promotion rule
 
-A `v4` build may be promoted from `candidate` to `stable` only when all of these
+A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
 1. **Minimum soak:** the candidate digest has been the newest candidate for at
@@ -25,7 +25,7 @@ conditions hold:
    and non-flaky required checks are passing or skipped by policy.
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate
    digest, release tag, or included fix set as `blocker`, `regression`, or
-   `security` hold for the v4 line.
+   `security` hold for the stable (v5) line.
 5. **Operator smoke signal:** at least one maintained hive has reported a healthy
    heartbeat on the candidate digest, or the release captain records why a
    dashboard/heartbeat smoke is not applicable for that digest.
@@ -36,7 +36,7 @@ start/end time, and smoke evidence in the promotion PR or workflow summary.
 ## CI enforcement
 
 The existing release build continues to publish immutable short-SHA tags and move
-`candidate`; it no longer moves `stable` on every `v4` merge. The
+`candidate`; it no longer moves `stable` on every `v5` merge. The
 `Promote Stable Channel` workflow runs hourly and can also be manually dispatched.
 It:
 
