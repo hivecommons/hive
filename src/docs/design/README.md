@@ -33,7 +33,9 @@ that status is the thing to check before treating a page as current behaviour:
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
 - [Standby contributors: protocol, configuration, state machine, and the suspend rule](standby-contributors.md)
-  — **design only / proposed.** Step S0, the design gate, for
+  — **partly shipped (v6).** The configuration surface (phase S2) is in tree,
+  defaulted and validated, and nothing reads it; every other phase is design
+  only. Step S0, the design gate, for
   [RFC #7629](../../../docs/rfc-7629-standby-contributors.md) on the v6 line: a
   lane paused for budget offers its queue to approved standby contributors,
   behind a per-lane model floor. Specifies the four additive standby messages

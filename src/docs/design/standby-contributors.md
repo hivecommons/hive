@@ -1,8 +1,11 @@
 # Standby contributors: protocol, configuration, state machine, and the suspend rule
 
-Status: **Proposed — this is step S0, the design gate, for
+Status: **Partly shipped — this is step S0, the design gate, for
 [RFC #7629](https://github.com/hivecommons/hive/blob/v6/docs/rfc-7629-standby-contributors.md).
-Nothing described here is implemented.** Target line: `v6`.
+The configuration surface below (phase S2) is in tree, defaulted and
+validated, and nothing reads it. Everything else described here is design
+only.** Target line: `v6`. Check the phase map and its issues for what has
+landed since; this page is the plan and is not rewritten as phases ship.
 
 [RFC #7629](../../../docs/rfc-7629-standby-contributors.md) proposes that a lane
 paused for budget offer its queue to approved standby contributors, behind a
@@ -77,7 +80,7 @@ phase map stays small.
   selection already used to build kicks. Per-lane queue depth is a count over
   work the scheduler already computes.
 - **The tier vocabulary.** `RotationConfig.AgentTiers`
-  (`src/pkg/config/config.go:1733`) already spells T1/T2/T3 in `hive.yaml`. It
+  (`src/pkg/config/config.go:1745`) already spells T1/T2/T3 in `hive.yaml`. It
   maps *agent names*, not models — so standby borrows the vocabulary and needs
   its own mapping (below).
 - **The relay's configuration report.** `auth_response` already carries
@@ -250,8 +253,8 @@ is unaffected" a property of the design rather than a hope.
 
 Two places, matching where each kind of setting already lives: per-lane
 behaviour under the agent, hive-wide allow-lists under `hub:` next to
-`contribute_allow_models` (`src/pkg/config/config.go:4098`) and
-`contribute_delegatable_roles` (`src/pkg/config/config.go:4189`).
+`contribute_allow_models` (`ContributeAllowModels`, `src/pkg/config/config.go:4110`) and
+`contribute_delegatable_roles` (`ContributeDelegatableRoles`, `src/pkg/config/config.go:4201`).
 
 ```yaml
 agents:
@@ -269,7 +272,10 @@ hub:
 ```
 
 `standby` is a new block on `AgentConfig` (`src/pkg/config/config.go:974`); the
-three `hub.standby_*` keys are new fields on `HubConfig`.
+three `hub.standby_*` keys are new fields on `HubConfig`. Both landed in S2:
+`AgentConfig.Standby` (`src/pkg/config/config.go:1140`) and
+`HubConfig.StandbyContributors` (`src/pkg/config/config.go:4211`) with its two
+neighbours. The types, defaults and validation are `pkg/config/standby.go`.
 
 ### Validation rules
 

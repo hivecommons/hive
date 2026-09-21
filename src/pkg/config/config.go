@@ -1127,6 +1127,18 @@ type AgentConfig struct {
 	// global turn.reentrant.enabled rollout gate is also true.
 	ReentrantTurn *bool `yaml:"reentrant_turn,omitempty" json:"reentrant_turn,omitempty"`
 
+	// Standby is the per-lane standby-contributor block from RFC #7629: when
+	// this lane is paused for budget, offer its queue to approved standby
+	// contributors whose model configuration clears the lane's floor.
+	//
+	// Nil — the zero value, and every config written before this field —
+	// means the lane has no standby block at all, which is what keeps an
+	// existing hive byte-for-byte unchanged through a load/save cycle. As of
+	// S2 the block is parsed, defaulted and validated; NOTHING reads it to
+	// make a decision. See pkg/config/standby.go and
+	// src/docs/design/standby-contributors.md.
+	Standby *StandbyConfig `yaml:"standby,omitempty" json:"standby,omitempty"`
+
 	// Channels declares how this agent gets triggered. "kick" is the governor
 	// runtime; "mention" is valid only alongside "kick". When nil/empty, the
 	// agent uses governor timer kicks by default (implicit kick channel).
@@ -4186,11 +4198,32 @@ type HubConfig struct {
 	// Empty means the safe default set: scanner, quality, outreach. Privileged roles
 	// (ci-maintainer, sec-check, architect) must be explicitly listed here AND
 	// granted on the contributor profile; supervisor is never delegatable.
-	ContributeDelegatableRoles []string            `yaml:"contribute_delegatable_roles,omitempty"`
-	DisabledRepos              []string            `yaml:"disabled_repos"`
-	DisabledTiers              []string            `yaml:"disabled_tiers"`
-	TierLimits                 map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin        int                 `yaml:"snapshot_interval_min"`
+	ContributeDelegatableRoles []string `yaml:"contribute_delegatable_roles,omitempty"`
+	// StandbyContributors is the hive-wide approved list for standby
+	// (RFC #7629): the GitHub logins whose relays may be offered work from a
+	// lane paused for budget. Approval is durable and lives here; a relay
+	// declaring standby is volunteering, which grants nothing. A login here
+	// grants nothing else either — not a trust tier, not a role, not a
+	// credential. Empty (the default) means standby can offer work to nobody,
+	// and a lane with `standby.enabled: true` and an empty list fails the
+	// load rather than sitting inert. Resolve through
+	// StandbyContributorSet()/IsStandbyContributorApproved().
+	StandbyContributors []string `yaml:"standby_contributors,omitempty"`
+	// StandbyModelTiers maps whole contributor model configurations to the
+	// RFC #6825 capability tiers. Owner-authored, and it ships EMPTY with no
+	// defaults: an unmapped configuration is unknown, and unknown never
+	// qualifies, so a hive that has not written this mapping reports "0
+	// qualify" rather than admitting a model nobody assessed.
+	StandbyModelTiers []StandbyModelTier `yaml:"standby_model_tiers,omitempty"`
+	// StandbyAllowPrivateRepos opts standby dispatch into private
+	// repositories. Default OFF: a standby contributor receives the full task
+	// context, which for a private repository is read access in substance.
+	// Resolve through IsStandbyPrivateReposAllowed().
+	StandbyAllowPrivateRepos bool                `yaml:"standby_allow_private_repos,omitempty"`
+	DisabledRepos            []string            `yaml:"disabled_repos"`
+	DisabledTiers            []string            `yaml:"disabled_tiers"`
+	TierLimits               map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin      int                 `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
@@ -5198,6 +5231,11 @@ func (c *Config) applyDefaults() {
 			c.Hub.ContributeCooldownHours = contributeCooldownMaxHours
 		}
 	}
+
+	// Standby (RFC #7629 S2): default the per-lane floor to T1, clamp the
+	// per-contributor daily cap, and fold the hub-side lists to their
+	// canonical spelling. Lanes that wrote no `standby:` block are untouched.
+	c.applyStandbyDefaults()
 
 	// One-time migration of the old dual label lists into the single list+mode.
 	// If a legacy allow list was set (and no new label list/mode has been chosen

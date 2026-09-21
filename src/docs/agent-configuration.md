@@ -756,6 +756,43 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 
 **Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
+## Standby contributors (`standby`)
+
+> **Configuration only.** Hive parses, defaults and validates this block today, and **nothing reads it** — no lane offers work, no relay stands by, no tile counts anybody. It is step S2 of [RFC #7629](https://github.com/hivecommons/hive/issues/7629); the pause signal, the relay's standby mode, matching and dispatch are later phases. The full plan, and the reasoning behind every rule below, is in [the standby design record](design/standby-contributors.md). Writing the block now is safe and changes no behaviour; a hive that writes nothing is unaffected byte for byte.
+
+The idea: when a lane pauses because the hive is **out of budget**, its queue can be offered to contributors who volunteered ahead of time and whom you approved — running their own agent, on their own machine, with their own model, handing the result back as an ordinary hold-gated PR. No credential moves. The risk the design is built around is that donating a frontier model costs real money and donating a cheap one costs nearly nothing, so the pool tends toward cheap models and an owner staring at a stuck queue gets tempted to lower the bar until something qualifies. Hence a **floor**, per lane.
+
+```yaml
+agents:
+  quality:
+    standby:
+      enabled: false                 # default
+      min_model_capability: T1       # default T1 — the STRONGEST floor
+      daily_cap_per_contributor: 0   # default 0 — nothing is dispatched
+
+hub:
+  standby_contributors: [alice, bob]   # approval; volunteering is not approval
+  standby_model_tiers:                 # owner-authored; Hive ships NO defaults
+    - { backend: claude, model: claude-opus-5, reasoning_effort: high, tier: T1 }
+    - { backend: codex,  model: gpt-5.6-terra, reasoning_effort: high, tier: T2 }
+  standby_allow_private_repos: false   # default off
+```
+
+| Field | Meaning |
+|---|---|
+| `standby.enabled` | Offer this lane's queue when it is paused for budget. Default off. **`true` with an empty `hub.standby_contributors` fails the load** — a lane that is on with nobody approved is a misconfiguration you should see at boot, not a setting that sits inert. |
+| `standby.min_model_capability` | The lane's floor: the weakest capability tier a donated configuration may have and still be offered this lane's work. `T1`, `T2` or `T3` — the [RFC #6825](../../docs/rfc-6825-capability-aware-contributor-task-assignment.md) vocabulary — defaulting to **T1**, the strongest. `unknown` is **rejected at load**: it is the absence of a tier, not a weak one, and a lane floored at unknown is a lane anything clears. |
+| `standby.daily_cap_per_contributor` | How many donated tasks one approved contributor may be dispatched on this lane per rolling day. Default **0**, and 0 means *nothing is dispatched* — which is what makes the block safe to adopt before the dispatch path exists. Negative fails the load; a value above 50 is clamped with a logged warning. |
+| `hub.standby_contributors` | The approved GitHub logins. Approval is durable and lives in config; a relay declaring standby is *volunteering*, which grants nothing. A login here grants nothing else either: not a trust tier, not a role, not a credential. |
+| `hub.standby_model_tiers` | Which contributor model configurations count as which tier. Owner-authored, and **Hive publishes no defaults**: an unmapped configuration is `unknown`, and `unknown` never clears any floor, so a hive that has not written this mapping reports "0 qualify" rather than admitting a model nobody assessed. The **whole** configuration is the key — `backend`, `model`, `reasoning_effort`, and the optional `advisor_model` / `advisor_reasoning_effort`, which are the five fields a relay already reports — so the same model at a different reasoning effort is a different entry, and two entries for one configuration are a load error rather than last-one-wins. `backend` and `model` are required on every entry: an entry without a model would be a wildcard over every model on that backend, which is the opposite of matching a configuration. |
+| `hub.standby_allow_private_repos` | Whether standby may be offered work in private repositories. **Default off.** A standby contributor receives the full task context — issue title, body, labels, the lane's policy text — which for a private repository is read access in substance. Approve only people you would give read access to. |
+
+### The floor is read-only, everywhere
+
+`min_model_capability` is readable on every surface and writable **only by editing `hive.yaml`**. There is no dashboard control, no `PUT` field and no chat command, and a test (`TestStandbyFloorHasNoWriterOutsideConfig`) scans every route, template and client file to keep it that way. Nor will any surface *suggest* lowering it: a paused lane that nobody qualifies for renders as exactly that and offers no next step — no "0 contributors qualify — lower the floor?", no "2 would qualify at T3".
+
+That is deliberate, and it is the point of the whole feature. A lane that ran on a strong model for months and then quietly starts producing work from a weak one costs more reviewer trust than a paused lane saves queue depth. **"Nobody qualifies, the lane stays paused" is an acceptable answer.** Lowering a floor should be a decision you made, in a file, on purpose.
+
 ## When to add what
 
 | Add… | …when |
@@ -773,6 +810,7 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 | `tools` rules | one agent needs a sharper permission edge than its `mode` tier provides |
 | a higher ACMM level | your review capacity, CI trust, and appetite for autonomy have all grown — raise the level and let the pack reconcile the roster |
 | an inference method | you have GPUs (or a LiteLLM gateway) and want agents off subscription seats |
+| a `standby` block | you expect this lane to pause for budget and you want the floor and the approved list written down before it does — the block is parsed and validated today and read by nothing |
 
 ## What to read next
 

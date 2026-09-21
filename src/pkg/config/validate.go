@@ -162,6 +162,13 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	// Standby (RFC #7629 S2). Its own pass rather than a block inside the
+	// agent loop: two of its rules (an enabled lane needs a non-empty approved
+	// list; the tier map must not contradict itself) are relations between the
+	// agent and the hub blocks, not properties of a single agent.
+	if err := c.validateStandby(); err != nil {
+		return err
+	}
 	return nil
 }
 

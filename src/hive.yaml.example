@@ -165,6 +165,32 @@ agents:
     description: Runs automated test suites — coverage gates and regression checks
     role: quality
     sort_order: 35
+    # Standby contributors (RFC #7629): when this lane is paused for BUDGET,
+    # offer its queue to approved standby contributors whose model
+    # configuration clears the lane's floor. PARSED AND VALIDATED ONLY — as of
+    # S2 nothing reads the block. See src/docs/design/standby-contributors.md.
+    #
+    #   min_model_capability  T1 | T2 | T3, defaulting to T1 — the STRONGEST
+    #                         floor, so adopting the block without thinking
+    #                         about it gets the safe answer. "unknown" is
+    #                         rejected at load: it is the ABSENCE of a tier,
+    #                         not a weak one, and a lane floored at unknown is
+    #                         a lane anything clears. The floor is READ-ONLY on
+    #                         every surface — lowering it is an edit to this
+    #                         file, never a control, and nothing Hive renders
+    #                         proposes it.
+    #   daily_cap_per_contributor
+    #                         0 (the default) means NOTHING is dispatched,
+    #                         which is what makes the block safe to adopt
+    #                         before the dispatch path exists.
+    #   enabled: true         REQUIRES a non-empty hub.standby_contributors
+    #                         list below, or the hive fails to load: a lane
+    #                         that is on with nobody approved is a
+    #                         misconfiguration, not a silently inert setting.
+    # standby:
+    #   enabled: false
+    #   min_model_capability: T1
+    #   daily_cap_per_contributor: 0
   architect:
     enabled: false                        # Disabled by default — enable for design work
     backend: claude
@@ -247,6 +273,33 @@ agents:
     include_repos: false
     on_demand: true
     stale_timeout: 7200
+
+# Hub — hive-wide contributor settings. Shown here only for the standby keys
+# (RFC #7629); the contribute admission filters live on the dashboard's
+# Operations tab and are written back here.
+# hub:
+#   # The APPROVED standby list. Approval is durable and lives here; a relay
+#   # declaring standby is volunteering, and volunteering grants nothing. A
+#   # login here grants nothing else either — not a trust tier, not a role, not
+#   # a credential. An approved standby contributor receives the full task
+#   # context for any repository the lane serves, including private ones if you
+#   # have enabled that below: approve only people you would give read access to.
+#   standby_contributors: [alice, bob]
+#
+#   # Which contributor model configurations count as which capability tier.
+#   # OWNER-AUTHORED, and Hive ships NO defaults: an unmapped configuration is
+#   # unknown, and unknown never clears any floor — so a hive that has not
+#   # written this mapping reports "0 qualify" rather than admitting a model
+#   # nobody assessed. The WHOLE configuration is the key, so the same model at
+#   # a different reasoning effort is a different entry; two entries for one
+#   # configuration are a load error rather than last-one-wins.
+#   standby_model_tiers:
+#     - { backend: claude, model: claude-opus-5,  reasoning_effort: high, tier: T1 }
+#     - { backend: codex,  model: gpt-5.6-terra,  reasoning_effort: high, tier: T2 }
+#
+#   # Private repositories are OFF by default. Task context for a private repo
+#   # is read access in substance.
+#   standby_allow_private_repos: false
 
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
