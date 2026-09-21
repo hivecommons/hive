@@ -145,12 +145,19 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
-grep -q 'v4 true candidate' "$workflow"
-if grep -q 'v4 true stable,candidate\|CHANNELS: "stable,candidate"' "$workflow"; then
-  echo "docker workflow still publishes stable on every v4 merge" >&2
+# #7721 Phase 1: stable/candidate/:latest moved to the v5 line. v4 is a
+# maintenance lane now: every image row (and its cross-org mirror step) must
+# publish only v4-latest + the short SHA — no channel, no :latest.
+[[ $(grep -c "v4 false ''" "$workflow") -eq 3 ]]
+if grep -q 'v4 true \|v4 false candidate\|v4 false stable\|CHANNELS: "stable\|CHANNELS: "candidate' "$workflow"; then
+  echo "docker workflow publishes a v5-owned channel or :latest from the v4 lane" >&2
   exit 1
 fi
-grep -q 'INCLUDE_LATEST: "true"' "$workflow"
+[[ $(grep -c 'INCLUDE_LATEST: "false"' "$workflow") -eq 3 ]]
+if grep -q 'INCLUDE_LATEST: "true"' "$workflow"; then
+  echo "cross-org mirror step publishes v5-owned :latest from the v4 lane" >&2
+  exit 1
+fi
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then
   echo "HEAD-only publication guard was reintroduced" >&2
   exit 1

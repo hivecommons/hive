@@ -481,7 +481,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive /tmp/digests \
             '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
-            v4 true candidate
+            v4 false ''
 
       # ---- Cross-org mirror (kubestellar <-> hivecommons dual-publish) ----
       # Copy the tags just published above into the other org's GHCR
@@ -543,9 +543,9 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # These three mirror publish-image-tags.sh's positional args in the
           # publish step above — keep them in lockstep with that call.
-          INCLUDE_LATEST: "true"
+          INCLUDE_LATEST: "false"
           RELEASE_BRANCH: "v4"
-          CHANNELS: "candidate"
+          CHANNELS: ""
         run: |
           set -euo pipefail
           # Same tag set publish-image-tags.sh manages for this image. Each
@@ -687,7 +687,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive-contributor /tmp/contrib-digests \
             '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
-            v4 true candidate
+            v4 false ''
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
@@ -728,9 +728,9 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
-          INCLUDE_LATEST: "true"
+          INCLUDE_LATEST: "false"
           RELEASE_BRANCH: "v4"
-          CHANNELS: "candidate"
+          CHANNELS: ""
         run: |
           set -euo pipefail
           branch_tag="${BRANCH//\//-}"
@@ -878,7 +878,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive-hub /tmp/hub-digests \
             '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
-            v4 true candidate
+            v4 false ''
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
       # same "one credential per registry host" ordering constraint as the
@@ -919,9 +919,9 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Lockstep with the publish-image-tags.sh args above.
-          INCLUDE_LATEST: "true"
+          INCLUDE_LATEST: "false"
           RELEASE_BRANCH: "v4"
-          CHANNELS: "candidate"
+          CHANNELS: ""
         run: |
           set -euo pipefail
           branch_tag="${BRANCH//\//-}"
