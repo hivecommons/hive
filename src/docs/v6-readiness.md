@@ -44,7 +44,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 
 | Surface | Shipped in | Conformance evidence |
 | --- | --- | --- |
-| GitHub @-mention triggers | #7582 / #7597 / #7623 | ⬜ |
+| GitHub @-mention triggers | #7582 / #7597 / #7623 | ✅ [`src/pkg/mention/conformance_v6_test.go`](../pkg/mention/conformance_v6_test.go) ([#8041](https://github.com/hivecommons/hive/issues/8041)) |
 | Slack (Socket Mode) | #7585 | ✅ [`src/pkg/slack/conformance_v6_test.go`](../pkg/slack/conformance_v6_test.go) ([#8042](https://github.com/hivecommons/hive/issues/8042)) |
 | Discord (spine port + reliability) | #7572 / #7586 | ⬜ |
 | Microsoft Teams | #7621 | ✅ [`src/pkg/msteams/conformance_v6_test.go`](../pkg/msteams/conformance_v6_test.go) ([#8044](https://github.com/hivecommons/hive/issues/8044)) |

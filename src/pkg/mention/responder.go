@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 type Responder struct {
@@ -139,6 +141,7 @@ func (r *Responder) agentCanConverse(agentName string) bool {
 }
 
 func completionReply(agentName, detail string) string {
+	detail = logscrub.ScrubString(detail)
 	if detail != "" {
 		return fmt.Sprintf("Agent `%s` finished the mention-summoned run. The full log is retained on the hive dashboard. (%s)", agentName, detail)
 	}
