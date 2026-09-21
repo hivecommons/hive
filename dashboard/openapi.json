@@ -5168,6 +5168,10 @@
                             },
                             "cavemanMode": {
                               "type": "string"
+                            },
+                            "converse": {
+                              "type": "boolean",
+                              "description": "Pack-seeded `converse` capability. Omitted when the pack is silent on it, which is not the same as false."
                             }
                           }
                         }

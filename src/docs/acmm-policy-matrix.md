@@ -66,9 +66,9 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 | **sec-check** | **holdgated** | `sec-check-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L5 — Semi-Autonomous (Semi-Automated) (11 agents)
+### L5 — Semi-Autonomous (Semi-Automated) (12 agents)
 
-Agents open issues AND pull requests. All PRs get a hold label — humans batch-review and approve. Architect produces RFCs, strategist coordinates across agents. The system proposes; it does not merge autonomously.
+Agents open issues AND pull requests. All PRs get a hold label — humans batch-review and approve. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes. The system proposes; it does not merge autonomously.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -80,13 +80,14 @@ Agents open issues AND pull requests. All PRs get a hold label — humans batch-
 | sec-check | holdgated | `sec-check-holdgated.md` |
 | architect | holdgated | `architect-holdgated.md` |
 | strategist | holdgated | `strategist-holdgated.md` |
+| reviewer | converse | `reviewer-queue.md` |
 | telemetry (paused) | holdgated | `telemetry-holdgated.md` |
 | operations (paused) | holdgated | `operations-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L6 — Fully Autonomous (12 agents)
+### L6 — Fully Autonomous (13 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. No hold label. Outreach handles community engagement. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. No hold label. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -99,6 +100,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 | architect | full | `architect-full.md` |
 | strategist | full | `strategist-full.md` |
 | outreach | full | `outreach-full.md` |
+| reviewer | converse | `reviewer-queue.md` |
 | telemetry (paused) | full | `telemetry-full.md` |
 | operations (paused) | full | `operations-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
@@ -110,12 +112,13 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 ## Key Rules
 
 1. **All PRs are holdgated below L6.** No agent can auto-merge unless running at L6 (Fully Autonomous).
-2. **Advisory agents never get GH auth.** The `${GH_AUTH}` template variable is only injected into measured, holdgated, and full templates.
+2. **Advisory agents never get GH auth.** The `${GH_AUTH}` template variable is only injected into measured, holdgated, full, and converse templates. The converse tier is the one place an agent writes to GitHub without sitting on the mode ladder: `reviewer` is `mode: ADVISORY` plus the orthogonal `converse` capability ([#4492](https://github.com/hivecommons/hive/issues/4492)), which grants comments and PR reviews and nothing else — no issue creation, no relabelling, no push, no merge. It needs the auth block because posting a review *is* a GitHub write.
 3. **Supervisor uses no-GitHub advisory mode.** At every level, supervisor uses `supervisor-nogithub.md` in the built-in ACMM packs — it monitors agent health, not code.
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
-7. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
+7. **Reviewer is L5/L6-only by default and never merges.** It joined the L5 and L6 rosters in [#8023](https://github.com/hivecommons/hive/issues/8023) at a 30-minute cadence in every governor mode. Below L5 no pack lists it, so an operator who wants repo-grounded PR review creates it by hand and a pack apply leaves that agent's mode, model, backend, and pause state alone. Its mode stays `ADVISORY` at both levels, including L6: it reads the queue, comments, and returns a verdict, and it is that verdict — `requires_human` or `reject` — that pulls a PR out of the auto-merge lane.
+8. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
 
 ## ioscan hardening defaults per level
 

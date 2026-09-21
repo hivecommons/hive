@@ -208,6 +208,19 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				changed = true
 			}
 
+			// Converse is fill-if-UNSET, never replace-on-diff. It is an
+			// orthogonal operator choice, not a pack-seeded tier (#7503), so
+			// the pack may introduce it on an agent that has never had a
+			// value — a hive that hand-created `reviewer` before it joined
+			// the L5/L6 roster — but an explicit `converse: false` is a
+			// revocation the pack must respect, and ApplyPack runs on every
+			// restart. Pointer-nil is the only "no value yet".
+			if existing.Converse == nil && pa.Converse != nil {
+				converse := *pa.Converse
+				existing.Converse = &converse
+				changed = true
+			}
+
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice.
@@ -254,6 +267,11 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		}
 
 		includeRepos := pa.IncludeRepos
+		var converse *bool
+		if pa.Converse != nil {
+			v := *pa.Converse
+			converse = &v
+		}
 		agentCfg := config.AgentConfig{
 			Backend: pa.Backend,
 			Model:   pa.Model,
@@ -273,6 +291,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			IncludeRepos: &includeRepos,
 			LaneKeywords: pa.LaneKeywords,
 			Mode:         pa.Mode,
+			Converse:     converse,
 			OnDemand:     pa.OnDemand,
 			Managed:      true,
 		}

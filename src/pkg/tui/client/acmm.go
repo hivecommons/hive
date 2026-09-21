@@ -45,6 +45,10 @@ type PackAgent struct {
 	OnDemand bool `json:"onDemand,omitempty"`
 	// CavemanMode is the reduced-capability variant, when the pack defines one.
 	CavemanMode string `json:"cavemanMode,omitempty"`
+	// Converse is the pack-seeded `converse` capability, when the pack defines
+	// one. A pointer for the same reason config.PackAgent's is: nil means the
+	// pack is silent, not that it says false.
+	Converse *bool `json:"converse,omitempty"`
 }
 
 // PackGovernor is the governor configuration a level recommends.

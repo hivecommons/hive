@@ -43,6 +43,14 @@ type PackAgent struct {
 	Mode         string   `json:"mode,omitempty" yaml:"mode,omitempty"`
 	OnDemand     bool     `json:"onDemand,omitempty" yaml:"on_demand,omitempty"`
 	CavemanMode  string   `json:"cavemanMode,omitempty" yaml:"caveman_mode,omitempty"`
+	// Converse seeds the orthogonal `converse` capability (#4492) for agents
+	// whose pack role is to talk on issues and pull requests rather than to
+	// open them — `reviewer` at L5/L6 is `mode: ADVISORY` + `converse: true`.
+	// A pointer, like AgentConfig.Converse, so "the pack is silent" and "the
+	// pack says false" stay distinguishable: a pack apply only ever SEEDS this
+	// on an agent that has no value yet, and never revokes an operator's
+	// opt-in (#7503).
+	Converse *bool `json:"converse,omitempty" yaml:"converse,omitempty"`
 }
 
 // PackGovernor describes the governor configuration recommended for a level.

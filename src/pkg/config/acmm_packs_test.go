@@ -171,3 +171,37 @@ func TestACMMPackManagedAgentNames(t *testing.T) {
 		}
 	}
 }
+
+// The L5/L6 pack YAML declares `converse: true` on reviewer (#8023). Until
+// PackAgent carried the field, yaml.Unmarshal dropped it silently and a
+// pack-created reviewer landed with no converse — unable to post the reviews
+// that are its entire product. Pin that the value survives loading.
+func TestPackReviewerConverseSurvivesLoad(t *testing.T) {
+	for _, level := range []int{5, 6} {
+		p, err := ACMMPackByLevel(level)
+		if err != nil {
+			t.Fatalf("no pack for level %d: %v", level, err)
+		}
+		var found bool
+		for _, a := range p.Agents {
+			if a.Name != "reviewer" {
+				continue
+			}
+			found = true
+			if a.Converse == nil || !*a.Converse {
+				t.Errorf("L%d reviewer: converse = %v, want true", level, a.Converse)
+			}
+		}
+		if !found {
+			t.Fatalf("L%d pack has no reviewer", level)
+		}
+	}
+	for _, level := range []int{1, 2, 3, 4} {
+		p, _ := ACMMPackByLevel(level)
+		for _, a := range p.Agents {
+			if a.Converse != nil {
+				t.Errorf("L%d %s: pack sets converse=%v; converse is opt-in below L5", level, a.Name, *a.Converse)
+			}
+		}
+	}
+}
