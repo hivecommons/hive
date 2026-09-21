@@ -97,7 +97,7 @@ pinned:
   # entry again, the exclusion has been lost upstream — restore it there; do
   # not merge the sync branch, and do not "fix" it by widening this entry.
   # See src/docs/release-line-guard.md, "The infra workflow sync".
-  scorecard.yml: [main, -v2, -v5]
+  scorecard.yml: [main, -v2]
   suid-contract.yml: []
   # PR-level guard for src/internal/testutil (#5603). Pinned to the release
   # lines and nothing else: it is a pull_request-only path-gated check, and a
