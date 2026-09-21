@@ -45,10 +45,11 @@ type hubRegistration = hivectl.Registration
 
 // hivesDeps are the seams `hivectl hives` is tested through.
 type hivesDeps struct {
-	store      *hivectl.ProfileStore
-	registrar  hubRegistrar
-	githubUser func(ctx context.Context) (string, error)
-	now        func() time.Time
+	store       *hivectl.ProfileStore
+	registrar   hubRegistrar
+	githubUser  func(ctx context.Context) (string, error)
+	signalRelay func(ctx context.Context, store *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error)
+	now         func() time.Time
 }
 
 func newHivesCommand(env *commandEnv) *cobra.Command {
@@ -82,10 +83,11 @@ func defaultHivesDeps(timeout time.Duration) (*hivesDeps, error) {
 		return nil, err
 	}
 	return &hivesDeps{
-		store:      store,
-		registrar:  httpRegistrar{timeout: timeout},
-		githubUser: hivectl.GitHubLogin,
-		now:        time.Now,
+		store:       store,
+		registrar:   httpRegistrar{timeout: timeout},
+		githubUser:  hivectl.GitHubLogin,
+		signalRelay: hivectl.SignalRunningRelay,
+		now:         time.Now,
 	}, nil
 }
 
@@ -140,6 +142,7 @@ type hivesListRow struct {
 	Session       string `json:"session,omitempty" yaml:"session,omitempty"`
 	Active        bool   `json:"active" yaml:"active"`
 	AddedAt       string `json:"added_at,omitempty" yaml:"added_at,omitempty"`
+	LastSeen      string `json:"last_seen,omitempty" yaml:"last_seen,omitempty"`
 	Reachable     *bool  `json:"reachable,omitempty" yaml:"reachable,omitempty"`
 }
 
@@ -175,6 +178,10 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 		return err
 	}
 	active := set.ActiveProfile()
+	lastSeen, err := deps.store.LoadHubsSeen()
+	if err != nil {
+		return err
+	}
 	rows := make([]hivesListRow, 0, len(set.Profiles))
 	for _, p := range set.Ordered() {
 		row := hivesListRow{
@@ -186,6 +193,9 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 		}
 		if !p.AddedAt.IsZero() {
 			row.AddedAt = p.AddedAt.UTC().Format(time.RFC3339)
+		}
+		if seen, ok := lastSeen[p.Hub]; ok {
+			row.LastSeen = seen.UTC().Format(time.RFC3339)
 		}
 		if check {
 			reachable := probeHub(cmd.Context(), p.Hub, e.options.timeout)
@@ -201,7 +211,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 }
 
 func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
-	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED"
+	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED\tLAST SEEN"
 	if check {
 		header += "\tREACHABLE"
 	}
@@ -212,7 +222,7 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		if row.Active {
 			marker = "*"
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", marker, row.Name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, row.Name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen))
 		if check {
 			state := "-"
 			if row.Reachable != nil {
@@ -423,8 +433,9 @@ func newHivesUseCommand(env *commandEnv) *cobra.Command {
 		Aliases: []string{"switch"},
 		Short:   "Make a hive the active one",
 		Long: "Marks the named hive active and regenerates contributor.env with it first in the hub list. " +
-			"The relay starts at the first hub, so a relay started after this switches hives; one already " +
-			"running keeps its current hub until it is restarted.",
+			"If a contributor relay is already running, hivectl asks it to reload the projection with SIGUSR1 " +
+			"(or docker/podman kill --signal USR1 for container mode) so the switch takes effect without a restart. " +
+			"Any task already in flight finishes on the hub that assigned it; the next solicitation goes to the new active hive.",
 		Args: argsExact(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return env.runHivesUse(cmd, args[0])
@@ -448,6 +459,13 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 	if err := commit(deps, set); err != nil {
 		return err
 	}
+	switchResult := hivectl.RelaySwitchResult{}
+	if deps.signalRelay != nil {
+		switchResult, err = deps.signalRelay(cmd.Context(), deps.store)
+		if err != nil {
+			return err
+		}
+	}
 	out := cmd.OutOrStdout()
 	if already {
 		_, _ = fmt.Fprintf(out, "✓ %q was already active (%s)\n", target.Name, target.Hub)
@@ -455,7 +473,11 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 		_, _ = fmt.Fprintf(out, "✓ Active hive is now %q (%s)\n", target.Name, target.Hub)
 	}
 	_, _ = fmt.Fprintf(out, "  %s regenerated with %q first\n", deps.store.EnvPath(), target.Name)
-	_, _ = fmt.Fprintln(out, "  a running relay keeps its current hub until it restarts ('just contribute-stop' then 'just contribute-hive')")
+	if switchResult.Running {
+		_, _ = fmt.Fprintf(out, "  running relay signaled (%s); in-flight work finishes on its original hive, then the relay solicits from %q\n", switchResult.Target, target.Name)
+	} else {
+		_, _ = fmt.Fprintln(out, "  no running relay found; the next relay start will solicit from this hive first")
+	}
 	return nil
 }
 

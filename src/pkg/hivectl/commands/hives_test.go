@@ -29,12 +29,15 @@ func (f *fakeRegistrar) Register(_ context.Context, base, user string) (hubRegis
 }
 
 type hivesHarness struct {
-	dir   string
-	store *hivectl.ProfileStore
-	reg   *fakeRegistrar
-	out   *bytes.Buffer
-	errs  *bytes.Buffer
-	in    *bytes.Reader
+	dir          string
+	store        *hivectl.ProfileStore
+	reg          *fakeRegistrar
+	out          *bytes.Buffer
+	errs         *bytes.Buffer
+	in           *bytes.Reader
+	signalResult hivectl.RelaySwitchResult
+	signalErr    error
+	signalCalls  int
 }
 
 // newHivesHarness points `hivectl hives` at a temporary config directory and a
@@ -57,7 +60,11 @@ func newHivesHarness(t *testing.T) *hivesHarness {
 			store:      h.store,
 			registrar:  h.reg,
 			githubUser: func(context.Context) (string, error) { return "octocat", nil },
-			now:        func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
+			signalRelay: func(context.Context, *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error) {
+				h.signalCalls++
+				return h.signalResult, h.signalErr
+			},
+			now: func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
 		}, nil
 	}
 	t.Cleanup(func() { hivesDepsFor = prev })
@@ -139,6 +146,23 @@ func TestHivesListMarksTheActiveHive(t *testing.T) {
 	}
 	if strings.Index(out, "acme") > strings.Index(out, "other") {
 		t.Errorf("active hive is not listed first:\n%s", out)
+	}
+}
+
+func TestHivesListShowsLastSeen(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	seen := `{"wss://acme.example/contribute":"2026-09-21T15:04:05Z"}`
+	if err := os.WriteFile(h.store.HubsSeenPath(), []byte(seen), 0o600); err != nil {
+		t.Fatalf("write hubs-seen: %v", err)
+	}
+
+	if err := h.run(t, "", "hives", "list"); err != nil {
+		t.Fatalf("hives list: %v", err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "LAST SEEN") || !strings.Contains(out, "2026-09-21T15:04:05Z") {
+		t.Fatalf("last-seen column missing:\n%s", out)
 	}
 }
 
@@ -248,8 +272,28 @@ func TestHivesUseReordersTheProjection(t *testing.T) {
 	if !strings.Contains(env, "HIVE_LITELLM_ENDPOINT=https://llm.example") {
 		t.Errorf("unmanaged key dropped from the projection:\n%s", env)
 	}
-	if !strings.Contains(h.out.String(), "restarts") {
-		t.Errorf("output did not say a running relay needs a restart:\n%s", h.out.String())
+	if h.signalCalls != 1 {
+		t.Fatalf("signal relay calls = %d, want 1", h.signalCalls)
+	}
+	if !strings.Contains(h.out.String(), "no running relay found") {
+		t.Errorf("output did not say no relay was running:\n%s", h.out.String())
+	}
+}
+
+func TestHivesUseSignalsRunningRelay(t *testing.T) {
+	h := newHivesHarness(t)
+	h.signalResult = hivectl.RelaySwitchResult{Running: true, Target: "pid 1234"}
+	h.seed(t, twoHives())
+	h.writeEnv(t, "HIVE_REGISTRATION_TOKEN=tok-acme,tok-other\nHIVE_HUB=wss://acme.example/contribute,wss://other.example/contribute\nCONTRIBUTOR_ID=c1,c2\n")
+
+	if err := h.run(t, "", "hives", "use", "other"); err != nil {
+		t.Fatalf("hives use: %v", err)
+	}
+	if !strings.Contains(h.out.String(), "running relay signaled (pid 1234)") {
+		t.Fatalf("output did not report the live switch:\n%s", h.out.String())
+	}
+	if !strings.Contains(h.out.String(), "in-flight work finishes on its original hive") {
+		t.Fatalf("output did not document in-flight task handling:\n%s", h.out.String())
 	}
 }
 

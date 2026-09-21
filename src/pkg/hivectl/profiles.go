@@ -1,6 +1,7 @@
 package hivectl
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -45,6 +46,8 @@ const (
 
 	profilesFileName       = "profiles.yml"
 	contributorEnvFileName = "contributor.env"
+	relayPIDFileName       = "contributor-relay.pid"
+	hubsSeenFileName       = "hubs-seen.json"
 
 	// profilesFileMode is asserted by tests, not merely applied: profiles.yml
 	// carries HIVE_REGISTRATION_TOKEN for every hive, the sole long-lived
@@ -122,6 +125,39 @@ func (s *ProfileStore) Path() string { return filepath.Join(s.dir, profilesFileN
 
 // EnvPath reports where the generated contributor.env projection lives.
 func (s *ProfileStore) EnvPath() string { return filepath.Join(s.dir, contributorEnvFileName) }
+
+// RelayPIDPath reports where a running contributor relay advertises its PID
+// (or container identity) so `hivectl hives use` can ask it to reload.
+func (s *ProfileStore) RelayPIDPath() string { return filepath.Join(s.dir, relayPIDFileName) }
+
+// HubsSeenPath reports where the relay records the last time each hub
+// authenticated or heartbeated successfully.
+func (s *ProfileStore) HubsSeenPath() string { return filepath.Join(s.dir, hubsSeenFileName) }
+
+// LoadHubsSeen reads hubs-seen.json. A missing file is not an error: it simply
+// means no relay has recorded reachability yet.
+func (s *ProfileStore) LoadHubsSeen() (map[string]time.Time, error) {
+	data, err := os.ReadFile(s.HubsSeenPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]time.Time{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read hive last-seen file %s: %w", s.HubsSeenPath(), err)
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse hive last-seen file %s: %w", s.HubsSeenPath(), err)
+	}
+	seen := make(map[string]time.Time, len(raw))
+	for hub, stamp := range raw {
+		t, err := time.Parse(time.RFC3339, stamp)
+		if err != nil {
+			return nil, fmt.Errorf("parse last-seen timestamp for %s in %s: %w", hub, s.HubsSeenPath(), err)
+		}
+		seen[hub] = t
+	}
+	return seen, nil
+}
 
 // Find returns the profile with the given name (case-insensitive, matching the
 // uniqueness rule Validate enforces) and its index.

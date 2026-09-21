@@ -55,10 +55,11 @@ type hivesStore interface {
 // a test replaces the lot in one assignment, and so the production wiring is
 // one literal that can be read against the CLI's defaultHivesDeps.
 type hivesEnv struct {
-	store    hivesStore
-	probe    func(ctx context.Context, hub string) bool
-	login    func(ctx context.Context) (string, error)
-	register func(ctx context.Context, hubHTTPBase, githubUser string) (hivectl.Registration, error)
+	store       hivesStore
+	probe       func(ctx context.Context, hub string) bool
+	login       func(ctx context.Context) (string, error)
+	register    func(ctx context.Context, hubHTTPBase, githubUser string) (hivectl.Registration, error)
+	signalRelay func(ctx context.Context) (hivectl.RelaySwitchResult, error)
 }
 
 // defaultHivesEnv wires the production implementations.
@@ -80,6 +81,9 @@ func defaultHivesEnv() hivesEnv {
 	}
 	if store, err := hivectl.DefaultProfileStore(); err == nil {
 		env.store = store
+		env.signalRelay = func(ctx context.Context) (hivectl.RelaySwitchResult, error) {
+			return hivectl.SignalRunningRelay(ctx, store)
+		}
 	}
 	return env
 }
@@ -375,8 +379,22 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 		if err := env.store.Commit(set); err != nil {
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
+		if action.Kind == panes.HivesActionUse && env.signalRelay != nil {
+			result, err := env.signalRelay(context.Background())
+			if err != nil {
+				return hivesActionMsg{overlayID: overlayID, err: err}
+			}
+			note = hivesUseSwitchNote(note, action.Name, result)
+		}
 		return hivesActionMsg{overlayID: overlayID, note: note}
 	}
+}
+
+func hivesUseSwitchNote(note, name string, result hivectl.RelaySwitchResult) string {
+	if result.Running {
+		return fmt.Sprintf("%s; running relay signaled (%s), in-flight work finishes on its original hive", note, result.Target)
+	}
+	return fmt.Sprintf("%s; no running relay found, the next relay start will solicit from %q first", note, name)
 }
 
 // applyHivesAction mutates the set in memory and returns the receipt to render.

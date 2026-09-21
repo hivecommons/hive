@@ -412,7 +412,9 @@ hivectl hives rename hive-b staging
 hivectl hives remove staging                              # asks you to type the name
 ```
 
-The active profile is written first in each list, which is the hub the relay solicits from when it starts. A relay that is **already running** keeps its current hub until it is restarted (`just contribute-stop`, then `just contribute-hive`); switching a live relay is phase 2 of that issue.
+The active profile is written first in each list, which is the hub the relay solicits from when it starts. When a relay is **already running**, `hivectl hives use <name>` writes the projection and signals that relay to reload it, so the next solicitation goes to the new active hive without a restart. Work already in flight stays with the hub that assigned it and completes there.
+
+The relay writes two non-secret control files beside the profiles: `contributor-relay.pid`, so `hivectl hives use` can signal the native process or recorded docker/podman container, and `hubs-seen.json`, so `hivectl hives list` can show when each hub last authenticated or heartbeated successfully without probing every hub.
 
 The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
 

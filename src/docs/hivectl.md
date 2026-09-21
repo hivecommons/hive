@@ -525,10 +525,12 @@ Opening the overlay migrates a legacy positional `contributor.env` exactly as
 the first `hivectl hives` command would, and leaves that file byte-identical
 until something actually changes. Every mutation then writes `profiles.yml`
 first and regenerates `contributor.env` from it, so the relay keeps reading the
-variables it always has. **`enter` does not move a running relay** — like the
-CLI, it reorders the projection, and the relay picks the new hub up at its next
-start (`just contribute-stop` then `just contribute-hive`). Switching a live
-relay is [#8097](https://github.com/hivecommons/hive/issues/8097) phase 2.
+variables it always has. **`enter` can move a running relay without a restart**
+— like the CLI, it reorders the projection and then signals the relay recorded in
+`contributor-relay.pid` (or its docker/podman container) to reload it. Work
+already in flight stays with the hub that assigned it; the next solicitation
+goes to the newly active hive. If no relay is running, the next relay start
+uses the new active hive first.
 
 Two safety properties carry over from the CLI, unchanged:
 
@@ -683,14 +685,20 @@ credential at the wrong hive; fix the file (or re-run
 
 Notes:
 
-- **`use` needs a relay restart.** It reorders the projection; a relay already
-  running keeps its current hub until `just contribute-stop` and
-  `just contribute-hive`. Switching a live relay is
-  [#8097](https://github.com/hivecommons/hive/issues/8097) phase 2.
 - **The same list is in the TUI.** `hivectl tui`, then `H`, opens the
   [Hives overlay](#hives-switching-the-hive-you-contribute-to): the same rows,
   with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls
   these same functions, so either surface leaves the files in the same state.
+- **`use` switches a running relay.** It reorders the projection, then signals
+  the relay advertised in `contributor-relay.pid` (or its recorded
+  docker/podman container) to reload `contributor.env`. The task currently in
+  flight finishes on the hub that assigned it; the next solicitation goes to
+  the newly active hive. If no relay is running, the next relay start uses the
+  new active hive first.
+- **Last seen is local relay state.** `hives list` reads
+  `~/.config/hive/hubs-seen.json`, written by the relay after `auth_ok` and
+  successful heartbeats at most once a minute. A `-` means this machine has not
+  seen that hub since the feature landed or since the file was removed.
 - **`add` is the registration half of `contribute-setup` only.** It POSTs to
   `<hub>/api/contribute/register` and appends the result; it does not run the
   `gh` login or the backend CLI preflight, so a first-time machine still wants

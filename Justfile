@@ -1746,7 +1746,7 @@ contribute-hive backend="" mode="docker": check-version
         ${RUNTIME_FLAGS} \
         "${RESOURCE_FLAGS[@]}" \
         ${NET_FLAGS} \
-        -v "{{config_dir}}:/home/dev/.config/hive${ROSUF}" \
+        -v "{{config_dir}}:/home/dev/.config/hive${VOLSUF}" \
         ${CLI_MOUNTS} \
         -v "${HOME}/.config/gh:/home/dev/.config/gh${ROSUF}" \
         -e HIVE_HUB="{{hive_hub}}" \
@@ -1755,6 +1755,7 @@ contribute-hive backend="" mode="docker": check-version
         -e HIVE_USE_CONTRIBUTOR_GH=true \
         -e HIVE_CONTAINER_NAME="${CONTAINER_NAME}" \
         -e HIVE_CONTAINER_RUNTIME="${RUNTIME}" \
+        -e HIVE_CONTRIBUTOR_ENV="/home/dev/.config/hive/contributor.env" \
         "${PROVIDER_ENV_ARGS[@]}" \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
         ${AGENT_REASONING_EFFORT:+-e AGENT_REASONING_EFFORT="${AGENT_REASONING_EFFORT}"} \

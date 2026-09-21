@@ -521,12 +521,9 @@ const hivesNone = "no hives configured — press a to add one"
 // suggest a hive that is running rather than the hub that gets solicited first.
 const hivesActiveLegend = "* = active: the hub the relay solicits from first."
 
-// hivesRestartNote is the honest limit of what `use` does today. Phase 2
-// (#8126) gives the running relay a live switch; until it lands, an overlay
-// that implied the switch was instant would be claiming something the relay
-// does not do.
-const hivesRestartNote = "a running relay keeps its current hub until it restarts " +
-	"('just contribute-stop' then 'just contribute-hive')"
+// hivesSwitchNote describes the live-switch half the app appends after the
+// profile set is committed and the relay signal has been attempted.
+const hivesSwitchNote = "the running relay is signaled when present"
 
 // View renders the overlay's box, sized to its own content. Placing it over the
 // frame is the app's job, matching every other overlay.
@@ -782,11 +779,11 @@ func (o HivesOverlay) footer() string {
 }
 
 // HivesUseNote is the receipt `use` leaves on the list, and the note the
-// operator most needs after switching: where the projection was written, and
-// that a relay already running has not moved.
+// operator most needs after switching: where the projection was written. The
+// app appends whether a running relay was signaled after the commit succeeds.
 //
 // Exported so the app builds it and the tests assert it without either of them
 // re-deriving the wording.
 func HivesUseNote(name, hub, envPath string) string {
-	return fmt.Sprintf("✓ active hive is now %q (%s) — %s regenerated; %s", name, hub, envPath, hivesRestartNote)
+	return fmt.Sprintf("✓ active hive is now %q (%s) — %s regenerated; %s", name, hub, envPath, hivesSwitchNote)
 }

@@ -209,3 +209,19 @@ func TestCommitRefusesAnInvalidSetWithoutWriting(t *testing.T) {
 		t.Errorf("a refused Commit still wrote contributor.env (%v)", err)
 	}
 }
+
+func TestCommitKeepsProfilesWhenProjectionFails(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	if err := os.Mkdir(filepath.Join(dir, "contributor.env"), 0o700); err != nil {
+		t.Fatalf("seed contributor.env directory: %v", err)
+	}
+	set := opsSet()
+	err := store.Commit(set)
+	if err == nil || !strings.Contains(err.Error(), "contributor.env") {
+		t.Fatalf("Commit error = %v, want projection failure", err)
+	}
+	if loaded, loadErr := store.Load(); loadErr != nil || loaded == nil || loaded.Active != set.Active {
+		t.Fatalf("profiles.yml was not saved before projection failure: set=%+v err=%v", loaded, loadErr)
+	}
+}

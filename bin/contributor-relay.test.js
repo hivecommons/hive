@@ -3308,6 +3308,46 @@ function withImmediateTimers(fn) {
   try { fn(); } finally { global.setTimeout = origSetTimeout; }
 }
 
+test('SIGUSR1 reload switches the active hub from contributor.env without dropping an in-flight task', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'reload-'));
+  const envFile = path.join(dir, 'contributor.env');
+  fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-a.example/contribute,wss://hub-b.example/contribute\nHIVE_REGISTRATION_TOKEN=tok-a,tok-b\n');
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_CONTRIBUTOR_ENV: envFile }, cliStates: ['ready'] });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c2' }), hubs[1]);
+    assert.deepStrictEqual(sentB.map(m => m.type), []);
+
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', task_gen: 1, repo: 'o/r', number: 1, kind: 'issue', title: 'work' }), hubs[0]);
+    assert.ok(sentA.some(m => m.type === 'task_accepted'), 'the old active hub assigned the in-flight task');
+    fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-b.example/contribute,wss://hub-a.example/contribute\nHIVE_REGISTRATION_TOKEN=tok-b,tok-a\n');
+    relay.reloadHubsFromProjection();
+
+    const reordered = relay.getHubs();
+    assert.strictEqual(reordered[0].sourceURL, 'wss://hub-b.example/contribute');
+    assert.ok(!sentB.some(m => m.type === 'ready'), 'in-flight task must finish before the switched hub is solicited');
+  } finally { teardown(relay); }
+});
+
+test('relay records last-seen hubs without registration tokens', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const seenFile = path.join(fs.mkdtempSync(path.join(scratchRoot, 'seen-')), 'hubs-seen.json');
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_HUBS_SEEN_FILE: seenFile } });
+  try {
+    const hub = relay.getHubs()[0];
+    relay.recordHubSeen(hub, Date.parse('2026-09-21T15:04:05Z'));
+    relay.writeHubsSeenNow();
+    const raw = fs.readFileSync(seenFile, 'utf8');
+    assert.ok(raw.includes('wss://hub-a.example/contribute'));
+    assert.ok(raw.includes('2026-09-21T15:04:05.000Z') || raw.includes('2026-09-21T15:04:05Z'));
+    assert.ok(!raw.includes('tok-a'), 'hubs-seen.json must not contain registration tokens');
+  } finally { teardown(relay); }
+});
+
 test('HIVE_HUB/HIVE_REGISTRATION_TOKEN comma lists parse into one hub per entry, matched by position', () => {
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {

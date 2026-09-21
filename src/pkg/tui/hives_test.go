@@ -43,6 +43,8 @@ type hivesHarness struct {
 	probeErr map[string]bool // hub -> unreachable
 	logins   atomic.Int64
 	regs     atomic.Int64
+	signals  atomic.Int64
+	signal   hivectl.RelaySwitchResult
 	regFn    func(ctx context.Context, base, user string) (hivectl.Registration, error)
 }
 
@@ -97,6 +99,10 @@ func newHivesHarness(t *testing.T, set *hivectl.ProfileSet) *hivesHarness {
 				return h.regFn(ctx, base, user)
 			}
 			return hivectl.Registration{RegistrationToken: "tok-new", ContributorID: "contrib_new"}, nil
+		},
+		signalRelay: func(context.Context) (hivectl.RelaySwitchResult, error) {
+			h.signals.Add(1)
+			return h.signal, nil
 		},
 	}
 	h.model = m
@@ -275,13 +281,43 @@ func TestHivesEnterSwitchesTheActiveHive(t *testing.T) {
 	}
 
 	// The overlay reloads, so the marker on screen agrees with the file, and
-	// the receipt is honest about the relay needing a restart (phase 2, #8126).
+	// the receipt is honest about whether a running relay was signaled.
 	if rows := h.model.hives.Rows(); len(rows) != 2 || rows[0].Name != "other" || !rows[0].Active {
 		t.Errorf("rows after the switch = %+v, want other active and first", rows)
 	}
+	if h.signals.Load() != 1 {
+		t.Fatalf("relay signal attempts = %d, want 1", h.signals.Load())
+	}
 	view := h.view()
-	if !strings.Contains(view, "active hive is now") || !strings.Contains(view, "restarts") {
-		t.Errorf("the switch receipt does not state the restart caveat:\n%s", view)
+	if !strings.Contains(view, "active hive is now") || !strings.Contains(view, "next relay start") {
+		t.Errorf("the switch receipt does not state the relay signal result:\n%s", view)
+	}
+}
+
+func TestHivesEnterReportsRunningRelaySignal(t *testing.T) {
+	h := newHivesHarness(t, seededHives())
+	h.signal = hivectl.RelaySwitchResult{Running: true, Target: "pid 4242"}
+	h.open(t)
+
+	h.run(t, h.send(t, key("j")))
+	cmd := h.send(t, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter did not issue a hives switch command")
+	}
+	msg, ok := cmd().(hivesActionMsg)
+	if !ok {
+		t.Fatalf("switch command returned %T, want hivesActionMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("switch command failed: %v", msg.err)
+	}
+	if !strings.Contains(msg.note, "running relay signaled (pid 4242)") ||
+		!strings.Contains(msg.note, "in-flight work finishes on its original hive") {
+		t.Fatalf("switch receipt did not report live relay signal: %q", msg.note)
+	}
+	h.run(t, h.send(t, msg))
+	if h.signals.Load() != 1 {
+		t.Fatalf("relay signal attempts = %d, want 1", h.signals.Load())
 	}
 }
 

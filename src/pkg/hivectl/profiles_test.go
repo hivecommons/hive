@@ -71,6 +71,63 @@ func TestProfileStoreSaveIsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestDefaultProfileStoreUsesHomeConfigHive(t *testing.T) {
+	store, err := DefaultProfileStore()
+	if err != nil {
+		t.Fatalf("DefaultProfileStore: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	if got, want := store.Path(), filepath.Join(home, ".config", "hive", "profiles.yml"); got != want {
+		t.Fatalf("Path() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadHubsSeen(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	if got, err := store.LoadHubsSeen(); err != nil || len(got) != 0 {
+		t.Fatalf("missing hubs-seen = %v, %v; want empty map and nil error", got, err)
+	}
+	if got, want := store.HubsSeenPath(), filepath.Join(dir, "hubs-seen.json"); got != want {
+		t.Fatalf("HubsSeenPath() = %q, want %q", got, want)
+	}
+	if err := os.WriteFile(store.HubsSeenPath(), []byte(`{"wss://a.example/contribute":"2026-09-21T15:04:05Z"}`), 0o600); err != nil {
+		t.Fatalf("write hubs-seen: %v", err)
+	}
+	seen, err := store.LoadHubsSeen()
+	if err != nil {
+		t.Fatalf("LoadHubsSeen: %v", err)
+	}
+	if got := seen["wss://a.example/contribute"].UTC().Format(time.RFC3339); got != "2026-09-21T15:04:05Z" {
+		t.Fatalf("last seen = %q", got)
+	}
+}
+
+func TestLoadHubsSeenErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "bad json", body: "{", want: "parse hive last-seen file"},
+		{name: "bad timestamp", body: `{"wss://a.example/contribute":"not-a-time"}`, want: "parse last-seen timestamp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewProfileStore(t.TempDir())
+			if err := os.WriteFile(store.HubsSeenPath(), []byte(tt.body), 0o600); err != nil {
+				t.Fatalf("write hubs-seen: %v", err)
+			}
+			if _, err := store.LoadHubsSeen(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("LoadHubsSeen error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestProfileStoreLoadMissingFileIsNotAnError(t *testing.T) {
 	set, err := NewProfileStore(t.TempDir()).Load()
 	if err != nil {

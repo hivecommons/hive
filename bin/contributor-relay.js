@@ -136,6 +136,14 @@ const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/r
   ? '/var/run/hive-metrics/contributor-gh-token.cache'
   : '/tmp/hive-gh-token.cache');
 const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
+const CONTRIBUTOR_CONFIG_DIR = process.env.HIVE_CONTRIBUTOR_CONFIG_DIR || path.join(process.env.HOME || process.cwd(), '.config', 'hive');
+const CONTRIBUTOR_ENV_FILE = process.env.HIVE_CONTRIBUTOR_ENV || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor.env');
+const RELAY_PID_FILE = process.env.HIVE_RELAY_PID_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor-relay.pid');
+const HUBS_SEEN_FILE = process.env.HIVE_HUBS_SEEN_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'hubs-seen.json');
+const HUBS_SEEN_MIN_WRITE_MS = 60000;
+let hubsSeenWriteTimer = null;
+let hubsSeenDirty = false;
+let lastHubsSeenWrite = 0;
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
 // The relay can deliver a task to the backend CLI in one of two ways:
@@ -1189,36 +1197,49 @@ if (rawTokenList.length === 0) {
 // state. currentTask, cliReady and everything CLI-facing stay single global
 // values below — there is exactly one CLI/tmux session, shared across
 // whichever hub currently holds the active task or is being polled for work.
-const hubs = rawHubList.map((url, i) => ({
-  url: url.replace(/\/contribute\/?$/, '/api/contribute/ws'),
-  regToken: rawTokenList[i] || rawTokenList[0],
-  ws: null,
-  reconnectDelay: BASE_RECONNECT_DELAY_MS,
-  heartbeatInterval: null,
-  lastPong: Date.now(),
-  lastPingSentAt: 0,
-  connectionId: '',
-  connectGeneration: 0,
-  reconnectTimer: null,
-  authenticated: false,
-  authFailed: false,
-  // #2547: set once we have reported a contributor-protocol difference with
-  // this hub, so a reconnect loop does not repeat the same advisory line.
-  protocolDriftReported: false,
-  serverCapabilities: [],
-  // #7732: true from the moment a `ready` is actually transmitted to this hub
-  // until the hub answers it (task_assign or task_unavailable), or the
-  // conversation it belonged to ends (socket close, re-auth). While it is
-  // set, this relay has ALREADY asked for work and must not ask again: the
-  // hub reads a second `ready` as "give back whatever you were just assigned"
-  // (#2545). Maintained in sendTo() and the answer handlers, never at a
-  // `ready` call site — see armCLIReadyWait for the one reader.
-  readyOutstanding: false,
-  // #7932: the largest frame this hub will read, less headroom. Replaced on
-  // auth_ok by whatever the hub advertises; the default is the 64 KiB every
-  // hub released before that advertisement enforces silently.
-  maxFrameBytes: WS_FRAME_BYTES,
-}));
+function hubWsURL(url) {
+  return String(url || '').trim().replace(/\/contribute\/?$/, '/api/contribute/ws');
+}
+
+function hubPublicURL(url) {
+  return String(url || '').trim().replace(/\/api\/contribute\/ws\/?$/, '/contribute');
+}
+
+function makeHub(url, token) {
+  return {
+    url: hubWsURL(url),
+    sourceURL: hubPublicURL(url),
+    regToken: token,
+    ws: null,
+    reconnectDelay: BASE_RECONNECT_DELAY_MS,
+    heartbeatInterval: null,
+    lastPong: Date.now(),
+    lastPingSentAt: 0,
+    connectionId: '',
+    connectGeneration: 0,
+    reconnectTimer: null,
+    authenticated: false,
+    authFailed: false,
+    // #2547: set once we have reported a contributor-protocol difference with
+    // this hub, so a reconnect loop does not repeat the same advisory line.
+    protocolDriftReported: false,
+    serverCapabilities: [],
+    // #7732: true from the moment a `ready` is actually transmitted to this hub
+    // until the hub answers it (task_assign or task_unavailable), or the
+    // conversation it belonged to ends (socket close, re-auth). While it is
+    // set, this relay has ALREADY asked for work and must not ask again: the
+    // hub reads a second `ready` as "give back whatever you were just assigned"
+    // (#2545). Maintained in sendTo() and the answer handlers, never at a
+    // `ready` call site — see armCLIReadyWait for the one reader.
+    readyOutstanding: false,
+    // #7932: the largest frame this hub will read, less headroom. Replaced on
+    // auth_ok by whatever the hub advertises; the default is the 64 KiB every
+    // hub released before that advertisement enforces silently.
+    maxFrameBytes: WS_FRAME_BYTES,
+  };
+}
+
+const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0]));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
@@ -1720,6 +1741,146 @@ function advanceActiveHub(fromHub) {
     }
   }
   return null;
+}
+
+function parseContributorEnvFile(file) {
+  const out = {};
+  const text = fs.readFileSync(file, 'utf8');
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+    out[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  return out;
+}
+
+function hubListFromEnv(env) {
+  const hubList = String(env.HIVE_HUB || '').split(',').map(s => s.trim()).filter(Boolean);
+  const tokenList = String(env.HIVE_REGISTRATION_TOKEN || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (hubList.length === 0) throw new Error(`HIVE_HUB is empty in ${CONTRIBUTOR_ENV_FILE}`);
+  if (tokenList.length === 0) throw new Error(`HIVE_REGISTRATION_TOKEN is empty in ${CONTRIBUTOR_ENV_FILE}`);
+  if (hubList.length > 1 && tokenList.length !== hubList.length) {
+    throw new Error(`HIVE_HUB lists ${hubList.length} hub(s) but HIVE_REGISTRATION_TOKEN lists ${tokenList.length} token(s)`);
+  }
+  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0] }));
+}
+
+function stopHub(hub, reason) {
+  if (!hub) return;
+  console.log(`Disconnecting from ${hub.url}${reason ? ` (${reason})` : ''}`);
+  if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
+  if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+  if (hub.ws) {
+    try { hub.ws.removeAllListeners(); hub.ws.close(1000, 'profile switch'); } catch (_) {
+      try { hub.ws.terminate(); } catch (_) {}
+    }
+    hub.ws = null;
+  }
+  hub.authenticated = false;
+  hub.readyOutstanding = false;
+  hub.connectGeneration++;
+}
+
+function maybeAskActiveHubForWork() {
+  const hub = hubs[activeHubIndex];
+  if (!hub || currentTask || !hub.authenticated || hub.readyOutstanding) return;
+  if (cliReadyFailed) {
+    console.log('Active hive switched, but CLI readiness previously failed — withholding ready until the CLI recovers');
+    return;
+  }
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
+    sendTo(hub, { type: 'ready', seq: nextSeq() });
+  } else {
+    console.log('Active hive switched, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
+  }
+}
+
+function reloadHubsFromProjection() {
+  const entries = hubListFromEnv(parseContributorEnvFile(CONTRIBUTOR_ENV_FILE));
+  const oldByURL = new Map(hubs.map(h => [h.url, h]));
+  const next = entries.map(entry => {
+    const url = hubWsURL(entry.url);
+    const existing = oldByURL.get(url);
+    if (existing) {
+      existing.sourceURL = hubPublicURL(entry.url);
+      if (existing.regToken !== entry.token) {
+        existing.regToken = entry.token;
+        stopHub(existing, 'registration token changed');
+        connectHub(existing);
+      }
+      oldByURL.delete(url);
+      return existing;
+    }
+    const hub = makeHub(entry.url, entry.token);
+    connectHub(hub);
+    return hub;
+  });
+  for (const removed of oldByURL.values()) stopHub(removed, 'removed from contributor.env');
+  hubs.splice(0, hubs.length, ...next);
+  activeHubIndex = 0;
+  console.log(`Reloaded ${hubs.length} hive profile(s) from ${CONTRIBUTOR_ENV_FILE}; active hive is ${hubs[0] ? hubs[0].sourceURL : '(none)'}`);
+  maybeAskActiveHubForWork();
+  return hubs.length;
+}
+
+function handleProfileSwitchSignal() {
+  try {
+    reloadHubsFromProjection();
+  } catch (e) {
+    console.error(`Failed to reload hive profiles from ${CONTRIBUTOR_ENV_FILE}: ${e.message}`);
+  }
+}
+
+function writeRelayPidFile() {
+  try {
+    fs.mkdirSync(path.dirname(RELAY_PID_FILE), { recursive: true, mode: 0o700 });
+    const record = {
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      env_file: CONTRIBUTOR_ENV_FILE,
+      container_runtime: (process.env.HIVE_CONTAINER_RUNTIME || '').trim() || undefined,
+      container_name: (process.env.HIVE_CONTAINER_NAME || '').trim() || undefined,
+    };
+    fs.writeFileSync(RELAY_PID_FILE, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
+  } catch (e) {
+    console.error(`WARNING: could not write relay pid file ${RELAY_PID_FILE}: ${e.message}`);
+  }
+}
+
+function removeRelayPidFile() {
+  try { fs.unlinkSync(RELAY_PID_FILE); } catch (_) {}
+}
+
+function writeHubsSeenNow() {
+  hubsSeenWriteTimer = null;
+  if (!hubsSeenDirty) return;
+  const seen = {};
+  for (const hub of hubs) {
+    if (hub.lastSeenAt) seen[hub.sourceURL || hubPublicURL(hub.url)] = hub.lastSeenAt;
+  }
+  try {
+    fs.mkdirSync(path.dirname(HUBS_SEEN_FILE), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(HUBS_SEEN_FILE, JSON.stringify(seen, null, 2) + '\n', { mode: 0o600 });
+    hubsSeenDirty = false;
+    lastHubsSeenWrite = Date.now();
+  } catch (e) {
+    console.error(`WARNING: could not write hub last-seen file ${HUBS_SEEN_FILE}: ${e.message}`);
+  }
+}
+
+function recordHubSeen(hub, now = Date.now()) {
+  if (!hub) return;
+  hub.lastSeenAt = new Date(now).toISOString();
+  hubsSeenDirty = true;
+  const wait = Math.max(0, HUBS_SEEN_MIN_WRITE_MS - (now - lastHubsSeenWrite));
+  if (wait === 0) {
+    writeHubsSeenNow();
+  } else if (!hubsSeenWriteTimer) {
+    hubsSeenWriteTimer = setTimeout(writeHubsSeenNow, wait);
+    if (typeof hubsSeenWriteTimer.unref === 'function') hubsSeenWriteTimer.unref();
+  }
 }
 
 function injectGhToken(token) {
@@ -7017,6 +7178,7 @@ function handleMessage(data, hub) {
 
     case 'auth_ok':
       console.log(`Authenticated with ${hub.url} as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
+      recordHubSeen(hub);
       // #2567: the hub advertises its protocol version + capability set here. We
       // log them (forward-compatible: unknown/absent fields are simply skipped)
       // so a newer relay can adapt to what the deployed server supports instead
@@ -7526,10 +7688,12 @@ function connectHub(hub) {
   hub.ws.on('pong', () => {
     if (gen !== hub.connectGeneration) return;
     hub.lastPong = Date.now();
+    recordHubSeen(hub, hub.lastPong);
   });
   hub.ws.on('ping', () => {
     if (gen !== hub.connectGeneration) return;
     hub.lastPong = Date.now();
+    recordHubSeen(hub, hub.lastPong);
   });
 
   hub.ws.on('close', (code, reason) => {
@@ -7557,6 +7721,9 @@ function connect() {
 }
 
 function cleanup() {
+  if (hubsSeenWriteTimer) { clearTimeout(hubsSeenWriteTimer); hubsSeenWriteTimer = null; }
+  writeHubsSeenNow();
+  removeRelayPidFile();
   hubs.forEach(hub => {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
@@ -7585,6 +7752,7 @@ function cleanup() {
 
 process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 process.on('SIGINT', () => { cleanup(); process.exit(0); });
+process.on('SIGUSR1', handleProfileSwitchSignal);
 
 // Last-resort backstop (kubestellar/hive#5655): the scoped token must never
 // outlive the process, however it exits. 'exit' fires on a normal return, on
@@ -7970,6 +8138,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     tmuxSendEnters,
     tmuxSendNudge,
     GIVE_UP_MEMORY_MS,
+    parseContributorEnvFile,
+    hubListFromEnv,
+    reloadHubsFromProjection,
+    recordHubSeen,
+    writeHubsSeenNow,
+    handleProfileSwitchSignal,
+    hubs,
+    HUBS_SEEN_FILE,
+    RELAY_PID_FILE,
     // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
     // expiry pruning can be exercised without waiting an hour.
     __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
@@ -7989,5 +8166,6 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   // path entirely, where a slow host could otherwise eat that budget. Failures are
   // already absorbed field-by-field, so this cannot stop the relay starting.
   detectCapabilities();
+  writeRelayPidFile();
   connect();
 }
