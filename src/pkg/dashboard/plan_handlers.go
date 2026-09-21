@@ -2,11 +2,13 @@ package dashboard
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/planning"
 )
 
@@ -39,6 +41,36 @@ func (s *Server) decomposeKicker() planning.DecomposeKicker {
 		return nil
 	}
 	return s.deps.AgentMgr
+}
+
+func (s *Server) designConfig() planning.DesignConfig {
+	if s.deps == nil || s.deps.Config == nil {
+		return planning.DefaultDesignConfig()
+	}
+	p := s.deps.Config.Planning
+	return planning.DesignConfig{
+		PlanLabels:    p.PlanLabelsOrDefault(),
+		DesignLabels:  p.DesignLabelsOrDefault(),
+		ApprovedLabel: p.DesignApprovedLabelOrDefault(),
+		MaxRevisions:  p.MaxDesignRevisionsOrDefault(),
+		MaxConcurrent: p.MaxConcurrentDesignsOrDefault(),
+	}
+}
+
+func (s *Server) enforcePlanIssueBody(r *http.Request, text string) (string, bool) {
+	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Ioscan.IsEnabled() {
+		return text, true
+	}
+	sanitized, v := ioscan.EnforceInput(text)
+	if v.Blocked {
+		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "plan_from_issue", "findings", strconv.Itoa(len(v.Findings))), planning.ArchitectAgentName)
+	}
+	level := detectACMMLevel(s.deps.Config)
+	if s.deps.Config.Ioscan.FailClosedAtLevel(level) && v.HasCriticalInjection() {
+		s.auditFromRequest(r, "ioscan_fail_closed", auditDetail("context", "plan_from_issue", "findings", strconv.Itoa(len(v.Findings))), planning.ArchitectAgentName)
+		return sanitized, false
+	}
+	return sanitized, true
 }
 
 // requestArchitectDecompose hands a freshly-minted (pending) epic to the
@@ -109,6 +141,12 @@ func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, planning.PlanningLevelGateMessage, http.StatusConflict)
 		return
 	}
+	if sanitized, ok := s.enforcePlanIssueBody(r, body.Body); !ok {
+		jsonError(w, "ioscan rejected critical injection in issue body", http.StatusUnprocessableEntity)
+		return
+	} else {
+		body.Body = sanitized
+	}
 
 	issue := github.Issue{
 		Repo:   sanitizeString(body.Repo),
@@ -148,6 +186,10 @@ func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if planning.DesignGated(epic) {
+		jsonError(w, "design gate is still active for this epic; approve the design before planning", http.StatusConflict)
+		return
+	}
 
 	// Hand the epic to the architect out-of-band, respecting its pause. Extracted
 	// so the paused/kicked/queued bookkeeping is testable without a live tmux agent.
@@ -177,6 +219,146 @@ func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
 		"architectPaused": state == planning.DecomposeQueuedPaused,
 		"message":         message,
 		"poll_url":        "/api/plan/" + epic.ID,
+	})
+}
+
+// handlePlanDesignApprove serves POST /api/plan/{epicID}/design/approve: owner-only
+// approval of Gate 1. It mirrors the trust boundary in GitHub by applying the
+// configured approval label to the source issue, then marks the local epic as
+// design-approved so the next label pass can decompose it.
+func (s *Server) handlePlanDesignApprove(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	epicID := r.PathValue("epicID")
+	store, agentName := s.findEpicStore(epicID)
+	if store == nil {
+		jsonError(w, "epic not found in any bead store", http.StatusNotFound)
+		return
+	}
+	epic, err := store.Get(epicID)
+	if err != nil {
+		jsonError(w, "epic not found", http.StatusNotFound)
+		return
+	}
+	repo := epic.Meta(planning.MetaIssueRepo)
+	number, _ := strconv.Atoi(epic.Meta(planning.MetaIssueNumber))
+	if repo == "" || number <= 0 {
+		jsonError(w, "epic is not linked to a GitHub issue", http.StatusBadRequest)
+		return
+	}
+	switch planning.DesignStatus(epic) {
+	case planning.DesignStatusRequested, planning.DesignStatusNeedsHuman:
+	case "":
+		jsonError(w, "epic has no design to approve", http.StatusBadRequest)
+		return
+	default:
+		jsonError(w, "design has not been posted yet", http.StatusBadRequest)
+		return
+	}
+	if s.deps == nil || s.deps.GHClient == nil {
+		jsonError(w, "github client not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	label := s.designConfig().ApprovedLabelOrDefault()
+	if err := s.deps.GHClient.AddLabels(r.Context(), repo, number, []string{label}); err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if err := planning.ApproveDesign(store, epicID); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "design_approved", auditDetail("epic", epicID, "label", label), agentName)
+	s.refreshAndPersist()
+	tree, _ := planning.GetPlanTree(store, epicID)
+	jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "plan": tree})
+}
+
+// handleDesignFromIssue serves POST /api/plan/from-issue/design: the dashboard
+// “design first” button. It mints the issue epic and enters Gate 1, but does not
+// kick decomposition; the label loop sends the design prompt after seeing the
+// configured design label on the issue.
+func (s *Server) handleDesignFromIssue(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	var body struct {
+		Repo   string `json:"repo"`
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil || !planning.PlanningAllowedAtLevel(detectACMMLevel(s.deps.Config)) {
+		jsonError(w, planning.PlanningLevelGateMessage, http.StatusConflict)
+		return
+	}
+	if sanitized, ok := s.enforcePlanIssueBody(r, body.Body); !ok {
+		jsonError(w, "ioscan rejected critical injection in issue body", http.StatusUnprocessableEntity)
+		return
+	} else {
+		body.Body = sanitized
+	}
+	issue := github.Issue{Repo: sanitizeString(body.Repo), Number: body.Number, URL: sanitizeString(body.URL), Title: sanitizeString(body.Title)}
+	if issue.Title == "" {
+		if resolved, ok := s.resolveActionableIssue(issue.Repo, issue.Number, issue.URL); ok {
+			if issue.Title == "" {
+				issue.Title = resolved.Title
+			}
+			if issue.URL == "" {
+				issue.URL = resolved.URL
+			}
+			if issue.Repo == "" {
+				issue.Repo = resolved.Repo
+			}
+			issue.Labels = resolved.Labels
+		}
+	}
+	if issue.Title == "" {
+		jsonError(w, "issue title is required (or a resolvable repo+number)", http.StatusBadRequest)
+		return
+	}
+	if issue.Repo == "" || issue.Number <= 0 {
+		jsonError(w, "issue repo and number are required to apply the design label", http.StatusBadRequest)
+		return
+	}
+	if s.deps.GHClient == nil {
+		jsonError(w, "github client not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	store, agentName := s.planEpicStore()
+	if store == nil {
+		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	if existing := store.FindByExternalRef(planning.IssueRef(issue)); existing != nil && !planning.DecomposePending(existing) {
+		jsonError(w, "epic is already decomposed; nothing to design", http.StatusBadRequest)
+		return
+	}
+	label := s.designConfig().DesignLabelOrDefault()
+	if err := s.deps.GHClient.AddLabels(r.Context(), issue.Repo, issue.Number, []string{label}); err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	epic, err := planning.EpicFromIssue(store, issue, sanitizeString(body.Body))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := planning.RequestDesign(store, epic.ID); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "design_requested", auditDetail("epic", epic.ID, "ref", epic.ExternalRef, "label", label), agentName)
+	s.refreshAndPersist()
+	jsonResponse(w, map[string]interface{}{
+		"ok": true, "epic_id": epic.ID, "epic": epic, "state": planning.DesignStatusQueued,
+		"message": "Design requested — the architect will post a design before breakdown.", "poll_url": "/api/plan/" + epic.ID,
 	})
 }
 

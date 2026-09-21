@@ -10,6 +10,11 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 )
 
+func planLabelTestConfig() *config.Config {
+	v := true
+	return &config.Config{Planning: config.PlanningConfig{PlanFromLabel: &v}}
+}
+
 func newPlanTestStore(t *testing.T) *beads.Store {
 	t.Helper()
 	store, err := beads.NewStore(t.TempDir())
@@ -32,10 +37,10 @@ func TestPlanFromLabeledIssuesGatedBelowPlanningLevel(t *testing.T) {
 	stores := map[string]*beads.Store{planning.ArchitectAgentName: store}
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
-		planLabeledIssue(1, "plan"),
+		planLabeledIssue(1, "hive-plan"),
 	}}}
 
-	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel-1)
 
 	if got := len(store.List(beads.ListFilter{})); got != 0 {
@@ -56,12 +61,12 @@ func TestPlanFromLabeledIssuesRoutesToArchitectStore(t *testing.T) {
 	}
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
-		planLabeledIssue(1, "plan"),
+		planLabeledIssue(1, "hive-plan"),
 		planLabeledIssue(2, "kind/bug"),
 		planLabeledIssue(3),
 	}}}
 
-	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
 
 	if got := len(architectStore.List(beads.ListFilter{})); got != 1 {
@@ -77,8 +82,8 @@ func TestPlanFromLabeledIssuesRoutesToArchitectStore(t *testing.T) {
 // with no bead stores at all.
 func TestPlanFromLabeledIssuesNilInputs(t *testing.T) {
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
-	planFromLabeledIssues(nil, map[string]*beads.Store{}, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(nil, map[string]*beads.Store{}, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
-	planFromLabeledIssues(&github.ActionableResult{}, nil, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(&github.ActionableResult{}, nil, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
 }

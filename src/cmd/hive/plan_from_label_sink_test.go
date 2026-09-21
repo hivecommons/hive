@@ -116,10 +116,10 @@ func TestPlanFromLabeledIssuesFallbackStore(t *testing.T) {
 	stores := map[string]*beads.Store{"scanner": fallback}
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
-		planLabeledIssue(7, "plan"),
+		planLabeledIssue(7, "hive-plan"),
 	}}}
 
-	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
 
 	if got := len(fallback.List(beads.ListFilter{})); got != 1 {
@@ -136,6 +136,6 @@ func TestPlanFromLabeledIssuesNilStoreValue(t *testing.T) {
 		planLabeledIssue(9, "plan"),
 	}}}
 
-	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(),
+	planFromLabeledIssues(actionable, stores, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
 }

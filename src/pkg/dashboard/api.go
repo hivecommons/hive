@@ -321,9 +321,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Phase 4 adds the issue entry point: mint an epic from a GitHub issue and
 	// request its decomposition (the "Plan this issue" dashboard action).
 	s.mux.HandleFunc("POST /api/plan/from-issue", s.handlePlanFromIssue)
+	s.mux.HandleFunc("POST /api/plan/from-issue/design", s.handleDesignFromIssue)
 	s.mux.HandleFunc("GET /api/plans", s.handlePlanList)
 	s.mux.HandleFunc("GET /api/plan/{epicID}", s.handlePlanTree)
 	s.mux.HandleFunc("POST /api/plan/{epicID}/approve", s.handlePlanApprove)
+	s.mux.HandleFunc("POST /api/plan/{epicID}/design/approve", s.handlePlanDesignApprove)
 	s.mux.HandleFunc("POST /api/plan/{epicID}/reject", s.handlePlanReject)
 	s.mux.HandleFunc("POST /api/plan/{epicID}/child/{childID}", s.handlePlanChild)
 

@@ -166,6 +166,10 @@ func TestStaticPlanLinkageWiring8011(t *testing.T) {
 		// Pill chip replaces the Plan button for issues that already have a plan.
 		`const linked = planLinks[repoFull + '#' + i.number];`,
 		`function planIssueChip(l)`,
+		`data-action="designIssue"`,
+		`/api/plan/from-issue/design`,
+		`/api/plan/${encodeURIComponent(epicID)}/design/approve`,
+		`data-action="designApprove"`,
 		`data-action="openPlanReview" data-arg0="${esc(l.epicId)}"`,
 		`.repo-issue-plan.plan-review { --pill-c: var(--yellow); }`,
 		`.repo-issue-plan.plan-stuck { --pill-c: var(--red); }`,

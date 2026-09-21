@@ -1610,7 +1610,7 @@
           "Agents"
         ],
         "summary": "Agent prompt template",
-        "description": "Returns the agent's kick prompt template (`prompt`, variables substituted unless `?raw=1`), the `sourceFiles` it came from (a repo `url` is present only when pkg/policies/defaults actually ships the file), and `template`: the scheduler's resolution of the configured kick_template — `{kickTemplate, resolved, source, fallback, pathsTried, embeddedDefaultExists}` — so a dangling kick_template is reported with the fallback the kicks actually use rather than rendered as an empty editor (#7390).",
+        "description": "Returns the agent's kick prompt template (`prompt`, variables substituted unless `?raw=1`), the `sourceFiles` it came from (a repo `url` is present only when pkg/policies/defaults actually ships the file), and `template`: the scheduler's resolution of the configured kick_template \u2014 `{kickTemplate, resolved, source, fallback, pathsTried, embeddedDefaultExists}` \u2014 so a dangling kick_template is reported with the fallback the kicks actually use rather than rendered as an empty editor (#7390).",
         "parameters": [
           {
             "name": "name",
@@ -1951,7 +1951,7 @@
           "System"
         ],
         "summary": "Available CLI backends and models",
-        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models. Each CLI backend entry carries `fallback` (the static list is being served because discovery returned nothing), `degraded` (the list came from a live probe that is NOT the catalog the CLI uses — the raw-HTTP Copilot probe after the installed SDK helper failed), an optional `notice` (an entitlement verdict from upstream), and, whenever discovery failed or degraded, `discovery: {ok: false, error, fallback, degraded}` with the token-free failure text so the dropdown can render an explicit error state (#7384). Neither a fallback nor a degraded list is authoritative: clients must not treat a model's absence from one as evidence it is unavailable. The same failures and their recovery are recorded in the audit log as `model_discovery_failed` / `model_discovery_recovered`, once per transition.",
+        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models. Each CLI backend entry carries `fallback` (the static list is being served because discovery returned nothing), `degraded` (the list came from a live probe that is NOT the catalog the CLI uses \u2014 the raw-HTTP Copilot probe after the installed SDK helper failed), an optional `notice` (an entitlement verdict from upstream), and, whenever discovery failed or degraded, `discovery: {ok: false, error, fallback, degraded}` with the token-free failure text so the dropdown can render an explicit error state (#7384). Neither a fallback nor a degraded list is authoritative: clients must not treat a model's absence from one as evidence it is unavailable. The same failures and their recovery are recorded in the audit log as `model_discovery_failed` / `model_discovery_recovered`, once per transition.",
         "responses": {
           "200": {
             "description": "Backends config",
@@ -4424,7 +4424,7 @@
           "Agents"
         ],
         "summary": "Update an agent's backend/model",
-        "description": "Owner-only. Sets backend, model and/or reasoning_effort (backend and model may be omitted/empty to leave unchanged; reasoning_effort is applied when present, with \"\" meaning the backend default), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. The change is persisted AND applied to the live launch configuration (#7374): a new model/backend replaces any runtime override left by /api/model, /api/switch, a pin or the governor — previously such an override silently won at launch, so a restart respawned the agent on the old model. Because all three are launch-time flags, the agent is restarted once when any of them actually changed; an unchanged value does not restart.",
+        "description": "Owner-only. Sets backend, model and/or reasoning_effort (backend and model may be omitted/empty to leave unchanged; reasoning_effort is applied when present, with \"\" meaning the backend default), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. The change is persisted AND applied to the live launch configuration (#7374): a new model/backend replaces any runtime override left by /api/model, /api/switch, a pin or the governor \u2014 previously such an override silently won at launch, so a restart respawned the agent on the old model. Because all three are launch-time flags, the agent is restarted once when any of them actually changed; an unchanged value does not restart.",
         "parameters": [
           {
             "name": "name",
@@ -11608,7 +11608,7 @@
                     },
                     "prs_produced_24h": {
                       "type": "integer",
-                      "description": "Completions in the trailing window_hours hourly buckets that reported a pull request the hub could verify — the per-hour counterpart of total_tasks_completed_with_pr. Meaningful only when pr_history_available is true."
+                      "description": "Completions in the trailing window_hours hourly buckets that reported a pull request the hub could verify \u2014 the per-hour counterpart of total_tasks_completed_with_pr. Meaningful only when pr_history_available is true."
                     },
                     "pr_window_hours_covered": {
                       "type": "integer",
@@ -11616,7 +11616,7 @@
                     },
                     "pr_history_available": {
                       "type": "boolean",
-                      "description": "False when this contributor has no hourly PR series yet — registered since the last rollup, or the spoke has not rolled up since the upgrade that introduced the series — which is distinct from a real zero."
+                      "description": "False when this contributor has no hourly PR series yet \u2014 registered since the last rollup, or the spoke has not rolled up since the upgrade that introduced the series \u2014 which is distinct from a real zero."
                     }
                   }
                 }
@@ -14914,6 +14914,92 @@
         }
       }
     },
+    "/api/plan/from-issue/design": {
+      "post": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "Request a design for a GitHub issue before breakdown",
+        "description": "Mint an epic from a GitHub issue, apply the configured design label, and enter the design gate without decomposing it yet.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "If empty, the server attempts to resolve repo+number/url against the last enumerated actionable issues."
+                  },
+                  "body": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Plan requested/queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "epic_id": {
+                      "type": "string"
+                    },
+                    "epic": {
+                      "type": "object",
+                      "description": "beads.Bead"
+                    },
+                    "kicked": {
+                      "type": "boolean"
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "planning.DecomposeState"
+                    },
+                    "architectPaused": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "poll_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or missing resolvable issue title"
+          },
+          "409": {
+            "description": "Planning not allowed at the hive's current ACMM level"
+          },
+          "503": {
+            "description": "Bead stores not initialized"
+          }
+        }
+      }
+    },
     "/api/plan/{epicID}/approve": {
       "post": {
         "tags": [
@@ -14921,6 +15007,55 @@
         ],
         "summary": "Approve a plan",
         "description": "Approves the plan, releasing its children through Ready() for agent execution. Requires owner role.",
+        "parameters": [
+          {
+            "name": "epicID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "approved"
+                    },
+                    "plan": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Approve failed"
+          },
+          "404": {
+            "description": "Epic not found in any bead store"
+          }
+        }
+      }
+    },
+    "/api/plan/{epicID}/design/approve": {
+      "post": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "Approve an epic design",
+        "description": "Owner-only endpoint that applies the configured design-approved label to the source issue and marks Gate 1 approved.",
         "parameters": [
           {
             "name": "epicID",

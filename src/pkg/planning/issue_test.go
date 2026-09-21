@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/github"
@@ -63,7 +64,7 @@ func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 		Number: 7,
 		Title:  "Add planning intelligence phase 4",
 		URL:    "https://github.com/hivecommons/hive/issues/7",
-		Labels: []string{"enhancement", "plan"},
+		Labels: []string{"enhancement", "hive-plan"},
 	}
 
 	epic, err := EpicFromIssue(store, issue, "Detailed body describing the work.")
@@ -94,7 +95,7 @@ func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 	if epic.Meta(MetaIssueURL) != issue.URL {
 		t.Errorf("issue_url = %q", epic.Meta(MetaIssueURL))
 	}
-	if epic.Meta(MetaIssueLabels) != "enhancement,plan" {
+	if epic.Meta(MetaIssueLabels) != "enhancement,hive-plan" {
 		t.Errorf("labels = %q", epic.Meta(MetaIssueLabels))
 	}
 	// Accepted-but-not-built state: draft + decompose_pending, no children yet.
@@ -178,11 +179,12 @@ func TestHasPlanLabel(t *testing.T) {
 		labels []string
 		want   bool
 	}{
-		{[]string{"plan"}, true},
-		{[]string{"epic"}, true},
-		{[]string{"Plan"}, true},    // case-insensitive
-		{[]string{"  EPIC "}, true}, // trimmed + case-insensitive
-		{[]string{"bug", "epic"}, true},
+		{[]string{"hive-plan"}, true},
+		{[]string{"Hive-Plan"}, true},    // case-insensitive
+		{[]string{"  HIVE-PLAN "}, true}, // trimmed + case-insensitive
+		{[]string{"bug", "hive-plan"}, true},
+		{[]string{"plan"}, false},
+		{[]string{"epic"}, false},
 		{[]string{"enhancement"}, false},
 		{nil, false},
 		{[]string{}, false},
@@ -256,6 +258,10 @@ type recordingSink struct {
 	queuedPaused []string
 	queuedNo     []string
 	failed       []string
+	designKicked []string
+	designRev    []int
+	designOK     []string
+	designHuman  []string
 }
 
 func (s *recordingSink) KickedPlan(epic *beads.Bead) { s.kicked = append(s.kicked, epic.ID) }
@@ -267,13 +273,23 @@ func (s *recordingSink) QueuedPlan(epic *beads.Bead, paused bool) {
 		s.queuedNo = append(s.queuedNo, epic.ID)
 	}
 }
+func (s *recordingSink) KickedDesign(epic *beads.Bead, revision int) {
+	s.designKicked = append(s.designKicked, epic.ID)
+	s.designRev = append(s.designRev, revision)
+}
+func (s *recordingSink) ApprovedDesign(epic *beads.Bead) {
+	s.designOK = append(s.designOK, epic.ID)
+}
+func (s *recordingSink) DesignNeedsHuman(epic *beads.Bead, revisions int) {
+	s.designHuman = append(s.designHuman, epic.ID)
+}
 
 func TestPlanIssuesFromLabels_MintsKicksAndSkips(t *testing.T) {
 	store := newStore(t)
 	issues := []github.Issue{
-		{Repo: "a/b", Number: 1, Title: "labeled plan", Labels: []string{"plan"}},
+		{Repo: "a/b", Number: 1, Title: "labeled plan", Labels: []string{"hive-plan"}},
 		{Repo: "a/b", Number: 2, Title: "no label", Labels: []string{"bug"}}, // skipped
-		{Repo: "a/b", Number: 3, Title: "labeled epic", Labels: []string{"epic"}},
+		{Repo: "a/b", Number: 3, Title: "labeled plan too", Labels: []string{"hive-plan"}},
 	}
 	sink := &recordingSink{}
 	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil, PlanningMinACMMLevel)
@@ -298,7 +314,7 @@ func TestPlanIssuesFromLabels_MintsKicksAndSkips(t *testing.T) {
 
 func TestPlanIssuesFromLabels_Idempotent(t *testing.T) {
 	store := newStore(t)
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "once", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "once", Labels: []string{"hive-plan"}}}
 	sink := &recordingSink{}
 
 	first := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil, PlanningMinACMMLevel)
@@ -315,7 +331,7 @@ func TestPlanIssuesFromLabels_Idempotent(t *testing.T) {
 
 func TestPlanIssuesFromLabels_PausedQueues(t *testing.T) {
 	store := newStore(t)
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"hive-plan"}}}
 	sink := &recordingSink{}
 	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{paused: true}, issues, sink, nil, PlanningMinACMMLevel)
 
@@ -342,7 +358,7 @@ func TestPlanIssuesFromLabels_NilStoreAndMintErr(t *testing.T) {
 	called := false
 	PlanIssuesFromLabels(store,
 		&fakeDecomposeKicker{},
-		[]github.Issue{{Title: "no ref", Labels: []string{"plan"}}},
+		[]github.Issue{{Title: "no ref", Labels: []string{"hive-plan"}}},
 		nil,
 		func(string, error) { called = true },
 		PlanningMinACMMLevel)
@@ -353,7 +369,7 @@ func TestPlanIssuesFromLabels_NilStoreAndMintErr(t *testing.T) {
 
 func TestPlanIssuesFromLabels_QueuedNoAgent(t *testing.T) {
 	store := newStore(t)
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan", Labels: []string{"hive-plan"}}}
 	sink := &recordingSink{}
 	// Kick fails → queued (no agent) path + sink.QueuedPlan(paused=false).
 	PlanIssuesFromLabels(store, &fakeDecomposeKicker{kickErr: errFake}, issues, sink, nil, PlanningMinACMMLevel)
@@ -394,7 +410,7 @@ func TestPlanIssuesFromLabels_LevelGate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newStore(t)
-			issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+			issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"hive-plan"}}}
 			res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, &recordingSink{}, nil, tc.level)
 			if res.Minted != tc.wantMinted {
 				t.Errorf("level %d: Minted = %d, want %d", tc.level, res.Minted, tc.wantMinted)
@@ -442,5 +458,182 @@ func TestRequestDecompose(t *testing.T) {
 	failing := &fakeDecomposeKicker{kickErr: errFake}
 	if got := RequestDecompose(failing, epic); got != DecomposeQueuedNoAgent {
 		t.Errorf("kick error: got %q, want queued_no_agent", got)
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_DesignKickOnceAndWait(t *testing.T) {
+	store := newStore(t)
+	now := withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
+	issue := github.Issue{Repo: "a/b", Number: 10, Title: "design first", Labels: []string{"hive-design"}}
+	kicker := &fakeDecomposeKicker{}
+	sink := &recordingSink{}
+
+	first := PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, sink, nil, PlanningMinACMMLevel)
+	if first.Minted != 1 || first.Design.DesignKicked != 1 || kicker.kicks != 1 || len(sink.designRev) != 1 || sink.designRev[0] != 1 {
+		t.Fatalf("first = %+v kicks=%d sink=%+v, want design revision 1", first, kicker.kicks, sink)
+	}
+	epic := store.FindByExternalRef("gh-a/b#10")
+	if epic == nil || DesignStatus(epic) != DesignStatusRequested || DesignRevision(epic) != 1 {
+		t.Fatalf("epic design state = status %q rev %d", DesignStatus(epic), DesignRevision(epic))
+	}
+
+	*now = now.Add(time.Hour)
+	second := PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, sink, nil, PlanningMinACMMLevel)
+	if second.Design.DesignKicked != 0 || second.Design.DesignWaiting != 1 || kicker.kicks != 1 {
+		t.Fatalf("second = %+v kicks=%d, want waiting without re-kick", second, kicker.kicks)
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_DesignReapplyRequestsRevision(t *testing.T) {
+	store := newStore(t)
+	_ = withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
+	labeled := github.Issue{Repo: "a/b", Number: 11, Title: "revise design", Labels: []string{"hive-design"}}
+	unlabeled := github.Issue{Repo: "a/b", Number: 11, Title: "revise design"}
+	kicker := &fakeDecomposeKicker{}
+
+	PlanIssuesFromLabels(store, kicker, []github.Issue{labeled}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	PlanIssuesFromLabels(store, kicker, []github.Issue{unlabeled}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	sink := &recordingSink{}
+	res := PlanIssuesFromLabels(store, kicker, []github.Issue{labeled}, sink, nil, PlanningMinACMMLevel)
+	if res.Design.DesignKicked != 1 || len(sink.designRev) != 1 || sink.designRev[0] != 2 || kicker.kicks != 2 {
+		t.Fatalf("revision pass = %+v kicks=%d sink=%+v, want revision 2", res, kicker.kicks, sink)
+	}
+	epic := store.FindByExternalRef("gh-a/b#11")
+	if got := DesignRevision(epic); got != 2 {
+		t.Fatalf("revision = %d, want 2", got)
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_DesignRevisionCapNeedsHuman(t *testing.T) {
+	store := newStore(t)
+	cfg := DefaultDesignConfig()
+	cfg.MaxRevisions = 1
+	labeled := github.Issue{Repo: "a/b", Number: 12, Title: "cap design", Labels: []string{"hive-design"}}
+	unlabeled := github.Issue{Repo: "a/b", Number: 12, Title: "cap design"}
+	kicker := &fakeDecomposeKicker{}
+
+	PlanIssuesFromLabelsWithConfig(store, kicker, []github.Issue{labeled}, cfg, &recordingSink{}, nil, PlanningMinACMMLevel)
+	PlanIssuesFromLabelsWithConfig(store, kicker, []github.Issue{unlabeled}, cfg, &recordingSink{}, nil, PlanningMinACMMLevel)
+	sink := &recordingSink{}
+	res := PlanIssuesFromLabelsWithConfig(store, kicker, []github.Issue{labeled}, cfg, sink, nil, PlanningMinACMMLevel)
+	if res.Design.DesignNeedsHuman != 1 || len(sink.designHuman) != 1 || kicker.kicks != 1 {
+		t.Fatalf("cap pass = %+v kicks=%d sink=%+v, want needs_human", res, kicker.kicks, sink)
+	}
+	epic := store.FindByExternalRef("gh-a/b#12")
+	if DesignStatus(epic) != DesignStatusNeedsHuman {
+		t.Fatalf("status = %q, want needs_human", DesignStatus(epic))
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_DesignApprovalThenDecompose(t *testing.T) {
+	store := newStore(t)
+	labeled := github.Issue{Repo: "a/b", Number: 13, Title: "approve design", Labels: []string{"hive-design"}}
+	approved := github.Issue{Repo: "a/b", Number: 13, Title: "approve design", Labels: []string{"hive-design", "design-approved"}}
+	kicker := &fakeDecomposeKicker{}
+
+	PlanIssuesFromLabels(store, kicker, []github.Issue{labeled}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	sink := &recordingSink{}
+	res := PlanIssuesFromLabels(store, kicker, []github.Issue{approved}, sink, nil, PlanningMinACMMLevel)
+	if res.Design.DesignApproved != 1 || res.Kicked != 1 || len(sink.designOK) != 1 || len(sink.kicked) != 1 || kicker.kicks != 2 {
+		t.Fatalf("approval pass = %+v kicks=%d sink=%+v, want design approved and decompose kick", res, kicker.kicks, sink)
+	}
+	epic := store.FindByExternalRef("gh-a/b#13")
+	if DesignStatus(epic) != DesignStatusApproved {
+		t.Fatalf("status = %q, want approved", DesignStatus(epic))
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_DesignConcurrencyCapQueues(t *testing.T) {
+	store := newStore(t)
+	cfg := DefaultDesignConfig()
+	cfg.MaxConcurrent = 1
+	issues := []github.Issue{
+		{Repo: "a/b", Number: 14, Title: "design one", Labels: []string{"hive-design"}},
+		{Repo: "a/b", Number: 15, Title: "design two", Labels: []string{"hive-design"}},
+	}
+	kicker := &fakeDecomposeKicker{}
+	res := PlanIssuesFromLabelsWithConfig(store, kicker, issues, cfg, &recordingSink{}, nil, PlanningMinACMMLevel)
+	if res.Design.DesignKicked != 1 || res.Design.DesignQueued != 1 || kicker.kicks != 1 {
+		t.Fatalf("res = %+v kicks=%d, want one kicked and one queued", res, kicker.kicks)
+	}
+	if st := DesignStatus(store.FindByExternalRef("gh-a/b#15")); st != DesignStatusQueued {
+		t.Fatalf("second status = %q, want queued", st)
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_PlanLabelAloneOldBehavior(t *testing.T) {
+	store := newStore(t)
+	issue := github.Issue{Repo: "a/b", Number: 16, Title: "plan only", Labels: []string{"hive-plan"}}
+	kicker := &fakeDecomposeKicker{}
+	res := PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	if res.Minted != 1 || res.Kicked != 1 || res.Design != (DesignPlanResult{}) || kicker.kicks != 1 {
+		t.Fatalf("res = %+v kicks=%d, want direct decompose", res, kicker.kicks)
+	}
+}
+
+func TestAutoApproveDraftsApprovesDecomposedDraftsOnly(t *testing.T) {
+	store := newStore(t)
+	pending, _ := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 17, Title: "pending"}, "")
+	decomposed, _ := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 18, Title: "decomposed"}, "")
+	if _, err := DecomposeFromOutput(store, decomposed, "1. [T1] task [agent_suitable]\n", Options{}); err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	design, _ := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 19, Title: "design gated"}, "")
+	if _, err := DecomposeFromOutput(store, design, "1. [T1] task [agent_suitable]\n", Options{}); err != nil {
+		t.Fatalf("decompose design: %v", err)
+	}
+	if err := store.SetMetadata(design.ID, MetaDesignStatus, DesignStatusRequested); err != nil {
+		t.Fatalf("set design: %v", err)
+	}
+
+	approved := AutoApproveDrafts(store)
+	if len(approved) != 1 || approved[0] != decomposed.ID {
+		t.Fatalf("approved = %v, want only %s", approved, decomposed.ID)
+	}
+	if got, _ := store.Get(decomposed.ID); got.Meta(MetaPlanStatus) != PlanStatusApproved {
+		t.Fatalf("decomposed status = %q", got.Meta(MetaPlanStatus))
+	}
+	if got, _ := store.Get(pending.ID); got.Meta(MetaPlanStatus) != PlanStatusDraft {
+		t.Fatalf("pending status = %q, want draft", got.Meta(MetaPlanStatus))
+	}
+	if got, _ := store.Get(design.ID); got.Meta(MetaPlanStatus) != PlanStatusDraft {
+		t.Fatalf("design status = %q, want draft", got.Meta(MetaPlanStatus))
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_QueuedDesignRequiresLabelBeforeKick(t *testing.T) {
+	store := newStore(t)
+	issue := github.Issue{Repo: "a/b", Number: 20, Title: "queued design"}
+	epic, err := EpicFromIssue(store, issue, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestDesign(store, epic.ID); err != nil {
+		t.Fatal(err)
+	}
+	kicker := &fakeDecomposeKicker{}
+	res := PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	if res.Design.DesignQueued != 1 || kicker.kicks != 0 {
+		t.Fatalf("unlabeled queued design = %+v kicks=%d, want queued without kick", res, kicker.kicks)
+	}
+
+	issue.Labels = []string{"hive-design"}
+	res = PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	if res.Design.DesignKicked != 1 || kicker.kicks != 1 {
+		t.Fatalf("labeled queued design = %+v kicks=%d, want kicked", res, kicker.kicks)
+	}
+}
+
+func TestPlanIssuesFromLabelsWithConfig_ApprovalLabelCannotSkipInitialDesign(t *testing.T) {
+	store := newStore(t)
+	issue := github.Issue{Repo: "a/b", Number: 21, Title: "approve too early", Labels: []string{"hive-design", "design-approved"}}
+	kicker := &fakeDecomposeKicker{}
+	res := PlanIssuesFromLabels(store, kicker, []github.Issue{issue}, &recordingSink{}, nil, PlanningMinACMMLevel)
+	if res.Design.DesignApproved != 0 || res.Design.DesignKicked != 1 || res.Kicked != 0 || kicker.kicks != 1 {
+		t.Fatalf("res=%+v kicks=%d, want design kicked without approval/decompose", res, kicker.kicks)
+	}
+	epic := store.FindByExternalRef("gh-a/b#21")
+	if planningStatus := DesignStatus(epic); planningStatus != DesignStatusRequested {
+		t.Fatalf("design status = %q, want requested", planningStatus)
 	}
 }

@@ -1969,6 +1969,12 @@ func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, acmmL
 		}
 		if p.NeedsHuman() {
 			item := PlanWaitItem{EpicID: p.EpicID, EpicTitle: p.EpicTitle, Reason: p.State}
+			switch p.State {
+			case planning.PlanStateDesignReview:
+				item.Reason = "design posted — approve or request changes"
+			case planning.PlanStateDesignStuck:
+				item.Reason = "design revisions exhausted — needs a human"
+			}
 			if p.IssueRepo != "" && p.IssueNumber != "" {
 				item.Issue = p.IssueRepo + "#" + p.IssueNumber
 			}

@@ -35,6 +35,9 @@ type PlanSummary struct {
 	DecomposeFailed bool `json:"decomposeFailed"`
 	// DecomposeAttempts counts architect kicks so far for a pending epic.
 	DecomposeAttempts int `json:"decomposeAttempts,omitempty"`
+	// DesignStatus/DesignRevision expose Gate 1 state for dashboard review.
+	DesignStatus   string `json:"designStatus,omitempty"`
+	DesignRevision int    `json:"designRevision,omitempty"`
 	// IssueRepo / IssueNumber / IssueURL trace an issue-sourced epic back to its
 	// GitHub issue; zero values for bd-created epics.
 	IssueRepo   string `json:"issueRepo,omitempty"`
@@ -60,6 +63,12 @@ const (
 	PlanStateStuck = "stuck"
 	// PlanStateReview: decomposed, plan_status=draft, waiting for approval.
 	PlanStateReview = "review"
+	// PlanStateDesign: design is queued or the design kick is pending.
+	PlanStateDesign = "design"
+	// PlanStateDesignReview: design was posted/requested and is waiting on a human.
+	PlanStateDesignReview = "design_review"
+	// PlanStateDesignStuck: design revisions are exhausted and need a human.
+	PlanStateDesignStuck = "design_stuck"
 	// PlanStateQueued: accepted, waiting for the architect to decompose it.
 	PlanStateQueued = "queued"
 	// PlanStateExecuting: approved with at least one open child.
@@ -73,6 +82,12 @@ const (
 // and an approved plan is executing until its last child closes.
 func PlanStateOf(p PlanSummary) string {
 	switch {
+	case p.DesignStatus == DesignStatusNeedsHuman:
+		return PlanStateDesignStuck
+	case p.DesignStatus == DesignStatusRequested:
+		return PlanStateDesignReview
+	case p.DesignStatus == DesignStatusQueued:
+		return PlanStateDesign
 	case p.DecomposeFailed:
 		return PlanStateStuck
 	case p.PendingDecompose:
@@ -90,7 +105,7 @@ func PlanStateOf(p PlanSummary) string {
 // NeedsHuman reports whether the plan is parked on a person: stuck (someone
 // must re-request it) or awaiting review (someone must approve it).
 func (p PlanSummary) NeedsHuman() bool {
-	return p.State == PlanStateStuck || p.State == PlanStateReview
+	return p.State == PlanStateStuck || p.State == PlanStateReview || p.State == PlanStateDesignReview || p.State == PlanStateDesignStuck
 }
 
 // listOrder ranks summaries so human-action-required plans surface first:
@@ -98,6 +113,8 @@ func (p PlanSummary) NeedsHuman() bool {
 // (executing) plans.
 func listOrder(p PlanSummary) int {
 	switch {
+	case p.State == PlanStateDesignStuck || p.State == PlanStateDesignReview:
+		return 0 // design needs a human
 	case p.DecomposeFailed:
 		return 0 // stuck — a human must re-request it
 	case p.PlanStatus == PlanStatusDraft && !p.PendingDecompose:
@@ -146,6 +163,8 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 				PendingDecompose:  DecomposePending(b),
 				DecomposeFailed:   DecomposeStuck(b),
 				DecomposeAttempts: DecomposeAttempts(b),
+				DesignStatus:      DesignStatus(b),
+				DesignRevision:    DesignRevision(b),
 				IssueRepo:         b.Meta(MetaIssueRepo),
 				IssueNumber:       b.Meta(MetaIssueNumber),
 				IssueURL:          b.Meta(MetaIssueURL),

@@ -1,0 +1,1 @@
+- ⚠ planning labels now default to `hive-plan`/`hive-design` with `design-approved` approval, add the design gate before breakdown for labeled epics, and keep the L5 plan-review gate on (`plan_auto_approve: false`). (#7993)

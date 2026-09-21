@@ -360,18 +360,90 @@ func (c IoscanConfig) CanariesEnabled() bool {
 // carrying one of those labels auto-mints an epic and requests decomposition.
 type PlanningConfig struct {
 	// PlanFromLabel enables the label trigger. Pointer so an omitted key is
-	// distinguishable from an explicit false: when nil, the trigger falls back to
-	// an ACMM-level gate (on at L5+), so mature hives get it without extra config
-	// while low-maturity hives stay advisory-only. An explicit value overrides the
-	// ACMM gate in either direction — but see the note below: even an explicit
-	// true is a no-op below L5, because the architect that decomposes the minted
-	// epics is not scheduled there.
+	// distinguishable from an explicit false. Omitted and false are both OFF:
+	// Hive never auto-detects epics. Even an explicit true is a no-op below L5,
+	// because the architect that decomposes the minted epics is not scheduled
+	// there.
 	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
 	// MirrorToIssue, when true, posts an approved plan's task checklist as a
 	// comment on the epic's source GitHub issue, so people who never open the
 	// dashboard can see what the plan is and how far along it is
 	// (hivecommons/hive#8011). Off by default: it writes to the issue thread.
 	MirrorToIssue bool `yaml:"mirror_to_issue,omitempty" json:"mirror_to_issue,omitempty"`
+
+	// PlanLabels are the issue labels that mean "break this down" (Gate 2
+	// only — same as the dashboard 📋 button). Matched case-insensitively.
+	// Default DefaultPlanLabel; the previous `plan`/`epic` defaults collided
+	// with repos that use `Epic` as taxonomy (RFC hivecommons/hive#7993 §7).
+	PlanLabels []string `yaml:"plan_labels,omitempty" json:"plan_labels,omitempty"`
+	// DesignLabels are the issue labels that mean "design first": the
+	// architect posts a design on the issue, a human approves it
+	// (DesignApprovedLabel), THEN it is broken down (Gate 1 → Gate 2).
+	// Default DefaultDesignLabel.
+	DesignLabels []string `yaml:"design_labels,omitempty" json:"design_labels,omitempty"`
+	// DesignApprovedLabel is the label a human applies to approve a posted
+	// design. Default DefaultDesignApprovedLabel. Applying a label needs triage
+	// on the repo, which is the trust boundary the RFC settled on.
+	DesignApprovedLabel string `yaml:"design_approved_label,omitempty" json:"design_approved_label,omitempty"`
+	// MaxDesignRevisions caps how many times the architect is asked to revise
+	// a design (a human re-applies the design label to request a revision);
+	// past it the epic waits on a human. 0 = DefaultMaxDesignRevisions.
+	MaxDesignRevisions int `yaml:"max_design_revisions,omitempty" json:"max_design_revisions,omitempty"`
+	// MaxConcurrentDesigns caps how many designs may be in flight (posted, not
+	// yet approved) at once so labeling a backlog does not starve the
+	// architect's other work. 0 = DefaultMaxConcurrentDesigns.
+	MaxConcurrentDesigns int `yaml:"max_concurrent_designs,omitempty" json:"max_concurrent_designs,omitempty"`
+}
+
+// Defaults for the planning label trigger (RFC hivecommons/hive#7993). The
+// trigger labels are deliberately prefixed so they cannot collide with a
+// repo's own `epic`/`plan` taxonomy.
+const (
+	DefaultPlanLabel            = "hive-plan"
+	DefaultDesignLabel          = "hive-design"
+	DefaultDesignApprovedLabel  = "design-approved"
+	DefaultMaxDesignRevisions   = 3
+	DefaultMaxConcurrentDesigns = 3
+)
+
+// PlanLabelsOrDefault returns the configured plan labels or the default set.
+func (p PlanningConfig) PlanLabelsOrDefault() []string {
+	if len(p.PlanLabels) > 0 {
+		return p.PlanLabels
+	}
+	return []string{DefaultPlanLabel}
+}
+
+// DesignLabelsOrDefault returns the configured design labels or the default set.
+func (p PlanningConfig) DesignLabelsOrDefault() []string {
+	if len(p.DesignLabels) > 0 {
+		return p.DesignLabels
+	}
+	return []string{DefaultDesignLabel}
+}
+
+// DesignApprovedLabelOrDefault returns the approval label or its default.
+func (p PlanningConfig) DesignApprovedLabelOrDefault() string {
+	if p.DesignApprovedLabel != "" {
+		return p.DesignApprovedLabel
+	}
+	return DefaultDesignApprovedLabel
+}
+
+// MaxDesignRevisionsOrDefault returns the revision cap or its default.
+func (p PlanningConfig) MaxDesignRevisionsOrDefault() int {
+	if p.MaxDesignRevisions > 0 {
+		return p.MaxDesignRevisions
+	}
+	return DefaultMaxDesignRevisions
+}
+
+// MaxConcurrentDesignsOrDefault returns the concurrency cap or its default.
+func (p PlanningConfig) MaxConcurrentDesignsOrDefault() int {
+	if p.MaxConcurrentDesigns > 0 {
+		return p.MaxConcurrentDesigns
+	}
+	return DefaultMaxConcurrentDesigns
 }
 
 // RetroConfig gates the post-completion retro lane. It is off by

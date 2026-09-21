@@ -41,7 +41,7 @@ func TestPlanStateOf(t *testing.T) {
 
 func TestListPlans_SetsStateAndIssueLink(t *testing.T) {
 	store := newStore(t)
-	issue := github.Issue{Repo: "a/b", Number: 7, Title: "big feature", URL: "https://github.com/a/b/issues/7", Labels: []string{"plan"}}
+	issue := github.Issue{Repo: "a/b", Number: 7, Title: "big feature", URL: "https://github.com/a/b/issues/7", Labels: []string{"hive-plan"}}
 	epic, err := EpicFromIssue(store, issue, "")
 	if err != nil {
 		t.Fatal(err)

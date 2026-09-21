@@ -28,7 +28,7 @@ func withDecomposeClock(t *testing.T, start time.Time) *time.Time {
 func TestPlanIssuesFromLabels_NoRekickInsideWindow(t *testing.T) {
 	store := newStore(t)
 	now := withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"hive-plan"}}}
 	kicker := &fakeDecomposeKicker{}
 
 	first := PlanIssuesFromLabels(store, kicker, issues, &recordingSink{}, nil, PlanningMinACMMLevel)
@@ -61,7 +61,7 @@ func TestPlanIssuesFromLabels_NoRekickInsideWindow(t *testing.T) {
 func TestPlanIssuesFromLabels_AttemptCapMarksFailed(t *testing.T) {
 	store := newStore(t)
 	now := withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"hive-plan"}}}
 	kicker := &fakeDecomposeKicker{}
 	sink := &recordingSink{}
 
@@ -110,7 +110,7 @@ func TestPlanIssuesFromLabels_AttemptCapMarksFailed(t *testing.T) {
 func TestResetDecomposeAttempts_HumanRetryKicksAgain(t *testing.T) {
 	store := newStore(t)
 	now := withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
-	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"hive-plan"}}}
 	kicker := &fakeDecomposeKicker{}
 	for i := 0; i <= DecomposeMaxAttempts; i++ {
 		PlanIssuesFromLabels(store, kicker, issues, &recordingSink{}, nil, PlanningMinACMMLevel)
@@ -161,7 +161,7 @@ func TestClearDecomposePending_DropsThrottleMarkers(t *testing.T) {
 
 func TestBuildPrompt_TellsArchitectToRunBdDecompose(t *testing.T) {
 	store := newStore(t)
-	epic, err := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 7, Title: "Big thing", URL: "https://github.com/a/b/issues/7", Labels: []string{"plan"}}, "")
+	epic, err := EpicFromIssue(store, github.Issue{Repo: "a/b", Number: 7, Title: "Big thing", URL: "https://github.com/a/b/issues/7", Labels: []string{"hive-plan"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

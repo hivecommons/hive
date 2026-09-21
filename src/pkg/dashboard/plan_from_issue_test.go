@@ -598,3 +598,25 @@ func TestGovernorConfigGet_IncludesClassifier(t *testing.T) {
 		t.Error("complexSignals missing from governor config")
 	}
 }
+
+func TestHandlePlanFromIssue_DoesNotBypassDesignGate(t *testing.T) {
+	srv, store := planIssueServer(t)
+	issue := github.Issue{Repo: "org/repo", Number: 77, Title: "needs design"}
+	epic, err := planning.EpicFromIssue(store, issue, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := planning.RequestDesign(store, epic.ID); err != nil {
+		t.Fatal(err)
+	}
+	k := &stubKicker{}
+	srv.decomposeKickerOverride = k
+
+	w := postPlanFromIssue(t, srv, `{"repo":"org/repo","number":77,"title":"needs design"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("want 409 while design-gated, got %d: %s", w.Code, w.Body.String())
+	}
+	if k.kicks != 0 {
+		t.Fatalf("design-gated epic was decomposed: kicks=%d", k.kicks)
+	}
+}

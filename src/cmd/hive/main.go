@@ -5483,6 +5483,7 @@ func planFromLabeledIssues(
 	gov *governor.Governor,
 	dashSrv *dashboard.Server,
 	logger *slog.Logger,
+	cfg *config.Config,
 	acmmLevel int,
 ) {
 	if actionable == nil || len(beadStores) == 0 {
@@ -5499,11 +5500,35 @@ func planFromLabeledIssues(
 		return
 	}
 
+	designCfg := planning.DesignConfig{
+		PlanLabels:    cfg.Planning.PlanLabelsOrDefault(),
+		DesignLabels:  cfg.Planning.DesignLabelsOrDefault(),
+		ApprovedLabel: cfg.Planning.DesignApprovedLabelOrDefault(),
+		MaxRevisions:  cfg.Planning.MaxDesignRevisionsOrDefault(),
+		MaxConcurrent: cfg.Planning.MaxConcurrentDesignsOrDefault(),
+	}
+	issues := actionable.Issues.Items
+	if cfg == nil || !cfg.Planning.PlanFromLabelEnabled(acmmLevel) {
+		issues = nil
+		for _, issue := range actionable.Issues.Items {
+			if store.FindByExternalRef(planning.IssueRef(issue)) != nil {
+				issues = append(issues, issue)
+			}
+		}
+	}
 	sink := labelPlanSink{gov: gov, dashSrv: dashSrv, logger: logger}
-	planning.PlanIssuesFromLabels(store, agentMgr, actionable.Issues.Items, sink,
+	planning.PlanIssuesFromLabelsWithConfig(store, agentMgr, issues, designCfg, sink,
 		func(ref string, err error) {
 			logger.Warn("plan-from-label: minting epic failed", "issue", ref, "error", err)
 		}, acmmLevel)
+	if config.PlanAutoApproveForLevel(acmmLevel) {
+		for _, id := range planning.AutoApproveDrafts(store) {
+			if dashSrv != nil {
+				dashSrv.AuditLog("planning", "plan_auto_approved", "epic="+id, planning.ArchitectAgentName)
+			}
+			logger.Info("audit: plan auto-approved by ACMM pack", "epic", id, "acmm_level", acmmLevel)
+		}
+	}
 }
 
 // labelPlanSink adapts the governor/dashboard/logger to planning.LabelPlanSink so
@@ -5537,6 +5562,28 @@ func (s labelPlanSink) QueuedPlan(epic *beads.Bead, paused bool) {
 		return
 	}
 	s.logger.Warn("plan-from-label: architect unavailable, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
+}
+
+func (s labelPlanSink) KickedDesign(epic *beads.Bead, revision int) {
+	s.gov.RecordKick(planning.ArchitectAgentName)
+	if s.dashSrv != nil {
+		s.dashSrv.AuditLog("planning", "design_kicked", "epic="+epic.ID+" ref="+epic.ExternalRef+" revision="+strconv.Itoa(revision), planning.ArchitectAgentName)
+	}
+	s.logger.Info("audit: design requested from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef, "revision", revision)
+}
+
+func (s labelPlanSink) ApprovedDesign(epic *beads.Bead) {
+	if s.dashSrv != nil {
+		s.dashSrv.AuditLog("planning", "design_approved", "epic="+epic.ID+" ref="+epic.ExternalRef, planning.ArchitectAgentName)
+	}
+	s.logger.Info("audit: design approved from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef)
+}
+
+func (s labelPlanSink) DesignNeedsHuman(epic *beads.Bead, revisions int) {
+	if s.dashSrv != nil {
+		s.dashSrv.AuditLog("planning", "design_needs_human", "epic="+epic.ID+" ref="+epic.ExternalRef+" revisions="+strconv.Itoa(revisions), planning.ArchitectAgentName)
+	}
+	s.logger.Warn("plan-from-label: design revision cap reached — epic needs a human", "epic", epic.ID, "ref", epic.ExternalRef, "revisions", revisions)
 }
 
 func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg *config.Config, logger *slog.Logger) {
@@ -6310,8 +6357,8 @@ func runEvalCycle(
 	// no duplicate epic if one already exists). Cheap, synchronous, adds NO
 	// goroutine, and drives the architect only via SendKick (never the launch
 	// path). Gated by config/ACMM so low-maturity hives stay advisory-only.
-	if acmmLvl := inferACMMLevel(cfg); cfg.Planning.PlanFromLabelEnabled(acmmLvl) {
-		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger, acmmLvl)
+	if acmmLvl := inferACMMLevel(cfg); planning.PlanningAllowedAtLevel(acmmLvl) {
+		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger, cfg, acmmLvl)
 	}
 
 	// Advisory digest: build from beads (the source of truth) before status broadcast.

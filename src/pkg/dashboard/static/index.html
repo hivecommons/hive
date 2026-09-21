@@ -8408,9 +8408,11 @@
     // planWaitingLines renders planning.waiting_on_human as one line per plan
     // ("review  owner/repo#12  Title"), for tooltips. Empty string when none.
     function planWaitingLines(plan) {
-      return ((plan && plan.waiting_on_human) || []).map(w =>
-        (w.reason === 'stuck' ? '⚠ stuck ' : '● review ') + (w.issue ? w.issue + ' ' : '') + (w.epicTitle || w.epicId || '')
-      ).join('\n');
+      return ((plan && plan.waiting_on_human) || []).map(w => {
+        const reason = String(w.reason || 'review');
+        const icon = reason.includes('design revisions') ? '✎ stuck ' : (reason.includes('design') ? '✎ design ' : (reason === 'stuck' ? '⚠ stuck ' : '● review '));
+        return icon + (w.issue ? w.issue + ' ' : '') + (w.epicTitle || w.epicId || '') + (reason && reason !== 'review' && reason !== 'stuck' ? ' — ' + reason : '');
+      }).join('\n');
     }
 
     // planIssueLinks indexes the status payload's planning.issues by
@@ -8429,6 +8431,9 @@
       const total = l.childrenTotal || 0, open = l.childrenOpen || 0, done = total - open;
       let glyph, cls, tip;
       switch (l.state) {
+        case 'design_stuck': glyph = '✎⚠';              cls = 'plan-stuck';   tip = 'Design revisions exhausted — needs a human'; break;
+        case 'design_review': glyph = '✎';              cls = 'plan-review';  tip = 'Design posted — approve or request changes'; break;
+        case 'design':    glyph = '✎';                 cls = 'plan-queued';  tip = 'Design queued for the architect'; break;
         case 'stuck':     glyph = '⚠';                cls = 'plan-stuck';   tip = 'Plan stuck — the architect produced nothing; open to retry'; break;
         case 'review':    glyph = '● ' + total;       cls = 'plan-review';  tip = total + ' task' + (total === 1 ? '' : 's') + ' drafted — awaiting your review'; break;
         case 'executing': glyph = '▶ ' + done + '/' + total; cls = 'plan-active'; tip = done + ' of ' + total + ' tasks done — plan approved and in progress'; break;
@@ -8442,6 +8447,7 @@
       if (_repoResizeDrag) return;
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
+      const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
       const planLinks = planIssueLinks();
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
@@ -8514,7 +8520,7 @@
           const linked = planLinks[repoFull + '#' + i.number];
           const planBtn = linked
             ? planIssueChip(linked)
-            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
+            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>${showDesign ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : ''}` : '');
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
         }).join('');
         // Held issues (hivecommons/hive#7896): in the issue column, because
@@ -16322,6 +16328,29 @@ function burnAreaChart() {
       }
     }
 
+    async function designIssue(el) {
+      const repo = el.dataset.repo || '';
+      const number = parseInt(el.dataset.number, 10) || 0;
+      const url = el.dataset.url || '';
+      const title = el.dataset.title || '';
+      el.disabled = true;
+      const toast = showToast(`Requesting design for ${repo}#${number || '?'}...`, 'info', true);
+      try {
+        const res = await fetch('/api/plan/from-issue/design', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo, number, url, title }),
+        });
+        const data = await res.json();
+        if (!data.ok) { dismissToast(toast, 'Design failed: ' + (data.error || 'unknown'), 'error'); el.disabled = false; return; }
+        dismissToast(toast, data.message || 'Design requested', 'success');
+        if (typeof openPlanReview === 'function' && data.epic_id) openPlanReview(data.epic_id);
+      } catch (e) {
+        dismissToast(toast, 'Design failed: ' + e.message, 'error');
+        el.disabled = false;
+      }
+    }
+
     // ── Plan review view (#7537) ─────────────────────────────────────────
     // The governor PLANNING tile links here: openPlanList() enumerates every
     // plan (GET /api/plans, drafts first) and openPlanReview(epicID) shows one
@@ -16354,6 +16383,9 @@ function burnAreaChart() {
     function planStatusBadge(p) {
       // Stuck beats queued: the architect was kicked its full attempt budget
       // and produced nothing, so "queued" would read as progress (hivecommons/hive#8010).
+      if (p.designStatus === 'needs_human') return '<span style="color:var(--red)">✎ design stuck — revisions exhausted</span>';
+      if (p.designStatus === 'requested') return '<span style="color:var(--yellow)">✎ design posted — awaiting approval</span>';
+      if (p.designStatus === 'queued') return '<span style="color:var(--blue)">✎ design queued</span>';
       if (p.decomposeFailed) return '<span style="color:var(--red)">⚠ stuck — architect produced no plan; click Plan on the issue to retry</span>';
       if (p.pendingDecompose) return '<span style="color:var(--blue)">⧗ queued for architect' + (p.decomposeAttempts > 1 ? ' (attempt ' + p.decomposeAttempts + ')' : '') + '</span>';
       if (p.planStatus === 'draft') return '<span style="color:var(--yellow)">● awaiting your review</span>';
@@ -16369,10 +16401,10 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(data.error || res.statusText);
         const plans = data.plans || [];
         if (!plans.length) {
-          planShowModal('Plans', '<p class="muted-note">No plans yet. Click <strong>⧉ Plan</strong> on any issue pill, or add the <code>plan</code> label to an issue on GitHub, and the architect will decompose it into a reviewable plan.</p>');
+          planShowModal('Plans', '<p class="muted-note">No plans yet. Click <strong>⧉ Plan</strong> on any issue pill, or add the <code>hive-plan</code> label to an issue on GitHub, and the architect will decompose it into a reviewable plan.</p>');
           return;
         }
-        const needsYou = plans.filter(p => p.state === 'review' || p.state === 'stuck').length;
+        const needsYou = plans.filter(p => p.state === 'review' || p.state === 'stuck' || p.state === 'design_review' || p.state === 'design_stuck').length;
         const header = needsYou
           ? `<p class="muted-note" style="margin:0 0 8px">${needsYou} plan${needsYou === 1 ? '' : 's'} need${needsYou === 1 ? 's' : ''} you — listed first.</p>`
           : '';
@@ -16422,15 +16454,26 @@ function burnAreaChart() {
         }).join('') || (plan.decomposeFailed
             ? '<p class="muted-note" style="color:var(--red)">⚠ Stuck — the architect was asked ' + escapeHtml(String(plan.decomposeAttempts || '')) + ' times and never ran <code>bd decompose</code> for this epic. Click 📋 Plan on the issue again to retry with a fresh budget.</p>'
             : '<p class="muted-note">No children yet — the architect has been asked to plan this epic and will hand the task list back with <code>bd decompose</code>. Check back once the PLANNING tile stops counting it as queued.</p>');
-        const gate = draft
-          ? `<button class="btn" style="color:var(--green)" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
-          : `<button class="btn" style="color:var(--yellow)" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`;
+        const designBlocking = plan.designStatus && plan.designStatus !== 'approved';
+        const gate = designBlocking
+          ? ''
+          : (draft
+            ? `<button class="btn" style="color:var(--green)" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
+            : `<button class="btn" style="color:var(--yellow)" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`);
+        const designLine = plan.designStatus
+          ? `<div class="muted-note" style="margin-bottom:10px">Design: <strong>${escapeHtml(plan.designStatus)}</strong>${plan.designRevision ? ' · revision ' + escapeHtml(String(plan.designRevision)) : ''}</div>`
+          : '';
+        const canApproveDesign = (plan.designStatus === 'requested' || plan.designStatus === 'needs_human') && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const designGate = canApproveDesign
+          ? `<button class="btn" style="color:var(--green)" data-action="designApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Apply the design-approved label and let breakdown proceed">✓ Approve design</button>`
+          : '';
         planShowModal(`Plan: ${escapeHtml(plan.epicTitle || epicID)}`, `
           <div class="muted-note" style="margin-bottom:10px">${escapeHtml(plan.epicId || '')} — status: <strong>${escapeHtml(plan.planStatus || 'pending')}</strong></div>
+          ${designLine}
           ${children}
-          <div style="display:flex;justify-content:space-between;margin-top:14px">
+          <div style="display:flex;justify-content:space-between;margin-top:14px;gap:8px">
             <button class="btn" data-action="openPlanList">← All plans</button>
-            ${gate}
+            <span style="display:flex;gap:8px">${designGate}${gate}</span>
           </div>`);
       } catch (e) {
         planShowModal('Plan review', `<p class="muted-note">Failed to load plan: ${escapeHtml(e.message)}</p>`);
@@ -16451,6 +16494,18 @@ function burnAreaChart() {
     }
     function planApprove(epicID) { planGateAction(epicID, 'approve'); }
     function planReject(epicID) { planGateAction(epicID, 'reject'); }
+    async function designApprove(epicID) {
+      const toast = showToast('Approving design…', 'info', true);
+      try {
+        const res = await fetch(`/api/plan/${encodeURIComponent(epicID)}/design/approve`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || res.statusText);
+        dismissToast(toast, 'Design approved — breakdown can proceed', 'success');
+        openPlanReview(epicID);
+      } catch (e) {
+        dismissToast(toast, 'Design approval failed: ' + e.message, 'error');
+      }
+    }
 
     async function planChildEdit(epicID, childID, body, okMsg) {
       const toast = showToast('Updating plan…', 'info', true);
