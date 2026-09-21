@@ -153,18 +153,18 @@ Pre-built images are published by [`.github/workflows/docker.yml`](../../.github
 
 A build of a release line publishes, in one multi-architecture manifest operation:
 
-- `ghcr.io/hivecommons/hive:<line>-latest` — the rolling tag for the current HEAD of that branch: `v4-latest` on `v4`, `v5-latest` on `v5`;
+- `ghcr.io/hivecommons/hive:<line>-latest` — the rolling tag for the current HEAD of that branch: `v4-latest` on `v4`, `v5-latest` on `v5`, `v6-latest` on `v6`;
 - `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tags;
-- that line's moving **release channel** — `v4` merge builds own `:candidate`, `v5` merge builds own `:edge` (retags of the same digest; see [release-channels.md](release-channels.md)).
+- that line's moving **release channel**, if it owns one — `v5` merge builds own `:candidate` (and `:latest`), `v6` merge builds own `:edge`; `v4` is a maintenance line and publishes **no** channel, only `v4-latest` and short-SHA tags ([#7721](https://github.com/hivecommons/hive/issues/7721) Phase 1). Channels are retags of the same digest; see [release-channels.md](release-channels.md).
 
-> **`:latest` is not currently line-scoped.** Both lines' builds move the global `:latest` tag, so it alternates between `v4` and pre-GA `v5` depending on which run finishes last — tracked in [#6711](https://github.com/hivecommons/hive/issues/6711). Until that is fixed, do not deploy `:latest`; name the line (`v4-latest`), the channel (`stable`), or a digest.
+> **`:latest` follows `v5`.** Only `v5` builds move the global `:latest` tag (`INCLUDE_LATEST` is `false` in `docker.yml` on `v4` and `v6`), so it tracks the same digest as `candidate`. The cross-line ambiguity previously tracked in [#6711](https://github.com/hivecommons/hive/issues/6711) — where `:latest` alternated between lines depending on which run finished last — was resolved by the [#7721](https://github.com/hivecommons/hive/issues/7721) Phase 1 channel remap. For production, still prefer a named channel (`stable`) or a digest over `:latest`.
 
-Channel ownership is deliberately **per-line**: without the split, every `v4` merge would silently re-point `edge` back onto `v4` minutes after any deliberate promotion of `edge` to `v5` (`src/scripts/publish-image-tags.sh`). Two consequences follow that are easy to get backwards:
+Channel ownership is deliberately **per-line**: without the split, every merge to one line would silently re-point another line's channel back onto its own build minutes after a deliberate promotion (`src/scripts/publish-image-tags.sh`). Two consequences follow that are easy to get backwards:
 
 - `:stable` is **not** published by a branch build at all. The separate stable-promotion workflow advances it by digest from `candidate`, after the [soak gate](stable-soak-policy.md) passes.
-- `:edge` rides `v5`, so it is an **active-development build of the next line**, not a fresher `:stable`. It is the newest build, not the most proven one.
+- `:edge` rides `v6`, so it is an **active-development build of the next line**, not a fresher `:stable`. It is the newest build, not the most proven one.
 
-PR and short-lived branch builds compile the image as a CI gate, but only the long-lived release lines (`v4` and `v5`) push tags. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
+PR and short-lived branch builds compile the image as a CI gate, but only the long-lived release lines (`v4`, `v5`, and `v6`) push tags. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
 > **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` was bumped off it in #4206; standalone image references now come from one source of truth, [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh).)
 
