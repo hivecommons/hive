@@ -5522,6 +5522,14 @@ func (s labelPlanSink) KickedPlan(epic *beads.Bead) {
 	s.logger.Info("audit: plan requested from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef)
 }
 
+func (s labelPlanSink) FailedPlan(epic *beads.Bead) {
+	if s.dashSrv != nil {
+		s.dashSrv.AuditLog("planning", "plan_decompose_failed", "epic="+epic.ID+" ref="+epic.ExternalRef+" attempts="+strconv.Itoa(planning.DecomposeMaxAttempts), planning.ArchitectAgentName)
+	}
+	s.logger.Warn("plan-from-label: architect produced no plan after max attempts — epic marked stuck; re-request it from the dashboard",
+		"epic", epic.ID, "ref", epic.ExternalRef, "attempts", planning.DecomposeMaxAttempts)
+}
+
 func (s labelPlanSink) QueuedPlan(epic *beads.Bead, paused bool) {
 	if paused {
 		// Architect deliberately paused — queue, do not unpause, log once.

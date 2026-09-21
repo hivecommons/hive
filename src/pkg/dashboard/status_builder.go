@@ -1941,7 +1941,11 @@ func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, acmmL
 			// Phase 4: an issue-sourced epic still marked decompose_pending is
 			// queued for the architect (children not yet materialized).
 			if planning.DecomposePending(b) {
-				fp.PendingDecompose++
+				if planning.DecomposeFailed(b) {
+					fp.StuckDecompose++
+				} else {
+					fp.PendingDecompose++
+				}
 			}
 			if raw := b.Meta(planning.MetaLastReplanAt); raw != "" {
 				if t, err := time.Parse(time.RFC3339, raw); err == nil && t.After(cutoff) {

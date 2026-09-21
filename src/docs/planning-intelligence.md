@@ -35,16 +35,29 @@ the next eval cycle Hive:
   immediately in the dashboard as a queued plan, and
 - hands it to the architect to decompose.
 
-When the architect finishes, the plan appears in the plan-review view for your
-approval. Remove/re-add the label at will — the epic is keyed to the issue.
+The architect closes the loop itself: its kick prompt names the epic and the
+issue URL, asks it to read the issue, write the task list to a file and run
+`bd decompose <epic-id> --plan <file>`. That command is the only thing that
+creates child beads and clears `decompose_pending`; once it runs, the plan
+appears in the plan-review view for your approval. Remove/re-add the label at
+will — the epic is keyed to the issue.
+
+The label trigger does **not** kick the architect every cycle. A pending epic
+is kicked once, then left alone for 30 minutes (`planning.DecomposeRekickAfter`)
+before it may be kicked again, and after 3 kicks with no children
+(`planning.DecomposeMaxAttempts`) it is marked **stuck** (`decompose_failed`)
+instead of being kicked a fourth time. Stuck plans show as **⚠** on the
+PLANNING tile and first in the plan list; clicking **⧉ Plan** on the issue
+again resets the budget and kicks immediately.
 
 The label trigger is **OFF by default** and must be enabled explicitly. The
-label path feeds a raw issue body into the architect's kick prompt with no
-per-kick review, so a maintainer merely labeling an attacker's issue would
-otherwise auto-fire attacker-controlled text into the highest-autonomy agent.
-Making it opt-in forces an operator to consciously accept that. When enabled, it
-still only fires at ACMM **L5+** (where the decomposing architect is scheduled),
-so enabling it below L5 is inert.
+enumerated issue carries only its title and labels; the architect is handed the
+issue URL and reads the body itself, with no per-kick review, so a maintainer
+merely labeling an attacker's issue would otherwise auto-fire
+attacker-controlled text into the highest-autonomy agent. Making it opt-in
+forces an operator to consciously accept that. When enabled, it still only
+fires at ACMM **L5+** (where the decomposing architect is scheduled), so
+enabling it below L5 is inert.
 
 ```yaml
 planning:
@@ -55,8 +68,11 @@ planning:
 
 Every actionable issue pill on the dashboard has a **⧉ Plan** button. Click it to
 run the exact same flow as the label — mint the epic and request decomposition —
-without leaving the dashboard. The button is always available (it does not depend
-on ACMM level); the label path is what the ACMM gate governs.
+without leaving the dashboard. Like the label path, the button needs ACMM
+**L5+** (below that the request is refused with an explanation — the architect
+that would build the plan has no cadence). Unlike the label path it sends the
+issue body along, and a click is an explicit request: it bypasses the re-kick
+throttle and gives a stuck epic a fresh attempt budget.
 
 ## The architect is a shared agent — and its pause is respected
 
@@ -116,8 +132,8 @@ the feature: *click ⧉ Plan on any issue, or add the `plan` label on GitHub.*
 ## Configuration reference
 
 ```yaml
-# Auto-plan issues carrying the `plan`/`epic` label. Omit to use the ACMM gate
-# (on at L5+); set explicitly to force on/off.
+# Auto-plan issues carrying the `plan`/`epic` label. Off unless set to true;
+# even when true it only fires at ACMM L5+.
 planning:
   plan_from_label: true
 

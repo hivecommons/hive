@@ -107,6 +107,17 @@ func BuildPrompt(epic *beads.Bead) string {
 	b.WriteString("EPIC: ")
 	b.WriteString(epic.Title)
 	b.WriteString("\n")
+	b.WriteString("EPIC ID: ")
+	b.WriteString(epic.ID)
+	b.WriteString("\n")
+	if url := epicIssueURL(epic); url != "" {
+		// The label trigger mints epics from an enumerated github.Issue, which
+		// carries no body. Send the URL so the architect reads the whole issue
+		// itself instead of planning a title (hivecommons/hive#8010).
+		b.WriteString("ISSUE: ")
+		b.WriteString(url)
+		b.WriteString("\n")
+	}
 	if body := epicBody(epic); body != "" {
 		b.WriteString("DETAILS:\n")
 		b.WriteString(body)
@@ -115,17 +126,38 @@ func BuildPrompt(epic *beads.Bead) string {
 	b.WriteString("\n")
 
 	b.WriteString("INSTRUCTIONS:\n")
+	if epicIssueURL(epic) != "" {
+		b.WriteString("  0. Read the full issue first (`gh issue view <ISSUE URL> --comments`); the DETAILS above may be only the title.\n")
+	}
 	b.WriteString("  1. Break the goal into ordered, independent-where-possible sub-tasks.\n")
 	b.WriteString("  2. Give each sub-task a local id in [brackets] (T1, T2, ...).\n")
 	b.WriteString("  3. Note dependencies with a trailing \"(depends: T1, T2)\" clause.\n")
 	b.WriteString("  4. Mark each sub-task \"[agent_suitable]\" or \"[human_required]\".\n")
-	b.WriteString("  5. Do NOT open PRs or create beads — output only the plan.\n\n")
+	b.WriteString("  5. Do NOT open PRs and do NOT create beads by hand.\n")
+	// Closing the loop (hivecommons/hive#8010): planning.DecomposeFromOutput is
+	// the only thing that turns a task list into child beads and clears the
+	// pending marker, and before this its only caller was the `bd decompose`
+	// CLI run by an operator. The architect has `bd` on PATH and BD_DIR set to
+	// its own store, so it hands the plan to the same CLI itself.
+	b.WriteString("  6. When the plan is final, write it to a file and hand it to Hive with:\n")
+	b.WriteString("       bd decompose ")
+	b.WriteString(epic.ID)
+	b.WriteString(" --plan <file>\n")
+	b.WriteString("     That command creates the child tasks and marks this epic as planned. Until it runs, the plan does not exist.\n\n")
 
-	b.WriteString("FORMAT (one task per line):\n")
+	b.WriteString("FORMAT (one task per line, nothing else in the file):\n")
 	b.WriteString("  1. [T1] <task> [agent_suitable]\n")
 	b.WriteString("  2. [T2] <task> (depends: T1) [human_required]\n")
 
 	return b.String()
+}
+
+// epicIssueURL returns the source issue URL for an issue-minted epic, else "".
+func epicIssueURL(epic *beads.Bead) string {
+	if epic == nil {
+		return ""
+	}
+	return strings.TrimSpace(epic.Meta(MetaIssueURL))
 }
 
 // epicBody returns the most descriptive text available for an epic: its Notes,

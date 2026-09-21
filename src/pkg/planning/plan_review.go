@@ -44,6 +44,12 @@ type PlanTree struct {
 	PlanStatus string `json:"planStatus"`
 	// Approved is true when PlanStatus == PlanStatusApproved.
 	Approved bool `json:"approved"`
+	// PendingDecompose / DecomposeFailed / DecomposeAttempts mirror the plan
+	// list's queued-vs-stuck state so the review modal can say why a plan has
+	// no children yet (hivecommons/hive#8010).
+	PendingDecompose  bool `json:"pendingDecompose"`
+	DecomposeFailed   bool `json:"decomposeFailed"`
+	DecomposeAttempts int  `json:"decomposeAttempts,omitempty"`
 	// Children are the epic's child beads, in creation order.
 	Children []PlanChild `json:"children"`
 }
@@ -86,10 +92,13 @@ func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
 	}
 	status := epic.Meta(MetaPlanStatus)
 	tree := &PlanTree{
-		EpicID:     epic.ID,
-		EpicTitle:  epic.Title,
-		PlanStatus: status,
-		Approved:   status == PlanStatusApproved,
+		EpicID:            epic.ID,
+		EpicTitle:         epic.Title,
+		PlanStatus:        status,
+		Approved:          status == PlanStatusApproved,
+		PendingDecompose:  DecomposePending(epic),
+		DecomposeFailed:   DecomposeFailed(epic),
+		DecomposeAttempts: DecomposeAttempts(epic),
 	}
 	for _, c := range childrenOf(store, epicID) {
 		tree.Children = append(tree.Children, PlanChild{

@@ -387,7 +387,7 @@ type RetroConfig struct {
 }
 
 // planFromLabelMinACMM is the lowest ACMM level at which the label trigger fires
-// by default. It matches planning.PlanningMinACMMLevel: the architect agent that
+// when explicitly enabled (it is never on by default). It matches planning.PlanningMinACMMLevel: the architect agent that
 // decomposes the minted epics only has a cadence at L5 (4h) and L6 (15m), so
 // below L5 a minted epic would sit in decompose_pending forever. It is duplicated
 // here (rather than imported) to avoid a config→planning import cycle.
@@ -395,10 +395,11 @@ const planFromLabelMinACMM = 5
 
 // PlanFromLabelEnabled reports whether the label trigger should fire, given the
 // hive's ACMM level. The trigger is OFF by default and must be explicitly
-// enabled (`plan_from_label: true`): the label path pipes a raw issue body into
-// the architect's kick prompt with no per-kick review, so a maintainer merely
-// labeling an attacker's issue would otherwise auto-fire attacker-controlled
-// text into the highest-autonomy agent. Making it opt-in forces an operator to
+// enabled (`plan_from_label: true`): the label path hands the issue (title,
+// labels and URL — the architect reads the body itself) to the architect's kick
+// prompt with no per-kick review, so a maintainer merely labeling an attacker's
+// issue would otherwise auto-fire attacker-controlled text into the
+// highest-autonomy agent. Making it opt-in forces an operator to
 // consciously accept that. When explicitly enabled, planning's own
 // PlanIssuesFromLabels still applies a hard L5+ no-op (the architect that
 // decomposes epics only has a cadence at L5/L6), so enabling it below L5 is

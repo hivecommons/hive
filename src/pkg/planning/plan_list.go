@@ -28,6 +28,12 @@ type PlanSummary struct {
 	// PendingDecompose is true while the epic is queued for the architect
 	// (children not yet materialized).
 	PendingDecompose bool `json:"pendingDecompose"`
+	// DecomposeFailed is true when the architect was kicked DecomposeMaxAttempts
+	// times without producing children: the epic is STUCK, not queued, and
+	// needs a human to re-request it (hivecommons/hive#8010).
+	DecomposeFailed bool `json:"decomposeFailed"`
+	// DecomposeAttempts counts architect kicks so far for a pending epic.
+	DecomposeAttempts int `json:"decomposeAttempts,omitempty"`
 	// IssueRepo / IssueNumber / IssueURL trace an issue-sourced epic back to its
 	// GitHub issue; zero values for bd-created epics.
 	IssueRepo   string `json:"issueRepo,omitempty"`
@@ -45,6 +51,8 @@ type PlanSummary struct {
 // (executing) plans.
 func listOrder(p PlanSummary) int {
 	switch {
+	case p.DecomposeFailed:
+		return 0 // stuck — a human must re-request it
 	case p.PlanStatus == PlanStatusDraft && !p.PendingDecompose:
 		return 0 // decomposed, awaiting human review
 	case p.PendingDecompose:
@@ -84,16 +92,18 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 				continue
 			}
 			out = append(out, PlanSummary{
-				EpicID:           b.ID,
-				EpicTitle:        b.Title,
-				Agent:            name,
-				PlanStatus:       b.Meta(MetaPlanStatus),
-				PendingDecompose: DecomposePending(b),
-				IssueRepo:        b.Meta(MetaIssueRepo),
-				IssueNumber:      b.Meta(MetaIssueNumber),
-				IssueURL:         b.Meta(MetaIssueURL),
-				ChildrenTotal:    total[b.ID],
-				ChildrenOpen:     open[b.ID],
+				EpicID:            b.ID,
+				EpicTitle:         b.Title,
+				Agent:             name,
+				PlanStatus:        b.Meta(MetaPlanStatus),
+				PendingDecompose:  DecomposePending(b),
+				DecomposeFailed:   DecomposeFailed(b),
+				DecomposeAttempts: DecomposeAttempts(b),
+				IssueRepo:         b.Meta(MetaIssueRepo),
+				IssueNumber:       b.Meta(MetaIssueNumber),
+				IssueURL:          b.Meta(MetaIssueURL),
+				ChildrenTotal:     total[b.ID],
+				ChildrenOpen:      open[b.ID],
 			})
 		}
 	}

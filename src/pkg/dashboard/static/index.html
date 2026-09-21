@@ -4846,21 +4846,26 @@
             const active = plan.active_plans || 0;
             const awaiting = plan.awaiting_review || 0;
             const pending = plan.pending_decompose || 0;
+            const stuck = plan.stuck_decompose || 0;
             const paused = !!plan.architect_paused;
             // Highlight when plans await human review — a human-action-required
             // state, surfaced amber like the "N Issues" / ON HOLD indicators.
-            const planClass = (awaiting > 0 || paused) ? 'gm-alert' : '';
+            // Stuck plans (architect kicked its full budget, no children) are
+            // human-action-required too (hivecommons/hive#8010).
+            const planClass = (awaiting > 0 || paused || stuck > 0) ? 'gm-alert' : '';
             let planText = `${active}`;
             if (awaiting > 0) planText = `${active} (${awaiting} review)`;
+            if (stuck > 0) planText = `${planText} ⚠${stuck}`;
             if (paused) planText = `⏸ ${planText}`;
             let planTitle = active > 0 ? `${active} active plan(s)` : '';
             if (awaiting > 0) planTitle = `${awaiting} plan(s) awaiting human review — decomposed epic children are withheld until approved`;
             if (paused) planTitle = `⏸ Architect is paused — ${pending} queued plan(s) won't be built until you resume the architect agent.`;
             else if (pending > 0) planTitle = `${pending} plan(s) queued for the architect to decompose`;
+            if (stuck > 0) planTitle = `⚠ ${stuck} plan(s) stuck — the architect was asked ${stuck === 1 ? 'for it' : 'for them'} repeatedly and produced no task list. Open the plan view and click Plan on the issue again to retry.` + (planTitle ? ` ${planTitle}.` : '');
             // Empty-state discoverability hint when there is no planning activity.
             // Below ACMM L5 the architect that decomposes epics has no cadence, so
             // planning is unavailable — say so instead of pointing at a button we hide.
-            if (active === 0 && pending === 0) {
+            if (active === 0 && pending === 0 && stuck === 0) {
               planTitle = ((window._lastStatus?.acmmLevel || 0) >= 5)
                 ? 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.'
                 : 'Planning needs ACMM level 5+ — the architect that decomposes plans is only scheduled at L5/L6. Raise the level to enable ⧉ Plan and the `plan` label.';
@@ -16291,7 +16296,10 @@ function burnAreaChart() {
     }
 
     function planStatusBadge(p) {
-      if (p.pendingDecompose) return '<span style="color:var(--blue)">⧗ queued for architect</span>';
+      // Stuck beats queued: the architect was kicked its full attempt budget
+      // and produced nothing, so "queued" would read as progress (hivecommons/hive#8010).
+      if (p.decomposeFailed) return '<span style="color:var(--red)">⚠ stuck — architect produced no plan; click Plan on the issue to retry</span>';
+      if (p.pendingDecompose) return '<span style="color:var(--blue)">⧗ queued for architect' + (p.decomposeAttempts > 1 ? ' (attempt ' + p.decomposeAttempts + ')' : '') + '</span>';
       if (p.planStatus === 'draft') return '<span style="color:var(--yellow)">● awaiting your review</span>';
       if (p.planStatus === 'approved') return '<span style="color:var(--green)">✓ approved</span>';
       return escapeHtml(p.planStatus || '—');
@@ -16347,7 +16355,9 @@ function burnAreaChart() {
             <div><span class="muted-note" style="font-size:.8em">${escapeHtml(c.planRef || '')}</span> ${escapeHtml(c.title)} <span class="muted-note" style="font-size:.8em">[${escapeHtml(String(c.status || ''))}]</span>${deps}</div>
             <div style="display:flex;gap:6px;align-items:center;white-space:nowrap">${controls}</div>
           </div>`;
-        }).join('') || '<p class="muted-note">No children yet — the architect has not decomposed this epic. Check back once the PLANNING tile stops counting it as queued.</p>';
+        }).join('') || (plan.decomposeFailed
+            ? '<p class="muted-note" style="color:var(--red)">⚠ Stuck — the architect was asked ' + escapeHtml(String(plan.decomposeAttempts || '')) + ' times and never ran <code>bd decompose</code> for this epic. Click 📋 Plan on the issue again to retry with a fresh budget.</p>'
+            : '<p class="muted-note">No children yet — the architect has been asked to plan this epic and will hand the task list back with <code>bd decompose</code>. Check back once the PLANNING tile stops counting it as queued.</p>');
         const gate = draft
           ? `<button class="btn" style="color:var(--green)" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
           : `<button class="btn" style="color:var(--yellow)" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`;

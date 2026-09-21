@@ -782,6 +782,12 @@ type FrontendPlanning struct {
 	// accepted but not yet decomposed by the architect (decompose_pending). While
 	// >0 there is planning work queued for the architect.
 	PendingDecompose int `json:"pending_decompose"`
+	// StuckDecompose counts pending epics the architect was kicked
+	// planning.DecomposeMaxAttempts times for without producing children
+	// (decompose_failed). They are NOT in PendingDecompose: the tile must show
+	// them as stuck, not as work the architect is about to do
+	// (hivecommons/hive#8010).
+	StuckDecompose int `json:"stuck_decompose"`
 	// ArchitectPaused is true when >=1 plan is pending AND the architect is paused,
 	// so nothing will be built until the operator resumes it. The tile shows the
 	// "architect is paused" message when this is set.

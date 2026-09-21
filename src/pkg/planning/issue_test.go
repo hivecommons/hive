@@ -255,9 +255,11 @@ type recordingSink struct {
 	kicked       []string
 	queuedPaused []string
 	queuedNo     []string
+	failed       []string
 }
 
 func (s *recordingSink) KickedPlan(epic *beads.Bead) { s.kicked = append(s.kicked, epic.ID) }
+func (s *recordingSink) FailedPlan(epic *beads.Bead) { s.failed = append(s.failed, epic.ID) }
 func (s *recordingSink) QueuedPlan(epic *beads.Bead, paused bool) {
 	if paused {
 		s.queuedPaused = append(s.queuedPaused, epic.ID)

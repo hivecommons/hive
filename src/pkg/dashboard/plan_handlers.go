@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/github"
@@ -47,9 +48,20 @@ func (s *Server) decomposeKicker() planning.DecomposeKicker {
 // On a successful kick it records the governor kick. The epic stays
 // decompose_pending until the architect materializes children.
 func (s *Server) requestArchitectDecompose(epic *beads.Bead) planning.DecomposeState {
+	// A click is an explicit human request: it bypasses the label trigger's
+	// re-kick throttle and hands a stuck (decompose_failed) epic a fresh
+	// attempt budget (hivecommons/hive#8010). The kick is recorded so the
+	// label trigger's throttle sees it and does not double-kick next cycle.
+	store, _ := s.planEpicStore()
+	if store != nil {
+		_ = planning.ResetDecomposeAttempts(store, epic.ID)
+	}
 	state := planning.RequestDecompose(s.decomposeKicker(), epic)
 	switch state {
 	case planning.DecomposeKicked:
+		if store != nil {
+			_ = planning.RecordDecomposeKick(store, epic.ID, time.Now())
+		}
 		if s.deps != nil && s.deps.Governor != nil {
 			s.deps.Governor.RecordKick(planning.ArchitectAgentName)
 		}
@@ -68,8 +80,9 @@ func (s *Server) requestArchitectDecompose(epic *beads.Bead) planning.DecomposeS
 // prompt — the same lock-safe SendKick path every other kick uses, never the
 // agent-launch mutex. It does NOT decompose synchronously (that would block the
 // HTTP handler on a live tmux agent); instead it returns the epic id so the UI
-// polls GET /api/plan/{epicID} and the architect fills the plan in, surfaced via
-// the existing plan-review gate.
+// polls GET /api/plan/{epicID} and the architect fills the plan in by running
+// `bd decompose <epic> --plan <file>` from its own pane (the kick prompt tells
+// it to; hivecommons/hive#8010), surfaced via the existing plan-review gate.
 func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
 	// Deliberately NOT owner-gated (F16, TestF16PlanFromIssueStaysUngated):
 	// this mints a DRAFT epic whose children decompose.go withholds from

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/classify"
@@ -45,7 +46,36 @@ const (
 	// trigger idempotent (no re-kick while a decompose is already pending). The
 	// architect clears it when it materializes the children.
 	MetaDecomposePending = "decompose_pending"
+	// MetaDecomposeKickedAt is the RFC3339 time of the most recent architect kick
+	// for a pending epic. The label trigger runs every eval cycle; before this
+	// marker existed it re-sent the same prompt every cycle for as long as the
+	// epic stayed pending (hivecommons/hive#8010). A kick is not repeated until
+	// DecomposeRekickAfter has passed.
+	MetaDecomposeKickedAt = "decompose_kicked_at"
+	// MetaDecomposeAttempts counts architect kicks for a pending epic. Once it
+	// reaches DecomposeMaxAttempts without children appearing, the epic is
+	// marked failed rather than kicked forever.
+	MetaDecomposeAttempts = "decompose_attempts"
+	// MetaDecomposeFailed marks an epic the architect was asked to decompose
+	// DecomposeMaxAttempts times without producing children. It is a visible
+	// stuck state (the PLANNING tile counts it separately from queued) and
+	// stops the label trigger from spending another kick on it. A human
+	// re-requesting the plan from the dashboard resets it.
+	MetaDecomposeFailed = "decompose_failed"
 )
+
+// DecomposeRekickAfter is how long a pending epic waits after an architect kick
+// before the label trigger may kick again. The architect's own cadence is
+// hours; half an hour is long enough for a plan to be written and `bd
+// decompose` to run, and short enough that a lost kick is retried the same day.
+const DecomposeRekickAfter = 30 * time.Minute
+
+// DecomposeMaxAttempts is the number of architect kicks a pending epic gets
+// before it is marked decompose_failed instead of being kicked again.
+const DecomposeMaxAttempts = 3
+
+// decomposeNow is the clock the throttle reads; tests override it.
+var decomposeNow = time.Now
 
 // SourceGitHubIssue is the MetaSource value for epics minted from a GH issue.
 const SourceGitHubIssue = "github-issue"
@@ -173,7 +203,115 @@ func DecomposePending(epic *beads.Bead) bool {
 // failure is non-fatal (the marker is advisory — the tile would just show the
 // epic as pending one cycle longer).
 func ClearDecomposePending(store *beads.Store, epicID string) error {
-	return store.UnsetMetadata(epicID, MetaDecomposePending)
+	return store.Update(epicID, func(b *beads.Bead) {
+		if b.Metadata == nil {
+			return
+		}
+		for _, k := range []string{MetaDecomposePending, MetaDecomposeKickedAt, MetaDecomposeAttempts, MetaDecomposeFailed} {
+			delete(b.Metadata, k)
+		}
+	})
+}
+
+// DecomposeFailed reports whether the architect was asked DecomposeMaxAttempts
+// times to decompose this epic without children appearing. The epic is still
+// pending (nothing was built) but it is STUCK, not queued, and the label
+// trigger leaves it alone until a human re-requests it.
+func DecomposeFailed(epic *beads.Bead) bool {
+	return epic != nil && epic.Meta(MetaDecomposeFailed) == "true"
+}
+
+// DecomposeAttempts returns how many times the architect has been kicked for
+// this epic since it was minted (or last reset).
+func DecomposeAttempts(epic *beads.Bead) int {
+	if epic == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(epic.Meta(MetaDecomposeAttempts))
+	return n
+}
+
+// DecomposeKickedAt returns the time of the most recent architect kick for this
+// epic, or the zero time when it has never been kicked (or the marker is
+// unreadable, which fails OPEN — an unreadable marker must not block a kick).
+func DecomposeKickedAt(epic *beads.Bead) time.Time {
+	if epic == nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, epic.Meta(MetaDecomposeKickedAt))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// ResetDecomposeAttempts clears the kick throttle and the failed marker so an
+// explicit human re-request (the dashboard button) kicks the architect right
+// now and gets a fresh DecomposeMaxAttempts budget. The pending marker stays.
+func ResetDecomposeAttempts(store *beads.Store, epicID string) error {
+	return store.Update(epicID, func(b *beads.Bead) {
+		if b.Metadata == nil {
+			return
+		}
+		for _, k := range []string{MetaDecomposeKickedAt, MetaDecomposeAttempts, MetaDecomposeFailed} {
+			delete(b.Metadata, k)
+		}
+	})
+}
+
+// RecordDecomposeKick stamps the epic with the kick time and bumps the attempt
+// counter. Called after a successful SendKick by every planning entry point so
+// the throttle sees dashboard and label kicks alike.
+func RecordDecomposeKick(store *beads.Store, epicID string, now time.Time) error {
+	return store.Update(epicID, func(b *beads.Bead) {
+		if b.Metadata == nil {
+			b.Metadata = make(map[string]interface{})
+		}
+		n, _ := strconv.Atoi(metaString(b, MetaDecomposeAttempts))
+		b.Metadata[MetaDecomposeKickedAt] = now.UTC().Format(time.RFC3339)
+		b.Metadata[MetaDecomposeAttempts] = strconv.Itoa(n + 1)
+	})
+}
+
+func metaString(b *beads.Bead, key string) string {
+	if b == nil || b.Metadata == nil {
+		return ""
+	}
+	if v, ok := b.Metadata[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// RequestDecomposeThrottled is RequestDecompose for the per-cycle label
+// trigger: it refuses to kick a pending epic that was kicked less than
+// DecomposeRekickAfter ago (DecomposeWaiting), marks an epic that has used its
+// DecomposeMaxAttempts budget as failed instead of kicking it again
+// (DecomposeFailedState), and records every kick it does send. The dashboard
+// button does NOT go through here — a human clicking is an explicit request
+// and resets the budget first (ResetDecomposeAttempts).
+func RequestDecomposeThrottled(store *beads.Store, kicker DecomposeKicker, epic *beads.Bead) DecomposeState {
+	if epic == nil {
+		return DecomposeQueuedNoAgent
+	}
+	if DecomposeFailed(epic) {
+		return DecomposeFailedState
+	}
+	now := decomposeNow()
+	if at := DecomposeKickedAt(epic); !at.IsZero() && now.Sub(at) < DecomposeRekickAfter {
+		return DecomposeWaiting
+	}
+	if DecomposeAttempts(epic) >= DecomposeMaxAttempts {
+		if store != nil {
+			_ = store.SetMetadata(epic.ID, MetaDecomposeFailed, "true")
+		}
+		return DecomposeFailedState
+	}
+	state := RequestDecompose(kicker, epic)
+	if state == DecomposeKicked && store != nil {
+		_ = RecordDecomposeKick(store, epic.ID, now)
+	}
+	return state
 }
 
 // HasPlanLabel reports whether any of the issue's labels is a "plan" trigger
@@ -241,6 +379,13 @@ const (
 	// DecomposeQueuedNoAgent: no architect/manager is wired, so the request is
 	// queued for a later cycle (also covers the kick failing transiently).
 	DecomposeQueuedNoAgent DecomposeState = "queued_no_agent"
+	// DecomposeWaiting: the architect was kicked less than DecomposeRekickAfter
+	// ago and has not produced children yet; no new kick was sent this cycle.
+	DecomposeWaiting DecomposeState = "waiting"
+	// DecomposeFailedState: the epic has used its DecomposeMaxAttempts kicks
+	// without children appearing and is marked decompose_failed. Nothing more
+	// is sent until a human re-requests the plan.
+	DecomposeFailedState DecomposeState = "failed"
 )
 
 // ArchitectPausedMessage is the user-facing explanation shown wherever a plan is
@@ -284,6 +429,12 @@ type LabelPlanResult struct {
 	Kicked int
 	// QueuedPaused is the number left queued because the architect is paused.
 	QueuedPaused int
+	// Waiting is the number of pending epics kicked recently enough that no
+	// new kick was sent this cycle (hivecommons/hive#8010).
+	Waiting int
+	// Failed is the number of pending epics marked decompose_failed — either
+	// already so at the start of the pass or tripped by it.
+	Failed int
 }
 
 // LabelPlanSink observes PlanIssuesFromLabels decisions (audit + logging). Both
@@ -296,6 +447,9 @@ type LabelPlanSink interface {
 	// paused reports which case, so the caller can log the "architect paused"
 	// message once.
 	QueuedPlan(epic *beads.Bead, paused bool)
+	// FailedPlan is called once, on the pass that marks an epic decompose_failed
+	// after DecomposeMaxAttempts kicks produced no children.
+	FailedPlan(epic *beads.Bead)
 }
 
 // PlanIssuesFromLabels is the Phase 4 Part B core: for each issue carrying a
@@ -324,7 +478,9 @@ func PlanIssuesFromLabels(store *beads.Store, kicker DecomposeKicker, issues []g
 			continue
 		}
 		existing := store.FindByExternalRef(IssueRef(issue))
-		// The github.Issue carries no body; the epic plans against title + labels.
+		// The github.Issue carries no body; the epic plans against title +
+		// labels, and BuildPrompt sends the issue URL so the architect reads the
+		// body itself (hivecommons/hive#8010).
 		epic, err := EpicFromIssue(store, issue, "")
 		if err != nil {
 			if mintErr != nil {
@@ -339,11 +495,23 @@ func PlanIssuesFromLabels(store *beads.Store, kicker DecomposeKicker, issues []g
 		if !DecomposePending(epic) {
 			continue
 		}
-		switch RequestDecompose(kicker, epic) {
+		// A failed epic is stuck, not queued: count it, do not kick it.
+		if DecomposeFailed(epic) {
+			res.Failed++
+			continue
+		}
+		switch RequestDecomposeThrottled(store, kicker, epic) {
 		case DecomposeKicked:
 			res.Kicked++
 			if sink != nil {
 				sink.KickedPlan(epic)
+			}
+		case DecomposeWaiting:
+			res.Waiting++
+		case DecomposeFailedState:
+			res.Failed++
+			if sink != nil {
+				sink.FailedPlan(epic)
 			}
 		case DecomposeQueuedPaused:
 			res.QueuedPaused++
