@@ -113,10 +113,14 @@ func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
 // durable companion that records the last upgrade that actually LANDED, so the
 // dashboard can tell "attempted and succeeded" apart from "never attempted"
 // instead of letting a blank panel masquerade as success.
-const (
-	upgradeMarkerPath      = "/data/upgrade-requested"
-	lastUpgradeOutcomePath = "/data/last-upgrade-outcome"
-)
+//
+// upgradeMarkerPath is a var, not a const, purely as a test seam (#7990): the
+// hub UpgradeCallback reads, writes and clears the marker at this path, and
+// its backoff/give-up branches can only be exercised hermetically when a test
+// can point it at a temp file. Production never reassigns it.
+var upgradeMarkerPath = "/data/upgrade-requested"
+
+const lastUpgradeOutcomePath = "/data/last-upgrade-outcome"
 
 // upgradeOutcome is the durable "last upgrade LANDED" record. Written on the
 // boot that completes an upgrade (reconcileUpgradeOutcomeAtBoot), it survives —
