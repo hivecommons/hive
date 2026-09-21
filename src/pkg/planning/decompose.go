@@ -43,6 +43,16 @@ const (
 	// MetaPlanRef on a child records the planner's local task reference (e.g.
 	// "T1") so a plan can be re-derived / audited.
 	MetaPlanRef = "plan_ref"
+	// MetaClaimedBy on a child records who picked the task up (agent name or
+	// GitHub login). Set by whoever claims it — e.g.
+	// `bd update <id> --claim --set-metadata claimed_by=<name>` — and read by
+	// the dashboard plan review so an epic's tasks show who is on them
+	// (hivecommons/hive#8011).
+	MetaClaimedBy = "claimed_by"
+	// MetaPRURL on a child records the pull request that carries its work
+	// (`bd update <id> --set-metadata pr_url=<url>`). The plan review renders
+	// it as the task's PR link (hivecommons/hive#8011).
+	MetaPRURL = "pr_url"
 )
 
 const (

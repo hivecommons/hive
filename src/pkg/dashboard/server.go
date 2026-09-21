@@ -759,6 +759,27 @@ type FrontendBeads struct {
 // FrontendPlanning is the governor-facing PLANNING metric block (Phase 2
 // planning intelligence). It is computed from bead metadata (parent_epic +
 // plan_status) across all bead stores.
+// PlanIssueLink is the compact issue→plan join the frontend needs to decorate
+// an issue pill: where the plan lives, what state it is in, and its progress.
+type PlanIssueLink struct {
+	EpicID        string `json:"epicId"`
+	Agent         string `json:"agent"`
+	IssueRepo     string `json:"issueRepo"`
+	IssueNumber   string `json:"issueNumber"`
+	State         string `json:"state"`
+	ChildrenOpen  int    `json:"childrenOpen"`
+	ChildrenTotal int    `json:"childrenTotal"`
+}
+
+// PlanWaitItem is one plan that needs a human: Reason is the plan state
+// ("review" or "stuck"), Issue is "owner/repo#N" or "" for bd-created epics.
+type PlanWaitItem struct {
+	EpicID    string `json:"epicId"`
+	EpicTitle string `json:"epicTitle"`
+	Issue     string `json:"issue,omitempty"`
+	Reason    string `json:"reason"`
+}
+
 type FrontendPlanning struct {
 	// Available is true only when planning is usable at the current ACMM level
 	// (>= 5, where the architect that decomposes plans is scheduled). The
@@ -792,6 +813,13 @@ type FrontendPlanning struct {
 	// so nothing will be built until the operator resumes it. The tile shows the
 	// "architect is paused" message when this is set.
 	ArchitectPaused bool `json:"architect_paused"`
+	// Issues links each issue-sourced plan back to its GitHub issue so the
+	// REPOSITORIES issue pills can show the plan's state chip instead of a bare
+	// Plan button (hivecommons/hive#8011). Keyed client-side on repo#number.
+	Issues []PlanIssueLink `json:"issues,omitempty"`
+	// WaitingOnHuman lists the plans parked on a person — awaiting review or
+	// stuck — so the PLANNING tile can say WHICH ones, not just how many.
+	WaitingOnHuman []PlanWaitItem `json:"waiting_on_human,omitempty"`
 }
 
 type FrontendBudget struct {

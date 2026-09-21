@@ -285,7 +285,8 @@ func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "plan_approve", auditDetail("epic", epicID), agentName)
 	s.refreshAndPersist()
 	tree, _ := planning.GetPlanTree(store, epicID)
-	jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "plan": tree})
+	mirrored := s.mirrorPlanToIssue(r, store, tree, agentName)
+	jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "plan": tree, "mirrored": mirrored})
 }
 
 // handlePlanReject serves POST /api/plan/{epicID}/reject: return an approved (or

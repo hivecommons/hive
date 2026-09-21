@@ -115,6 +115,41 @@ agent can start the work yet. In the plan-review view you can:
 High-maturity ACMM packs may enable `plan_auto_approve`, which approves a plan at
 decomposition time (no review gate); by default the gate is on.
 
+Each child row also shows **who is on it** and **where the work is**: the
+task's `claimed_by` metadata and its PR link (`pr_url` metadata, or the bead's
+`external_ref` when that is a PR URL). Agents and people record these with
+`bd update <id> --claim --set-metadata claimed_by=<name>` and
+`bd update <id> --set-metadata pr_url=<url>`; nothing is shown until they do.
+
+### Seeing plan state from the issue itself
+
+Once an issue has a plan, its pill in **REPOSITORIES** stops showing the
+⧉ Plan button and shows a **state chip** instead — the same lifecycle the Plans
+modal uses, compressed to fit next to the issue number:
+
+| chip | state | meaning |
+|------|-------|---------|
+| `⧗` | queued | accepted, waiting for the architect to break it into tasks |
+| `⚠` | stuck | the architect exhausted its attempts and produced nothing — click to retry |
+| `● N` | review | N tasks drafted, waiting for your approval |
+| `▶ d/N` | executing | approved; d of N tasks done |
+| `✓ N` | done | approved and every task closed |
+
+Clicking the chip opens that plan's review view. The chip is driven by
+`planning.issues` on the status payload (one entry per issue-sourced epic), so
+it needs no extra fetch and updates with the governor cycle.
+
+### Mirroring the plan onto the issue (opt-in)
+
+People who never open the dashboard can still see the plan. With
+`planning.mirror_to_issue: true`, **approving** a plan posts its task list as a
+GitHub checklist comment on the epic's source issue — ticked for closed tasks,
+with claimant and PR where known, and a `#plan=<epicId>` link back to the
+dashboard review. The comment is a snapshot taken at approval (the beads remain
+the source of truth) and is marked `<!-- hive-plan-mirror -->`. It is off by
+default because it writes to the issue thread; a failed post is logged and
+audited (`plan_mirror_failed`) but never fails the approval.
+
 ## The PLANNING governor tile
 
 The governor's **PLANNING** metric summarizes plan state across all bead stores:
@@ -123,8 +158,14 @@ The governor's **PLANNING** metric summarizes plan state across all bead stores:
 - **review** — drafts awaiting human approval,
 - **queued** — issue-sourced epics not yet built by the architect
   (`decompose_pending`),
+- **⚠N** — plans stuck after the architect's attempt budget ran out,
 - and a **⏸** marker plus a warning tooltip when queued work is blocked on a
   paused architect.
+
+The tile's tooltip also lists **which** plans are waiting on a person
+(`planning.waiting_on_human`): one line per plan, `● review` or `⚠ stuck`,
+with its `owner/repo#N` and title — so "what does the hive need from me?" is
+answered on hover. The Plans modal lists the same items first.
 
 When there is no planning activity at all, the tile's tooltip nudges you toward
 the feature: *click ⧉ Plan on any issue, or add the `plan` label on GitHub.*
@@ -136,6 +177,8 @@ the feature: *click ⧉ Plan on any issue, or add the `plan` label on GitHub.*
 # even when true it only fires at ACMM L5+.
 planning:
   plan_from_label: true
+  # Post an approved plan's checklist on the source issue. Off by default.
+  mirror_to_issue: true
 
 # Tier-classification keywords (used to pick a model per issue) are config-driven
 # and shown in the dashboard governor-config view. Empty/absent keeps the

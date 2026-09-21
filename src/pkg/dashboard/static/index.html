@@ -1354,6 +1354,15 @@
        always-visible Plan button never overflow the fixed-width repo card. */
     .repo-issue-pill-wrap .repo-issue-pill { min-width: 0; flex: 0 1 auto; overflow: hidden; }
     .repo-issue-plan { --pill-c: var(--purple); flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
+    /* Plan-state chip (hivecommons/hive#8011): replaces the Plan button on an
+       issue that already has a plan. Colour = what the plan needs — amber for a
+       human (review), red for stuck, blue for the fleet, green for done. */
+    .repo-issue-plan.plan-chip { opacity: 0.95; font-variant-numeric: tabular-nums; }
+    .repo-issue-plan.plan-review { --pill-c: var(--yellow); }
+    .repo-issue-plan.plan-stuck { --pill-c: var(--red); }
+    .repo-issue-plan.plan-active { --pill-c: var(--blue); }
+    .repo-issue-plan.plan-done { --pill-c: var(--green); }
+    .repo-issue-plan.plan-queued { --pill-c: var(--muted); }
     .repo-pr-pill.pill-icon, .repo-issue-pill.pill-icon, .repo-issue-plan.pill-icon { flex: 0 0 auto; padding: 3px 5px; min-width: 1.45rem; justify-content: center; white-space: nowrap; font-size: var(--fs-xs); line-height: 1; }
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
@@ -4870,6 +4879,11 @@
                 ? 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.'
                 : 'Planning needs ACMM level 5+ — the architect that decomposes plans is only scheduled at L5/L6. Raise the level to enable ⧉ Plan and the `plan` label.';
             }
+            // Name WHICH plans are waiting on a person, not just how many:
+            // the tooltip is the fastest answer to "what does the hive need
+            // from me right now?" (hivecommons/hive#8011).
+            const waiting = planWaitingLines(plan);
+            if (waiting) planTitle = planTitle + '\n\nNeeds you:\n' + waiting;
             return `<div class="gov-metric" style="cursor:pointer" data-action="openPlanList" title="${esc(planTitle + ' — click to open the plan view')}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}${pending > 0 ? ` <span style="opacity:0.7;font-size:0.85em">+${pending} queued</span>` : ''}</span></div>`;
           })()}
           <div class="oc-gov-gauge">
@@ -8391,10 +8405,44 @@
     // it, so the card would stop following the cursor.
     let _repoResizeDrag = null;
 
+    // planWaitingLines renders planning.waiting_on_human as one line per plan
+    // ("review  owner/repo#12  Title"), for tooltips. Empty string when none.
+    function planWaitingLines(plan) {
+      return ((plan && plan.waiting_on_human) || []).map(w =>
+        (w.reason === 'stuck' ? '⚠ stuck ' : '● review ') + (w.issue ? w.issue + ' ' : '') + (w.epicTitle || w.epicId || '')
+      ).join('\n');
+    }
+
+    // planIssueLinks indexes the status payload's planning.issues by
+    // "owner/repo#N" so renderRepos can decorate pills in O(1) per issue.
+    function planIssueLinks() {
+      const out = {};
+      ((window._lastStatus && window._lastStatus.planning && window._lastStatus.planning.issues) || []).forEach(l => {
+        if (l && l.issueRepo && l.issueNumber) out[l.issueRepo + '#' + l.issueNumber] = l;
+      });
+      return out;
+    }
+
+    // planIssueChip renders one plan's state as a pill chip. Same vocabulary
+    // as planStatusBadge, compressed to fit next to an issue number.
+    function planIssueChip(l) {
+      const total = l.childrenTotal || 0, open = l.childrenOpen || 0, done = total - open;
+      let glyph, cls, tip;
+      switch (l.state) {
+        case 'stuck':     glyph = '⚠';                cls = 'plan-stuck';   tip = 'Plan stuck — the architect produced nothing; open to retry'; break;
+        case 'review':    glyph = '● ' + total;       cls = 'plan-review';  tip = total + ' task' + (total === 1 ? '' : 's') + ' drafted — awaiting your review'; break;
+        case 'executing': glyph = '▶ ' + done + '/' + total; cls = 'plan-active'; tip = done + ' of ' + total + ' tasks done — plan approved and in progress'; break;
+        case 'done':      glyph = '✓ ' + total;       cls = 'plan-done';    tip = 'Plan complete — all ' + total + ' tasks closed'; break;
+        default:          glyph = '⧗';                cls = 'plan-queued';  tip = 'Queued for the architect to break into tasks';
+      }
+      return `<button class="repo-issue-plan pill-icon plan-chip ${cls}" data-action="openPlanReview" data-arg0="${esc(l.epicId)}" title="${esc(tip + ' — click to open the plan')}" aria-label="${esc(tip)}">${esc(glyph)}</button>`;
+    }
+
     function renderRepos(repos) {
       if (_repoResizeDrag) return;
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
+      const planLinks = planIssueLinks();
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
       // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
@@ -8458,7 +8506,15 @@
           // decomposition. data-action wires into the delegated click handler.
           // Only rendered at ACMM L5+, where the architect that decomposes the
           // epic is actually scheduled — below that the button is hidden.
-          const planBtn = showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '';
+          // An issue that already has a plan shows the plan's STATE instead of
+          // the Plan button, and opens the plan review — so "is this epic
+          // being worked, and by whom?" is answered from the pill, not by
+          // hunting through the Plans modal (hivecommons/hive#8011). The
+          // button stays only for issues with no plan yet.
+          const linked = planLinks[repoFull + '#' + i.number];
+          const planBtn = linked
+            ? planIssueChip(linked)
+            : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
         }).join('');
         // Held issues (hivecommons/hive#7896): in the issue column, because
@@ -16316,7 +16372,11 @@ function burnAreaChart() {
           planShowModal('Plans', '<p class="muted-note">No plans yet. Click <strong>⧉ Plan</strong> on any issue pill, or add the <code>plan</code> label to an issue on GitHub, and the architect will decompose it into a reviewable plan.</p>');
           return;
         }
-        const rows = plans.map(p => {
+        const needsYou = plans.filter(p => p.state === 'review' || p.state === 'stuck').length;
+        const header = needsYou
+          ? `<p class="muted-note" style="margin:0 0 8px">${needsYou} plan${needsYou === 1 ? '' : 's'} need${needsYou === 1 ? 's' : ''} you — listed first.</p>`
+          : '';
+        const rows = header + plans.map(p => {
           const issue = p.issueRepo && p.issueNumber
             ? ` <a href="${escapeHtml(p.issueUrl || '#')}" target="_blank" rel="noopener" style="color:var(--muted);font-size:.85em" data-stop="1">${escapeHtml(p.issueRepo)}#${escapeHtml(p.issueNumber)}</a>` : '';
           const kids = p.childrenTotal ? ` · ${p.childrenOpen}/${p.childrenTotal} tasks open` : '';
@@ -16351,8 +16411,12 @@ function burnAreaChart() {
               </select>
               <button class="btn" data-action="planChildRemove" data-arg0="${escapeHtml(plan.epicId)}" data-arg1="${escapeHtml(c.id)}" title="Remove this task from the plan">✕</button>`
             : `<span class="muted-note" style="font-size:.85em">${escapeHtml(c.execution || '')}</span>`;
+          // Who is on it and where the work is: the two questions the pill
+          // chip can't answer (hivecommons/hive#8011).
+          const who = c.claimedBy ? `<span class="muted-note" style="font-size:.8em"> · @${escapeHtml(String(c.claimedBy).replace(/^@/, ''))}</span>` : '';
+          const pr = c.prUrl ? ` <a href="${escapeHtml(c.prUrl)}" target="_blank" rel="noopener" data-stop="1" style="font-size:.8em" title="Open the pull request">PR ↗</a>` : '';
           return `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
-            <div><span class="muted-note" style="font-size:.8em">${escapeHtml(c.planRef || '')}</span> ${escapeHtml(c.title)} <span class="muted-note" style="font-size:.8em">[${escapeHtml(String(c.status || ''))}]</span>${deps}</div>
+            <div><span class="muted-note" style="font-size:.8em">${escapeHtml(c.planRef || '')}</span> ${escapeHtml(c.title)} <span class="muted-note" style="font-size:.8em">[${escapeHtml(String(c.status || ''))}]</span>${who}${pr}${deps}</div>
             <div style="display:flex;gap:6px;align-items:center;white-space:nowrap">${controls}</div>
           </div>`;
         }).join('') || (plan.decomposeFailed
@@ -18485,6 +18549,16 @@ function burnAreaChart() {
     }
     window.addEventListener('hashchange', () => { if (location.hash.startsWith('#config/')) handleConfigHash(); });
     setTimeout(() => { if (location.hash.startsWith('#config/')) handleConfigHash(); }, 1000);
+    // #plan=<epicId> deep-links into the plan review — it is the link the
+    // mirrored issue checklist carries back to the dashboard (hivecommons/hive#8011).
+    function handlePlanHash() {
+      const hash = location.hash;
+      if (!hash.startsWith('#plan=')) return;
+      const epicID = decodeURIComponent(hash.slice(6));
+      if (epicID && typeof openPlanReview === 'function') openPlanReview(epicID);
+    }
+    window.addEventListener('hashchange', () => { if (location.hash.startsWith('#plan=')) handlePlanHash(); });
+    setTimeout(() => { if (location.hash.startsWith('#plan=')) handlePlanHash(); }, 1000);
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;

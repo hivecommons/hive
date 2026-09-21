@@ -44,6 +44,52 @@ type PlanSummary struct {
 	ChildrenTotal int `json:"childrenTotal"`
 	// ChildrenOpen counts children with status open or in_progress.
 	ChildrenOpen int `json:"childrenOpen"`
+	// State is the one-word lifecycle bucket the dashboard renders as the
+	// issue pill's plan chip (hivecommons/hive#8011): one of the PlanState*
+	// constants, derived from the fields above by PlanStateOf.
+	State string `json:"state"`
+}
+
+// Plan lifecycle buckets, coarse enough for a chip on an issue pill. Ordered
+// by how badly a human is needed: stuck and review need one, queued and
+// executing are the fleet's, done is finished.
+const (
+	// PlanStateStuck: the architect exhausted its attempts without producing
+	// children; a human must re-request the plan.
+	PlanStateStuck = "stuck"
+	// PlanStateReview: decomposed, plan_status=draft, waiting for approval.
+	PlanStateReview = "review"
+	// PlanStateQueued: accepted, waiting for the architect to decompose it.
+	PlanStateQueued = "queued"
+	// PlanStateExecuting: approved with at least one open child.
+	PlanStateExecuting = "executing"
+	// PlanStateDone: approved and every child is closed.
+	PlanStateDone = "done"
+)
+
+// PlanStateOf buckets a summary into one PlanState* value. Stuck beats
+// queued (same precedence as listOrder), review beats everything but stuck,
+// and an approved plan is executing until its last child closes.
+func PlanStateOf(p PlanSummary) string {
+	switch {
+	case p.DecomposeFailed:
+		return PlanStateStuck
+	case p.PendingDecompose:
+		return PlanStateQueued
+	case p.PlanStatus == PlanStatusDraft:
+		return PlanStateReview
+	case p.PlanStatus == PlanStatusApproved && p.ChildrenOpen > 0:
+		return PlanStateExecuting
+	case p.PlanStatus == PlanStatusApproved:
+		return PlanStateDone
+	}
+	return PlanStateQueued
+}
+
+// NeedsHuman reports whether the plan is parked on a person: stuck (someone
+// must re-request it) or awaiting review (someone must approve it).
+func (p PlanSummary) NeedsHuman() bool {
+	return p.State == PlanStateStuck || p.State == PlanStateReview
 }
 
 // listOrder ranks summaries so human-action-required plans surface first:
@@ -91,7 +137,7 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 			if b.Type != beads.TypeEpic || b.Meta(MetaPlanStatus) == "" {
 				continue
 			}
-			out = append(out, PlanSummary{
+			p := PlanSummary{
 				EpicID:            b.ID,
 				EpicTitle:         b.Title,
 				Agent:             name,
@@ -104,7 +150,9 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 				IssueURL:          b.Meta(MetaIssueURL),
 				ChildrenTotal:     total[b.ID],
 				ChildrenOpen:      open[b.ID],
-			})
+			}
+			p.State = PlanStateOf(p)
+			out = append(out, p)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

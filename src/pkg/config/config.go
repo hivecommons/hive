@@ -367,6 +367,11 @@ type PlanningConfig struct {
 	// true is a no-op below L5, because the architect that decomposes the minted
 	// epics is not scheduled there.
 	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
+	// MirrorToIssue, when true, posts an approved plan's task checklist as a
+	// comment on the epic's source GitHub issue, so people who never open the
+	// dashboard can see what the plan is and how far along it is
+	// (hivecommons/hive#8011). Off by default: it writes to the issue thread.
+	MirrorToIssue bool `yaml:"mirror_to_issue,omitempty" json:"mirror_to_issue,omitempty"`
 }
 
 // RetroConfig gates the post-completion retro lane. It is off by

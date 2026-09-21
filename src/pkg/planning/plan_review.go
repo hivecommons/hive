@@ -2,6 +2,7 @@ package planning
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
@@ -30,6 +31,25 @@ type PlanChild struct {
 	// DependsOn holds the child bead IDs this child depends on. These are the
 	// intra-plan dependency edges for the review DAG.
 	DependsOn []string `json:"dependsOn,omitempty"`
+	// ClaimedBy is who is on the task (MetaClaimedBy), or "" if nobody has
+	// claimed it yet (hivecommons/hive#8011).
+	ClaimedBy string `json:"claimedBy,omitempty"`
+	// PRURL is the pull request carrying the task's work: MetaPRURL when set,
+	// else the child's ExternalRef when it is a PR URL (hivecommons/hive#8011).
+	PRURL string `json:"prUrl,omitempty"`
+}
+
+// childPRURL resolves a child's PR link: an explicit pr_url wins; otherwise a
+// PR-shaped ExternalRef (".../pull/N") counts, so a bead that was minted from
+// or attached to a PR shows it without anyone tagging it.
+func childPRURL(c *beads.Bead) string {
+	if u := c.Meta(MetaPRURL); u != "" {
+		return u
+	}
+	if strings.Contains(c.ExternalRef, "/pull/") {
+		return c.ExternalRef
+	}
+	return ""
 }
 
 // PlanTree is the review view of a decomposed epic: the epic plus its children
@@ -108,6 +128,8 @@ func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
 			PlanRef:   c.Meta(MetaPlanRef),
 			Status:    c.Status,
 			DependsOn: c.DependsOn,
+			ClaimedBy: c.Meta(MetaClaimedBy),
+			PRURL:     childPRURL(c),
 		})
 	}
 	return tree, nil

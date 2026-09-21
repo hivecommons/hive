@@ -1957,6 +1957,24 @@ func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, acmmL
 	// Only flag the paused-architect condition when it actually matters: there is
 	// queued work AND the architect is paused. Otherwise the tile stays quiet.
 	fp.ArchitectPaused = fp.PendingDecompose > 0 && architectPaused
+	// Issue links and the waiting-on-human list ride the same payload so the
+	// pills and the tile need no second fetch (hivecommons/hive#8011).
+	for _, p := range planning.ListPlans(stores) {
+		if p.IssueRepo != "" && p.IssueNumber != "" {
+			fp.Issues = append(fp.Issues, PlanIssueLink{
+				EpicID: p.EpicID, Agent: p.Agent,
+				IssueRepo: p.IssueRepo, IssueNumber: p.IssueNumber,
+				State: p.State, ChildrenOpen: p.ChildrenOpen, ChildrenTotal: p.ChildrenTotal,
+			})
+		}
+		if p.NeedsHuman() {
+			item := PlanWaitItem{EpicID: p.EpicID, EpicTitle: p.EpicTitle, Reason: p.State}
+			if p.IssueRepo != "" && p.IssueNumber != "" {
+				item.Issue = p.IssueRepo + "#" + p.IssueNumber
+			}
+			fp.WaitingOnHuman = append(fp.WaitingOnHuman, item)
+		}
+	}
 	return fp
 }
 
