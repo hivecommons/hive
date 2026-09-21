@@ -509,11 +509,21 @@ function syncBackOmp(ompDir, stageDir, model) {
     if (keep && !keep.has(provider)) { report.skipped.push(`${provider}: not a selected provider`); continue; }
     const h = hostByKey.get(rowKey(s));
     if (!h) { report.skipped.push(`${provider}: no matching row on the host`); continue; }
+    // A row the CONTAINER's omp disabled (its refresh lost the race to the
+    // host's) is a dead token with a fresh stamp. It never helps the host —
+    // the remedy is /login either way — so it must not overwrite a host row
+    // that may still be working. Only a usable credential travels back.
+    if (s.disabled_cause != null && String(s.disabled_cause) !== '') {
+      report.skipped.push(`${provider}: the container's copy is disabled, not written back`);
+      continue;
+    }
     if (!(Number(s.updated_at) > Number(h.updated_at))) { report.skipped.push(`${provider}: host row is as new or newer`); continue; }
     const where = `lower(provider) = ${quoteSql(provider)} AND credential_type = ${quoteSql(s.credential_type)} AND ` +
       (s.identity_key == null ? 'identity_key IS NULL' : `identity_key = ${quoteSql(s.identity_key)}`) +
       ` AND updated_at < ${Number(s.updated_at)}`;
-    const cause = withCause ? `, disabled_cause = ${s.disabled_cause == null ? 'NULL' : quoteSql(s.disabled_cause)}` : '';
+    // The staged row is usable (checked above), so a newer usable credential
+    // also clears whatever cause the host had recorded for the old one.
+    const cause = withCause ? ', disabled_cause = NULL' : '';
     statements.push(`UPDATE ${OMP_AUTH_TABLE} SET data = ${quoteSql(s.data)}${cause}, updated_at = ${Number(s.updated_at)} WHERE ${where}`);
     report.syncedProviders.push(provider);
   }

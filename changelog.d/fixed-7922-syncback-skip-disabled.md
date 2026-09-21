@@ -1,0 +1,1 @@
+- omp container mode's credential sync-back skips a row the container's own omp disabled (its refresh lost the race to the host's), so a dead token with a newer stamp can no longer overwrite a working host sign-in on the 300 s timer or at exit ([#7922](https://github.com/hivecommons/hive/issues/7922))

@@ -1727,6 +1727,37 @@ test('omp sync-back writes the container-refreshed credential over the host row 
   }
 });
 
+test('omp sync-back never writes a credential the container disabled over a working host row', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp sync-back not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-syncback-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    const stampHost = new sqlite.DatabaseSync(hostDb);
+    stampHost.exec('UPDATE auth_credentials SET updated_at = 1000');
+    stampHost.close();
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    // The host's omp refreshed first; the container's refresh then failed and
+    // omp in the container disabled its copy with a NEWER stamp.
+    const inContainer = new sqlite.DatabaseSync(path.join(stage, 'agent', 'agent.db'));
+    inContainer.prepare("UPDATE auth_credentials SET data = ?, disabled_cause = 'oauth refresh failed: invalid_grant', updated_at = 2000 WHERE provider = 'anthropic'")
+      .run(JSON.stringify({ access: 'dead', refresh: 'dead' }));
+    inContainer.close();
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.syncedProviders, []);
+    assert.ok(report.skipped.some((s) => /anthropic: .*disabled/.test(s)), report.skipped.join('; '));
+    const host = credentialRow(hostDb, 'anthropic');
+    assert.strictEqual(host.updated_at, 1000);
+    assert.strictEqual(host.disabled_cause, null, 'the host row must not inherit the container\'s disabled_cause');
+    assert.ok(String(host.data).includes('anthropic-refresh-token'), 'the host\'s working token was overwritten by the container\'s dead one');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('omp sync-back does not roll a host sign-in back to an older staged copy', () => {
   if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp sync-back not exercised'); return; }
   const sqlite = require('node:sqlite');
