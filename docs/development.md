@@ -1,6 +1,6 @@
 # Local development
 
-This guide describes the local workflow for contributing to the Hive Go codebase on the `v4` branch.
+This guide describes the local workflow for contributing to the Hive Go codebase on the `v5` branch.
 
 ## Prerequisites
 
@@ -16,10 +16,10 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 ```bash
 git clone https://github.com/hivecommons/hive.git
 cd hive
-git switch -c <topic-branch> origin/v4
+git switch -c <topic-branch> origin/v5
 ```
 
-Use `v4` as the PR base for ordinary Hive development. Rebase or recreate your branch from a fresh `origin/v4` before opening or updating a PR.
+Use `v5` as the PR base for ordinary Hive development (`v4` is feature-frozen and takes security/critical fixes only — see [CONTRIBUTING.md](../CONTRIBUTING.md)). Rebase or recreate your branch from a fresh `origin/v5` before opening or updating a PR.
 
 ## Build
 
@@ -150,7 +150,7 @@ Run `gofmt` on Go files you edit:
 gofmt -w path/to/file.go
 ```
 
-The v4 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
+The v5 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
 
 ```bash
 cd src
@@ -183,9 +183,9 @@ Three things that will otherwise cost you a CI round trip:
   resolve stdlib packages and abort before writing anything. Set
   `GOTOOLCHAIN` to the pinned version if your default `go` is older.
 - **A red `notice-drift` is not always yours.** Because `NOTICE` lives on the
-  branch, a dependency bump merged without regenerating it leaves `v4` itself
+  branch, a dependency bump merged without regenerating it leaves `v5` itself
   stale — and then *every* open PR inherits the failure, including docs-only
-  ones. Check whether `v4` is clean before assuming your change caused it.
+  ones. Check whether `v5` is clean before assuming your change caused it.
 
 A `FORBIDDEN` result is a different problem: the module graph contains a
 licence the project cannot ship (this is how an AGPL-3.0 dependency was caught
@@ -233,7 +233,7 @@ Deployment and development tasks that are not listed by `just --list` are not pu
 
 ## Before opening a PR
 
-1. Rebase on the latest `origin/v4`.
+1. Rebase on the latest `origin/v5`.
 2. Run the build and tests that match your change.
 3. Commit with DCO sign-off: `git commit -s`.
-4. Open a PR against `v4` with an emoji-prefixed title, testing notes, and `Fixes #...` lines for closing issues.
+4. Open a PR against `v5` with an emoji-prefixed title, testing notes, and `Fixes #...` lines for closing issues.

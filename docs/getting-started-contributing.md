@@ -67,7 +67,8 @@ contribution:
 
 ## 6. Review and CI: what to expect
 
-- Open your PR against the **`v4`** branch (the active development branch).
+- Open your PR against the **`v5`** branch (the active development branch;
+  `v4` is feature-frozen and takes security/critical fixes only).
 - CI runs build, tests, a coverage check, and container image builds. Some
   checks (Playwright, `tide`) are non-blocking. The **required** checks are the
   build/test/coverage/docker ones.

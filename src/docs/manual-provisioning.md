@@ -131,7 +131,7 @@ swap first.
 because you **must** swap values before it works:
 
 ```bash
-git clone -b v4 https://github.com/hivecommons/hive.git
+git clone -b v5 https://github.com/hivecommons/hive.git
 cd hive/src/deploy/kustomize/overlays/standalone
 # Edit the placeholders — see "What you must swap" below:
 #   patch-configmap.yaml       (org/repos, owner login, OAuth client id, litellm endpoint)
