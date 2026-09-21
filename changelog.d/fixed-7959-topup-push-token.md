@@ -1,0 +1,1 @@
+- v5/v6 Top-up workflows push with the `TOPUP_PUSH_TOKEN` repo secret (fine-grained PAT with Contents + Workflows write) when it is set, so forward-merges that touch `.github/workflows/**` (dependabot action-pin bumps) no longer fail at the push; without the secret the job now stops before pushing with an actionable error naming the files and the manual sync recipe (#7959).

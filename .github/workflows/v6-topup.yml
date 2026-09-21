@@ -42,6 +42,16 @@ jobs:
           # Full history: a forward-merge needs both lines' commits, and a
           # shallow clone makes every merge look like an unrelated history.
           fetch-depth: 0
+          # #7959: GITHUB_TOKEN can never push a commit that touches
+          # .github/workflows/** ("refusing to allow a GitHub App to create
+          # or update workflow ... without `workflows` permission") and no
+          # `permissions:` key grants it, so every dependabot action-pin bump
+          # on v5 made this job red until a human carried the sync by hand.
+          # TOPUP_PUSH_TOKEN is a fine-grained PAT (Contents: write +
+          # Workflows: write on this repo) that the push step uses when set;
+          # unset, the job keeps GITHUB_TOKEN and the preflight below turns
+          # the server-side rejection into an actionable error instead.
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
 
       - name: Identify the committer
         run: |
@@ -130,6 +140,23 @@ jobs:
           echo "  git checkout -B sync/v5-to-v6 origin/v6"
           echo "  git merge --no-ff --signoff origin/v5"
           echo "  # resolve, then push and open a PR against v6"
+          exit 1
+
+      - name: Refuse a workflow-file delta the push credential cannot carry (#7959)
+        if: steps.merge.outputs.conflict == 'false'
+        env:
+          HAS_PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          [ "${HAS_PUSH_TOKEN}" = "true" ] && exit 0
+          touched="$(git diff --name-only origin/v6...HEAD -- .github/workflows/ || true)"
+          [ -z "${touched}" ] && exit 0
+          echo "::error::v5 -> v6 top-up touches workflow files and TOPUP_PUSH_TOKEN is not set — GITHUB_TOKEN cannot push them (#7959)."
+          echo "Files: $(echo "${touched}" | tr '\n' ' ')"
+          echo "Nothing was pushed. Either add repo secret TOPUP_PUSH_TOKEN (fine-grained PAT, Contents: write + Workflows: write) or carry the sync by hand:"
+          echo "  git checkout -B sync/v5-to-v6 origin/v6"
+          echo "  git merge --no-ff --signoff origin/v5"
+          echo "  git push -u origin sync/v5-to-v6  # then open a PR against v6"
           exit 1
 
       - name: Push the top-up branch
