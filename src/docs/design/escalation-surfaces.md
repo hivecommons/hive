@@ -1,10 +1,16 @@
 # Escalation surfaces: email and push, the terminus of decision routing
 
-Status: Proposed for **v6** — Track 6 of the epic
-[#7563](https://github.com/hivecommons/hive/issues/7563). Design only; nothing
-described here changes v4/v5 behaviour. Implementation targets the `v6`
-branch and builds on the chat spine (`pkg/chat`, merged on v6) and the
-HUMAN DECISION NEEDED routing work (#7515/#7536).
+Status: **Partly shipped on `v6`** — Track 6 of the epic
+[#7563](https://github.com/hivecommons/hive/issues/7563). The outbound half
+landed in [#7618](https://github.com/hivecommons/hive/pull/7618)
+(tracker [#7613](https://github.com/hivecommons/hive/issues/7613)):
+`src/pkg/escalate` carries a severity-routed dispatcher, an SMTP email sink
+with the daily digest, and ntfy / Pushover / PagerDuty push sinks. The
+**inbound reply-to-act path is not built** — no IMAP poller, no signed reply
+parsing, no sender allowlist — as this design intended, inbound last and off
+by default. Nothing here changes v4 or v5 behaviour: `pkg/escalate` exists on
+the `v6` branch only. Builds on the chat spine (`pkg/chat`, merged on v6) and
+the HUMAN DECISION NEEDED routing work (#7515/#7536).
 
 Code references were checked against `v4` at `15d99a45` (and `v6` for
 `pkg/chat`). Line numbers drift; the named symbols are the stable handles.

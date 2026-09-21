@@ -1,10 +1,16 @@
 # Slack integration: the second backend on the chat spine
 
-Status: Proposed for **v6** — Track 3 of the epic
+Status: **Shipped on `v6`** — Track 3 of the epic
 [#7563](https://github.com/hivecommons/hive/issues/7563) (folds in the original
-request, #7559). Design only; nothing described here changes v4/v5 behaviour.
-Implementation targets the `v6` branch and depends on the chat spine
-(`pkg/chat`, Track 1) landing first.
+request, #7559). The chat spine this design depends on landed in
+[#7572](https://github.com/hivecommons/hive/pull/7572) (`pkg/chat`, Track 1),
+the Socket Mode backend in
+[#7585](https://github.com/hivecommons/hive/pull/7585) (`src/pkg/slack/bot.go`,
+`apps.connections.open`), and reconnect/cancellation parity across backends in
+[#7586](https://github.com/hivecommons/hive/pull/7586). The Events API
+accelerator described below is **not built** — Socket Mode is the only
+transport. Nothing here changes v4 or v5 behaviour: `pkg/chat` and `pkg/slack`
+exist on the `v6` branch only, and a v4 or v5 hive still speaks Discord alone.
 
 Every code reference below was checked against `v4` at `e81d51750` while
 writing this page. Line numbers may drift; the named symbols are the stable

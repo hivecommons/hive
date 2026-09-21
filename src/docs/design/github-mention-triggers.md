@@ -1,11 +1,18 @@
 # GitHub @-mention triggers: letting a human summon an agent from a thread
 
-Status: Proposed for **v6** — discussion on
-[#7483](https://github.com/hivecommons/hive/issues/7483). Design only; nothing
-described here is implemented, and it deliberately changes no v4/v5 trigger
-behaviour.
+Status: **Shipped on `v6`** — all three phases, tracked on
+[#7483](https://github.com/hivecommons/hive/issues/7483). Phase 1 (poller,
+grammar, guards, `source=mention` kick, 👀 ack, audits) landed in
+[#7582](https://github.com/hivecommons/hive/pull/7582), phase 2 (in-thread
+replies through `Converse` when the summoned run completes) in
+[#7597](https://github.com/hivecommons/hive/pull/7597), and phase 3 (the
+webhook accelerator) in
+[#7623](https://github.com/hivecommons/hive/pull/7623) — `src/pkg/mention` on
+the `v6` branch. It changes no v4 or v5 trigger behaviour: that package does
+not exist on either line, so a v4 or v5 hive still has no inbound GitHub
+trigger.
 
-RFC credit: this page turns the proposal in #7483 into a reviewable plan without
+RFC credit: this page turned the proposal in #7483 into a reviewable plan before
 implementing it. Its core observation — that Hive already built the inbound
 mention model for Linear and never built the GitHub equivalent — is the
 organising idea below: mirror what exists, reuse every guard that already has a
@@ -307,17 +314,30 @@ From the issue, restated as boundaries this design must not cross:
 
 ## Open questions for maintainers
 
+**All three were decided before phase 1 landed, each the way this page
+proposed.** The questions are kept below as the record of what was weighed;
+the decision follows each one, with the code on `v6` that now carries it.
+
 1. **Role floor.** Is `read-write` the right default floor for summoning, or
    should the default be `merger` with `read-write` as an opt-down? The
    argument for `read-write`: a summon produces at most a comment. The argument
    for `merger`: a summon spends tokens on someone else's request.
+   **Decided: `read-write`, operator-overridable** — `DefaultMentionMinRole =
+   RoleReadWrite` with `GitHubMentionsConfig.MinRoleEffective()`,
+   `src/pkg/config/config.go` on `v6`.
 2. **PR review comments.** `pull_request_review_comment` mentions land inside a
    review thread; should the reply go in-thread (the #7360 reply path, capped
    by `max_attempts_per_thread`) or as a PR-level comment? In-thread is more
    useful and already guarded; it is proposed here.
+   **Decided: in-thread** — the phase 2 responder replies on the summoning
+   thread under a per-thread lock (`Responder.lockThread`,
+   `src/pkg/mention/responder.go` on `v6`).
 3. **Multi-agent selectors.** `ask <agent>` names one agent. Is fan-out
    (`ask scanner,quality`) wanted, or is one summon one agent? One is proposed:
    fan-out multiplies token spend under a stranger's control.
+   **Decided: one summon, one agent** — the parsed mention carries a single
+   `Agent string` (`src/pkg/mention/grammar.go` on `v6`); there is no fan-out
+   syntax.
 
 ## References
 

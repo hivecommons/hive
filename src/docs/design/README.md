@@ -20,16 +20,21 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
-- [Escalation surfaces: email and push](escalation-surfaces.md) — **design
-  only / proposed.** Track 6 of the v6 epic (#7563): a severity-routed
+- [Escalation surfaces: email and push](escalation-surfaces.md) — **partly
+  shipped (v6).** Track 6 of the v6 epic (#7563): a severity-routed
   `pkg/escalate` fan-out feeding SMTP mail (immediate escalations + daily
   digest) and push/on-call sinks (ntfy, Pushover, PagerDuty), with inbound
-  reply-to-act email deliberately last and defaulting off.
+  reply-to-act email deliberately last and defaulting off. The outbound half
+  landed on `v6` in [#7618](https://github.com/hivecommons/hive/pull/7618);
+  the inbound reply-to-act path is still unbuilt.
 
 - [Slack integration on the chat spine](slack-integration.md) — **shipped
   (v6).** Track 3 of the v6 epic (#7563): Socket Mode transport as a pure
   `chat.Backend`, mrkdwn translation at `Send`, fail-closed allowlist kept in
-  the spine. Phase PR A landed; Events API accelerator remains future work.
+  the spine. The backend landed on `v6` in
+  [#7585](https://github.com/hivecommons/hive/pull/7585), on the spine from
+  [#7572](https://github.com/hivecommons/hive/pull/7572); the Events API
+  accelerator remains future work.
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
 - [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **declined** (RFC #6235 closed; #6111 on hold).
@@ -114,7 +119,7 @@ that status is the thing to check before treating a page as current behaviour:
   timestamps and `InferenceSink` discards them, so persisting per-request usage
   with its timestamp would move Copilot from "structurally impossible" to
   phase 3's existing join, in `pkg/tokens` only and off the request path.
-- [GitHub @-mention triggers](github-mention-triggers.md) — **proposed for v6, design only.**
+- [GitHub @-mention triggers](github-mention-triggers.md) — **shipped (v6), all three phases.**
   The first inbound GitHub trigger: a human summons an agent by mentioning the
   App on an issue or PR, mirroring the Linear agent-session path
   (`pkg/linearagent`) that already exists. Poll-first transport so it works on
@@ -124,8 +129,11 @@ that status is the thing to check before treating a page as current behaviour:
   with no new outbound surface, and seven guards each mapped to a mechanism
   that already has a runtime (dashboard role list, `review_bots` loop list and
   per-thread cap, ioscan input enforcement). Records the #5591 lesson: the
-  channel type ships with its runtime or not at all. Credits RFC #7483 and
-  lists the maintainer questions still open.
+  channel type ships with its runtime or not at all. Credits RFC #7483. Phases
+  1–3 landed on `v6` in [#7582](https://github.com/hivecommons/hive/pull/7582),
+  [#7597](https://github.com/hivecommons/hive/pull/7597), and
+  [#7623](https://github.com/hivecommons/hive/pull/7623); the maintainer
+  questions the page raised are all answered there.
 - [Discord reaction-consensus issue promotion](discord-issue-promotion.md) — **proposed.**
   Design for turning Discord community reaction consensus into the same
   approval label that `project.issue_filter.require_labels` already uses, while

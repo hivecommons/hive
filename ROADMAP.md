@@ -16,7 +16,7 @@ plan (Now / Next / Later, item by item), see the
 | --- | --- | --- | --- |
 | v4 | `v4` (default) | Supported stable line | `stable`, `candidate` |
 | v5 | `v5` | Active development, RFC-gated | `edge` |
-| v6 | `v6` | Open line, early development, tracks v5 (see [v6 section](#v6--dashboard-optional-operation-line-open)) | none yet |
+| v6 | `v6` | Open line, tracks v5; the #7563 dashboard-optional tracks are merged on the branch (see [v6 section](#v6--dashboard-optional-operation-line-open)) | none yet |
 
 Operators select a line by pointing a hive at a
 [release channel](src/docs/release-channels.md) rather than a branch tag.
@@ -156,30 +156,55 @@ for replies, `ioscan` enforcement on all inbound text, and canary/secret
 scrubbing on all outbound text. No surface grows its own authz.
 
 Workstreams (details and sequencing in
-[#7563](https://github.com/hivecommons/hive/issues/7563)):
+[#7563](https://github.com/hivecommons/hive/issues/7563)). **Status below is
+`v6`-branch status, not a release claim** — none of this code exists on `v4`
+or `v5`, and no channel publishes v6 builds, so an operator tracking `stable`
+or `edge` does not have these surfaces:
 
-- **`pkg/chat` spine** — extract the transport-agnostic core of the
-  Discord bot (command router, dashboard REST/SSE client, notification
-  fan-out) so every chat backend shares one implementation.
+- **`pkg/chat` spine** — the transport-agnostic core of the Discord bot
+  (command router, dashboard REST/SSE client, notification fan-out) so every
+  chat backend shares one implementation. **Merged on `v6`**
+  ([#7572](https://github.com/hivecommons/hive/pull/7572)); `pkg/discord`
+  became transport-only in the same PR.
 - **Discord fix** — reconnect/backoff contract, heartbeat watchdog, and
-  parity with the operator surfaces the bot predates.
+  parity with the operator surfaces the bot predates. **Merged on `v6`**
+  ([#7586](https://github.com/hivecommons/hive/pull/7586)), as reconnect and
+  cancellation parity across every backend rather than a Discord-only fix.
 - **Slack** — Socket Mode first (works from pull-only clusters with no
-  public URL), Events API as a later accelerator.
+  public URL), Events API as a later accelerator. **Socket Mode merged on
+  `v6`** ([#7585](https://github.com/hivecommons/hive/pull/7585),
+  [design doc](src/docs/design/slack-integration.md)); the Events API
+  accelerator is not built.
 - **GitHub @-mention triggers** — a human summons an agent by mentioning
   the App on an issue or PR, mirroring the existing Linear inbound-mention
   path ([#7483](https://github.com/hivecommons/hive/issues/7483),
-  [design doc](src/docs/design/github-mention-triggers.md)). Lands in the
-  three phases the design names; GitHub Mobile becomes a hive remote for
-  free when phase 1 ships.
+  [design doc](src/docs/design/github-mention-triggers.md)). **All three
+  phases merged on `v6`** — poller and guards
+  ([#7582](https://github.com/hivecommons/hive/pull/7582)), in-thread replies
+  through `Converse` ([#7597](https://github.com/hivecommons/hive/pull/7597)),
+  webhook accelerator ([#7623](https://github.com/hivecommons/hive/pull/7623))
+  — which is also what makes GitHub Mobile a hive remote on that line.
 - **More chat backends** — Microsoft Teams, Matrix, Telegram, as
-  `chat.Backend` implementations once the spine merges.
+  `chat.Backend` implementations on the spine. **All three merged on `v6`**
+  ([#7621](https://github.com/hivecommons/hive/pull/7621),
+  [#7617](https://github.com/hivecommons/hive/pull/7617),
+  [#7616](https://github.com/hivecommons/hive/pull/7616)).
 - **Escalation surfaces** — email (outbound digest and HUMAN DECISION
   NEEDED escalation; allowlisted inbound reply-to-act) and push/on-call
   (ntfy / Pushover / PagerDuty) so a `requires_human` verdict pages a
-  person instead of waiting in a queue.
+  person instead of waiting in a queue. **Outbound merged on `v6`**
+  ([#7618](https://github.com/hivecommons/hive/pull/7618),
+  [design doc](src/docs/design/escalation-surfaces.md)): `pkg/escalate`
+  severity routing, SMTP sink with daily digest, and the three push sinks.
+  Inbound reply-to-act is still unbuilt, as the design sequenced it.
 - Named for later, not scheduled: Jira (mirroring the Linear agent), an
   IDE extension over the dashboard API, a subscribable calendar feed of
   scheduled kicks.
+
+With those tracks merged, what the line still owes is **release-path work,
+not features**: v6 publishes no channel today, so the surfaces above reach
+operators only when a v6 line ships or the work lands forward on a released
+line. That sequencing stays behind the v5 GA bar above.
 
 ## Hosted Hive Hub
 
