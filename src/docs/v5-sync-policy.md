@@ -40,6 +40,45 @@ v5's CI signal meaningful. The drift counter should usually return to zero; if
 it does not, the remaining commits must be named as intentional v5-only
 skips/divergences in the PR body.
 
+## Automated top-up workflows (`v5-topup.yml` / `v6-topup.yml`)
+
+The trigger above is implemented mechanically
+([#7297](https://github.com/hivecommons/hive/issues/7297)):
+[`.github/workflows/v5-topup.yml`](../../.github/workflows/v5-topup.yml)
+opens the v4 → v5 forward-merge PR automatically after every **successful
+"Tagged Release" run on `v4`**, with a daily scheduled run (`17 6 * * *` UTC)
+as a safety net for drift that arrives without a release tag (dependency
+bumps, revert traffic), plus `workflow_dispatch` for manual runs.
+`v6-topup.yml` does the same for the v5 → v6 hop. Three points of policy are
+encoded in the workflow rather than left to the operator:
+
+- **Conflicts are a human signal, not a retry.** When the merge conflicts,
+  the workflow fails instead of opening a PR
+  ([#7199](https://github.com/hivecommons/hive/issues/7199)) — a
+  forward-merge that resolves itself wrongly is worse than one that waits.
+  Nothing is pushed in that case, so re-running after a manual top-up is
+  safe.
+- **Feature freeze disarms it.** Once the repository variable
+  `V4_FEATURE_FREEZE` is set, the `top-up` job is skipped on every trigger —
+  release, schedule, and manual dispatch alike — and a `frozen` job records
+  why in the run summary. See the
+  [v4 freeze runbook](v4-freeze-runbook.md); `v6-topup` is unaffected.
+- **Workflow-file deltas need the `TOPUP_PUSH_TOKEN` secret.** The job's
+  `GITHUB_TOKEN` can never push commits touching `.github/workflows/**`, so
+  a sync range carrying workflow changes (dependabot action-pin bumps on
+  `v4` are the common case) requires the repo secret `TOPUP_PUSH_TOKEN` — a
+  fine-grained PAT with **Contents: write + Workflows: write**
+  ([#7959](https://github.com/hivecommons/hive/issues/7959)). When the
+  secret is set, the checkout pushes with it; when it is not, a preflight
+  step fails early — before anything is pushed — naming the touched workflow
+  files and the manual sync recipe. An operator standing up a fork or a new
+  release line must provision this secret or accept that those top-ups need
+  a hand-carried sync.
+
+The automation covers only the mechanical open. Ownership, the verification
+checklist, the PR body contract, and the review contract below apply to an
+automatically opened sync PR exactly as they do to a hand-opened one.
+
 ## Ownership
 
 - Syncs are owned by the maintainer group. Each sync PR still has a **single
