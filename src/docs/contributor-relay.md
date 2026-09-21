@@ -230,7 +230,7 @@ while keeping `--ask-for-approval`/`--sandbox` — prefer that over
 `HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1`, which removes the
 sandbox altogether.
 
-To change hubs for direct Compose, re-run the registration/setup flow for the target hub or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
+To change hubs for direct Compose, run `hivectl hives use <name>` (see [Named profiles](#named-profiles-instead-of-hand-edited-lists-hivectl-hives)), re-run the registration/setup flow for the target hub, or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
 
 Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables (`HIVE_LITELLM_ENDPOINT`, `HIVE_LITELLM_API_KEY` — exported locally, never sent to the hive).
 
@@ -394,6 +394,24 @@ The lists are positional: the first token belongs to the first hub, the second t
 
 The relay keeps a WebSocket and heartbeat for each subscribed hub, but shares one CLI/tmux session and works on only one task at a time. It rotates to another hub when the active hub has no assignable work. A task that is blocked on human action stays with its owning hub; the relay does not mix task state across hubs.
 
+### Named profiles instead of hand-edited lists (`hivectl hives`)
+
+Positional lists have no names, and one hand-edit that drops a field transposes every hub/token pair after it. `hivectl hives` ([#8097](https://github.com/hivecommons/hive/issues/8097)) saves the same set as named profiles in `~/.config/hive/profiles.yml` (mode 0600) and **generates** `contributor.env` from them, so the lists are aligned by construction and the relay keeps reading exactly the variables documented above:
+
+```bash
+hivectl hives list                                        # which hives, and which one is active
+hivectl hives add hive-b --hub wss://hive-b.example.com/contribute
+hivectl hives use hive-b                                  # make it the hub the relay starts on
+hivectl hives rename hive-b staging
+hivectl hives remove staging                              # asks you to type the name
+```
+
+The active profile is written first in each list, which is the hub the relay solicits from when it starts. A relay that is **already running** keeps its current hub until it is restarted (`just contribute-stop`, then `just contribute-hive`); switching a live relay is phase 2 of that issue.
+
+The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
+
+See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`).
+
 ## Moving the relay to another machine
 
 Nothing binds a contributor identity to a machine. Authentication is a plain token-hash lookup — no device binding, no IP pinning, no session affinity — so the same `contributor.env` authenticates from anywhere. Only one relay should run at a time per identity, but *which* machine it runs on is yours to choose: a desktop today, a VM or a sandbox tomorrow, and back again.
@@ -445,6 +463,8 @@ Keys `contribute-move` does not manage — `HIVE_LITELLM_ENDPOINT`, for instance
 ### Adding another hive to an existing setup
 
 That is not a move: run `contribute-setup` against the new hive with `HIVE_HUB` pointing at it. It appends to the hub, token, and id lists already in `contributor.env` rather than replacing them, so a working multi-hive setup survives. The previous file is kept at `contributor.env.bak`.
+
+`hivectl hives add <name> --hub <url>` does the same append with a name attached, once the machine is already set up — it performs only the registration POST, not the `gh` login or the backend CLI preflight. See [Named profiles](#named-profiles-instead-of-hand-edited-lists-hivectl-hives).
 
 ## Acting as a spoke agent role
 

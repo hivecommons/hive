@@ -1965,6 +1965,46 @@ contribute-status:
       echo ""
     done
 
+# Manage your named hive profiles: list (default), add, use, rename, remove
+contribute-hives *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Usage: just contribute-hives                      # same as: hivectl hives list
+    #        just contribute-hives use acme
+    #        just contribute-hives add acme --hub wss://acme.example/contribute
+    #
+    # An alias, not a reimplementation (#8097). The profiles live in
+    # {{config_dir}}/profiles.yml and contributor.env is generated from them;
+    # `hivectl hives` owns that logic, and this recipe only exists so the
+    # contributor workflow keeps one entry point. Anything this recipe did in
+    # shell would be a second implementation of the same file format, which is
+    # exactly how the positional lists drifted out of alignment in the first
+    # place.
+    # Capture the override BEFORE shadowing the name, or the loop below would
+    # only ever see the empty local value.
+    HIVECTL_OVERRIDE="${HIVECTL:-}"
+    HIVECTL=""
+    for candidate in "$HIVECTL_OVERRIDE" ./bin/hivectl "${HOME}/.local/bin/hivectl" /usr/local/bin/hivectl; do
+      if [[ -n "$candidate" && -x "$candidate" ]]; then HIVECTL="$candidate"; break; fi
+    done
+    if [[ -z "$HIVECTL" ]] && command -v hivectl &>/dev/null; then
+      HIVECTL="$(command -v hivectl)"
+    fi
+    if [[ -z "$HIVECTL" ]]; then
+      echo "ERROR: hivectl not found."
+      echo ""
+      echo "  From this checkout:   (cd src && go build -o ../bin/hivectl ./cmd/hivectl)"
+      echo "  From the Hive image:  see 'Getting the binary' in src/docs/hivectl.md"
+      echo "  Or set HIVECTL=/path/to/hivectl"
+      exit 1
+    fi
+    # No arguments is the question people actually have ("which hives do I have,
+    # and which one am I on?"), so default to the list.
+    if [[ -z "{{ARGS}}" ]]; then
+      exec "$HIVECTL" hives list
+    fi
+    exec "$HIVECTL" hives {{ARGS}}
+
 # Browse available Hive projects to contribute to
 contribute-browse:
     #!/usr/bin/env bash

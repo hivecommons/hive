@@ -582,6 +582,73 @@ the heartbeat project-config callback; otherwise the hub provisions a hosted
 lite spoke. Lite mode is advisory-only and capped at ACMM L2. It writes no
 repository PAT or long-lived secret.
 
+### hives — named profiles for the hives you contribute to
+
+```bash
+hivectl hives list                                            # active hive marked *
+hivectl hives list --check -o json                            # also probe each hub
+hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
+hivectl hives use acme
+hivectl hives rename acme acme-prod
+hivectl hives remove acme                                     # confirm, or --yes
+```
+
+`hives` is the one command group that does **not** talk to a dashboard API:
+it reads and writes your own contributor credentials, so `--server` and
+`--token-env` do not apply to it. Profiles live in
+`~/.config/hive/profiles.yml` (mode 0600), one named entry per hive:
+
+```yaml
+version: 1
+active: acme
+profiles:
+    - name: acme
+      hub: wss://acme.hive.hivecommons.dev/contribute
+      contributor_id: contrib_a1b2
+      registration_token: <secret>
+      session: review          # optional: HIVE_SESSION for this profile
+      added_at: 2026-09-21T10:00:00Z
+```
+
+`~/.config/hive/contributor.env` becomes a **generated projection** of that
+file. The relay, `src/compose-contributor.yaml` and `just contribute-k8s` keep
+reading the same `HIVE_HUB` / `HIVE_REGISTRATION_TOKEN` / `CONTRIBUTOR_ID`
+lists they always have; the active hive is written first in each, which is the
+hub the relay solicits from at startup (`activeHubIndex` 0 in
+`bin/contributor-relay.js`). Keys the projection does not own —
+`CONTRIBUTOR_USERNAME`, `AGENT_BACKEND`, `HIVE_LITELLM_ENDPOINT` — are carried
+across rather than dropped, and the previous file is kept at
+`contributor.env.bak`.
+
+The first `hivectl hives` command on a machine that still has the old
+positional `contributor.env` migrates it: entries are named after their hub
+host, and the first hub in the legacy list stays active, so a running relay is
+unaffected. Migration alone does not rewrite `contributor.env` — the
+projection is written only when a command actually changes your hives. A
+legacy file whose three lists disagree in length is **refused** rather than
+guessed at, because pairing a token with the wrong hub points a live
+credential at the wrong hive; fix the file (or re-run
+`just contribute-setup`) and try again.
+
+Notes:
+
+- **`use` needs a relay restart.** It reorders the projection; a relay already
+  running keeps its current hub until `just contribute-stop` and
+  `just contribute-hive`. Switching a live relay is
+  [#8097](https://github.com/hivecommons/hive/issues/8097) phase 2.
+- **`add` is the registration half of `contribute-setup` only.** It POSTs to
+  `<hub>/api/contribute/register` and appends the result; it does not run the
+  `gh` login or the backend CLI preflight, so a first-time machine still wants
+  `just contribute-setup <backend>`. No bearer credential is sent to the hub.
+- **Already registered elsewhere?** The register endpoint is unauthenticated,
+  so the hub will never hand an existing contributor's token back. Add the
+  credential you already hold instead:
+  `printf '%s' "$TOKEN" | hivectl hives add acme --hub <url> --token-stdin --contributor-id <id>`,
+  or move the identity with `just contribute-move`.
+- **Registration tokens are never printed**, in any `-o` format.
+- **`remove` discards a token the hub cannot reprint**, so it asks you to type
+  the hive name unless `--yes` is given.
+
 ## Input and safety
 
 - Write commands take `--file <path>` or `--stdin` (JSON or YAML).
