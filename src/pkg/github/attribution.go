@@ -142,6 +142,11 @@ type InvocationMeta struct {
 	// and notified. Empty when the rationale issues were all hive-filed or
 	// could not be read: the trail records who ASKED, never guesses.
 	RequestedBy string
+	// StandbyLane/StandbyTier mark donated standby work. They are launch
+	// descriptors like the fields above: the lane whose paused queue donated the
+	// item and the contributor configuration tier that qualified at dispatch.
+	StandbyLane string
+	StandbyTier string
 }
 
 // pairs returns the known metadata as ordered key/value pairs, omitting
@@ -170,6 +175,8 @@ func (m InvocationMeta) pairs() []string {
 	if login := strings.TrimPrefix(strings.TrimSpace(m.RequestedBy), "@"); login != "" {
 		kv = append(kv, "requested_by", "@"+login)
 	}
+	add("standby_lane", m.StandbyLane)
+	add("standby_tier", m.StandbyTier)
 	return kv
 }
 

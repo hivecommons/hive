@@ -88,6 +88,7 @@ type ReadyQueueItem struct {
 	Title  string   `json:"title"`
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
+	Lane   string   `json:"lane,omitempty"`
 	// Key, SourceType and ExternalID carry the item's canonical, source-aware
 	// identity (kubestellar/hive#4245). All three are additive and omitempty, so
 	// a GitHub-only hive's payload is byte-for-byte what it was.
@@ -458,6 +459,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
+			lane, _ := issue["lane"].(string)
 			assignees := stringSliceFromAny(issue["assignees"])
 
 			// Apply the SAME admission filters selectTask enforces so the queue
@@ -490,6 +492,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				Title:      title,
 				URL:        url,
 				Labels:     labels,
+				Lane:       lane,
 			})
 		})
 	}

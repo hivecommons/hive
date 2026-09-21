@@ -342,7 +342,10 @@ type WSMessage struct {
 	Title   string   `json:"title,omitempty"`
 	URL     string   `json:"url,omitempty"`
 	Labels  []string `json:"labels,omitempty"`
-	Prompt  string   `json:"prompt,omitempty"`
+	// StandbyLane and StandbyTier mark donated standby assignments.
+	StandbyLane string `json:"standby_lane,omitempty"`
+	StandbyTier string `json:"standby_tier,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
 	// Requirements carries the hub-derived task-side capability requirements
 	// used by #2547 routing. Additive and advisory: older relays ignore it, and
 	// enforcement already happened server-side before assignment.
@@ -495,6 +498,11 @@ type WSTaskAssign struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	// StandbyLane and StandbyTier mark a manually dispatched donated standby
+	// task. Empty on ordinary contributor assignments, so older relays and all
+	// non-standby work keep the existing envelope byte-for-byte.
+	StandbyLane string `json:"standby_lane,omitempty"`
+	StandbyTier string `json:"standby_tier,omitempty"`
 	// Key, SourceType, ExternalID and URL carry the assigned item's canonical,
 	// source-aware identity (kubestellar/hive#4245). Additive and omitempty: a
 	// GitHub assignment is byte-for-byte what it was, and Number keeps its
@@ -723,7 +731,12 @@ type ContributeWSHub struct {
 	persistActivity    bool
 	persistTaskLedgers bool
 	completedMu        sync.Mutex
-	selectMu           sync.Mutex
+	// standbyDispatches records manual donated dispatches inside the rolling
+	// standby daily-cap window. The cap decrements at dispatch, not completion,
+	// so abandoned donated work still consumes a slot.
+	standbyDispatches map[string][]time.Time
+	standbyMu         sync.Mutex
+	selectMu          sync.Mutex
 	// assignmentTimes records, per contributor identity (identityOf), the wall-clock
 	// times of the task_assign messages that identity has been handed. It backs the
 	// #2436/#2566 per-tier rate gate: tier_limits.max_per_hour / max_per_day were
@@ -859,6 +872,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		asyncActivitySave:         asyncActivitySave,
 		persistActivity:           activityPersistenceEnabled,
 		persistTaskLedgers:        taskLedgerPersistenceEnabled,
+		standbyDispatches:         make(map[string][]time.Time),
 		assignmentTimes:           make(map[string][]time.Time),
 		contributorFailureStreaks: make(map[string]contributorFailureStreak),
 		leases:                    make(map[string]*taskLease),
@@ -2512,6 +2526,49 @@ func normalizeStandbyLanes(lanes []string) []string {
 	return out
 }
 
+func standbyDispatchKey(contributor, lane string) string {
+	return strings.ToLower(strings.TrimSpace(contributor)) + "\x00" + strings.ToLower(strings.TrimSpace(lane))
+}
+
+func (h *ContributeWSHub) standbyDispatchWindow(contributor, lane string, now time.Time) []time.Time {
+	if h == nil {
+		return nil
+	}
+	key := standbyDispatchKey(contributor, lane)
+	cutoff := now.Add(-rateLimitDayWindow)
+	h.standbyMu.Lock()
+	defer h.standbyMu.Unlock()
+	if h.standbyDispatches == nil {
+		h.standbyDispatches = map[string][]time.Time{}
+	}
+	times := h.standbyDispatches[key]
+	kept := times[:0]
+	for _, at := range times {
+		if !at.Before(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) == 0 {
+		delete(h.standbyDispatches, key)
+		return nil
+	}
+	h.standbyDispatches[key] = kept
+	return append([]time.Time(nil), kept...)
+}
+
+func (h *ContributeWSHub) recordStandbyDispatch(contributor, lane string, at time.Time) {
+	if h == nil {
+		return
+	}
+	key := standbyDispatchKey(contributor, lane)
+	h.standbyMu.Lock()
+	if h.standbyDispatches == nil {
+		h.standbyDispatches = map[string][]time.Time{}
+	}
+	h.standbyDispatches[key] = append(h.standbyDispatches[key], at)
+	h.standbyMu.Unlock()
+}
+
 // QualifiedStandbyCounts is the M in each paused lane's "N waiting, M qualify".
 //
 // laneItems carries each lane's queued work, keyed by lane, so the count can
@@ -2553,6 +2610,7 @@ func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string, laneItems map[s
 			candidates = append(candidates, standbypkg.Candidate{
 				Contributor: conn.profile.GitHubUsername,
 				Approved:    cfg.Hub.IsStandbyContributorApproved(conn.profile.GitHubUsername),
+				Dispatches:  h.standbyDispatchWindow(conn.profile.GitHubUsername, lane, now),
 				Config: standbypkg.Configuration{
 					Backend:         state.CLIBackend,
 					Model:           state.Model,
@@ -3167,27 +3225,43 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			}
 			if prDetail.Verified {
 				verifiedPR = msg.PRURL
-				// Off the read loop, deliberately. This is cosmetic
-				// best-effort work that gates NOTHING — unlike
-				// verifyReportedPR above, whose result decides the cooldown
-				// and trust credit and so must be awaited. Inline it would
-				// add up to two GitHub round trips (bounded by the App
-				// client's 30s timeout, so ~60s worst case) to this
-				// contributor's message loop, during which its pongs are not
-				// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
-				// push a perfectly healthy contributor to `Stale` in the
-				// fleet view for the sake of a PR-body edit.
-				go h.reconcilePRAttribution(msg.PRURL, s.contributor)
-				// A MERGED fix retires the finding it addresses, so the
-				// digest stops carrying work that is already done. Gated
-				// on prDetail.Merged, not on verification alone: a PR
-				// that merely exists is a fix in review, and closing
-				// findings on it would retire them before anything
-				// landed. The PR's OWN title is matched — the
-				// assignment's issue title would match the finding it
-				// was minted from on the mere existence of a PR.
-				if prDetail.Merged {
-					h.closeAdvisoryForMergedPR(prDetail.Title)
+				if completedTask != nil && completedTask.StandbyLane != "" {
+					if err := h.applyDonatedHold(msg.PRURL); err != nil {
+						h.logger.Warn("[contribute-ws] donated standby PR verified but hold label failed; completion will not settle as shipped",
+							"username", s.contributor.profile.GitHubUsername,
+							"task", msg.TaskID,
+							"pr_url", msg.PRURL,
+							"standby_lane", completedTask.StandbyLane,
+							"error", err)
+						h.recordDecision(s.contributor.profile.GitHubUsername, decisionRefused,
+							msg.TaskID, completedTask.Repo, completedTask.Number,
+							"donated standby PR verified but required hold label failed: "+err.Error())
+						verifiedPR = ""
+					}
+				}
+				if verifiedPR != "" {
+					// Off the read loop, deliberately. This is cosmetic
+					// best-effort work that gates NOTHING — unlike
+					// verifyReportedPR above, whose result decides the cooldown
+					// and trust credit and so must be awaited. Inline it would
+					// add up to two GitHub round trips (bounded by the App
+					// client's 30s timeout, so ~60s worst case) to this
+					// contributor's message loop, during which its pongs are not
+					// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
+					// push a perfectly healthy contributor to `Stale` in the
+					// fleet view for the sake of a PR-body edit.
+					go h.reconcilePRAttribution(msg.PRURL, s.contributor)
+					// A MERGED fix retires the finding it addresses, so the
+					// digest stops carrying work that is already done. Gated
+					// on prDetail.Merged, not on verification alone: a PR
+					// that merely exists is a fix in review, and closing
+					// findings on it would retire them before anything
+					// landed. The PR's OWN title is matched — the
+					// assignment's issue title would match the finding it
+					// was minted from on the mere existence of a PR.
+					if prDetail.Merged {
+						h.closeAdvisoryForMergedPR(prDetail.Title)
+					}
 				}
 			}
 			// #3987: normalize the completion's verdict. A verified PR always

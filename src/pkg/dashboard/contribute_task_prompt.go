@@ -557,5 +557,31 @@ func promptInvocationMeta(c *ContributorConnection) ghpkg.InvocationMeta {
 		Model:   ghpkg.RequestedModel(c.cliBackend, c.model),
 		Effort:  c.reasoningEffort,
 	}
+	if c.currentTask != nil {
+		meta.StandbyLane = c.currentTask.StandbyLane
+		meta.StandbyTier = c.currentTask.StandbyTier
+	}
 	return meta
+}
+
+func buildStandbyTaskPrompt(base, lane, policy string) string {
+	lane = strings.TrimSpace(lane)
+	policy = strings.TrimSpace(policy)
+	if lane == "" && policy == "" {
+		return base
+	}
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString(" This is donated standby work")
+	if lane != "" {
+		b.WriteString(" for the ")
+		b.WriteString(lane)
+		b.WriteString(" lane")
+	}
+	b.WriteString(". Open the PR ready for review and expect it to be held for the owner; never merge it yourself.")
+	if policy != "" {
+		b.WriteString(" Lane policy: ")
+		b.WriteString(policy)
+	}
+	return b.String()
 }

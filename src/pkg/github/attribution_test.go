@@ -99,6 +99,14 @@ func TestAttributionTrailer_AllUnknownRendersEmpty(t *testing.T) {
 	}
 }
 
+func TestAttributionTrailer_StandbyPairs(t *testing.T) {
+	m := InvocationMeta{Agent: "quality", Backend: "claude", Model: "opus", StandbyLane: "quality", StandbyTier: "T2"}
+	want := "— hive: agent=quality backend=claude model=opus standby_lane=quality standby_tier=T2"
+	if got := m.Trailer(); got != want {
+		t.Errorf("Trailer() = %q, want %q", got, want)
+	}
+}
+
 func TestAppendTrailer(t *testing.T) {
 	m := InvocationMeta{Agent: "quality", Backend: "copilot"}
 	got := AppendTrailer("Fixes #1\n", m)

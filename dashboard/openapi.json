@@ -854,7 +854,11 @@
                     },
                     "tracking": {
                       "type": "string",
-                      "enum": ["floating", "pinned", "unknown"],
+                      "enum": [
+                        "floating",
+                        "pinned",
+                        "unknown"
+                      ],
                       "description": "Shared Hive image-tracking classification, independent of the channel and running commit"
                     },
                     "dirty": {
@@ -18448,7 +18452,7 @@
           "Status"
         ],
         "summary": "List the repositories currently paused",
-        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it — the same state is already on the repository cards.",
+        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it \u2014 the same state is already on the repository cards.",
         "responses": {
           "200": {
             "description": "Current repo pauses",
@@ -19234,6 +19238,76 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/contribute/standby/dispatch": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Manually dispatch ready work to standby",
+        "description": "Owner/read-write control for standby S5. Dispatches one ready queue item (identified by key, or the first item in a lane) to a qualified approved standby contributor. Refuses lanes whose ACMM mode ceiling cannot create PRs; no automatic dispatch is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "lane": {
+                    "type": "string",
+                    "description": "Standby lane to dispatch from, for example quality"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "Optional canonical work item key (owner/repo#number) for per-item dispatch"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Standby task assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "standby_lane": {
+                      "type": "string"
+                    },
+                    "standby_tier": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No dispatchable item or no qualified standby contributor"
+          },
+          "403": {
+            "description": "Read-only caller or lane mode ceiling forbids PRs"
+          },
+          "503": {
+            "description": "Contribute hub not ready"
           }
         }
       }

@@ -188,15 +188,15 @@ func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
 // TestStaticTerminalHostedApexWiring pins the two hosted-hive terminal defects
 // that shipped alongside the proxy's single-apex /terminal gate.
 //
-// 1. isHostedHiveHost() suffix-matched ONE hardcoded apex, so on the rebranded
-//    hive.hivecommons.dev fleet renewTerminalAssertion() returned early, the
-//    15-minute hive_terminal_assertion expired with nothing to refresh it, and
-//    ttyd's next reconnect was rejected.
-// 2. dashboardTokenConfigured() mapped EVERY non-OK response to "a shared token
-//    IS configured". A hosted hive has no shared token and answers
-//    /api/auth/token with 404, so when the handoff failed openTerminal() took
-//    the tab.close() branch instead of falling back to the plain terminal URL —
-//    the operator sees a tab flash open and vanish.
+//  1. isHostedHiveHost() suffix-matched ONE hardcoded apex, so on the rebranded
+//     hive.hivecommons.dev fleet renewTerminalAssertion() returned early, the
+//     15-minute hive_terminal_assertion expired with nothing to refresh it, and
+//     ttyd's next reconnect was rejected.
+//  2. dashboardTokenConfigured() mapped EVERY non-OK response to "a shared token
+//     IS configured". A hosted hive has no shared token and answers
+//     /api/auth/token with 404, so when the handoff failed openTerminal() took
+//     the tab.close() branch instead of falling back to the plain terminal URL —
+//     the operator sees a tab flash open and vanish.
 func TestStaticTerminalHostedApexWiring(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {

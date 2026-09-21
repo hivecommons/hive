@@ -10,38 +10,46 @@ import (
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
 )
 
-func TestQualifiedStandbyCountsPausedLane(t *testing.T) {
-	cfg := &config.Config{
+func standbyTestConfig() *config.Config {
+	return &config.Config{
 		Agents: map[string]config.AgentConfig{"quality": {Standby: &config.StandbyConfig{MinModelCapability: "T2", DailyCapPerContributor: 1}}},
 		Hub: config.HubConfig{
 			StandbyContributors: []string{"alice"},
 			StandbyModelTiers:   []config.StandbyModelTier{{Backend: "claude", Model: "opus", ReasoningEffort: "high", Tier: "T2"}},
 		},
 	}
-	s := &Server{deps: &Dependencies{Config: cfg}, logger: slog.Default()}
-	h := NewContributeWSHub(slog.Default(), s)
+}
+
+func addStandbyConnection(h *ContributeWSHub, username string, approved bool) {
 	h.mu.Lock()
-	h.connections["c1"] = &ContributorConnection{
-		profile:         &ContributorProfile{GitHubUsername: "alice"},
+	defer h.mu.Unlock()
+	model := "opus"
+	effort := "high"
+	if !approved {
+		effort = ""
+	}
+	h.connections[username] = &ContributorConnection{
+		profile:         &ContributorProfile{GitHubUsername: username},
 		cliBackend:      "claude",
-		model:           "opus",
-		reasoningEffort: "high",
+		model:           model,
+		reasoningEffort: effort,
 		standby: map[string]StandbyConnectionState{"quality": {
 			Lane:            "quality",
 			CLIBackend:      "claude",
-			Model:           "opus",
-			ReasoningEffort: "high",
+			Model:           model,
+			ReasoningEffort: effort,
 			DailyCap:        1,
 			UpdatedAt:       time.Now(),
 		}},
 	}
-	h.connections["c2"] = &ContributorConnection{
-		profile:    &ContributorProfile{GitHubUsername: "mallory"},
-		cliBackend: "claude",
-		model:      "opus",
-		standby:    map[string]StandbyConnectionState{"quality": {Lane: "quality", CLIBackend: "claude", Model: "opus"}},
-	}
-	h.mu.Unlock()
+}
+
+func TestQualifiedStandbyCountsPausedLane(t *testing.T) {
+	cfg := standbyTestConfig()
+	s := &Server{deps: &Dependencies{Config: cfg}, logger: slog.Default()}
+	h := NewContributeWSHub(slog.Default(), s)
+	addStandbyConnection(h, "alice", true)
+	addStandbyConnection(h, "mallory", false)
 	// No item-tier list on this hive, so item-tier matching is not in force
 	// and this is S4's count: the lane floor decides alone.
 	counts := h.QualifiedStandbyCounts([]string{"quality"}, nil)
@@ -134,5 +142,32 @@ func TestStandbyLaneItemsSplitsTheQueueByLane(t *testing.T) {
 	}
 	if standbyLaneItems(nil, actionable) != nil || standbyLaneItems([]string{"quality"}, nil) != nil {
 		t.Error("standbyLaneItems must be nil when there is no lane or no enumeration to project")
+	}
+}
+
+func TestQualifiedStandbyCountsDecrementsCapOnDispatch(t *testing.T) {
+	cfg := standbyTestConfig()
+	s := &Server{deps: &Dependencies{Config: cfg}, logger: slog.Default()}
+	h := NewContributeWSHub(slog.Default(), s)
+	addStandbyConnection(h, "alice", true)
+	h.recordStandbyDispatch("alice", "quality", time.Now())
+	counts := h.QualifiedStandbyCounts([]string{"quality"}, nil)
+	if counts["quality"] != 0 {
+		t.Fatalf("qualified count after dispatch = %d, want 0", counts["quality"])
+	}
+}
+
+func TestStandbyModeCeilingRefusesNonPRLane(t *testing.T) {
+	level := 2
+	cfg := &config.Config{
+		ACMMLevel: &level,
+		Agents:    map[string]config.AgentConfig{"quality": {Mode: "ADVISORY"}},
+	}
+	if got := standbyModeCeilingReason(cfg, "quality"); got == "" {
+		t.Fatal("standbyModeCeilingReason = empty, want refusal")
+	}
+	cfg.Agents["quality"] = config.AgentConfig{Mode: "ISSUES_AND_PRS"}
+	if got := standbyModeCeilingReason(cfg, "quality"); got != "" {
+		t.Fatalf("standbyModeCeilingReason = %q, want allowed", got)
 	}
 }

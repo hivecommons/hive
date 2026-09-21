@@ -175,6 +175,10 @@ func (s *Server) registerContributeRoutes() {
 	// operator does not have to Resume parked issues one at a time. Same owner/read-
 	// write gate and refreshAndPersist path as the single-issue hold endpoint above.
 	s.mux.HandleFunc("POST /api/contribute/queue/hold/clear", s.handleContributeQueueHoldClear)
+	// Manual standby dispatch (S5): owner/read-write only, no automatic path.
+	// Body: {"lane":"quality","key":"owner/repo#123"}; omitting key dispatches
+	// the first ready item in the lane.
+	s.mux.HandleFunc("POST /api/contribute/standby/dispatch", s.handleContributeStandbyDispatch)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,

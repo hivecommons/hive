@@ -1007,7 +1007,7 @@ func TestRegisterBuiltinCommands_AllPresent(t *testing.T) {
 	b.client = ts.Client()
 	b.registerBuiltinCommands()
 
-	expected := []string{"status", "governor", "help", "kick", "pause", "resume"}
+	expected := []string{"status", "governor", "help", "kick", "pause", "resume", "standby"}
 	b.mu.RLock()
 	for _, cmd := range expected {
 		if _, ok := b.commands[cmd]; !ok {
