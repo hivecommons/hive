@@ -216,8 +216,21 @@ jobs:
           set -euo pipefail
           command -v gh >/dev/null 2>&1 && exit 0
           VER=2.63.2
+          # #7976: pin and verify unconditionally (the v2-ci.yml `just`
+          # convention). This job's checkout persists a push credential — a
+          # workflows-write PAT when TOPUP_PUSH_TOKEN is set — so an
+          # unverified binary here would run with the repo's most powerful
+          # CI token in its working tree. Values from gh_${VER}_checksums.txt.
+          SHA256_amd64=912fdb1ca29cb005fb746fc5d2b787a289078923a29d0f9ec19a0b00272ded00
+          SHA256_arm64=0f31e2a8549c64b5c1679f0b99ce5e0dac7c91da9e86f6246adb8805b0f0b4bb
           ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          case "$ARCH" in
+            amd64) SHA256="$SHA256_amd64" ;;
+            arm64) SHA256="$SHA256_arm64" ;;
+            *) echo "::error::no pinned gh checksum for arch ${ARCH}"; exit 1 ;;
+          esac
           curl -fsSL "https://github.com/cli/cli/releases/download/v${VER}/gh_${VER}_linux_${ARCH}.tar.gz" -o /tmp/gh.tgz
+          echo "${SHA256}  /tmp/gh.tgz" | sha256sum -c -
           tar -xzf /tmp/gh.tgz -C /tmp
           mkdir -p "$HOME/.local/bin"
           install "/tmp/gh_${VER}_linux_${ARCH}/bin/gh" "$HOME/.local/bin/gh"

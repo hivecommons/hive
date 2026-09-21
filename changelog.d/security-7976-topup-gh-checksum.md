@@ -1,0 +1,1 @@
+- v5/v6 Top-up workflows verify the pinned SHA-256 of the `gh` CLI tarball before installing it, matching the `just` download convention in v2-ci.yml; the job's checkout can hold a workflows-write credential, so an unverified binary there was an unsafe supply-chain pattern (#7976).
