@@ -21,7 +21,6 @@ on:
   # v5" — there is no v4 behavior to mirror for this workflow.
   push:
     branches:
-      - v2
       - v4
       - v5
     paths:
@@ -31,7 +30,6 @@ on:
       - '.github/workflows/podman-contract.yml'
   pull_request:
     branches:
-      - v2
       - v4
       - v5
     paths:

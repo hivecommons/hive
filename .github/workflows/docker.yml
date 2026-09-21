@@ -125,7 +125,7 @@ jobs:
           # (stable moves only via promote-stable.yml after soak), v6 publishes
           # edge, v4 is maintenance and publishes no channel — see the
           # RELEASE_BRANCH/CHANNELS args on each publish step below.
-          LONG_LIVED: "v2 v4 v5 mk dd v6"
+          LONG_LIVED: "v4 v5 mk dd v6"
           REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
           TARGET_SHA: ${{ inputs.release_sha || github.sha }}
