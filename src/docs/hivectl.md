@@ -642,6 +642,9 @@ hivectl hives list                                            # active hive mark
 hivectl hives list --check -o json                            # also probe each hub
 hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
 hivectl hives use acme
+hivectl hives export acme --out acme.hive-profile
+hivectl hives import acme.hive-profile --name acme-laptop
+hivectl hives session acme --label review
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
 ```
@@ -708,6 +711,14 @@ Notes:
   credential you already hold instead:
   `printf '%s' "$TOKEN" | hivectl hives add acme --hub <url> --token-stdin --contributor-id <id>`,
   or move the identity with `just contribute-move`.
+- **Moving a profile to another machine:** `hivectl hives export <name> --out
+  <file>` writes one passphrase-encrypted bundle. On the other machine,
+  `hivectl hives import <file> [--name <new-name>]` decrypts, validates and
+  appends it. The registration token is never printed unless you already hold
+  it and explicitly feed it to `add --token-stdin`.
+- **Two sessions on one hive:** `hivectl hives session <name> --label <label>
+  [--name <new-name>]` copies a profile and sets `session`, so the projection
+  carries `HIVE_SESSION=<label>` only when that copied profile is active.
 - **Registration tokens are never printed**, in any `-o` format.
 - **`remove` discards a token the hub cannot reprint**, so it asks you to type
   the hive name unless `--yes` is given.

@@ -562,6 +562,8 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 	// a single-session contributor keeps the behaviour they had.
 	if active := set.ActiveProfile(); active != nil && active.Session != "" {
 		env.set("HIVE_SESSION", active.Session)
+	} else {
+		env.unset("HIVE_SESSION")
 	}
 
 	if _, statErr := os.Stat(s.EnvPath()); statErr == nil {
@@ -665,6 +667,18 @@ func (f *envFile) set(key, value string) {
 	}
 	if !replaced {
 		out = append(out, prefix+value)
+	}
+	f.lines = out
+}
+
+func (f *envFile) unset(key string) {
+	prefix := key + "="
+	out := make([]string, 0, len(f.lines))
+	for _, line := range f.lines {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			continue
+		}
+		out = append(out, line)
 	}
 	f.lines = out
 }

@@ -312,6 +312,84 @@ func TestHivesUseUnknownName(t *testing.T) {
 	}
 }
 
+func TestHivesExportImportRoundTripEncrypted(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	bundle := filepath.Join(h.dir, "acme.hive-profile")
+
+	if err := h.run(t, "passphrase\n", "hives", "export", "acme", "--out", bundle, "--passphrase-stdin"); err != nil {
+		t.Fatalf("hives export: %v", err)
+	}
+	data, err := os.ReadFile(bundle)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	if strings.Contains(string(data), "tok-acme") {
+		t.Fatalf("encrypted bundle contains plaintext token:\n%s", data)
+	}
+
+	h2 := newHivesHarness(t)
+	if err := h2.run(t, "passphrase\n", "hives", "import", bundle, "--name", "acme-copy", "--passphrase-stdin", "--activate"); err != nil {
+		t.Fatalf("hives import: %v", err)
+	}
+	set := h2.profiles(t)
+	got, _ := set.Find("acme-copy")
+	if got == nil {
+		t.Fatal("imported profile not found")
+	}
+	if got.RegistrationToken != "tok-acme" || got.ContributorID != "c1" || set.Active != "acme-copy" {
+		t.Fatalf("imported profile mismatch: active=%q profile=%+v", set.Active, got)
+	}
+	if !strings.Contains(h2.env(t), "HIVE_HUB=wss://acme.example/contribute") {
+		t.Fatalf("projection was not written:\n%s", h2.env(t))
+	}
+}
+
+func TestHivesImportWrongPassphraseDoesNotWrite(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	bundle := filepath.Join(h.dir, "acme.hive-profile")
+	if err := h.run(t, "right\n", "hives", "export", "acme", "--out", bundle, "--passphrase-stdin"); err != nil {
+		t.Fatalf("hives export: %v", err)
+	}
+
+	h2 := newHivesHarness(t)
+	err := h2.run(t, "wrong\n", "hives", "import", bundle, "--passphrase-stdin")
+	if err == nil || !strings.Contains(err.Error(), "wrong passphrase") {
+		t.Fatalf("error = %v, want wrong passphrase", err)
+	}
+	if _, statErr := os.Stat(h2.store.Path()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("profiles file was written after failed import: %v", statErr)
+	}
+}
+
+func TestHivesSessionCopiesProfileWithLabel(t *testing.T) {
+	h := newHivesHarness(t)
+	h.seed(t, twoHives())
+	h.writeEnv(t, "HIVE_REGISTRATION_TOKEN=tok-acme,tok-other\nHIVE_HUB=wss://acme.example/contribute,wss://other.example/contribute\nCONTRIBUTOR_ID=c1,c2\nHIVE_SESSION=stale\n")
+
+	if err := h.run(t, "", "hives", "session", "acme", "--label", "review", "--activate"); err != nil {
+		t.Fatalf("hives session: %v", err)
+	}
+	set := h.profiles(t)
+	got, _ := set.Find("acme-review")
+	if got == nil || got.Session != "review" || got.RegistrationToken != "tok-acme" {
+		t.Fatalf("session profile mismatch: %+v", got)
+	}
+	if set.Active != "acme-review" {
+		t.Fatalf("active = %q, want acme-review", set.Active)
+	}
+	if !strings.Contains(h.env(t), "HIVE_SESSION=review") {
+		t.Fatalf("active session label not projected:\n%s", h.env(t))
+	}
+	if err := h.run(t, "", "hives", "use", "other"); err != nil {
+		t.Fatalf("hives use other: %v", err)
+	}
+	if strings.Contains(h.env(t), "HIVE_SESSION=") {
+		t.Fatalf("session label from previous active profile leaked into projection:\n%s", h.env(t))
+	}
+}
+
 func TestHivesAddRegistersAndAppends(t *testing.T) {
 	h := newHivesHarness(t)
 	h.seed(t, twoHives())

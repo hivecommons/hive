@@ -128,6 +128,47 @@ func TestLoadHubsSeenErrors(t *testing.T) {
 	}
 }
 
+func TestValidateHubURLErrors(t *testing.T) {
+	tests := []string{
+		"",
+		" wss://a.example/contribute",
+		"ftp://a.example/contribute",
+		"wss:///contribute",
+		"wss://a.example/contribute,wss://b.example/contribute",
+	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			if err := ValidateHubURL(input); err == nil {
+				t.Fatalf("ValidateHubURL(%q) succeeded, want error", input)
+			}
+		})
+	}
+}
+
+func TestEnvFileUnsetAndRender(t *testing.T) {
+	env := &envFile{lines: []string{"A=1", "HIVE_SESSION=review", "B=2", "HIVE_SESSION=stale"}}
+	env.unset("HIVE_SESSION")
+	if got := string(env.render()); got != "A=1\nB=2\n" {
+		t.Fatalf("render after unset = %q", got)
+	}
+	if got := string((&envFile{}).render()); got != "" {
+		t.Fatalf("empty render = %q, want empty string", got)
+	}
+}
+
+func TestProfileStoreWriteFileReportsCreateDirError(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	store := NewProfileStore(filepath.Join(blocker, "child"))
+	if err := store.Save(&ProfileSet{Profiles: []Profile{{Name: "a", Hub: "wss://a.example/contribute", RegistrationToken: "t"}}}); err == nil ||
+		!strings.Contains(err.Error(), "create hive config dir") {
+		t.Fatalf("Save error = %v, want create dir error", err)
+	}
+}
+
 func TestProfileStoreLoadMissingFileIsNotAnError(t *testing.T) {
 	set, err := NewProfileStore(t.TempDir()).Load()
 	if err != nil {

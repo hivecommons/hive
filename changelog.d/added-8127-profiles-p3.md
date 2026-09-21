@@ -1,0 +1,1 @@
+- `hivectl hives export`, `import`, and `session` now move a named hive profile as a passphrase-encrypted bundle and create separate named session profiles for running two relays against one hive (#8127).

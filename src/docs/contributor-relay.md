@@ -275,6 +275,8 @@ HIVE_SESSION=claude-b just contribute-hive claude   # terminal 2
 
 The labels must be distinct: two same-backend relays with identical labels (including the identical *default* label) share one session identity and collide on a single active-task slot, exactly as if no label were set.
 
+With named profiles, use `hivectl hives session <name> --label <label>` to make the second session explicit in `profiles.yml` instead of exporting `HIVE_SESSION` by hand. The command copies the selected hive profile under a new name (default `<name>-<label>`) and stores the session label there; `hivectl hives use <session-profile>` projects that label as `HIVE_SESSION` for the active relay.
+
 What the session label does **not** scope: auth, trust tier, model admission, and rate-limit accounting all stay per-account. Extra sessions share your account's rate limits — this is a way to run several backends concurrently, not a way to get more throughput headroom.
 
 Notes:
@@ -428,19 +430,21 @@ Nothing binds a contributor identity to a machine. Authentication is a plain tok
 
 What you cannot do is re-run `contribute-setup` on the new machine. `POST /api/contribute/register` is unauthenticated and identifies you by a self-asserted GitHub username, so it will never hand back an existing contributor's token — otherwise POSTing someone else's username would be an account takeover. It answers "already registered" and stops. That is correct; the two supported ways round it are below.
 
-### Option 1 — copy the credential (keeps the old machine working)
+### Option 1 — export/import one named profile (keeps the old machine working)
 
-Copy both files. `contribute-hive` hard-requires each of them and refuses to start without either:
+Export the named hive profile on the old machine and import it on the new one:
 
 ```bash
-scp old-machine:~/.config/hive/contributor.env ~/.config/hive/
-scp old-machine:~/.config/hive/gh-auth.env     ~/.config/hive/
-chmod 600 ~/.config/hive/contributor.env ~/.config/hive/gh-auth.env
+hivectl hives export acme --out acme.hive-profile
+# copy acme.hive-profile by your normal file-transfer path
+hivectl hives import acme.hive-profile --name acme-laptop
 ```
 
-**Copying is the only way to *reuse* a registration token.** The hive stores only a SHA-256 hash of it and clears the plaintext after the first read, so no endpoint can print it again — not the dashboard, not the API, not the hive administrator.
+The bundle is passphrase-encrypted and contains one profile: hub URL, contributor id, optional session label and the registration token. The token is never printed in any `hivectl` output. You still need the backend and GitHub credentials on the new machine (`gh auth login`, backend CLI login, or your usual dotfile/bootstrap path); the profile bundle replaces hand-copying `contributor.env`.
 
-Use this when you want to switch back and forth, or to try the VM before committing to it. The cost is that the credential now exists in two places: delete both files on the machine you are moving off once the new one works.
+**Export/import is the only way to *reuse* a registration token without copying raw files.** The hive stores only a SHA-256 hash of the token and clears the plaintext after the first read, so no endpoint can print it again — not the dashboard, not the API, not the hive administrator.
+
+Use this when you want to switch back and forth, or to try the VM before committing to it. The cost is that the credential now exists in two places: remove the imported profile or the old profile once you no longer want both machines able to connect as the same contributor id.
 
 ### Option 2 — reissue the credential (`just contribute-move`)
 

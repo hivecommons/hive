@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -65,12 +66,18 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 		Example: `  hivectl hives list
   hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
   hivectl hives use acme
+  hivectl hives export acme --out acme.hive-profile
+  hivectl hives import acme.hive-profile --name acme-laptop
+  hivectl hives session acme --label review
   hivectl hives rename acme acme-prod
   hivectl hives remove acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesUseCommand(env))
+	cmd.AddCommand(newHivesExportCommand(env))
+	cmd.AddCommand(newHivesImportCommand(env))
+	cmd.AddCommand(newHivesSessionCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
 	return cmd
@@ -425,6 +432,26 @@ func readTokenFrom(in io.Reader) (string, error) {
 	return token, nil
 }
 
+func readPassphrase(in io.Reader, promptOut io.Writer, fromStdin bool) ([]byte, error) {
+	if promptOut != nil {
+		_, _ = fmt.Fprint(promptOut, "Profile bundle passphrase: ")
+	}
+	if !fromStdin && in == nil {
+		return nil, &usageError{message: "no input available for the profile bundle passphrase; pass --passphrase-stdin to read it from stdin"}
+	}
+	line, err := bufio.NewReader(io.LimitReader(in, 64*1024)).ReadString('\n')
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("read profile bundle passphrase: %w", err)
+		}
+	}
+	pass := strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(pass) == "" {
+		return nil, &usageError{message: "profile bundle passphrase must not be empty"}
+	}
+	return []byte(pass), nil
+}
+
 // ── use ─────────────────────────────────────────────────────────────────────
 
 func newHivesUseCommand(env *commandEnv) *cobra.Command {
@@ -478,6 +505,195 @@ func (e *commandEnv) runHivesUse(cmd *cobra.Command, name string) error {
 	} else {
 		_, _ = fmt.Fprintln(out, "  no running relay found; the next relay start will solicit from this hive first")
 	}
+	return nil
+}
+
+// ── export/import/session ──────────────────────────────────────────────────
+
+type hivesExportOptions struct {
+	outFile         string
+	passphraseStdin bool
+}
+
+func newHivesExportCommand(env *commandEnv) *cobra.Command {
+	opts := &hivesExportOptions{}
+	cmd := &cobra.Command{
+		Use:   "export <name>",
+		Short: "Export one hive profile as a passphrase-encrypted bundle",
+		Long: "Writes one named profile as an AES-256-GCM encrypted bundle. The registration token is never printed in plaintext; " +
+			"the bundle can be imported on another machine with 'hivectl hives import'.",
+		Args: argsExact(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.runHivesExport(cmd, args[0], opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.outFile, "out", "", "write the encrypted bundle to a file instead of stdout")
+	cmd.Flags().BoolVar(&opts.passphraseStdin, "passphrase-stdin", false, "read the bundle passphrase from stdin")
+	return cmd
+}
+
+func (e *commandEnv) runHivesExport(cmd *cobra.Command, name string, opts *hivesExportOptions) error {
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, false)
+	if err != nil {
+		return err
+	}
+	profile, _ := set.Find(name)
+	if profile == nil {
+		return unknownHiveError(name, set)
+	}
+	pass, err := readPassphrase(cmd.InOrStdin(), cmd.ErrOrStderr(), opts.passphraseStdin)
+	if err != nil {
+		return err
+	}
+	bundle, err := hivectl.EncryptProfileBundle(*profile, pass)
+	if err != nil {
+		return err
+	}
+	if opts.outFile != "" {
+		if err := os.WriteFile(opts.outFile, bundle, 0o600); err != nil {
+			return fmt.Errorf("write encrypted hive profile bundle %s: %w", opts.outFile, err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Exported hive %q to %s (encrypted; token not printed)\n", profile.Name, opts.outFile)
+		return nil
+	}
+	_, err = cmd.OutOrStdout().Write(bundle)
+	return err
+}
+
+type hivesImportOptions struct {
+	name            string
+	activate        bool
+	passphraseStdin bool
+}
+
+func newHivesImportCommand(env *commandEnv) *cobra.Command {
+	opts := &hivesImportOptions{}
+	cmd := &cobra.Command{
+		Use:   "import <bundle-file>",
+		Short: "Import a passphrase-encrypted hive profile bundle",
+		Args:  argsExact(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.runHivesImport(cmd, args[0], opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.name, "name", "", "save the imported profile under this name")
+	cmd.Flags().BoolVar(&opts.activate, "activate", false, "make the imported hive active")
+	cmd.Flags().BoolVar(&opts.passphraseStdin, "passphrase-stdin", false, "read the bundle passphrase from stdin")
+	return cmd
+}
+
+func (e *commandEnv) runHivesImport(cmd *cobra.Command, bundleFile string, opts *hivesImportOptions) error {
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, true)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(bundleFile)
+	if err != nil {
+		return fmt.Errorf("read encrypted hive profile bundle %s: %w", bundleFile, err)
+	}
+	pass, err := readPassphrase(cmd.InOrStdin(), cmd.ErrOrStderr(), opts.passphraseStdin)
+	if err != nil {
+		return err
+	}
+	profile, err := hivectl.DecryptProfileBundle(data, pass)
+	if err != nil {
+		return err
+	}
+	if opts.name != "" {
+		if err := hivectl.ValidateProfileName(opts.name); err != nil {
+			return &usageError{message: err.Error()}
+		}
+		profile.Name = opts.name
+	}
+	if existing, _ := set.Find(profile.Name); existing != nil {
+		return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s); pass --name to import it under a different name", existing.Name, existing.Hub)}
+	}
+	if err := set.Add(profile, opts.activate); err != nil {
+		if errors.Is(err, hivectl.ErrProfileExists) {
+			return &usageError{message: err.Error()}
+		}
+		return err
+	}
+	if err := commit(deps, set); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Imported hive %q (%s)\n", profile.Name, profile.Hub)
+	return nil
+}
+
+type hivesSessionOptions struct {
+	label    string
+	name     string
+	activate bool
+}
+
+func newHivesSessionCommand(env *commandEnv) *cobra.Command {
+	opts := &hivesSessionOptions{}
+	cmd := &cobra.Command{
+		Use:   "session <name> --label <label>",
+		Short: "Create a second named session profile for one hive",
+		Long: "Copies an existing profile under a new name and sets its HIVE_SESSION label. " +
+			"Two profiles for one hub with different session labels run as separate hub sessions.",
+		Args: argsExact(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.runHivesSession(cmd, args[0], opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.label, "label", "", "session label to project as HIVE_SESSION (required)")
+	cmd.Flags().StringVar(&opts.name, "name", "", "name for the copied profile (default: <name>-<label>)")
+	cmd.Flags().BoolVar(&opts.activate, "activate", false, "make the session profile active")
+	return cmd
+}
+
+func (e *commandEnv) runHivesSession(cmd *cobra.Command, sourceName string, opts *hivesSessionOptions) error {
+	label := strings.TrimSpace(opts.label)
+	if label == "" {
+		return &usageError{message: "--label is required"}
+	}
+	deps, err := e.hivesDeps()
+	if err != nil {
+		return err
+	}
+	set, err := loadProfiles(cmd, deps, false)
+	if err != nil {
+		return err
+	}
+	source, _ := set.Find(sourceName)
+	if source == nil {
+		return unknownHiveError(sourceName, set)
+	}
+	name := strings.TrimSpace(opts.name)
+	if name == "" {
+		name = source.Name + "-" + label
+	}
+	if err := hivectl.ValidateProfileName(name); err != nil {
+		return &usageError{message: err.Error()}
+	}
+	if existing, _ := set.Find(name); existing != nil {
+		return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s)", existing.Name, existing.Hub)}
+	}
+	copy := *source
+	copy.Name = name
+	copy.Session = label
+	copy.AddedAt = deps.now().UTC().Truncate(time.Second)
+	if err := set.Add(copy, opts.activate); err != nil {
+		if errors.Is(err, hivectl.ErrProfileExists) {
+			return &usageError{message: err.Error()}
+		}
+		return err
+	}
+	if err := commit(deps, set); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Created hive session %q for %s with label %q\n", copy.Name, copy.Hub, copy.Session)
 	return nil
 }
 
