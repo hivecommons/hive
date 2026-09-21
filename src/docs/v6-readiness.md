@@ -6,6 +6,8 @@ of the [v5 GA readiness bar](v5-ga.md), written at line-open time instead of
 being retrofitted later (the gap
 [#5622](https://github.com/hivecommons/hive/issues/5622) had to close for v5).
 
+See the maintainer [v6 readiness live-exercise runbook](v6-readiness-runbook.md) for the step-by-step evidence template that closes the live rows below.
+
 Status today: `v6` publishes **no channel**
 (see the release-lines table in [ROADMAP.md](../../ROADMAP.md)). Every track
 named on the line epic

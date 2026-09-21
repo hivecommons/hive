@@ -1,0 +1,1 @@
+- Add the v6 readiness live-exercise runbook and evidence template for every shipped surface, so maintainers can close the live rows with linked evidence (#7683).
