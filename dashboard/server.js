@@ -115,6 +115,10 @@ const PORT = process.env.HIVE_DASHBOARD_PORT || ((projectConfig.dashboard || {})
 // Operators fronting it with an authenticated proxy may set
 // HIVE_DASHBOARD_BIND=0.0.0.0 explicitly.
 const BIND_HOST = process.env.HIVE_DASHBOARD_BIND || ((projectConfig.dashboard || {}).bind) || '127.0.0.1';
+const LEGACY_DASHBOARD_AUTH_TOKEN = process.env.HIVE_DASHBOARD_TOKEN
+  || ((projectConfig.dashboard || {}).auth_token)
+  || ((runtimeConfig.dashboard || {}).auth_token)
+  || '';
 const REFRESH_MS = 5000;
 const METRICS_DIR = '/var/run/hive-metrics';
 const HISTORY_DIR = path.join(METRICS_DIR, 'history');
@@ -1338,6 +1342,32 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''" ) + "'";
 }
 
+function secureCompare(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length > 0 && left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function bearerMatchesToken(headerValue, token) {
+  const value = String(headerValue || '').trim();
+  return secureCompare(value, `Bearer ${token}`) || secureCompare(value, token);
+}
+
+function requireLegacyOwnerRole(req, res) {
+  const token = String(LEGACY_DASHBOARD_AUTH_TOKEN || '').trim();
+  const role = String(req.get('X-Hive-Role') || '').trim().toLowerCase();
+  const proxyProof = req.get('X-Hive-Proxy-Auth');
+  const internal = req.get('X-Hive-Internal');
+  const bearer = req.get('Authorization');
+
+  if (token && (bearerMatchesToken(bearer, token) || secureCompare(internal, token) || (role === 'owner' && secureCompare(proxyProof, token)))) {
+    return true;
+  }
+
+  res.status(403).json({ error: 'owner access required' });
+  return false;
+}
+
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
   const content = fs.readFileSync(filePath, 'utf8');
@@ -2381,7 +2411,8 @@ app.get('/api/nous/principles', (_req, res) => {
 });
 
 // POST /api/nous/approve — approve pending experiment (suggest mode only)
-app.post('/api/nous/approve', (_req, res) => {
+app.post('/api/nous/approve', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   const campaign = readNousCampaign();
   const mode = (campaign.campaign && campaign.campaign.mode) || 'observe';
   if (mode !== 'suggest') {
@@ -2421,7 +2452,8 @@ app.post('/api/nous/approve', (_req, res) => {
 });
 
 // POST /api/nous/abort — emergency stop
-app.post('/api/nous/abort', (_req, res) => {
+app.post('/api/nous/abort', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   try {
     let experimentId = 'unknown';
     if (fs.existsSync(NOUS_OVERLAY_PATH)) {
@@ -2445,6 +2477,7 @@ app.post('/api/nous/abort', (_req, res) => {
 
 // PUT /api/nous/mode — change campaign mode
 app.put('/api/nous/mode', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   const { mode, force } = req.body;
   const VALID_MODES = ['observe', 'suggest', 'evolve'];
   if (!VALID_MODES.includes(mode)) {
@@ -2484,6 +2517,7 @@ app.put('/api/nous/mode', (req, res) => {
 // PUT /api/nous/scope — change experiment scope (governor | repo | both)
 const VALID_SCOPES = ['governor', 'repo', 'both'];
 app.put('/api/nous/scope', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   const { scope } = req.body;
   if (!VALID_SCOPES.includes(scope)) {
     return res.status(400).json({ error: `Invalid scope: ${scope}. Must be one of: ${VALID_SCOPES.join(', ')}` });
@@ -2525,6 +2559,7 @@ app.get('/api/nous/phase', (_req, res) => {
 let _pendingGateDecision = null;
 let _gateResponseResolve = null;
 app.put('/api/nous/gate-decision', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   _pendingGateDecision = {
     ...req.body,
     received_at: new Date().toISOString(),
@@ -2542,6 +2577,7 @@ app.get('/api/nous/gate-pending', (_req, res) => {
 
 // POST /api/nous/gate-respond — operator approves/rejects gate decision
 app.post('/api/nous/gate-respond', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return;
   const { decision } = req.body;
   if (!['approve', 'reject', 'abort'].includes(decision)) {
     return res.status(400).json({ error: 'decision must be approve, reject, or abort' });

@@ -23,6 +23,7 @@ import urllib.error
 DASHBOARD_URL = os.environ.get("HIVE_DASHBOARD_URL", "http://localhost:3001")
 GATE_TIMEOUT_SEC = 1800
 GATE_POLL_INTERVAL_SEC = 5
+DASHBOARD_TOKEN = os.environ.get("HIVE_DASHBOARD_TOKEN", "").strip()
 
 
 def get_effective_mode():
@@ -57,10 +58,13 @@ def post_pending(question, artifact_path=None, reviews=None, summary_path=None):
             payload["summary_path"] = summary_path
 
     data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if DASHBOARD_TOKEN:
+        headers["Authorization"] = "Bearer " + DASHBOARD_TOKEN
     req = urllib.request.Request(
         f"{DASHBOARD_URL}/api/nous/gate-decision",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="PUT",
     )
     try:

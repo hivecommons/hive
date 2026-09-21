@@ -3652,6 +3652,41 @@ function burnAreaChart() {
       setIfChanged(panel, html);
     }
 
+    function nousAuthHeaders(headers) {
+      const h = Object.assign({}, headers || {});
+      const token = localStorage.getItem('hive-token') || localStorage.getItem('hive-dashboard-token') || '';
+      if (token && !h.Authorization) h.Authorization = 'Bearer ' + token;
+      return h;
+    }
+
+    async function nousMutationFetch(url, opts) {
+      const request = Object.assign({}, opts || {});
+      const callerAuth = !!(request.headers && (request.headers.Authorization || request.headers.authorization));
+      request.headers = nousAuthHeaders(request.headers);
+      const usedStoredAuth = !callerAuth && !!request.headers.Authorization;
+      let res = await fetch(url, request);
+      if ((res.status === 401 || res.status === 403) && (!request.headers.Authorization || usedStoredAuth)) {
+        if (usedStoredAuth) localStorage.removeItem('hive-token');
+        const msg = usedStoredAuth
+          ? 'The stored dashboard token was rejected. Paste the current HIVE_DASHBOARD_TOKEN:'
+          : 'This Nous change requires the owner/operator dashboard token. Paste HIVE_DASHBOARD_TOKEN:';
+        const token = prompt(msg);
+        if (token) {
+          const trimmed = token.trim();
+          localStorage.setItem('hive-token', trimmed);
+          request.headers = Object.assign({}, request.headers, { Authorization: 'Bearer ' + trimmed });
+          res = await fetch(url, request);
+        }
+      }
+      return res;
+    }
+
+    async function nousJsonOrThrow(res) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
     async function nousSetMode(mode) {
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
       const modeOrder = { observe: 0, suggest: 1, evolve: 2 };
@@ -3661,20 +3696,22 @@ function burnAreaChart() {
         force = true;
       }
       try {
-        await fetch('/api/nous/mode', {
+        const r = await nousMutationFetch('/api/nous/mode', {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mode, force }),
         });
+        await nousJsonOrThrow(r);
         fetchNousStatus();
       } catch (e) { showToast('Failed to change mode: ' + e.message, 'error'); }
     }
 
     async function nousSetScope(scope) {
       try {
-        await fetch('/api/nous/scope', {
+        const r = await nousMutationFetch('/api/nous/scope', {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ scope }),
         });
+        await nousJsonOrThrow(r);
         fetchNousStatus();
         showToast(`Scope set to: ${scope}`, 'success');
       } catch (e) { showToast('Failed to change scope: ' + e.message, 'error'); }
@@ -3682,8 +3719,8 @@ function burnAreaChart() {
 
     async function nousApprove() {
       try {
-        const r = await fetch('/api/nous/approve', { method: 'POST' });
-        const j = await r.json();
+        const r = await nousMutationFetch('/api/nous/approve', { method: 'POST' });
+        const j = await nousJsonOrThrow(r);
         if (j.ok) { showToast('Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
       } catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
@@ -3692,7 +3729,8 @@ function burnAreaChart() {
     async function nousReject() {
       if (!confirm('Reject this experiment proposal?')) return;
       try {
-        await fetch('/api/nous/abort', { method: 'POST' });
+        const r = await nousMutationFetch('/api/nous/abort', { method: 'POST' });
+        await nousJsonOrThrow(r);
         showToast('Proposal rejected', 'success');
         fetchNousStatus();
       } catch (e) { showToast('Reject failed: ' + e.message, 'error'); }
@@ -3701,8 +3739,8 @@ function burnAreaChart() {
     async function nousAbort() {
       if (!confirm('Abort the active experiment? This will revert governor to default behavior.')) return;
       try {
-        const r = await fetch('/api/nous/abort', { method: 'POST' });
-        const j = await r.json();
+        const r = await nousMutationFetch('/api/nous/abort', { method: 'POST' });
+        const j = await nousJsonOrThrow(r);
         if (j.ok) { showToast('Experiment aborted: ' + j.aborted, 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Abort failed', 'error');
       } catch (e) { showToast('Abort failed: ' + e.message, 'error'); }
