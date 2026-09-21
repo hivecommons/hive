@@ -5178,9 +5178,10 @@
       if (lanes.length === 0) return '';
       const depths = gov.lane_queue_depths || {};
       const reasons = gov.lane_pause_reasons || {};
+      const qualified = gov.qualified_standbys || {};
       const text = lanes.map(lane => {
         const reason = reasons[lane] === 'budget_exhausted' ? 'out of budget' : (reasons[lane] || 'paused');
-        return `${lane} paused, ${reason}, ${depths[lane] || 0} waiting`;
+        return `${lane} paused, ${reason}, ${depths[lane] || 0} waiting, ${qualified[lane] || 0} qualify`;
       }).join('; ');
       return `<div class="gov-metric gm-alert" title="${esc(text)}"><span class="gm-label">standby</span><span class="gm-val">${esc(text)}</span></div>`;
     }

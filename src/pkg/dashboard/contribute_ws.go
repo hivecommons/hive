@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	standbypkg "github.com/hivecommons/hive/pkg/standby"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -2508,6 +2509,75 @@ func normalizeStandbyLanes(lanes []string) []string {
 		return []string{"all"}
 	}
 	return out
+}
+
+func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string) map[string]int {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil || len(lanes) == 0 {
+		return nil
+	}
+	cfg := h.server.deps.Config
+	tiers := standbyTierMapFromConfig(cfg.Hub.StandbyModelTiers)
+	out := make(map[string]int, len(lanes))
+	now := time.Now()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, lane := range lanes {
+		agentCfg := cfg.Agents[lane]
+		standbyCfg := agentCfg.Standby
+		policy := standbypkg.LanePolicy{
+			Floor:    standbypkg.NormalizeTier(standbyCfg.StandbyFloor()),
+			DailyCap: standbyCfg.StandbyDailyCap(),
+		}
+		candidates := make([]standbypkg.Candidate, 0, len(h.connections))
+		for _, conn := range h.connections {
+			if conn == nil || conn.profile == nil {
+				continue
+			}
+			conn.mu.Lock()
+			state, ok := conn.standby[lane]
+			if !ok {
+				state, ok = conn.standby["all"]
+			}
+			conn.mu.Unlock()
+			if !ok {
+				continue
+			}
+			candidates = append(candidates, standbypkg.Candidate{
+				Contributor: conn.profile.GitHubUsername,
+				Approved:    cfg.Hub.IsStandbyContributorApproved(conn.profile.GitHubUsername),
+				Config: standbypkg.Configuration{
+					Backend:         state.CLIBackend,
+					Model:           state.Model,
+					ReasoningEffort: state.ReasoningEffort,
+					AdvisorModel:    state.AdvisorModel,
+					AdvisorEffort:   state.AdvisorEffort,
+				},
+			})
+		}
+		out[lane] = standbypkg.QualifiedCount(candidates, policy, tiers, now)
+	}
+	return out
+}
+
+func standbyTierMapFromConfig(entries []config.StandbyModelTier) standbypkg.TierMap {
+	tierEntries := make([]standbypkg.TierEntry, 0, len(entries))
+	for _, entry := range entries {
+		tierEntries = append(tierEntries, standbypkg.TierEntry{
+			Config: standbypkg.Configuration{
+				Backend:         entry.Backend,
+				Model:           entry.Model,
+				ReasoningEffort: entry.ReasoningEffort,
+				AdvisorModel:    entry.AdvisorModel,
+				AdvisorEffort:   entry.AdvisorReasoningEffort,
+			},
+			Tier: standbypkg.NormalizeTier(entry.Tier),
+		})
+	}
+	tiers, err := standbypkg.NewTierMap(tierEntries)
+	if err != nil {
+		return standbypkg.TierMap{}
+	}
+	return tiers
 }
 
 // handleReady is the dispatch phase: a contributor with no task asks for work

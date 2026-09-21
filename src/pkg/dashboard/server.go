@@ -677,15 +677,16 @@ type FrontendConfiguredAgent struct {
 }
 
 type FrontendGovernor struct {
-	Active           bool               `json:"active"`
-	Mode             string             `json:"mode"`
-	Issues           int                `json:"issues"`
-	PRs              int                `json:"prs"`
-	Thresholds       FrontendThresholds `json:"thresholds"`
-	NextKick         string             `json:"nextKick,omitempty"`
-	SuppressedLanes  []string           `json:"suppressed_lanes,omitempty"`
-	LaneQueueDepths  map[string]int     `json:"lane_queue_depths,omitempty"`
-	LanePauseReasons map[string]string  `json:"lane_pause_reasons,omitempty"`
+	Active            bool               `json:"active"`
+	Mode              string             `json:"mode"`
+	Issues            int                `json:"issues"`
+	PRs               int                `json:"prs"`
+	Thresholds        FrontendThresholds `json:"thresholds"`
+	NextKick          string             `json:"nextKick,omitempty"`
+	SuppressedLanes   []string           `json:"suppressed_lanes,omitempty"`
+	LaneQueueDepths   map[string]int     `json:"lane_queue_depths,omitempty"`
+	LanePauseReasons  map[string]string  `json:"lane_pause_reasons,omitempty"`
+	QualifiedStandbys map[string]int     `json:"qualified_standbys,omitempty"`
 }
 
 type FrontendThresholds struct {
@@ -1902,6 +1903,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		}
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
+	if s.contributeHub != nil {
+		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(status.Governor.SuppressedLanes)
+	}
 
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
