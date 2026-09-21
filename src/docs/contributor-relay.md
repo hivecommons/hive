@@ -856,6 +856,59 @@ of SIGKILL. The hub is not messaged on shutdown; the socket drop already books
 the release through the disconnect cooldown path
 ([#5097](https://github.com/hivecommons/hive/issues/5097)).
 
+## What the contributor image can run
+
+The image carries a deliberately small **repository-check baseline** on top of
+the relay's own dependencies, so a container-mode agent can run the checked-out
+repository's real checks rather than a substitute for them
+([#7925](https://github.com/hivecommons/hive/issues/7925)):
+
+| Area | Shipped |
+| --- | --- |
+| Languages / runtimes | `python3`, `go`, `node`/`npm` |
+| Python | `pip`, `pytest`, `pyyaml`, `jsonschema`, `requests`, `venv` |
+| Build / task runners | `make`, `just` |
+| Shell and data | `shellcheck`, `jq`, `yq` (the Go mikefarah/yq v4, not Debian's Python `yq`) |
+| VCS and platform | `git`, `gh`, `curl`, `tmux`, `bubblewrap` |
+
+Before this baseline existed, an agent could *edit* a Python-, Make- or
+`just`-driven repository in container mode but could not run its test suite,
+its `just check`, or its `make ci`. The reason that is a correctness problem
+and not only a convenience one is substitution: on one task, pytest-style tests
+were run under `python3 -m unittest`, reported `Ran 0 tests ... OK`, and were
+about to be cited as a passing run — the kind of false verification claim this
+repository's reviewers police. Deferring to CI is a fine answer when a check
+cannot run locally; reaching for a proxy that looks green is not.
+
+**Python packages install into a virtualenv, not the system Python.** Debian
+marks its system Python externally-managed (PEP 668) and the container runs as
+the unprivileged `dev` user, so a bare `pip install` would fail twice over. The
+image therefore ships `/opt/hive/pyenv` — created with `--system-site-packages`
+so the distribution-packaged `yaml`/`jsonschema`/`requests`/`pytest` remain
+importable through it, owned by `dev`, and first on `PATH` with `VIRTUAL_ENV`
+set to match. `pip install <anything>` and `python3 -m pytest` therefore work
+inside a task with no privilege and no flags, and nothing outside the venv is
+modified. Prefer `python3 -m pytest` over bare `pytest` when a repository needs
+a plugin you just installed; the `pytest` on `PATH` is a shim onto exactly that
+command, so the two agree.
+
+**Container tooling is deliberately absent.** `podman`, `skopeo`, `buildah`,
+`crane` and `oras` are not in the image and are not planned for it: they need
+privileges the contributor container should not hold. A task that genuinely
+needs to build or inspect an OCI image is a task for local mode or a derived
+image, not for the stock contributor container.
+
+**Anything beyond the baseline is the task's own problem to solve**, inside the
+container, with what the checkout declares. `pip install -r requirements.txt`
+into the venv above works; `apt-get install` does not, because the container
+runs unprivileged by design. Reading a repository's declared toolchain
+(`.devcontainer/devcontainer.json`, or a hive-specific manifest) and installing
+from it automatically is proposed in
+[#7925](https://github.com/hivecommons/hive/issues/7925) but not implemented:
+the apt half of that proposal needs a privilege decision the contributor
+container's threat model does not currently allow. Until it is, a derived image
+with an entrypoint hook is the supported way to add tools — see below.
+
 ## Extending the contributor image (downstream hooks)
 
 The contributor entrypoint (`bin/contributor-agent.sh`) ships an extension seam

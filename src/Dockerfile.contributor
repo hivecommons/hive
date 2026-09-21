@@ -38,6 +38,116 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bubblewrap \
   && rm -rf /var/lib/apt/lists/*
 
+# Repository-check baseline (kubestellar/hive#7925).
+#
+# Everything in the layer above is what it takes to run the relay and the agent
+# CLIs. It is not what it takes to run the CHECKED-OUT REPOSITORY's own checks:
+# the image shipped no pip, no pytest, no PyYAML/jsonschema/requests, no make,
+# no just, no shellcheck and no yq, so a container-mode agent could edit a
+# Python-, Make- or just-driven repository and then not run its test suite, its
+# `just check`, or its `make ci`.
+#
+# That is a correctness problem and not only a convenience one, because an
+# agent that cannot run the real check reaches for a proxy that looks green:
+# on one task, pytest-style tests were run under `python3 -m unittest`, printed
+# `Ran 0 tests ... OK`, and were about to be cited as a passing run. Other
+# tasks hand-synced a generated file because the generator's runtime was
+# missing, and burned tool calls trying to conjure a YAML parser.
+#
+# Deliberately small and Debian-packaged — a few tens of MB covering Python,
+# shell and Make/just-driven repositories, which is most of what the hosted
+# spokes serve. Container tooling (podman/skopeo/buildah/crane) is NOT here on
+# purpose: it needs privileges the contributor container should not have.
+#
+# The venv is not decoration. Debian marks its system Python
+# externally-managed (PEP 668) and this container runs as non-root `dev`, so a
+# bare `pip install` fails twice over, which is why "no pip" was the headline
+# complaint. /opt/hive/pyenv is created with --system-site-packages so the
+# apt-installed yaml/jsonschema/requests/pytest stay visible through it, and is
+# owned by uid 1000 — the `dev` user created further down; numeric because this
+# layer belongs with the other rarely-changing apt content, above the Node and
+# CLI layers — so an agent can install a repository's extra test dependency
+# with no privilege at all and nothing outside the venv is touched.
+#
+# The pytest shim exists because apt's `pytest` is /usr/bin/pytest, whose
+# shebang is the SYSTEM python3: it would not see anything an agent
+# pip-installs into the venv, so `pytest` and `python3 -m pytest` would
+# disagree about which plugins are loaded. A later `pip install pytest`
+# replaces the shim with the real console script pointing at the same venv.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    make shellcheck \
+    python3-pip python3-venv python3-pytest \
+    python3-yaml python3-jsonschema python3-requests \
+  && rm -rf /var/lib/apt/lists/* \
+  && python3 -m venv --system-site-packages /opt/hive/pyenv \
+  && printf '#!/bin/sh\nexec /opt/hive/pyenv/bin/python3 -m pytest "$@"\n' \
+       > /opt/hive/pyenv/bin/pytest \
+  && chmod 0755 /opt/hive/pyenv/bin/pytest \
+  && make --version >/dev/null \
+  && shellcheck --version >/dev/null \
+  && /opt/hive/pyenv/bin/python3 -c 'import yaml, jsonschema, requests' \
+  && /opt/hive/pyenv/bin/python3 -m pytest --version \
+  && /opt/hive/pyenv/bin/pip --version \
+  && chown -R 1000:1000 /opt/hive/pyenv
+# Putting the venv first on PATH is what makes `pip`, `python3` and `pytest`
+# resolve to it for the relay, the tmux session and the CLI backend alike.
+# VIRTUAL_ENV is set alongside so tooling that probes for an active environment
+# (tox, poetry, pip's own "externally managed" check) agrees with PATH.
+ENV VIRTUAL_ENV=/opt/hive/pyenv
+ENV PATH=/opt/hive/pyenv/bin:$PATH
+
+# just and yq complete the baseline. `just` is the entry point to a growing
+# number of repositories' own checks (`just check`, `just ci` — this repository
+# included), and `yq` is what shell-driven checks read YAML with.
+#
+# Neither arrives from apt. Debian 12 has no `just` package at all (it lands in
+# trixie), and its `yq` 3.1.0 is a DIFFERENT project — the Python jq wrapper
+# kislyuk/yq — not the Go mikefarah/yq v4 whose `yq eval` / `yq -i` surface CI
+# scripts are actually written against; installing the apt one would satisfy
+# `command -v yq` while failing every real invocation. So both are fetched the
+# way this file already fetches the NodeSource key, Go, muse and omp: a pinned
+# release verified with `sha256sum -c` BEFORE it is installed, never a
+# curl-pipe-to-shell installer that resolves the release at run time.
+# JUST_VERSION matches the pin .github/workflows/v2-ci.yml already uses, so the
+# container and CI run the same `just`; bump the two together.
+#
+# Unlike the optional backend CLIs below, a download failure here is fatal
+# rather than tolerated. Those are tolerated because one backend's absence is
+# surfaced honestly at startup by detect_cli; a silently missing `just` is not
+# surfaced anywhere and would reproduce the exact "the repository's own check
+# could not run" failure this baseline exists to remove. The retry ladder is
+# the same one the muse layer uses.
+ARG TARGETARCH
+ARG JUST_VERSION=1.58.0
+ARG JUST_SHA256_AMD64=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+ARG JUST_SHA256_ARM64=748237128c4c40cbdabc65e841d05ceba13cc23a91eaba395495894c1d9764df
+ARG YQ_VERSION=4.53.6
+ARG YQ_SHA256_AMD64=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
+ARG YQ_SHA256_ARM64=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64|x86_64) JUST_TARGET=x86_64-unknown-linux-musl; JUST_SHA256="$JUST_SHA256_AMD64"; \
+                     YQ_ASSET=yq_linux_amd64; YQ_SHA256="$YQ_SHA256_AMD64" ;; \
+       arm64|aarch64) JUST_TARGET=aarch64-unknown-linux-musl; JUST_SHA256="$JUST_SHA256_ARM64"; \
+                     YQ_ASSET=yq_linux_arm64; YQ_SHA256="$YQ_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for just/yq: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+       -o /tmp/just.tar.gz \
+       "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TARGET}.tar.gz" \
+  && echo "${JUST_SHA256}  /tmp/just.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/just.tar.gz -C /tmp just \
+  && install -m 0755 /tmp/just /usr/local/bin/just \
+  && rm -f /tmp/just.tar.gz /tmp/just \
+  && curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+       -o /tmp/yq \
+       "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/${YQ_ASSET}" \
+  && echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - \
+  && install -m 0755 /tmp/yq /usr/local/bin/yq \
+  && rm -f /tmp/yq \
+  && just --version \
+  && yq --version
+
 # The NodeSource GPG key is downloaded to a file and its SHA-256 verified
 # BEFORE being dearmored/trusted (issue #3821), mirroring the
 # download-then-sha256sum-c-then-use pattern already used below for bobshell,
