@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/chat"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -113,6 +115,7 @@ func (b *discordBackend) Name() string {
 }
 
 func (b *discordBackend) Send(content string) error {
+	content = logscrub.ScrubString(content)
 	payload := map[string]string{"content": content}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -195,12 +198,17 @@ func (b *discordBackend) Listen(ctx context.Context, deliver func(chat.Message))
 				msg := messages[i]
 				lastMessageID = msg.ID
 				if !firstPoll {
-					deliver(chat.Message{ID: msg.ID, Text: msg.Content, AuthorID: msg.Author.ID, FromBot: msg.Author.Bot})
+					deliver(discordChatMessage(msg))
 				}
 			}
 			firstPoll = false
 		}
 	}
+}
+
+func discordChatMessage(msg discordMessage) chat.Message {
+	text, _ := ioscan.EnforceInput(msg.Content)
+	return chat.Message{ID: msg.ID, Text: text, AuthorID: msg.Author.ID, FromBot: msg.Author.Bot}
 }
 
 func (b *discordBackend) fetchMessages(ctx context.Context, after string) ([]discordMessage, error) {
