@@ -26,7 +26,11 @@ assert_eq() {
 }
 assert_contains() {
   local haystack="$1" needle="$2" ok_msg="$3" fail_msg="$4"
-  if printf '%s\n' "$haystack" | grep -qF "$needle"; then
+  # No pipe here on purpose: with `set -o pipefail`, `printf ... | grep -q`
+  # fails spuriously when grep matches early, exits, and printf takes a
+  # SIGPIPE ("printf: write error: Broken pipe"), turning a real match into
+  # a FAIL (seen in v2 CI run 35553391736). A here-string has no writer to kill.
+  if grep -qF "$needle" <<<"$haystack"; then
     pass "$ok_msg"
   else
     bad "$fail_msg"
