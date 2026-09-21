@@ -17,7 +17,6 @@ name: Podman Rootless Contract
 on:
   push:
     branches:
-      - v2
       - v4
     paths:
       - 'Justfile'
@@ -26,7 +25,6 @@ on:
       - '.github/workflows/podman-contract.yml'
   pull_request:
     branches:
-      - v2
       - v4
     paths:
       - 'Justfile'

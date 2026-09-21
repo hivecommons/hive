@@ -68,7 +68,6 @@ on:
       - 'src/deploy/**'
       - 'justfile'
     branches:
-      - v2
       - v4
   pull_request:
     paths:
@@ -76,7 +75,6 @@ on:
       - 'src/deploy/**'
       - 'justfile'
     branches:
-      - v2
       - v4
   workflow_dispatch:
     inputs:

@@ -35,7 +35,7 @@ name: testutil-guard
 
 on:
   pull_request:
-    branches: [v2, v4, v5, v6]
+    branches: [v4, v5, v6]
     paths:
       # Whole subtree, not *.go: a change to testdata or embedded fixtures can
       # move coverage too, and layer 2 should re-score on any of it. Layer 1
