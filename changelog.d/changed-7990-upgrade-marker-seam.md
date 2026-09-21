@@ -1,0 +1,1 @@
+- `upgradeMarkerPath` in cmd/hive is now a var (test-only seam, production unchanged) so the hub UpgradeCallback's give-up, backoff, stale-marker and uptime-floor branches are pinned by hermetic tests (#7990).
