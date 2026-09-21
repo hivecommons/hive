@@ -1,1 +1,1 @@
-Apply the configured `review.human_decision_label` when the reviewer's aggregate verdict is `requires_human`. Previously only fixer-side exhaustion (fix cap reached, no fixer available) created a human hold, so reviewer-flagged PRs carried the marker in the review body but never got the triage label.
+- Apply the configured `review.human_decision_label` when the reviewer's aggregate verdict is `requires_human`. Previously only fixer-side exhaustion created a human hold, so reviewer-flagged PRs carried the marker in the review body but never got the triage label.
