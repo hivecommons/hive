@@ -33,14 +33,14 @@ func redirectReviewPaths(t *testing.T) string {
 	dir := t.TempDir()
 	oldState := review.ReviewDispatchStatePath
 	oldVerdicts := review.ReviewVerdictsPath
-	oldReports := outputschema.AgentReportDir
+	oldReports := review.DefaultReportDir
 	review.ReviewDispatchStatePath = filepath.Join(dir, review.ReviewDispatchStateFile)
 	review.ReviewVerdictsPath = filepath.Join(dir, review.ReviewVerdictsFile)
-	outputschema.AgentReportDir = dir
+	review.DefaultReportDir = dir
 	t.Cleanup(func() {
 		review.ReviewDispatchStatePath = oldState
 		review.ReviewVerdictsPath = oldVerdicts
-		outputschema.AgentReportDir = oldReports
+		review.DefaultReportDir = oldReports
 	})
 	return dir
 }
@@ -171,7 +171,7 @@ func TestRefreshReviewVerdicts_NilOrDisabledConfigIsNoOp(t *testing.T) {
 
 func TestRefreshReviewVerdicts_MissingReportDirIsQuiet(t *testing.T) {
 	dir := redirectReviewPaths(t)
-	outputschema.AgentReportDir = filepath.Join(dir, "does-not-exist")
+	review.DefaultReportDir = filepath.Join(dir, "does-not-exist")
 	cfg := &config.Config{Review: config.ReviewConfig{RequireApproval: true}}
 	refreshReviewVerdicts(cfg, restoreTestLogger()) // must not panic or write
 	if _, err := os.Stat(review.ReviewVerdictsPath); !os.IsNotExist(err) {
