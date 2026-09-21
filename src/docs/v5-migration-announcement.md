@@ -1,11 +1,16 @@
 # v5 migration — operator announcement (draft)
 
-> **Status: DRAFT — do not publish until Phase 0 of
-> [#7721](https://github.com/hivecommons/hive/issues/7721) is complete.**
-> This is the announcement the migration plan's Phase 2 requires
-> ("Evidence: announcement link"). The migration marshal fills every
-> `«fill-in»` field from Phase 0/1 evidence, deletes this banner, and posts
-> the result to the announcement channels listed at the bottom. Filed from
+> **Status: DRAFT — posting this announcement is itself a Phase 0
+> prerequisite of [#7721](https://github.com/hivecommons/hive/issues/7721)
+> (amended per [#7958](https://github.com/hivecommons/hive/issues/7958)):
+> it must be posted *before* Phase 1 retags `edge` ← v6**, because the
+> `edge` → `candidate` opt-out guidance below is only actionable before
+> that retag. The migration marshal resolves the `«fill-in»` fields from
+> Phase 0 evidence where it exists, marks every Phase-1-and-later date as
+> an **estimate**, deletes this banner, and posts the result to the
+> announcement channels listed at the bottom. Phase 2 retains only a
+> follow-up update filling in the date `stable` first resolves to v5 once
+> Phase 3 sets it. Filed from
 > [#7736](https://github.com/hivecommons/hive/issues/7736).
 
 ---
@@ -92,19 +97,29 @@ EOL announcement is a separate, later artifact
 
 | Event | Date |
 |---|---|
-| Channel re-base (`candidate`←v5, `edge`←v6), v4 freeze flag set | `«Phase 1 date»` |
-| Hosted hub on v5 | `«Phase 2 date»` |
-| First v5 `stable` promotion | `«Phase 3 date»` |
-| Default branch v4 → v5 | `«Phase 4 date»` |
+| Channel re-base (`candidate`←v5, `edge`←v6), v4 freeze flag set | `«Phase 1 date (estimate)»` |
+| Hosted hub on v5 | `«Phase 2 date (estimate)»` |
+| First v5 `stable` promotion | `«Phase 3 date (estimate)»` |
+| Default branch v4 → v5 | `«Phase 4 date (estimate)»` |
+
+This announcement is posted during Phase 0, so every date above is an
+estimate; the Phase 2 follow-up update confirms the `stable` date once
+Phase 3 sets it.
 
 ---
 
 ## Publication checklist (marshal)
 
-- [ ] All `«fill-in»` fields resolved from #7721 Phase 0/1 evidence; draft
-      banner removed.
-- [ ] UPGRADE.md §"v4 → v5" status line updated in the same Phase 1 doc
-      sweep (it still reads "v5 not yet released").
+- [ ] `«fill-in»` fields resolved from the Phase 0 evidence that exists
+      (e.g. the rollback digest-record comment on #7721); every
+      Phase-1-and-later date marked `(estimate)` — do **not** wait for
+      Phase 1 evidence; draft banner removed.
+- [ ] UPGRADE.md §"v4 → v5" status line updated in the Phase 1 doc
+      sweep (it still reads "v5 not yet released") — that sweep happens
+      after this posting.
 - [ ] Posted to: #6016 (comment), hub dashboard notice, `«operator
       announcement channel(s): Discord/Slack, mailing list if any»`.
-- [ ] Announcement link recorded on #7721's Phase 2 row as evidence.
+- [ ] Announcement link recorded on #7721's **Phase 0 announcement row**
+      as evidence (the slip rule gates Phase 1 on it); the Phase 2
+      "Self-hosted operators" row is only the follow-up update with the
+      confirmed first-v5-`stable` date.
