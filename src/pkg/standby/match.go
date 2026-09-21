@@ -37,7 +37,7 @@ const (
 	// that has not written the mapping.
 	ReasonConfigurationUnknown Reason = "configuration_unknown"
 	// ReasonBelowFloor: the configuration's tier is weaker than the lane's
-	// min_model_capability. It carries no floor value on purpose.
+	// capability floor. It carries no floor value on purpose.
 	ReasonBelowFloor Reason = "below_floor"
 	// ReasonCapExhausted: no daily cap left in the trailing window — including
 	// the default cap of zero, which dispatches nothing.
@@ -82,8 +82,10 @@ type Candidate struct {
 // donated configuration must clear, and how many donated tasks one contributor
 // may be dispatched per rolling day.
 type LanePolicy struct {
-	// Floor is standby.min_model_capability. It defaults to T1 — the
-	// strongest — at parse, and it is writable only by editing hive.yaml.
+	// Floor is the lane's minimum model capability from the standby block of
+	// hive.yaml (the wire key is owned by pkg/config, which is the only
+	// package allowed to name it). It defaults to T1 — the strongest — at
+	// parse, and it is writable only by editing hive.yaml.
 	Floor Tier
 	// DailyCap is standby.daily_cap_per_contributor. Zero, the default, means
 	// nothing is dispatched.
