@@ -50,7 +50,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Microsoft Teams | #7621 | ⬜ |
 | Matrix | #7617 | ⬜ |
 | Telegram | #7616 | ⬜ |
-| Email escalation (outbound + reply-to-act) | #7613 / #7618 | ⬜ |
+| Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
 | Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
 
 **Egress-only surfaces.** A surface with no inbound path conforms to the four
@@ -63,6 +63,17 @@ providers, and parses the surface package to fail if an inbound entry point
 (an ntfy action handler, a PagerDuty webhook, a Pushover receipt callback) or
 a state-reaching dependency appears. When one does, the guards have to be
 wired and asserted for real before the row can go back to green.
+
+Email is the same shape with a shorter fuse: outbound mail is shipped, and
+inbound reply-to-act is designed but deliberately unshipped
+([escalation-surfaces.md](design/escalation-surfaces.md), "Inbound
+reply-to-act (phase 2, explicitly later)"), which makes its egress-only status
+a *plan* rather than a property. Its test therefore pins the pieces an inbound
+path arrives in — a mail-reading dependency, a poller or reply entry point,
+inbound fields on `EmailConfig`, or a sender allowlist invented at the surface
+instead of derived from the role floor — and fails on any of them appearing
+without `ioscan`. The row goes back to ⬜ until the reply path asserts the
+four inbound mechanisms positively.
 
 ## 3. Live exercise (per surface)
 

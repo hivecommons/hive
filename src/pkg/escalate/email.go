@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const defaultSMTPPort = 587
@@ -52,6 +54,12 @@ func NewEmailSink(cfg EmailConfig) *EmailSink {
 func (s *EmailSink) Name() string { return "email" }
 
 func (s *EmailSink) Deliver(ctx context.Context, ev Event) error {
+	// Scrub here as well as in Dispatch: the sink is exported and can be
+	// delivered to directly, so the guarantee must not depend on which door
+	// the event came through. Scrubbing *before* recordDigest also matters on
+	// its own — the digest buffer holds event text for up to a day, so an
+	// unscrubbed secret parked there outlives the delivery that carried it.
+	ev = scrubEvent(ev)
 	if ev.Severity == SeverityInfo || ev.Severity == SeverityDecision {
 		s.recordDigest(ev)
 	}
@@ -131,6 +139,16 @@ func (s *EmailSink) send(ctx context.Context, to []string, subject, body string)
 	if len(to) == 0 {
 		return nil
 	}
+	// The last door out of the process. Deliver scrubs the Event and
+	// SendDigest assembles from already-scrubbed events, but every outbound
+	// mail — immediate and digest — is composed here, so scrubbing here is
+	// what makes "nothing unscrubbed reaches SMTP" a property of the surface
+	// rather than of its two callers. ScrubString is idempotent.
+	//
+	// From/To are configuration, not event text: they are the addressing the
+	// operator chose, and they stay intact (the same rule that keeps a push
+	// sink's bearer token alive).
+	subject, body = logscrub.ScrubString(subject), logscrub.ScrubString(body)
 	msg := buildMessage(s.cfg.From, to, subject, body)
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprint(s.cfg.Port))
 	var conn net.Conn

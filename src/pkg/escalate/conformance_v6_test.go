@@ -73,7 +73,7 @@ func assertNoSecrets(t *testing.T, provider, wire string) {
 	for name, secret := range conformanceSecrets {
 		if strings.Contains(wire, secret) {
 			t.Errorf("v6 conformance (canary/secret scrubbing): %s payload carries an unscrubbed %s; "+
-				"every push/on-call payload must pass logscrub.ScrubString before it leaves the process "+
+				"every escalation payload must pass logscrub.ScrubString before it leaves the process "+
 				"(src/docs/v6-readiness.md §2)", provider, name)
 		}
 	}
