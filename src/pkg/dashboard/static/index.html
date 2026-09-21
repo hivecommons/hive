@@ -16466,7 +16466,7 @@ function burnAreaChart() {
           // Who is on it and where the work is: the two questions the pill
           // chip can't answer (hivecommons/hive#8011).
           const who = c.claimedBy ? `<span class="muted-note" style="font-size:.8em"> · @${escapeHtml(String(c.claimedBy).replace(/^@/, ''))}</span>` : '';
-          const pr = c.prUrl ? ` <a href="${escapeHtml(c.prUrl)}" target="_blank" rel="noopener" data-stop="1" style="font-size:.8em" title="Open the pull request">PR ↗</a>` : '';
+          const pr = (c.prUrl && /^https?:\/\//i.test(c.prUrl)) ? ` <a href="${escapeHtml(c.prUrl)}" target="_blank" rel="noopener" data-stop="1" style="font-size:.8em" title="Open the pull request">PR ↗</a>` : '';
           return `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
             <div><span class="muted-note" style="font-size:.8em">${escapeHtml(c.planRef || '')}</span> ${escapeHtml(c.title)} <span class="muted-note" style="font-size:.8em">[${escapeHtml(String(c.status || ''))}]</span>${who}${pr}${deps}</div>
             <div style="display:flex;gap:6px;align-items:center;white-space:nowrap">${controls}</div>

@@ -178,7 +178,8 @@ func TestStaticPlanLinkageWiring8011(t *testing.T) {
 		`plan.waiting_on_human`,
 		// Review modal: claimant and PR per task.
 		`const who = c.claimedBy`,
-		`const pr = c.prUrl`,
+		// #8037: href only for http(s) PR links.
+		`const pr = (c.prUrl && /^https?:\/\//i.test(c.prUrl))`,
 		// Tile names what needs you; deep link from the mirrored comment.
 		`Needs you:`,
 		`function handlePlanHash()`,

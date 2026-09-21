@@ -43,11 +43,25 @@ type PlanChild struct {
 // PR-shaped ExternalRef (".../pull/N") counts, so a bead that was minted from
 // or attached to a PR shows it without anyone tagging it.
 func childPRURL(c *beads.Bead) string {
-	if u := c.Meta(MetaPRURL); u != "" {
+	if u := safePRURL(c.Meta(MetaPRURL)); u != "" {
 		return u
 	}
 	if strings.Contains(c.ExternalRef, "/pull/") {
-		return c.ExternalRef
+		return safePRURL(c.ExternalRef)
+	}
+	return ""
+}
+
+// safePRURL admits only http(s) URLs. Bead metadata is writable by any agent
+// through bd, and the value lands in an href in the plan review panel and in
+// the mirrored issue comment, so a javascript:/data:/vbscript: value must
+// never survive to either sink (hivecommons/hive#8037). The dashboard CSP
+// already blocks script URLs; this closes the gap server-side regardless.
+func safePRURL(u string) string {
+	u = strings.TrimSpace(u)
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
+		return u
 	}
 	return ""
 }
