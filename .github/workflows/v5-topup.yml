@@ -71,6 +71,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # #7930: approve/re-run the PR's own held workflow runs.
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -219,6 +221,41 @@ jobs:
           gh pr create --repo "$GITHUB_REPOSITORY" --base v5 --head sync/v4-to-v5 \
             --title "🌱 Forward-merge v4 into v5 (${BEHIND} commits)" \
             --body-file "$RUNNER_TEMP/v5-topup-body.md"
+
+      # #7930: a pull_request opened or refreshed by GITHUB_TOKEN carries
+      # github-actions[bot] as its actor, and GitHub either holds every
+      # pull_request run for approval (action_required) or lets it die at
+      # workflow resolution with 0 jobs and the misleading "workflow file
+      # issue" banner. Either way the PR shows no test evidence and gets
+      # merged on faith. Release those runs here: approve the held ones and
+      # re-run the 0-job startup failures. Real failures keep their jobs and
+      # are left alone.
+      - name: Release the top-up PR's held workflow runs (#7930)
+        if: steps.merge.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          released=0
+          for attempt in 1 2 3 4 5 6; do
+            sleep 20
+            pending="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=${head}&per_page=100" \
+              --jq '.workflow_runs[] | select(.conclusion == "action_required" or (.conclusion == "failure" and .run_attempt == 1)) | "\(.id) \(.conclusion)"')"
+            [ -n "$pending" ] || { [ "$attempt" -ge 3 ] && break || continue; }
+            while read -r id conclusion; do
+              [ -n "$id" ] || continue
+              if [ "$conclusion" = "action_required" ]; then
+                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/approve" >/dev/null && { echo "approved held run ${id}"; released=$((released+1)); }
+              else
+                jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${id}/jobs" --jq '.total_count')"
+                if [ "$jobs" = "0" ]; then
+                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; released=$((released+1)); }
+                fi
+              fi
+            done <<< "$pending"
+          done
+          echo "released ${released} run(s) for ${head}"
 
   frozen:
     # The visible half of the post-freeze disposition: when the flag is set
