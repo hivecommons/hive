@@ -49,7 +49,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Discord (spine port + reliability) | #7572 / #7586 | ⬜ |
 | Microsoft Teams | #7621 | ⬜ |
 | Matrix | #7617 | ⬜ |
-| Telegram | #7616 | ⬜ |
+| Telegram | #7616 | ✅ [`src/pkg/telegram/conformance_v6_test.go`](../pkg/telegram/conformance_v6_test.go) ([#8046](https://github.com/hivecommons/hive/issues/8046)) |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
 | Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
 

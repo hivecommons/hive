@@ -16,6 +16,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/chat"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -134,6 +136,7 @@ func (b *telegramBackend) Name() string { return "telegram" }
 func (b *telegramBackend) Send(content string) error {
 	// Telegram's HTML parse mode has a much smaller escaping surface than MarkdownV2,
 	// so the backend translates the spine's Markdown-ish messages to HTML here.
+	content = logscrub.ScrubString(content)
 	for _, part := range splitTelegramMessage(markdownToHTML(content)) {
 		payload := map[string]string{"chat_id": b.chatID, "text": part, "parse_mode": "HTML"}
 		if err := b.callTelegram(context.Background(), "sendMessage", payload, nil); err != nil {
@@ -144,6 +147,7 @@ func (b *telegramBackend) Send(content string) error {
 }
 
 func (b *telegramBackend) SetTopic(topic string) error {
+	topic = logscrub.ScrubString(topic)
 	b.logger.Debug("telegram topic update unsupported", "topic", topic)
 	return nil
 }
@@ -206,9 +210,10 @@ func (b *telegramBackend) handleUpdate(upd update, deliver func(chat.Message)) {
 	if strconv.FormatInt(msg.Chat.ID, 10) != b.chatID || msg.Text == "" {
 		return
 	}
+	text, _ := ioscan.EnforceInput(msg.Text)
 	deliver(chat.Message{
 		ID:       strconv.FormatInt(msg.MessageID, 10),
-		Text:     msg.Text,
+		Text:     text,
 		AuthorID: strconv.FormatInt(msg.From.ID, 10),
 		FromBot:  msg.From.IsBot,
 	})
