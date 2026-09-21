@@ -46,15 +46,17 @@ func repoCardConstLine(t *testing.T, html, name string) string {
 func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		".repo-grid { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }",
-		// The default basis reproduces the old auto-fit behaviour, so an
-		// untouched hive looks exactly as it did.
-		"position: relative; flex: 1 1 240px; min-width: 0;",
+		".repo-grid { --repo-cols: 4; --repo-gap: 8px; display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }",
+		// The default basis is a quarter of the row: at most four cards
+		// across, so pill rows are readable instead of squashed six-wide.
+		"flex: 1 1 calc((100% - (var(--repo-cols) - 1) * var(--repo-gap)) / var(--repo-cols));",
+		"@media (max-width: 1400px) { .repo-grid { --repo-cols: 3; } }",
+		"@media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }",
 		// A sized card keeps its width instead of sharing the row's slack.
 		".repo-card.repo-card-sized { flex-grow: 0; }",
-		// Light mode packed cards to 200px through the grid's minmax(); it
-		// has to say the same thing on the item now.
-		"body.light-mode .repo-card { flex-basis: 200px; }",
+		// The title budget scales from the layout width, not a fixed 240px.
+		"const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);",
+		"function repoCardLayoutWidth(grid)",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
@@ -65,6 +67,8 @@ func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 	for _, gone := range []string{
 		".repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }",
 		"body.light-mode .repo-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }",
+		"flex: 1 1 240px;",
+		"body.light-mode .repo-card { flex-basis: 200px; }",
 	} {
 		if strings.Contains(html, gone) {
 			t.Errorf("index.html still sizes repo cards by grid track: %q", gone)
@@ -102,7 +106,7 @@ func TestRepoCardResizeHandleMarkup(t *testing.T) {
 	}
 	// The pill title budget must follow the card width; a wider card with the
 	// same 50-character clip is the bug this issue is about.
-	if !strings.Contains(html, "const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW);") {
+	if !strings.Contains(html, "const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);") {
 		t.Error("pill titles are still cut to a fixed length regardless of card width")
 	}
 	if strings.Contains(html, "const MAX_PILL_TITLE_LEN = 50;") {

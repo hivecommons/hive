@@ -1,0 +1,1 @@
+- REPOSITORIES cards now lay out at most four across (three/two/one on narrower viewports) instead of packing six at 240px, and the pill title budget scales from the card's actual layout width — so issue/PR pill rows are readable instead of squashed to a few characters each.
