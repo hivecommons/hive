@@ -161,10 +161,10 @@ func (s *HubServer) forgetUncollectibleUpgrade(hiveID string) {
 // upgrade target for the same reason: "hardcoding here made the badge and the
 // poller disagree the moment a hub ran on v3".
 //
-// Falls back to "v2" only when the hub's own branch is somehow unset, preserving
-// historical behaviour for a hub that cannot identify itself rather than
-// resolving against an empty branch (which returns no SHA and silently disables
-// upgrades).
+// Falls back to the stable release line only when the hub's own branch is
+// somehow unset, so a hub that cannot identify itself still resolves against a
+// real branch rather than an empty one (which returns no SHA and silently
+// disables upgrades). v2 was retired in #8061.
 func (s *HubServer) upgradeBranchOrDefault(gitBranch string) string {
 	if gitBranch != "" {
 		return gitBranch
@@ -172,5 +172,5 @@ func (s *HubServer) upgradeBranchOrDefault(gitBranch string) string {
 	if s.hubGitBranch != "" {
 		return s.hubGitBranch
 	}
-	return "v2"
+	return stableReleaseLine(s.logger)
 }

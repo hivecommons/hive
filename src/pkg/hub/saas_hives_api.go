@@ -679,8 +679,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// Attach the user-journey stage to every row so the table can show who is
 	// stalled where. Derived on read; never persisted on the registry entry.
 	journeyNow := time.Now()
+	stableLine := stableReleaseLine(s.logger)
 	for i := range result {
-		if count, known := commitsBehindStableV4(result[i].GitHash, s.logger); known {
+		if count, known := commitsBehindStableLine(result[i].GitHash, stableLine, s.logger); known {
 			result[i].CommitsBehindStableV4 = &count
 		}
 		// Measure "behind" against the target this spoke can actually reach —
@@ -851,7 +852,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
 		"latest_sha":               getLatestSHA(),
-		"stable_v4_sha":            getLatestSHAForBranch(stableReleaseBranch),
+		"stable_branch":            stableLine,
+		"stable_v4_sha":            getLatestSHAForBranch(stableLine),
 		"latest_shas":              getDisplaySHAs(),
 		"latest_sha_messages":      getDisplaySHAMessages(),
 		"latest_sha_image_status":  getImageStatuses(),

@@ -1392,7 +1392,10 @@ func (s *HubServer) loadHubBanners() {
 
 func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *HubServer {
 	if gitBranch == "" || gitBranch == "unknown" {
-		gitBranch = "v2"
+		// Build info missing: assume the stable release line rather than a
+		// retired one (#8061). stableReleaseLine needs the poller caches,
+		// which do not exist yet at construction, so this is the cold fallback.
+		gitBranch = fallbackReleaseLine
 	}
 	secret := os.Getenv("HIVE_HUB_SECRET")
 	if secret == "" {
@@ -2318,10 +2321,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// carryAdvisoryPostTime for why that is the difference between a
 			// wedged digest being flagged and being invisible forever.
 			carryAdvisoryPostTime(&entry, h)
-			branchForLatest := payload.GitBranch
-			if branchForLatest == "" {
-				branchForLatest = "v2"
-			}
+			branchForLatest := s.upgradeBranchOrDefault(payload.GitBranch)
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
 			// The orphan-sweep retry budget is HUB-side state and must survive
 			// ordinary heartbeats. The rebuilt entry starts from the payload
@@ -2578,10 +2578,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Build the heartbeat response with version info for all spokes.
-	branch := payload.GitBranch
-	if branch == "" {
-		branch = "v2"
-	}
+	branch := s.upgradeBranchOrDefault(payload.GitBranch)
 	latestSHA := getLatestSHAForBranch(branch)
 	resp := HeartbeatResponse{
 		OK:         true,

@@ -78,10 +78,6 @@ const (
 	bulkViaStore     = "store"
 )
 
-// bulkDefaultBranch is the branch assumed when a hive has never reported one.
-// Matches the same "" -> "v2" default the single-hive upgrade paths apply.
-const bulkDefaultBranch = "v2"
-
 // bulkHiveImageRepo is the container image repository the hosted hives run,
 // matching the image handleSwitchBranch sets and docker.yml publishes.
 const bulkHiveImageRepo = "ghcr.io/hivecommons/hive"
@@ -318,9 +314,9 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 		}
 	}
 	s.mu.RUnlock()
-	if branch == "" {
-		branch = bulkDefaultBranch
-	}
+	// Same default the single-hive upgrade paths apply (hub's own branch,
+	// then the stable release line).
+	branch = s.upgradeBranchOrDefault(branch)
 	// The spoke's REACHABLE latest, not the branch tip: a release-channel
 	// spoke can only land on its channel's commit (#6294). Resolved outside
 	// s.mu because the channel lookup may consult GHCR.

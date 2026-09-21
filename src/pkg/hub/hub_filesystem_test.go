@@ -1659,15 +1659,52 @@ func TestTrackedBranchListFiltersRetiredV3(t *testing.T) {
 		imageBranchMu.Unlock()
 	}()
 
-	s := &HubServer{registry: Registry{Hives: []RegistryEntry{
+	s := &HubServer{hubGitBranch: "v4", registry: Registry{Hives: []RegistryEntry{
 		{GitBranch: "v3"},
 		{GitBranch: "v2"},
+		{GitBranch: "v5"},
 	}}}
 	got := s.trackedBranchList()
 	for _, branch := range got {
-		if branch == "v3" {
-			t.Fatalf("trackedBranchList() = %v, includes retired v3", got)
+		if branch == "v3" || branch == "v2" {
+			t.Fatalf("trackedBranchList() = %v, includes retired %s (#8061)", got, branch)
 		}
+	}
+	if len(got) == 0 || got[0] != "v4" {
+		t.Fatalf("trackedBranchList() = %v, want the hub's own branch first", got)
+	}
+}
+
+// TestRetiredV2IsNotAlwaysTracked pins #8061: v2 must not be listed by the
+// hub merely because a lingering branch, image tag, or persisted SHA cache
+// entry exists — the "v2" row on My Hives came from trackedBranches alone.
+func TestRetiredV2IsNotAlwaysTracked(t *testing.T) {
+	for _, branch := range trackedBranches {
+		if branch == "v2" {
+			t.Fatal("retired v2 branch must not be in the always-tracked hub image list")
+		}
+	}
+	if _, ok := retiredBranches["v2"]; !ok {
+		t.Fatal("v2 must be in retiredBranches")
+	}
+}
+
+// TestTrackedBranchListKeepsHubOwnRetiredBranch: a hub still RUNNING a
+// retired line must keep polling it so its own upgrade state stays truthful.
+func TestTrackedBranchListKeepsHubOwnRetiredBranch(t *testing.T) {
+	imageBranchMu.Lock()
+	savedCache, savedCachedAt := imageBranchCache, imageBranchCachedAt
+	imageBranchCache = []string{}
+	imageBranchCachedAt = time.Now()
+	imageBranchMu.Unlock()
+	defer func() {
+		imageBranchMu.Lock()
+		imageBranchCache, imageBranchCachedAt = savedCache, savedCachedAt
+		imageBranchMu.Unlock()
+	}()
+	s := &HubServer{hubGitBranch: "v2"}
+	if got := s.trackedBranchList(); len(got) != 1 || got[0] != "v2" {
+		t.Fatalf("trackedBranchList() = %v, want [v2] for a hub running v2", got)
 	}
 }
 

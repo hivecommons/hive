@@ -33,12 +33,15 @@ func resetCommitBehindState(t *testing.T) {
 	commitBehindCache = map[commitBehindKey]commitBehindValue{}
 	commitBehindInFlight = map[commitBehindKey]bool{}
 	commitBehindMu.Unlock()
+	origResolve := resolveStableReleaseLine
+	resolveStableReleaseLine = func(*slog.Logger) string { return fallbackReleaseLine }
 	latestSHAMu.Lock()
-	oldLatest, hadLatest := latestSHAByBranch[stableReleaseBranch]
-	latestSHAByBranch[stableReleaseBranch] = branchSHAInfo{SHA: "head999"}
+	oldLatest, hadLatest := latestSHAByBranch[fallbackReleaseLine]
+	latestSHAByBranch[fallbackReleaseLine] = branchSHAInfo{SHA: "head999"}
 	latestSHAMu.Unlock()
 	t.Cleanup(func() {
 		waitForCommitBehindResolvers(t)
+		resolveStableReleaseLine = origResolve
 		commitBehindMu.Lock()
 		fetchCommitBehindCount = origFetch
 		commitBehindCache = map[commitBehindKey]commitBehindValue{}
@@ -46,9 +49,9 @@ func resetCommitBehindState(t *testing.T) {
 		commitBehindMu.Unlock()
 		latestSHAMu.Lock()
 		if hadLatest {
-			latestSHAByBranch[stableReleaseBranch] = oldLatest
+			latestSHAByBranch[fallbackReleaseLine] = oldLatest
 		} else {
-			delete(latestSHAByBranch, stableReleaseBranch)
+			delete(latestSHAByBranch, fallbackReleaseLine)
 		}
 		latestSHAMu.Unlock()
 	})
@@ -60,7 +63,7 @@ func TestResolveCommitBehindCachesKnownAndUnknown(t *testing.T) {
 	resolveCommitBehind(key, func(base, head string, logger *slog.Logger) (int, bool, error) {
 		return 12, true, nil
 	}, nil)
-	if got, known := commitsBehindStableV4("base111", nil); !known || got != 12 {
+	if got, known := commitsBehindStableLine("base111", fallbackReleaseLine, nil); !known || got != 12 {
 		t.Fatalf("known cached count = %d,%v; want 12,true", got, known)
 	}
 
@@ -68,7 +71,7 @@ func TestResolveCommitBehindCachesKnownAndUnknown(t *testing.T) {
 	resolveCommitBehind(unknownKey, func(base, head string, logger *slog.Logger) (int, bool, error) {
 		return 0, false, nil
 	}, nil)
-	if _, known := commitsBehindStableV4("fork123", nil); known {
+	if _, known := commitsBehindStableLine("fork123", fallbackReleaseLine, nil); known {
 		t.Fatal("unknown compare result must stay unknown")
 	}
 }
@@ -77,7 +80,7 @@ func TestCommitsBehindStableV4SameCommitShortCircuits(t *testing.T) {
 	resetCommitBehindState(t)
 	// A base that prefix-matches the stable head must report 0-behind
 	// immediately, with no compare dispatched.
-	got, known := commitsBehindStableV4("head999extended", nil)
+	got, known := commitsBehindStableLine("head999extended", fallbackReleaseLine, nil)
 	if !known || got != 0 {
 		t.Fatalf("same-commit result = %d,%v; want 0,true", got, known)
 	}
@@ -90,15 +93,15 @@ func TestCommitsBehindStableV4SameCommitShortCircuits(t *testing.T) {
 
 func TestCommitsBehindStableV4EmptySHAsStayUnknown(t *testing.T) {
 	resetCommitBehindState(t)
-	if _, known := commitsBehindStableV4("", nil); known {
+	if _, known := commitsBehindStableLine("", fallbackReleaseLine, nil); known {
 		t.Fatal("empty base SHA must stay unknown")
 	}
 
 	// No cached SHA for the stable branch → empty head → unknown.
 	latestSHAMu.Lock()
-	delete(latestSHAByBranch, stableReleaseBranch)
+	delete(latestSHAByBranch, fallbackReleaseLine)
 	latestSHAMu.Unlock()
-	if _, known := commitsBehindStableV4("base111", nil); known {
+	if _, known := commitsBehindStableLine("base111", fallbackReleaseLine, nil); known {
 		t.Fatal("missing stable-branch head SHA must stay unknown")
 	}
 	commitBehindMu.Lock()
@@ -119,7 +122,7 @@ func TestCommitsBehindStableV4InFlightDedupes(t *testing.T) {
 	}
 	commitBehindMu.Unlock()
 
-	if _, known := commitsBehindStableV4("base111", nil); known {
+	if _, known := commitsBehindStableLine("base111", fallbackReleaseLine, nil); known {
 		t.Fatal("in-flight compare must report unknown, not block")
 	}
 
@@ -143,13 +146,13 @@ func TestCommitsBehindStableV4DispatchesAndCaches(t *testing.T) {
 
 	// Cache miss: first call answers unknown and dispatches the compare
 	// asynchronously; note the base is truncated to the canonical short form.
-	if _, known := commitsBehindStableV4("base111full", nil); known {
+	if _, known := commitsBehindStableLine("base111full", fallbackReleaseLine, nil); known {
 		t.Fatal("cache miss must answer unknown while the compare runs")
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		got, known := commitsBehindStableV4("base111full", nil)
+		got, known := commitsBehindStableLine("base111full", fallbackReleaseLine, nil)
 		if known {
 			if got != 5 {
 				t.Fatalf("cached count = %d; want 5", got)
@@ -218,7 +221,7 @@ func TestHandleMyHivesIncludesCommitsBehind(t *testing.T) {
 	commitBehindMu.Lock()
 	commitBehindCache[commitBehindKey{base: "base111", head: "head999"}] = commitBehindValue{count: 3, known: true}
 	// handleMyHives also compares against behindTargetFor's target (the "v2"
-	// default upgrade branch here, not stableReleaseBranch). If earlier tests
+	// default upgrade branch here, not fallbackReleaseLine). If earlier tests
 	// left latestSHAByBranch["v2"] populated, that pair is uncached and would
 	// dispatch a real-network resolver whose read of githubAPIBase races with
 	// the next fakeGitHubGHCR. Stub the fetch so any dispatch stays hermetic.

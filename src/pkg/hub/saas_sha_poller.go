@@ -118,13 +118,18 @@ var (
 	commitMsgBySHA = map[string]string{}
 )
 
-// trackedBranches lists the legacy always-tracked branches that still produce
-// Docker images via CI. Personal dev branches (e.g. mk) are tracked
-// dynamically: see HubServer.trackedBranchList. v3 is retired and must not be
-// offered solely because old image tags or persisted SHA cache entries linger.
-var trackedBranches = []string{"v2"}
+// trackedBranches lists branches that are always tracked regardless of
+// whether any hive is assigned to them or an image exists. Empty since v2 was
+// retired (#8061): every release line is discovered dynamically — from the
+// hub's own branch, registered hives' branches, and published <branch>-latest
+// images — see HubServer.trackedBranchList.
+var trackedBranches = []string{}
 
+// retiredBranches are sunset release lines that must not be offered solely
+// because old image tags, persisted SHA cache entries, or a lingering branch
+// exist. v3 (#5030-era) and v2 (#8061) are retired.
 var retiredBranches = map[string]struct{}{
+	"v2": {},
 	"v3": {},
 }
 
@@ -134,8 +139,8 @@ var retiredBranches = map[string]struct{}{
 // a hub code change per branch. Static branches keep their order and come
 // first. Caller must not hold s.mu.
 func (s *HubServer) trackedBranchList() []string {
-	seen := make(map[string]bool, len(trackedBranches))
-	out := make([]string, 0, len(trackedBranches))
+	seen := make(map[string]bool, len(trackedBranches)+1)
+	out := make([]string, 0, len(trackedBranches)+1)
 	add := func(b string) {
 		if _, retired := retiredBranches[b]; retired {
 			return
@@ -144,6 +149,14 @@ func (s *HubServer) trackedBranchList() []string {
 			seen[b] = true
 			out = append(out, b)
 		}
+	}
+	// The hub's own line comes first and bypasses the retired filter: a hub
+	// still running a sunset line must keep polling it so it can see (and be
+	// upgraded off) its own branch. It is never offered to SPOKES via
+	// retirement alone — that is what the retired filter below is for.
+	if s.hubGitBranch != "" && !seen[s.hubGitBranch] {
+		seen[s.hubGitBranch] = true
+		out = append(out, s.hubGitBranch)
 	}
 	for _, b := range trackedBranches {
 		add(b)
@@ -341,8 +354,11 @@ func nextLinkURL(link string) string {
 
 const latestSHAPollInterval = 2 * time.Minute
 
+// getLatestSHA is the legacy single-branch latest_sha field: the stable
+// release line's tip. Callers that know a hive's branch use
+// getLatestSHAForBranch directly.
 func getLatestSHA() string {
-	return getLatestSHAForBranch("v2")
+	return getLatestSHAForBranch(stableReleaseLine(slog.Default()))
 }
 
 func getLatestSHAForBranch(branch string) string {

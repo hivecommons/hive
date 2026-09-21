@@ -378,8 +378,8 @@ func TestUpgradeBranchDefaultsToHubBranchNotV2(t *testing.T) {
 		t.Errorf("upgradeBranchOrDefault(\"v2\") = %q, want v2 — an explicit branch always wins", got)
 	}
 	s2 := &HubServer{logger: slog.Default()}
-	if got := s2.upgradeBranchOrDefault(""); got != "v2" {
-		t.Errorf("with no hub branch, upgradeBranchOrDefault(\"\") = %q, want v2", got)
+	if got := s2.upgradeBranchOrDefault(""); got != fallbackReleaseLine {
+		t.Errorf("with no hub branch, upgradeBranchOrDefault(\"\") = %q, want the stable release line %q (v2 is retired, #8061)", got, fallbackReleaseLine)
 	}
 }
 

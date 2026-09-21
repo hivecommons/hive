@@ -11,25 +11,31 @@ import (
 
 // stubReleaseLineTips primes the SHA poller cache the way the reconcile tick
 // would, so ReleaseLineLagStatus resolves real v5/v4 tips. Restored on cleanup.
+// testEdgeLine is the edge line the lag tests pin (stable is fallbackReleaseLine).
+const testEdgeLine = "v6"
+
 func stubReleaseLineTips(t *testing.T, edgeSHA, stableSHA string) {
+	origEdgeFn := edgeReleaseLine
+	edgeReleaseLine = func(*slog.Logger) string { return testEdgeLine }
+	t.Cleanup(func() { edgeReleaseLine = origEdgeFn })
 	t.Helper()
 	latestSHAMu.Lock()
-	origEdge, hadEdge := latestSHAByBranch[edgeReleaseBranch]
-	origStable, hadStable := latestSHAByBranch[stableReleaseBranch]
-	latestSHAByBranch[edgeReleaseBranch] = branchSHAInfo{SHA: edgeSHA}
-	latestSHAByBranch[stableReleaseBranch] = branchSHAInfo{SHA: stableSHA}
+	origEdge, hadEdge := latestSHAByBranch[testEdgeLine]
+	origStable, hadStable := latestSHAByBranch[fallbackReleaseLine]
+	latestSHAByBranch[testEdgeLine] = branchSHAInfo{SHA: edgeSHA}
+	latestSHAByBranch[fallbackReleaseLine] = branchSHAInfo{SHA: stableSHA}
 	latestSHAMu.Unlock()
 	t.Cleanup(func() {
 		latestSHAMu.Lock()
 		if hadEdge {
-			latestSHAByBranch[edgeReleaseBranch] = origEdge
+			latestSHAByBranch[testEdgeLine] = origEdge
 		} else {
-			delete(latestSHAByBranch, edgeReleaseBranch)
+			delete(latestSHAByBranch, testEdgeLine)
 		}
 		if hadStable {
-			latestSHAByBranch[stableReleaseBranch] = origStable
+			latestSHAByBranch[fallbackReleaseLine] = origStable
 		} else {
-			delete(latestSHAByBranch, stableReleaseBranch)
+			delete(latestSHAByBranch, fallbackReleaseLine)
 		}
 		latestSHAMu.Unlock()
 	})
@@ -64,8 +70,8 @@ func TestReleaseLineLagDirectionV5BehindV4(t *testing.T) {
 	if got.BehindBy != 7 {
 		t.Errorf("BehindBy = %d, want 7", got.BehindBy)
 	}
-	if got.EdgeBranch != "v5" || got.StableBranch != "v4" {
-		t.Errorf("branches = %s behind %s, want v5 behind v4", got.EdgeBranch, got.StableBranch)
+	if got.EdgeBranch != testEdgeLine || got.StableBranch != fallbackReleaseLine {
+		t.Errorf("branches = %s behind %s, want edge behind stable", got.EdgeBranch, got.StableBranch)
 	}
 	if got.EdgeSHA != "v5tip00" || got.StableSHA != "v4tip00" {
 		t.Errorf("tips = %s/%s, want v5tip00/v4tip00", got.EdgeSHA, got.StableSHA)

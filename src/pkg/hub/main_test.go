@@ -48,6 +48,12 @@ func TestMain(m *testing.M) {
 	k8sTokenPath = "testdata/no-such-serviceaccount-token"
 	k8sCACertPath = "testdata/no-such-serviceaccount-ca.crt"
 
+	// The stable release line is resolved through GHCR in production
+	// (activeReleaseLine over the :stable channel digest). Pin it offline so
+	// no handler test HEADs the registry; tests that care about the
+	// resolution itself swap resolveStableReleaseLine explicitly.
+	resolveStableReleaseLine = func(*slog.Logger) string { return fallbackReleaseLine }
+
 	// Provider and forge credentials. The suite is run inside hive pods and on
 	// developer machines whose environment carries REAL keys, and handlers
 	// under test (GitHub token validation, model probes, the gh wrapper paths)

@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	stableReleaseBranch        = "v4"
 	commitBehindCompareTimeout = 10 * time.Second
 	commitBehindCacheMax       = 1024
 )
@@ -70,13 +69,43 @@ var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count
 	return result.AheadBy, true, nil
 }
 
-// commitsBehindStableV4 counts how far base sits behind the v4 BRANCH tip.
-// That is the right number for a spoke on a branch tag and the wrong one for a
-// spoke on a release channel — see commitsBehindTarget and behindTargetFor.
-// Kept for the tooltip's secondary "and the channel itself is N behind the
-// tip" note.
-func commitsBehindStableV4(base string, logger *slog.Logger) (int, bool) {
-	return commitsBehindTarget(base, getLatestSHAForBranch(stableReleaseBranch), logger)
+// fallbackReleaseLine is the branch assumed when neither the :stable channel
+// nor any tracked v<N> line resolves (cold cache, GHCR unreachable). It is the
+// line :stable was promoted from at #7721 Phase 1 and exists only so a hub
+// that cannot identify anything still resolves SOME branch rather than "";
+// every runtime path prefers stableReleaseLine().
+const fallbackReleaseLine = "v5"
+
+// stableReleaseLine returns the branch the :stable release channel currently
+// resolves to (#7721 Phase 1 moved it from v4 to v5; hard-coding a line here
+// re-creates the "152 behind" bug at every rollover). Falls back to the
+// highest-numbered tracked v<N> line, then fallbackReleaseLine.
+//
+// Resolution may consult GHCR (through getChannelTargets' 5-minute cache), so
+// request handlers resolve it ONCE per request and pass the line down rather
+// than calling this per hive.
+func stableReleaseLine(logger *slog.Logger) string {
+	return resolveStableReleaseLine(logger)
+}
+
+// resolveStableReleaseLine is the swappable implementation behind
+// stableReleaseLine; tests pin it to avoid registry lookups.
+var resolveStableReleaseLine = func(logger *slog.Logger) string {
+	shas := getDisplaySHAs()
+	if line := activeReleaseLine(getChannelTargets(shas, logger), shas); line != "" {
+		return line
+	}
+	return fallbackReleaseLine
+}
+
+// commitsBehindStableLine counts how far base sits behind the BRANCH tip of
+// line (the stable release line, resolved once by the caller). That is the right number for a spoke on a branch tag and
+// the wrong one for a spoke on a release channel — see commitsBehindTarget
+// and behindTargetFor. Kept for the tooltip's secondary "and the channel
+// itself is N behind the tip" note. The JSON field it feeds keeps its
+// historical commitsBehindStableV4 name so mixed hub/asset versions agree.
+func commitsBehindStableLine(base, line string, logger *slog.Logger) (int, bool) {
+	return commitsBehindTarget(base, getLatestSHAForBranch(line), logger)
 }
 
 // commitsBehindTarget counts how far base sits behind head, resolving through

@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -20,11 +21,6 @@ import (
 // moves, and the same honest unknown-on-first-call / unknown-on-error
 // semantics.
 const (
-	// edgeReleaseBranch is the release line hosted spokes run and the one that
-	// falls behind. stableReleaseBranch ("v4", commit_behind.go) is where fixes
-	// land and the line edge is measured against.
-	edgeReleaseBranch = "v5"
-
 	// ReleaseLineLagMaxEnvVar overrides the alarm threshold: v5 may sit up to
 	// this many commits behind v4 before the dashboard flags the line as
 	// drifting. An unset, empty, non-numeric, or negative value falls back to
@@ -39,18 +35,20 @@ const (
 	defaultReleaseLineLagMax = 5
 )
 
-// ReleaseLineLag reports how far the edge release line (v5) sits behind the
-// stable default branch (v4), and whether that lag has crossed the alarm
-// threshold.
+// ReleaseLineLag reports how far the edge release line sits behind the stable
+// release line, and whether that lag has crossed the alarm threshold. Both
+// lines are resolved from the release channels at call time (#7721 Phase 1
+// moved stable v4→v5 and edge v5→v6; hard-coding either re-creates #6960 at
+// the next rollover).
 type ReleaseLineLag struct {
-	// EdgeBranch and StableBranch name the two lines compared (v5 behind v4).
+	// EdgeBranch and StableBranch name the two lines compared (edge behind stable).
 	EdgeBranch   string `json:"edgeBranch"`
 	StableBranch string `json:"stableBranch"`
 	// EdgeSHA and StableSHA are the short tips the count was measured between,
 	// empty until the SHA poller has resolved them.
 	EdgeSHA   string `json:"edgeSHA,omitempty"`
 	StableSHA string `json:"stableSHA,omitempty"`
-	// BehindBy is the number of commits on v4 that are not yet on v5. Only
+	// BehindBy is the number of commits on stable that are not yet on edge. Only
 	// meaningful when Known is true.
 	BehindBy int `json:"behindBy"`
 	// Known is false when the tips are not yet resolved or the compare has not
@@ -81,21 +79,43 @@ func releaseLineLagMax() int {
 	return n
 }
 
-// ReleaseLineLagStatus measures how far the edge line (v5) is behind the stable
-// line (v4), reusing the commit_behind.go compare/cache path. The first call
-// for a given (v5 tip, v4 tip) pair reports Known=false and dispatches the
+// edgeReleaseLine returns the branch the :edge channel currently resolves to,
+// falling back to the numerically-next v<N> line after stable (the line a
+// fresh edge build will come from before its first publish). Swappable for
+// tests like resolveStableReleaseLine.
+var edgeReleaseLine = func(logger *slog.Logger) string {
+	shas := getDisplaySHAs()
+	for _, ch := range getChannelTargets(shas, logger) {
+		if ch.Channel == ReleaseChannelEdge && ch.Branch != "" {
+			return ch.Branch
+		}
+	}
+	stable := stableReleaseLine(logger)
+	if m := releaseLinePattern.FindStringSubmatch(stable); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return fmt.Sprintf("v%d", n+1)
+		}
+	}
+	return ""
+}
+
+// ReleaseLineLagStatus measures how far the edge line is behind the stable
+// line, reusing the commit_behind.go compare/cache path. The first call
+// for a given (edge tip, stable tip) pair reports Known=false and dispatches the
 // background compare; a later call returns the cached count. Tips it cannot yet
 // resolve (SHA poller not populated) also yield Known=false. It never blocks a
 // dashboard render on the network and never reports a healthy zero for an
 // unresolved or failed compare.
 func ReleaseLineLagStatus(logger *slog.Logger) ReleaseLineLag {
 	threshold := releaseLineLagMax()
-	edgeSHA := shortSHA(getLatestSHAForBranch(edgeReleaseBranch))
-	stableSHA := shortSHA(getLatestSHAForBranch(stableReleaseBranch))
+	edgeBranch := edgeReleaseLine(logger)
+	stableBranch := stableReleaseLine(logger)
+	edgeSHA := shortSHA(getLatestSHAForBranch(edgeBranch))
+	stableSHA := shortSHA(getLatestSHAForBranch(stableBranch))
 
 	lag := ReleaseLineLag{
-		EdgeBranch:   edgeReleaseBranch,
-		StableBranch: stableReleaseBranch,
+		EdgeBranch:   edgeBranch,
+		StableBranch: stableBranch,
 		EdgeSHA:      edgeSHA,
 		StableSHA:    stableSHA,
 		Threshold:    threshold,

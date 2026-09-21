@@ -2759,8 +2759,10 @@
     var _latestSHA = '';
     var _stableV4SHA = '';
     /* Name of the branch _stableV4SHA is the tip of; the server's
-       stable_v4_sha is that branch's HEAD, not the :stable channel. */
-    var STABLE_BRANCH_LABEL = 'v4';
+       stable_v4_sha is that branch's HEAD, not the :stable channel. Set from
+       stable_branch on every poll: the line :stable follows moves at each
+       rollover (v4 -> v5 at #7721 Phase 1), so it is never hard-coded here. */
+    var STABLE_BRANCH_LABEL = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
@@ -3089,7 +3091,7 @@
     function hiveIsUpgradingNow(h, branchName, branchLatest) {
       if (!h) return false;
       if (branchName === undefined || branchName === null || branchName === '') {
-        branchName = h.gitBranch || 'v2';
+        branchName = h.gitBranch || STABLE_BRANCH_LABEL;
       }
       if (branchLatest === undefined || branchLatest === null) {
         /* The hub resolves what THIS spoke's tag can deliver
@@ -3150,7 +3152,7 @@
        Returns nothing; callers re-read _upgradingHives through the predicate. */
     function normalizeUpgradeState(h) {
       if (!h) return;
-      var branchName = h.gitBranch || 'v2';
+      var branchName = h.gitBranch || STABLE_BRANCH_LABEL;
       var st = hiveSwitchState(h, branchName);
       /* A switch sentinel that no longer resolves to a switch (the target
          became a same-branch SHA) is stale and must not force upgrading. */
@@ -5639,6 +5641,7 @@
         _hivesSummary = data.hives_summary || null;
         _latestSHA = data.latest_sha || _latestSHA;
         _stableV4SHA = data.stable_v4_sha || _stableV4SHA;
+        STABLE_BRANCH_LABEL = data.stable_branch || STABLE_BRANCH_LABEL;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
@@ -5766,7 +5769,7 @@
           shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
-        var hubBranch = data.hub_git_branch || 'v2';
+        var hubBranch = data.hub_git_branch || STABLE_BRANCH_LABEL;
         if (hubHash) {
           var el = document.getElementById('hub-version');
           if (el) {
@@ -6719,7 +6722,7 @@
         var driftDot = driftOf(h).count > 0 ? driftBadge(h) : '';
         var versionCell = '';
         if (sha) {
-          var branchName = h.gitBranch || 'v2';
+          var branchName = h.gitBranch || STABLE_BRANCH_LABEL;
           /* Effective version SELECTION, distinct from the running branch. A
              hive following a release channel heartbeats the channel image's
              baked-in branch (a "stable" retag of a v4 build reports
@@ -6741,7 +6744,7 @@
              on a fleet the upgrade engine (correctly) refused to move. */
           var branchLatest = h.behindTargetSHA || _latestSHAs[branchName] || _latestSHA;
           var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
-          if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
+          if (_trackedBranches.length === 0 && STABLE_BRANCH_LABEL) _trackedBranches = [STABLE_BRANCH_LABEL];
           /* A release channel is as valid an upgrade target as a branch — the
              hive gets pinned to the moving tag and follows promotions — so the
              same menu offers both. Channels are listed in their own section
