@@ -530,6 +530,33 @@ func TestBuildFrontendStatus(t *testing.T) {
 	}
 }
 
+func TestBuildFrontendStatusPublishesStandbyPauseFacts(t *testing.T) {
+	cfg := &config.Config{
+		Project:  config.ProjectConfig{Org: "org", Repos: []string{"repo"}},
+		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
+		Agents: map[string]config.AgentConfig{
+			"quality": {},
+		},
+	}
+	state := governor.State{
+		Mode:             governor.ModeIdle,
+		SuppressedLanes:  []string{"quality"},
+		LanePauseReasons: map[string]string{"quality": "budget_exhausted"},
+	}
+	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "org/repo", Number: 1, Lane: "quality"},
+		{Repo: "org/repo", Number: 2, Lane: ""},
+	}}}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+	payload := BuildFrontendStatus(state, actionable, nil, cfg, nil, gov, nil, nil, nil, nil)
+	if payload.Governor.LanePauseReasons["quality"] != "budget_exhausted" {
+		t.Fatalf("pause reason = %q, want budget_exhausted", payload.Governor.LanePauseReasons["quality"])
+	}
+	if payload.Governor.LaneQueueDepths["quality"] != 2 {
+		t.Fatalf("lane depth = %d, want 2", payload.Governor.LaneQueueDepths["quality"])
+	}
+}
+
 func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},

@@ -293,7 +293,7 @@ func BuildFrontendStatus(
 		Agents:              agents,
 		HiddenAgents:        hiddenAgents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
-		Governor:            buildGovernor(govState, cfg),
+		Governor:            buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable)),
 		Tokens:              buildTokens(tokenCollector),
 		Repos:               buildRepos(cfg, actionable, govState),
 		Beads:               BuildBeadsFromConfig(beadStores, cfg),
@@ -1628,6 +1628,10 @@ func cadenceDisplay(c config.Cadence) string {
 }
 
 func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
+	return buildGovernorWithLaneDepths(state, cfg, nil)
+}
+
+func buildGovernorWithLaneDepths(state governor.State, cfg *config.Config, laneDepths map[string]int) FrontendGovernor {
 	// The gauge must show the thresholds the governor ACTUALLY laddered on, or
 	// it explains the current mode with numbers that did not produce it. This
 	// used to be a private copy of the defaults plus its own explicit-wins
@@ -1648,13 +1652,68 @@ func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
 	}
 
 	return FrontendGovernor{
-		Active:     true,
-		Mode:       strings.ToLower(string(state.Mode)),
-		Issues:     state.QueueIssues,
-		PRs:        state.QueuePRs,
-		Thresholds: thresholds,
-		NextKick:   nextKick,
+		Active:           true,
+		Mode:             strings.ToLower(string(state.Mode)),
+		Issues:           state.QueueIssues,
+		PRs:              state.QueuePRs,
+		Thresholds:       thresholds,
+		NextKick:         nextKick,
+		SuppressedLanes:  cloneStringSlice(state.SuppressedLanes),
+		LaneQueueDepths:  cloneIntMap(laneDepths),
+		LanePauseReasons: cloneStringStringMap(state.LanePauseReasons),
 	}
+}
+
+func buildLaneQueueDepths(cfg *config.Config, actionable *github.ActionableResult) map[string]int {
+	if cfg == nil || actionable == nil {
+		return nil
+	}
+	depths := make(map[string]int, len(cfg.Agents))
+	for lane := range cfg.Agents {
+		if lane == "scanner" {
+			depths[lane] = len(actionable.Issues.Items)
+			continue
+		}
+		count := 0
+		for _, issue := range actionable.Issues.Items {
+			if issue.Lane == lane || issue.Lane == "" {
+				count++
+			}
+		}
+		depths[lane] = count
+	}
+	return depths
+}
+
+func cloneStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneIntMap(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func buildTokens(collector *tokens.Collector) FrontendTokens {

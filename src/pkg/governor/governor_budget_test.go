@@ -29,6 +29,17 @@ func TestBudgetExhausted_SuppressesKicks(t *testing.T) {
 	if !g.GetState().BudgetExhausted {
 		t.Error("state should report budget exhausted")
 	}
+	state := g.GetState()
+	if len(state.SuppressedLanes) != 2 {
+		t.Fatalf("suppressed lanes = %v, want scanner and outreach", state.SuppressedLanes)
+	}
+	if state.LanePauseReasons["scanner"] != budgetExhaustedPauseReason {
+		t.Errorf("scanner pause reason = %q, want %q", state.LanePauseReasons["scanner"], budgetExhaustedPauseReason)
+	}
+	history := g.EvalHistory()
+	if len(history) == 0 || history[len(history)-1].LanePauseReasons["outreach"] != budgetExhaustedPauseReason {
+		t.Fatalf("eval history did not publish budget pause reason: %+v", history)
+	}
 }
 
 func TestBudgetExhausted_ExemptAgentsStillDue(t *testing.T) {

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -785,6 +786,30 @@ func TestFilterByLane_AllMatchingLane(t *testing.T) {
 	result := filterByLane(issues, "outreach")
 	if len(result) != 2 {
 		t.Errorf("expected 2 results, got %d", len(result))
+	}
+}
+
+func TestSchedulerLaneDepthsTrackLastActionable(t *testing.T) {
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{
+		"scanner": {},
+		"quality": {},
+	}}
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.SetLastActionable(&github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Number: 1, Lane: "quality"},
+		{Number: 2, Lane: ""},
+		{Number: 3, Lane: "scanner"},
+	}}})
+	depths := s.GetLaneDepths()
+	if depths["scanner"] != 3 {
+		t.Fatalf("scanner depth = %d, want all 3 issues", depths["scanner"])
+	}
+	if depths["quality"] != 2 {
+		t.Fatalf("quality depth = %d, want quality plus unrouted issue", depths["quality"])
+	}
+	depths["quality"] = 99
+	if got := s.GetLaneDepths()["quality"]; got != 2 {
+		t.Fatalf("GetLaneDepths returned mutable state, got %d", got)
 	}
 }
 

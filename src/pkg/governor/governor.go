@@ -39,22 +39,25 @@ type ModeChange struct {
 }
 
 type EvalSnapshot struct {
-	Timestamp       int64                     `json:"t"`
-	Mode            Mode                      `json:"govMode"`
-	QueueIssues     int                       `json:"govIssues"`
-	QueuePRs        int                       `json:"govPrs"`
-	QueueTotal      int                       `json:"govTotal"`
-	QueueHold       int                       `json:"govHold"`
-	QueueActive     int                       `json:"govActive"`
-	SLAViolations   int                       `json:"sla_violations,omitempty"`
-	AgentsKicked    []string                  `json:"agents_kicked,omitempty"`
-	Actionable      int                       `json:"actionableCount"`
-	OpenPRs         int                       `json:"openPrCount"`
-	Mergeable       int                       `json:"mergeableCount"`
-	BeadsWorkers    int                       `json:"beadsWorkers"`
-	BeadsSupervisor int                       `json:"beadsSupervisor"`
-	Repos           map[string]RepoSnapshot   `json:"repos,omitempty"`
-	AgentStats      map[string]map[string]any `json:"agentStats,omitempty"`
+	Timestamp        int64                     `json:"t"`
+	Mode             Mode                      `json:"govMode"`
+	QueueIssues      int                       `json:"govIssues"`
+	QueuePRs         int                       `json:"govPrs"`
+	QueueTotal       int                       `json:"govTotal"`
+	QueueHold        int                       `json:"govHold"`
+	QueueActive      int                       `json:"govActive"`
+	SLAViolations    int                       `json:"sla_violations,omitempty"`
+	AgentsKicked     []string                  `json:"agents_kicked,omitempty"`
+	Actionable       int                       `json:"actionableCount"`
+	OpenPRs          int                       `json:"openPrCount"`
+	Mergeable        int                       `json:"mergeableCount"`
+	BeadsWorkers     int                       `json:"beadsWorkers"`
+	BeadsSupervisor  int                       `json:"beadsSupervisor"`
+	Repos            map[string]RepoSnapshot   `json:"repos,omitempty"`
+	AgentStats       map[string]map[string]any `json:"agentStats,omitempty"`
+	SuppressedLanes  []string                  `json:"suppressed_lanes,omitempty"`
+	LaneQueueDepths  map[string]int            `json:"lane_queue_depths,omitempty"`
+	LanePauseReasons map[string]string         `json:"lane_pause_reasons,omitempty"`
 }
 
 type RepoSnapshot struct {
@@ -178,7 +181,9 @@ type State struct {
 	// BudgetExhausted mirrors the budget gate as of the last eval: the
 	// weekly limit is set and window spend has reached it, so kicks for
 	// non-exempt agents are suppressed.
-	BudgetExhausted bool `json:"budget_exhausted"`
+	BudgetExhausted  bool              `json:"budget_exhausted"`
+	SuppressedLanes  []string          `json:"suppressed_lanes,omitempty"`
+	LanePauseReasons map[string]string `json:"lane_pause_reasons,omitempty"`
 }
 
 const (
@@ -417,20 +422,25 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 
 	g.state.BudgetExhausted = g.budgetExhausted()
 
-	due := g.agentsDueForKick()
+	kickReport := g.agentsDueForKickReport()
+	due := kickReport.due
+	g.state.SuppressedLanes = kickReport.suppressedLanes
+	g.state.LanePauseReasons = kickReport.pauseReasons
 
 	snap := EvalSnapshot{
-		Timestamp:     time.Now().UnixMilli(),
-		Mode:          g.state.Mode,
-		QueueIssues:   queueIssues,
-		QueuePRs:      queuePRs,
-		QueueTotal:    queueIssues + queuePRs + queueHold,
-		QueueHold:     queueHold,
-		QueueActive:   queueIssues + queuePRs,
-		SLAViolations: slaViolations,
-		AgentsKicked:  due,
-		Actionable:    queueIssues,
-		OpenPRs:       queuePRs,
+		Timestamp:        time.Now().UnixMilli(),
+		Mode:             g.state.Mode,
+		QueueIssues:      queueIssues,
+		QueuePRs:         queuePRs,
+		QueueTotal:       queueIssues + queuePRs + queueHold,
+		QueueHold:        queueHold,
+		QueueActive:      queueIssues + queuePRs,
+		SLAViolations:    slaViolations,
+		AgentsKicked:     due,
+		Actionable:       queueIssues,
+		OpenPRs:          queuePRs,
+		SuppressedLanes:  cloneStrings(kickReport.suppressedLanes),
+		LanePauseReasons: cloneStringMap(kickReport.pauseReasons),
 	}
 	g.appendEvalHistory(snap)
 
@@ -784,7 +794,19 @@ func (g *Governor) budgetExhausted() bool {
 	return g.budget.WeeklyLimit > 0 && !g.budget.IgnoreAll && g.budget.CurrentSpend >= g.budget.WeeklyLimit
 }
 
+type kickReport struct {
+	due             []string
+	suppressedLanes []string
+	pauseReasons    map[string]string
+}
+
+const budgetExhaustedPauseReason = "budget_exhausted"
+
 func (g *Governor) agentsDueForKick() []string {
+	return g.agentsDueForKickReport().due
+}
+
+func (g *Governor) agentsDueForKickReport() kickReport {
 	now := g.now()
 	exhausted := g.budgetExhausted()
 	// IgnoredAgents are exempt from budget suppression: they keep getting
@@ -794,6 +816,7 @@ func (g *Governor) agentsDueForKick() []string {
 		exempt[name] = true
 	}
 	suppressed := 0
+	suppressedSet := map[string]struct{}{}
 
 	keys := make([]string, 0, len(g.state.Cadences))
 	for key := range g.state.Cadences {
@@ -825,6 +848,7 @@ func (g *Governor) agentsDueForKick() []string {
 		}
 		if exhausted && !exempt[agentName] {
 			suppressed++
+			suppressedSet[agentName] = struct{}{}
 			continue
 		}
 
@@ -880,7 +904,15 @@ func (g *Governor) agentsDueForKick() []string {
 		)
 	}
 
-	return due
+	suppressedLanes := make([]string, 0, len(suppressedSet))
+	pauseReasons := make(map[string]string, len(suppressedSet))
+	for lane := range suppressedSet {
+		suppressedLanes = append(suppressedLanes, lane)
+		pauseReasons[lane] = budgetExhaustedPauseReason
+	}
+	sort.Strings(suppressedLanes)
+
+	return kickReport{due: due, suppressedLanes: suppressedLanes, pauseReasons: pauseReasons}
 }
 
 // AgentEligibleForCELKick reports whether an agent selected by an ADDITIVE CEL
@@ -1084,17 +1116,39 @@ func (g *Governor) GetState() State {
 		lastKick[k] = v
 	}
 	return State{
-		Mode:            g.state.Mode,
-		RepoModes:       repoModes,
-		QueueIssues:     g.state.QueueIssues,
-		QueuePRs:        g.state.QueuePRs,
-		QueueHold:       g.state.QueueHold,
-		Cadences:        cadences,
-		LastKick:        lastKick,
-		LastEval:        g.state.LastEval,
-		SLAViolations:   g.state.SLAViolations,
-		BudgetExhausted: g.state.BudgetExhausted,
+		Mode:             g.state.Mode,
+		RepoModes:        repoModes,
+		QueueIssues:      g.state.QueueIssues,
+		QueuePRs:         g.state.QueuePRs,
+		QueueHold:        g.state.QueueHold,
+		Cadences:         cadences,
+		LastKick:         lastKick,
+		LastEval:         g.state.LastEval,
+		SLAViolations:    g.state.SLAViolations,
+		BudgetExhausted:  g.state.BudgetExhausted,
+		SuppressedLanes:  cloneStrings(g.state.SuppressedLanes),
+		LanePauseReasons: cloneStringMap(g.state.LanePauseReasons),
 	}
+}
+
+func cloneStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func modeToConfigKey(m Mode) string {

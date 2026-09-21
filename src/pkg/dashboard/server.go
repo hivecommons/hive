@@ -677,12 +677,15 @@ type FrontendConfiguredAgent struct {
 }
 
 type FrontendGovernor struct {
-	Active     bool               `json:"active"`
-	Mode       string             `json:"mode"`
-	Issues     int                `json:"issues"`
-	PRs        int                `json:"prs"`
-	Thresholds FrontendThresholds `json:"thresholds"`
-	NextKick   string             `json:"nextKick,omitempty"`
+	Active           bool               `json:"active"`
+	Mode             string             `json:"mode"`
+	Issues           int                `json:"issues"`
+	PRs              int                `json:"prs"`
+	Thresholds       FrontendThresholds `json:"thresholds"`
+	NextKick         string             `json:"nextKick,omitempty"`
+	SuppressedLanes  []string           `json:"suppressed_lanes,omitempty"`
+	LaneQueueDepths  map[string]int     `json:"lane_queue_depths,omitempty"`
+	LanePauseReasons map[string]string  `json:"lane_pause_reasons,omitempty"`
 }
 
 type FrontendThresholds struct {

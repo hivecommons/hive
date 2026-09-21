@@ -40,6 +40,7 @@ type Scheduler struct {
 	inflight             InflightLookup
 	lifecycle            timeline.Recorder
 	mu                   sync.RWMutex
+	laneDepths           map[string]int
 }
 
 // SetLifecycleRecorder attaches the lifecycle timeline sink. Once set, every
@@ -153,6 +154,7 @@ func (s *Scheduler) SetLastActionable(a *github.ActionableResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastActionable = a
+	s.laneDepths = s.computeLaneDepthsLocked(a)
 }
 
 // GetLastActionable returns the most recently cached actionable result.
@@ -160,6 +162,37 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastActionable
+}
+
+// GetLaneDepths returns the last per-lane actionable issue depth computed from
+// the same queue snapshot used by BuildAgentMessageFromLastActionable.
+func (s *Scheduler) GetLaneDepths() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int, len(s.laneDepths))
+	for lane, depth := range s.laneDepths {
+		out[lane] = depth
+	}
+	return out
+}
+
+func (s *Scheduler) computeLaneDepthsLocked(a *github.ActionableResult) map[string]int {
+	if a == nil {
+		return nil
+	}
+	agents := map[string]config.AgentConfig{}
+	if s.cfg != nil {
+		agents = s.cfg.Agents
+	}
+	depths := make(map[string]int, len(agents))
+	for lane := range agents {
+		if lane == "scanner" {
+			depths[lane] = len(a.Issues.Items)
+			continue
+		}
+		depths[lane] = len(filterByLane(a.Issues.Items, lane))
+	}
+	return depths
 }
 
 // userSavedPolicyDir is where the dashboard prompt editor

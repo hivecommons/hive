@@ -260,6 +260,7 @@ type SchedulerControl interface {
 	BuildAgentMessage(agentName string, issues []ghpkg.Issue, actionable *ghpkg.ActionableResult) string
 	BuildAgentMessageFromLastActionable(agentName string) string
 	GetLastActionable() *ghpkg.ActionableResult
+	GetLaneDepths() map[string]int
 	// ResolveTemplate / TemplateExists report kick_template provenance for
 	// the prompt editor and the general-settings guard (#7390).
 	ResolveTemplate(agentName string) scheduler.TemplateResolution
