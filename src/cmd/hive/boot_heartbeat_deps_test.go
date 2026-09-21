@@ -88,6 +88,8 @@ func newBootHeartbeatBoot(t *testing.T, f *bootHeartbeatFake, cfg *config.Config
 		cfg:                     cfg,
 		logger:                  logger,
 		startTime:               time.Now(),
+		reporterName:            "test-host/1",
+		processStartedAt:        time.Now(),
 		repoTargetMisconfigured: func() bool { return false },
 		repoTargetIssueMessage:  func() string { return "" },
 		gov:                     governor.New(cfg.Governor, cfg.Agents, logger),

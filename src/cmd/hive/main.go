@@ -897,6 +897,13 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		return false
 	}
 	b.startTime = time.Now()
+	// The heartbeat identity fields live on boot since the boot split, but
+	// nothing assigned them: v5 spokes beat with Reporter "" (the hub reads
+	// that as "too old to report") and a zero StartedAt, and the restart
+	// min-uptime guard measured uptime from year 1 so it never fired. Set
+	// them here, alongside startTime, which is the same instant they mean.
+	b.reporterName = reporterName
+	b.processStartedAt = b.startTime
 	b.configPath = deps.parseFlags(resolveDefaultConfigPath(deps.getenv(hiveConfigEnv)))
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
 	// compares against. The Dockerfile builds it with `--short=7`, but git can

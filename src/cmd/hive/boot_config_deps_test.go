@@ -287,6 +287,15 @@ func TestBootConfigWith_HappyPathPopulatesBootAndRegistersCleanups(t *testing.T)
 	if b.cfg == nil || b.logger == nil || b.ctx == nil || b.startTime.IsZero() {
 		t.Fatalf("boot state incomplete: cfg=%v logger=%v ctx=%v start=%v", b.cfg, b.logger, b.ctx, b.startTime)
 	}
+	// Heartbeat identity must be populated here, not left to bootHeartbeat: an
+	// empty Reporter reads as "too old to report" on the hub and a zero
+	// processStartedAt disables the restart min-uptime guard.
+	if b.reporterName != reporterName || b.reporterName == "" {
+		t.Fatalf("reporterName = %q, want %q (non-empty)", b.reporterName, reporterName)
+	}
+	if !b.processStartedAt.Equal(b.startTime) {
+		t.Fatalf("processStartedAt = %v, want startTime %v", b.processStartedAt, b.startTime)
+	}
 	if b.configPath != "/etc/hive/hive.yaml" || f.parsedDefault != "/etc/hive/hive.yaml" {
 		t.Fatalf("configPath=%q parsedDefault=%q, want HIVE_CONFIG as the -config default", b.configPath, f.parsedDefault)
 	}
