@@ -221,6 +221,28 @@ func DecomposeFailed(epic *beads.Bead) bool {
 	return epic != nil && epic.Meta(MetaDecomposeFailed) == "true"
 }
 
+// DecomposeStuckAfter is how long a pending epic may sit after its last
+// architect kick before the dashboard calls it stuck even without the
+// explicit failure marker. The marker only lands on the label path (which
+// re-kicks and counts); a button-kicked epic is kicked once and then waits,
+// so age is the only signal that its architect never answered. 12h is three
+// missed architect cycles at ACMM L5 (credit: Danathar, hivecommons/hive#8013).
+const DecomposeStuckAfter = 12 * time.Hour
+
+// DecomposeStuck is the display-side "this needs a human" test: the epic
+// either exhausted its attempt budget (DecomposeFailed) or has been pending
+// for DecomposeStuckAfter since it was last kicked with nothing to show.
+func DecomposeStuck(epic *beads.Bead) bool {
+	if epic == nil || !DecomposePending(epic) {
+		return false
+	}
+	if DecomposeFailed(epic) {
+		return true
+	}
+	at := DecomposeKickedAt(epic)
+	return !at.IsZero() && decomposeNow().Sub(at) >= DecomposeStuckAfter
+}
+
 // DecomposeAttempts returns how many times the architect has been kicked for
 // this epic since it was minted (or last reset).
 func DecomposeAttempts(epic *beads.Bead) int {

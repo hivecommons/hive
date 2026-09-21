@@ -117,7 +117,7 @@ func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
 		PlanStatus:        status,
 		Approved:          status == PlanStatusApproved,
 		PendingDecompose:  DecomposePending(epic),
-		DecomposeFailed:   DecomposeFailed(epic),
+		DecomposeFailed:   DecomposeStuck(epic),
 		DecomposeAttempts: DecomposeAttempts(epic),
 	}
 	for _, c := range childrenOf(store, epicID) {

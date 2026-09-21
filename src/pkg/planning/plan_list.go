@@ -28,9 +28,10 @@ type PlanSummary struct {
 	// PendingDecompose is true while the epic is queued for the architect
 	// (children not yet materialized).
 	PendingDecompose bool `json:"pendingDecompose"`
-	// DecomposeFailed is true when the architect was kicked DecomposeMaxAttempts
-	// times without producing children: the epic is STUCK, not queued, and
-	// needs a human to re-request it (hivecommons/hive#8010).
+	// DecomposeFailed is true when the epic is STUCK, not queued: the architect
+	// was kicked DecomposeMaxAttempts times without producing children, or its
+	// last kick is older than DecomposeStuckAfter (hivecommons/hive#8010, #8011).
+	// A human needs to re-request it.
 	DecomposeFailed bool `json:"decomposeFailed"`
 	// DecomposeAttempts counts architect kicks so far for a pending epic.
 	DecomposeAttempts int `json:"decomposeAttempts,omitempty"`
@@ -143,7 +144,7 @@ func ListPlans(stores map[string]*beads.Store) []PlanSummary {
 				Agent:             name,
 				PlanStatus:        b.Meta(MetaPlanStatus),
 				PendingDecompose:  DecomposePending(b),
-				DecomposeFailed:   DecomposeFailed(b),
+				DecomposeFailed:   DecomposeStuck(b),
 				DecomposeAttempts: DecomposeAttempts(b),
 				IssueRepo:         b.Meta(MetaIssueRepo),
 				IssueNumber:       b.Meta(MetaIssueNumber),

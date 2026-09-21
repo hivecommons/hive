@@ -130,7 +130,7 @@ modal uses, compressed to fit next to the issue number:
 | chip | state | meaning |
 |------|-------|---------|
 | `⧗` | queued | accepted, waiting for the architect to break it into tasks |
-| `⚠` | stuck | the architect exhausted its attempts and produced nothing — click to retry |
+| `⚠` | stuck | the architect exhausted its attempts, or its last kick is over 12h old (`DecomposeStuckAfter`) with nothing built — click to retry |
 | `● N` | review | N tasks drafted, waiting for your approval |
 | `▶ d/N` | executing | approved; d of N tasks done |
 | `✓ N` | done | approved and every task closed |

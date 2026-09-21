@@ -3,6 +3,7 @@ package planning
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/github"
@@ -136,5 +137,41 @@ func TestGetPlanTree_ClaimantAndPR(t *testing.T) {
 	}
 	if MirrorChecklist(nil, "") != "" {
 		t.Error("nil tree must render empty")
+	}
+}
+
+func TestDecomposeStuck_ByAgeWithoutFailureMarker(t *testing.T) {
+	store := newStore(t)
+	now := withDecomposeClock(t, time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC))
+	issue := github.Issue{Repo: "a/b", Number: 3, Title: "button kicked", URL: "https://github.com/a/b/issues/3"}
+	epic, err := EpicFromIssue(store, issue, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DecomposeStuck(epic) {
+		t.Fatal("never-kicked pending epic must not read as stuck")
+	}
+	if err := RecordDecomposeKick(store, epic.ID, *now); err != nil {
+		t.Fatal(err)
+	}
+	epic, _ = store.Get(epic.ID)
+	*now = now.Add(DecomposeStuckAfter - time.Minute)
+	if DecomposeStuck(epic) {
+		t.Fatal("inside the window must not be stuck")
+	}
+	*now = now.Add(2 * time.Minute)
+	if !DecomposeStuck(epic) {
+		t.Fatal("past DecomposeStuckAfter with no children must be stuck")
+	}
+	if got := ListPlans(map[string]*beads.Store{"a": store})[0].State; got != PlanStateStuck {
+		t.Fatalf("ListPlans state=%q, want stuck", got)
+	}
+	// Children arriving clears pending, and with it the stuck reading.
+	if _, err := DecomposeFromOutput(store, epic, "1. [T1] x [agent_suitable]\n", Options{}); err != nil {
+		t.Fatal(err)
+	}
+	epic, _ = store.Get(epic.ID)
+	if DecomposeStuck(epic) {
+		t.Fatal("decomposed epic must not be stuck")
 	}
 }
