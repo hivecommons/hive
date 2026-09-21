@@ -8035,18 +8035,25 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 	// Holds persist across cycles, so re-deriving them every pass would re-ask
 	// GitHub to apply a label the PR already carries. The enumeration already
 	// fetched each PR's labels, so skipping the settled ones costs nothing.
+	//
+	// Holds carry the owner/repo form (they descend from review reports, which
+	// record GitHub's full name) while PRs.Items carry whatever governor.repos
+	// says — usually the bare repo under project.org. Key both through
+	// fullRepoName or the skip never matches and every cycle re-labels every
+	// hold (observed on a hive whose repos were configured bare).
+	org := cfg.Project.Org
 	labeled := map[string]bool{}
 	if actionable != nil {
 		for _, pr := range actionable.PRs.Items {
 			for _, have := range pr.Labels {
 				if strings.EqualFold(strings.TrimSpace(have), label) {
-					labeled[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = true
+					labeled[strings.ToLower(fmt.Sprintf("%s#%d", fullRepoName(pr.Repo, org), pr.Number))] = true
 				}
 			}
 		}
 	}
 	for _, hold := range plan.State.Human {
-		if labeled[fmt.Sprintf("%s#%d", hold.Repo, hold.Number)] {
+		if labeled[strings.ToLower(fmt.Sprintf("%s#%d", fullRepoName(hold.Repo, org), hold.Number))] {
 			continue
 		}
 		if err := ghClient.ApplyHumanDecisionLabel(ctx, hold.Repo, hold.Number, label); err != nil {

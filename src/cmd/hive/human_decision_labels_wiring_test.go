@@ -156,6 +156,27 @@ func TestApplyHumanDecisionLabels_SkipsAlreadyLabeledCaseInsensitive(t *testing.
 	}
 }
 
+// Live hives configure governor.repos as bare names under project.org, so the
+// enumeration reports Repo "widget" while holds (born from review reports)
+// carry "acme/widget". The skip must reconcile the two forms; before it did,
+// every cycle re-labeled every hold and the "already labeled" test passed
+// only because both sides happened to use the same spelling.
+func TestApplyHumanDecisionLabels_SkipMatchesBareRepoAgainstFullHold(t *testing.T) {
+	h := newHumanLabelServer(t, "queue-triage")
+	ghClient := github.NewClientForTest(h.srv.URL, "acme", []string{"widget"}, restoreTestLogger())
+
+	cfg := humanLabelConfig("queue-triage")
+	cfg.Project.Org = "acme"
+	actionable := actionableWithLabels(42, "queue-triage")
+	actionable.PRs.Items[0].Repo = "widget"
+
+	applyHumanDecisionLabels(context.Background(), cfg, ghClient, actionable, humanHoldPlan(42), restoreTestLogger())
+
+	if got := h.appliedPRs(); len(got) != 0 {
+		t.Fatalf("bare-repo snapshot must satisfy the full-name hold, got calls for %v", got)
+	}
+}
+
 // A different label on the PR is not the triage label; it must still apply.
 func TestApplyHumanDecisionLabels_OtherLabelsDoNotSuppress(t *testing.T) {
 	h := newHumanLabelServer(t, "queue-triage")

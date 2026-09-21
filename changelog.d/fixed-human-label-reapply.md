@@ -1,0 +1,1 @@
+- Fixed the review human-decision label being re-applied to every held PR on every governor cycle: the already-labeled skip compared the hold's `owner/repo` against the enumeration's bare repo name and never matched. Both sides now resolve through `project.org`.
