@@ -242,18 +242,61 @@ var closingKeywords = []string{
 	"resolve", "resolves", "resolved",
 }
 
+// claimKeywordGap is what may sit between a closing keyword and the issue
+// reference it closes. Two alternatives, in preference order:
+//
+//	\s*:?\s+             the machine-readable trailer form — "Fixes #12",
+//	                     "Fixes: #12", and (because \s spans newlines) a
+//	                     keyword and reference split across lines. This is the
+//	                     form GitHub itself auto-closes on, and it is matched
+//	                     first so its behaviour is bit-for-bit what it always
+//	                     was.
+//	[ \t][^.\n#]{0,39}?  the bounded prose gap referenceRefPattern already
+//	                     allows (hivecommons/hive#7995) — "Resolves architect
+//	                     issue #1232", "Fixes the bug in #12".
+//
+// The prose alternative must begin with a space or tab, which is what keeps a
+// Conventional Commits type prefix from reading as a closing keyword: in
+// "fix: the thing (closes #60)" and "fix(contribute): … (#1232)" the leading
+// `fix` is followed by ':' or '(', so only the real keyword later in the line
+// can match. Without that one character the commit type would claim the first
+// issue number within 40 characters of the title — which is most of them.
+//
+// The prose alternative exists because closing keywords are written as prose
+// at least as often as they are written as trailers, and until #7995 the
+// parser was as strict as GitHub's auto-close. That strictness is what failed:
+// projectbluefin/documentation#1232 was claimed by a merged PR whose body read
+// "Resolves architect issue #1232 (first incremental step)", the parser
+// returned nothing, and the issue went back on the offer path after every
+// merge — three merged and four closed PRs deep.
+//
+// GitHub will not auto-close on the prose form, and hive does not pretend
+// otherwise: a claim here is about whether the WORK landed, not about what
+// GitHub's linker will do. A merged PR that says it resolves an issue is the
+// strongest evidence hive gets, so it is a strong claim rather than a weak one
+// released for re-verification every cycle (see FilterClaimedIssues).
+//
+// The gap is bounded exactly as referenceRefPattern's is — at most 40
+// characters, lazily matched, no '.', newline or '#' — so it cannot cross a
+// sentence boundary, swallow a paragraph, or skip over a nearer reference to
+// reach a further one. #7915 kept this parser single-issue for parity with
+// GitHub's "one keyword per number" rule, and that is untouched: with '#'
+// excluded from the gap a match still contains exactly one reference, and
+// referenceListTail remains reference-tier only.
+const claimKeywordGap = `(?:\s*:?\s+|[ \t][^.\n#]{0,39}?)`
+
 // claimRefPattern matches a closing keyword followed by an issue reference in
 // either the same-repo (`#123`) or cross-repo (`owner/repo#123`) form.
 //
 //	(?i)                        case-insensitive
 //	\b(close|closes|...)\b      a closing keyword as a whole word
-//	\s*:?\s+                    optional colon, then whitespace
+//	claimKeywordGap             a trailer separator or bounded prose
 //	(?:([\w.-]+/[\w.-]+))?#(\d+) optional owner/repo prefix, then #N
 //
 // Non-closing mentions ("see #12", "related to #12") deliberately do NOT match:
 // only a PR that claims to close an issue should suppress work on it.
 var claimRefPattern = regexp.MustCompile(
-	`(?i)\b(` + strings.Join(closingKeywords, "|") + `)\b\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+	`(?i)\b(` + strings.Join(closingKeywords, "|") + `)\b` + claimKeywordGap + `(?:([\w.-]+/[\w.-]+))?#(\d+)`)
 
 // ParseClaimedIssues extracts every issue this text claims to close. defaultRepo
 // supplies the repository for bare `#N` references. Results are de-duplicated
@@ -557,17 +600,28 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 // A per-repo API failure is reported via err but the successfully-scanned repos
 // are still returned, so the caller can merge partial results into the ledger
 // instead of discarding everything.
+//
+// It is the claims-only projection of FetchClaimScan, kept because most callers
+// want exactly that.
 func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]IssueClaim, error) {
+	scan, err := c.FetchClaimScan(ctx, identity)
+	return scan.Claims, err
+}
+
+// FetchClaimScan is FetchClaims plus the churn history the same two listings
+// already contain (hivecommons/hive#7995). See ClaimScan.
+func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (ClaimScan, error) {
 	if c == nil || c.client == nil {
-		return nil, fmt.Errorf("nil github client")
+		return ClaimScan{}, fmt.Errorf("nil github client")
 	}
 	if identity.IsZero() {
-		return nil, fmt.Errorf("no hive identity configured (project.ai_author unset and no GitHub App login)")
+		return ClaimScan{}, fmt.Errorf("no hive identity configured (project.ai_author unset and no GitHub App login)")
 	}
 
 	now := time.Now()
 	mergedCutoff := now.Add(-mergedClaimScanWindow)
 	var claims []IssueClaim
+	var history []IssuePRRecord
 	var firstErr error
 
 	for _, repo := range c.getRepos() {
@@ -591,7 +645,9 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 				if pr == nil {
 					continue
 				}
-				claims = append(claims, claimsFromPR(pr, repo, identity, now)...)
+				prClaims := claimsFromPR(pr, repo, identity, now)
+				claims = append(claims, prClaims...)
+				history = append(history, prHistoryFromClaims(prClaims, PRStateOpen, now)...)
 			}
 			if resp == nil || resp.NextPage == 0 {
 				break
@@ -633,10 +689,32 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 					break
 				}
 				mergedAt := pr.GetMergedAt().Time
-				if mergedAt.IsZero() || mergedAt.Before(mergedCutoff) {
+				if mergedAt.IsZero() {
+					// Closed without merging. It still claims nothing — the
+					// issue is genuinely released back for work — but it IS
+					// one more pull request spent on that issue, and #7995
+					// counts those: four closed PRs on one issue is the
+					// signal that nobody's next attempt will land either.
+					closedAt := pr.GetClosedAt().Time
+					if closedAt.IsZero() {
+						// The listing sorts and cuts off on updated_at, which
+						// this PR has already passed to get here, so an
+						// absent closed_at falls back to it rather than
+						// dropping the record.
+						closedAt = pr.GetUpdatedAt().Time
+					}
+					if !closedAt.Before(mergedCutoff) {
+						history = append(history,
+							prHistoryFromClaims(claimsFromPR(pr, repo, identity, now), PRStateClosed, now)...)
+					}
 					continue
 				}
-				for _, claim := range claimsFromPR(pr, repo, identity, now) {
+				if mergedAt.Before(mergedCutoff) {
+					continue
+				}
+				prClaims := claimsFromPR(pr, repo, identity, now)
+				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
+				for _, claim := range prClaims {
 					claim.MergedPR = true
 					claim.MergedAt = mergedAt
 					// Anchor the weak-claim deferral window at the merge, not
@@ -656,7 +734,7 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 		}
 	}
 
-	return claims, firstErr
+	return ClaimScan{Claims: claims, History: history}, firstErr
 }
 
 // ClaimLedger is the persisted issue→PR claim mapping. It is the fail-closed
@@ -672,8 +750,18 @@ type ClaimLedger struct {
 	mu sync.RWMutex
 	// claims is keyed by "repo#issue".
 	claims map[string]IssueClaim
+	// history is the churn record (hivecommons/hive#7995): "repo#issue" → PR
+	// number → the last state that PR was observed in. Unlike claims it
+	// ACCUMULATES — a merged or closed PR leaves the claim map immediately but
+	// stays in the history until churnHistoryTTL retires it, which is what lets
+	// the admission guard see "three merged and four closed on this one issue"
+	// from scans that each only saw a 72-hour slice.
+	history map[string]map[int]IssuePRRecord
 	// ttl bounds entry lifetime; overridable for tests.
 	ttl time.Duration
+	// churnTTL bounds how long a churn history record survives without being
+	// re-observed; overridable for tests.
+	churnTTL time.Duration
 	// weakDefer is how long a weak claim defers agent dispatch (#4929);
 	// overridable for tests.
 	weakDefer time.Duration
@@ -681,10 +769,14 @@ type ClaimLedger struct {
 	now func() time.Time
 }
 
-// ledgerFile is the on-disk shape of the ledger.
+// ledgerFile is the on-disk shape of the ledger. History is omitempty so a
+// hive that has never recorded churn writes the same file it always did, and
+// a ledger written before #7995 loads with an empty history rather than
+// failing.
 type ledgerFile struct {
-	SavedAt time.Time    `json:"saved_at"`
-	Claims  []IssueClaim `json:"claims"`
+	SavedAt time.Time       `json:"saved_at"`
+	Claims  []IssueClaim    `json:"claims"`
+	History []IssuePRRecord `json:"history,omitempty"`
 }
 
 // NewClaimLedger creates an empty ledger backed by path. Use LoadClaimLedger to
@@ -700,7 +792,9 @@ func NewClaimLedger(path string, logger *slog.Logger) *ClaimLedger {
 		path:      path,
 		logger:    logger,
 		claims:    make(map[string]IssueClaim),
+		history:   make(map[string]map[int]IssuePRRecord),
 		ttl:       claimLedgerTTL,
+		churnTTL:  churnHistoryTTL,
 		weakDefer: weakClaimDeferWindow,
 		now:       time.Now,
 	}
@@ -740,6 +834,13 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 			c.FirstObservedAt = c.ObservedAt
 		}
 		l.insertLocked(c)
+	}
+	churnCutoff := l.now().Add(-l.churnTTL)
+	for _, r := range file.History {
+		if r.ObservedAt.Before(churnCutoff) {
+			continue
+		}
+		l.insertHistoryLocked(r)
 	}
 	return l, nil
 }
@@ -970,6 +1071,7 @@ func (l *ClaimLedger) pruneLocked() {
 			delete(l.claims, k)
 		}
 	}
+	l.pruneHistoryLocked()
 }
 
 // Save writes the ledger to disk atomically (write temp, then rename), matching
@@ -981,6 +1083,7 @@ func (l *ClaimLedger) Save() error {
 	data, err := json.MarshalIndent(ledgerFile{
 		SavedAt: l.now(),
 		Claims:  l.Claims(),
+		History: l.PRHistory(),
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling claim ledger: %w", err)
@@ -1207,7 +1310,7 @@ func ApplyDuplicatePRGuard(
 		return 0
 	}
 
-	live, err := client.FetchClaims(ctx, identity)
+	scan, err := client.FetchClaimScan(ctx, identity)
 	authoritative := err == nil
 	if err != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: claim fetch failed, falling back to persisted ledger (fail closed)",
@@ -1215,7 +1318,11 @@ func ApplyDuplicatePRGuard(
 			"cached_claims", ledger.Len(),
 		)
 	}
-	ledger.Reconcile(live, authoritative)
+	ledger.Reconcile(scan.Claims, authoritative)
+	// Churn history accumulates from whatever the scan DID return, partial or
+	// not (#7995): a record is an observation that a pull request existed in a
+	// state, which a later failure cannot falsify.
+	ledger.RecordPRHistory(scan.History)
 
 	if saveErr := ledger.Save(); saveErr != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: failed to persist claim ledger", "error", saveErr)

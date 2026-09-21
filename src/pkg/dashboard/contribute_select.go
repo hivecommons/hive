@@ -783,6 +783,16 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
 						"merged", decision.claim.MergedPR,
 						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
+				case contributorAdmissionReasonIssueChurn:
+					// #7995: not "somebody is on it" but "this issue has
+					// already eaten several PRs and nobody can say what is
+					// left". Logged with the counts so the reason is legible
+					// without opening the Withheld panel.
+					h.logger.Info("[contribute-ws] skip: issue churn needs maintainer triage",
+						"repo", repo.Full, "number", number,
+						"merged_prs", len(decision.churn.Merged),
+						"closed_prs", len(decision.churn.ClosedUnmerged),
+						"prs", strings.Join(decision.churn.PRNumbers(), ","))
 				case contributorAdmissionReasonWorkflowBlocked:
 					h.logger.Info("[contribute-ws] skip: issue is blocked by workflow state",
 						"repo", repo.Full, "number", number)

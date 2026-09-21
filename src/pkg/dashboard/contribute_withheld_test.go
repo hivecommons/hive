@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,24 @@ func withheldCases() []withheldCase {
 				}
 				if item.ClaimAuthor != "claimer" {
 					t.Errorf("claim_author = %q, want claimer", item.ClaimAuthor)
+				}
+			},
+		},
+		{
+			name:   "issue churn needs maintainer triage",
+			reason: contributorAdmissionReasonIssueChurn,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				s.deps.IssueChurn = churnedIssue(601)
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ChurnMerged != 2 || item.ChurnClosed != 2 {
+					t.Errorf("churn = %d merged / %d closed, want 2 / 2", item.ChurnMerged, item.ChurnClosed)
+				}
+				if len(item.ChurnPRs) != 4 {
+					t.Errorf("churn_prs = %v, want the four PRs a maintainer has to look at", item.ChurnPRs)
+				}
+				if !strings.Contains(item.Detail, "2 merged and 2 closed") {
+					t.Errorf("detail = %q, want the counts — they ARE the question being asked of the maintainer", item.Detail)
 				}
 			},
 		},
@@ -460,6 +479,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		withheldReasonInFlight,
 		withheldReasonContributorFilter,
 		withheldReasonAssignedToOther,
+		contributorAdmissionReasonIssueChurn,
 	}
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {

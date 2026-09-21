@@ -75,6 +75,10 @@ type contributorAdmissionDecision struct {
 	admitted bool
 	reason   string
 	claim    ghpkg.IssueClaim
+	// churn carries the pull-request history behind an issue_churn refusal
+	// (#7995): which PRs merged, which closed unmerged. Zero-valued for every
+	// other reason.
+	churn ghpkg.IssueChurn
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
 	// which dependency IDs blocked. Zero-valued when admission never reached
@@ -84,6 +88,10 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonIssueChurn: the issue has already consumed
+	// enough pull requests (merged, closed, or both) that what remains is a
+	// maintainer's judgment call rather than dispatchable work (#7995).
+	contributorAdmissionReasonIssueChurn = "issue_churn"
 	// contributorAdmissionReasonWorkflowBlocked: the canonical workflow state
 	// says the work is waiting on an external dependency or human input.
 	contributorAdmissionReasonWorkflowBlocked = "workflow_blocked"
@@ -129,6 +137,19 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 		return contributorAdmissionDecision{
 			reason: contributorAdmissionReasonOpenPRClaim,
 			claim:  claim,
+		}
+	}
+
+	// Churn guard (#7995). An issue nobody is on right now, but which has
+	// already absorbed several pull requests without settling, is not ready
+	// work — the open question on it is "what is left?", and only a maintainer
+	// can answer that. Checked after the claim gate because a live open PR is
+	// the more specific and more current signal, and before the dependency
+	// gate because churn is a property of the issue itself.
+	if churn, needs := h.issueNeedsHumanTriage(candidate); needs {
+		return contributorAdmissionDecision{
+			reason: contributorAdmissionReasonIssueChurn,
+			churn:  churn,
 		}
 	}
 
@@ -203,4 +224,52 @@ func (h *ContributeWSHub) issueClaimedByOpenPR(repoFull, repoName string, number
 		}
 	}
 	return ghpkg.IssueClaim{}, false
+}
+
+// churnTriagedMarker is the label a maintainer applies to say "I have looked
+// at the churn on this issue; it is still ordinary work". It clears the churn
+// guard for that issue and nothing else — the guard's whole purpose is to ask
+// a human a question, so the human's answer has to be able to end it.
+//
+// It matches the shape CONTRIBUTING already documents for the reporter-
+// confirmation gate ("hive: reporter-confirmed"), so an operator who has met
+// one of these conventions can guess the other. Matching is case-insensitive
+// and whitespace-tolerant, because a label typed by hand is.
+const churnTriagedMarker = "hive: churn-triaged"
+
+// issueNeedsHumanTriage reports whether the churn on this candidate has passed
+// the #7995 thresholds, via the Dependencies.IssueChurn hook into the same
+// ledger IssueClaimed reads. Repo spellings are tried in the same order and
+// for the same reason as issueClaimedByOpenPR.
+//
+// It fails OPEN in every direction that matters: no hook wired (tests, or a
+// hive booted without GitHub credentials), no history for the issue, or churn
+// below the thresholds all admit the candidate exactly as before. Only a
+// positive count of finished pull requests can withhold anything.
+func (h *ContributeWSHub) issueNeedsHumanTriage(candidate contributorAdmissionCandidate) (ghpkg.IssueChurn, bool) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueChurn == nil {
+		return ghpkg.IssueChurn{}, false
+	}
+	if hasChurnTriagedLabel(candidate.labels) {
+		return ghpkg.IssueChurn{}, false
+	}
+	churn, ok := h.server.deps.IssueChurn(candidate.repoFull, candidate.number)
+	if !ok && candidate.repoName != "" && candidate.repoName != candidate.repoFull {
+		churn, ok = h.server.deps.IssueChurn(candidate.repoName, candidate.number)
+	}
+	if !ok || !churn.NeedsHumanTriage() {
+		return ghpkg.IssueChurn{}, false
+	}
+	return churn, true
+}
+
+// hasChurnTriagedLabel reports whether a maintainer has already dispositioned
+// this issue's churn.
+func hasChurnTriagedLabel(labels []string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), churnTriagedMarker) {
+			return true
+		}
+	}
+	return false
 }

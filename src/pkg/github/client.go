@@ -1575,11 +1575,20 @@ const trackerTaskListMin = 3
 // direction that hurts. The task list is enough, and it is what GitHub itself
 // treats as the tracking signal.
 func IsTrackerIssue(title string, labels []string, body string) bool {
-	if strings.HasPrefix(title, "[Tracker]") {
+	// The title and label markers are matched case- and namespace-insensitively
+	// (hivecommons/hive#7995). They used to be one exact-case prefix and one
+	// exact label, which meant the two conventions every other tracker check in
+	// this package already knew about — the `epic`/`tracker` labels and the
+	// `[epic]` title prefix, see incompleteIssueReason — were invisible HERE,
+	// where Issue.IsTracker is computed and the contribute queue reads it. A
+	// tracking issue is the incremental shape by construction: its children
+	// carry the work, and it re-offers after every one of them merges until a
+	// human closes it. utah#24 was handed to a contributor that way.
+	if trackerTitlePrefix(title) {
 		return true
 	}
 	for _, l := range labels {
-		if l == "meta-tracker" {
+		if trackerLabel(l) {
 			return true
 		}
 	}
@@ -1593,6 +1602,39 @@ func IsTrackerIssue(title string, labels []string, body string) bool {
 
 func isTracker(title string, labels []string, body string) bool {
 	return IsTrackerIssue(title, labels, body)
+}
+
+// trackerLabelNames are the labels that mark an issue as coordination-only.
+// Kept deliberately short: each one names the tracking role outright, so none
+// of them can appear on ordinary work by accident.
+var trackerLabelNames = map[string]bool{
+	"tracker":      true,
+	"meta-tracker": true,
+	"tracking":     true,
+	"epic":         true,
+}
+
+// trackerLabel reports whether one label marks a tracker, tolerating the
+// prefixed spellings repositories use (`kind/epic`, `type: tracking`) by
+// reading only the final segment.
+func trackerLabel(label string) bool {
+	l := strings.ToLower(strings.TrimSpace(label))
+	if i := strings.LastIndexAny(l, "/:"); i >= 0 {
+		l = strings.TrimSpace(l[i+1:])
+	}
+	return trackerLabelNames[l]
+}
+
+// trackerTitlePrefix reports whether a title opens with a bracketed tracker
+// marker. Emoji-prefixed titles are covered because the marker is looked for
+// after any leading non-'[' run, which is what the repository's own
+// "🌱 chore: ..." convention produces once a tracker marker is added.
+func trackerTitlePrefix(title string) bool {
+	t := strings.ToLower(strings.TrimSpace(title))
+	if i := strings.Index(t, "["); i >= 0 && i <= 8 {
+		t = t[i:]
+	}
+	return strings.HasPrefix(t, "[tracker]") || strings.HasPrefix(t, "[epic]")
 }
 
 type RateLimitInfo struct {

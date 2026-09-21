@@ -633,7 +633,23 @@ func TestIsTracker(t *testing.T) {
 		{"regular issue", []string{"bug"}, "", false},
 		{"regular issue", []string{}, "", false},
 		{"", []string{}, "", false},
-		{"Not a tracker", []string{"tracker"}, "", false}, // label must be exactly "meta-tracker"
+		// #7995 widened the markers to the ones the rest of this package
+		// already honoured (incompleteIssueReason) and this function did not.
+		// A `tracker` label previously read as "not a tracker" HERE, which is
+		// where Issue.IsTracker — the flag the contribute queue gates on — is
+		// computed, so a tracking issue was offered as one task and re-offered
+		// after each child merged.
+		{"Not a tracker", []string{"tracker"}, "", true},
+		{"regular issue", []string{"tracking"}, "", true},
+		{"regular issue", []string{"kind/epic"}, "", true},
+		{"regular issue", []string{"Type: Tracking"}, "", true},
+		{"[epic] lower case marker", []string{}, "", true},
+		{"🌱 [Epic] emoji-prefixed marker", []string{}, "", true},
+		// Still narrow: a label that merely CONTAINS a marker word is not one,
+		// and a marker that is not a prefix does not make a title a tracker.
+		{"regular issue", []string{"epic-failure"}, "", false},
+		{"a fix for the [epic] rollout", []string{}, "", false},
+		{"regular issue", []string{"tracked-by-someone"}, "", false},
 	}
 	for _, tt := range tests {
 		got := isTracker(tt.title, tt.labels, tt.body)

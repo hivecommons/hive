@@ -2845,6 +2845,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		RecordIssueClaim: func(c github.IssueClaim) error {
 			return getClaimLedger(logger).Record(c)
 		},
+		// #7995: and read access to the same ledger's churn history, so an
+		// issue that has already absorbed several merged or abandoned PRs
+		// without settling is withheld for a maintainer rather than offered
+		// for another round of the same.
+		IssueChurn: func(repo string, number int) (github.IssueChurn, bool) {
+			return getClaimLedger(logger).Churn(repo, number)
+		},
 		HookFire: func(ctx context.Context, p hooks.Payload) {
 			hookDispatcher().Fire(ctx, p)
 		},

@@ -118,7 +118,15 @@ type Dependencies struct {
 	// A nil func disables recording; verdicts are still honoured by the
 	// hub's own (activity-voidable) verdict ledger exactly as before.
 	RecordIssueClaim func(ghpkg.IssueClaim) error
-	HookFire         func(context.Context, hooks.Payload)
+	// IssueChurn reports how many pull requests the same ledger has observed
+	// against an issue and how they ended (hivecommons/hive#7995). The
+	// contribute admission path consults it so an issue that has already
+	// absorbed several merged or abandoned PRs without settling is withheld
+	// for a maintainer instead of being offered for another cycle of the same.
+	// repo is tried in the same spellings as IssueClaimed; a nil func means
+	// "no churn data" and disables the guard.
+	IssueChurn func(repo string, number int) (ghpkg.IssueChurn, bool)
+	HookFire   func(context.Context, hooks.Payload)
 }
 
 type NousState struct {

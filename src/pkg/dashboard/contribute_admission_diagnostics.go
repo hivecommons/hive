@@ -87,6 +87,13 @@ type AdmissionWithheldItem struct {
 	// CooldownUntil is when a completion or failure cooldown lapses, RFC3339 in
 	// UTC, so a client can render a countdown without guessing the window.
 	CooldownUntil string `json:"cooldown_until,omitempty"`
+	// ChurnMerged / ChurnClosed are the pull-request counts behind an
+	// issue_churn refusal (#7995), and ChurnPRs names them ("#1236",
+	// "owner/repo#12") so a maintainer opening the row has the table rather
+	// than a number. Public metadata from the governor's claim ledger.
+	ChurnMerged int      `json:"churn_merged,omitempty"`
+	ChurnClosed int      `json:"churn_closed,omitempty"`
+	ChurnPRs    []string `json:"churn_prs,omitempty"`
 	// Assignees are the logins the skip-assigned gate saw on the issue.
 	Assignees []string `json:"assignees,omitempty"`
 	// Filter names WHICH contributor filter rejected the candidate ("title",

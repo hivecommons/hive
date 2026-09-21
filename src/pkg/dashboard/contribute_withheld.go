@@ -89,6 +89,7 @@ const (
 // rule applies to the WORDS as much as to the decisions).
 var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonOpenPRClaim:       "An open pull request already claims this issue",
+	contributorAdmissionReasonIssueChurn:        "Too many pull requests on one issue — needs maintainer triage",
 	contributorAdmissionReasonWorkflowBlocked:   "Workflow label: blocked",
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
@@ -121,6 +122,7 @@ func withheldReasonLabel(reason string) string {
 func isConvergenceWithheldReason(reason string) bool {
 	switch reason {
 	case contributorAdmissionReasonOpenPRClaim,
+		contributorAdmissionReasonIssueChurn,
 		withheldReasonDisabledRepo,
 		withheldReasonTracker,
 		withheldReasonCooldown,
@@ -303,6 +305,15 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		if d.claim.PRNumber > 0 {
 			item.Detail = fmt.Sprintf("Existing pull request #%d", d.claim.PRNumber)
 		}
+		return item
+	case contributorAdmissionReasonIssueChurn:
+		item := newWithheldItem(c, d.reason)
+		item.ChurnMerged = len(d.churn.Merged)
+		item.ChurnClosed = len(d.churn.ClosedUnmerged)
+		item.ChurnPRs = d.churn.PRNumbers()
+		// The counts ARE the answer a maintainer is being asked for, so the
+		// prose states them rather than restating the rule.
+		item.Detail = d.churn.Reason()
 		return item
 	case contributorAdmissionReasonWorkflowBlocked:
 		return newWithheldItem(c, d.reason)

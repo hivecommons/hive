@@ -119,10 +119,10 @@ The duplicate-PR guard (`src/pkg/github/prclaims.go`) exists precisely
 because independent agent processes filing PRs against the same issue
 produced duplicates (`prclaims.go:19-30`, "a restart storm... made a quality
 agent open nine near-identical PRs overnight"). Its ledger,
-`ClaimLedgerPath = "/data/pr-claims.json"` (`prclaims.go:73-76`), is **local
+`ClaimLedgerPath = "/data/pr-claims.json"` (`prclaims.go:85-89`), is **local
 to each pod's own PVC** and is reconciled against live GitHub API state on
 each cycle, falling back to the persisted ledger only when the API call
-fails (`prclaims.go:954-962`, "duplicate-PR guard: claim fetch failed,
+fails (`ApplyDuplicatePRGuard`, `prclaims.go:1312-1318`, "duplicate-PR guard: claim fetch failed,
 falling back to persisted ledger (fail closed)"). Two live instances of the
 same hive — source still running, target already started — each maintain
 **their own** claim ledger and each independently poll GitHub for the same
