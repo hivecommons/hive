@@ -182,7 +182,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -195,7 +195,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
@@ -302,7 +302,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -311,7 +311,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
@@ -422,7 +422,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -431,7 +431,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
@@ -547,7 +547,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -556,7 +556,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
@@ -666,7 +666,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -675,7 +675,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
@@ -1176,7 +1176,7 @@ jobs:
           cache-dependency-path: src/go.sum
 
       - name: Restore warm Go build cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
@@ -1185,7 +1185,7 @@ jobs:
 
       - name: Restore cgo toolchain package cache
         id: restore-cgo-apt-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
