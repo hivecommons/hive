@@ -203,6 +203,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_labels_mode":             cfg.Hub.ContributeLabelsMode,
 			"contribute_allow_labels":            cfg.Hub.ContributeAllowLabels,
 			"contribute_deny_labels":             cfg.Hub.ContributeDenyLabels,
+			"contribute_skip_labels":             cfg.Hub.ContributeSkipLabelPatterns(),
 			"contribute_deny_titles":             cfg.Hub.ContributeDenyTitles,
 			"contribute_deny_authors":            cfg.Hub.ContributeDenyAuthors,
 			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
@@ -871,6 +872,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeLabelsMode           *string                    `json:"contribute_labels_mode"`
 		ContributeAllowLabels          []string                   `json:"contribute_allow_labels"`
 		ContributeDenyLabels           []string                   `json:"contribute_deny_labels"`
+		ContributeSkipLabels           []string                   `json:"contribute_skip_labels"`
 		ContributeDenyTitles           []string                   `json:"contribute_deny_titles"`
 		ContributeDenyAuthors          []string                   `json:"contribute_deny_authors"`
 		ContributeAllowModels          []string                   `json:"contribute_allow_models"`
@@ -943,6 +945,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeDenyLabels != nil {
 		cfg.Hub.ContributeDenyLabels = body.ContributeDenyLabels
+	}
+	if body.ContributeSkipLabels != nil {
+		cfg.Hub.ContributeSkipLabels = (config.HubConfig{ContributeSkipLabels: body.ContributeSkipLabels}).ContributeSkipLabelPatterns()
 	}
 	if body.ContributeDenyTitles != nil {
 		cfg.Hub.ContributeDenyTitles = body.ContributeDenyTitles

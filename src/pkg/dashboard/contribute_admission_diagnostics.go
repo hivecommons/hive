@@ -77,6 +77,9 @@ type AdmissionWithheldItem struct {
 	// "author" or "label"), because "a filter" is not actionable when three are
 	// configured.
 	Filter string `json:"filter,omitempty"`
+	// SkippedLabel is the issue label that matched the contribute skip-label set
+	// for workflow_blocked / label_skipped refusals.
+	SkippedLabel string `json:"skipped_label,omitempty"`
 }
 
 // AdmissionCoverage reports, per snapshot, how much of the bead ledger the

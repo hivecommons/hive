@@ -49,8 +49,11 @@ func (s *Server) ConvergenceKickProjectionDetailed(issues []ghpkg.Issue) (admitt
 	coverage = hub.admissionCoverageFromSweep(sweep)
 	for _, issue := range issues {
 		candidate := kickAdmissionCandidate(issue)
-		if hasBlockedWorkflowLabel(candidate.labels) {
-			decision := blockedWorkflowAdmissionDecision()
+		if label, ok := s.contributeSkipLabel(candidate.labels); ok {
+			decision := labelSkippedAdmissionDecision(label)
+			if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
+				decision = blockedWorkflowAdmissionDecision(label)
+			}
 			withheld = append(withheld, ConvergenceKickFinding{
 				Issue: issue, Decision: decision.convergence,
 			})

@@ -42,6 +42,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
 | `HIVE_CONTRIBUTORS_DIR` | No | hub default | Contributor registry directory override. |
+| `HIVE_CONTRIBUTE_SKIP_LABELS` | No | `blocked,tracking,epic,discussion,question,needs-decision,needs-triage` | Comma-separated, case-insensitive label patterns for issues that are not contributor work and must never be offered by the relay. Patterns use `path.Match`-style `*` globs; `blocked` is always unioned into the effective set even if omitted. Same setting as `hub.contribute_skip_labels`. |
 | `HIVE_FEDERATION_REGISTRY_PATH` | No | `/data/federation/registry.json` | Federation registry path override. |
 | `HIVE_WEBHOOK_SECRET` | No | none | HMAC secret for the spoke `/webhook` channel. |
 | `GITHUB_WEBHOOK_SECRET` | No | `/data/saas/webhook-secret.key` when present | Hub GitHub webhook HMAC secret. |

@@ -500,6 +500,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 	reasons := []string{
 		contributorAdmissionReasonOpenPRClaim,
 		contributorAdmissionReasonWorkflowBlocked,
+		contributorAdmissionReasonLabelSkipped,
 		contributorAdmissionReasonDependencyBlocked,
 		contributorAdmissionReasonDependencyUnknown,
 		withheldReasonDisabledRepo,

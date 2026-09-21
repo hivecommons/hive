@@ -1,0 +1,1 @@
+- Added per-hive contribute skip labels via `HIVE_CONTRIBUTE_SKIP_LABELS` / `hub.contribute_skip_labels`, with glob matching and a blocked-label floor so decision briefs are never offered as agent work (#8070)

@@ -475,6 +475,7 @@ Only issues that pass **all** of these filters are offered to contributors:
 |---|---|---|
 | **Repos for Contribute** | `disabled_repos` | Per-repo toggle. A monitored repo serves work unless it is listed in `disabled_repos`; newly added repos default to **on**. |
 | **Label filter** | `contribute_labels_mode` + `contribute_deny_labels` | Set `contribute_labels_mode` to `deny` (default) so listed labels exclude an issue (e.g. `hold`, `wontfix`, `duplicate`), or to `allow` so an issue must carry one of the listed labels to queue (e.g. `good-first-issue`, `help-wanted`). |
+| **Contribute skip labels** | `contribute_skip_labels` / `HIVE_CONTRIBUTE_SKIP_LABELS` | Hive-wide “not contributor work” labels that are never offered even before normal filters run. Default: `blocked,tracking,epic,discussion,question,needs-decision,needs-triage`; `blocked` is always added as a floor. Comma-separated entries are case-insensitive and use `path.Match`-style `*` globs, so projectbluefin can set `wayfinder:map,wayfinder:grilling,wayfinder:research` (or `wayfinder:*`) to keep decision briefs out of the relay. |
 | **Title filter** | `contribute_titles_mode` + `contribute_deny_titles` | Title patterns. With `contribute_titles_mode` set to `deny` (default) a matching title excludes the issue; set it to `allow` so only issues whose title matches one of the patterns queue. Supports `*`-wildcards (`*dashboard*`, `epic:*`) and slash-delimited regex (`/renovate/`, always case-insensitive). |
 | **Author filter** | `contribute_authors_mode` + `contribute_deny_authors` | Author patterns (e.g. `dependabot*`, `renovate[bot]`). Same `deny` (default) / `allow` mode semantics as the title filter, and the same wildcard/regex syntax. |
 | **Skip Assigned to Others** | `contribute_skip_assigned_to_others` | When on, an issue already assigned to someone other than the requesting contributor is skipped. Unassigned issues, and issues assigned to the contributor themselves, stay eligible. Default off, so issues are offered regardless of assignment. |
@@ -519,7 +520,8 @@ Withheld rows carry a stable reason code and, where the refusing gate had one, t
 | `open_pr_claim` | An open pull request already claims the issue. | Claiming PR URL and author |
 | `merged_claim_stale` | A merged pull request (or a verified `no_work_needed` verdict) has claimed to fix the issue for 7+ days and the issue is still open; the next step is a maintainer's — close it, or say what remains ([#8003](https://github.com/hivecommons/hive/issues/8003)). | Fixing PR URL and author; the age in days |
 | `issue_churn` | The issue has already absorbed several merged or abandoned pull requests without settling, so what is left is a maintainer's call ([#7995](https://github.com/hivecommons/hive/issues/7995)). | Merged / closed-unmerged counts and the PR numbers |
-| `workflow_blocked` | The issue carries the `blocked` workflow label. | — |
+| `workflow_blocked` | The issue carries the `blocked` workflow label. | Matched label |
+| `label_skipped` | The issue carries a label from `contribute_skip_labels` / `HIVE_CONTRIBUTE_SKIP_LABELS` (for example `wayfinder:grilling`). | Matched label |
 | `dependency_blocked` | A declared dependency is established as unsatisfied. | Blocker keys, observed record/generation |
 | `dependency_unknown` | A declared dependency could not be resolved, so satisfaction cannot be asserted. | Blocker keys, observed record/generation |
 | `disabled_repo` | The repository is switched off for contribution (`disabled_repos`). | — |

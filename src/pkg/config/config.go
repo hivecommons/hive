@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -3994,11 +3995,18 @@ type HubConfig struct {
 	// filter regardless of mode (names kept for backward compatibility with
 	// existing on-disk config; the mode decides allow vs deny). ContributeAllowLabels
 	// is retained only for one-time migration into DenyLabels+LabelsMode.
-	ContributeTitlesMode          string   `yaml:"contribute_titles_mode,omitempty"`
-	ContributeAuthorsMode         string   `yaml:"contribute_authors_mode,omitempty"`
-	ContributeLabelsMode          string   `yaml:"contribute_labels_mode,omitempty"`
-	ContributeAllowLabels         []string `yaml:"contribute_allow_labels"`
-	ContributeDenyLabels          []string `yaml:"contribute_deny_labels"`
+	ContributeTitlesMode  string   `yaml:"contribute_titles_mode,omitempty"`
+	ContributeAuthorsMode string   `yaml:"contribute_authors_mode,omitempty"`
+	ContributeLabelsMode  string   `yaml:"contribute_labels_mode,omitempty"`
+	ContributeAllowLabels []string `yaml:"contribute_allow_labels"`
+	ContributeDenyLabels  []string `yaml:"contribute_deny_labels"`
+	// ContributeSkipLabels is the hive-wide "not contributor work" label set.
+	// Matching is case-insensitive and uses path.Match-style glob patterns (not
+	// substring matching), so "discussion" matches that label and
+	// "wayfinder:*" matches "wayfinder:grilling". The effective set defaults to
+	// DefaultContributeSkipLabels and always includes "blocked" as the historical
+	// floor, even if an operator-supplied list omits it.
+	ContributeSkipLabels          []string `yaml:"contribute_skip_labels,omitempty"`
 	ContributeDenyTitles          []string `yaml:"contribute_deny_titles"`
 	ContributeDenyAuthors         []string `yaml:"contribute_deny_authors"`
 	ContributeAllowModels         []string `yaml:"contribute_allow_models"`
@@ -4132,6 +4140,97 @@ func (h HubConfig) IsContributeCooldownEnabled() bool {
 // is withheld until the client accepts the assigned task.
 func (h HubConfig) IsContributeRequireExplicitAccept() bool {
 	return h.ContributeRequireExplicitAccept != nil && *h.ContributeRequireExplicitAccept
+}
+
+const ContributeSkipLabelsEnvVar = "HIVE_CONTRIBUTE_SKIP_LABELS"
+
+var defaultContributeSkipLabels = []string{
+	"blocked",
+	"tracking",
+	"epic",
+	"discussion",
+	"question",
+	"needs-decision",
+	"needs-triage",
+}
+
+// DefaultContributeSkipLabels returns the default hive-wide "not contributor
+// work" label patterns. Callers receive a copy so tests and UI code cannot
+// mutate the process-wide defaults.
+func DefaultContributeSkipLabels() []string {
+	out := make([]string, len(defaultContributeSkipLabels))
+	copy(out, defaultContributeSkipLabels)
+	return out
+}
+
+func parseContributeSkipLabels(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if label := strings.TrimSpace(part); label != "" {
+			out = append(out, label)
+		}
+	}
+	return out
+}
+
+func normalizeContributeSkipLabels(labels []string) []string {
+	if len(labels) == 0 {
+		labels = DefaultContributeSkipLabels()
+	}
+	out := make([]string, 0, len(labels)+1)
+	seen := map[string]struct{}{}
+	add := func(label string) {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label == "" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	for _, label := range labels {
+		add(label)
+	}
+	add(blockedWorkflowSkipLabel)
+	return out
+}
+
+const blockedWorkflowSkipLabel = "blocked"
+
+// ContributeSkipLabelPatterns resolves the effective hive-wide "not contributor
+// work" label patterns. It applies the default and the historical blocked-label
+// floor defensively so tests and direct HubConfig literals behave like loaded
+// config.
+func (h HubConfig) ContributeSkipLabelPatterns() []string {
+	return normalizeContributeSkipLabels(h.ContributeSkipLabels)
+}
+
+// MatchContributeSkipLabel returns the issue label that matches the configured
+// contributor-skip set. Patterns are case-insensitive and use path.Match-style
+// glob syntax; invalid patterns fall back to exact case-insensitive matching so
+// a typo cannot broaden the skip set.
+func (h HubConfig) MatchContributeSkipLabel(labels []string) (string, bool) {
+	patterns := h.ContributeSkipLabelPatterns()
+	for _, label := range labels {
+		trimmed := strings.TrimSpace(label)
+		if trimmed == "" {
+			continue
+		}
+		candidate := strings.ToLower(trimmed)
+		for _, pattern := range patterns {
+			matched, err := path.Match(pattern, candidate)
+			if err != nil {
+				matched = candidate == strings.ToLower(strings.TrimSpace(pattern))
+			}
+			if matched {
+				return trimmed, true
+			}
+		}
+	}
+	return "", false
 }
 
 var defaultContributeDelegatableRoles = []string{"scanner", "quality", "outreach"}
@@ -4833,6 +4932,9 @@ func (c *Config) applyBootstrapEnv() {
 			c.GitHub.selfAuthorizationHoldEnvOverride = &b
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv(ContributeSkipLabelsEnvVar)); v != "" {
+		c.Hub.ContributeSkipLabels = parseContributeSkipLabels(v)
+	}
 }
 
 // parseAuthorizedUsers splits a comma-separated authorized-users list, trimming
@@ -5087,6 +5189,8 @@ func (c *Config) applyDefaults() {
 			"mergeraptor[bot]",
 		}
 	}
+
+	c.Hub.ContributeSkipLabels = c.Hub.ContributeSkipLabelPatterns()
 
 	// Contribute filter modes: default to deny (the pre-mode behavior — the
 	// *Deny* lists were always deny lists). Normalize any stored value.

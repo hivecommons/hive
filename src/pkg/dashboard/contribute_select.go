@@ -801,7 +801,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"prs", strings.Join(decision.churn.PRNumbers(), ","))
 				case contributorAdmissionReasonWorkflowBlocked:
 					h.logger.Info("[contribute-ws] skip: issue is blocked by workflow state",
-						"repo", repo.Full, "number", number)
+						"repo", repo.Full, "number", number, "label", decision.skippedLabel)
+				case contributorAdmissionReasonLabelSkipped:
+					h.logger.Info("[contribute-ws] skip: issue has contribute skip label",
+						"repo", repo.Full, "number", number, "label", decision.skippedLabel)
 				// #3845: a declared dependency is not satisfied (or cannot be
 				// resolved), so this issue is not admissible work yet. Only THIS
 				// candidate is withheld — the scan continues and unrelated ready

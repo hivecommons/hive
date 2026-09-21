@@ -72,6 +72,7 @@ var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonMergedClaimStale:  "Fixed by a merged pull request; the issue is still open — close it or say what remains",
 	contributorAdmissionReasonIssueChurn:        "Too many pull requests on one issue — needs maintainer triage",
 	contributorAdmissionReasonWorkflowBlocked:   "Workflow label: blocked",
+	contributorAdmissionReasonLabelSkipped:      "Contribute skip label",
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
@@ -303,8 +304,17 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		// prose states them rather than restating the rule.
 		item.Detail = d.churn.Reason()
 		return item
-	case contributorAdmissionReasonWorkflowBlocked:
-		return newWithheldItem(c, d.reason)
+	case contributorAdmissionReasonWorkflowBlocked, contributorAdmissionReasonLabelSkipped:
+		item := newWithheldItem(c, d.reason)
+		if d.skippedLabel != "" {
+			item.SkippedLabel = d.skippedLabel
+			if d.reason == contributorAdmissionReasonWorkflowBlocked {
+				item.Detail = fmt.Sprintf("Workflow label: %s", d.skippedLabel)
+			} else {
+				item.Detail = fmt.Sprintf("Skipped by contribute label: %s", d.skippedLabel)
+			}
+		}
+		return item
 	}
 	return withheldItemFromDecision(c.repoFull, c.ref, c.title, c.url, d.convergence)
 }

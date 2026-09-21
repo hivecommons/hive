@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -11,26 +12,43 @@ import (
 
 const blockedWorkflowLabel = "blocked"
 
-// hasBlockedWorkflowLabel reports whether a candidate carries the canonical
-// external-dependency overlay. A blocked item is not contributor work until
-// its dependency is cleared, so this gate is enforced in both ReadyQueue and
-// selectTask rather than relying only on the enumerator's refresh.
-func hasBlockedWorkflowLabel(labels []string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
-			return true
-		}
-	}
-	return false
-}
-
-func blockedWorkflowAdmissionDecision() contributorAdmissionDecision {
+func blockedWorkflowAdmissionDecision(label string) contributorAdmissionDecision {
 	return contributorAdmissionDecision{
-		reason: contributorAdmissionReasonWorkflowBlocked,
+		reason:       contributorAdmissionReasonWorkflowBlocked,
+		skippedLabel: label,
 		convergence: convergence.Decision{
-			Reason: contributorAdmissionReasonWorkflowBlocked,
+			Reason:   contributorAdmissionReasonWorkflowBlocked,
+			Blockers: []string{label},
 		},
 	}
+}
+
+func labelSkippedAdmissionDecision(label string) contributorAdmissionDecision {
+	return contributorAdmissionDecision{
+		reason:       contributorAdmissionReasonLabelSkipped,
+		skippedLabel: label,
+		convergence: convergence.Decision{
+			Reason:   contributorAdmissionReasonLabelSkipped,
+			Blockers: []string{label},
+		},
+	}
+}
+
+func (h *ContributeWSHub) contributeSkipLabel(labels []string) (string, bool) {
+	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return h.server.deps.Config.Hub.MatchContributeSkipLabel(labels)
+	}
+	return (config.HubConfig{}).MatchContributeSkipLabel(labels)
+}
+
+func (s *Server) contributeSkipLabel(labels []string) (string, bool) {
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		return s.deps.Config.Hub.MatchContributeSkipLabel(labels)
+	}
+	if s != nil && s.contributeHub != nil {
+		return s.contributeHub.contributeSkipLabel(labels)
+	}
+	return (config.HubConfig{}).MatchContributeSkipLabel(labels)
 }
 
 type contributorAdmissionCandidate struct {
@@ -80,6 +98,9 @@ type contributorAdmissionDecision struct {
 	// (#7995): which PRs merged, which closed unmerged. Zero-valued for every
 	// other reason.
 	churn ghpkg.IssueChurn
+	// skippedLabel carries the exact issue label that matched the contribute
+	// skip-label set for workflow_blocked / label_skipped refusals.
+	skippedLabel string
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
 	// which dependency IDs blocked. Zero-valued when admission never reached
@@ -100,9 +121,12 @@ const (
 	// enough pull requests (merged, closed, or both) that what remains is a
 	// maintainer's judgment call rather than dispatchable work (#7995).
 	contributorAdmissionReasonIssueChurn = "issue_churn"
-	// contributorAdmissionReasonWorkflowBlocked: the canonical workflow state
-	// says the work is waiting on an external dependency or human input.
+	// contributorAdmissionReasonWorkflowBlocked: the historical blocked workflow
+	// label says the work is waiting on an external dependency or human input.
 	contributorAdmissionReasonWorkflowBlocked = "workflow_blocked"
+	// contributorAdmissionReasonLabelSkipped: an operator-configured contribute
+	// skip-label says the item is not contributor work.
+	contributorAdmissionReasonLabelSkipped = "label_skipped"
 	// contributorAdmissionReasonDependencyBlocked: a declared dependency is
 	// established as NOT satisfied.
 	contributorAdmissionReasonDependencyBlocked = "dependency_blocked"
@@ -128,8 +152,11 @@ const (
 // it" signal. External work bypasses that GitHub-only observer and evaluates
 // the source-native dependency edges carried by its enumeration snapshot.
 func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributorAdmissionSweep, candidate contributorAdmissionCandidate) contributorAdmissionDecision {
-	if hasBlockedWorkflowLabel(candidate.labels) {
-		return blockedWorkflowAdmissionDecision()
+	if label, ok := h.contributeSkipLabel(candidate.labels); ok {
+		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
+			return blockedWorkflowAdmissionDecision(label)
+		}
+		return labelSkippedAdmissionDecision(label)
 	}
 
 	// isGitHubBacked remains the hard boundary around BOTH legacy observers: the
