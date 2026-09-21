@@ -567,10 +567,12 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		h.logger.Warn("[contribute-ws] refusing task: contributor failure streak",
 			"username", identityOf(c),
 			"consecutive_fast_failures", streak.Count,
+			"consecutive_stall_failures", streak.StallCount,
 			"paused_until", until.UTC().Format(time.RFC3339))
 		h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
 			"contributor failure streak: "+strconv.Itoa(streak.Count)+
-				" consecutive fast failures, paused until "+until.UTC().Format(time.RFC3339))
+				" consecutive fast failures, "+strconv.Itoa(streak.StallCount)+
+				" consecutive stall failures, paused until "+until.UTC().Format(time.RFC3339))
 		msg := h.taskUnavailable(taskUnavailableFailureStreak)
 		msg.Message = contributorFailureStreakMessage(streak, until)
 		return msg

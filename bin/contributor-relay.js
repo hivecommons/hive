@@ -758,6 +758,107 @@ function releaseQuotaHold(why) {
   }
 }
 
+// ── Login hold state (hivecommons/hive#7996) ─────────────────────────────────
+// A contributor whose Claude login had expired ran all night: the CLI answered
+// every task prompt with "Login expired · Please run /login" and returned to
+// its prompt, the relay read the prompt as ready, and each of nine assignments
+// died on the 30-minute watchdog as "no observed progress". The pane state
+// machine already classifies that pane BLOCKED_ON_HUMAN (#5088) so a present
+// human can rescue the task by logging in — but with nobody attached, blocked
+// is a 30-minute wait for the watchdog, and the relaunch after the failure
+// draws a fresh splash that re-latches ready for the next one.
+//
+// The hold is the quota hold's shape (#6541): once a login wall has sat
+// unattended for LOGIN_WALL_GRACE_TICKS progress ticks, the relay hands the
+// task back at once as an `environment` failure naming the login, stops
+// advertising `ready` at the send choke point, declines pushed assignments,
+// and does NOT relaunch the CLI (the pane holding "Please run /login" is the
+// evidence a human who attaches needs). It probes the pane on a timer and
+// releases the hold when the wall is gone and the CLI shows a signed-in
+// state — the CLI's own login-success line, or a ready pane with a human at
+// it — then re-advertises.
+const LOGIN_WALL_GRACE_TICKS = Math.max(1, Number(process.env.HIVE_LOGIN_WALL_GRACE_TICKS) || 3);
+const LOGIN_HOLD_PROBE_MS = RELAY_TEST_TIMING ? 100 : 10000;
+// What the CLIs print once a sign-in completes. Claude: "Login successful" /
+// "Logged in as <account>"; copilot: "Logged in as"; gemini: "Authenticated".
+const LOGIN_SUCCESS_PATTERN = /Login successful|Logged in as|Successfully logged in|Successfully authenticated|You are now logged in/i;
+let loginHoldReason = '';
+let loginHoldSince = 0;
+let loginHoldTimer = null;
+let loginWallTicks = 0;
+
+function loginHoldActive() {
+  return loginHoldReason !== '';
+}
+
+// loginWallLine returns the line of the pane tail that carries the login
+// wall, for the hold reason and the failure report.
+function loginWallLine(text) {
+  const lines = String(text || '').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const lower = lines[i].toLowerCase();
+    if (lower.includes('please run /login') || lower.includes('use /login') || (lower.includes('api error:') && /\b401\b/.test(lower))) {
+      return lines[i].trim();
+    }
+  }
+  return 'the CLI is asking for /login';
+}
+
+function enterLoginHold(line) {
+  if (loginHoldActive()) return;
+  loginHoldReason = line || 'the CLI is asking for /login';
+  loginHoldSince = Date.now();
+  loginWallTicks = 0;
+
+  console.warn('');
+  console.warn('┌─ CLI LOGIN EXPIRED ────────────────────────────────────────');
+  console.warn(`│ ${loginHoldReason}`);
+  console.warn(`│ ${BACKEND} is up but refuses every prompt until someone signs in again.`);
+  console.warn('│ Not asking the hub for work until the pane shows a signed-in CLI.');
+  for (const l of loginBannerLines(BACKEND, ATTACH_COMMAND)) console.warn(`│ ${l}`);
+  console.warn('└────────────────────────────────────────────────────────────');
+  console.warn('');
+
+  if (loginHoldTimer) clearInterval(loginHoldTimer);
+  loginHoldTimer = setInterval(probeLoginHold, LOGIN_HOLD_PROBE_MS);
+  if (typeof loginHoldTimer.unref === 'function') loginHoldTimer.unref();
+}
+
+// probeLoginHold reads the pane and releases the hold once the wall is gone
+// AND the CLI shows a signed-in state. Both halves are required: the wall
+// scrolling off, or a relaunch drawing a fresh splash, must not count as a
+// login — a fresh claude splash is exactly what fooled the readiness latch
+// in the incident.
+function probeLoginHold() {
+  if (!loginHoldActive()) return false;
+  let text = '';
+  try { text = capturePaneText(); } catch (_) { return false; }
+  if (paneShowsLoginRequiredError(text)) return false;
+  const signedIn = LOGIN_SUCCESS_PATTERN.test(text) ||
+    (paneHasPresentHuman() && classifyReadiness(text, BACKEND) === 'ready');
+  if (!signedIn) return false;
+  releaseLoginHold('the pane shows a signed-in CLI');
+  return true;
+}
+
+// releaseLoginHold clears the hold and re-advertises. As with the quota hold,
+// the explicit `ready` is the point: it was suppressed for the whole hold and
+// the hub is not going to offer work unprompted.
+function releaseLoginHold(why) {
+  if (!loginHoldActive()) return;
+  const was = loginHoldReason;
+  loginHoldReason = '';
+  loginHoldSince = 0;
+  loginWallTicks = 0;
+  if (loginHoldTimer) { clearInterval(loginHoldTimer); loginHoldTimer = null; }
+  console.log(`CLI login hold released — ${why}. Asking for work again (was: ${was})`);
+  cliReady = true;
+  cliReadyFailed = false;
+  if (!currentTask && !quotaHoldActive()) {
+    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // #7932 — frame-size clamping. Everything below is pure: it takes a frame and
 // a byte budget and returns a frame that fits, leaving the frame untouched
@@ -907,6 +1008,8 @@ function sendTo(hub, msg) {
   // `ready` is withheld: progress, completion and failure frames for work
   // already in flight must still reach the hub.
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
+  // #7996: same choke point for an expired CLI login — see enterLoginHold.
+  if (msg && msg.type === 'ready' && loginHoldActive()) return;
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
     // #7932: a frame the hub cannot read is a frame that never arrives — it is
     // answered with a 1009 close, not an error the relay can see. Bound it HERE,
@@ -6066,7 +6169,27 @@ function progressTick() {
     // itself. At most once per task; everything below is unchanged and is what
     // runs on every later tick.
     if (maybeSendAutonomyNudge(tmuxLines)) return;
-    console.warn(`Task ${currentTask.task_id} is blocked waiting for human input`);
+    // #7996: a login wall is blocked-on-human only while a human might turn
+    // up. Unattended past the grace, it is an environment the CLI cannot work
+    // in: hand the task back now (not at the 30-minute watchdog), keep the
+    // pane as it is for whoever attaches, and stop advertising until they do.
+    const paneText = tmuxLines.join('\n');
+    if (paneShowsLoginRequiredError(paneText)) {
+      loginWallTicks++;
+      if (!paneHasPresentHuman() && loginWallTicks >= LOGIN_WALL_GRACE_TICKS) {
+        const line = loginWallLine(paneText);
+        enterLoginHold(line);
+        failCurrentTask(
+          `${BACKEND} CLI login expired — the CLI refuses every prompt until someone attaches and runs /login (${line}); ` +
+            'not a fault of the task; this contributor is standing down until the pane shows a signed-in CLI',
+          { skipReady: true, skipCLI: true, kind: 'environment' });
+        return;
+      }
+      console.warn(`Task ${currentTask.task_id} is blocked on an expired ${BACKEND} login (${loginWallTicks}/${LOGIN_WALL_GRACE_TICKS} ticks before standing down${paneHasPresentHuman() ? '; a human is attached' : ''})`);
+    } else {
+      loginWallTicks = 0;
+      console.warn(`Task ${currentTask.task_id} is blocked waiting for human input`);
+    }
     send({
       type: 'task_progress',
       seq: nextSeq(),
@@ -6074,7 +6197,9 @@ function progressTick() {
       task_gen: currentTask.task_gen,
       status: 'blocked_on_human',
       attention: true,
-      summary: 'Agent is waiting for human input in the tmux pane',
+      summary: paneShowsLoginRequiredError(paneText)
+        ? `Agent CLI login has expired — attach to ${TMUX_SESSION} and run /login`
+        : 'Agent is waiting for human input in the tmux pane',
       tmux_output: tmuxLines,
       ...progressModelFields(),
     });
@@ -6265,6 +6390,8 @@ function handleMessage(data, hub) {
           // during a hold looks like the relay silently losing interest (#6541).
           console.log(`Authenticated, but the provider quota is exhausted — withholding ready for ` +
             `${formatQuotaHoldRemaining(quotaHoldUntil - Date.now())} (${quotaHoldReason})`);
+        } else if (loginHoldActive()) {
+          console.log(`Authenticated, but the ${BACKEND} CLI login has expired — withholding ready until someone runs /login in the pane (${loginHoldReason})`);
         } else if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
           sendTo(hub, { type: 'ready', seq: nextSeq() });
         } else if (cliReadyFailed) {
@@ -6341,6 +6468,21 @@ function handleMessage(data, hub) {
         });
         break;
       }
+      // #7996: an expired CLI login refuses every prompt. Decline so the hub
+      // offers the issue to a contributor who can run it, instead of holding
+      // the lease for a 30-minute watchdog to release.
+      if (loginHoldActive()) {
+        console.log(`Declining ${taskKey(msg)} — the ${BACKEND} CLI login has expired; waiting for /login in the pane`);
+        sendTo(hub, {
+          type: 'task_failed',
+          seq: nextSeq(),
+          task_id: msg.task_id,
+          reason: `${BACKEND} CLI login expired on this contributor — declining work until someone runs /login in the pane (${loginHoldReason})`,
+          failure_kind: 'environment',
+        });
+        break;
+      }
+      loginWallTicks = 0;
       currentTask = msg;
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
@@ -6782,6 +6924,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     releaseQuotaHold,
     getQuotaHoldUntil: () => quotaHoldUntil,
     getQuotaHoldReason: () => quotaHoldReason,
+    // CLI login hold (hivecommons/hive#7996).
+    loginHoldActive,
+    enterLoginHold,
+    releaseLoginHold,
+    probeLoginHold,
+    getLoginHoldReason: () => loginHoldReason,
+    LOGIN_WALL_GRACE_TICKS,
     QUOTA_HOLD_FALLBACK_MS,
     QUOTA_HOLD_MAX_MS,
     QUOTA_HOLD_GRACE_MS,

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,5 +170,87 @@ func TestFailureStreak_ScopedToIdentity(t *testing.T) {
 	msg := hub.selectTask(healthy)
 	if msg == nil || msg.Type != "task_assign" {
 		t.Fatalf("want task_assign for healthy contributor, got %+v", msg)
+	}
+}
+
+// bookStallFailures books n watchdog-length failures for the identity — the
+// #7996 shape (every task dying on the 30-minute "no observed progress"
+// watchdog because the CLI's login had expired).
+func bookStallFailures(hub *ContributeWSHub, identity string, n int) {
+	for i := 0; i < n; i++ {
+		hub.recordContributorFastFailure(identity, 30*time.Minute, "no observed progress for 30min — the agent CLI is not visibly working")
+	}
+}
+
+// TestFailureStreak_StallStreakPausesClaims (#7996): three consecutive
+// watchdog-length failures must pause the identity with a message that points
+// at the pane (/login), not at startup credentials.
+func TestFailureStreak_StallStreakPausesClaims(t *testing.T) {
+	hub, s := covK2Hub(t)
+	setStatusIssues(s, streakIssue(81))
+	c := streakConn("ct-stall")
+
+	bookStallFailures(hub, identityOf(c), contributorStallStreakThreshold)
+
+	msg := hub.selectTask(c)
+	if msg == nil || msg.Type != "task_unavailable" {
+		t.Fatalf("want task_unavailable, got %+v", msg)
+	}
+	if msg.Reason != taskUnavailableFailureStreak {
+		t.Fatalf("want reason %q, got %q", taskUnavailableFailureStreak, msg.Reason)
+	}
+	if !strings.Contains(msg.Message, "/login") || !strings.Contains(msg.Message, "without progress") {
+		t.Fatalf("want a stall-shaped message naming /login, got %q", msg.Message)
+	}
+}
+
+// TestFailureStreak_StallBelowThresholdStillOffers: two stall failures are not
+// a verdict.
+func TestFailureStreak_StallBelowThresholdStillOffers(t *testing.T) {
+	hub, s := covK2Hub(t)
+	setStatusIssues(s, streakIssue(82))
+	c := streakConn("ct-stall-2")
+
+	bookStallFailures(hub, identityOf(c), contributorStallStreakThreshold-1)
+
+	if msg := hub.selectTask(c); msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("want task_assign below stall threshold, got %+v", msg)
+	}
+}
+
+// TestFailureStreak_StallAndFastDoNotMix: a merits failure between stalls
+// resets the stall streak, and fast and stall failures do not sum — they are
+// evidence for two different dead runtimes.
+func TestFailureStreak_StallAndFastDoNotMix(t *testing.T) {
+	hub, s := covK2Hub(t)
+	setStatusIssues(s, streakIssue(83))
+	c := streakConn("ct-stall-3")
+
+	bookStallFailures(hub, identityOf(c), contributorStallStreakThreshold-1)
+	hub.recordContributorFastFailure(identityOf(c), contributorFastFailureMax+time.Second, "task failed on its merits")
+	bookStallFailures(hub, identityOf(c), 1)
+	if msg := hub.selectTask(c); msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("want task_assign after a merits failure reset the stall streak, got %+v", msg)
+	}
+
+	bookFastFailures(hub, identityOf(c), 1)
+	bookStallFailures(hub, identityOf(c), 1)
+	if msg := hub.selectTask(c); msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("want task_assign: 1 stall + 1 fast + 1 stall is not a streak of either kind, got %+v", msg)
+	}
+}
+
+// TestFailureStreak_StallCompletionResets: a genuine completion clears the
+// stall streak too.
+func TestFailureStreak_StallCompletionResets(t *testing.T) {
+	hub, s := covK2Hub(t)
+	setStatusIssues(s, streakIssue(84))
+	c := streakConn("ct-stall-4")
+
+	bookStallFailures(hub, identityOf(c), contributorStallStreakThreshold)
+	hub.resetContributorFailureStreak(identityOf(c))
+
+	if msg := hub.selectTask(c); msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("want task_assign after completion reset, got %+v", msg)
 	}
 }

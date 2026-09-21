@@ -6284,6 +6284,115 @@ test('#5094 a mid-session credential expiry is blocked-on-human, not completed',
   } finally { teardown(relay); }
 });
 
+// ── hivecommons/hive#7996: an expired login unattended is a hold, not a 30-minute wait ──
+const CLAUDE_LOGIN_EXPIRED_PANE = [
+  '❯ do the thing',
+  '',
+  '● Login expired · Please run /login',
+  '',
+  '✻ Churned for 0s',
+  '',
+  '❯ ',
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+].join('\n');
+
+const CLAUDE_LOGGED_IN_PANE = [
+  '● Login successful. Logged in as someone@example.com',
+  '',
+  '❯ ',
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+].join('\n');
+
+test('#7996 an unattended login wall hands the task back after the grace and stops advertising', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE, attachedClients: false });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    assert.strictEqual(relay.classifyTmuxPane(CLAUDE_LOGIN_EXPIRED_PANE), relay.PANE_STATE_BLOCKED_ON_HUMAN);
+    relay.setCliReady(true);
+    assignTask(relay, 't-login');
+    const before = relay.__sent.length;
+    for (let i = 0; i < relay.LOGIN_WALL_GRACE_TICKS - 1; i++) relay.__crashTick();
+    assert.strictEqual(relay.__sent.slice(before).filter(m => m.type === 'task_failed').length, 0,
+      'inside the grace the wall is still blocked-on-human — a human may be about to log in');
+    assert.ok(relay.__sent.slice(before).some(m => m.status === 'blocked_on_human' && /\/login/.test(m.summary)),
+      'the blocked report must name /login');
+    assert.strictEqual(relay.loginHoldActive(), false);
+
+    relay.__crashTick();
+    const after = relay.__sent.slice(before);
+    const failed = after.find(m => m.type === 'task_failed');
+    assert.ok(failed, `past the grace the task is handed back: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(failed.failure_kind, 'environment');
+    assert.match(failed.reason, /login expired/i);
+    assert.match(failed.reason, /\/login/);
+    assert.ok(!/not visibly working/.test(failed.reason), 'an expired login must not be reported as a dead CLI');
+    assert.ok(!after.some(m => m.type === 'ready'),
+      `no ready after a login wall: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.loginHoldActive(), true);
+    assert.strictEqual(relay.getCurrentTask(), null);
+    // The pane is left alone: no relaunch overwriting the "/login" evidence.
+    assert.ok(!relay.__tmuxSends().some(c => /claude/.test(c) && /send-keys/.test(c) && !/do the thing/.test(c)),
+      'the CLI must not be relaunched over the login wall');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 a login wall with a human attached stays blocked-on-human indefinitely', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE, attachedClients: true });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-login-human');
+    for (let i = 0; i < relay.LOGIN_WALL_GRACE_TICKS + 2; i++) relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'someone is at the pane — they can log in and the task continues');
+    assert.strictEqual(relay.loginHoldActive(), false);
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('#7996 ready is withheld at the choke point and pushed assignments are declined during a login hold', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterLoginHold('● Login expired · Please run /login');
+    const before = relay.__sent.length;
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign', task_id: 't-pushed-login', kind: 'issue', repo: 'foo/bar', number: 9, title: 'pushed',
+    }));
+    const after = relay.__sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'ready'), `no ready during a login hold: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.getCurrentTask(), null, 'a signed-out relay must not take the task');
+    const declined = after.find(m => m.type === 'task_failed' && m.task_id === 't-pushed-login');
+    assert.ok(declined, `the offer must be declined: ${JSON.stringify(after)}`);
+    assert.strictEqual(declined.failure_kind, 'environment');
+    assert.match(declined.reason, /login expired/i);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 the hold releases only on a signed-in pane, then re-advertises', () => {
+  let pane = CLAUDE_LOGIN_EXPIRED_PANE;
+  const relay = loadRelay({ backend: 'claude', paneText: () => pane, attachedClients: false });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    relay.enterLoginHold('● Login expired · Please run /login');
+    assert.strictEqual(relay.probeLoginHold(), false, 'the wall is still up');
+    // A fresh splash (what a relaunch draws) is NOT a login: the readiness
+    // latch was fooled by exactly this in the incident.
+    pane = '  ⏵⏵ auto mode on (shift+tab to cycle)\n❯ ';
+    assert.strictEqual(relay.probeLoginHold(), false, 'a ready-looking pane with nobody at it is not evidence of a login');
+    assert.strictEqual(relay.loginHoldActive(), true);
+    const before = relay.__sent.length;
+    pane = CLAUDE_LOGGED_IN_PANE;
+    assert.strictEqual(relay.probeLoginHold(), true);
+    assert.strictEqual(relay.loginHoldActive(), false);
+    assert.ok(relay.__sent.slice(before).some(m => m.type === 'ready'), 'release must re-advertise — the hub heard nothing during the hold');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
 test('#5094 a login hint alongside a 403 stays fatal — /login fixes nothing about authorization', () => {
   // #4400: 401 is authentication (login fixes it); 403 is authorization (the
   // caller IS identified and is not permitted). A line carrying both the login
