@@ -28,6 +28,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/chat"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -195,6 +197,7 @@ func (b *Backend) validate() error {
 }
 
 func (b *Backend) Send(content string) error {
+	content = logscrub.ScrubString(content)
 	for _, part := range splitTeamsMessage(content) {
 		payload := map[string]string{"text": markdownToTeamsHTML(part)}
 		if err := b.postWebhook(context.Background(), payload); err != nil {
@@ -244,6 +247,7 @@ func (b *Backend) postWebhook(ctx context.Context, payload any) error {
 }
 
 func (b *Backend) SetTopic(topic string) error {
+	topic = logscrub.ScrubString(topic)
 	payload := map[string]string{"description": topic}
 	err := b.callGraphJSON(context.Background(), http.MethodPatch, b.channelPath(), payload, nil)
 	if isForbidden(err) {
@@ -308,7 +312,8 @@ func (b *Backend) pollOnce(ctx context.Context, deliver func(chat.Message)) (boo
 		}
 		b.markSeen(msg.ID)
 		if !baseline {
-			deliver(chat.Message{ID: msg.ID, Text: inboundText(msg.Body), AuthorID: authorID(msg), FromBot: fromBot(msg, b.clientID)})
+			text, _ := ioscan.EnforceInput(inboundText(msg.Body))
+			deliver(chat.Message{ID: msg.ID, Text: text, AuthorID: authorID(msg), FromBot: fromBot(msg, b.clientID)})
 		}
 	}
 	if page.NextLink != "" {

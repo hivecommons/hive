@@ -47,7 +47,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | GitHub @-mention triggers | #7582 / #7597 / #7623 | ⬜ |
 | Slack (Socket Mode) | #7585 | ⬜ |
 | Discord (spine port + reliability) | #7572 / #7586 | ⬜ |
-| Microsoft Teams | #7621 | ⬜ |
+| Microsoft Teams | #7621 | ✅ [`src/pkg/msteams/conformance_v6_test.go`](../pkg/msteams/conformance_v6_test.go) ([#8044](https://github.com/hivecommons/hive/issues/8044)) |
 | Matrix | #7617 | ⬜ |
 | Telegram | #7616 | ⬜ |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
