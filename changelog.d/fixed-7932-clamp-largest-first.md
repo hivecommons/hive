@@ -1,0 +1,1 @@
+- The relay's frame clamp now shrinks the largest payload field first, so a small `tmux_output` tail or `summary` that already fit is no longer emptied to make room for an oversized later field such as `reason` ([#7932](https://github.com/hivecommons/hive/issues/7932))

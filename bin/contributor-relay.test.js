@@ -11159,6 +11159,22 @@ test('#7932 a frame oversized on a field other than the tail is trimmed too', ()
   } finally { teardown(relay); }
 });
 
+test('#7932 clamping an oversized field leaves the fields that already fit untouched', () => {
+  const relay = loadRelay({});
+  try {
+    const msg = {
+      type: 'task_failed', seq: 2, task_id: 'ct-3', task_gen: 3,
+      summary: 'short summary', tmux_output: ['a', 'b', 'c'],
+      reason: `boom: ${'z'.repeat(200 * 1024)}`,
+    };
+    const out = relay.clampFrame(msg, relay.WS_FRAME_BYTES);
+    assert.ok(relay.frameByteLength(out) <= relay.WS_FRAME_BYTES);
+    assert.deepStrictEqual(out.tmux_output, ['a', 'b', 'c'], 'a tail that already fit was emptied to pay for another field');
+    assert.strictEqual(out.summary, 'short summary', 'a summary that already fit was emptied to pay for another field');
+    assert.ok(out.reason.startsWith('boom: ') && out.reason.endsWith(relay.TEXT_TRUNCATED_SUFFIX), 'only the oversized field is cut, and the cut is marked');
+  } finally { teardown(relay); }
+});
+
 test('#7932 the relay clamps to the limit the hub advertises on auth_ok', () => {
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   const log = console.log; console.log = () => {};

@@ -836,6 +836,11 @@ function truncateTailLines(lines, maxBytes) {
   return [OUTPUT_TAIL_TRUNCATED_MARKER].concat(kept);
 }
 
+// frameFieldBytes is the serialized size of one field's value.
+function frameFieldBytes(msg, field) {
+  return Buffer.byteLength(JSON.stringify(msg[field]), 'utf8');
+}
+
 function truncateFrameField(value, maxBytes) {
   return Array.isArray(value)
     ? truncateTailLines(value, Math.max(maxBytes, 0))
@@ -855,9 +860,16 @@ function clampFrame(msg, maxFrameBytes) {
     if (bounded !== msg.tmux_output) clamped = { ...clamped, tmux_output: bounded };
   }
   if (frameByteLength(clamped) <= maxFrameBytes) return clamped;
-  for (const field of FRAME_TRUNCATABLE_FIELDS) {
+  // Largest field first. In allowlist order a small tail and a normal summary
+  // were emptied to make room for a huge later field (`room` went negative
+  // with that field still inside `rest`), and the frame STILL did not fit
+  // until the loop reached the culprit. Shrinking the biggest field first
+  // fits the frame in one step and leaves the fields that already fit alone.
+  const bySize = FRAME_TRUNCATABLE_FIELDS
+    .filter((field) => clamped[field] !== undefined && clamped[field] !== null)
+    .sort((a, b) => frameFieldBytes(clamped, b) - frameFieldBytes(clamped, a));
+  for (const field of bySize) {
     const value = clamped[field];
-    if (value === undefined || value === null) continue;
     const rest = { ...clamped };
     delete rest[field];
     // What is left once the rest of the frame and this field's own JSON wrapper
