@@ -710,6 +710,7 @@ type ContributeWSHub struct {
 	// Guarded by completedMu; persisted in the same PVC-backed ledger dir as
 	// the cooldowns so a pod restart does not forget the verdict.
 	noWorkVerdicts     map[string]noWorkVerdictRecord
+	standbyOutcomes    []standbyOutcomeRecord
 	activityFilePath   string
 	completedTasksFile string
 	failedTasksFile    string
@@ -725,12 +726,13 @@ type ContributeWSHub struct {
 	// its work item (#5681); since #7773 every unexpired lease is a hold, so it is
 	// informational. Written once at construction and only read afterwards, so it
 	// needs no lock.
-	startedAt          time.Time
-	noWorkVerdictsFile string
-	asyncActivitySave  bool
-	persistActivity    bool
-	persistTaskLedgers bool
-	completedMu        sync.Mutex
+	startedAt           time.Time
+	noWorkVerdictsFile  string
+	standbyOutcomesFile string
+	asyncActivitySave   bool
+	persistActivity     bool
+	persistTaskLedgers  bool
+	completedMu         sync.Mutex
 	// standbyDispatches records manual donated dispatches inside the rolling
 	// standby daily-cap window. The cap decrements at dispatch, not completion,
 	// so abandoned donated work still consumes a slot.
@@ -860,6 +862,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		consecutiveFailures:       make(map[string]int),
 		noPRStreaks:               make(map[string]noPRStreakRecord),
 		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
+		standbyOutcomes:           []standbyOutcomeRecord{},
 		activityFilePath:          contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
 		completedTasksFile:        contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
 		failedTasksFile:           contributorStatePath(contributorsDir, failedTasksFile, "failed-tasks.json"),
@@ -869,6 +872,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		taskRunLogFile:            contributorStatePath(contributorsDir, taskRunLogPath, taskRunLogFileName),
 		startedAt:                 time.Now(),
 		noWorkVerdictsFile:        filepath.Join(contributorsDir, noWorkVerdictsFileName),
+		standbyOutcomesFile:       filepath.Join(contributorsDir, standbyOutcomesFileName),
 		asyncActivitySave:         asyncActivitySave,
 		persistActivity:           activityPersistenceEnabled,
 		persistTaskLedgers:        taskLedgerPersistenceEnabled,
@@ -888,6 +892,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadFailedTasks()
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
+	hub.loadStandbyOutcomes()
 	hub.loadActivity()
 	// #5681: restore the leases the PREVIOUS process issued before any relay can
 	// reconnect, so an in-flight task survives the restart instead of being revoked
@@ -2452,6 +2457,16 @@ func (s *wsSession) handleStandbyDeclare(msg WSMessage) {
 	lanes := normalizeStandbyLanes(standby.Lanes)
 	now := time.Now().UTC()
 	accepted := make([]WSStandbyLane, 0, len(lanes))
+	rejected := []WSStandbyLane{}
+	config := standbyConfigFromConnection(s.contributor)
+	key := standbyOutcomeKey(s.contributor.profile.GitHubUsername, config)
+	if suspended, _ := s.h.standbySuspended(key); suspended {
+		for _, lane := range lanes {
+			rejected = append(rejected, WSStandbyLane{Lane: lane, Reason: string(standbypkg.ReasonSuspended)})
+		}
+		_ = s.contributor.send(WSMessage{Type: "standby_ack", Seq: msg.Seq, Standby: &WSStandby{Rejected: rejected}})
+		return
+	}
 	s.contributor.mu.Lock()
 	if s.contributor.standby == nil {
 		s.contributor.standby = map[string]StandbyConnectionState{}
@@ -2476,6 +2491,7 @@ func (s *wsSession) handleStandbyDeclare(msg WSMessage) {
 		Seq:  msg.Seq,
 		Standby: &WSStandby{
 			Accepted: accepted,
+			Rejected: rejected,
 		},
 	})
 }
@@ -2607,18 +2623,16 @@ func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string, laneItems map[s
 			if !ok {
 				continue
 			}
-			candidates = append(candidates, standbypkg.Candidate{
+			candidateConfig := standbyConfigFromState(state)
+			suspended, _ := h.standbySuspended(standbyOutcomeKey(conn.profile.GitHubUsername, candidateConfig))
+			candidate := standbypkg.Candidate{
 				Contributor: conn.profile.GitHubUsername,
 				Approved:    cfg.Hub.IsStandbyContributorApproved(conn.profile.GitHubUsername),
+				Suspended:   suspended,
 				Dispatches:  h.standbyDispatchWindow(conn.profile.GitHubUsername, lane, now),
-				Config: standbypkg.Configuration{
-					Backend:         state.CLIBackend,
-					Model:           state.Model,
-					ReasoningEffort: state.ReasoningEffort,
-					AdvisorModel:    state.AdvisorModel,
-					AdvisorEffort:   state.AdvisorEffort,
-				},
-			})
+				Config:      candidateConfig,
+			}
+			candidates = append(candidates, candidate)
 		}
 		queue := itemTiers.LaneQueue(laneItems[lane], standbyProposeItemTier)
 		out[lane] = standbypkg.QualifiedCountForQueue(candidates, policy, queue, tiers, now)
@@ -2674,6 +2688,40 @@ func standbyLaneItems(lanes []string, actionable *ghpkg.ActionableResult) map[st
 			items = append(items, standbypkg.Item{Repo: issue.Repo, Labels: issue.Labels})
 		}
 		out[lane] = items
+	}
+	return out
+}
+
+func (h *ContributeWSHub) SuspendedStandbyCounts(lanes []string) map[string]int {
+	if h == nil || len(lanes) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(lanes))
+	laneSet := map[string]bool{}
+	for _, lane := range lanes {
+		laneSet[lane] = true
+	}
+	byKey := map[string][]standbypkg.Outcome{}
+	keyLane := map[string]string{}
+	h.completedMu.Lock()
+	for _, rec := range h.standbyOutcomes {
+		if rec.Key == "" {
+			continue
+		}
+		byKey[rec.Key] = append(byKey[rec.Key], rec)
+		if rec.Lane != "" {
+			keyLane[rec.Key] = rec.Lane
+		}
+	}
+	h.completedMu.Unlock()
+	for key, rows := range byKey {
+		lane := keyLane[key]
+		if !laneSet[lane] {
+			continue
+		}
+		if suspended, _ := standbypkg.SuspendState(rows, standbypkg.DefaultSuspendThreshold); suspended {
+			out[lane]++
+		}
 	}
 	return out
 }
@@ -3260,6 +3308,17 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					// assignment's issue title would match the finding it
 					// was minted from on the mere existence of a PR.
 					if prDetail.Merged {
+						if completedTask != nil && completedTask.StandbyLane != "" {
+							cfg := standbyConfigFromConnection(s.contributor)
+							h.appendStandbyOutcome(standbyOutcomeRecord{
+								Key:          standbyOutcomeKey(s.contributor.profile.GitHubUsername, cfg),
+								Lane:         completedTask.StandbyLane,
+								Repo:         completedTask.Repo,
+								Number:       standbyPRNumber(msg.PRURL),
+								DispatchedAt: taskAssignedAt.UTC(),
+								Kind:         standbypkg.OutcomeMerged,
+							})
+						}
 						h.closeAdvisoryForMergedPR(prDetail.Title)
 					}
 				}

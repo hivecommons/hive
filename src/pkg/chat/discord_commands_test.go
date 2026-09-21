@@ -21,7 +21,7 @@ func TestRegisterBuiltinCommandsAllRegistered(t *testing.T) {
 	b := newTestBot(ts, "test-channel")
 	b.registerBuiltinCommands()
 
-	expectedCommands := []string{"status", "governor", "help", "kick", "pause", "resume", "standby"}
+	expectedCommands := []string{"status", "governor", "help", "kick", "pause", "resume", "standby", "standby-clear"}
 	for _, cmd := range expectedCommands {
 		b.mu.RLock()
 		_, ok := b.commands[cmd]

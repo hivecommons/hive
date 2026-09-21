@@ -687,6 +687,7 @@ type FrontendGovernor struct {
 	LaneQueueDepths   map[string]int     `json:"lane_queue_depths,omitempty"`
 	LanePauseReasons  map[string]string  `json:"lane_pause_reasons,omitempty"`
 	QualifiedStandbys map[string]int     `json:"qualified_standbys,omitempty"`
+	SuspendedStandbys map[string]int     `json:"suspended_standbys,omitempty"`
 }
 
 type FrontendThresholds struct {
@@ -1914,6 +1915,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(
 			status.Governor.SuppressedLanes,
 			standbyLaneItems(status.Governor.SuppressedLanes, actionable))
+		status.Governor.SuspendedStandbys = s.contributeHub.SuspendedStandbyCounts(status.Governor.SuppressedLanes)
 	}
 
 	s.githubAppMu.RLock()

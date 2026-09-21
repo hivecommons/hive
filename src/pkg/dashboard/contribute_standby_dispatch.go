@@ -157,17 +157,14 @@ func (h *ContributeWSHub) pickStandbyCandidate(cfg *config.Config, lane string, 
 		if !ok {
 			continue
 		}
+		candidateConfig := standbyConfigFromState(state)
+		suspended, _ := h.standbySuspended(standbyOutcomeKey(conn.profile.GitHubUsername, candidateConfig))
 		c := standbypkg.Candidate{
 			Contributor: conn.profile.GitHubUsername,
 			Approved:    cfg.Hub.IsStandbyContributorApproved(conn.profile.GitHubUsername),
+			Suspended:   suspended,
 			Dispatches:  h.standbyDispatchWindow(conn.profile.GitHubUsername, lane, now),
-			Config: standbypkg.Configuration{
-				Backend:         state.CLIBackend,
-				Model:           state.Model,
-				ReasoningEffort: state.ReasoningEffort,
-				AdvisorModel:    state.AdvisorModel,
-				AdvisorEffort:   state.AdvisorEffort,
-			},
+			Config:      candidateConfig,
 		}
 		if ok, reason := standbypkg.Qualifies(c, policy, itemMatch, tiers, now); ok {
 			return standbyDispatchCandidate{conn: conn, state: state, tier: tiers.Tier(c.Config)}, nil
@@ -276,6 +273,15 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 		return nil, err
 	}
 	h.recordStandbyDispatch(c.profile.GitHubUsername, lane, assignedAt)
+	cfg := standbyConfigFromConnection(c)
+	h.appendStandbyOutcome(standbyOutcomeRecord{
+		Key:          standbyOutcomeKey(c.profile.GitHubUsername, cfg),
+		Lane:         lane,
+		Repo:         item.Repo,
+		Number:       item.Number,
+		DispatchedAt: assignedAt.UTC(),
+		Kind:         standbypkg.OutcomeOpen,
+	})
 	h.addActivity(c.profile.GitHubUsername, "standby dispatched", c.role, state.CLIBackend, state.Model, state.ReasoningEffort, taskDescOf(assignment), c.advisor())
 	return msg, nil
 }

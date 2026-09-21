@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"log/slog"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -154,6 +155,49 @@ func TestQualifiedStandbyCountsDecrementsCapOnDispatch(t *testing.T) {
 	counts := h.QualifiedStandbyCounts([]string{"quality"}, nil)
 	if counts["quality"] != 0 {
 		t.Fatalf("qualified count after dispatch = %d, want 0", counts["quality"])
+	}
+}
+
+func TestQualifiedStandbyCountsExcludesSuspendedConfiguration(t *testing.T) {
+	cfg := standbyTestConfig()
+	s := &Server{deps: &Dependencies{Config: cfg}, logger: slog.Default()}
+	h := NewContributeWSHub(slog.Default(), s)
+	addStandbyConnection(h, "alice", true)
+	standbyCfg := standbypkg.Configuration{Backend: "claude", Model: "opus", ReasoningEffort: "high"}
+	key := standbyOutcomeKey("alice", standbyCfg)
+	h.appendStandbyOutcome(standbyOutcomeRecord{Key: key, Lane: "quality", Kind: standbypkg.OutcomeClosedUnmerged})
+	h.appendStandbyOutcome(standbyOutcomeRecord{Key: key, Lane: "quality", Kind: standbypkg.OutcomeClosedUnmerged})
+
+	counts := h.QualifiedStandbyCounts([]string{"quality"}, nil)
+	if counts["quality"] != 0 {
+		t.Fatalf("qualified count for suspended config = %d, want 0", counts["quality"])
+	}
+	suspended := h.SuspendedStandbyCounts([]string{"quality"})
+	if suspended["quality"] != 1 {
+		t.Fatalf("suspended count = %d, want 1", suspended["quality"])
+	}
+}
+
+func TestStandbyOutcomeLedgerPersistsAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), standbyOutcomesFileName)
+	first := NewContributeWSHub(slog.Default(), nil)
+	first.standbyOutcomesFile = path
+	cfg := standbypkg.Configuration{Backend: "claude", Model: "opus", ReasoningEffort: "high"}
+	key := standbyOutcomeKey("alice", cfg)
+	first.appendStandbyOutcome(standbyOutcomeRecord{Key: key, Kind: standbypkg.OutcomeClosedUnmerged})
+	first.appendStandbyOutcome(standbyOutcomeRecord{Key: key, Kind: standbypkg.OutcomeClosedUnmerged})
+
+	second := NewContributeWSHub(slog.Default(), nil)
+	second.standbyOutcomesFile = path
+	second.loadStandbyOutcomes()
+	suspended, streak := second.standbySuspended(key)
+	if !suspended || streak != 2 {
+		t.Fatalf("loaded suspension = (%v,%d), want (true,2)", suspended, streak)
+	}
+	second.clearStandbySuspension("alice", cfg)
+	suspended, streak = second.standbySuspended(key)
+	if suspended || streak != 0 {
+		t.Fatalf("cleared suspension = (%v,%d), want (false,0)", suspended, streak)
 	}
 }
 

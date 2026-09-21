@@ -179,6 +179,9 @@ func (s *Server) registerContributeRoutes() {
 	// Body: {"lane":"quality","key":"owner/repo#123"}; omitting key dispatches
 	// the first ready item in the lane.
 	s.mux.HandleFunc("POST /api/contribute/standby/dispatch", s.handleContributeStandbyDispatch)
+	// Owner clear for S6 standby suspension. Body identifies contributor + config
+	// tuple; appending "cleared" reinstates future declarations for that tuple.
+	s.mux.HandleFunc("POST /api/contribute/standby/clear", s.handleContributeStandbyClear)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,

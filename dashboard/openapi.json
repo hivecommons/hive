@@ -19311,6 +19311,62 @@
           }
         }
       }
+    },
+    "/api/contribute/standby/clear": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Clear a standby suspension",
+        "description": "Owner/read-write control for standby S6. Appends a cleared outcome for the contributor plus model configuration tuple so future standby declarations are accepted again.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contributor"
+                ],
+                "properties": {
+                  "contributor": {
+                    "type": "string"
+                  },
+                  "backend": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "reasoning_effort": {
+                    "type": "string"
+                  },
+                  "advisor_model": {
+                    "type": "string"
+                  },
+                  "advisor_reasoning_effort": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Suspension cleared"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Read-only caller"
+          },
+          "503": {
+            "description": "Contribute hub not ready"
+          }
+        }
+      }
     }
   },
   "components": {

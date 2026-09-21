@@ -28,6 +28,9 @@ func (s *Service) registerBuiltinCommands() {
 	s.RegisterCommand("standby", func(ctx context.Context, args string) (string, error) {
 		return s.cmdStandbyDispatch(ctx, args)
 	})
+	s.RegisterCommand("standby-clear", func(ctx context.Context, args string) (string, error) {
+		return s.cmdStandbyClear(ctx, args)
+	})
 }
 
 func (s *Service) Deliver(ctx context.Context, msg Message) {

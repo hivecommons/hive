@@ -5179,14 +5179,17 @@
       const depths = gov.lane_queue_depths || {};
       const reasons = gov.lane_pause_reasons || {};
       const qualified = gov.qualified_standbys || {};
+      const suspended = gov.suspended_standbys || {};
       const parts = lanes.map(lane => {
         const reason = reasons[lane] === 'budget_exhausted' ? 'out of budget' : (reasons[lane] || 'paused');
         const q = qualified[lane] || 0;
-        const text = `${lane} paused, ${reason}, ${depths[lane] || 0} waiting, ${q} qualify`;
+        const sus = suspended[lane] || 0;
+        const suffix = sus > 0 ? `, ${sus} suspended (owner clear via standby-clear)` : '';
+        const text = `${lane} paused, ${reason}, ${depths[lane] || 0} waiting, ${q} qualify${suffix}`;
         const btn = q > 0 ? ` <button class="pill" data-action="standbyDispatch" data-arg-types="t" data-standby-lane="${esc(lane)}" data-stop="1" data-prevent="1" title="Dispatch the next ready ${esc(lane)} item to standby">dispatch</button>` : '';
         return `${esc(text)}${btn}`;
       });
-      const title = lanes.map(lane => `${lane}: ${depths[lane] || 0} waiting, ${qualified[lane] || 0} qualify`).join('; ');
+      const title = lanes.map(lane => `${lane}: ${depths[lane] || 0} waiting, ${qualified[lane] || 0} qualify, ${suspended[lane] || 0} suspended`).join('; ');
       return `<div class="gov-metric gm-alert" title="${esc(title)}"><span class="gm-label">standby</span><span class="gm-val">${parts.join('; ')}</span></div>`;
     }
 
