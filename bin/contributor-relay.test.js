@@ -1176,6 +1176,58 @@ test('#7790 a revoke stashes the uncommitted leftovers in the task checkout, aft
   } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
 });
 
+// ---------------------------------------------------------------------------
+// #7925: a repository's declared toolchain (`.hive/tools`) is installed into
+// the container BEFORE the prompt is typed, when the checkout already exists.
+// ---------------------------------------------------------------------------
+
+test('#7925 a checkout with .hive/tools gets its toolchain installed before the task prompt is typed', () => {
+  const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
+  fs.mkdirSync(path.join(checkout, '.hive'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.hive', 'tools'), 'pip ruff==0.6.9\n');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, execFileResult: { stdout: 'repo-toolchain: installed 1 pip requirement(s)\n' } });
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7925');
+    const call = relay.__execFileCalls.find(c => c.bin === 'bash' && /repo-toolchain\.sh$/.test(c.args[0]));
+    assert.ok(call, `expected the relay to run repo-toolchain.sh; got ${JSON.stringify(relay.__execFileCalls.map(c => [c.bin, c.args]))}`);
+    assert.strictEqual(call.args[1], checkout, 'the script is pointed at the task checkout, nothing else');
+    // The prompt still goes out, after the install.
+    assert.ok(relay.__commands.some(c => /send-keys/.test(c) && /do the thing/.test(c)), 'the task prompt must still be typed');
+    assert.ok(logged.some(l => /declared toolchain/.test(l)) && logged.some(l => /installed 1 pip requirement/.test(l)),
+      `the install and the script's report are logged; got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('#7925 no manifest, no install: the checkout is left alone and the prompt goes straight out', () => {
+  const { ws } = fakeWorkspaceWithCheckout('foo/bar');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws } });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7925-none');
+    assert.ok(!relay.__execFileCalls.some(c => /repo-toolchain\.sh$/.test(String(c.args && c.args[0]))), 'no manifest means the script is not run');
+    assert.ok(relay.__commands.some(c => /send-keys/.test(c) && /do the thing/.test(c)), 'the task prompt is typed');
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('#7925 a revoke that lands while the toolchain installs drops the dispatch', () => {
+  const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
+  fs.mkdirSync(path.join(checkout, '.hive'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.hive', 'tools'), 'pip ruff\n');
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-7925-revoked');
+    assert.ok(!relay.__commands.some(c => /send-keys/.test(c) && /do the thing/.test(c)), 'the prompt waits for the install');
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't-7925-revoked', reason: 'operator stop' }));
+    relay.__completeDeferredExecFile(null, 'repo-toolchain: installed 1 pip requirement(s)\n', '');
+    assert.ok(!relay.__commands.some(c => /send-keys/.test(c) && /do the thing/.test(c)), 'a revoked task must not be typed into the pane after the install finishes');
+  } finally { console.log = log; teardown(relay); fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
 test('#7790 a clean checkout is inspected but not stashed', () => {
   const { ws, checkout } = fakeWorkspaceWithCheckout('foo/bar');
   const relay = loadRelay({ backend: 'claude', env: { HIVE_WORKSPACE_DIR: ws }, gitStatus: '' });

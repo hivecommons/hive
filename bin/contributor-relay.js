@@ -2013,6 +2013,53 @@ function resolveTaskPrompt(task) {
   return prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
 }
 
+// installRepoToolchain runs bin/repo-toolchain.sh against the task's checkout
+// — when one already exists under $HIVE_WORKSPACE_DIR — and calls `then` once
+// it has finished, so a repository's declared `.hive/tools` pip requirements
+// are in the container BEFORE the prompt is typed (hivecommons/hive#7925).
+// The first task on a repo has no checkout yet (the agent clones it), so that
+// task runs without the extras and every later one gets them; the script
+// itself never fails a task, and neither does anything here: a missing
+// script, a spawn error or the time box all fall through to `then`.
+const REPO_TOOLCHAIN_SCRIPT = path.join(__dirname, 'repo-toolchain.sh');
+const REPO_TOOLCHAIN_MANIFEST = path.join('.hive', 'tools');
+const REPO_TOOLCHAIN_TIMEOUT_MS = Number(process.env.HIVE_REPO_TOOLCHAIN_TIMEOUT_MS || 180000);
+
+function installRepoToolchain(task, then) {
+  const dir = taskCheckoutDir(task && task.repo);
+  if (!dir || !fs.existsSync(path.join(dir, REPO_TOOLCHAIN_MANIFEST))) { then(); return; }
+  let done = false;
+  const finish = () => { if (done) return; done = true; then(); };
+  console.log(`Installing ${task.repo}'s declared toolchain (${REPO_TOOLCHAIN_MANIFEST}) into the container before the task prompt (#7925)`);
+  let child;
+  try {
+    child = spawn('bash', [REPO_TOOLCHAIN_SCRIPT, dir], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    console.error(`repo-toolchain could not start: ${e.message} — continuing without the declared tools`);
+    finish();
+    return;
+  }
+  let output = '';
+  child.stdout.on('data', (d) => { output += d.toString(); });
+  child.stderr.on('data', (d) => { output += d.toString(); });
+  const timer = setTimeout(() => {
+    console.error(`repo-toolchain did not finish within ${REPO_TOOLCHAIN_TIMEOUT_MS} ms — continuing without the declared tools`);
+    try { child.kill('SIGKILL'); } catch (_) { /* already gone */ }
+    finish();
+  }, REPO_TOOLCHAIN_TIMEOUT_MS);
+  child.on('error', (e) => {
+    clearTimeout(timer);
+    console.error(`repo-toolchain failed to run: ${e.message} — continuing without the declared tools`);
+    finish();
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    for (const line of output.split('\n')) if (line.trim()) console.log(`  ${line.trimEnd()}`);
+    if (code !== 0) console.error(`repo-toolchain exited ${code} — continuing without the declared tools`);
+    finish();
+  });
+}
+
 function runHeadlessTask(task) {
   const prompt = resolveTaskPrompt(task);
   if (!headlessSupportsBackend()) {
@@ -6326,18 +6373,27 @@ function handleMessage(data, hub) {
         console.error(`Failed to write task file ${TASK_FILE}: ${e.message} — continuing without it`);
       }
       send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
-      if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
-        // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
-        // invocation and report completion/failure from its exit status — no
-        // tmux, no pane scraping, no watchdog waiting on an invisible prompt.
-        runHeadlessTask(msg);
-      } else {
-        const taskPrompt = resolveTaskPrompt(msg);
-        // tmuxSendKeys() itself queues when the CLI is not confirmed ready, so
-        // there is a single gate rather than two that can disagree.
-        tmuxSendKeys(taskPrompt);
-        startProgressReporting();
-      }
+      // #7925: the repository's declared tools go in before the prompt does.
+      // The task stays current while this runs; a revoke that lands meanwhile
+      // clears currentTask and the dispatch below is dropped.
+      installRepoToolchain(msg, () => {
+        if (!currentTask || currentTask.task_id !== msg.task_id || currentTask.task_gen !== msg.task_gen) {
+          console.log(`Task ${msg.task_id} is no longer current after the toolchain step; not dispatching it`);
+          return;
+        }
+        if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+          // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
+          // invocation and report completion/failure from its exit status — no
+          // tmux, no pane scraping, no watchdog waiting on an invisible prompt.
+          runHeadlessTask(msg);
+        } else {
+          const taskPrompt = resolveTaskPrompt(msg);
+          // tmuxSendKeys() itself queues when the CLI is not confirmed ready, so
+          // there is a single gate rather than two that can disagree.
+          tmuxSendKeys(taskPrompt);
+          startProgressReporting();
+        }
+      });
       break;
 
     case 'token_refresh':

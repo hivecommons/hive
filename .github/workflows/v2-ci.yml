@@ -646,6 +646,10 @@ jobs:
         working-directory: .
         run: bash bin/gh-wrapper.test.sh
 
+      - name: repo-toolchain manifest tests (#7925)
+        working-directory: .
+        run: bash bin/repo-toolchain.test.sh
+
       - name: hive-open-issue helper tests
         working-directory: .
         run: bash bin/test_hive_open_issue.sh

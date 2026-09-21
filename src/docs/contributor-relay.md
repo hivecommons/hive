@@ -928,16 +928,36 @@ privileges the contributor container should not hold. A task that genuinely
 needs to build or inspect an OCI image is a task for local mode or a derived
 image, not for the stock contributor container.
 
-**Anything beyond the baseline is the task's own problem to solve**, inside the
-container, with what the checkout declares. `pip install -r requirements.txt`
-into the venv above works; `apt-get install` does not, because the container
-runs unprivileged by design. Reading a repository's declared toolchain
-(`.devcontainer/devcontainer.json`, or a hive-specific manifest) and installing
-from it automatically is proposed in
-[#7925](https://github.com/hivecommons/hive/issues/7925) but not implemented:
-the apt half of that proposal needs a privilege decision the contributor
-container's threat model does not currently allow. Until it is, a derived image
-with an entrypoint hook is the supported way to add tools — see below.
+**Beyond the baseline, the repository declares what it needs** in a small
+manifest, `<checkout>/.hive/tools` — one directive per line, `#` comments
+([#7925](https://github.com/hivecommons/hive/issues/7925), second half):
+
+```
+pip ruff==0.6.9
+pip "pytest-cov>=5,<6"
+apt libfoo-dev        # recorded in the relay log, not installed
+```
+
+When a task is assigned and its checkout already exists under
+`$HIVE_WORKSPACE_DIR/<owner>/<repo>`, the relay runs `bin/repo-toolchain.sh`
+against it **before typing the prompt** and installs the `pip` lines into the
+venv above in one `python3 -m pip install -- …` call. The first task on a repo
+has no checkout yet (the agent clones it), so that task runs on the baseline
+alone and every later one gets the extras; the step is time-boxed
+(`HIVE_REPO_TOOLCHAIN_TIMEOUT_MS`, default 180 s) and never fails a task — a
+container without egress logs pip's failure and the task proceeds.
+
+The manifest is content from the repository under work, so nothing in it is
+executed: only `pip <requirement>` is acted on, each requirement must be a bare
+PEP 508 `name[extras][version-spec]` (URLs, paths, `-r`, `--index-url`, `-e`
+and anything pip would read as an option are rejected and named), at most 32
+of them, and `--` ends pip's option parsing. `apt` lines are recorded and
+skipped — the container runs unprivileged by design and has no sudo — so the
+log says what the image is missing rather than the task silently lacking it.
+`.devcontainer/devcontainer.json`'s `postCreateCommand` is deliberately not
+honoured: it is an arbitrary shell command from the checkout. For anything
+apt-shaped, a derived image with an entrypoint hook remains the supported way
+to add tools — see below.
 
 ## Extending the contributor image (downstream hooks)
 

@@ -43,6 +43,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 |---|---|---|
 | `gh-app-token.sh` | Credentials | Generates and caches (0600, hub-only) a GitHub App installation token; `--export` prints shell exports for callers; `--scoped <tier> [repos]` prints a JSON tier-scoped token for a contributor agent and never touches the shared cache. |
 | `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
+| `repo-toolchain.sh` | Contributor runtime | Installs a task repository's declared `.hive/tools` `pip` requirements into the container's venv before the relay types the prompt (#7925). Bounded: PEP 508 name/extras/version only, `apt` lines recorded not installed (no root), devcontainer `postCreateCommand` ignored, time-boxed, exit 0 always. |
 | `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
 | `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. See [`src/docs/hive-open-pr.md`](../src/docs/hive-open-pr.md). |
 | `hive-open-issue.sh` | Enforcement | Agent-side wrapper for issue creation and comments. Agents call it INSTEAD of `gh issue create` / `gh issue comment`; it writes a request file for the Hive watcher so the work is attributed to the GitHub App bot and passes the same ACMM authorization checks. See [`src/docs/hive-open-issue.md`](../src/docs/hive-open-issue.md). |
@@ -102,6 +103,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.js` with stubs, plus direct-require coverage of `lib/pane-classifier.js`. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
+| `repo-toolchain.test.sh` | `repo-toolchain.sh` manifest parsing: what never reaches pip (URLs, paths, options, unknown directives), apt lines recorded not run, pip failure never fails the task. |
 | `test_agent_env_scrub.sh` | `agent-env-scrub.sh` (#4045): backend CLIs must not re-export live GitHub credentials into the tool shells they spawn. Behavioural plus source assertions. |
 | `test_gh_auth_native_no_cat.sh` | The N14 (#3842) fix: a native/systemd-install agent kicked via `kick-agents.sh` — no Go AgentManager, no per-agent `HIVE_AGENT_TOKEN_CACHE` — still authenticates without leaking the token through `cat`. |
 | `test_gh_wrapper_gates.sh` | `gh-wrapper.sh`'s enforcement gates. |
