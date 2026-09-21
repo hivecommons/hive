@@ -61,7 +61,7 @@ run_case() {
   local mode=$1 run=$2 capture=$3
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
     PUBLISH_INSPECT_RETRY_DELAY=0 \
-    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v5 abcdef123456 "$run" v5 false edge
+    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v5 abcdef123456 "$run" v5 true candidate
 }
 
 run_custom_case() {
@@ -75,21 +75,22 @@ capture="$tmp/create-new"
 run_case missing 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
 grep -q 'hive:v5-latest' "$capture"
-grep -q 'hive:edge' "$capture"
-if grep -q 'hive:stable\|hive:candidate' "$capture"; then
-  echo "v5 publish moved v4-owned stable/candidate tags" >&2
+grep -q 'hive:candidate' "$capture"
+grep -q 'hive:latest' "$capture"
+if grep -q 'hive:stable\|hive:edge' "$capture"; then
+  echo "v5 publish moved soak-gated stable or v6-owned edge" >&2
   exit 1
 fi
 
 capture="$tmp/create-forward"
 run_case 99 100 "$capture"
 grep -q 'hive:v5-latest' "$capture"
-grep -q 'hive:edge' "$capture"
+grep -q 'hive:candidate' "$capture"
 
 capture="$tmp/create-stale"
 run_case sha-missing-moving-newer 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
-if grep -q 'hive:v5-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
+if grep -q 'hive:v5-latest\|hive:latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
   echo "stale run moved a mutable tag" >&2
   exit 1
 fi
@@ -104,7 +105,7 @@ fi
 capture="$tmp/create-legacy"
 run_case legacy 100 "$capture"
 grep -q 'hive:v5-latest' "$capture"
-grep -q 'hive:edge' "$capture"
+grep -q 'hive:candidate' "$capture"
 
 if run_case failure 100 "$tmp/create-failure"; then
   echo "registry inspection failure did not fail closed" >&2
@@ -148,21 +149,21 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
-# #7893: :latest is v4-owned until #7721 Phase 1 hands it over. Every image
-# row on this lane must pass INCLUDE_LATEST=false — the mirror steps too, or
-# the cross-org copy would still advance :latest.
-[[ $(grep -c 'v5 false edge' "$workflow") -eq 3 ]]
-if grep -q 'v5 true edge' "$workflow"; then
-  echo "docker workflow publishes v4-owned :latest from the v5 lane" >&2
+# #7721 Phase 1: v5 is the stable line. Every image row (and its cross-org
+# mirror step) publishes candidate + :latest; stable is moved only by
+# promote-stable.yml after soak, and edge belongs to the v6 lane.
+[[ $(grep -c 'v5 true candidate' "$workflow") -eq 3 ]]
+if grep -q 'v5 true stable\|v5 true candidate,stable\|CHANNELS: "stable\|CHANNELS: "candidate,stable' "$workflow"; then
+  echo "docker workflow publishes stable on every v5 merge (bypasses promote-stable soak)" >&2
   exit 1
 fi
-if grep -q 'v5 true stable\|CHANNELS: "stable' "$workflow"; then
-  echo "docker workflow publishes v4-owned stable from the v5 lane" >&2
+if grep -q 'v5 true edge\|v5 false edge\|CHANNELS: "edge' "$workflow"; then
+  echo "docker workflow publishes v6-owned edge from the v5 lane" >&2
   exit 1
 fi
-[[ $(grep -c 'INCLUDE_LATEST: "false"' "$workflow") -eq 3 ]]
-if grep -q 'INCLUDE_LATEST: "true"' "$workflow"; then
-  echo "cross-org mirror step publishes v4-owned :latest from the v5 lane" >&2
+[[ $(grep -c 'INCLUDE_LATEST: "true"' "$workflow") -eq 3 ]]
+if grep -q 'INCLUDE_LATEST: "false"' "$workflow"; then
+  echo "cross-org mirror step fails to publish :latest from the stable (v5) lane" >&2
   exit 1
 fi
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then

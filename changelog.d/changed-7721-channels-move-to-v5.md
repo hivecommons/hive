@@ -1,0 +1,1 @@
+- Release channels moved to the v5 line (#7721 Phase 1): every green `v5` build now retags `candidate` and `:latest`, `stable` is promoted from the v5 candidate by `promote-stable.yml` after soak, and `edge` now follows `v6`. `v4` is a maintenance line publishing only `v4-latest` and short-SHA tags.

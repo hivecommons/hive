@@ -20,10 +20,11 @@ run_number=$5
 release_branch=$6
 include_latest=$7
 # CHANNELS: comma-separated release-channel tags this branch's builds own.
-# Channel ownership is per-branch: v4 owns stable+candidate, the v5 line owns
-# edge — without the split, one release line can silently re-point another
+# Channel ownership is per-branch: v5 owns stable+candidate (+ :latest), the
+# v6 line owns edge, v4 owns none — without the split, one release line can silently re-point another
 # line's channel tags minutes after any deliberate promotion.
-channels=${8:-edge}
+# No default: a lane that owns no channel passes '' explicitly (v4).
+channels=${8-}
 run_label=io.kubestellar.hive.github-actions-run-number
 
 if [[ ! $run_number =~ ^[0-9]+$ ]]; then
