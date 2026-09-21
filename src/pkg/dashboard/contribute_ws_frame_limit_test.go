@@ -28,20 +28,35 @@ import (
 // matched it) while the relay logged "code=1009 message too big" at the other
 // end of the same socket.
 
-// syncBuffer is a log sink safe to read from the test goroutine while the hub's
-// connection goroutine writes to it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+// waitingLogSink is a log sink safe to read from the test goroutine while the
+// hub's connection goroutine writes to it, and which SIGNALS the line the test
+// is waiting for. The hub logs on its own goroutine, still unwinding when our
+// read returns, so the alternative is polling — and a poll loop either sleeps
+// (which this repository ratchets down on) or spins.
+type waitingLogSink struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	want   string
+	seen   chan struct{}
+	closed bool
 }
 
-func (b *syncBuffer) Write(p []byte) (int, error) {
+func newWaitingLogSink(want string) *waitingLogSink {
+	return &waitingLogSink{want: want, seen: make(chan struct{})}
+}
+
+func (b *waitingLogSink) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(p)
+	n, err := b.buf.Write(p)
+	if !b.closed && strings.Contains(b.buf.String(), b.want) {
+		b.closed = true
+		close(b.seen)
+	}
+	return n, err
 }
 
-func (b *syncBuffer) String() string {
+func (b *waitingLogSink) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
@@ -79,7 +94,7 @@ func TestWS_AuthOKAdvertisesMaxMessageBytes(t *testing.T) {
 func TestWS_OversizedFrameIsClosedAndLogged(t *testing.T) {
 	s, ts := setupWSTest(t)
 	defer ts.Close()
-	logs := &syncBuffer{}
+	logs := newWaitingLogSink("exceeded the read limit")
 	s.contributeHub.logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	token, _ := registerWSUser(t, s, "oversize-user")
 
@@ -124,15 +139,12 @@ func TestWS_OversizedFrameIsClosedAndLogged(t *testing.T) {
 
 	// The log is written on the hub's connection goroutine, which is still
 	// unwinding when our read returns.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(logs.String(), "exceeded the read limit") {
-			if !strings.Contains(logs.String(), "limit_bytes=65536") {
-				t.Fatalf("the log must name the bound that was exceeded, got: %s", logs.String())
-			}
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	select {
+	case <-logs.seen:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("an oversized frame disconnected a contributor with nothing in the hub log: %s", logs.String())
 	}
-	t.Fatalf("an oversized frame disconnected a contributor with nothing in the hub log: %s", logs.String())
+	if !strings.Contains(logs.String(), "limit_bytes=65536") {
+		t.Fatalf("the log must name the bound that was exceeded, got: %s", logs.String())
+	}
 }
