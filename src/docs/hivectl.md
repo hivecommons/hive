@@ -589,6 +589,9 @@ hivectl hives list                                            # active hive mark
 hivectl hives list --check -o json                            # also probe each hub
 hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
 hivectl hives use acme
+hivectl hives session acme --label review                     # second entry, same identity
+hivectl hives export acme                                     # passphrase-encrypted bundle
+hivectl hives import acme.hiveprofile                         # on the other machine
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
 ```
@@ -609,6 +612,13 @@ profiles:
       session: review          # optional: HIVE_SESSION for this profile
       added_at: 2026-09-21T10:00:00Z
 ```
+
+`session` is three-state, because `HIVE_SESSION` is: **absent** means the relay
+defaults the label to the backend name, `session: ""` is the relay's explicit
+opt-out (shown as `(none)` by `hives list`), and a string is that label. The
+projection writes whichever the **active** profile carries, and removes the
+`HIVE_SESSION` line when it carries none — leaving a stale label behind would
+have the hub keying the relay's task slot to a session you thought you left.
 
 `~/.config/hive/contributor.env` becomes a **generated projection** of that
 file. The relay, `src/compose-contributor.yaml` and `just contribute-k8s` keep
@@ -648,6 +658,61 @@ Notes:
 - **Registration tokens are never printed**, in any `-o` format.
 - **`remove` discards a token the hub cannot reprint**, so it asks you to type
   the hive name unless `--yes` is given.
+
+#### export / import — moving one hive to another machine
+
+```bash
+hivectl hives export acme                        # -> ./acme.hiveprofile, mode 0600
+hivectl hives export acme --out /media/usb/acme.hiveprofile
+hivectl hives import acme.hiveprofile --name acme-laptop --activate
+```
+
+`export` seals ONE profile — hub, contributor id, registration token, session
+label, backend defaults — into a file encrypted with a passphrase you type
+twice. `import` prompts for it, revalidates the profile against the same rules
+`profiles.yml` enforces, and appends it. This is the supported replacement for
+`scp`-ing `contributor.env` around ([#8127](https://github.com/hivecommons/hive/issues/8127)).
+
+- **The bundle is AES-256-GCM under a PBKDF2-HMAC-SHA256 key** (600,000
+  iterations, recorded in the file and authenticated with the rest of the
+  header). It holds no plaintext token, contributor id or hub URL. The
+  passphrase is not stored and cannot be recovered — a lost one means
+  re-exporting from the machine that still has the profile.
+- **A wrong passphrase writes nothing.** Decryption and validation both happen
+  before any file is touched, so a failed import leaves your profiles exactly
+  as they were.
+- **Importing is not a second identity.** The token *is* the identity, so both
+  machines then authenticate as the same contributor and the hub sees two
+  connections. Run one relay per identity, or give each entry a session label
+  (below). `import` says so when it spots an entry with the same hub and
+  contributor id already present.
+- **No `--passphrase` flag and no environment variable.** A flag value lands in
+  your shell history and in every `ps`; an environment variable is inherited by
+  everything the process spawns. Scripted runs pipe it in with
+  `--passphrase-stdin`; `--out -` writes the bundle to stdout (prompts go to
+  stderr, so the redirect stays clean).
+- **`export` will not clobber an existing file** without `--force`, and pins
+  mode 0600 either way.
+
+#### session — two relays against one hive
+
+```bash
+hivectl hives session acme --label review            # -> profile "acme-review"
+hivectl hives session acme --label nightly --as acme-night --activate
+```
+
+One GitHub account has one contributor identity per hive, and the hub keys task
+leases, cooldowns and ownership on that identity — so two relays under one
+account collide on a single active-task slot unless each declares a session
+label. `session` copies an existing profile under a new name with the label set;
+the copy shares the original's hub, contributor id and registration token, so
+the hub scopes it as `contributor_id#label` rather than as a separate account.
+
+Only the active entry's label is projected into `contributor.env`, so running
+both at once means one config directory (`HOME`) or container per entry — the
+same shape as running two backends. See
+[contributor-relay.md](contributor-relay.md#running-multiple-backends-under-one-account)
+for what a session label does and does not scope.
 
 ## Input and safety
 

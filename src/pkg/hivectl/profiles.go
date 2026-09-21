@@ -69,15 +69,40 @@ var ErrProfileNotFound = errors.New("no such hive profile")
 // `hivectl hives` commands render profiles through the shared printer, and a
 // json/yaml `-o` on `hives list` must not spray live tokens across a terminal
 // or a CI log. Redacted() is what the commands print.
+//
+// Session is a POINTER because HIVE_SESSION is a three-state variable, not a
+// string (#8127). bin/contributor-relay.js reads it as
+// `process.env.HIVE_SESSION !== undefined ? process.env.HIVE_SESSION : BACKEND`,
+// and the Justfile forwards it with `${HIVE_SESSION+...}` — no colon — so that
+// an explicitly EMPTY label survives as the relay's opt-out of session
+// labelling while an ABSENT one still defaults to the backend name. A plain
+// string would collapse those two into one value, and the projection would then
+// have to pick which of the two every unlabelled profile meant.
 type Profile struct {
 	Name              string    `yaml:"name" json:"name"`
 	Hub               string    `yaml:"hub" json:"hub"`
 	ContributorID     string    `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
 	RegistrationToken string    `yaml:"registration_token" json:"-"`
-	Session           string    `yaml:"session,omitempty" json:"session,omitempty"`
+	Session           *string   `yaml:"session,omitempty" json:"session,omitempty"`
 	Backend           string    `yaml:"backend,omitempty" json:"backend,omitempty"`
 	Model             string    `yaml:"model,omitempty" json:"model,omitempty"`
 	AddedAt           time.Time `yaml:"added_at,omitempty" json:"added_at,omitempty"`
+}
+
+// SessionLabel reports the profile's session label and whether one is set at
+// all, mirroring the relay's `!== undefined` test. ("", true) is the explicit
+// opt-out; ("", false) means the relay falls back to the backend name.
+func (p Profile) SessionLabel() (string, bool) {
+	if p.Session == nil {
+		return "", false
+	}
+	return *p.Session, true
+}
+
+// WithSession returns a copy of the profile carrying the given session label.
+func (p Profile) WithSession(label string) Profile {
+	p.Session = &label
+	return p
 }
 
 // ProfileSet is the whole file: every hive, plus which one is active.
@@ -204,11 +229,19 @@ func (set *ProfileSet) Validate() error {
 		if err := validateEnvValue("registration_token", p.RegistrationToken); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
-		for field, value := range map[string]string{"session": p.Session, "backend": p.Backend, "model": p.Model} {
+		for field, value := range map[string]string{"backend": p.Backend, "model": p.Model} {
 			if value == "" {
 				continue
 			}
 			if err := validateEnvValue(field, value); err != nil {
+				return fmt.Errorf("profile %q: %w", p.Name, err)
+			}
+		}
+		// The session label is checked even when empty-but-set: "" is a legal
+		// value (the relay's opt-out) and validateEnvValue passes it, so this
+		// is about not skipping a SET label that happens to be empty.
+		if label, ok := p.SessionLabel(); ok {
+			if err := validateEnvValue("session", label); err != nil {
 				return fmt.Errorf("profile %q: %w", p.Name, err)
 			}
 		}
@@ -454,7 +487,10 @@ func (s *ProfileStore) migrateFromEnv() (*ProfileSet, error) {
 		// migrated hive with the moment of migration.
 		addedAt = info.ModTime().UTC().Truncate(time.Second)
 	}
-	session := env.value("HIVE_SESSION")
+	// lookup, not value: a legacy file carrying `HIVE_SESSION=` means "no
+	// session label", which is a different relay identity from having no
+	// HIVE_SESSION line at all. Migration must not turn one into the other.
+	session, hasSession := env.lookup("HIVE_SESSION")
 	taken := map[string]struct{}{}
 	set := &ProfileSet{Version: ProfilesVersion}
 	for i, hub := range hubs {
@@ -465,8 +501,11 @@ func (s *ProfileStore) migrateFromEnv() (*ProfileSet, error) {
 			Name:              uniqueProfileName(ProfileNameFromHub(hub), taken),
 			Hub:               hub,
 			RegistrationToken: tokens[i],
-			Session:           session,
 			AddedAt:           addedAt,
+		}
+		if hasSession {
+			label := session
+			p.Session = &label
 		}
 		if i < len(ids) {
 			p.ContributorID = ids[i]
@@ -522,10 +561,24 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 	env.set("HIVE_REGISTRATION_TOKEN", strings.Join(tokens, ","))
 	env.set("HIVE_HUB", strings.Join(hubs, ","))
 	env.set("CONTRIBUTOR_ID", strings.Join(ids, ","))
-	// The session label is per-profile from here on; project the active one so
-	// a single-session contributor keeps the behaviour they had.
-	if active := set.ActiveProfile(); active != nil && active.Session != "" {
-		env.set("HIVE_SESSION", active.Session)
+	// The session label is per-profile, so the projection OWNS HIVE_SESSION:
+	// it writes the active profile's label and REMOVES the line when the active
+	// profile has none. Leaving a stale line behind was the failure worth
+	// naming — switching from a labelled profile to an unlabelled one would
+	// otherwise keep announcing the old label, and the hub would go on keying
+	// the relay's task slot to a session the contributor thinks they left.
+	//
+	// Removing is not the same as writing an empty value: `HIVE_SESSION=` is
+	// the relay's opt-out and is what a profile with an explicitly empty label
+	// projects, while an absent line lets the relay default to the backend
+	// name. Both states are reachable, which is why Profile.Session is a
+	// pointer.
+	if active := set.ActiveProfile(); active != nil {
+		if label, ok := active.SessionLabel(); ok {
+			env.set("HIVE_SESSION", label)
+		} else {
+			env.unset("HIVE_SESSION")
+		}
 	}
 
 	if _, statErr := os.Stat(s.EnvPath()); statErr == nil {
@@ -599,13 +652,21 @@ func readEnvFile(path string) (*envFile, error) {
 }
 
 func (f *envFile) value(key string) string {
+	v, _ := f.lookup(key)
+	return v
+}
+
+// lookup reports a key's value and whether the file assigns it at all. The
+// distinction matters for HIVE_SESSION, where an empty assignment and an absent
+// one give the relay two different session identities.
+func (f *envFile) lookup(key string) (string, bool) {
 	prefix := key + "="
 	for _, line := range f.lines {
 		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), prefix))
+			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), prefix)), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // set replaces the first assignment of key, or appends one when the key is
@@ -629,6 +690,22 @@ func (f *envFile) set(key, value string) {
 	}
 	if !replaced {
 		out = append(out, prefix+value)
+	}
+	f.lines = out
+}
+
+// unset removes every assignment of key, leaving the variable absent rather
+// than empty. Every duplicate goes, not just the first: a shell sourcing the
+// file lets the last assignment win, so dropping only the first would leave the
+// value the projection meant to remove still in effect.
+func (f *envFile) unset(key string) {
+	prefix := key + "="
+	out := make([]string, 0, len(f.lines))
+	for _, line := range f.lines {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			continue
+		}
+		out = append(out, line)
 	}
 	f.lines = out
 }

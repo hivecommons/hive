@@ -284,6 +284,20 @@ Notes:
 - `HIVE_SESSION=""` (explicit empty string) opts out entirely: the relay declares no session and the hub uses the bare per-account identity — byte-for-byte the pre-session single-relay behavior.
 - The feature is additive and backward-compatible: an older hub ignores the unknown field and treats the relay as a single session, and an existing single relay that never sets `HIVE_SESSION` still defaults to its backend name, which only matters once a second relay connects.
 
+#### Two sessions against one hive, as two named profiles
+
+`HIVE_SESSION` in your shell labels whatever relay you happen to launch from that shell. `hivectl hives session` records the label on the hive itself instead, so "two sessions against hive X" is simply two entries ([#8127](https://github.com/hivecommons/hive/issues/8127)):
+
+```bash
+hivectl hives session acme --label review     # copies "acme" to "acme-review"
+hivectl hives session acme --label nightly --as acme-night
+hivectl hives list                            # SESSION column shows each label
+```
+
+The copy shares the original's hub, contributor id and registration token — it is the same identity, scoped to a different session on the hub (`contributor_id#label`), which is exactly the distinction the hub needs to give each relay its own task slot. Only the **active** entry's label reaches `contributor.env`, and switching to an entry with no label removes `HIVE_SESSION` rather than leaving the previous one behind. Two entries therefore run two relays the way two backends do: one per config directory (`HOME`) or container, each with its own entry active.
+
+The three states of the label are all reachable and all different to the relay: no `session` key at all (the relay defaults to the backend name), `--label ""` (the explicit opt-out above, shown as `(none)` in `hives list`), and a name.
+
 ### Sharing one quota reserve across those relays
 
 Extra sessions share your provider account's quota, so two relays under one account can each hold their own reserve against the *same* pool and, between them, spend past it. The cross-process quota-pool store closes that gap. Set `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` (and, when two relays authenticate to the same account, an identical `HIVE_CONTRIBUTOR_QUOTA_POOL_ACCOUNT`) on every relay that shares a provider account:
@@ -408,6 +422,9 @@ Positional lists have no names, and one hand-edit that drops a field transposes 
 hivectl hives list                                        # which hives, and which one is active
 hivectl hives add hive-b --hub wss://hive-b.example.com/contribute
 hivectl hives use hive-b                                  # make it the hub the relay starts on
+hivectl hives session hive-b --label review               # a second entry for the same hive
+hivectl hives export hive-b                               # encrypted bundle, for another machine
+hivectl hives import hive-b.hiveprofile
 hivectl hives rename hive-b staging
 hivectl hives remove staging                              # asks you to type the name
 ```
@@ -424,19 +441,30 @@ Nothing binds a contributor identity to a machine. Authentication is a plain tok
 
 What you cannot do is re-run `contribute-setup` on the new machine. `POST /api/contribute/register` is unauthenticated and identifies you by a self-asserted GitHub username, so it will never hand back an existing contributor's token — otherwise POSTing someone else's username would be an account takeover. It answers "already registered" and stops. That is correct; the two supported ways round it are below.
 
-### Option 1 — copy the credential (keeps the old machine working)
+### Option 1 — move the credential in an encrypted bundle (keeps the old machine working)
 
-Copy both files. `contribute-hive` hard-requires each of them and refuses to start without either:
+`hivectl hives export` seals one profile — hub, contributor id, registration token, session label, backend defaults — into a passphrase-encrypted file ([#8127](https://github.com/hivecommons/hive/issues/8127)). On the old machine:
 
 ```bash
-scp old-machine:~/.config/hive/contributor.env ~/.config/hive/
-scp old-machine:~/.config/hive/gh-auth.env     ~/.config/hive/
-chmod 600 ~/.config/hive/contributor.env ~/.config/hive/gh-auth.env
+hivectl hives export hive-b                  # prompts twice for a passphrase
+                                             # writes ./hive-b.hiveprofile, mode 0600
 ```
 
-**Copying is the only way to *reuse* a registration token.** The hive stores only a SHA-256 hash of it and clears the plaintext after the first read, so no endpoint can print it again — not the dashboard, not the API, not the hive administrator.
+Copy `hive-b.hiveprofile` across by whatever means you like — scp, a share, a USB stick — and send the passphrase by a *different* channel. On the new machine, run `just contribute-setup <backend>` first (it signs in with `gh` and writes `gh-auth.env`, the second file `contribute-hive` hard-requires; it will then stop at "already registered", which is the dead end this option exists to get past), and import:
 
-Use this when you want to switch back and forth, or to try the VM before committing to it. The cost is that the credential now exists in two places: delete both files on the machine you are moving off once the new one works.
+```bash
+hivectl hives import hive-b.hiveprofile      # prompts for the passphrase
+rm hive-b.hiveprofile                        # it still decrypts to a live token
+just contribute-hive
+```
+
+The bundle is AES-256-GCM under a PBKDF2-HMAC-SHA256 key. A wrong passphrase fails without writing anything, and the file contains no plaintext token, contributor id or hub URL — which is what makes it safe to move over a channel you would not put `contributor.env` on. Nothing recovers a forgotten passphrase; re-export from the machine that still holds the profile.
+
+**Moving the credential is the only way to *reuse* a registration token.** The hive stores only a SHA-256 hash of it and clears the plaintext after the first read, so no endpoint can print it again — not the dashboard, not the API, not the hive administrator.
+
+Use this when you want to switch back and forth, or to try the VM before committing to it. The cost is that the credential now exists in two places: **the token is the identity**, so both machines authenticate as the same contributor and the hub sees two connections. Either run one relay at a time, or give each entry its own session label (below). Remove the profile on the machine you are moving off (`hivectl hives remove`) once the new one works.
+
+Copying `contributor.env` and `gh-auth.env` by hand still works and is still what the plain-`scp` instructions did; it moves *every* hive in the file, in the clear, which is why it is no longer the documented path.
 
 ### Option 2 — reissue the credential (`just contribute-move`)
 
@@ -471,6 +499,8 @@ Keys `contribute-move` does not manage — `HIVE_LITELLM_ENDPOINT`, for instance
 That is not a move: run `contribute-setup` against the new hive with `HIVE_HUB` pointing at it. It appends to the hub, token, and id lists already in `contributor.env` rather than replacing them, so a working multi-hive setup survives. The previous file is kept at `contributor.env.bak`.
 
 `hivectl hives add <name> --hub <url>` does the same append with a name attached, once the machine is already set up — it performs only the registration POST, not the `gh` login or the backend CLI preflight. See [Named profiles](#named-profiles-instead-of-hand-edited-lists-hivectl-hives).
+
+If the hive is one you are already registered with on another machine, `hivectl hives export` there and `hivectl hives import` here moves that identity instead of registering a new one — see [Option 1](#option-1--move-the-credential-in-an-encrypted-bundle-keeps-the-old-machine-working).
 
 ## Acting as a spoke agent role
 

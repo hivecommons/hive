@@ -17,6 +17,17 @@ func writeEnv(t *testing.T, dir, contents string) string {
 	return path
 }
 
+// sessionPtr spells the three-state session label in a test literal: nil is
+// "no label", a pointer to "" is the relay's explicit opt-out.
+func sessionPtr(label string) *string { return &label }
+
+// label flattens a profile's session for comparisons where only the set case
+// is under test.
+func label(p Profile) string {
+	l, _ := p.SessionLabel()
+	return l
+}
+
 func TestProfileStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := NewProfileStore(dir)
@@ -25,7 +36,7 @@ func TestProfileStoreRoundTrip(t *testing.T) {
 		Active: "acme",
 		Profiles: []Profile{
 			{Name: "acme", Hub: "wss://acme.example/contribute", ContributorID: "c1", RegistrationToken: "tok1", AddedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)},
-			{Name: "local", Hub: "ws://localhost:3001/contribute", ContributorID: "c2", RegistrationToken: "tok2", Session: "review", Backend: "claude"},
+			{Name: "local", Hub: "ws://localhost:3001/contribute", ContributorID: "c2", RegistrationToken: "tok2", Session: sessionPtr("review"), Backend: "claude"},
 		},
 	}
 	if err := store.Save(set); err != nil {
@@ -45,7 +56,7 @@ func TestProfileStoreRoundTrip(t *testing.T) {
 	if loaded.Active != "acme" {
 		t.Errorf("active = %q, want acme", loaded.Active)
 	}
-	if got := loaded.Profiles[1]; got.Session != "review" || got.Backend != "claude" || got.RegistrationToken != "tok2" {
+	if got := loaded.Profiles[1]; label(got) != "review" || got.Backend != "claude" || got.RegistrationToken != "tok2" {
 		t.Errorf("second profile round-tripped as %+v", got)
 	}
 	if !loaded.Profiles[0].AddedAt.Equal(set.Profiles[0].AddedAt) {
@@ -288,7 +299,7 @@ func TestWriteEnvProjection(t *testing.T) {
 func TestWriteEnvProjectionCreatesFileWhenAbsent(t *testing.T) {
 	dir := t.TempDir()
 	store := NewProfileStore(dir)
-	set := &ProfileSet{Profiles: []Profile{{Name: "a", Hub: "wss://a.example/contribute", ContributorID: "c", RegistrationToken: "t", Session: "review"}}}
+	set := &ProfileSet{Profiles: []Profile{{Name: "a", Hub: "wss://a.example/contribute", ContributorID: "c", RegistrationToken: "t", Session: sessionPtr("review")}}}
 	if err := store.WriteEnvProjection(set); err != nil {
 		t.Fatalf("WriteEnvProjection: %v", err)
 	}
@@ -524,5 +535,188 @@ func assertAligned(t *testing.T, env map[string]string) {
 	ids := splitList(env["CONTRIBUTOR_ID"])
 	if len(hubs) != len(tokens) || len(hubs) != len(ids) {
 		t.Fatalf("positional lists misaligned: %d hub(s), %d token(s), %d id(s)", len(hubs), len(tokens), len(ids))
+	}
+}
+
+// ── session label projection (#8127) ────────────────────────────────────────
+
+// envAssigns reports whether the projection assigns a key at all, which
+// readEnvMap cannot answer: `HIVE_SESSION=` and a missing HIVE_SESSION line are
+// two different relay identities.
+func envAssigns(t *testing.T, path, key string) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k == key {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// The projection OWNS HIVE_SESSION. Switching from a labelled hive to an
+// unlabelled one must drop the line, or the relay keeps announcing a session
+// the contributor thinks they left and the hub keeps keying its task slot to it.
+func TestWriteEnvProjectionDropsStaleSessionLabel(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	set := &ProfileSet{
+		Active: "review",
+		Profiles: []Profile{
+			{Name: "review", Hub: "wss://a.example/contribute", ContributorID: "c1", RegistrationToken: "t1", Session: sessionPtr("review")},
+			{Name: "plain", Hub: "wss://a.example/contribute", ContributorID: "c1", RegistrationToken: "t1"},
+		},
+	}
+	if err := store.WriteEnvProjection(set); err != nil {
+		t.Fatalf("WriteEnvProjection: %v", err)
+	}
+	if got, ok := envAssigns(t, store.EnvPath(), "HIVE_SESSION"); !ok || got != "review" {
+		t.Fatalf("HIVE_SESSION = (%q,%v), want the active label", got, ok)
+	}
+
+	set.Active = "plain"
+	if err := store.WriteEnvProjection(set); err != nil {
+		t.Fatalf("WriteEnvProjection after switch: %v", err)
+	}
+	if got, ok := envAssigns(t, store.EnvPath(), "HIVE_SESSION"); ok {
+		t.Fatalf("HIVE_SESSION survived a switch to an unlabelled hive as %q; the relay would still report the old session", got)
+	}
+}
+
+// An explicitly empty label is the relay's opt-out (`HIVE_SESSION=`), which is a
+// different thing from no line at all (the relay defaults to the backend name).
+// The projection has to be able to express both.
+func TestWriteEnvProjectionKeepsExplicitlyEmptySessionLabel(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	set := &ProfileSet{Profiles: []Profile{
+		{Name: "a", Hub: "wss://a.example/contribute", ContributorID: "c", RegistrationToken: "t", Session: sessionPtr("")},
+	}}
+	if err := store.WriteEnvProjection(set); err != nil {
+		t.Fatalf("WriteEnvProjection: %v", err)
+	}
+	got, ok := envAssigns(t, store.EnvPath(), "HIVE_SESSION")
+	if !ok {
+		t.Fatal("an explicitly empty session label projected as NO HIVE_SESSION line; the relay would default to the backend name")
+	}
+	if got != "" {
+		t.Errorf("HIVE_SESSION = %q, want an empty assignment", got)
+	}
+}
+
+// Two entries for one hub with different labels is how "two sessions against
+// hive X" is spelled. Only the ACTIVE entry's label reaches contributor.env.
+func TestWriteEnvProjectionCarriesOnlyTheActiveEntrysLabel(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	set := &ProfileSet{
+		Active: "acme-nightly",
+		Profiles: []Profile{
+			{Name: "acme-review", Hub: "wss://a.example/contribute", ContributorID: "c1", RegistrationToken: "t1", Session: sessionPtr("review")},
+			{Name: "acme-nightly", Hub: "wss://a.example/contribute", ContributorID: "c1", RegistrationToken: "t1", Session: sessionPtr("nightly")},
+		},
+	}
+	if err := store.WriteEnvProjection(set); err != nil {
+		t.Fatalf("WriteEnvProjection: %v", err)
+	}
+	got, ok := envAssigns(t, store.EnvPath(), "HIVE_SESSION")
+	if !ok || got != "nightly" {
+		t.Fatalf("HIVE_SESSION = (%q,%v), want the active entry's label", got, ok)
+	}
+	env := readEnvMap(t, store.EnvPath())
+	if strings.Count(env["HIVE_HUB"], ",") != 1 {
+		t.Errorf("HIVE_HUB = %q, want both entries' hubs", env["HIVE_HUB"])
+	}
+	assertAligned(t, env)
+}
+
+// unset removes EVERY assignment, not just the first: a shell sourcing the file
+// lets the last one win, so leaving a duplicate behind would mean the removal
+// had no effect.
+func TestEnvFileUnsetRemovesDuplicateAssignments(t *testing.T) {
+	f := &envFile{lines: []string{"HIVE_SESSION=one", "OTHER=keep", "HIVE_SESSION=two"}}
+	f.unset("HIVE_SESSION")
+	if got := string(f.render()); got != "OTHER=keep\n" {
+		t.Errorf("after unset the file is %q", got)
+	}
+}
+
+// A legacy contributor.env carrying `HIVE_SESSION=` opted OUT of session
+// labelling. Migration must not turn that into "no label configured", which the
+// relay reads as "default to the backend name".
+func TestMigrationPreservesExplicitlyEmptySessionLabel(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	writeFileForTest(t, store.EnvPath(), "HIVE_HUB=wss://a.example/contribute\nHIVE_REGISTRATION_TOKEN=t\nHIVE_SESSION=\n")
+	set, migrated, err := store.LoadOrMigrate()
+	if err != nil || !migrated {
+		t.Fatalf("LoadOrMigrate = %v, migrated=%v", err, migrated)
+	}
+	got, ok := set.Profiles[0].SessionLabel()
+	if !ok || got != "" {
+		t.Fatalf("migrated session = (%q,%v), want an explicitly empty label", got, ok)
+	}
+}
+
+func TestMigrationLeavesSessionUnsetWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	writeFileForTest(t, store.EnvPath(), "HIVE_HUB=wss://a.example/contribute\nHIVE_REGISTRATION_TOKEN=t\n")
+	set, migrated, err := store.LoadOrMigrate()
+	if err != nil || !migrated {
+		t.Fatalf("LoadOrMigrate = %v, migrated=%v", err, migrated)
+	}
+	if _, ok := set.Profiles[0].SessionLabel(); ok {
+		t.Fatal("a file with no HIVE_SESSION line migrated to a SET session label")
+	}
+}
+
+func writeFileForTest(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// The three-state accessors are the only supported way to read and set a
+// session label, so they are pinned rather than assumed.
+func TestProfileSessionAccessors(t *testing.T) {
+	var p Profile
+	if got, ok := p.SessionLabel(); ok || got != "" {
+		t.Errorf("a zero profile reports (%q,%v), want no label", got, ok)
+	}
+	labelled := p.WithSession("review")
+	if got, ok := labelled.SessionLabel(); !ok || got != "review" {
+		t.Errorf("WithSession(review) reports (%q,%v)", got, ok)
+	}
+	if _, ok := p.SessionLabel(); ok {
+		t.Error("WithSession mutated the receiver; it must return a copy")
+	}
+	optOut := p.WithSession("")
+	if got, ok := optOut.SessionLabel(); !ok || got != "" {
+		t.Errorf("WithSession(\"\") reports (%q,%v), want an explicitly empty label", got, ok)
+	}
+}
+
+// A session label is written into a shell-sourced file like every other field,
+// so it is subject to the same character rules — including when it is empty
+// but set, which the loop over the other fields would have skipped.
+func TestValidateRejectsUnsafeSessionLabel(t *testing.T) {
+	set := &ProfileSet{Profiles: []Profile{
+		{Name: "a", Hub: "wss://a.example/contribute", RegistrationToken: "t", Session: sessionPtr("two words")},
+	}}
+	if err := set.Validate(); err == nil {
+		t.Fatal("a session label with a space was accepted")
+	}
+	set.Profiles[0].Session = sessionPtr("")
+	if err := set.Validate(); err != nil {
+		t.Fatalf("an explicitly empty session label was rejected: %v", err)
 	}
 }

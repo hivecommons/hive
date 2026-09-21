@@ -47,6 +47,10 @@ type hivesDeps struct {
 	registrar  hubRegistrar
 	githubUser func(ctx context.Context) (string, error)
 	now        func() time.Time
+	// passphrase reads a bundle passphrase interactively. It is a seam because
+	// the production reader needs a real terminal with echo off, which a test
+	// process does not have — not because tests want to skip the prompt.
+	passphrase func(cmd *cobra.Command, confirm bool) (string, error)
 }
 
 func newHivesCommand(env *commandEnv) *cobra.Command {
@@ -55,13 +59,18 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 		Aliases: []string{"hive"},
 		Short:   "Manage the named hives you lend a CLI to",
 		Long: "Save the hives you contribute to as named profiles, see which one is active, " +
-			"and switch, add, rename or remove one without hand-editing ~/.config/hive/contributor.env.\n\n" +
+			"and switch, add, rename or remove one without hand-editing ~/.config/hive/contributor.env. " +
+			"Move one to another machine with export/import, and run two relays against one hive as two " +
+			"session-labelled entries.\n\n" +
 			"Profiles live in ~/.config/hive/profiles.yml (mode 0600). contributor.env is regenerated " +
 			"from it, with the active hive first, so the contributor relay keeps reading exactly the " +
 			"variables it always has. A relay that is already running picks up a switch on its next start.",
 		Example: `  hivectl hives list
   hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
   hivectl hives use acme
+  hivectl hives session acme --label review
+  hivectl hives export acme
+  hivectl hives import acme.hiveprofile
   hivectl hives rename acme acme-prod
   hivectl hives remove acme`,
 	}
@@ -70,6 +79,9 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesUseCommand(env))
 	cmd.AddCommand(newHivesRenameCommand(env))
 	cmd.AddCommand(newHivesRemoveCommand(env))
+	cmd.AddCommand(newHivesExportCommand(env))
+	cmd.AddCommand(newHivesImportCommand(env))
+	cmd.AddCommand(newHivesSessionCommand(env))
 	return cmd
 }
 
@@ -84,6 +96,7 @@ func defaultHivesDeps(timeout time.Duration) (*hivesDeps, error) {
 		registrar:  httpRegistrar{timeout: timeout},
 		githubUser: githubUserFromCLI,
 		now:        time.Now,
+		passphrase: promptPassphrase,
 	}, nil
 }
 
@@ -138,14 +151,17 @@ func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
 
 // ── list ────────────────────────────────────────────────────────────────────
 
+// Session is a pointer for the same reason Profile.Session is: an absent label
+// and an empty one are two different relay identities, and `-o json` has to be
+// able to say which one a profile carries.
 type hivesListRow struct {
-	Name          string `json:"name" yaml:"name"`
-	Hub           string `json:"hub" yaml:"hub"`
-	ContributorID string `json:"contributor_id,omitempty" yaml:"contributor_id,omitempty"`
-	Session       string `json:"session,omitempty" yaml:"session,omitempty"`
-	Active        bool   `json:"active" yaml:"active"`
-	AddedAt       string `json:"added_at,omitempty" yaml:"added_at,omitempty"`
-	Reachable     *bool  `json:"reachable,omitempty" yaml:"reachable,omitempty"`
+	Name          string  `json:"name" yaml:"name"`
+	Hub           string  `json:"hub" yaml:"hub"`
+	ContributorID string  `json:"contributor_id,omitempty" yaml:"contributor_id,omitempty"`
+	Session       *string `json:"session,omitempty" yaml:"session,omitempty"`
+	Active        bool    `json:"active" yaml:"active"`
+	AddedAt       string  `json:"added_at,omitempty" yaml:"added_at,omitempty"`
+	Reachable     *bool   `json:"reachable,omitempty" yaml:"reachable,omitempty"`
 }
 
 func newHivesListCommand(env *commandEnv) *cobra.Command {
@@ -217,7 +233,7 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		if row.Active {
 			marker = "*"
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", marker, row.Name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", marker, row.Name, row.Hub, dashIfEmpty(row.ContributorID), sessionColumn(row.Session), dashIfEmpty(row.AddedAt))
 		if check {
 			state := "-"
 			if row.Reachable != nil {
@@ -242,6 +258,20 @@ func dashIfEmpty(value string) string {
 		return "-"
 	}
 	return value
+}
+
+// sessionColumn renders the three states of a session label distinctly: no
+// label at all (the relay defaults to the backend name), an explicitly empty
+// one (the relay runs unlabelled), and a name.
+func sessionColumn(label *string) string {
+	switch {
+	case label == nil:
+		return "-"
+	case *label == "":
+		return "(none)"
+	default:
+		return *label
+	}
 }
 
 // probeHub reports whether the hub answered its contributor status endpoint.
@@ -277,6 +307,7 @@ type hivesAddOptions struct {
 	hub           string
 	githubUser    string
 	session       string
+	sessionSet    bool
 	backend       string
 	model         string
 	contributorID string
@@ -300,6 +331,10 @@ func newHivesAddCommand(env *commandEnv) *cobra.Command {
   printf '%s' "$TOKEN" | hivectl hives add acme --hub wss://acme.example/contribute --token-stdin --contributor-id contrib_123`,
 		Args: argsExact(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Changed(), not the value: `--session ""` is the relay's opt-out
+			// of session labelling and is a different thing from omitting the
+			// flag, which leaves the relay defaulting to the backend name.
+			opts.sessionSet = cmd.Flags().Changed("session")
 			return env.runHivesAdd(cmd, args[0], opts)
 		},
 	}
@@ -344,11 +379,13 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 	profile := hivectl.Profile{
 		Name:          name,
 		Hub:           hub,
-		Session:       strings.TrimSpace(opts.session),
 		Backend:       strings.TrimSpace(opts.backend),
 		Model:         strings.TrimSpace(opts.model),
 		ContributorID: strings.TrimSpace(opts.contributorID),
 		AddedAt:       deps.now().UTC().Truncate(time.Second),
+	}
+	if opts.sessionSet {
+		profile = profile.WithSession(strings.TrimSpace(opts.session))
 	}
 
 	if opts.tokenStdin {

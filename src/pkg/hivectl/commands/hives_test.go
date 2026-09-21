@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
+	"github.com/spf13/cobra"
 )
 
 type fakeRegistrar struct {
@@ -35,6 +36,13 @@ type hivesHarness struct {
 	out   *bytes.Buffer
 	errs  *bytes.Buffer
 	in    *bytes.Reader
+
+	// passphrase stands in for the terminal prompt, which a test process has
+	// no terminal to run. Tests that exercise a passphrase set this; the
+	// default refuses, so a test that forgot cannot accidentally export under
+	// an empty one.
+	passphrase   func(confirm bool) (string, error)
+	passphraseIn []bool
 }
 
 // newHivesHarness points `hivectl hives` at a temporary config directory and a
@@ -58,6 +66,13 @@ func newHivesHarness(t *testing.T) *hivesHarness {
 			registrar:  h.reg,
 			githubUser: func(context.Context) (string, error) { return "octocat", nil },
 			now:        func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
+			passphrase: func(_ *cobra.Command, confirm bool) (string, error) {
+				h.passphraseIn = append(h.passphraseIn, confirm)
+				if h.passphrase == nil {
+					return "", errors.New("no terminal to prompt on")
+				}
+				return h.passphrase(confirm)
+			},
 		}, nil
 	}
 	t.Cleanup(func() { hivesDepsFor = prev })
