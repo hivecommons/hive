@@ -1,0 +1,1 @@
+- `just check-version` (and every recipe behind it — `contribute-setup`, `contribute-hive`) now compares HEAD against the checked-out branch's own `origin/<branch>` instead of a hard-coded `origin/v4`, so a v5 or v6 checkout at its tip is no longer told to pull v4; the hint names the right branch. `HIVE_SKIP_VERSION_CHECK` still skips it. (#8071)

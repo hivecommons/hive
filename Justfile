@@ -42,11 +42,16 @@ check-version skip="false":
     #!/usr/bin/env bash
     if [[ "{{skip}}" == "true" || "${HIVE_SKIP_VERSION_CHECK:-}" == "true" ]]; then exit 0; fi
     LOCAL=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    git fetch origin v4 --quiet 2>/dev/null || true
-    REMOTE=$(git rev-parse --short origin/v4 2>/dev/null || echo "unknown")
+    # Compare against the checked-out line, not a hard-coded branch: a v5 or
+    # v6 checkout at its own tip must not be told to pull v4 (#8071). A
+    # detached HEAD has no line to compare against, so it is not checked.
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+    if [[ "$BRANCH" == "HEAD" ]]; then echo "✓ Detached HEAD (${LOCAL}); skipping branch freshness check"; exit 0; fi
+    git fetch origin "$BRANCH" --quiet 2>/dev/null || true
+    REMOTE=$(git rev-parse --short "origin/$BRANCH" 2>/dev/null || echo "unknown")
     if [[ "$LOCAL" != "$REMOTE" && "$REMOTE" != "unknown" ]]; then
-      echo "✗ Version check failed (local: ${LOCAL}, latest: ${REMOTE})"
-      echo "  Run: git pull origin v4"
+      echo "✗ Version check failed (local: ${LOCAL}, latest: ${REMOTE} on ${BRANCH})"
+      echo "  Run: git pull origin ${BRANCH}"
       echo "  Or skip: export HIVE_SKIP_VERSION_CHECK=true"
       exit 1
     fi
