@@ -167,6 +167,35 @@ else
 fi
 git -C "$repo" checkout -q - 2>/dev/null || git -C "$repo" checkout -q master 2>/dev/null || git -C "$repo" checkout -q main
 
+# ---------------------------------------------------------------------------
+# Case L3: detached HEAD (what actions/checkout@<sha> produces) with no
+# RELEASE_LINE => hard error. Falling through to the global latest tag here is
+# how v4.73.3 was minted from v5; the script must refuse, not guess.
+# ---------------------------------------------------------------------------
+git -C "$repo" checkout -q --detach
+printf '%s' $'## Unreleased\n\n### Fixed\n\n- x\n' > "$repo/CHANGELOG.md"
+if ( cd "$repo" && GITHUB_OUTPUT="" RELEASE_LINE="" bash "$derive" CHANGELOG.md ) >/dev/null 2>"$tmp/l3.err"; then
+  note_fail "detached HEAD without RELEASE_LINE must fail, but succeeded"
+elif grep -q 'RELEASE_LINE' "$tmp/l3.err"; then
+  note_ok "detached HEAD without RELEASE_LINE => refused, names RELEASE_LINE"
+else
+  note_fail "detached HEAD failed for the wrong reason: $(cat "$tmp/l3.err")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case L4: detached HEAD WITH RELEASE_LINE=v5 and only v4 tags => 5.0.0. The
+# explicit line, not the branch name, scopes the base tag.
+# ---------------------------------------------------------------------------
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
+git -C "$repo" tag -f v4.66.0 >/dev/null 2>&1
+out=$( cd "$repo" && GITHUB_OUTPUT="" RELEASE_LINE=v5 bash "$derive" CHANGELOG.md 2>&1 )
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" version)" == "5.0.0" ]]; then
+  note_ok "detached HEAD with RELEASE_LINE=v5 and only v4 tags => 5.0.0"
+else
+  note_fail "expected 5.0.0 via RELEASE_LINE on detached HEAD, got: $out"
+fi
+git -C "$repo" checkout -q master 2>/dev/null || git -C "$repo" checkout -q main 2>/dev/null || true
+
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1

@@ -19,7 +19,11 @@ feature-frozen maintenance line**; each cuts its own semver tags:
   number on the line's own latest `v5.*` tag only, and the **first** tag on a
   line is always `vN.0.0` regardless of the inferred bump — the human chose
   the major when they cut the line. A `v4.*` tag never seeds a `v5` number,
-  and vice versa.
+  and vice versa. The workflow names the line explicitly (`RELEASE_LINE: v5`
+  on the derive step) because its checkout is a detached SHA; without that
+  variable on a detached checkout the script **refuses** to run rather than
+  falling back to the global latest tag — the fall-through that minted a
+  stray `v4.73.3` from `v5` on 2026-09-21 (deleted; see #7721).
 - **`v4` cuts `v4.x.y` tags** for the security and critical fixes it still
   accepts under the freeze (#6346). Its copy of `tagged-release.yml` stays
   pinned to `v4` and labels its release PR `v4-freeze-exempt` so the required

@@ -1,0 +1,1 @@
+- `derive-release-version.sh` now takes the release line from `RELEASE_LINE` (set by `tagged-release.yml`) and refuses to run on a detached checkout without it, instead of falling through to the global latest tag — which had minted a stray `v4.73.3` from the `v5` branch (release and tag deleted, release commit reverted).

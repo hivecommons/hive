@@ -250,6 +250,12 @@ jobs:
       - name: Derive whether this merge warrants a release
         id: derive
         if: github.event_name == 'workflow_run' || steps.images.outputs.published == 'true'
+        # The checkout above is a detached SHA, so the script cannot read the
+        # line from the branch name; name it explicitly. This workflow is
+        # pinned to v5 everywhere else (concurrency, --base, --ref), and the
+        # script refuses to run without it.
+        env:
+          RELEASE_LINE: v5
         run: src/scripts/derive-release-version.sh
 
   # Cheap supersession check BEFORE the expensive release job (#5142): if v5

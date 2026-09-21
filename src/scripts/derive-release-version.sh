@@ -173,7 +173,20 @@ fi
 # Cutting a new line stays a deliberate, human, multi-step operation. If that
 # is genuinely what you want, tag it by hand on the correct branch.
 # ---------------------------------------------------------------------------
-branch_line="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+# The release line comes from RELEASE_LINE when set (the workflow passes the
+# branch it is pinned to), else from the checked-out branch name. A detached
+# checkout — which is what actions/checkout@<sha> produces — reports "HEAD",
+# and that case MUST fail rather than fall through to the global latest tag:
+# that fall-through is exactly how the first v5 tagged-release run minted
+# v4.73.3 from the v5 branch (#7721 Phase 4 incident, 2026-09-21).
+branch_line="${RELEASE_LINE:-}"
+if [[ -z "$branch_line" ]]; then
+  branch_line="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$branch_line" == "HEAD" ]]; then
+    echo "::error::cannot determine the release line: HEAD is detached and RELEASE_LINE is not set. Refusing to derive a version from the global latest tag — set RELEASE_LINE=vN (the workflow does) so only that line's tags seed the version." >&2
+    exit 1
+  fi
+fi
 if [[ "$branch_line" =~ ^v([0-9]+)$ ]]; then
   line_major="${BASH_REMATCH[1]}"
   if [[ "$bump" == "major" ]]; then
