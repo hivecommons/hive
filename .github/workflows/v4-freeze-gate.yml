@@ -80,7 +80,9 @@ jobs:
           } | tee "$GITHUB_STEP_SUMMARY"
           # Escalate. Fork PRs carry a read-only token; the check failing is
           # still the gate, so a labelling failure must not mask it.
-          gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label needs-human \
+          # REST, not `gh pr edit`: the latter also queries Projects, which the
+          # workflow token cannot read, so it fails even with pull-requests: write.
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f 'labels[]=needs-human' >/dev/null \
             || echo "::warning::could not add needs-human (read-only token?) — the failing check is still the gate"
           echo "::error::v4 is feature-frozen: PR #${PR_NUMBER} is not labelled as a security/critical fix"
           exit 1
