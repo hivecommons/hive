@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test-release-push-retry.sh — exercises the `push_v4` step of
+# test-release-push-retry.sh — exercises the `push_v5` step of
 # .github/workflows/tagged-release.yml (#5142, #5222) by extracting its script
 # from the workflow file itself and driving it with stubbed `git`/`gh`, so the
 # merge state machine is proven against the shipped source rather than a copy.
 #
-# Since #5222 the step opens a PR from the scratch branch into v4 and merges
+# Since #5222 the step opens a PR from the scratch branch into v5 and merges
 # it (SHA-keyed required-status evaluation) instead of doing a raw `git push`
-# to v4 (ref-keyed evaluation, which is why the raw push could never succeed
+# to v5 (ref-keyed evaluation, which is why the raw push could never succeed
 # — see the workflow's RACES header comment).
 #
 # Since #5318/#5324 that merge is `gh api -X PUT .../pulls/{n}/merge -f
@@ -57,15 +57,15 @@ if ! python3 -c 'import yaml' 2>/dev/null; then
 fi
 
 # --- extract the step's script verbatim from the workflow ---------------------
-python3 - "$workflow" > "$tmp/push_v4.sh" <<'PY'
+python3 - "$workflow" > "$tmp/push_v5.sh" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 for st in w["jobs"]["release"]["steps"]:
-    if st.get("id") == "push_v4":
+    if st.get("id") == "push_v5":
         sys.stdout.write(st["run"])
         break
 else:
-    sys.exit("no step with id push_v4 in the release job")
+    sys.exit("no step with id push_v5 in the release job")
 PY
 
 # --- stub git + gh + sleep -----------------------------------------------------
@@ -86,7 +86,7 @@ state="$RPR_STATE"
 case "$1 $2 ${3:-}" in
   "rev-parse HEAD ")
     echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
-  "rev-parse origin/v4 ")
+  "rev-parse origin/v5 ")
     echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
   "fetch origin "*)
     exit 0 ;;
@@ -158,7 +158,7 @@ case "$1 $2" in
   "workflow run")
     echo dispatch >> "$state/timeline"
     case "$args" in
-      *"docker.yml --ref v4"*"release_sha=feedfacefeedfacefeedfacefeedfacefeedface"*) ;;
+      *"docker.yml --ref v5"*"release_sha=feedfacefeedfacefeedfacefeedfacefeedface"*) ;;
       *) echo "STUBFAIL: release dispatch did not carry exact merge SHA: $args" >&2; exit 1 ;;
     esac
     if [ "$RPR_SCENARIO" = dispatch_fails ]; then
@@ -197,7 +197,7 @@ run_step() {
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
     ACTIONS_TOKEN="actions-token-for-test" \
     GITHUB_REPOSITORY="hivecommons/hive" \
-    PATH="$tmp/bin:$PATH" bash "$tmp/push_v4.sh" > "$st/out" 2>&1
+    PATH="$tmp/bin:$PATH" bash "$tmp/push_v5.sh" > "$st/out" 2>&1
   rc=$?
   output=$(cat "$st/out")
   ghout=$(cat "$st/gh_output" 2>/dev/null || true)
@@ -333,7 +333,7 @@ gh_release = next((s for s in rel.get("steps", [])
                    if "Create GitHub Release" in (s.get("name") or "")), None)
 if gh_release is None:
     bad("the Create GitHub Release step was not found")
-elif "steps.push_v4.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
+elif "steps.push_v5.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
     bad("Create GitHub Release is not gated on pushed=true — a deferred run would "
         "publish a Release for a tag that was never pushed")
 perms = w.get("permissions", {})
@@ -394,22 +394,22 @@ guard = next((s for s in dec.get("steps", [])
               if "Require published images" in (s.get("name") or "")), None)
 if guard is None:
     bad("the backstop's published-images guard is gone — a scheduled run could "
-        "tag a v4 tip whose docker.yml build was cancelled or is still running (#5318)")
+        "tag a v5 tip whose docker.yml build was cancelled or is still running (#5318)")
 else:
     guard_run = guard.get("run") or ""
-    # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v4,
+    # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v5,
     # not a push. The backstop may count that publishing run, but the decide
     # job's workflow_run filter above must still reject workflow_dispatch so
     # the handoff cannot re-enter the release loop.
-    if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v4"' not in guard_run:
-        bad("the backstop no longer accepts v4 workflow_dispatch docker.yml publishing runs (#6380)")
+    if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v5"' not in guard_run:
+        bad("the backstop no longer accepts v5 workflow_dispatch docker.yml publishing runs (#6380)")
     decide_if = dec.get("if") or ""
     if "github.event.workflow_run.event != 'workflow_dispatch'" not in decide_if:
         bad("decide no longer filters workflow_dispatch workflow_run events, risking a release loop (#6380)")
 push_step = next((s for s in rel.get("steps", [])
-                   if s.get("id") == "push_v4"), None)
+                   if s.get("id") == "push_v5"), None)
 if push_step is None:
-    bad("no step with id push_v4 found")
+    bad("no step with id push_v5 found")
 else:
     run = push_step.get("run", "")
     # Comments in this step DISCUSS `gh pr merge` (explaining why it was
@@ -417,18 +417,18 @@ else:
     code = "\n".join(l for l in run.splitlines()
                      if not l.lstrip().startswith("#"))
     if "gh pr create" not in code:
-        bad("push_v4 no longer merges via a PR (#5222) — check for a regression back to a raw v4 push")
+        bad("push_v5 no longer merges via a PR (#5222) — check for a regression back to a raw v5 push")
     if "/merge" not in code or "gh api -X PUT" not in code:
-        bad("push_v4 no longer merges via the SHA-keyed merge API (#5318/#5324)")
+        bad("push_v5 no longer merges via the SHA-keyed merge API (#5318/#5324)")
     if '-f sha="${commit_sha}"' not in code:
         bad("the merge API call no longer passes -f sha=<head> — without it a mid-flight "
             "head move merges the wrong tree instead of deferring (#5318/#5324)")
     if "${{" in code:
-        bad("push_v4's code uses a ${{ }} expression — this step is extracted and run under "
+        bad("push_v5's code uses a ${{ }} expression — this step is extracted and run under "
             "plain bash by this test, where that is a bad-substitution. Use the runner's "
             "environment variables (e.g. $GITHUB_REPOSITORY) instead.")
     if "gh pr merge" in code:
-        bad("push_v4 regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
+        bad("push_v5 regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
             "mergeStateStatus is BLOCKED — a pending non-required `tide` status alone is "
             "enough to block every release forever (#5318/#5324)")
     # #5356: workflow_dispatch check-runs are not PR-associated, even when
@@ -436,24 +436,24 @@ else:
     # SHA-scoped commit status BEFORE opening the PR so its rollup can see it.
     status_endpoint = 'repos/${GITHUB_REPOSITORY}/statuses/${commit_sha}'
     if status_endpoint not in code:
-        bad("push_v4 no longer publishes the SHA-scoped gate status — the release PR "
+        bad("push_v5 no longer publishes the SHA-scoped gate status — the release PR "
             "rollup cannot see workflow_dispatch check-runs and protection 405s (#5356)")
     else:
         status_at = code.index(status_endpoint)
         pr_at = code.index("gh pr create")
         merge_at = code.index("gh api -X PUT")
         if not status_at < pr_at < merge_at:
-            bad("push_v4 must publish gate status, then open the PR, then merge it (#5356)")
+            bad("push_v5 must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
-        bad("push_v4's commit status is not the required gate:success verdict (#5356)")
+        bad("push_v5's commit status is not the required gate:success verdict (#5356)")
     # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
     # push event. Dispatch immediately after the SHA-keyed merge, before tag
-    # retries widen the window in which a later v4 push could get an earlier
+    # retries widen the window in which a later v5 push could get an earlier
     # docker.yml run number. The exact merge SHA must be an explicit input.
     merge_at = code.index("gh api -X PUT")
-    dispatch_call = "gh workflow run docker.yml --ref v4"
+    dispatch_call = "gh workflow run docker.yml --ref v5"
     if dispatch_call not in code:
-        bad("push_v4 no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
+        bad("push_v5 no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
     else:
         dispatch_at = code.index(dispatch_call)
         tag_at = code.index('git tag "v${VERSION}"')

@@ -7,9 +7,9 @@ name: Tagged Release
 # the short version.
 #
 # TRIGGER: `workflow_run` on "Build and Push Docker Image" (docker.yml)
-# completing successfully on branch v4. NOT a tag push — there is no tag until
+# completing successfully on branch v5. NOT a tag push — there is no tag until
 # THIS workflow creates one. Chaining off docker.yml rather than a parallel
-# `push: branches: [v4]` trigger means this workflow only ever runs after the
+# `push: branches: [v5]` trigger means this workflow only ever runs after the
 # continuous-delivery images for that exact commit are already published,
 # which is also the digest this workflow retags — it can never race ahead of
 # or duplicate that build.
@@ -33,10 +33,10 @@ name: Tagged Release
 # fragment deletions. An empty Unreleased with an empty changelog.d/ is still
 # the release=false no-op, so the IDEMPOTENCY loop below is unchanged.
 #
-# RACES (#5142, #5222): the gate-earning dance below takes minutes, and v4
+# RACES (#5142, #5222): the gate-earning dance below takes minutes, and v5
 # can advance underneath it. Two rules keep that from starving releases or
 # painting red runs for normal traffic:
-#   - SUPERSESSION IS DEFERRAL, NOT FAILURE. If v4 has already advanced past
+#   - SUPERSESSION IS DEFERRAL, NOT FAILURE. If v5 has already advanced past
 #     this run's commit (precheck job), or advances mid-flight (the final
 #     step's PR merge becomes non-mergeable because the base moved), this run
 #     steps aside cleanly: the very merge that won triggered its own
@@ -46,14 +46,14 @@ name: Tagged Release
 #     the images were built from THIS commit, so rebasing the release commit
 #     onto the new tip would tag content the published images do not
 #     contain.
-#   - MERGEABILITY SETTLING IS RETRIED. A direct `git push` to v4 (the
+#   - MERGEABILITY SETTLING IS RETRIED. A direct `git push` to v5 (the
 #     pre-#5222 approach) was retried on GH006 under the theory that branch
 #     protection just needed a few seconds to ingest the gate check-run's
 #     conclusion — but that check-run belongs to the scratch branch's
-#     workflow_dispatch suite, not to v4's protected-ref evaluation, so no
+#     workflow_dispatch suite, not to v5's protected-ref evaluation, so no
 #     amount of retrying could ever have worked (confirmed live: 15 retries
 #     over 120s, gate green throughout — run 33330740324). The final step now
-#     opens a PR from the scratch branch into v4 and merges it after publishing
+#     opens a PR from the scratch branch into v5 and merges it after publishing
 #     the SHA-scoped `gate` status described below. That merge call is still
 #     retried for a bounded window in case GitHub needs a moment to ingest the
 #     status and recompute mergeability.
@@ -66,7 +66,7 @@ name: Tagged Release
 #     success, but `tide` sat PENDING (Tide never reports on a PR it will
 #     not act on), so `gh pr merge` returned "the base branch policy
 #     prohibits the merge" on every attempt for the full retry window. The
-#     API call is evaluated server-side against v4's ACTUAL required
+#     API call is evaluated server-side against v5's ACTUAL required
 #     contexts for that SHA — protection is still fully enforced, an
 #     unsatisfied required check still yields 405 — it simply stops
 #     consulting a status the repo does not require. This is the same
@@ -112,14 +112,14 @@ name: Tagged Release
 #   - A docker.yml run that is CANCELLED never fires workflow_run at all. A
 #     multi-arch build takes ~10 minutes, so when merges arrive faster than
 #     that, most commits never complete one.
-#   - A run that DOES fire defers at `precheck` when v4 has already advanced,
+#   - A run that DOES fire defers at `precheck` when v5 has already advanced,
 #     on the reasoning that the successor releases instead. That reasoning is
 #     sound per-run but has no terminating condition: under sustained merges
 #     every successor applies the same test and defers again.
 # Neither is a bug in the deferral itself — a superseded run genuinely must
 # not release, because its images were built from the old tree (see RACES).
 # The gap is that nothing ever comes back for the work left behind. The
-# schedule below is that "come back": it runs against v4's CURRENT tip, whose
+# schedule below is that "come back": it runs against v5's CURRENT tip, whose
 # images docker.yml has long since published, so it releases the accumulated
 # Unreleased section without ever tagging content the images do not contain.
 # On a healthy repo it is a no-op (Unreleased is empty => release=false).
@@ -142,7 +142,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tagged-release-v4
+  group: tagged-release-v5
   cancel-in-progress: false
 
 permissions:
@@ -154,7 +154,7 @@ permissions:
   # git push and image-tag operations this workflow already did.
   actions: write
   # `pull-requests: write` is required for the `release` job's PR-merge path
-  # to v4 (#5222, 4th GH006 recurrence): a direct `git push` to v4 is
+  # to v5 (#5222, 4th GH006 recurrence): a direct `git push` to v5 is
   # evaluated against required status checks by the push event, and never
   # sees the `gate` check-run earned on the scratch branch even though it is
   # on the identical SHA. The release therefore enters through a protected PR
@@ -163,15 +163,15 @@ permissions:
 
 jobs:
   decide:
-    # workflow_run: only a successful docker.yml build of a real v4 push (a
+    # workflow_run: only a successful docker.yml build of a real v5 push (a
     # workflow_dispatch build is the scratch-branch gate dance this workflow
     # itself starts — releasing off it would be releasing off our own tail).
     # schedule/workflow_dispatch: the #5318 backstop, which has no triggering
-    # run to qualify and instead resolves v4's current tip below.
+    # run to qualify and instead resolves v5's current tip below.
     if: >-
       github.event_name != 'workflow_run' || (
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'v4' &&
+      github.event.workflow_run.head_branch == 'v5' &&
       github.event.workflow_run.event != 'workflow_dispatch' )
     runs-on: ubuntu-latest
     outputs:
@@ -181,7 +181,7 @@ jobs:
       sha: ${{ steps.target.outputs.sha }}
     steps:
       # workflow_run carries the exact commit docker.yml built. The backstop
-      # has no such commit, so it resolves v4's tip — whose images are already
+      # has no such commit, so it resolves v5's tip — whose images are already
       # published (its docker.yml run completed long before an hourly tick),
       # which is what keeps the retag honest.
       - name: Resolve the commit to consider releasing
@@ -194,8 +194,8 @@ jobs:
             sha="${{ github.event.workflow_run.head_sha }}"
             echo "Triggered by docker.yml on ${sha}."
           else
-            sha="$(gh api "repos/${{ github.repository }}/branches/v4" --jq .commit.sha)"
-            echo "Backstop (${{ github.event_name }}): considering v4 tip ${sha}."
+            sha="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
+            echo "Backstop (${{ github.event_name }}): considering v5 tip ${sha}."
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
@@ -222,15 +222,15 @@ jobs:
         run: |
           set -euo pipefail
           sha="${{ steps.target.outputs.sha }}"
-          # A `push` run is the normal case; a `workflow_dispatch` run on v4
+          # A `push` run is the normal case; a `workflow_dispatch` run on v5
           # is the post-release exact-SHA rebuild of a GITHUB_TOKEN merge commit
-          # (#6380). Both publish the <sha> / v4-latest / candidate tags, so
+          # (#6380). Both publish the <sha> / v5-latest / candidate tags, so
           # both count as published for the backstop.
           conclusion="$(gh api \
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
-            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v4"))] | last | .conclusion // ""')"
+            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5"))] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v5 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v5's tip are not being built (#5318)."
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -252,7 +252,7 @@ jobs:
         if: github.event_name == 'workflow_run' || steps.images.outputs.published == 'true'
         run: src/scripts/derive-release-version.sh
 
-  # Cheap supersession check BEFORE the expensive release job (#5142): if v4
+  # Cheap supersession check BEFORE the expensive release job (#5142): if v5
   # already moved past the commit this run was triggered for, every minute
   # spent here is wasted — the final push can only ever be rejected
   # non-fast-forward — and worse, the `concurrency` group above serializes
@@ -260,7 +260,7 @@ jobs:
   # API call decides in seconds.
   #
   # #5318: this job used to claim the successor was GUARANTEED to exist ("the
-  # merge that advanced v4 triggered docker.yml, whose completion triggers
+  # merge that advanced v5 triggered docker.yml, whose completion triggers
   # tagged-release.yml for that newer tip"). That guarantee does not hold — a
   # cancelled docker.yml run fires no workflow_run at all, and a successor
   # that does fire applies this same test and defers again. Deferring is still
@@ -276,19 +276,19 @@ jobs:
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
     steps:
-      - name: Defer to the successor run if v4 already advanced
+      - name: Defer to the successor run if v5 already advanced
         id: tip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           sha="${{ needs.decide.outputs.sha }}"
-          tip="$(gh api "repos/${{ github.repository }}/branches/v4" --jq .commit.sha)"
+          tip="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
           if [ "$tip" = "$sha" ]; then
-            echo "v4 is still at ${sha} — proceeding with the release."
+            echo "v5 is still at ${sha} — proceeding with the release."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Release opportunity skipped for ${sha}: v4 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
+            echo "::warning::Release opportunity skipped for ${sha}: v5 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -359,7 +359,7 @@ jobs:
       # retags the already-published short-SHA digest as the immutable
       # version tag without touching a Dockerfile, a builder, or a single byte
       # of image content — the published v3.1.0 image is byte-identical to
-      # the v4-latest / <sha> image docker.yml just pushed for this commit.
+      # the v5-latest / <sha> image docker.yml just pushed for this commit.
       # This is the same primitive src/scripts/publish-image-tags.sh uses for
       # the moving tags, applied here for one additional immutable tag per
       # image. A build-time VERSION ldflag is intentionally NOT used to
@@ -476,7 +476,7 @@ jobs:
       # silently couple a version tag to it.
       - name: Confirm channel tags were not touched
         run: |
-          echo "This workflow only ever writes vX.Y.Z tags. stable/candidate/edge are owned exclusively by docker.yml's merge jobs on every push to v4, independent of whether a release was cut here."
+          echo "This workflow only ever writes vX.Y.Z tags. stable/candidate/edge are owned exclusively by docker.yml's merge jobs on every push to v5, independent of whether a release was cut here."
 
       # SBOM: a standalone release ARTIFACT, not an in-image attestation.
       #
@@ -590,11 +590,11 @@ jobs:
           the CHANGELOG.md Unreleased section into a dated v${VERSION} entry.
           See src/docs/releases.md."
 
-      # v4 branch protection requires the "gate" status check (the only
+      # v5 branch protection requires the "gate" status check (the only
       # required context — see docker.yml) on the exact SHA being pushed.
       # `gate` only ever attaches to a commit via docker.yml's own `push` /
       # `pull_request` / `workflow_dispatch` triggers, so a commit created
-      # here in-workflow and pushed straight to v4 has no check on it yet and
+      # here in-workflow and pushed straight to v5 has no check on it yet and
       # GitHub rejects the push outright (GH006, #5026) — it can never
       # fast-forward, on the first attempt or any retry, because nothing
       # about retrying produces the missing check.
@@ -635,11 +635,11 @@ jobs:
           # cancelled run, runner death), leaving a stale
           # release-gate/v<VERSION> tip behind. A plain push is then rejected
           # non-fast-forward on every retry of that version, wedging the
-          # release (run 33581129180, v4.0.3). Delete any stale scratch ref
+          # release (run 33581129180, v5.0.3). Delete any stale scratch ref
           # before pushing so retries are idempotent. This delete is scoped to
           # the ephemeral scratch ref ONLY — this workflow owns release-gate/*
           # exclusively, and the `concurrency` group serializes runs — it must
-          # NEVER be widened or generalized to v4, main, or any release-line
+          # NEVER be widened or generalized to v5, main, or any release-line
           # branch, and no force-push to those branches is acceptable either.
           echo "Deleting any stale ${scratch} left by a prior failed attempt (#5629)..."
           git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
@@ -680,7 +680,7 @@ jobs:
               pending)
                 ;;
               *)
-                echo "::error::gate concluded '${conclusion}' on ${commit_sha} — cannot push to v4." >&2
+                echo "::error::gate concluded '${conclusion}' on ${commit_sha} — cannot push to v5." >&2
                 exit 1
                 ;;
             esac
@@ -694,8 +694,8 @@ jobs:
               ;;
           esac
 
-      # A raw push cannot use the scratch branch's check-run to satisfy v4
-      # protection (#5222), so the release enters v4 through a PR. A
+      # A raw push cannot use the scratch branch's check-run to satisfy v5
+      # protection (#5222), so the release enters v5 through a PR. A
       # workflow_dispatch check-run is not associated with a PR, however, and
       # the release PR's required-context rollup therefore omits it even when
       # it is green on the exact head SHA (#5356). Before opening the PR,
@@ -722,8 +722,8 @@ jobs:
       # pinned to ACTIONS_TOKEN below, like the docker.yml dispatch (#6380)
       # already was. Widening the PAT instead would hand a long-lived secret
       # readable by every workflow more power than this one step needs.
-      - name: Open and merge a PR from the scratch branch into v4
-        id: push_v4
+      - name: Open and merge a PR from the scratch branch into v5
+        id: push_v5
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -757,7 +757,7 @@ jobs:
             # ephemeral release-gate/v<VERSION> ref this workflow owns, so
             # no other run can be touched.
             # #6936 (recurrence of #6084, closed 2026-09-08): cancelling ONCE
-            # and deleting immediately cannot close this. On release v4.31.1
+            # and deleting immediately cannot close this. On release v5.31.1
             # five runs on this scratch branch were recorded with
             # `created_at == updated_at == 16:26:29Z`, zero jobs, and
             # `conclusion: failure` — one second after the merge. They were
@@ -832,9 +832,9 @@ jobs:
             -f context=gate \
             -f description="docker.yml gate verified for automated release"
 
-          echo "Opening a PR from ${scratch} into v4..."
+          echo "Opening a PR from ${scratch} into v5..."
           if ! pr_url="$(gh pr create \
-              --base v4 \
+              --base v5 \
               --head "${scratch}" \
               --title "release: v${VERSION}" \
               --body "Automated release PR (#5222/#5356). Merges the release commit for v${VERSION}, carrying a successful gate check and mirrored status on ${commit_sha}." 2>&1)"; then
@@ -851,13 +851,13 @@ jobs:
           # protection actually evaluates was green:
           #
           #     gate check-run on bb633caa   success   <- the ONLY required
-          #                                               context on v4
+          #                                               context on v5
           #     dco commit status            success
           #     tide commit status           PENDING   <- never resolves
           #     mergeable                    MERGEABLE
           #     mergeStateStatus             BLOCKED   <- caused by tide
           #
-          # `tide` is NOT a required status context on v4 (protection lists
+          # `tide` is NOT a required status context on v5 (protection lists
           # `gate` and nothing else), but a pending commit status still drags
           # the aggregate to BLOCKED, and Tide holds that status pending
           # indefinitely for a PR it is never going to act on. So the retry
@@ -883,7 +883,7 @@ jobs:
           #   settling): retried for a bounded window.
           #
           #   non-fast-forward equivalents (base branch moved, merge
-          #   conflict, 409 head-SHA mismatch): v4 advanced mid-flight.
+          #   conflict, 409 head-SHA mismatch): v5 advanced mid-flight.
           #   Retrying could never succeed — this release commit is parented
           #   on the old tip, and rebasing it forward would tag source the
           #   already-published images were not built from. Defer instead:
@@ -925,9 +925,9 @@ jobs:
               # #6380: the GITHUB_TOKEN-authenticated merge cannot emit a push
               # event to docker.yml. Dispatch immediately after the merge,
               # before tag work widens the ordering window; pass the API's exact
-              # SHA because the v4 ref can advance before the build starts.
-              echo "Dispatching docker.yml for merged release commit ${release_sha} on v4 (#6380)..."
-              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v4 \
+              # SHA because the v5 ref can advance before the build starts.
+              echo "Dispatching docker.yml for merged release commit ${release_sha} on v5 (#6380)..."
+              GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
                 -f "release_sha=${release_sha}"
               break
             fi
@@ -936,7 +936,7 @@ jobs:
             # modified" (the sha= guard fired) or "Base branch was modified" —
             # both are the base-moved case, not something a retry fixes.
             if grep -qiE 'base branch was modified|head branch was modified|is out of date|HTTP 409' <<<"$out"; then
-              echo "::warning::Release opportunity skipped for ${SHA}: v4 advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
+              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -948,21 +948,21 @@ jobs:
                 sleep 8
                 continue
               fi
-              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; compare v4's REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
+              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; compare v5's REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
               exit 1
             fi
             echo "::error::merging PR #${pr_number} failed for an unrecognized reason (see the API response above) — not retrying." >&2
             exit 1
           done
 
-          # The merge landed a NEW commit on v4 (a merge commit, or the same
+          # The merge landed a NEW commit on v5 (a merge commit, or the same
           # tree via fast-forward depending on PR mergeability). Fetch it so
           # the object exists locally, but tag the merge API's exact returned
           # SHA rather than re-resolving a branch that another PR can advance
           # between our merge and this fetch.
-          git fetch origin v4
-          if ! git merge-base --is-ancestor "$release_sha" origin/v4; then
-            echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/v4; refusing to tag or dispatch it." >&2
+          git fetch origin v5
+          if ! git merge-base --is-ancestor "$release_sha" origin/v5; then
+            echo "::error::merge API returned ${release_sha}, but it is not contained in fetched origin/v5; refusing to tag or dispatch it." >&2
             exit 1
           fi
           git tag "v${VERSION}" "$release_sha"
@@ -984,7 +984,7 @@ jobs:
       # auto-generated commit/PR summary so a Release is still created with a
       # useful body instead of leaving a tag-only ledger gap.
       - name: Create GitHub Release
-        if: steps.push_v4.outputs.pushed == 'true'
+        if: steps.push_v5.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1001,15 +1001,15 @@ jobs:
             echo
             echo "---"
             echo
-            echo "**SBOMs:** SPDX JSON, generated by Syft against the linux/amd64 image digest, attached below for \`hive\`, \`hive-contributor\`, and \`hive-hub\`. They cover linux/amd64 only — see [releases.md](https://github.com/${{ github.repository }}/blob/v4/src/docs/releases.md#software-bill-of-materials-sbom) for why linux/arm64 is not scanned separately."
+            echo "**SBOMs:** SPDX JSON, generated by Syft against the linux/amd64 image digest, attached below for \`hive\`, \`hive-contributor\`, and \`hive-hub\`. They cover linux/amd64 only — see [releases.md](https://github.com/${{ github.repository }}/blob/v5/src/docs/releases.md#software-bill-of-materials-sbom) for why linux/arm64 is not scanned separately."
             echo
-            echo "**NOTICE:** third-party license attribution for the Go module dependencies compiled into these images, attached below. Does not cover base-image OS packages or the Node.js/tmux layers built from source — see [releases.md](https://github.com/${{ github.repository }}/blob/v4/src/docs/releases.md#third-party-notices) for the exact boundary."
+            echo "**NOTICE:** third-party license attribution for the Go module dependencies compiled into these images, attached below. Does not cover base-image OS packages or the Node.js/tmux layers built from source — see [releases.md](https://github.com/${{ github.repository }}/blob/v5/src/docs/releases.md#third-party-notices) for the exact boundary."
           } >> "$notes_file"
           gh release create "v${VERSION}" \
             --repo "${{ github.repository }}" \
             --title "v${VERSION}" \
             --notes-file "$notes_file" \
-            --target v4 \
+            --target v5 \
             "hive-v${VERSION}-sbom.spdx.json" \
             "hive-contributor-v${VERSION}-sbom.spdx.json" \
             "hive-hub-v${VERSION}-sbom.spdx.json" \

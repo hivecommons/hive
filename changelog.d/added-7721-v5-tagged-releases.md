@@ -1,0 +1,1 @@
+- `v5` now cuts its own `v5.x.y` semver tags and GitHub Releases: `tagged-release.yml` is pinned to `v5`, and `derive-release-version.sh` bases the number on the line's own tags only (first tag on a line is `vN.0.0`) so `v4.*` tags never seed a `v5` number (#7721, #6016).

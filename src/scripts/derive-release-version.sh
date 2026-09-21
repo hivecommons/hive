@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# derive-release-version.sh — decide whether a merge to v4 warrants a tagged
+# derive-release-version.sh — decide whether a merge to a release line warrants a tagged
 # release, and if so, what version.
 #
 # WHY CHANGELOG.md AND NOT COMMIT-MESSAGE EMOJI:
@@ -186,8 +186,23 @@ fi
 # Base version: latest vX.Y.Z tag, sorted as versions (not tag creation date,
 # which a re-tag or annotated/lightweight mix could get wrong).
 # ---------------------------------------------------------------------------
-latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1 || true)"
-if [[ -z "$latest_tag" ]]; then
+# On a release line `vN`, only that line's own tags are the base: v4.65.0 must
+# never seed a v5 release (or the reverse). The FIRST tag on a line is always
+# vN.0.0 regardless of the inferred bump — the human chose N when they cut the
+# line, and this script never invents a major on its own authority.
+first_of_line=false
+if [[ -n "${line_major:-}" ]]; then
+  latest_tag="$(git tag -l "v${line_major}.[0-9]*.[0-9]*" | sort -V | tail -1 || true)"
+  if [[ -z "$latest_tag" ]]; then
+    first_of_line=true
+    echo "No existing v${line_major}.Y.Z tag on release line ${branch_line}; the first release of a line is v${line_major}.0.0."
+  fi
+else
+  latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1 || true)"
+fi
+if [[ "$first_of_line" == true ]]; then
+  base="${line_major}.0.0"
+elif [[ -z "$latest_tag" ]]; then
   base="0.0.0"
   echo "No existing vX.Y.Z tag found; treating base version as ${base}."
 else
@@ -201,7 +216,12 @@ if ! [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]];
   exit 1
 fi
 
+if [[ "$first_of_line" == true ]]; then
+  bump=first
+fi
 case "$bump" in
+  first)
+    ;;
   major)
     major=$((major + 1)); minor=0; patch=0
     ;;

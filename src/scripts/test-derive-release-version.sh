@@ -142,6 +142,31 @@ else
 fi
 
 echo
+# ---------------------------------------------------------------------------
+# Case L1: on release line v5 with only v4.x tags => first release is v5.0.0,
+# whatever the inferred bump. v4 tags must never seed a v5 number.
+# ---------------------------------------------------------------------------
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
+git -C "$repo" checkout -q -b v5
+out=$(run $'## Unreleased\n\n### Added\n\n- brand new line\n' v4.65.0 v4.64.2)
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" version)" == "5.0.0" ]]; then
+  note_ok "first release on line v5 with only v4 tags => 5.0.0"
+else
+  note_fail "expected first v5 release to be 5.0.0, got: $out"
+fi
+
+# ---------------------------------------------------------------------------
+# Case L2: on line v5 with v5.0.0 present and a newer v4 patch tag => the v5
+# line's own latest tag is the base (5.1.0 for Added), not v4's.
+# ---------------------------------------------------------------------------
+out=$(run $'## Unreleased\n\n### Added\n\n- more\n' v4.66.0 v5.0.0)
+if [[ "$(get "$out" version)" == "5.1.0" ]]; then
+  note_ok "line v5 bumps from its own latest tag => 5.1.0"
+else
+  note_fail "expected 5.1.0 on line v5, got: $out"
+fi
+git -C "$repo" checkout -q - 2>/dev/null || git -C "$repo" checkout -q master 2>/dev/null || git -C "$repo" checkout -q main
+
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1
