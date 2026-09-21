@@ -91,7 +91,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `copilot-models.mjs` | Model discovery | Uses `@github/copilot-sdk` and the installed Copilot CLI's own auth to print the available Copilot model catalog as one JSON line. |
 | `token-collector.sh` | Cost metrics | Reads scanner beads and token metrics to attribute issue cost; supports recent windows and `--all`. |
 | `token-usage.py` | Cost metrics | Aggregates Claude and Copilot CLI session token usage by agent and rolling time window. |
-| `nous-install.sh` | Nous | Clones or updates the external Nous strategy-evolution framework under `NOUS_DIR`, creates a venv, installs it editable, and prepares run directories. |
+| `nous-install.sh` | Nous | Clones the external Nous strategy-evolution framework under `NOUS_DIR`, fetches and verifies the reviewed `NOUS_PIN_SHA` commit (override for testing with `HIVE_NOUS_PIN`), creates a venv, installs it editable, and prepares run directories. Bump the pin only by reviewing the new upstream commit and updating the script in a PR. |
 | `nous-runner.sh` | Nous | Strategist helper that invokes the installed Nous framework on each kick. |
 | `nous-hive-gate.py` | Nous | Implements the Nous Gate protocol, posting suggest-mode decisions to the dashboard and polling for operator approval. |
 | `nous-sync.py` | Nous | Reads Nous governor/repo outputs, applies confidence decay and conflict detection, and writes principles, recommendations, and ledger data. |

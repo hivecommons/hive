@@ -1,0 +1,1 @@
+- Pin `bin/nous-install.sh` to a reviewed Nous upstream commit and verify the checkout before pip installation. (#8104)
