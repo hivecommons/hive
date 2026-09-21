@@ -57,9 +57,55 @@ When the relay's backend is Pi, `redactTokens()` additionally strips the configu
 
 **The practical reading:** GitHub token material is covered on both paths. Everything else in the Go list — JWTs, canaries, AWS keys, `Bearer` headers, private keys — is redacted in the hive's own logs and **not** in relay-forwarded agent output. If an agent's terminal prints a JWT or a private key, the relay will forward it.
 
+## When a redaction reaches an agent that is reading code
+
+Redaction protects a log sink. It is a hazard for an agent, because a masked
+line is indistinguishable from source: the placeholder sits exactly where the
+characters the agent is reasoning about used to be.
+
+This is not hypothetical. On [#8067](https://github.com/hivecommons/hive/issues/8067)
+a reviewer agent quoted
+
+```
+printf 'header = "Authorization: ******"\n' "$TOKEN"
+```
+
+and reported that the format string contained no `%s`, so the credential was
+never sent. The file said `Authorization: Bearer %s`. The reasoning was sound
+and the conclusion was wrong, because a scrubber — not this one; Go writes
+`[REDACTED]`, never a run of asterisks — had rewritten the text on the way in.
+The review was published, so the mask reached the PR author looking like their
+own code.
+
+Two mitigations, in order of how much they are worth relying on:
+
+- **The relay refuses to publish a review whose evidence is masked text.**
+  `redactedQuoteRefusal`, `pkg/github/review_redaction_guard.go:82`, inspects
+  the fenced blocks and inline code spans of a review body before the
+  review-request watcher submits it. A body that quotes a redaction marker is
+  quarantined with an error naming the quotation to re-read, and no review is
+  posted. Prose *about* redaction is untouched — only text quoted as code
+  counts. The marker vocabulary is `FindRedactionMarker`,
+  `pkg/logscrub/redaction.go:55`, which recognizes hive's own `[REDACTED]` and
+  `[REDACTED-JWT]` alongside the `<redacted>`, `***REDACTED***` and bare
+  `******` forms other layers emit — the layer that masks the text is not
+  always one of ours.
+- **The reviewer prompts say so.** `groundingSection`
+  (`pkg/review/prompts.go:71`) and the reviewer policies
+  (`policies/reviewer-queue.md`, `policies/reviewer-advisory.md`) tell the
+  reviewer that a mask is a hive artifact, never a defect, and that a line
+  carrying one must be re-read from the repository before it is quoted.
+
+Note the design principle this shares with the turn model: `Clone`/`Step`
+deliberately do **not** scrub, precisely so an agent never reads redacted
+content back as fact (see
+[design/reentrant-turn-model.md](design/reentrant-turn-model.md)). Scrub on the
+way *out*, to a sink; never on the way *in*, to a reasoner.
+
 ## Limits
 
 - Scrubbing is pattern-based, not a general secret scanner. A secret with another shape can still appear if code logs it directly.
+- A redaction that lands in text an agent reads is a correctness hazard, not just a lossy log. See the section above; `pkg/logscrub` cannot tell whether its caller is writing to a sink or to a model.
 - Non-string slog values are passed through unchanged unless they are inside a group containing string attributes.
 - `pkg/logscrub` redaction happens in the Hive logging path. Data written by external tools, agent CLIs, or third-party proxies is not automatically covered unless it flows through Hive's scrubbed logger. Agent terminal output forwarded by the contributor relay is a partial exception — it is redacted, but by the relay's own narrower pattern list, not by `pkg/logscrub`.
 - The two layers can drift. They are separate implementations with no shared source of truth, so a pattern added to one does not appear in the other; the table above is accurate as of writing and worth re-checking against both implementations before relying on it.

@@ -199,3 +199,29 @@ func TestPromptStillCarriesVerdictSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptWarnsAboutMaskedText pins the hivecommons/hive#8067 instruction.
+//
+// Grounding tells the reviewer to read the tree; it does not help when a
+// secret scrubber has already rewritten what the tree says. A reviewer read
+// `Authorization: ******` where the file said `Authorization: Bearer %s` and
+// reported the missing `%s` as the defect — correct reasoning over wrong text.
+// The reviewer has to recognize a mask on sight, so the prompt must name the
+// placeholder shapes and say the mask is not the code.
+func TestPromptWarnsAboutMaskedText(t *testing.T) {
+	for _, p := range DefaultPerspectives {
+		got := BuildPerspectivePrompt(p, groundedPR())
+		for _, want := range []string{
+			"MASKED TEXT IS NOT THE CODE",
+			"[REDACTED]",
+			"<redacted>",
+			"asterisks",
+			"Re-read the line",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("perspective %s: prompt is missing masked-text cue %q.\n"+
+					"Without it a reviewer reasons about a scrubber's placeholder as if it were source (hivecommons/hive#8067).", p, want)
+			}
+		}
+	}
+}

@@ -59,6 +59,15 @@ const (
 //
 // Caveat, recorded because it bounds how much authority a verdict should carry:
 // n=6, one run per cell. Directional, not definitive.
+//
+// The masked-text line is not from the experiment; it is from
+// hivecommons/hive#8067, where a reviewer read `Authorization: ******` in
+// place of `Authorization: Bearer %s` and reported the missing `%s` as the
+// defect. Reading the tree does not help when a scrubber has already rewritten
+// what the tree says, so the reviewer has to recognize a mask on sight. The
+// relay refuses to publish a review whose evidence is masked text
+// (pkg/github.redactedQuoteRefusal); this line is what keeps the reviewer from
+// writing one in the first place.
 func groundingSection(pr PullRequest) string {
 	var b strings.Builder
 	b.WriteString("\nGROUNDING — read the code, do not infer it.\n")
@@ -72,6 +81,7 @@ func groundingSection(pr PullRequest) string {
 	b.WriteString("- Before asserting a defect, check the surrounding code for the guard, early return, or caller that would already prevent it.\n")
 	b.WriteString("- Prefer one verified finding over three plausible ones. Measured: reviewers that read the tree found 4x more real defects AND made 61% fewer false claims.\n")
 	b.WriteString("- If you cannot verify a concern, either state it as an explicit open question or leave it out. Do not assert it as a defect.\n")
+	b.WriteString("- MASKED TEXT IS NOT THE CODE. If a line you are reading has a credential-shaped literal replaced by [REDACTED], <redacted>, or a run of asterisks, a secret scrubber put it there — the file does not say that. Re-read the line from the repository before you quote it, and never report the mask itself as a defect.\n")
 	fmt.Fprintf(&b, "- Budget: up to %d investigation tool calls for this perspective.\n", GroundingToolCallBudget)
 	return b.String()
 }

@@ -47,6 +47,14 @@ If you cannot verify a concern, you have two honest options: state it as an expl
 
 **Prefer one verified finding over three plausible ones.**
 
+## Masked text is not the code
+
+Secret scrubbers sit on several of the paths between a repository and you. If a line you are reading has a credential-shaped literal replaced by `[REDACTED]`, `<redacted>`, or a run of asterisks, a scrubber put that there and the file does not say it.
+
+This has already produced a confident, wrong review: a reviewer read `printf 'header = "Authorization: ******"\n'` and reported that the format string had no `%s`, so the token was never sent. The file said `Authorization: Bearer %s`. The reasoning was correct; the text was not.
+
+A mask is a hive artifact and never a defect in the change under review. Re-read the line from the checkout before you cite it. If you cannot get an unmasked read of a line your finding turns on, you have not verified the finding — make it an open question or drop it.
+
 ## Verdicts
 
 - `approve` — you found no blocker from this perspective
@@ -83,6 +91,7 @@ Up to **25** tool calls per perspective. The measured grounded reviewer averaged
 
 - Do NOT ask for or read the PR body / author rationale — measured to make reviews worse
 - Do NOT report a finding without file:line evidence you actually read
+- Do NOT quote or reason about text a scrubber has masked (`[REDACTED]`, `<redacted>`, `******`) — re-read the line from the checkout first
 - Do NOT pad the verdict with nits to look thorough — false positives are the failure mode being engineered out
 - Do NOT request more tests as if it were a defect; say so plainly as a suggestion instead
 - Do NOT attempt to merge, approve, label, or comment on GitHub — you have no write access and need none

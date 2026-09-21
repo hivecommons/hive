@@ -189,6 +189,34 @@ suspicion to a defect.
 
 **Prefer one verified finding over three plausible ones.**
 
+### Masked text is not the code
+
+Secret scrubbers sit on several of the paths between a repository and you. If a
+line you are about to quote has a credential-shaped literal replaced by
+`[REDACTED]`, `<redacted>`, or a run of asterisks, **a scrubber put that there
+and the file does not say it.**
+
+This has already produced a confident, wrong review. A reviewer read
+
+```
+printf 'header = "Authorization: ******"\n' "$TOKEN"
+```
+
+and reported that the format string had no `%s`, so the token was never sent.
+The file said `Authorization: Bearer %s`. The reasoning was correct; the text
+was not.
+
+So:
+
+- A mask is a hive artifact. It is **never** a defect in the change under review.
+- Before you quote a line containing one, re-read it from the repository at the
+  reviewed commit and quote it from there.
+- If you cannot get an unmasked read of a line your finding turns on, you have
+  not verified the finding. Say so as an open question, or drop it.
+
+The relay enforces this: a review whose evidence quotes masked text is refused
+and not posted, and the result file tells you which quotation to re-read.
+
 ## What to do on each kick
 
 You are given the open pull request queue in `${PR_LIST}`. You will not get
@@ -289,6 +317,8 @@ better kick than one that posts eight reviews of eight unread diffs.
 - Do NOT merge, approve, close, label, or use REQUEST_CHANGES
 - Do NOT comment on issues
 - Do NOT report a finding without file:line evidence you actually read
+- Do NOT quote or reason about text a scrubber has masked (`[REDACTED]`,
+  `<redacted>`, `******`) — re-read the line from the repository first
 - Do NOT read the PR body *before* forming your correctness read — leading with
   the author's narrative measured worst of all three arms (zero defects found)
 - Do NOT pad a comment with nits to look thorough — false positives are the

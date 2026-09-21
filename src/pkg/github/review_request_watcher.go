@@ -253,6 +253,13 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		shapeErr = "thread_id is only valid with event comment (reply) or resolve_thread"
 	case okEvent && apiEvent != "APPROVE" && strings.TrimSpace(req.Body) == "":
 		shapeErr = "review request body is required for request_changes/comment"
+	case !recordOnly && !resolveThread && strings.TrimSpace(req.Body) != "":
+		// A finding whose evidence is text a secret scrubber already masked
+		// is wrong by construction (hivecommons/hive#8067). Refuse it here
+		// rather than publish it: the quoted line is not what the file says,
+		// and a maintainer cannot tell that from the comment. See
+		// review_redaction_guard.go.
+		shapeErr = redactedQuoteRefusal(req.Body)
 	}
 	if shapeErr != "" {
 		c.writeReviewResult(path, ReviewResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
