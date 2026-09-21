@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# derive-release-version.sh — decide whether a merge to v4 warrants a tagged
+# derive-release-version.sh — decide whether a merge to a release line warrants a tagged
 # release, and if so, what version.
 #
 # WHY CHANGELOG.md AND NOT COMMIT-MESSAGE EMOJI:
@@ -174,7 +174,20 @@ fi
 # Cutting a new line stays a deliberate, human, multi-step operation. If that
 # is genuinely what you want, tag it by hand on the correct branch.
 # ---------------------------------------------------------------------------
-branch_line="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+# The release line comes from RELEASE_LINE when set (the workflow passes the
+# branch it is pinned to), else from the checked-out branch name. A detached
+# checkout — which is what actions/checkout@<sha> produces — reports "HEAD",
+# and that case MUST fail rather than fall through to the global latest tag:
+# that fall-through is exactly how the first v5 tagged-release run minted
+# v4.73.3 from the v5 branch (#7721 Phase 4 incident, 2026-09-21).
+branch_line="${RELEASE_LINE:-}"
+if [[ -z "$branch_line" ]]; then
+  branch_line="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$branch_line" == "HEAD" ]]; then
+    echo "::error::cannot determine the release line: HEAD is detached and RELEASE_LINE is not set. Refusing to derive a version from the global latest tag — set RELEASE_LINE=vN (the workflow does) so only that line's tags seed the version." >&2
+    exit 1
+  fi
+fi
 if [[ "$branch_line" =~ ^v([0-9]+)$ ]]; then
   line_major="${BASH_REMATCH[1]}"
   if [[ "$bump" == "major" ]]; then
@@ -187,8 +200,23 @@ fi
 # Base version: latest vX.Y.Z tag, sorted as versions (not tag creation date,
 # which a re-tag or annotated/lightweight mix could get wrong).
 # ---------------------------------------------------------------------------
-latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1 || true)"
-if [[ -z "$latest_tag" ]]; then
+# On a release line `vN`, only that line's own tags are the base: v4.65.0 must
+# never seed a v5 release (or the reverse). The FIRST tag on a line is always
+# vN.0.0 regardless of the inferred bump — the human chose N when they cut the
+# line, and this script never invents a major on its own authority.
+first_of_line=false
+if [[ -n "${line_major:-}" ]]; then
+  latest_tag="$(git tag -l "v${line_major}.[0-9]*.[0-9]*" | sort -V | tail -1 || true)"
+  if [[ -z "$latest_tag" ]]; then
+    first_of_line=true
+    echo "No existing v${line_major}.Y.Z tag on release line ${branch_line}; the first release of a line is v${line_major}.0.0."
+  fi
+else
+  latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1 || true)"
+fi
+if [[ "$first_of_line" == true ]]; then
+  base="${line_major}.0.0"
+elif [[ -z "$latest_tag" ]]; then
   base="0.0.0"
   echo "No existing vX.Y.Z tag found; treating base version as ${base}."
 else
@@ -202,7 +230,12 @@ if ! [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]];
   exit 1
 fi
 
+if [[ "$first_of_line" == true ]]; then
+  bump=first
+fi
 case "$bump" in
+  first)
+    ;;
   major)
     major=$((major + 1)); minor=0; patch=0
     ;;

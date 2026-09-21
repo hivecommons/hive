@@ -131,6 +131,60 @@ else
 fi
 
 echo
+# ---------------------------------------------------------------------------
+# Case L1: on release line v5 with only v4.x tags => first release is v5.0.0,
+# whatever the inferred bump. v4 tags must never seed a v5 number.
+# ---------------------------------------------------------------------------
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
+git -C "$repo" checkout -q -b v5
+out=$(run $'## Unreleased\n\n### Added\n\n- brand new line\n' v4.65.0 v4.64.2)
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" version)" == "5.0.0" ]]; then
+  note_ok "first release on line v5 with only v4 tags => 5.0.0"
+else
+  note_fail "expected first v5 release to be 5.0.0, got: $out"
+fi
+
+# ---------------------------------------------------------------------------
+# Case L2: on line v5 with v5.0.0 present and a newer v4 patch tag => the v5
+# line's own latest tag is the base (5.1.0 for Added), not v4's.
+# ---------------------------------------------------------------------------
+out=$(run $'## Unreleased\n\n### Added\n\n- more\n' v4.66.0 v5.0.0)
+if [[ "$(get "$out" version)" == "5.1.0" ]]; then
+  note_ok "line v5 bumps from its own latest tag => 5.1.0"
+else
+  note_fail "expected 5.1.0 on line v5, got: $out"
+fi
+git -C "$repo" checkout -q - 2>/dev/null || git -C "$repo" checkout -q master 2>/dev/null || git -C "$repo" checkout -q main
+
+# ---------------------------------------------------------------------------
+# Case L3: detached HEAD (what actions/checkout@<sha> produces) with no
+# RELEASE_LINE => hard error. Falling through to the global latest tag here is
+# how v4.73.3 was minted from v5; the script must refuse, not guess.
+# ---------------------------------------------------------------------------
+git -C "$repo" checkout -q --detach
+printf '%s' $'## Unreleased\n\n### Fixed\n\n- x\n' > "$repo/CHANGELOG.md"
+if ( cd "$repo" && GITHUB_OUTPUT="" RELEASE_LINE="" bash "$derive" CHANGELOG.md ) >/dev/null 2>"$tmp/l3.err"; then
+  note_fail "detached HEAD without RELEASE_LINE must fail, but succeeded"
+elif grep -q 'RELEASE_LINE' "$tmp/l3.err"; then
+  note_ok "detached HEAD without RELEASE_LINE => refused, names RELEASE_LINE"
+else
+  note_fail "detached HEAD failed for the wrong reason: $(cat "$tmp/l3.err")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case L4: detached HEAD WITH RELEASE_LINE=v5 and only v4 tags => 5.0.0. The
+# explicit line, not the branch name, scopes the base tag.
+# ---------------------------------------------------------------------------
+git -C "$repo" tag -d $(git -C "$repo" tag -l 'v*') >/dev/null 2>&1 || true
+git -C "$repo" tag -f v4.66.0 >/dev/null 2>&1
+out=$( cd "$repo" && GITHUB_OUTPUT="" RELEASE_LINE=v5 bash "$derive" CHANGELOG.md 2>&1 )
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" version)" == "5.0.0" ]]; then
+  note_ok "detached HEAD with RELEASE_LINE=v5 and only v4 tags => 5.0.0"
+else
+  note_fail "expected 5.0.0 via RELEASE_LINE on detached HEAD, got: $out"
+fi
+git -C "$repo" checkout -q master 2>/dev/null || git -C "$repo" checkout -q main 2>/dev/null || true
+
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1
