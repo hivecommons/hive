@@ -108,7 +108,15 @@ function createTestServer() {
     }
     const existing = loadContributor(github_username);
     if (existing) {
-      return res.json({ contributor_id: existing.contributor_id, registration_token: existing.registration_token_plain, message: 'Already registered' });
+      if (existing.trust_tier === 'revoked') {
+        return res.status(403).json({ error: 'Account revoked — contact the hive administrator to reinstate' });
+      }
+      // SECURITY: never reissue an existing contributor's token to an
+      // unauthenticated caller (account-takeover primitive).
+      return res.json({
+        contributor_id: existing.contributor_id,
+        message: 'Already registered — to retrieve your token, sign in via the GitHub OAuth flow at /contribute to prove account ownership',
+      });
     }
     const contributorId = `c-${crypto.randomBytes(6).toString('hex')}`;
     const registrationToken = crypto.randomBytes(32).toString('hex');
@@ -298,12 +306,25 @@ describe('contribute-hive', () => {
       assert.ok(res.body.registration_token.length > 0);
     });
 
-    it('returns existing profile on re-registration', async () => {
+    it('returns existing profile on re-registration without reissuing the token', async () => {
       const res1 = await httpRequest('POST', '/api/contribute/register', { github_username: 'testuser-dupe' });
       const res2 = await httpRequest('POST', '/api/contribute/register', { github_username: 'testuser-dupe' });
       assert.equal(res2.status, 200);
-      assert.equal(res2.body.message, 'Already registered');
+      assert.match(res2.body.message, /^Already registered/);
       assert.equal(res2.body.contributor_id, res1.body.contributor_id);
+      assert.equal(res2.body.registration_token, undefined);
+    });
+
+    it('rejects re-registration of a revoked contributor', async () => {
+      const res1 = await httpRequest('POST', '/api/contribute/register', { github_username: 'testuser-revoked-reg' });
+      assert.equal(res1.status, 200);
+      const file = path.join(TEST_CONTRIBUTORS_DIR, 'testuser-revoked-reg.json');
+      const profile = JSON.parse(fs.readFileSync(file, 'utf8'));
+      profile.trust_tier = 'revoked';
+      fs.writeFileSync(file, JSON.stringify(profile));
+      const res2 = await httpRequest('POST', '/api/contribute/register', { github_username: 'testuser-revoked-reg' });
+      assert.equal(res2.status, 403);
+      assert.equal(res2.body.registration_token, undefined);
     });
 
     it('rejects invalid username', async () => {

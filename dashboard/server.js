@@ -2973,7 +2973,18 @@ app.post('/api/contribute/register', (req, res) => {
   }
   const existing = loadContributor(github_username);
   if (existing) {
-    return res.json({ contributor_id: existing.contributor_id, registration_token: existing.registration_token_plain, message: 'Already registered' });
+    if (existing.trust_tier === 'revoked') {
+      return res.status(403).json({ error: 'Account revoked — contact the hive administrator to reinstate' });
+    }
+    // SECURITY: this endpoint is unauthenticated (username is self-asserted),
+    // so it must NEVER reissue and return an existing contributor's token —
+    // that is an account-takeover primitive (POST any known username →
+    // receive their live token). Re-showing the token requires proving you
+    // own the GitHub account, which the OAuth flow at /contribute does.
+    return res.json({
+      contributor_id: existing.contributor_id,
+      message: 'Already registered — to retrieve your token, sign in via the GitHub OAuth flow at /contribute to prove account ownership',
+    });
   }
   const { profile, registrationToken } = createContributorProfile(github_username);
   res.json({ contributor_id: profile.contributor_id, registration_token: registrationToken, message: 'Registered successfully' });
