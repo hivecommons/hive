@@ -1,0 +1,1 @@
+- Repositories cards can now be dragged wider or narrower from a handle on the right edge (double-click or Home resets one card, arrow keys nudge it, and a header-level "↔ Reset layout" button clears them all). Widths persist per repo in the browser and survive the governor's repaint; a card widened past 480px shows whole pill titles instead of the 50-character clip (#8000).

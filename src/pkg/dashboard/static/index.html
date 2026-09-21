@@ -414,7 +414,7 @@
       box-sizing: border-box;
     }
     body.light-mode > .gh-rate-alert { margin-left: 0; }
-    body.light-mode .repo-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    body.light-mode .repo-grid { --repo-card-basis: 200px; }
     body.light-mode .beads { flex-wrap: wrap; }
     body.light-mode .agents { grid-template-columns: 1fr; }
 
@@ -1270,11 +1270,33 @@
     /* Repos */
     .repos { margin-bottom: 24px; }
     .repos h2 { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); margin-bottom: 8px; }
-    .repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+    /* Flex-wrap rather than grid auto-fit so a card can carry its OWN width:
+       grid sizes tracks, not items, and a per-card width has nowhere to go.
+       A default card flexes from --repo-card-basis exactly as the old
+       minmax(240px, 1fr) track did; a card the operator has dragged gets an
+       explicit flex-basis and stops growing, so the width they set is the
+       width they get (hivecommons/hive#8000). */
+    .repo-grid { --repo-card-basis: 240px; display: flex; flex-wrap: wrap; gap: 8px; }
     .repo-card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 6px; padding: 12px; overflow: hidden;
+      position: relative; flex: 1 1 var(--repo-card-basis); min-width: 200px; max-width: 100%;
     }
+    .repo-card.repo-card-sized { flex-grow: 0; flex-shrink: 0; }
+    /* Drag handle on the card's right edge. Invisible until the card is
+       hovered or the handle focused, then a thin bar; keyboard users get a
+       focus ring and arrow keys (see repoCardHandleKey). */
+    .repo-resize-handle {
+      position: absolute; top: 0; right: 0; bottom: 0; width: 8px;
+      cursor: col-resize; touch-action: none; user-select: none;
+      border-radius: 0 6px 6px 0; background: transparent;
+    }
+    .repo-card:hover .repo-resize-handle, .repo-resize-handle:focus-visible, .repo-card.repo-card-dragging .repo-resize-handle {
+      background: color-mix(in srgb, var(--amber) 35%, transparent);
+    }
+    .repo-resize-handle:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+    .repo-card.repo-card-dragging { user-select: none; }
+    .repo-card.repo-card-sized .repo-pill-col { min-width: 0; }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
     .repo-name a:hover { text-decoration: underline !important; }
     /* The two stat columns (issues | PRs) and the two pill columns under
@@ -3417,7 +3439,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)" style="font-size:0.62em;vertical-align:middle;margin-left:8px;font-weight:400">🔄 Rescan</button> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)" style="font-size:0.62em;vertical-align:middle;margin-left:8px;font-weight:400">🔄 Rescan</button> <button class="btn" id="repos-reset-layout-btn" data-action="reposResetLayout" data-stop="1" title="Forget every card width you dragged on this browser and return the Repositories grid to its default layout" style="display:none;font-size:0.62em;vertical-align:middle;margin-left:4px;font-weight:400">↔ Reset layout</button> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
@@ -8266,6 +8288,9 @@
     }
 
     function renderRepos(repos) {
+      // A repaint mid-drag would replace the handle holding pointer capture
+      // and drop the drag on the floor; the next governor cycle repaints.
+      if (_repoCardDrag) return;
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
       // Definitive single-host badge in the section header: every repo in this
@@ -8311,7 +8336,11 @@
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes());
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes());
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
-        const MAX_PILL_TITLE_LEN = 50;
+        // A card the operator widened past REPO_CARD_FULL_TITLE_W has room
+        // for whole titles, so the clip is lifted there; the default card
+        // keeps the 50-char cut (hivecommons/hive#8000).
+        const cardW = repoCardStoredWidth(r.full || r.name);
+        const MAX_PILL_TITLE_LEN = cardW >= REPO_CARD_FULL_TITLE_W ? Infinity : REPO_CARD_DEFAULT_PILL_TITLE_LEN;
         const issuePills = (r.actionableIssues || []).map(i => {
           const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
           const age = pillAge(i.created_at);
@@ -8446,16 +8475,143 @@
           ? `<div class="repo-pills"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
           : '';
         return `
-        <div class="repo-card">
+        <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo="${esc(r.full || r.name)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
           <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a></div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a></div>
           </div>${pillsHtml}
+          <div class="repo-resize-handle" tabindex="0" role="separator" aria-orientation="vertical" aria-label="Resize ${esc(r.full || r.name)} card" data-repo="${esc(r.full || r.name)}" title="Drag to resize this card · double-click to reset · ←/→ to nudge, Home to reset"></div>
         </div>`;
       }).join(''));
+      repoCardSyncResetButton();
     }
+
+    // ── Repositories: per-card drag-to-resize (hivecommons/hive#8000) ──────
+    // Widths live in the browser, keyed by repo full name, so a card keeps
+    // the width the operator gave it across reloads and across the governor's
+    // repaint (renderRepos rebuilds the grid HTML every cycle and reads the
+    // width back out of this map — it is never set once on an element).
+    const REPO_CARD_WIDTHS_KEY = 'hive-repo-card-widths';
+    const REPO_CARD_MIN_W = 200;
+    const REPO_CARD_FULL_TITLE_W = 480;
+    const REPO_CARD_DEFAULT_PILL_TITLE_LEN = 50;
+    const REPO_CARD_NUDGE_PX = 16;
+    const REPO_CARD_NUDGE_BIG_PX = 64;
+    let _repoCardWidths = null;
+    let _repoCardDrag = null;
+    let _repoCardWidthsDirty = false;
+    function repoCardWidths() {
+      if (_repoCardWidths) return _repoCardWidths;
+      _repoCardWidths = {};
+      try {
+        const raw = JSON.parse(localStorage.getItem(REPO_CARD_WIDTHS_KEY) || '{}');
+        if (raw && typeof raw === 'object') {
+          for (const k of Object.keys(raw)) { const v = Number(raw[k]); if (Number.isFinite(v) && v >= REPO_CARD_MIN_W) _repoCardWidths[k] = Math.round(v); }
+        }
+      } catch {}
+      return _repoCardWidths;
+    }
+    function repoCardStoredWidth(repo) { return repoCardWidths()[repo] || 0; }
+    function repoCardPersistWidths() {
+      try {
+        const m = repoCardWidths();
+        if (Object.keys(m).length) localStorage.setItem(REPO_CARD_WIDTHS_KEY, JSON.stringify(m));
+        else localStorage.removeItem(REPO_CARD_WIDTHS_KEY);
+      } catch {}
+    }
+    function repoCardMaxWidth() {
+      const grid = document.getElementById('repos');
+      return grid ? Math.max(REPO_CARD_MIN_W, grid.clientWidth) : Infinity;
+    }
+    function repoCardClamp(w) { return Math.round(Math.min(repoCardMaxWidth(), Math.max(REPO_CARD_MIN_W, w))); }
+    // Apply a width to the live card without waiting for the next repaint;
+    // the map is updated too so the repaint agrees with what is on screen.
+    function repoCardSetWidth(repo, w, card) {
+      const m = repoCardWidths();
+      const before = m[repo] || 0;
+      if (w) { m[repo] = repoCardClamp(w); } else { delete m[repo]; }
+      card = card || document.querySelector(`.repo-card[data-repo="${CSS && CSS.escape ? CSS.escape(repo) : repo}"]`);
+      if (card) {
+        if (m[repo]) { card.style.flexBasis = m[repo] + 'px'; card.classList.add('repo-card-sized'); }
+        else { card.style.flexBasis = ''; card.classList.remove('repo-card-sized'); }
+      }
+      repoCardSyncResetButton();
+      // Crossing the whole-title threshold changes the pill markup, which
+      // only the repaint produces — ask for one.
+      if ((before >= REPO_CARD_FULL_TITLE_W) !== ((m[repo] || 0) >= REPO_CARD_FULL_TITLE_W)) _repoCardWidthsDirty = true;
+    }
+    function repoCardRepaint() {
+      if (window._lastStatus && Array.isArray(window._lastStatus.repos)) renderRepos(window._lastStatus.repos);
+    }
+    function repoCardSyncResetButton() {
+      const btn = document.getElementById('repos-reset-layout-btn');
+      if (btn) btn.style.display = Object.keys(repoCardWidths()).length ? '' : 'none';
+    }
+    function reposResetLayout() {
+      _repoCardWidths = {};
+      repoCardPersistWidths();
+      document.querySelectorAll('.repo-card.repo-card-sized').forEach(c => { c.style.flexBasis = ''; c.classList.remove('repo-card-sized'); });
+      repoCardSyncResetButton();
+      repoCardRepaint();
+    }
+    function repoCardHandleFor(e) {
+      const h = e.target && e.target.closest ? e.target.closest('.repo-resize-handle') : null;
+      if (!h) return null;
+      const card = h.closest('.repo-card');
+      return card ? { handle: h, card, repo: h.dataset.repo || card.dataset.repo || '' } : null;
+    }
+    document.addEventListener('pointerdown', (e) => {
+      const hit = repoCardHandleFor(e);
+      if (!hit || e.button !== 0) return;
+      e.preventDefault();
+      _repoCardDrag = { repo: hit.repo, card: hit.card, startX: e.clientX, startW: hit.card.getBoundingClientRect().width, pointerId: e.pointerId };
+      hit.card.classList.add('repo-card-dragging');
+      try { hit.handle.setPointerCapture(e.pointerId); } catch {}
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!_repoCardDrag || e.pointerId !== _repoCardDrag.pointerId) return;
+      repoCardSetWidth(_repoCardDrag.repo, _repoCardDrag.startW + (e.clientX - _repoCardDrag.startX), _repoCardDrag.card);
+    });
+    function repoCardEndDrag(e) {
+      if (!_repoCardDrag || (e && e.pointerId !== undefined && e.pointerId !== _repoCardDrag.pointerId)) return;
+      const d = _repoCardDrag; _repoCardDrag = null;
+      d.card.classList.remove('repo-card-dragging');
+      repoCardPersistWidths();
+      if (_repoCardWidthsDirty) { _repoCardWidthsDirty = false; repoCardRepaint(); }
+    }
+    document.addEventListener('pointerup', repoCardEndDrag);
+    document.addEventListener('pointercancel', repoCardEndDrag);
+    document.addEventListener('dblclick', (e) => {
+      const hit = repoCardHandleFor(e);
+      if (!hit) return;
+      e.preventDefault();
+      repoCardSetWidth(hit.repo, 0, hit.card);
+      repoCardPersistWidths();
+      if (_repoCardWidthsDirty) { _repoCardWidthsDirty = false; repoCardRepaint(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      const hit = repoCardHandleFor(e);
+      if (!hit) return;
+      const cur = repoCardStoredWidth(hit.repo) || hit.card.getBoundingClientRect().width;
+      const step = e.shiftKey ? REPO_CARD_NUDGE_BIG_PX : REPO_CARD_NUDGE_PX;
+      let next = null;
+      if (e.key === 'ArrowRight') next = cur + step;
+      else if (e.key === 'ArrowLeft') next = cur - step;
+      else if (e.key === 'Home' || e.key === 'Backspace' || e.key === 'Delete') next = 0;
+      else if (e.key === 'End') next = repoCardMaxWidth();
+      else return;
+      e.preventDefault();
+      repoCardSetWidth(hit.repo, next, hit.card);
+      repoCardPersistWidths();
+      if (_repoCardWidthsDirty) {
+        _repoCardWidthsDirty = false; repoCardRepaint();
+        // The repaint replaced the handle; put focus back on the new one.
+        const h = document.querySelector(`.repo-card[data-repo="${CSS && CSS.escape ? CSS.escape(hit.repo) : hit.repo}"] .repo-resize-handle`);
+        if (h) h.focus();
+      }
+    });
 
     // Operator-initiated repository rescan. The REPOSITORIES cards repaint
     // from the governor's eval cycle, whose cadence stretches to minutes on a
