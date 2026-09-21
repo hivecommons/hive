@@ -28,7 +28,7 @@
 # "fix" it by only editing one side.
 
 # The release lines CI is expected to cover.
-release_lines: [v2, v4, v5]
+release_lines: [v4, v5]
 
 # Workflows whose branch filters are pinned to the release lines.
 #
@@ -56,7 +56,7 @@ pinned:
   # docker.yml rows say so, the `edge` channel (#7721 Phase 1) — which is the
   # `env_lists` extra below, not a `release_lines` entry: publishing a line's
   # image is a narrower commitment than covering it with every pinned lane.
-  changelog-fragment-guard.yml: [v5, v6, -v2]
+  changelog-fragment-guard.yml: [v5, v6]
   # Static analysis and vulnerability scanning for the Go module. Pinned to the
   # release lines and nothing else: a feature branch gets the same gate through
   # `pull_request`, and running it on every pushed branch would burn runner
@@ -65,15 +65,15 @@ pinned:
   # (#5030-era). It gates src/docs/ links on v4 only; v2 is excluded rather
   # than back-filled, because the workflow never ran there and adding it
   # would gate a line no longer taking doc changes.
-  docs-link-check.yml: [-v2]
+  docs-link-check.yml: []
   # Post-merge DCO monitor for protected branch history. It intentionally
   # watches v4 and v5 only: v4 is the source line whose Tide squash commits
   # triggered #6312, and v5 is the sync target that inherits those commits.
-  dco-post-merge.yml: [v5, -v2]
+  dco-post-merge.yml: [v5]
   # Push-scoped delta DCO gate (#6756). Same v4/v5 coverage and reasoning as
   # dco-post-merge.yml above: v4 is the line whose pushes it audits, v5 the
   # sync target inheriting them; v2 is sunset and takes no pushes.
-  dco-push-delta.yml: [v5, -v2]
+  dco-push-delta.yml: [v5]
   go-security-analysis.yml: [v5, v6]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
@@ -97,7 +97,7 @@ pinned:
   # entry again, the exclusion has been lost upstream — restore it there; do
   # not merge the sync branch, and do not "fix" it by widening this entry.
   # See src/docs/release-line-guard.md, "The infra workflow sync".
-  scorecard.yml: [main, -v2]
+  scorecard.yml: [main]
   suid-contract.yml: []
   # PR-level guard for src/internal/testutil (#5603). Pinned to the release
   # lines and nothing else: it is a pull_request-only path-gated check, and a
@@ -112,18 +112,18 @@ pinned:
   # carry forward, and v5 is the merge TARGET rather than a trigger, so it is
   # not a branch this workflow watches (on v5, where v5 is itself a release
   # line, it must be excluded explicitly for the same reason).
-  v5-topup.yml: [-v2, -v5]
+  v5-topup.yml: [-v5]
   # Post-freeze intake gate for v4 (#7693, runbook §2). It watches PRs into
   # the ONE line the accepted freeze policy (#6346) applies to; v2 is sunset
   # and takes no PRs, and v5/v6 are exactly where non-critical work is sent.
-  v4-freeze-gate.yml: [-v2, -v5]
+  v4-freeze-gate.yml: [-v5]
   # Automated v5 -> v6 forward-merge cadence (#7563, Track 7). Its only branch
   # filter is the `push` trigger naming the line whose MOVEMENT it reacts to —
   # v5, the source of every v6 top-up. v2 and v4 are excluded for the same
   # reason as v5-topup.yml's exclusions: they are not the branch this workflow
   # watches (v4 reaches v6 through v5), and v6 is the merge TARGET, not a
   # trigger.
-  v6-topup.yml: [v5, -v2, -v4]
+  v6-topup.yml: [v5, -v4]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard
@@ -157,22 +157,8 @@ env_lists:
   # carries this list names v6 here, so the guard agrees across lines.
   docker.yml LONG_LIVED: [mk, dd, v6]
 
-# MAINTAINER DECISION — deliberately NOT answered here (#4405).
-#
-# Should `v2` still be in these allow-lists? Mainline is `v4`, yet eight of the
-# nine pinned workflows still fire on `v2` pushes and PRs — and the ninth,
-# scorecard.yml, never has, which is the inconsistency this guard surfaced on
-# its first run. Whether `v2` is still a supported release line is a maintainer
-# call, so this file records the status quo rather than picking a side:
-#
-#   - if `v2` IS still supported, scorecard.yml's `-v2` exclusion should be
-#     dropped and `v2` added to that workflow;
-#   - if it is NOT, remove `v2` from `release_lines` above and from the eight
-#     workflows that name it plus docker.yml's `LONG_LIVED` (and drop the
-#     now-redundant `-v2`).
-#
-# Either way it is one edit to `release_lines` plus the workflows, and this
-# guard proves the edit is complete — in both directions: retiring a line names
-# every list that still carries it, exactly as cutting one names every list that
-# does not. Until a maintainer says otherwise, the current behaviour stands
-# unchanged.
+# MAINTAINER DECISION (#4405, answered by #8061 on 2026-09-21): `v2` is retired.
+# It was removed from `release_lines`, from every workflow that named it, and
+# from docker.yml's `LONG_LIVED`; the branch was deleted after tagging its tip
+# as `v2-final`. The `v2-ci.yml` / `v2-tests.yml` workflow names are legacy
+# file names for the Go module lanes and are kept as-is.

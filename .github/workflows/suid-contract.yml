@@ -20,7 +20,6 @@ name: SUID + NET_ADMIN Contract
 on:
   push:
     branches:
-      - v2
       - v4
       - v5
     paths:
@@ -38,7 +37,6 @@ on:
       - '.github/workflows/suid-contract.yml'
   pull_request:
     branches:
-      - v2
       - v4
       - v5
     paths:

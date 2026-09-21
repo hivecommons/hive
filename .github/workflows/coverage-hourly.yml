@@ -16,7 +16,7 @@ on:
   # create-issue-on-coverage-drop machinery below.
   #
   # v5 is covered by the pre-merge half too: v2-tests.yml's `pull_request`
-  # filter is `branches: [v2, v4, v5]`, so the coverage floor still gates every
+  # filter is `branches: [v4, v5]`, so the coverage floor still gates every
   # v5 PR. v5 was added to the (now removed) trigger here in the #4058 top-up;
   # #4112 relocated the whole pre-merge job rather than the branch list, so
   # there is nothing v5-specific left to carry in this file.

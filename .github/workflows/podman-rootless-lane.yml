@@ -49,7 +49,6 @@ on:
       - 'src/deploy/**'
       - 'justfile'
     branches:
-      - v2
       - v4
       - v5
   pull_request:
@@ -58,7 +57,6 @@ on:
       - 'src/deploy/**'
       - 'justfile'
     branches:
-      - v2
       - v4
       - v5
   workflow_dispatch:
