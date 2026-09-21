@@ -39,6 +39,16 @@ const (
 	// ReasonBelowFloor: the configuration's tier is weaker than the lane's
 	// capability floor. It carries no floor value on purpose.
 	ReasonBelowFloor Reason = "below_floor"
+	// ReasonItemTierUnknown: item-tier matching is in force on this hive and
+	// this item is on no entry of the owner's item-tier list. Nobody said this
+	// class of work is donatable, so it is not standby-eligible at all — and
+	// a tier the classifier proposed for it changes nothing (S7).
+	ReasonItemTierUnknown Reason = "item_tier_unknown"
+	// ReasonBelowItemTier: the configuration's tier is weaker than the ITEM's
+	// tier. The lane floor and the item tier are both required: a T1
+	// configuration may take a T3 item, a T3 configuration may not take a T1
+	// item. Like ReasonBelowFloor it carries no value.
+	ReasonBelowItemTier Reason = "below_item_tier"
 	// ReasonCapExhausted: no daily cap left in the trailing window — including
 	// the default cap of zero, which dispatches nothing.
 	ReasonCapExhausted Reason = "cap_exhausted"
@@ -92,7 +102,8 @@ type LanePolicy struct {
 	DailyCap int
 }
 
-// Qualifies is the whole matching decision for one candidate on one lane.
+// Qualifies is the whole matching decision for one candidate on one lane, for
+// one item.
 //
 // The checks run cheapest-and-most-structural first, and each has its own
 // Reason so the cause is never inferred from a coincidence. In particular the
@@ -102,11 +113,17 @@ type LanePolicy struct {
 // refused as "below_floor", which is a lie. It is not below the floor; nobody
 // assessed it. Deleting the guard changes the reported reason, and the test
 // for it asserts the reason, so the test fails rather than passing on the
-// encoding's coincidence.
+// encoding's coincidence. The item's unknown guard (S7) is there for the same
+// reason and is asserted the same way.
+//
+// `item` is the owner's list's answer about the work, from ItemTiers.Match.
+// The ZERO value means item-tier matching is not in force — the shipped state,
+// because the owner's item-tier list ships empty — and then this function
+// decides exactly what it decided in S4.
 //
 // Returning false is a normal outcome, not an error. A lane on which no
 // candidate qualifies stays paused, reports zero, and offers no next step.
-func Qualifies(c Candidate, p LanePolicy, tiers TierMap, now time.Time) (bool, Reason) {
+func Qualifies(c Candidate, p LanePolicy, item ItemMatch, tiers TierMap, now time.Time) (bool, Reason) {
 	// The floor itself must be a real tier. Fail closed if it is not.
 	floor := NormalizeTier(string(p.Floor))
 	if !floor.Known() {
@@ -126,22 +143,59 @@ func Qualifies(c Candidate, p LanePolicy, tiers TierMap, now time.Time) (bool, R
 	if tier.strength() < floor.strength() {
 		return false, ReasonBelowFloor
 	}
+	// The item's own bar, when the owner has set one. Unknown never qualifies
+	// here either, and explicitly: an item nobody listed is not weak work, it
+	// is work nobody said was donatable.
+	if item.Enforced() {
+		if !item.Tier().Known() {
+			return false, ReasonItemTierUnknown
+		}
+		if tier.strength() < item.Tier().strength() {
+			return false, ReasonBelowItemTier
+		}
+	}
 	if CapRemaining(c, p, now) <= 0 {
 		return false, ReasonCapExhausted
 	}
 	return true, ReasonQualified
 }
 
-// QualifiedCount is the M in the tile's "N waiting, M qualify": how many of
-// the contributors standing by on this lane clear its floor and have cap left.
+// QualifiedCount counts the contributors standing by on this lane who clear
+// its floor, clear the item's tier, and have cap left. Pass the zero ItemMatch
+// for the lane-only question.
 //
 // It is a plain count over Qualifies with no side effect. A count of zero is a
 // terminal, acceptable state: the lane stays paused and nothing is proposed.
-func QualifiedCount(candidates []Candidate, p LanePolicy, tiers TierMap, now time.Time) int {
+func QualifiedCount(candidates []Candidate, p LanePolicy, item ItemMatch, tiers TierMap, now time.Time) int {
 	n := 0
 	for _, c := range candidates {
-		if ok, _ := Qualifies(c, p, tiers, now); ok {
+		if ok, _ := Qualifies(c, p, item, tiers, now); ok {
 			n++
+		}
+	}
+	return n
+}
+
+// QualifiedCountForQueue is the M in the tile's "N waiting, M qualify" once
+// items carry a tier: how many contributors standing by on this lane could be
+// offered AT LEAST ONE of the items queued on it.
+//
+// Counting per contributor rather than per (contributor, item) pair is what
+// keeps M comparable with the N beside it — N is a queue depth, M is a head
+// count, and the cell has always read that way.
+//
+// Build the queue with ItemTiers.LaneQueue, which returns a single not-in-force
+// match when the owner's list is empty. That is the shipped state, and it
+// makes this exactly S4's count: the queue is not consulted and every
+// contributor is judged against the lane floor alone.
+func QualifiedCountForQueue(candidates []Candidate, p LanePolicy, queue []ItemMatch, tiers TierMap, now time.Time) int {
+	n := 0
+	for _, c := range candidates {
+		for _, item := range queue {
+			if ok, _ := Qualifies(c, p, item, tiers, now); ok {
+				n++
+				break
+			}
 		}
 	}
 	return n

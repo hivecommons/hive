@@ -36,6 +36,18 @@ const (
 	standbyFloorWireKey = "min_model_capability"
 )
 
+// The same two spellings for the item-tier list (S7). It is guarded for the
+// same reason and by the same scan: `hub.standby_item_tiers` is the
+// authoritative answer to "which work may be donated, and at what tier". A
+// control that edits it is a control that widens what a weak configuration may
+// take — the item-side twin of lowering a floor. Hive's classifier can propose
+// a tier for an item; nothing may write the list, and no surface may even name
+// its wire key, because a field name in a template is how a control starts.
+const (
+	standbyItemTiersGoField = "StandbyItemTiers"
+	standbyItemTiersWireKey = "standby_item_tiers"
+)
+
 // standbyFloorScanRoots are the trees a surface could live in, relative to
 // this package. src/ is the Go module (every route, CLI and TUI surface);
 // dashboard/ is the browser client the hub serves.
@@ -49,6 +61,21 @@ var standbyFloorReaderExceptions = []string{
 }
 
 func TestStandbyFloorHasNoWriterOutsideConfig(t *testing.T) {
+	scanForStandbyWriter(t, standbyFloorGoField, standbyFloorWireKey,
+		"the standby model floor must stay readable-only outside pkg/config — lowering it is an edit to hive.yaml, never a control")
+}
+
+// TestStandbyItemTiersHaveNoWriterOutsideConfig is the same guard for the
+// owner-editable T3 list. The design's answer to the RFC's fourth open
+// question makes the list the only authority on which items are donatable;
+// a proposal may not widen it, and neither may a surface.
+func TestStandbyItemTiersHaveNoWriterOutsideConfig(t *testing.T) {
+	scanForStandbyWriter(t, standbyItemTiersGoField, standbyItemTiersWireKey,
+		"the standby item-tier list must stay readable-only outside pkg/config — no surface proposes adding an item to the T3 list")
+}
+
+func scanForStandbyWriter(t *testing.T, goField, wireKey, failure string) {
+	t.Helper()
 	var offenders []string
 	scanned := 0
 
@@ -82,11 +109,11 @@ func TestStandbyFloorHasNoWriterOutsideConfig(t *testing.T) {
 			}
 			scanned++
 			body := string(data)
-			if strings.Contains(body, standbyFloorWireKey) {
-				offenders = append(offenders, rel+": mentions the wire key "+standbyFloorWireKey)
+			if strings.Contains(body, wireKey) {
+				offenders = append(offenders, rel+": mentions the wire key "+wireKey)
 			}
-			if line, ok := standbyFloorAssignment(body); ok {
-				offenders = append(offenders, rel+": assigns "+standbyFloorGoField+" — "+line)
+			if line, ok := standbyFieldAssignment(body, goField); ok {
+				offenders = append(offenders, rel+": assigns "+goField+" — "+line)
 			}
 			return nil
 		})
@@ -101,8 +128,7 @@ func TestStandbyFloorHasNoWriterOutsideConfig(t *testing.T) {
 	}
 
 	if len(offenders) > 0 {
-		t.Fatalf("the standby model floor must stay readable-only outside pkg/config — lowering it is an edit to hive.yaml, never a control:\n  %s",
-			strings.Join(offenders, "\n  "))
+		t.Fatalf("%s:\n  %s", failure, strings.Join(offenders, "\n  "))
 	}
 }
 
@@ -122,8 +148,27 @@ func TestStandbyFloorIsOwnedByConfig(t *testing.T) {
 		t.Errorf("pkg/config/standby.go does not mention %s; the no-writer guard is scanning for a dead string", standbyFloorWireKey)
 	}
 	// And the defaults pass is the writer the exception exists for.
-	if _, ok := standbyFloorAssignment(body); !ok {
+	if _, ok := standbyFieldAssignment(body, standbyFloorGoField); !ok {
 		t.Errorf("pkg/config/standby.go assigns %s nowhere; the config path is supposed to be the ONLY writer", standbyFloorGoField)
+	}
+	// The item-tier list's guard must not be vacuous either. Its Go field is
+	// declared on HubConfig and its wire key is named by the struct tag, so
+	// config.go is where both spellings live.
+	cfgData, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatalf("reading config.go: %v", err)
+	}
+	cfgBody := string(cfgData)
+	if !strings.Contains(cfgBody, standbyItemTiersGoField) {
+		t.Errorf("pkg/config/config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersGoField)
+	}
+	if !strings.Contains(cfgBody, standbyItemTiersWireKey) {
+		t.Errorf("pkg/config/config.go does not mention %s; the no-writer guard is scanning for a dead string", standbyItemTiersWireKey)
+	}
+	// And pkg/config is where the list is normalized and validated, which is
+	// what the exception above is for.
+	if !strings.Contains(body, standbyItemTiersGoField) {
+		t.Errorf("pkg/config/standby.go does not mention %s; the defaults pass and the validator are supposed to be the only code that writes it", standbyItemTiersGoField)
 	}
 }
 
@@ -135,17 +180,18 @@ func standbyFloorScannableFile(path string) bool {
 	return false
 }
 
-// standbyFloorAssignment reports whether body contains an assignment to the
-// floor field, and returns the offending line. It looks for the field followed
+// standbyFieldAssignment reports whether body contains an assignment to the
+// named field, and returns the offending line. It looks for the field followed
 // by "=" (but not "==" or "!="), which is what a setter on any surface would
-// have to write.
-func standbyFloorAssignment(body string) (string, bool) {
+// have to write. Reading the field — rendering it, building a matcher from it
+// — is deliberately allowed; writing it is not.
+func standbyFieldAssignment(body, field string) (string, bool) {
 	for _, line := range strings.Split(body, "\n") {
-		idx := strings.Index(line, standbyFloorGoField)
+		idx := strings.Index(line, field)
 		if idx < 0 {
 			continue
 		}
-		rest := strings.TrimSpace(line[idx+len(standbyFloorGoField):])
+		rest := strings.TrimSpace(line[idx+len(field):])
 		if !strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, ":=") {
 			continue
 		}

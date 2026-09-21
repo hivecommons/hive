@@ -4300,6 +4300,18 @@ type HubConfig struct {
 	// qualifies, so a hive that has not written this mapping reports "0
 	// qualify" rather than admitting a model nobody assessed.
 	StandbyModelTiers []StandbyModelTier `yaml:"standby_model_tiers,omitempty"`
+	// StandbyItemTiers maps classes of WORK ITEM to the tier a donated
+	// configuration must have to be offered one. Owner-authored, and it ships
+	// EMPTY: with no entries, item-tier matching is not in force at all and
+	// the lane floor decides alone, exactly as it did before S7. An item that
+	// is not on a non-empty list is `unknown`, and an unknown item is not
+	// standby-eligible.
+	//
+	// It is the authoritative T3 list. Hive's classifier can PROPOSE a tier
+	// for an item, and no proposal can put an item on this list or widen what
+	// the list says — see `standby.ItemTiers` and the design record's answer
+	// to the RFC's fourth open question.
+	StandbyItemTiers []StandbyItemTier `yaml:"standby_item_tiers,omitempty"`
 	// StandbyAllowPrivateRepos opts standby dispatch into private
 	// repositories. Default OFF: a standby contributor receives the full task
 	// context, which for a private repository is read access in substance.

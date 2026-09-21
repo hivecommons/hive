@@ -22,9 +22,10 @@
 //     value here can tell a caller "you would qualify at T3" — the strength
 //     ordering is deliberately unexported so no surface can render a gap.
 //
-// This is step S4 of the design's phase map. Item-tier matching (S7) threads a
-// second tier into the decision; the lane-level rules below are unchanged by
-// it.
+// This is step S4 of the design's phase map. Item-tier matching (S7, item.go)
+// threads a second tier into the decision — the item's own — and the
+// lane-level rules below are unchanged by it: the two bars are both required,
+// and with the owner's item list empty the S4 answer is reproduced exactly.
 package standby
 
 import (

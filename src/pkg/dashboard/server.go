@@ -1904,7 +1904,16 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
 	if s.contributeHub != nil {
-		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(status.Governor.SuppressedLanes)
+		// The paused lanes' own queues, so the count honours item tiers
+		// (RFC #7629 S7). Nil when no enumeration has run yet, which is only
+		// visible on a hive whose owner has written an item-tier list.
+		var actionable *github.ActionableResult
+		if s.deps != nil && s.deps.Scheduler != nil {
+			actionable = s.deps.Scheduler.GetLastActionable()
+		}
+		status.Governor.QualifiedStandbys = s.contributeHub.QualifiedStandbyCounts(
+			status.Governor.SuppressedLanes,
+			standbyLaneItems(status.Governor.SuppressedLanes, actionable))
 	}
 
 	s.githubAppMu.RLock()

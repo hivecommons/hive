@@ -53,6 +53,7 @@ const (
 	// list past these sizes is a generated-file accident, not a hive.
 	standbyContributorsMax = 500
 	standbyModelTiersMax   = 200
+	standbyItemTiersMax    = 200
 	// githubLoginMaxLen is GitHub's own limit on a login.
 	githubLoginMaxLen = 39
 )
@@ -119,6 +120,57 @@ func (t StandbyModelTier) TupleKey() string {
 		strings.ToLower(strings.TrimSpace(t.ReasoningEffort)),
 		strings.ToLower(strings.TrimSpace(t.AdvisorModel)),
 		strings.ToLower(strings.TrimSpace(t.AdvisorReasoningEffort)),
+	}, "|")
+}
+
+// StandbyItemTier maps ONE class of work item — a label, optionally scoped to
+// one repository — to the capability tier a donated configuration must have to
+// be offered an item of that class. It is step S7 of RFC #7629, and it is the
+// authoritative list: Hive's classifier can propose a tier for an item, and no
+// proposal adds an entry here or widens one that is here.
+//
+// The list ships EMPTY, and an empty list means item-tier matching is NOT IN
+// FORCE: the lane floor decides alone and S7 changes nothing until an owner
+// opts in. Once the list has an entry, an item that matches none of them is
+// `unknown`, and an unknown item is not standby-eligible at all.
+//
+// A T3 entry must NAME ITS SIGNAL. The design's answer to the RFC's fourth
+// open question makes verifiability the whole test for T3 eligibility:
+//
+//	An item is T3-eligible only if its correctness is established by an
+//	automated signal a reviewer can read without reconstructing the change.
+//
+// Requiring `signal` is that rule with teeth. An owner who cannot name the
+// signal has not met the test, and the load fails rather than accepting a T3
+// class whose review cost nobody checked.
+type StandbyItemTier struct {
+	// Repo scopes the entry to one repository ("org/name", or the bare name).
+	// Empty applies it to every repository the lane serves. A repository-
+	// scoped entry and an unscoped one may both match an item; the STRONGER
+	// tier wins, so scoping can only ever narrow eligibility.
+	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	// Label is the item label this entry is about — matched the way lane
+	// routing matches labels: the whole label, or a whole "/"-delimited
+	// segment of it, never a substring.
+	Label string `yaml:"label" json:"label"`
+	// Tier is the capability tier a configuration must have to be offered an
+	// item of this class. T1, T2 or T3; "unknown" is rejected.
+	Tier string `yaml:"tier" json:"tier"`
+	// Signal names the automated evidence that makes an item of this class
+	// cheap to review — "the lockfile diff plus green CI", "the link checker".
+	// REQUIRED on a T3 entry, and free text: Hive does not evaluate it, the
+	// reviewer does.
+	Signal string `yaml:"signal,omitempty" json:"signal,omitempty"`
+}
+
+// TupleKey renders the (repo, label) half of an item-tier entry as a stable,
+// case-folded key. Two entries with the same key are duplicates however their
+// tier or signal is spelled, which is why duplicate detection uses this rather
+// than the whole struct.
+func (t StandbyItemTier) TupleKey() string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(t.Repo)),
+		strings.ToLower(strings.TrimSpace(t.Label)),
 	}, "|")
 }
 
@@ -293,6 +345,16 @@ func (c *Config) applyStandbyDefaults() {
 		}
 		c.Hub.StandbyModelTiers[i] = entry
 	}
+
+	for i, entry := range c.Hub.StandbyItemTiers {
+		entry.Repo = strings.ToLower(strings.TrimSpace(entry.Repo))
+		entry.Label = strings.ToLower(strings.TrimSpace(entry.Label))
+		entry.Signal = strings.TrimSpace(entry.Signal)
+		if tier := NormalizeStandbyTier(entry.Tier); tier != "" {
+			entry.Tier = tier
+		}
+		c.Hub.StandbyItemTiers[i] = entry
+	}
 }
 
 // validateStandby is the standby half of Config.Validate. Every rule here is a
@@ -305,6 +367,9 @@ func (c *Config) validateStandby() error {
 		return err
 	}
 	if err := c.validateStandbyModelTiers(); err != nil {
+		return err
+	}
+	if err := c.validateStandbyItemTiers(); err != nil {
 		return err
 	}
 
@@ -402,6 +467,79 @@ func (c *Config) validateStandbyModelTiers() error {
 		seen[key] = i
 	}
 	return nil
+}
+
+// validateStandbyItemTiers is the item half of the standby validation, and it
+// is where the design's answer to the RFC's fourth open question is enforced
+// rather than merely documented.
+func (c *Config) validateStandbyItemTiers() error {
+	if len(c.Hub.StandbyItemTiers) > standbyItemTiersMax {
+		return fmt.Errorf("hub.standby_item_tiers has %d entries (maximum %d)", len(c.Hub.StandbyItemTiers), standbyItemTiersMax)
+	}
+	seen := make(map[string]int, len(c.Hub.StandbyItemTiers))
+	for i, entry := range c.Hub.StandbyItemTiers {
+		// An entry with no label would be a wildcard over every item in
+		// scope — the opposite of naming a class of work whose correctness a
+		// reviewer can check from a signal.
+		if strings.TrimSpace(entry.Label) == "" {
+			return fmt.Errorf("hub.standby_item_tiers[%d]: label is required — an entry names ONE class of item, never every item in the repository", i)
+		}
+		if !validStandbyItemRepo(entry.Repo) {
+			return fmt.Errorf("hub.standby_item_tiers[%d] (label %s): invalid repo %q (use \"org/name\" or a bare repository name; omit for every repository the lane serves)",
+				i, entry.Label, entry.Repo)
+		}
+		if !IsStandbyTier(entry.Tier) {
+			if strings.EqualFold(strings.TrimSpace(entry.Tier), StandbyTierUnknown) {
+				return fmt.Errorf("hub.standby_item_tiers[%d] (%s): tier must not be %q — an item that is not on this list is already unknown, and an unknown item is not standby-eligible at all",
+					i, entry.Label, entry.Tier)
+			}
+			return fmt.Errorf("hub.standby_item_tiers[%d] (%s): invalid tier %q (must be %s, %s or %s)",
+				i, entry.Label, entry.Tier, StandbyTierT1, StandbyTierT2, StandbyTierT3)
+		}
+		// The verifiability rule, as a load error. T3 is the tier that admits
+		// the weakest donated configurations, so it is the one whose review
+		// cost has to be paid for by an automated signal.
+		if NormalizeStandbyTier(entry.Tier) == StandbyTierT3 && strings.TrimSpace(entry.Signal) == "" {
+			return fmt.Errorf("hub.standby_item_tiers[%d] (%s): a %s entry must name its signal — an item is T3-eligible only if its correctness is established by an automated signal a reviewer can read without reconstructing the change (for example signal: \"the lockfile diff plus green CI\")",
+				i, entry.Label, StandbyTierT3)
+		}
+		// Duplicates are an error rather than last-one-wins, for the same
+		// reason as the model tiers: two rows disagreeing about one class of
+		// item is an owner who lost track of their own list.
+		key := entry.TupleKey()
+		if prev, dup := seen[key]; dup {
+			return fmt.Errorf("hub.standby_item_tiers[%d] duplicates entry [%d] (repo %q, label %s) — one class of item maps to exactly one tier",
+				i, prev, entry.Repo, entry.Label)
+		}
+		seen[key] = i
+	}
+	return nil
+}
+
+// validStandbyItemRepo reports whether repo is shaped like a repository
+// reference. Empty is legal and means every repository the lane serves.
+func validStandbyItemRepo(repo string) bool {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return true
+	}
+	parts := strings.Split(repo, "/")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // sortedAgentNames orders the agent map so a config with several bad standby

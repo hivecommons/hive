@@ -297,6 +297,32 @@ agents:
 #     - { backend: claude, model: claude-opus-5,  reasoning_effort: high, tier: T1 }
 #     - { backend: codex,  model: gpt-5.6-terra,  reasoning_effort: high, tier: T2 }
 #
+#   # Which classes of WORK ITEM may be offered to standby, and at what tier.
+#   # OWNER-AUTHORED and AUTHORITATIVE. Hive's classifier can propose a tier
+#   # for an item; a proposal never adds an entry here and never widens one.
+#   #
+#   # It SHIPS EMPTY, and empty means item-tier matching is not in force at
+#   # all: the lane floor decides alone and nothing changes until you opt in.
+#   # Once there is one entry, an item matching none of them is unknown, and an
+#   # unknown item is not standby-eligible. Matching then needs BOTH bars: a T1
+#   # configuration may take a T3 item, a T3 configuration may not take a T1
+#   # item. An entry is keyed on (repo, label); omit repo to apply it to every
+#   # repository the lane serves, and duplicate tuples are a load error.
+#   #
+#   # A T3 entry MUST name its signal, because that is what T3 eligibility
+#   # means here:
+#   #
+#   #   An item is T3-eligible only if its correctness is established by an
+#   #   automated signal a reviewer can read without reconstructing the change.
+#   #
+#   # Explicitly NOT T3: anything whose acceptance rests on taste, naming,
+#   # prose quality or "does this belong here" — including changelog entries
+#   # and doc rewrites, which look small and review expensively.
+#   standby_item_tiers:
+#     - { repo: my-org/repo-a, label: dependencies, tier: T3, signal: "the lockfile diff plus green CI" }
+#     - { repo: my-org/repo-a, label: broken-link,  tier: T3, signal: "the link checker" }
+#     - { label: kind/security, tier: T1 }
+#
 #   # Private repositories are OFF by default. Task context for a private repo
 #   # is read access in substance.
 #   standby_allow_private_repos: false

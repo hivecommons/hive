@@ -269,6 +269,9 @@ hub:
   standby_model_tiers:               # owner-authored; NO shipped defaults
     - { backend: claude, model: claude-opus-5, reasoning_effort: high, tier: T1 }
     - { backend: codex,  model: gpt-5.6-terra, reasoning_effort: high, tier: T2 }
+  standby_item_tiers:                # S7; ships EMPTY, and empty is not in force
+    - { repo: my-org/repo-a, label: dependencies, tier: T3, signal: "the lockfile diff plus green CI" }
+    - { label: kind/security, tier: T1 }
 ```
 
 `standby` is a new block on `AgentConfig` (`src/pkg/config/config.go:974`); the
@@ -419,7 +422,9 @@ type LanePolicy struct {
 // Qualifies is the whole matching decision for one candidate on one lane.
 // Reason is always set, including on success, so every tile cell and every
 // standby_ack entry has a machine-readable cause.
-func Qualifies(c Candidate, p LanePolicy, item Tier, tiers TierMap, now time.Time) (bool, Reason)
+// As built in S7, `item` is an ItemMatch — the owner's list's answer about
+// the work — whose zero value means item-tier matching is not in force.
+func Qualifies(c Candidate, p LanePolicy, item ItemMatch, tiers TierMap, now time.Time) (bool, Reason)
 ```
 
 **Rules:**
@@ -442,7 +447,11 @@ func Qualifies(c Candidate, p LanePolicy, item Tier, tiers TierMap, now time.Tim
 - **Item tier (S7).** `item == ""` (unclassified) is `unknown`, and `unknown`
   item tier means the item is not standby-eligible at all. The lane floor and
   the item tier are *both* required: a T1 configuration may take a T3 item, a T3
-  configuration may not take a T1 item.
+  configuration may not take a T1 item. As built, "unclassified" is an item that
+  matches no entry of the owner's list — and an *empty* list is a separate
+  state, "not in force", in which there is no item bar at all and the decision
+  is S4's exactly. Without that distinction, shipping the list empty would
+  disqualify everybody rather than change nothing.
 - **Daily cap.** Counted as dispatches inside a trailing 24-hour window, exactly
   like `tier_limits.max_per_day` (`rateLimitDayWindow`,
   `src/pkg/dashboard/contribute_select.go:22-25`), not a calendar bucket — same
@@ -607,8 +616,10 @@ can read in seconds is cheap. So the T3 eligibility test is:
 
 Under that test:
 
-- The shipped `standby.item_tiers` list is **empty**, and S7 therefore changes
-  nothing until an owner opts in.
+- The shipped list (`hub.standby_item_tiers`, as built in S7) is **empty**, and
+  an empty list is not in force at all, so S7 changes nothing until an owner
+  opts in. The test above is enforced rather than advisory: a `T3` entry that
+  names no `signal` fails the load.
 - Three candidates a maintainer can start from, each with its signal named: a
   dependency bump (the lockfile diff plus green CI), a broken-link fix (the link
   checker), and adding a test for an already-specified pure function (the test
@@ -690,6 +701,23 @@ surface). RFC rollout step 2 begins here.
 `src/pkg/standby/` (item tier threaded into `Qualifies`) ·
 `src/pkg/classify/classifier.go` (reuse label routing to propose an item's tier
 candidate; the owner's list is authoritative).
+
+**As built.** The list is keyed on `(repo, label)`, with an empty `repo`
+applying an entry to every repository the lane serves, and a `T3` entry must
+name the `signal` that makes it cheap to review — the eligibility test below,
+as a load error rather than as prose. `standby.ItemTiers`
+(`src/pkg/standby/item.go`) resolves an item against the list; overlapping
+entries resolve to the STRONGEST, so scoping can only narrow eligibility.
+`Qualifies` takes the resolved `ItemMatch`, whose zero value means item-tier
+matching is not in force — which is how an empty list reproduces the S4 answer
+exactly. `ItemTiers.Match` is the single place the classifier's proposal
+(`classify.ProposeStandbyItemTier`, labels only — the title is not evidence)
+meets the list, and it is where the proposal stops: it is carried for logging
+and decides nothing. The no-writer guard that protects the floor was widened to
+cover the list's key (`TestStandbyItemTiersHaveNoWriterOutsideConfig`), so no
+surface may name it, let alone write it. The tile's "M qualify" counts
+contributors who could be offered at least one item queued on the lane, from
+the same per-lane split `buildLaneQueueDepths` uses for the N beside it.
 
 ### S8 — Automatic dispatch, opt-in per lane
 

@@ -16,7 +16,7 @@ func TestDefaultCapDispatchesNothing(t *testing.T) {
 		if got := CapRemaining(c, lane, now); got != 0 {
 			t.Errorf("DailyCap %d: CapRemaining = %d, want 0", cap, got)
 		}
-		ok, reason := Qualifies(c, lane, tm, now)
+		ok, reason := Qualifies(c, lane, noItem, tm, now)
 		if ok {
 			t.Errorf("DailyCap %d: a candidate qualified", cap)
 		}
@@ -34,7 +34,7 @@ func TestCapDecrementsAtDispatchAndResetsByExpiry(t *testing.T) {
 	if got := CapRemaining(c, lane, now); got != 2 {
 		t.Fatalf("fresh candidate: CapRemaining = %d, want 2", got)
 	}
-	if ok, reason := Qualifies(c, lane, tm, now); !ok {
+	if ok, reason := Qualifies(c, lane, noItem, tm, now); !ok {
 		t.Fatalf("fresh candidate did not qualify: %q", reason)
 	}
 
@@ -44,7 +44,7 @@ func TestCapDecrementsAtDispatchAndResetsByExpiry(t *testing.T) {
 	if got := CapRemaining(c, lane, now); got != 1 {
 		t.Fatalf("after one dispatch: CapRemaining = %d, want 1", got)
 	}
-	if ok, _ := Qualifies(c, lane, tm, now); !ok {
+	if ok, _ := Qualifies(c, lane, noItem, tm, now); !ok {
 		t.Error("a candidate with one slot left did not qualify")
 	}
 
@@ -54,7 +54,7 @@ func TestCapDecrementsAtDispatchAndResetsByExpiry(t *testing.T) {
 	if got := CapRemaining(c, lane, later); got != 0 {
 		t.Fatalf("after two dispatches: CapRemaining = %d, want 0", got)
 	}
-	ok, reason := Qualifies(c, lane, tm, later)
+	ok, reason := Qualifies(c, lane, noItem, tm, later)
 	if ok {
 		t.Error("a candidate with a spent cap qualified")
 	}
@@ -72,7 +72,7 @@ func TestCapDecrementsAtDispatchAndResetsByExpiry(t *testing.T) {
 	if got := CapRemaining(c, lane, atExpiry); got != 1 {
 		t.Errorf("exactly %v after the first dispatch: CapRemaining = %d, want 1", DispatchWindow, got)
 	}
-	if ok, _ := Qualifies(c, lane, tm, atExpiry); !ok {
+	if ok, _ := Qualifies(c, lane, noItem, tm, atExpiry); !ok {
 		t.Error("the candidate did not qualify again once a slot expired")
 	}
 

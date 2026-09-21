@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
@@ -2511,12 +2512,19 @@ func normalizeStandbyLanes(lanes []string) []string {
 	return out
 }
 
-func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string) map[string]int {
+// QualifiedStandbyCounts is the M in each paused lane's "N waiting, M qualify".
+//
+// laneItems carries each lane's queued work, keyed by lane, so the count can
+// honour the item tiers of RFC #7629 S7. It may be nil: with the owner's
+// item-tier list empty — the shipped state — item-tier matching is not in
+// force, the queue is not consulted at all, and this is the S4 count unchanged.
+func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string, laneItems map[string][]standbypkg.Item) map[string]int {
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil || len(lanes) == 0 {
 		return nil
 	}
 	cfg := h.server.deps.Config
 	tiers := standbyTierMapFromConfig(cfg.Hub.StandbyModelTiers)
+	itemTiers := standbyItemTiersFromConfig(cfg.Hub.StandbyItemTiers)
 	out := make(map[string]int, len(lanes))
 	now := time.Now()
 	h.mu.RLock()
@@ -2554,7 +2562,60 @@ func (h *ContributeWSHub) QualifiedStandbyCounts(lanes []string) map[string]int 
 				},
 			})
 		}
-		out[lane] = standbypkg.QualifiedCount(candidates, policy, tiers, now)
+		queue := itemTiers.LaneQueue(laneItems[lane], standbyProposeItemTier)
+		out[lane] = standbypkg.QualifiedCountForQueue(candidates, policy, queue, tiers, now)
+	}
+	return out
+}
+
+// standbyItemTiersFromConfig builds the owner's authoritative item-tier list.
+//
+// A list that does not validate yields the EMPTY list, matching
+// standbyTierMapFromConfig: the config loader rejects such a list at boot, so
+// reaching here means a Config assembled some other way, and an empty list is
+// the safe reading of "the owner has not said which items are donatable".
+func standbyItemTiersFromConfig(entries []config.StandbyItemTier) standbypkg.ItemTiers {
+	itemEntries := make([]standbypkg.ItemTierEntry, 0, len(entries))
+	for _, entry := range entries {
+		itemEntries = append(itemEntries, standbypkg.ItemTierEntry{
+			Repo:   entry.Repo,
+			Label:  entry.Label,
+			Tier:   standbypkg.NormalizeTier(entry.Tier),
+			Signal: entry.Signal,
+		})
+	}
+	items, err := standbypkg.NewItemTiers(itemEntries)
+	if err != nil {
+		return standbypkg.ItemTiers{}
+	}
+	return items
+}
+
+// standbyProposeItemTier is the classifier's non-authoritative tier candidate
+// for an item. It is carried into the match for logging and decides nothing:
+// ItemTiers.Match answers from the owner's list alone.
+func standbyProposeItemTier(item standbypkg.Item) standbypkg.Tier {
+	return standbypkg.NormalizeTier(classify.ProposeStandbyItemTierFromLabels(item.Labels).Tier)
+}
+
+// standbyLaneItems projects the hive's actionable queue into the per-lane item
+// lists QualifiedStandbyCounts takes. The lane split mirrors
+// buildLaneQueueDepths so the M in "N waiting, M qualify" is counted over the
+// same items as the N.
+func standbyLaneItems(lanes []string, actionable *ghpkg.ActionableResult) map[string][]standbypkg.Item {
+	if len(lanes) == 0 || actionable == nil {
+		return nil
+	}
+	out := make(map[string][]standbypkg.Item, len(lanes))
+	for _, lane := range lanes {
+		items := make([]standbypkg.Item, 0, len(actionable.Issues.Items))
+		for _, issue := range actionable.Issues.Items {
+			if lane != "scanner" && issue.Lane != lane && issue.Lane != "" {
+				continue
+			}
+			items = append(items, standbypkg.Item{Repo: issue.Repo, Labels: issue.Labels})
+		}
+		out[lane] = items
 	}
 	return out
 }

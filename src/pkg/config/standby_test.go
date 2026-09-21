@@ -458,3 +458,119 @@ agents:
 		t.Errorf("error %q does not report the first agent in name order", first)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// S7 — the item-tier list: empty by default, validated tuples, and the
+// verifiability rule that defines T3
+// ---------------------------------------------------------------------------
+
+func TestStandby_ItemTiersShipEmpty(t *testing.T) {
+	cfg := mustLoadStandby(t, "", "")
+	if len(cfg.Hub.StandbyItemTiers) != 0 {
+		t.Fatalf("Hub.StandbyItemTiers = %v, want empty — the T3 list ships empty, so item-tier matching is not in force and S7 changes nothing until an owner opts in",
+			cfg.Hub.StandbyItemTiers)
+	}
+}
+
+func TestStandby_ItemTiersParseAndNormalize(t *testing.T) {
+	cfg := mustLoadStandby(t, "", `  standby_item_tiers:
+    - { repo: My-Org/Repo-A, label: Dependencies, tier: t3, signal: "the lockfile diff plus green CI" }
+    - { label: kind/security, tier: T1 }
+`)
+	if len(cfg.Hub.StandbyItemTiers) != 2 {
+		t.Fatalf("len(StandbyItemTiers) = %d, want 2", len(cfg.Hub.StandbyItemTiers))
+	}
+	first := cfg.Hub.StandbyItemTiers[0]
+	if first.Repo != "my-org/repo-a" || first.Label != "dependencies" || first.Tier != StandbyTierT3 {
+		t.Errorf("entry[0] = %+v, want repo/label case-folded and tier %q", first, StandbyTierT3)
+	}
+	if first.Signal == "" {
+		t.Error("entry[0] lost its signal; a T3 entry is defined by the signal it names")
+	}
+}
+
+func TestStandby_ItemTierRejectsUnknownTier(t *testing.T) {
+	_, err := loadStandby(t, "", `  standby_item_tiers:
+    - { label: dependencies, tier: unknown }
+`)
+	if err == nil {
+		t.Fatal("Load() = nil error, want a load error: an item that is not on the list is already unknown")
+	}
+	if !strings.Contains(err.Error(), "standby_item_tiers") {
+		t.Errorf("error %q does not name the field", err.Error())
+	}
+}
+
+func TestStandby_ItemTierRejectsInvalidTier(t *testing.T) {
+	if _, err := loadStandby(t, "", "  standby_item_tiers:\n    - { label: dependencies, tier: cheap }\n"); err == nil {
+		t.Error("Load() = nil error, want a load error for an unrecognised tier")
+	}
+}
+
+func TestStandby_ItemTierRequiresALabel(t *testing.T) {
+	// A label-less entry would be a wildcard over every item in scope — the
+	// opposite of naming a class of work whose correctness a reviewer can
+	// check from a signal.
+	if _, err := loadStandby(t, "", "  standby_item_tiers:\n    - { tier: T1 }\n"); err == nil {
+		t.Error("Load() = nil error, want a load error when label is missing")
+	}
+}
+
+func TestStandby_ItemTierRejectsAMalformedRepo(t *testing.T) {
+	if _, err := loadStandby(t, "", "  standby_item_tiers:\n    - { repo: \"my org/repo a\", label: dependencies, tier: T1 }\n"); err == nil {
+		t.Error("Load() = nil error, want a load error for a repo that is not a repository reference")
+	}
+}
+
+// The design's answer to the RFC's fourth open question, as a load error: an
+// item is T3-eligible only if its correctness is established by an automated
+// signal a reviewer can read without reconstructing the change. An owner who
+// cannot name that signal has not met the test.
+func TestStandby_T3ItemEntryMustNameItsSignal(t *testing.T) {
+	_, err := loadStandby(t, "", "  standby_item_tiers:\n    - { label: dependencies, tier: T3 }\n")
+	if err == nil {
+		t.Fatal("Load() = nil error, want a load error: a T3 entry with no signal is a T3 class whose review cost nobody checked")
+	}
+	if !strings.Contains(err.Error(), "signal") {
+		t.Errorf("error %q does not name the missing signal", err.Error())
+	}
+	// T1 and T2 entries carry no such requirement: the tier that admits the
+	// weakest configurations is the one that has to pay for itself.
+	if _, err := loadStandby(t, "", "  standby_item_tiers:\n    - { label: kind/security, tier: T1 }\n"); err != nil {
+		t.Errorf("Load() error = %v, want a T1 entry to load without a signal", err)
+	}
+}
+
+func TestStandby_DuplicateItemTierTupleIsLoadError(t *testing.T) {
+	_, err := loadStandby(t, "", `  standby_item_tiers:
+    - { repo: my-org/repo-a, label: dependencies, tier: T1 }
+    - { repo: My-Org/Repo-A, label: Dependencies, tier: T3, signal: green CI }
+`)
+	if err == nil {
+		t.Fatal("Load() = nil error, want a load error: one class of item maps to exactly one tier, and last-one-wins would silently pick which intention to honour")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error %q does not say the entries are duplicates", err.Error())
+	}
+}
+
+// The tuple is (repo, label): the same label in two repositories is two
+// entries, because the signal that makes a class cheap to review — a link
+// checker, a lockfile job — is a property of the repository.
+func TestStandby_ItemTierTupleIsRepoAndLabel(t *testing.T) {
+	cfg := mustLoadStandby(t, "", `  standby_item_tiers:
+    - { repo: my-org/repo-a, label: dependencies, tier: T3, signal: "the lockfile diff plus green CI" }
+    - { repo: my-org/repo-b, label: dependencies, tier: T1 }
+    - { label: dependencies, tier: T2 }
+`)
+	if len(cfg.Hub.StandbyItemTiers) != 3 {
+		t.Fatalf("len(StandbyItemTiers) = %d, want 3", len(cfg.Hub.StandbyItemTiers))
+	}
+	keys := map[string]bool{}
+	for _, entry := range cfg.Hub.StandbyItemTiers {
+		if keys[entry.TupleKey()] {
+			t.Errorf("TupleKey collision on %q", entry.TupleKey())
+		}
+		keys[entry.TupleKey()] = true
+	}
+}

@@ -302,6 +302,81 @@ func classifyTier(titleLower, labelsStr string, labels []string) Tier {
 	return TierMedium
 }
 
+// StandbyItemTierProposal is a NON-AUTHORITATIVE capability-tier candidate for
+// a work item, for RFC #7629 standby (step S7).
+//
+// It is a proposal in the literal sense: matching never reads it. The owner's
+// item-tier list (`HubConfig.StandbyItemTiers`) decides which items are
+// donatable and at what tier, `standby.ItemTiers.Match` is where a proposal
+// meets that list, and the list wins in every disagreement — including the
+// disagreement where the list is silent, which is the common one. An item
+// nobody listed is `unknown` and not standby-eligible however confidently it
+// was proposed.
+//
+// So what is it for? It is the cheapest honest thing Hive can say about an
+// item's review cost, derived from routing it already does, available to logs
+// and outcome rows. It is deliberately NOT rendered as a suggestion anywhere:
+// no surface proposes adding an item to the T3 list, for the same reason no
+// surface proposes lowering a lane's floor.
+type StandbyItemTierProposal struct {
+	// Tier is "T1", "T2", "T3", or "" when the labels propose nothing.
+	Tier string
+	// Label is the label the proposal came from, for the log line. Empty when
+	// Tier is empty.
+	Label string
+}
+
+// ProposeStandbyItemTier proposes a capability tier for an issue from its
+// LABELS alone.
+func ProposeStandbyItemTier(issue github.Issue) StandbyItemTierProposal {
+	return ProposeStandbyItemTierFromLabels(issue.Labels)
+}
+
+// ProposeStandbyItemTierFromLabels is the label-only tier proposal, reusing
+// this package's label routing (labelMatchesRoutingToken) and its existing
+// complexity vocabulary rather than inventing a second table: a Complex signal
+// proposes T1, a Simple one proposes T3, and anything else proposes nothing.
+//
+// LABELS ONLY, on purpose. classifyTier also reads the title, and title prose
+// is the weakest evidence there is about how expensive a change will be to
+// review — "fix typo in the scheduler's lock ordering" is not a typo. A
+// proposal drawn from a title would be a guess wearing a tier's clothes. A
+// label is at least something a maintainer applied.
+//
+// Proposing NOTHING is the common answer and the right one: most items carry
+// no label that says anything about review cost.
+func ProposeStandbyItemTierFromLabels(labels []string) StandbyItemTierProposal {
+	for _, l := range labels {
+		label := strings.ToLower(strings.TrimSpace(l))
+		if label == "" {
+			continue
+		}
+		// Complex first: a security or regression label is the strongest
+		// label-borne statement this package makes about an item, and it must
+		// not be outvoted by a cosmetic one on the same issue.
+		for _, token := range []string{"kind/security", "kind/regression"} {
+			if label == token {
+				return StandbyItemTierProposal{Tier: "T1", Label: label}
+			}
+		}
+	}
+	for _, l := range labels {
+		label := strings.ToLower(strings.TrimSpace(l))
+		if label == "" {
+			continue
+		}
+		if label == "auto-qa" || label == "auto-qa-finding" {
+			return StandbyItemTierProposal{Tier: "T3", Label: label}
+		}
+		for _, kw := range activeSimpleKeywords() {
+			if labelMatchesRoutingToken(label, strings.ToLower(strings.TrimSpace(kw))) {
+				return StandbyItemTierProposal{Tier: "T3", Label: label}
+			}
+		}
+	}
+	return StandbyItemTierProposal{}
+}
+
 func tierToModel(t Tier) ModelRecommendation {
 	switch t {
 	case TierSimple:

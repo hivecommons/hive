@@ -759,7 +759,7 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 
 ## Standby contributors (`standby`)
 
-> **Configuration only.** Hive parses, defaults and validates this block today, and **nothing reads it** — no lane offers work, no relay stands by, no tile counts anybody. It is step S2 of [RFC #7629](https://github.com/hivecommons/hive/issues/7629); the pause signal, the relay's standby mode, matching and dispatch are later phases. The full plan, and the reasoning behind every rule below, is in [the standby design record](design/standby-contributors.md). Writing the block now is safe and changes no behaviour; a hive that writes nothing is unaffected byte for byte.
+> **Nothing dispatches yet.** Hive parses, defaults and validates this block, and matching reads it to render a count — a paused lane's tile can say how many standby contributors *would* qualify (steps S2, S4 and S7 of [RFC #7629](https://github.com/hivecommons/hive/issues/7629)). **No work is offered to anybody**: dispatch, the donated-task marker and the hold gate are S5, and automatic dispatch is S8. The full plan, and the reasoning behind every rule below, is in [the standby design record](design/standby-contributors.md). Writing the block is safe; a hive that writes nothing is unaffected byte for byte.
 
 The idea: when a lane pauses because the hive is **out of budget**, its queue can be offered to contributors who volunteered ahead of time and whom you approved — running their own agent, on their own machine, with their own model, handing the result back as an ordinary hold-gated PR. No credential moves. The risk the design is built around is that donating a frontier model costs real money and donating a cheap one costs nearly nothing, so the pool tends toward cheap models and an owner staring at a stuck queue gets tempted to lower the bar until something qualifies. Hence a **floor**, per lane.
 
@@ -776,6 +776,9 @@ hub:
   standby_model_tiers:                 # owner-authored; Hive ships NO defaults
     - { backend: claude, model: claude-opus-5, reasoning_effort: high, tier: T1 }
     - { backend: codex,  model: gpt-5.6-terra, reasoning_effort: high, tier: T2 }
+  standby_item_tiers:                  # owner-authored; ships EMPTY
+    - { repo: my-org/repo-a, label: dependencies, tier: T3, signal: "the lockfile diff plus green CI" }
+    - { label: kind/security, tier: T1 }
   standby_allow_private_repos: false   # default off
 ```
 
@@ -786,11 +789,38 @@ hub:
 | `standby.daily_cap_per_contributor` | How many donated tasks one approved contributor may be dispatched on this lane per rolling day. Default **0**, and 0 means *nothing is dispatched* — which is what makes the block safe to adopt before the dispatch path exists. Negative fails the load; a value above 50 is clamped with a logged warning. |
 | `hub.standby_contributors` | The approved GitHub logins. Approval is durable and lives in config; a relay declaring standby is *volunteering*, which grants nothing. A login here grants nothing else either: not a trust tier, not a role, not a credential. |
 | `hub.standby_model_tiers` | Which contributor model configurations count as which tier. Owner-authored, and **Hive publishes no defaults**: an unmapped configuration is `unknown`, and `unknown` never clears any floor, so a hive that has not written this mapping reports "0 qualify" rather than admitting a model nobody assessed. The **whole** configuration is the key — `backend`, `model`, `reasoning_effort`, and the optional `advisor_model` / `advisor_reasoning_effort`, which are the five fields a relay already reports — so the same model at a different reasoning effort is a different entry, and two entries for one configuration are a load error rather than last-one-wins. `backend` and `model` are required on every entry: an entry without a model would be a wildcard over every model on that backend, which is the opposite of matching a configuration. |
+| `hub.standby_item_tiers` | Which classes of **work item** may be offered to standby, and at what tier. Owner-authored and **authoritative**, and it **ships empty** — and empty means item-tier matching is *not in force at all*: the lane floor decides alone and nothing changes until you opt in. Once there is one entry, an item matching none of them is `unknown`, and an unknown item is not standby-eligible; matching then requires **both** bars, so a T1 configuration may take a T3 item and a T3 configuration may not take a T1 item. An entry is keyed on `(repo, label)` — omit `repo` to apply it to every repository the lane serves — `label` matches the whole label or a whole `/`-delimited segment of it, and duplicate tuples are a load error. **A `T3` entry must name its `signal`**; see the rule below. |
 | `hub.standby_allow_private_repos` | Whether standby may be offered work in private repositories. **Default off.** A standby contributor receives the full task context — issue title, body, labels, the lane's policy text — which for a private repository is read access in substance. Approve only people you would give read access to. |
+
+### What may be donated: the T3 list is defined by verifiability
+
+The break-even on a donated change is not its *size*. It is whether the
+reviewer must re-derive the work to check it: a one-line change whose
+correctness needs the surrounding subsystem in your head is expensive to
+review, while a larger change whose correctness is asserted by a signal you can
+read in seconds is cheap. So the eligibility test `hub.standby_item_tiers` is
+written against is:
+
+> An item is T3-eligible only if its correctness is established by an automated
+> signal a reviewer can read without reconstructing the change.
+
+That rule is enforced, not just documented: a `T3` entry with no `signal` fails
+the load. Three candidates to start from, each with its signal named — a
+dependency bump (the lockfile diff plus green CI), a broken-link fix (the link
+checker), and adding a test for an already-specified pure function (the test
+fails on the parent commit and passes on the change). Explicitly **not** T3:
+anything whose acceptance rests on taste, naming, prose quality or "does this
+belong here" — including changelog entries and doc rewrites, which look small
+and review expensively.
+
+Hive's classifier can *propose* a tier for an item from its labels, and the
+proposal is worth exactly what it costs: the list decides, a proposal never
+adds an entry or widens one, and **no surface proposes adding an item to the
+T3 list** — for the same reason none proposes lowering a floor.
 
 ### The floor is read-only, everywhere
 
-`min_model_capability` is readable on every surface and writable **only by editing `hive.yaml`**. There is no dashboard control, no `PUT` field and no chat command, and a test (`TestStandbyFloorHasNoWriterOutsideConfig`) scans every route, template and client file to keep it that way. Nor will any surface *suggest* lowering it: a paused lane that nobody qualifies for renders as exactly that and offers no next step — no "0 contributors qualify — lower the floor?", no "2 would qualify at T3".
+`min_model_capability` is readable on every surface and writable **only by editing `hive.yaml`**. There is no dashboard control, no `PUT` field and no chat command, and a test (`TestStandbyFloorHasNoWriterOutsideConfig`) scans every route, template and client file to keep it that way. `hub.standby_item_tiers` is held to the same rule by the same scan (`TestStandbyItemTiersHaveNoWriterOutsideConfig`): widening what a weak configuration may take is the item-side twin of lowering a floor, and it is an edit to `hive.yaml` too. Nor will any surface *suggest* lowering it: a paused lane that nobody qualifies for renders as exactly that and offers no next step — no "0 contributors qualify — lower the floor?", no "2 would qualify at T3".
 
 That is deliberate, and it is the point of the whole feature. A lane that ran on a strong model for months and then quietly starts producing work from a weak one costs more reviewer trust than a paused lane saves queue depth. **"Nobody qualifies, the lane stays paused" is an acceptable answer.** Lowering a floor should be a decision you made, in a file, on purpose.
 
