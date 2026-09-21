@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -385,10 +384,10 @@ func TestRecordReviewVerdictIsIdempotentPerPerspective(t *testing.T) {
 // which is the exact failure this event exists to prevent.
 func TestRecordVerdictEventPassesShapeValidation(t *testing.T) {
 	dir := t.TempDir()
-	// Keep the accepted verdict off the host's real metrics dir.
-	prevReportDir := outputschema.AgentReportDir
-	outputschema.AgentReportDir = t.TempDir()
-	defer func() { outputschema.AgentReportDir = prevReportDir }()
+	// Keep the accepted verdict off the host's real data dir.
+	prevReportDir := review.DefaultReportDir
+	review.DefaultReportDir = t.TempDir()
+	defer func() { review.DefaultReportDir = prevReportDir }()
 	raw := validVerdictJSON(t, "o/r", 5, "correctness", "approve")
 	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
 		pendingVerdict("o/r", 5, review.PerspectiveCorrectness, "reviewer"),

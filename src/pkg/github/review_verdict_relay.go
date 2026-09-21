@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -55,9 +54,7 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
 	if raw == "" {
 		return
 	}
-	if dir == "" {
-		dir = outputschema.AgentReportDir
-	}
+	dir = review.ReportDir(dir)
 	// Validate BEFORE the report lands where the collector reads. review.Collect
 	// fails the whole collection on the first unparseable file, so one malformed
 	// agent verdict would otherwise take down routing for every PR in the hive.

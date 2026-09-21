@@ -60,6 +60,29 @@ const (
 	DefaultVerdictsDir = DefaultDispatchStateDir
 )
 
+// DefaultReportDir is where the verdict relay drops each perspective's
+// review-report-*.json and where Collect reads them back. It lives under the
+// durable data dir for the same reason the artifact does: the reports used to
+// sit in outputschema.AgentReportDir (/var/run/hive-metrics), on the
+// container's ephemeral layer, and were merged into the artifact only on the
+// next eval cycle. A pod replacement inside that window lost the verdict, the
+// head looked unreviewed, and the reviewer posted the same review on the same
+// SHA a second time. Observed on a bluefin spoke with the fleet updater rolling
+// pods several times a day.
+//
+// A var, not a const, only so tests can keep accepted verdicts off the host's
+// real data dir — the ReviewDispatchStatePath pattern.
+var DefaultReportDir = DefaultDispatchStateDir + "/review-reports"
+
+// ReportDir resolves the directory review reports are written to and read
+// from: the caller's explicit choice, else DefaultReportDir.
+func ReportDir(dir string) string {
+	if dir == "" {
+		return DefaultReportDir
+	}
+	return dir
+}
+
 // ReviewVerdictsPath is the other half of the reviewer's memory: the recorded
 // verdicts that make PlanDispatch treat a (PR, head SHA) as already judged. If
 // it is missing, AggregateFor reports "never reviewed" and the PR is dispatched
@@ -258,9 +281,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 }
 
 func Collect(dir string, opts AggregateOptions) (Artifact, error) {
-	if dir == "" {
-		dir = outputschema.AgentReportDir
-	}
+	dir = ReportDir(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return Artifact{}, err
@@ -370,7 +391,48 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	for _, key := range order {
 		artifact.Items = append(artifact.Items, merged[key])
 	}
-	return artifact, WriteArtifact(path, artifact)
+	if err := WriteArtifact(path, artifact); err != nil {
+		return artifact, err
+	}
+	// Only after the merge is durable: a report is redundant once its verdict
+	// is in the artifact, but it is deleted on the artifact's own horizon, not
+	// immediately, because a combined verdict lands one file per perspective
+	// and a collect between two of those files must not turn the survivors
+	// into a partial aggregate.
+	_, _ = PruneReports(dir, VerdictRetention, now)
+	return artifact, nil
+}
+
+// PruneReports removes review-report-*.json files in dir whose modification
+// time is older than olderThan. Reports live on the durable data dir now
+// (DefaultReportDir), so without this they would accumulate for the life of
+// the volume. It is best-effort: an entry that cannot be inspected or removed
+// is skipped, never fatal, because a stale file costs a few kilobytes and a
+// failed collect costs a review cycle. Returns the number of files removed.
+func PruneReports(dir string, olderThan time.Duration, now time.Time) (int, error) {
+	dir = ReportDir(dir)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, ReviewReportFilePrefix) || !strings.HasSuffix(name, ReviewReportFileSuffix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) <= olderThan {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 func LoadArtifact(path string) (Artifact, error) {
