@@ -589,6 +589,20 @@ Exactly one container uses these paths. See the
 [SELinux release qualification](podman-selinux-release-qualification.md) for
 the measured difference.
 
+**The setup script tells Hive which image the Quadlet runs.** During
+`bin/hive-podman-setup.sh`, `hive.env` receives
+`HIVE_SELF_IMAGE=<Image= value>` and
+`HIVE_SELF_IMAGE_TRACKING=registry|pinned`; `hive.container` loads that file
+through its shipped `EnvironmentFile=` line and is still installed byte-for-byte.
+`registry` means the unit is using Podman registry auto-update for a non-digest
+image; digest pins and non-auto-updating images are reported as `pinned`. The
+spoke dashboard uses those variables because a standalone Quadlet has no
+Kubernetes Deployment to inspect: release status can show `Channel: candidate`
+and `tracking registry` for `Image=ghcr.io/hivecommons/hive:candidate`, while
+digest pins show pinned tracking and the digest. Channel selection remains
+unavailable on Podman; edit `Image=` in `hive.container` (and reload/restart
+through the lifecycle) to change channels.
+
 ## Docker-free: the quick start run with Docker scrubbed
 
 `README.md`'s Quick Start (Podman) asserts *"Docker is not required and is not

@@ -15,12 +15,12 @@ import (
 func resetSelfImageCache(t *testing.T) {
 	t.Helper()
 	selfImageMu.Lock()
-	pc, pf, pa := selfImageCached, selfImageFetched, selfImageAttempted
-	selfImageCached, selfImageFetched, selfImageAttempted = "", time.Time{}, false
+	pc, ps, pf, pa := selfImageCached, selfImageSourceCached, selfImageFetched, selfImageAttempted
+	selfImageCached, selfImageSourceCached, selfImageFetched, selfImageAttempted = "", SelfImageSourceUnknown, time.Time{}, false
 	selfImageMu.Unlock()
 	t.Cleanup(func() {
 		selfImageMu.Lock()
-		selfImageCached, selfImageFetched, selfImageAttempted = pc, pf, pa
+		selfImageCached, selfImageSourceCached, selfImageFetched, selfImageAttempted = pc, ps, pf, pa
 		selfImageMu.Unlock()
 	})
 }
@@ -173,6 +173,7 @@ func TestSelfDeploymentImageIsMemoised(t *testing.T) {
 // It must also never return a stale-but-wrong image.
 func TestSelfDeploymentImageCachesFailureAsEmpty(t *testing.T) {
 	resetSelfImageCache(t)
+	t.Setenv(selfImageEnv, "")
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -189,5 +190,50 @@ func TestSelfDeploymentImageCachesFailureAsEmpty(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("a failure must be cached too, got %d API calls", calls)
+	}
+}
+
+func TestSelfDeploymentImageFallsBackToPodmanEnv(t *testing.T) {
+	resetSelfImageCache(t)
+	t.Setenv(selfImageEnv, "ghcr.io/hivecommons/hive:candidate")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if got := SelfDeploymentImage(); got != "ghcr.io/hivecommons/hive:candidate" {
+		t.Fatalf("SelfDeploymentImage = %q, want env fallback", got)
+	}
+	if got := SelfDeploymentImageSource(); got != SelfImageSourcePodmanEnv {
+		t.Fatalf("SelfDeploymentImageSource = %q, want %q", got, SelfImageSourcePodmanEnv)
+	}
+}
+
+func TestSelfDeploymentImageDeploymentWinsOverPodmanEnv(t *testing.T) {
+	resetSelfImageCache(t)
+	t.Setenv(selfImageEnv, "ghcr.io/hivecommons/hive:candidate")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(deploymentJSON("ghcr.io/hivecommons/hive:stable")))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if got := SelfDeploymentImage(); got != "ghcr.io/hivecommons/hive:stable" {
+		t.Fatalf("SelfDeploymentImage = %q, want Deployment image", got)
+	}
+	if got := SelfDeploymentImageSource(); got != SelfImageSourceDeployment {
+		t.Fatalf("SelfDeploymentImageSource = %q, want %q", got, SelfImageSourceDeployment)
+	}
+}
+
+func TestPodmanSelfImageTrackingModeFromEnv(t *testing.T) {
+	t.Setenv(selfImageTrackingEnv, "registry")
+	if got := PodmanSelfImageTrackingMode("ghcr.io/hivecommons/hive:candidate"); got != "registry" {
+		t.Fatalf("registry tracking = %q", got)
+	}
+	t.Setenv(selfImageTrackingEnv, "pinned")
+	if got := PodmanSelfImageTrackingMode("ghcr.io/hivecommons/hive:candidate"); got != "pinned" {
+		t.Fatalf("pinned tracking = %q", got)
 	}
 }

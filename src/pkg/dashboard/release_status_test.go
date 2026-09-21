@@ -62,6 +62,15 @@ func TestBuildReleaseChannelStatus(t *testing.T) {
 			detailSubstr: "could not be read",
 			detailAbsent: "stable",
 		},
+		{
+			name:         "unresolved: digest pin keeps image ref",
+			imageRef:     "ghcr.io/hivecommons/hive@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			wantChannel:  "",
+			wantResolved: false,
+			wantTag:      "",
+			detailSubstr: "sha256:aaaaaaaa",
+			detailAbsent: "stable",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +83,9 @@ func TestBuildReleaseChannelStatus(t *testing.T) {
 			}
 			if got.ImageTag != tc.wantTag {
 				t.Errorf("ImageTag = %q, want %q", got.ImageTag, tc.wantTag)
+			}
+			if tc.imageRef != "" && got.ImageRef != tc.imageRef {
+				t.Errorf("ImageRef = %q, want %q", got.ImageRef, tc.imageRef)
 			}
 			if tc.detailSubstr != "" && !strings.Contains(got.Detail, tc.detailSubstr) {
 				t.Errorf("Detail = %q, want it to contain %q", got.Detail, tc.detailSubstr)

@@ -410,6 +410,9 @@ var (
 		}
 		return versionImageSource()
 	}
+	selfDeploymentImageSourceForDashboard = func() string {
+		return spoke.SelfDeploymentImageSource()
+	}
 )
 
 // defaultUpstreamBranch is the fallback branch for the self-version check
@@ -692,19 +695,25 @@ func (s *Server) autoMergeLabel() string {
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	imageRef, channel := "", versionChannel
+	imageSource := spoke.SelfImageSourceUnknown
 	if versionImageSource != nil {
 		imageRef = versionImageSource()
 		channel = spoke.ImageReleaseChannel(imageRef)
+		imageSource = selfDeploymentImageSourceForDashboard()
 	}
 	tracking := spoke.ImageTrackingMode(imageRef)
+	if imageSource == spoke.SelfImageSourcePodmanEnv {
+		tracking = spoke.PodmanSelfImageTrackingMode(imageRef)
+	}
 	resp := map[string]interface{}{
-		"version":    "2.0.0",
-		"go":         "1.25",
-		"hash":       versionHash,
-		"short":      versionShort,
-		"branch":     upstreamBranch(),
-		"tracking":   tracking,
-		"deployment": s.detectDeployment(),
+		"version":     "2.0.0",
+		"go":          "1.25",
+		"hash":        versionHash,
+		"short":       versionShort,
+		"branch":      upstreamBranch(),
+		"tracking":    tracking,
+		"imageSource": imageSource,
+		"deployment":  s.detectDeployment(),
 	}
 	if channel != "" {
 		resp["channel"] = channel
@@ -834,7 +843,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		readUpgradeOutcome(), marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
-	if s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
+	if imageSource != spoke.SelfImageSourcePodmanEnv && s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
 		releaseStatus.Channel.SelectorEnabled = true
 		releaseStatus.Channel.SelectorDetail = "Choose stable, candidate, or edge. The hub records your intent and the current channel changes only after the Deployment image lands."
 		if pending := pendingReleaseChannel(releaseStatus.Channel.Channel); pending != "" && pending != releaseStatus.Channel.Channel {
@@ -842,7 +851,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		releaseStatus.Channel.SelectorEnabled = false
-		releaseStatus.Channel.SelectorDetail = "Release-channel selection is available only for hub-managed spokes already following a release channel; this deployment appears self-hosted, branch-tracking, pinned, or missing hub credentials."
+		if imageSource == spoke.SelfImageSourcePodmanEnv {
+			releaseStatus.Channel.SelectorReason = "podman-self-hosted"
+			releaseStatus.Channel.SelectorDetail = "self-hosted Podman spoke; change Image= in hive.container"
+		} else {
+			releaseStatus.Channel.SelectorReason = "unsupported"
+			releaseStatus.Channel.SelectorDetail = "Release-channel selection is available only for hub-managed spokes already following a release channel; this deployment appears self-hosted, branch-tracking, pinned, or missing hub credentials."
+		}
 	}
 	resp["releaseStatus"] = releaseStatus
 

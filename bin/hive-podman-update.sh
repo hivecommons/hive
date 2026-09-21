@@ -194,6 +194,42 @@ show()  { sctl show "$UNIT" -p "$1" --value 2>/dev/null; }
 state() { printf '%s/%s/%s' "$(show ActiveState)" "$(show SubState)" "$(show Result)"; }
 now()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+installed_hive_image() {
+  as_owner cat "${QUADLET_DIR}/hive.container" 2>/dev/null | sed -n 's|^Image=\(.*\)$|\1|p' | head -n1
+}
+
+set_hive_env_var() {
+  local file="$1" key="$2" value="$3" tmp out rc
+  tmp="$(mktemp -p "$SRC_ROOT" .hive.env.in.XXXXXX)" || return 1
+  out="$(mktemp -p "$SRC_ROOT" .hive.env.out.XXXXXX)" || { rm -f "$tmp"; return 1; }
+  if as_owner test -f "$file"; then
+    as_owner cat "$file" >"$tmp" || { rm -f "$tmp" "$out"; return 1; }
+  else
+    : >"$tmp"
+  fi
+  awk -v key="$key" -v value="$value" '
+    BEGIN { line = key "=" value }
+    $0 ~ "^[[:space:]]*" key "=" {
+      if (!wrote) { print line; wrote = 1 }
+      next
+    }
+    { print }
+    END {
+      if (!wrote) { print line }
+    }
+  ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return 1; }
+  as_owner install -Dm600 "$out" "$file"
+  local rc=$?
+  rm -f "$tmp" "$out"
+  return "$rc"
+}
+
+set_self_image_env() {
+  local image="$1" tracking="$2" env_file="${CONF_DIR}/hive.env"
+  set_hive_env_var "$env_file" HIVE_SELF_IMAGE "$image" || return 1
+  set_hive_env_var "$env_file" HIVE_SELF_IMAGE_TRACKING "$tracking" || return 1
+}
+
 require_unit() {
   if ! sctl cat "$UNIT" >/dev/null 2>&1; then
     bad "$UNIT is not known to this manager -- install the units and run daemon-reload"
@@ -344,8 +380,10 @@ HEADER
     done
     printf '\n[Container]\nImage=%s\n' "$image"
   } >"$tmp"
-  as_owner install -Dm644 "$tmp" "$DROPIN"
+  as_owner install -Dm644 "$tmp" "$DROPIN" && set_self_image_env "$image" pinned
+  local rc=$?
   rm -f "$tmp"
+  return "$rc"
 }
 
 # Replaces the outcome word of the newest history entry in place.
@@ -1002,6 +1040,7 @@ do_rollback() {
 }
 
 do_unpin() {
+  local image tracking
   require_unit
   head1 "Unpin -- $MODE_LABEL"
   if [ ! -f "$DROPIN" ]; then
@@ -1010,6 +1049,13 @@ do_unpin() {
   fi
   as_owner rm -f "$DROPIN"
   as_owner rmdir "$DROPIN_DIR" 2>/dev/null
+  image="$(installed_hive_image)"
+  [ -n "$image" ] || image="${BASE_IMAGE_REPO}:stable"
+  if autoupdate_on_host; then tracking="registry"; else tracking="pinned"; fi
+  set_self_image_env "$image" "$tracking" || {
+    bad "could not write self-image metadata to ${CONF_DIR}/hive.env"
+    exit "$EX_CONFIG"
+  }
   ok "removed $DROPIN"
   sctl daemon-reload
   warn "the unit is back on the floating tag: $(unit_image)"
@@ -1034,7 +1080,7 @@ autoupdate_label() {
 timer_state() { sctl is-enabled "$AUTOUPDATE_TIMER" 2>/dev/null; }
 
 do_autoupdate() {
-  local action="${REF:-status}"
+  local action="${REF:-status}" image
   case "$action" in
     on|off|status) : ;;
     *) printf 'autoupdate takes on, off, or status (got %s)\n' "$action" >&2; usage ;;
@@ -1108,7 +1154,16 @@ do_autoupdate() {
   fi
 
   as_owner mkdir -p "$DROPIN_DIR"
-  as_owner cp "$AUTOUPDATE_SRC" "$AUTOUPDATE_DROPIN"
+  if ! as_owner cp "$AUTOUPDATE_SRC" "$AUTOUPDATE_DROPIN"; then
+    bad "could not install $AUTOUPDATE_DROPIN"
+    exit "$EX_CONFIG"
+  fi
+  image="$(installed_hive_image)"
+  [ -n "$image" ] || image="${BASE_IMAGE_REPO}:stable"
+  if ! set_self_image_env "$image" registry; then
+    bad "could not write self-image metadata to ${CONF_DIR}/hive.env"
+    exit "$EX_CONFIG"
+  fi
   ok "installed $AUTOUPDATE_DROPIN"
   sctl daemon-reload
   ok "daemon-reload: the unit now carries AutoUpdate=registry"

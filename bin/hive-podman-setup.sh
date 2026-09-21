@@ -288,6 +288,51 @@ unit_image() {
   sed -n 's|^Image=\(.*\)$|\1|p' "$1" | head -n1
 }
 
+unit_autoupdate_registry() {
+  grep -Eq '^[[:space:]]*(AutoUpdate=registry|Label=io\.containers\.autoupdate=registry)[[:space:]]*$' "$1"
+}
+
+image_is_digest_pin() {
+  printf '%s\n' "$1" | grep -Eq '@(sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})([[:space:]]*)$'
+}
+
+podman_self_image_tracking() {
+  local unit="$1" image="$2"
+  if image_is_digest_pin "$image"; then
+    printf 'pinned\n'
+  elif unit_autoupdate_registry "$unit"; then
+    printf 'registry\n'
+  else
+    printf 'pinned\n'
+  fi
+}
+
+set_hive_env_var() {
+  local file="$1" key="$2" value="$3" tmp out rc
+  tmp="$(mktemp -p "$SRC_DIR" .hive.env.in.XXXXXX)" || return 1
+  out="$(mktemp -p "$SRC_DIR" .hive.env.out.XXXXXX)" || { rm -f "$tmp"; return 1; }
+  if as_owner test -f "$file"; then
+    as_owner cat "$file" >"$tmp" || { rm -f "$tmp" "$out"; return 1; }
+  else
+    : >"$tmp"
+  fi
+  awk -v key="$key" -v value="$value" '
+    BEGIN { line = key "=" value }
+    $0 ~ "^[[:space:]]*" key "=" {
+      if (!wrote) { print line; wrote = 1 }
+      next
+    }
+    { print }
+    END {
+      if (!wrote) { print line }
+    }
+  ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return 1; }
+  as_owner install -Dm600 "$out" "$file"
+  rc=$?
+  rm -f "$tmp" "$out"
+  return "$rc"
+}
+
 # The volume's real name, read from the unit that creates it rather than a
 # constant that can drift from VolumeName= (#4485).
 unit_volume_name() {
@@ -393,6 +438,7 @@ HIVE_IMAGE="$(unit_image "${QUADLET_SRC}/hive.container")"
 [ -n "$HEALTH_PORT" ]  || die "$EX_SOFTWARE" "could not read the HealthCmd port from hive.container"
 [ -n "$GATEWAY_PORT" ] || die "$EX_SOFTWARE" "could not read PublishPort from hive-gateway.container"
 [ -n "$HIVE_IMAGE" ]   || die "$EX_SOFTWARE" "could not read Image= from hive.container"
+HIVE_SELF_IMAGE_TRACKING="$(podman_self_image_tracking "${QUADLET_SRC}/hive.container" "$HIVE_IMAGE")"
 ok "read from the units: health port ${HEALTH_PORT}, gateway port ${GATEWAY_PORT}"
 
 # Reported because the two are not interchangeable, and step 4 below couples
@@ -406,6 +452,7 @@ else
   warn "hive.container probes only ${HEALTH_PORT}: it can report healthy while the dashboard is dead (#4476)"
 fi
 info "image: ${HIVE_IMAGE}"
+info "self-image tracking: ${HIVE_SELF_IMAGE_TRACKING}"
 
 # --- step 2: the host preflights, before anything is written ----------------
 step "2/9  Host preflight (engine, root mode, cgroups; subordinate IDs, storage, networking)"
@@ -492,6 +539,11 @@ else
     || die "$EX_CONFIG" "could not append HIVE_DEPLOYMENT_PODMAN_MODE to ${CONF_DIR}/hive.env"
   ok "wrote   deployment mode: ${deploy_mode} appended to hive.env"
 fi
+set_hive_env_var "${CONF_DIR}/hive.env" HIVE_SELF_IMAGE "$HIVE_IMAGE" \
+  || die "$EX_CONFIG" "could not write HIVE_SELF_IMAGE to ${CONF_DIR}/hive.env"
+set_hive_env_var "${CONF_DIR}/hive.env" HIVE_SELF_IMAGE_TRACKING "$HIVE_SELF_IMAGE_TRACKING" \
+  || die "$EX_CONFIG" "could not write HIVE_SELF_IMAGE_TRACKING to ${CONF_DIR}/hive.env"
+ok "wrote   self image metadata to hive.env"
 
 # --- step 4: the #4367 coupling, enforced -----------------------------------
 step "4/9  dashboard.port must equal the unit's HealthCmd port (#4367)"

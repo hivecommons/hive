@@ -65,9 +65,15 @@ func TestReleaseChannelSwitchRelaysIntentAndReportsPending(t *testing.T) {
 
 func TestReleaseChannelSelectorUnavailableWhenImageUnresolved(t *testing.T) {
 	oldImage := selfDeploymentImageForDashboard
+	oldVersionSource := versionImageSource
 	selfDeploymentImageForDashboard = func() string { return "ghcr.io/hivecommons/hive:v4-latest" }
+	versionImageSource = selfDeploymentImageForDashboard
 	setPendingReleaseChannel("")
-	t.Cleanup(func() { selfDeploymentImageForDashboard = oldImage; setPendingReleaseChannel("") })
+	t.Cleanup(func() {
+		selfDeploymentImageForDashboard = oldImage
+		versionImageSource = oldVersionSource
+		setPendingReleaseChannel("")
+	})
 
 	srv := NewServerWithAuth(0, "token", slog.Default())
 	srv.RegisterAPI(&Dependencies{Config: &config.Config{Hub: config.HubConfig{URL: "https://hub.example"}, HiveID: "hosted-test"}, Logger: slog.Default()})
@@ -89,5 +95,66 @@ func TestReleaseChannelSelectorUnavailableWhenImageUnresolved(t *testing.T) {
 	}
 	if !strings.Contains(out.ReleaseStatus.Channel.SelectorDetail, "branch-tracking") {
 		t.Fatalf("selector detail = %q, want honest branch-tracking explanation", out.ReleaseStatus.Channel.SelectorDetail)
+	}
+}
+
+func TestReleaseChannelSelectorUnavailableNamesPodmanSelfHosted(t *testing.T) {
+	oldVersionSource := versionImageSource
+	oldImageSource := selfDeploymentImageSourceForDashboard
+	versionImageSource = func() string { return "ghcr.io/hivecommons/hive:candidate" }
+	selfDeploymentImageSourceForDashboard = func() string { return "podman-env" }
+	t.Cleanup(func() { versionImageSource = oldVersionSource; selfDeploymentImageSourceForDashboard = oldImageSource })
+
+	srv := NewServerWithAuth(0, "token", slog.Default())
+	srv.RegisterAPI(&Dependencies{Config: &config.Config{Hub: config.HubConfig{URL: "https://hub.example"}, HiveID: "hosted-test"}, Logger: slog.Default()})
+	rec := doGet(srv, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/version status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ReleaseStatus SpokeReleaseStatus `json:"releaseStatus"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ReleaseStatus.Channel.SelectorEnabled {
+		t.Fatalf("selector enabled for podman self-hosted: %+v", out.ReleaseStatus.Channel)
+	}
+	if out.ReleaseStatus.Channel.SelectorReason != "podman-self-hosted" {
+		t.Fatalf("selector reason = %q", out.ReleaseStatus.Channel.SelectorReason)
+	}
+	if !strings.Contains(out.ReleaseStatus.Channel.SelectorDetail, "self-hosted Podman spoke") ||
+		!strings.Contains(out.ReleaseStatus.Channel.SelectorDetail, "Image=") {
+		t.Fatalf("selector detail = %q", out.ReleaseStatus.Channel.SelectorDetail)
+	}
+}
+
+func TestVersionReportsPodmanRegistryTracking(t *testing.T) {
+	oldVersionSource := versionImageSource
+	oldImageSource := selfDeploymentImageSourceForDashboard
+	versionImageSource = func() string { return "ghcr.io/hivecommons/hive:candidate" }
+	selfDeploymentImageSourceForDashboard = func() string { return "podman-env" }
+	t.Setenv("HIVE_SELF_IMAGE_TRACKING", "registry")
+	t.Cleanup(func() { versionImageSource = oldVersionSource; selfDeploymentImageSourceForDashboard = oldImageSource })
+
+	srv := NewServerWithAuth(0, "token", slog.Default())
+	srv.RegisterAPI(&Dependencies{Config: &config.Config{}, Logger: slog.Default()})
+	rec := doGet(srv, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/version status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Tracking      string             `json:"tracking"`
+		Channel       string             `json:"channel"`
+		ReleaseStatus SpokeReleaseStatus `json:"releaseStatus"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Tracking != "registry" {
+		t.Fatalf("tracking = %q, want registry", out.Tracking)
+	}
+	if out.Channel != "candidate" || !out.ReleaseStatus.Channel.Resolved {
+		t.Fatalf("channel response = %q release=%+v, want candidate resolved", out.Channel, out.ReleaseStatus.Channel)
 	}
 }

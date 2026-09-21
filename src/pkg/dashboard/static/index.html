@@ -18368,6 +18368,8 @@ function burnAreaChart() {
     }
 
     function versionTrackingLabel(v) {
+      if (v.tracking === 'registry') return 'tracking registry';
+      if (v.tracking === 'pinned' && v.imageSource === 'podman-env') return 'tracking pinned';
       if (v.tracking === 'floating' || v.tracking === 'pinned') return v.tracking;
       return 'tracking unknown';
     }
@@ -18377,7 +18379,8 @@ function burnAreaChart() {
       if (v.channel) details.push('Channel: ' + String(v.channel));
       if (v.branch && v.branch !== 'unknown') details.push('Built from: ' + String(v.branch));
       if (v.imageRef) details.push('Image: ' + String(v.imageRef));
-      if (v.tracking === 'floating') details.push('Tracking: floating (mutable tag)');
+      if (v.tracking === 'registry') details.push('Tracking: podman auto-update (registry)');
+      else if (v.tracking === 'floating') details.push('Tracking: floating (mutable tag)');
       else if (v.tracking === 'pinned') details.push('Tracking: pinned (immutable tag or digest)');
       else details.push('Tracking: unknown (authoritative image reference unavailable)');
       return details.join('\n');
@@ -18508,7 +18511,8 @@ function burnAreaChart() {
       } else {
         chColor = 'var(--yellow, #d4a017)'; chIcon = '❔';
         chLabel = 'Channel: <strong>unknown</strong>' +
-          (ch.imageTag ? ' <span style="opacity:0.8">(image tag <code>' + escapeHtml(ch.imageTag) + '</code> is not a release channel)</span>' : ' <span style="opacity:0.8">(image reference unavailable)</span>');
+          (ch.imageTag ? ' <span style="opacity:0.8">(image tag <code>' + escapeHtml(ch.imageTag) + '</code> is not a release channel)</span>' :
+          (ch.imageRef ? ' <span style="opacity:0.8">(image <code>' + escapeHtml(ch.imageRef) + '</code> has no release-channel tag)</span>' : ' <span style="opacity:0.8">(image reference unavailable)</span>'));
       }
       var selectorHtml = '';
       if (ch.selectorEnabled) {

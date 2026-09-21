@@ -146,6 +146,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 func rememberSelfImage(image string) {
 	selfImageMu.Lock()
 	selfImageCached = image
+	selfImageSourceCached = SelfImageSourceDeployment
 	selfImageFetched = time.Now()
 	selfImageAttempted = true
 	selfImageMu.Unlock()
@@ -154,6 +155,15 @@ func rememberSelfImage(image string) {
 // mutableTagSuffix is retained for image-tag validation, which accepts the
 // same per-branch moving-tag shape as the shared provenance classifier.
 const mutableTagSuffix = "-latest"
+
+const (
+	SelfImageSourceUnknown    = "unknown"
+	SelfImageSourceDeployment = "deployment"
+	SelfImageSourcePodmanEnv  = "podman-env"
+
+	selfImageEnv         = "HIVE_SELF_IMAGE"
+	selfImageTrackingEnv = "HIVE_SELF_IMAGE_TRACKING"
+)
 
 // imageTagIsMutable reports whether restarting the pod can pick up new code for
 // this image reference. Digest pins (@sha256:...) and SHA tags never can.
@@ -165,6 +175,19 @@ func imageTagIsMutable(image string) bool {
 // Deployment image reference: "floating", "pinned", or "unknown".
 func ImageTrackingMode(image string) string {
 	return string(imageref.Tracking(image))
+}
+
+// PodmanSelfImageTrackingMode reports the tracking mode declared by Quadlet's
+// setup-time environment when the self image came from HIVE_SELF_IMAGE.
+func PodmanSelfImageTrackingMode(image string) string {
+	switch strings.TrimSpace(os.Getenv(selfImageTrackingEnv)) {
+	case "registry":
+		return "registry"
+	case "pinned":
+		return "pinned"
+	default:
+		return ImageTrackingMode(image)
+	}
 }
 
 // ImageReleaseChannel returns the explicit channel of a valid deployment ref.
@@ -463,10 +486,11 @@ func k8sAPIPatch(path string, body []byte) error {
 const selfImageCacheTTL = 10 * time.Minute
 
 var (
-	selfImageMu        sync.RWMutex
-	selfImageCached    string
-	selfImageFetched   time.Time
-	selfImageAttempted bool
+	selfImageMu           sync.RWMutex
+	selfImageCached       string
+	selfImageSourceCached = SelfImageSourceUnknown
+	selfImageFetched      time.Time
+	selfImageAttempted    bool
 )
 
 // SelfImageReleaseChannel returns the explicit channel in the validated
@@ -497,14 +521,31 @@ func SelfDeploymentImage() string {
 	selfImageMu.RUnlock()
 
 	img, err := selfDeploymentImage()
+	source := SelfImageSourceDeployment
 	if err != nil {
-		img = ""
+		img = strings.TrimSpace(os.Getenv(selfImageEnv))
+		if img != "" {
+			source = SelfImageSourcePodmanEnv
+		} else {
+			source = SelfImageSourceUnknown
+		}
 	}
 
 	selfImageMu.Lock()
 	selfImageCached = img
+	selfImageSourceCached = source
 	selfImageFetched = time.Now()
 	selfImageAttempted = true
 	selfImageMu.Unlock()
 	return img
+}
+
+// SelfDeploymentImageSource returns where SelfDeploymentImage's current cached
+// value came from, forcing the same lookup when no cached value exists yet.
+func SelfDeploymentImageSource() string {
+	_ = SelfDeploymentImage()
+	selfImageMu.RLock()
+	source := selfImageSourceCached
+	selfImageMu.RUnlock()
+	return source
 }

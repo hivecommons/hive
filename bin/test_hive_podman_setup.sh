@@ -24,7 +24,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SETUP="${ROOT}/bin/hive-podman-setup.sh"
-TEST_TMP="$(mktemp -d)"
+TEST_TMP="$(mktemp -d -p "$ROOT" .test-hive-podman-setup.XXXXXX)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
 FAKE_BIN="${TEST_TMP}/fakebin"
@@ -339,6 +339,8 @@ done
 if [[ -d "${CONF}/secrets" ]]; then pass "created secrets/"; else fail "did not create secrets/"; fi
 assert_eq "750" "$(stat -c '%a' "${CONF}/secrets")" "secrets/ is mode 750 (#4359)"
 assert_eq "600" "$(stat -c '%a' "${CONF}/hive.env")" "hive.env is mode 600"
+assert_file_contains "${CONF}/hive.env" "HIVE_SELF_IMAGE=ghcr.io/hivecommons/hive:stable" "hive.env carries the spoke self image (#8066)"
+assert_file_contains "${CONF}/hive.env" "HIVE_SELF_IMAGE_TRACKING=pinned" "hive.env carries the spoke self-image tracking mode (#8066)"
 
 calls="$(cat "$CALL_LOG")"
 assert_contains "$calls" "systemctl --user daemon-reload" "ran daemon-reload on the user manager"

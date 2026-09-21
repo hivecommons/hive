@@ -25,10 +25,15 @@ type ReleaseChannelStatus struct {
 	// even when it is not a channel so an operator can see what the resolution
 	// saw. "" when the image ref carried no tag or could not be read.
 	ImageTag string `json:"imageTag,omitempty"`
+	// ImageRef is the observed image reference for unresolved refs without a
+	// tag, such as digest pins, so the UI can show the pin rather than treating
+	// it as unavailable.
+	ImageRef string `json:"imageRef,omitempty"`
 	// PendingChannel is a just-requested hub intent that has not landed in the
 	// Deployment image yet. Channel remains the observed truth while this is set.
 	PendingChannel  string `json:"pendingChannel,omitempty"`
 	SelectorEnabled bool   `json:"selectorEnabled"`
+	SelectorReason  string `json:"selectorReason,omitempty"`
 	SelectorDetail  string `json:"selectorDetail,omitempty"`
 	Detail          string `json:"detail"`
 }
@@ -40,12 +45,14 @@ type ReleaseChannelStatus struct {
 // operator-facing detail string.
 func buildReleaseChannelStatus(imageRef, trackedChannel string) ReleaseChannelStatus {
 	channel, resolved, tag := spoke.ResolveReleaseChannel(imageRef, trackedChannel)
-	st := ReleaseChannelStatus{Channel: channel, Resolved: resolved, ImageTag: tag}
+	st := ReleaseChannelStatus{Channel: channel, Resolved: resolved, ImageTag: tag, ImageRef: strings.TrimSpace(imageRef)}
 	switch {
 	case resolved:
 		st.Detail = fmt.Sprintf("Following the %q release channel; updates arrive when that channel is retagged.", channel)
 	case strings.TrimSpace(tag) != "":
 		st.Detail = fmt.Sprintf("Not following a release channel: this hive's image tag %q is a branch tag or a pinned SHA, so it updates by tracking that tag directly.", tag)
+	case strings.TrimSpace(imageRef) != "":
+		st.Detail = fmt.Sprintf("Not following a release channel: this hive's image ref %q has no release-channel tag.", strings.TrimSpace(imageRef))
 	default:
 		st.Detail = "Release channel unknown: this hive's own image reference could not be read, so it cannot say which channel (if any) it follows."
 	}

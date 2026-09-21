@@ -79,11 +79,15 @@ A spoke running a channel image shows both delivery dimensions in its own dashbo
 
 The tooltip includes the running SHA, channel when present, built-from branch, authoritative Deployment image ref, and tracking mode. The spoke derives both channel and tracking mode server-side from its cached in-cluster Deployment image lookup; browser code does not infer mutability from tag strings. If the Deployment cannot be read (for example, during a plain `docker run`) or its image ref is malformed, the badge says `tracking unknown` and the API does not expose the untrusted ref. This preserves the distinction between unknown provenance and an intentional pin. The channel portion was introduced by [#3762](https://github.com/hivecommons/hive/pull/3762); the tracking detail is specified by [#6321](https://github.com/hivecommons/hive/issues/6321).
 
+On a self-hosted Podman Quadlet spoke there is no Kubernetes Deployment to read. `bin/hive-podman-setup.sh` therefore writes the unit's own image metadata into `hive.env`, which `hive.container` already loads through `EnvironmentFile=`: `HIVE_SELF_IMAGE` carries the `Image=` reference and `HIVE_SELF_IMAGE_TRACKING` is `registry` when Quadlet registry auto-update is enabled for a non-digest image, otherwise `pinned`. The spoke dashboard uses those variables only when the Deployment lookup is unavailable, so Kubernetes spokes keep the Deployment-derived behaviour above. A Quadlet spoke running `Image=ghcr.io/hivecommons/hive:candidate` with registry auto-update shows `candidate · tracking registry` in the header and `Channel: candidate` in the release-status panel; a digest-pinned Quadlet image shows pinned tracking and the digest while leaving the channel unresolved.
+
 ## Spoke self-service selector
 
 Hosted spoke dashboards that are already following a release-channel tag show a **Follow channel** selector in the release-status panel. Choosing `stable`, `candidate`, or `edge` calls the spoke-local `POST /api/release-channel`, which relays the request to the hub's existing `POST /api/saas/hives/{id}/switch-branch` path using the spoke's dashboard-token proof. The hub still performs the authorization, channel/tag validation, GHCR publishability check, tracked-channel persistence, and kubectl-or-heartbeat delivery.
 
 The spoke UI keeps reported state and intent separate: after a selection it continues to show the channel observed from the Deployment image, plus a pending "switch requested" note, until the rollout/heartbeat lands on the requested tag. Spokes that are self-hosted, pinned, branch-tracking, missing hub credentials, or otherwise unresolved show an honest "selection unavailable" explanation rather than a dead control.
+
+For self-hosted Podman Quadlet spokes the selector is intentionally unavailable even when `HIVE_SELF_IMAGE` resolves a channel, because there is no hub-managed Deployment image to patch. The panel says to change `Image=` in `hive.container`; after editing, reload/restart through the Podman lifecycle so `hive.env` carries the updated `HIVE_SELF_IMAGE` and tracking mode.
 
 ## Known limitations
 
