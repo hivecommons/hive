@@ -12005,3 +12005,253 @@ test('#7924 the label is for GitHub issue tasks only', () => {
     assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
   } finally { teardown(relay); }
 });
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#7996 — a contributor whose CLI login expired kept reporting
+// ready and failed every task on the 30-minute watchdog.
+//
+// Reported from a live host: the Claude session lapsed at 23:23 and the relay
+// worked the same wall until 07:40. Nine assignments, nine identical
+// "[environment] no observed progress for 30min — the agent CLI is not visibly
+// working" failures, nine hive issues in failure cooldown. The pane said
+// exactly what was wrong the whole time — "● Login expired · Please run
+// /login" — and nothing outside the container ever repeated it: the dashboard's
+// green dots are the hub's OWN agents, which had a working login.
+//
+// Two behaviours are pinned below. The relay must NAME the condition instead of
+// describing a dead host, and it must stop asking for work until a person has
+// been at the pane.
+// ---------------------------------------------------------------------------
+
+// The pane exactly as captured in the report: the prompt was typed, the CLI
+// refused it, and the cursor came straight back to ready-looking chrome. That
+// last part is the trap — the chrome is what the relay read as "CLI ready".
+const CLAUDE_LOGIN_EXPIRED_PANE = [
+  '● I will start by reading hivecommons/hive#111.',
+  '',
+  '● Login expired · Please run /login',
+  '',
+  '✻ Churned for 0s',
+  '',
+  '❯ ',
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+].join('\n');
+
+test('#7996 paneLoginWallLine returns the CLI\'s own refusal, and only that', () => {
+  const wall = paneClassifier.paneLoginWallLine;
+  assert.strictEqual(wall(CLAUDE_LOGIN_EXPIRED_PANE), '● Login expired · Please run /login',
+    'the line is the evidence — it is quoted to the operator and to the hub');
+  assert.strictEqual(wall('● Please run /login · API Error: 401 {"type":"authentication_error"}\n'),
+    '● Please run /login · API Error: 401 {"type":"authentication_error"}');
+  assert.strictEqual(wall('Error: No API key found for anthropic.\nUse /login, set an API key environment variable\n'),
+    'Error: No API key found for anthropic.');
+
+  // Two independent signals, as everywhere else in this classifier. This
+  // repository's sources contain every one of these strings, and an agent
+  // reading them into its pane must not park its own relay.
+  assert.strictEqual(wall('I documented that the CLI prints Please run /login when it expires\n'), null);
+  assert.strictEqual(wall('  the login expired handling lives in pane-classifier.js\n'), null);
+
+  // #4400 survives: 403 is authorization, and /login fixes nothing about it, so
+  // it stays with the fatal bucket however the line is phrased. Quota keeps its
+  // own hold.
+  assert.strictEqual(wall('● Please run /login · API Error: 403 {"error":{"message":"team not allowed to access model"}}\n'), null);
+  assert.strictEqual(wall('⚠ Individual quota reached. Please upgrade your subscription. Resets in 2h.\n'), null);
+});
+
+test('#7996 a signed-out CLI is not read as ready', () => {
+  // The mid-session wording has to count on its own: a rendering that prints
+  // only "Login expired", without the "/login" hint, used to fall through to
+  // the footer chrome below it and classify ready.
+  assert.strictEqual(paneClassifier.classifyReadiness('● Login expired\n❯ \n  ⏵⏵ auto mode on', 'claude'), 'needs-login');
+  // Chrome-gated, because this test reads the WHOLE pane — scrollback and
+  // prose included — and an agent working on this repository writes the phrase.
+  assert.strictEqual(paneClassifier.classifyReadiness(
+    'I renamed the login expired branch in pane-classifier.js\n❯ \n  ⏵⏵ auto mode on', 'claude'), 'ready');
+});
+
+test('#7996 a sign-in wall is handed back with the real reason, not the 30-minute watchdog', () => {
+  const relay = loadRelay({ backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE, attachedClients: false });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-Danathar/goodreads-mcp-111-1789961600', 111);
+
+    // First sighting is NOT acted on: #5094 established that a mid-session
+    // expiry is reported blocked_on_human so a person who IS watching can log
+    // in and rescue the task in place. That contract is unchanged.
+    relay.__stallTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'one frame must not park a contributor — the wall has to be confirmed');
+    assert.strictEqual(relay.__sent.filter(m => m.status === 'blocked_on_human').length, 1,
+      'the first tick still asks for a human, exactly as #5094 requires');
+
+    const before = relay.__sent.length;
+    relay.__stallTick();
+    const after = relay.__sent.slice(before);
+
+    const failed = after.find(m => m.type === 'task_failed');
+    assert.ok(failed, `the task must be handed back at once, not held for the watchdog: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(failed.failure_kind, 'environment');
+    // The misattribution the issue is about. "not visibly working" reads as a
+    // broken contributor host; the host was fine and the fix is thirty seconds
+    // of a person's time.
+    assert.ok(!/not visibly working/.test(failed.reason),
+      `a signed-out CLI must not be reported as a dead one: ${failed.reason}`);
+    assert.match(failed.reason, /signed out/);
+    assert.match(failed.reason, /Login expired · Please run \/login/);
+
+    // THE FIX: no `ready`. Before this the hub handed the same issue straight
+    // back, and the cycle repeated every thirty minutes until a human noticed.
+    assert.ok(!after.some(m => m.type === 'ready'),
+      `a signed-out relay must not advertise for work: ${JSON.stringify(after.map(m => m.type))}`);
+    assert.strictEqual(relay.signinHoldActive(), true);
+    assert.match(relay.getSigninHoldReason(), /Login expired/);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 a person actively at the pane keeps the task instead of parking the relay', () => {
+  // The #5094 premise, honoured where it actually holds: somebody is attached
+  // and typing, so they are the one thing that can clear this and the task is
+  // worth holding for them. Presence is a RECENCY question (#5277) — the idle
+  // dashboard tab in the test below is not a person.
+  const relay = loadRelay({
+    backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE, attachedClients: true, attachedIdleMs: 2000,
+  });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7996-attended', 111);
+    relay.__stallTick();
+    relay.__stallTick();
+    relay.__stallTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'do not take the task away from somebody who is logging in right now');
+    assert.strictEqual(relay.signinHoldActive(), false);
+    assert.ok(relay.__sent.filter(m => m.status === 'blocked_on_human').length >= 1,
+      'and keep asking for their attention');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 a pane that stops showing the wall resets the confirmation count', () => {
+  // The evidence has to be CONSECUTIVE, or one misread accumulates across a
+  // whole task and eventually parks a healthy contributor.
+  let pane = CLAUDE_LOGIN_EXPIRED_PANE;
+  const relay = loadRelay({ backend: 'claude', paneText: () => pane, attachedClients: false });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7996-flicker', 111);
+    relay.__stallTick();
+    assert.strictEqual(relay.getSigninWallTicks(), 1);
+    pane = CLAUDE_API_ERROR_PANE.replace('● API Error: Connection lost mid-response. The response above may be incomplete.',
+      '● Reading src/pkg/agent/manager.go');
+    relay.__stallTick();
+    assert.strictEqual(relay.getSigninWallTicks(), 0, 'a tick without the wall wipes the count');
+    assert.strictEqual(relay.signinHoldActive(), false);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 the progress-lease expiry names the sign-in wall instead of "not visibly working"', () => {
+  // Second net. The tick loop catches this first, but the lease timer exists
+  // for the case where the tick loop is not running at all — and that is the
+  // exact path that produced all nine reported failures.
+  const relay = loadRelay({
+    backend: 'claude', paneText: CLAUDE_LOGIN_EXPIRED_PANE, attachedClients: false, prMeta: new Error('gh: offline'),
+  });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-7996-lease', 111);
+    relay.setDeliveredVerdictBaseline(null);
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1);
+    assert.ok(!/no observed progress/.test(failed[0].reason),
+      `the lease expiry must report the cause it can see: ${failed[0].reason}`);
+    assert.match(failed[0].reason, /signed out/);
+    assert.strictEqual(relay.signinHoldActive(), true);
+    assert.ok(!relay.__sent.some(m => m.type === 'ready'), 'and it does not ask for the next one');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 `ready` is withheld at the send choke point for the whole hold', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterSigninHold('● Login expired · Please run /login');
+    const before = relay.__sent.length;
+    // Every route back into the loop: a reconnect, a task exit.
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }));
+    relay.setCurrentTask({ task_id: 't-x', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' });
+    relay.failCurrentTask('unrelated failure during the hold');
+    const after = relay.__sent.slice(before);
+    assert.ok(!after.some(m => m.type === 'ready'),
+      `no route may advertise readiness during a sign-in hold: ${JSON.stringify(after.map(m => m.type))}`);
+    // ...but frames about work already in flight still go out.
+    assert.ok(after.some(m => m.type === 'task_failed'),
+      'only `ready` is withheld — failure/progress frames must still be delivered');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 a pushed assignment during a hold is declined, not attempted', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterSigninHold('● Login expired · Please run /login');
+    const before = relay.__sent.length;
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign', task_id: 't-pushed', kind: 'issue', repo: 'foo/bar', number: 9, title: 'pushed',
+    }));
+    const after = relay.__sent.slice(before);
+    assert.strictEqual(relay.getCurrentTask(), null, 'a signed-out relay must not take the task');
+    const declined = after.find(m => m.type === 'task_failed' && m.task_id === 't-pushed');
+    assert.ok(declined, `the offer must be declined so another contributor gets it: ${JSON.stringify(after)}`);
+    assert.match(declined.reason, /signed out/);
+    assert.strictEqual(declined.failure_kind, 'environment');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 the hold ends when somebody has been at the pane since it began', () => {
+  const relay = loadRelay({ backend: 'claude', attachedClients: true, attachedIdleMs: 0 });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterSigninHold('● Login expired · Please run /login');
+    relay.__ageSigninHold(60000);
+    const before = relay.__sent.length;
+    relay.reprobeSigninHold();
+    assert.strictEqual(relay.signinHoldActive(), false, 'input newer than the hold is the person the banner asked for');
+    assert.ok(relay.__sent.slice(before).some(m => m.type === 'ready'),
+      'and the relay has to say so — nothing else would restart the loop');
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('#7996 the hold stands while nobody comes, and is bounded when nobody ever does', () => {
+  const relay = loadRelay({ backend: 'claude', attachedClients: false });
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  try {
+    relay.enterSigninHold('● Login expired · Please run /login');
+    relay.__ageSigninHold(60000);
+    relay.reprobeSigninHold();
+    assert.strictEqual(relay.signinHoldActive(), true,
+      'an unanswered tmux (or an empty session) is not evidence of a person');
+
+    // The ceiling exists so a contributor whose tmux cannot report client
+    // activity is not out of the fleet until someone restarts the relay. At the
+    // ceiling it asks once; the next task re-arms the hold if the CLI is still
+    // signed out.
+    relay.__ageSigninHold(relay.SIGNIN_HOLD_MAX_MS + 1);
+    const before = relay.__sent.length;
+    relay.reprobeSigninHold();
+    assert.strictEqual(relay.signinHoldActive(), false);
+    assert.ok(relay.__sent.slice(before).some(m => m.type === 'ready'));
+    assert.ok(relay.SIGNIN_HOLD_MAX_MS <= 24 * 60 * 60 * 1000,
+      `the ceiling must be a bound a human day can absorb, got ${relay.SIGNIN_HOLD_MAX_MS}ms`);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});

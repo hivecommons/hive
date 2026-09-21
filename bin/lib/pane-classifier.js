@@ -251,7 +251,19 @@ function classifyReadiness(text, backend) {
       // Order matters, as it does for bob and codex below: the blocked states
       // are classified FIRST, so a pane sitting on a login or trust gate is
       // never reported ready by persistent chrome it happens to draw as well.
+      // The second alternative is the MID-SESSION wording
+      // (hivecommons/hive#7996): Claude Code renders "● Login expired · Please
+      // run /login" when a credential lapses under a running CLI. Its
+      // "Please run /login" half is already caught by the first alternative,
+      // but a rendering that prints only the "Login expired" half would not be
+      // — so it is listed, under the CLI's own ● / ⚠ chrome. The chrome gate is
+      // the difference between the two halves of this test: these patterns are
+      // matched against the WHOLE pane, prose and scrollback included, and
+      // "Login expired" is a phrase an agent working on this repository writes.
+      // The durable half of that fix is the relay's sign-in hold, which does
+      // not depend on the line surviving on the pane at all.
       if (/Not logged in|Please run \/login/.test(text)) return 'needs-login';
+      if (/(?:^|\n)\s*[●⚠]\s*[^\n]*Login expired/.test(text)) return 'needs-login';
       // The first-run login chooser. It is NOT the same screen as the two
       // patterns above: those are what a signed-out CLI prints once it is past
       // onboarding, while this is onboarding itself, and it appears whenever
@@ -744,6 +756,65 @@ function paneShowsLoginRequiredError(text) {
   });
 }
 
+// LOGIN_WALL_CHROME_RE matches a CLI's OWN error rendering at line start — the
+// ● bullet Claude Code prints its messages under, the ⚠/✗ other CLIs use, and
+// the bare "Error:" omp emits. Paired with a wording below, never used alone.
+const LOGIN_WALL_CHROME_RE = /^\s*(?:[●⚠✗✖×]|Error:)\s*\S/;
+
+// paneLoginWallLine returns the CLI's own sign-in refusal line from the visible
+// tail, or null (hivecommons/hive#7996).
+//
+// It answers a STRICTER question than paneShowsLoginRequiredError above, for a
+// caller with more to lose. That predicate decides what to do with ONE task —
+// hand it to the human already watching — so an over-broad match costs a task.
+// This one decides whether the relay stops asking for work at all, and an
+// over-broad match costs the contributor its place in the fleet until someone
+// notices. So it follows the same two-independent-signals rule the quota and
+// unretryable detectors in this file follow: the CLI's own chrome, PLUS the
+// wording. This repository's sources contain every string in the list, and an
+// agent reading them into its pane must not park its own relay.
+//
+// Returning the LINE rather than a boolean is deliberate: it is the only
+// evidence of the condition that survives outside the container, so the relay
+// quotes it verbatim into the operator banner and into the failure reason the
+// hub records. "Login expired · Please run /login" tells an operator what to
+// do; "no observed progress for 30min" — what this condition used to be
+// reported as — tells them to go looking at a healthy machine.
+function paneLoginWallLine(text) {
+  const lines = paneTail(text, TRANSIENT_API_ERROR_TAIL_LINES).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lower = line.toLowerCase();
+    const chromed = LOGIN_WALL_CHROME_RE.test(line) || lower.includes('api error:');
+    if (!chromed) continue;
+    // #4400's ordering, carried over from classifyPane: a line that ALSO
+    // carries an authorization refusal or a spent quota is not a sign-in wall,
+    // whatever login hint sits next to it. /login fixes a 401 and fixes nothing
+    // about a 403, and parking the relay on "sign in" for either would send an
+    // operator to a remedy that cannot work. Those two keep their own buckets
+    // (FATAL_API_ERROR, and the quota hold).
+    if (UNRETRYABLE_API_ERROR_STATUS_RE.test(line) ||
+      CHROMELESS_QUOTA_BANNER_RE.test(line) ||
+      UNRETRYABLE_API_ERROR_PATTERNS.some((pat) => lower.includes(pat))) continue;
+    // Claude Code's mid-session expiry, as captured live on the #7996 pane:
+    // "● Login expired · Please run /login". Either half is enough once the
+    // chrome gate above has passed.
+    if (lower.includes('login expired') || lower.includes('please run /login') || lower.includes('not logged in')) {
+      return line.trim();
+    }
+    // omp's spelling of the same wall — see paneShowsLoginRequiredError.
+    if (/no api key found for \S+/.test(lower) &&
+      (lower.includes('use /login') || (lines[i + 1] || '').toLowerCase().includes('use /login'))) {
+      return line.trim();
+    }
+    // 401 is authentication; 403 is authorization and stays with the fatal
+    // bucket, because /login fixes the first and nothing about the second
+    // (#4400).
+    if (lower.includes('api error:') && /\b401\b/.test(lower)) return line.trim();
+  }
+  return null;
+}
+
 // paneUnknownAPIErrorLine returns the first line of the visible tail that
 // carries Claude Code's own error rendering — a line-leading "● API Error:" —
 // or null. Reached only after the three curated detectors above have NOT
@@ -1069,6 +1140,8 @@ module.exports = {
   paneQuotaExhaustion,
   parseQuotaResetMs,
   paneShowsLoginRequiredError,
+  // The CLI's own sign-in refusal, chrome-gated — what parks the relay (#7996).
+  paneLoginWallLine,
   paneUnknownAPIErrorLine,
   classifyPane,
 };

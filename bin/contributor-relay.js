@@ -61,6 +61,7 @@ const {
   paneShowsUnretryableAPIError,
   paneQuotaExhaustion,
   paneShowsLoginRequiredError,
+  paneLoginWallLine,
   paneUnknownAPIErrorLine,
   classifyPane,
 } = require('./lib/pane-classifier.js');
@@ -519,6 +520,43 @@ const QUOTA_HOLD_MAX_MS = RELAY_TEST_TIMING ? 200 : 6 * 60 * 60 * 1000;
 // refusal and another full hold; a small grace makes the first re-ask count.
 const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
 
+// ── Sign-in hold (hivecommons/hive#7996) ─────────────────────────────────────
+//
+// The quota hold above exists because a provider refusal is a property of the
+// ACCOUNT, not of the task. An expired CLI login is the same shape with one
+// difference that makes it worse: it does not expire on its own.
+//
+// Reported live: a contributor's Claude session lapsed at 23:23 and the relay
+// worked the same wall until 07:40 the next morning. Every task prompt was
+// answered with "● Login expired · Please run /login", the CLI returned to its
+// prompt, the relay read that prompt as a healthy CLI, advertised `ready`, took
+// the next lease — and the task then died thirty minutes later on the
+// progress-lease watchdog as "[environment] no observed progress for 30min —
+// the agent CLI is not visibly working". Nine tasks, nine identical failures,
+// nine issues put in failure cooldown, and nothing anywhere said "log in": the
+// dashboard's green dots are the HUB's agents, which had their own working
+// login, and the only evidence was inside the container's tmux pane.
+//
+// Two things were missing, and both are fixed here. The relay never acted on
+// the wall it could see (the task sat in blocked_on_human until the watchdog
+// ate it), and it went straight back to `ready` afterwards. So: name the
+// condition, hand the task back AT ONCE with a reason an operator can act on,
+// and stop asking for work until a person has been at the pane.
+//
+// SIGNIN_HOLD_REPROBE_MS is how often the hold re-checks for that person and
+// restates the banner. It is a reminder cadence as much as a poll: a relay that
+// has stood down must keep saying why, or the silence is the same invisibility
+// the incident was about.
+const SIGNIN_HOLD_REPROBE_MS = RELAY_TEST_TIMING ? 50 : 10 * 60 * 1000;
+// Hard ceiling, for the same reason QUOTA_HOLD_MAX_MS has one. The release
+// signal is tmux client activity, which an old tmux (or a container whose
+// session is driven some other way) may not report at all; without a ceiling
+// that contributor would be out of the fleet until someone restarted the relay.
+// At the ceiling the relay simply asks again — and if the login is still dead,
+// the very first task re-arms the hold, at a cost of one task per six hours
+// instead of one every thirty minutes.
+const SIGNIN_HOLD_MAX_MS = RELAY_TEST_TIMING ? 400 : 6 * 60 * 60 * 1000;
+
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
 // optional — an older hub simply ignores it) and the hub advertises its own
@@ -758,6 +796,127 @@ function releaseQuotaHold(why) {
   }
 }
 
+// ── Sign-in hold state (hivecommons/hive#7996) ───────────────────────────────
+// signinHoldSince is the epoch ms the hold began; 0 means not held.
+// signinHoldReason keeps the CLI's own refusal line, which is the only evidence
+// of the condition that leaves the container.
+let signinHoldSince = 0;
+let signinHoldReason = '';
+let signinHoldTimer = null;
+
+function signinHoldActive() {
+  return signinHoldSince > 0;
+}
+
+function signinHoldBannerLines(line) {
+  return [
+    `The ${BACKEND} CLI is not signed in.`,
+    `It answered the task prompt with: ${line}`,
+    '',
+    'This host is healthy; the CLI credential is not. Until someone signs it',
+    'back in, every task handed to this contributor would fail the same way,',
+    'so the relay has stopped asking the hub for work.',
+    '',
+    ...loginBannerLines(BACKEND, ATTACH_COMMAND).slice(1),
+  ];
+}
+
+// enterSigninHold parks the relay until a person has been at the pane.
+//
+// Unlike the quota hold there is no stated expiry to wait out — a lapsed
+// credential stays lapsed — so the release signal is human activity in the tmux
+// session (see reprobeSigninHold), with SIGNIN_HOLD_MAX_MS as the backstop.
+//
+// SAID LOUDLY, AND SAID AGAIN. The incident's defining property was silence:
+// the operator's dashboard was accurate and green in every panel while the
+// contributor failed nine tasks. The banner is the notification, so it is
+// restated on every re-probe rather than printed once and scrolled away.
+function enterSigninHold(line) {
+  const reason = line || `the ${BACKEND} CLI is asking for a sign-in`;
+  if (signinHoldActive()) {
+    // Already parked. Keep the FIRST line seen — it is the one closest to the
+    // failure — and do not restart the clock, or a second detection would push
+    // the ceiling out indefinitely.
+    return;
+  }
+  signinHoldSince = Date.now();
+  signinHoldReason = reason;
+
+  console.warn('');
+  for (const bannerLine of renderBoxedBanner(signinHoldBannerLines(reason))) console.warn(bannerLine);
+  console.warn('');
+
+  armSigninHoldReprobe();
+}
+
+function armSigninHoldReprobe() {
+  if (signinHoldTimer) clearTimeout(signinHoldTimer);
+  signinHoldTimer = setTimeout(reprobeSigninHold, SIGNIN_HOLD_REPROBE_MS);
+  // A hold outliving the work it bounds must not keep the process alive on its
+  // own — same reasoning as the quota hold's timer.
+  if (typeof signinHoldTimer.unref === 'function') signinHoldTimer.unref();
+}
+
+// reprobeSigninHold asks the one question that can end the hold: has anybody
+// been at this tmux session since it began?
+//
+// tmuxSessionHumanPresence() reports the age of the newest client input. An age
+// SHORTER than the hold has been running means that input happened after the
+// hold started — somebody attached and typed, which is exactly the act the
+// banner asked for. It is not proof the sign-in worked, and it does not need to
+// be: releasing costs one task, and that task re-arms the hold if the wall is
+// still there.
+//
+// An idleMs of null is tmux declining to answer (an old tmux, or no client at
+// all). That is not evidence of a person, so the hold stands and the ceiling
+// below is what ends it.
+function reprobeSigninHold() {
+  signinHoldTimer = null;
+  if (!signinHoldActive()) return;
+  const heldMs = Date.now() - signinHoldSince;
+  const presence = tmuxSessionHumanPresence();
+  if (presence.idleMs !== null && presence.idleMs < heldMs) {
+    releaseSigninHold(`someone has been at ${TMUX_SESSION} since the hold began ` +
+      `(last input ${Math.round(presence.idleMs / 1000)}s ago)`);
+    return;
+  }
+  if (heldMs >= SIGNIN_HOLD_MAX_MS) {
+    releaseSigninHold(`nobody came to the pane within ${formatQuotaHoldRemaining(SIGNIN_HOLD_MAX_MS)} — ` +
+      're-probing once; the next task re-arms the hold if the CLI is still signed out');
+    return;
+  }
+  console.warn(`Still standing down: ${BACKEND} is signed out and nobody has been at ${TMUX_SESSION} ` +
+    `for ${formatQuotaHoldRemaining(heldMs)}. Sign in with: ${ATTACH_COMMAND}  (${signinHoldReason})`);
+  armSigninHoldReprobe();
+}
+
+// releaseSigninHold clears the hold and re-advertises, for the same reason
+// releaseQuotaHold does: `ready` is suppressed while held, so nothing else
+// would restart the loop.
+function releaseSigninHold(why) {
+  if (!signinHoldActive()) return;
+  const was = signinHoldReason;
+  signinHoldSince = 0;
+  signinHoldReason = '';
+  if (signinHoldTimer) { clearTimeout(signinHoldTimer); signinHoldTimer = null; }
+  console.log(`Sign-in hold released — ${why}. Asking for work again (was: ${was})`);
+  if (!currentTask && !cliReadyFailed) {
+    sendTo(hubs[activeHubIndex], { type: 'ready', seq: nextSeq() });
+  }
+}
+
+// signinWallFailureReason is what the hub records, and therefore what an
+// operator reads in the Operations feed. It replaces "no observed progress for
+// 30min — the agent CLI is not visibly working", which is true of the symptom
+// and actively misleading about the cause: it reads as a broken contributor
+// host, and the host was fine.
+function signinWallFailureReason(line) {
+  return `the ${BACKEND} CLI is signed out — it answered the task prompt with "${line}" ` +
+    `instead of working, so nothing was attempted. This is not a fault of the work or of this host, ` +
+    `and no retry can clear it: a person has to sign the CLI back in (${ATTACH_COMMAND}). ` +
+    `The relay is not asking for more work until someone has been at the pane.`;
+}
+
 // ---------------------------------------------------------------------------
 // #7932 — frame-size clamping. Everything below is pure: it takes a frame and
 // a byte budget and returns a frame that fits, leaving the frame untouched
@@ -906,7 +1065,11 @@ function sendTo(hub, msg) {
   // failure being fixed is a `ready` that should not have been sent. Only
   // `ready` is withheld: progress, completion and failure frames for work
   // already in flight must still reach the hub.
-  if (msg && msg.type === 'ready' && quotaHoldActive()) return;
+  //
+  // #7996 rides the same choke point for the same reason. A signed-out CLI is
+  // the other condition that refuses every task rather than this one, and the
+  // relay used to answer it with `ready` twice a minute all night.
+  if (msg && msg.type === 'ready' && (quotaHoldActive() || signinHoldActive())) return;
   if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
     // #7932: a frame the hub cannot read is a frame that never arrives — it is
     // answered with a 1009 close, not an error the relay can see. Bound it HERE,
@@ -2624,7 +2787,18 @@ function waitForCLI() {
         if (loginMessageShown) {
           console.log('CLI authentication prompt cleared; continuing.');
         }
-        console.log('CLI ready — accepting tasks');
+        // #7996: a relaunched CLI draws ready chrome whether or not its
+        // credential is alive — that is why the pane could not be trusted in
+        // the first place — so this log must not claim to be accepting tasks
+        // while the sign-in hold is standing. The relay log saying "CLI ready"
+        // once every thirty minutes all night is part of what the operator was
+        // reading when nothing looked wrong.
+        if (signinHoldActive()) {
+          console.log(`CLI relaunched, but the sign-in hold still stands — not accepting tasks until someone ` +
+            `signs ${BACKEND} back in (${ATTACH_COMMAND})`);
+        } else {
+          console.log('CLI ready — accepting tasks');
+        }
         resolve();
       } else if (state === 'onboarding') {
         needsLoginTicks = 0;
@@ -4454,6 +4628,25 @@ function resetAutonomyNudgeState() {
   autonomyNudgeSent = false;
 }
 
+// Sign-in wall state (hivecommons/hive#7996), scoped to the CURRENT task: how
+// many CONSECUTIVE ticks have read the CLI's own "not signed in" refusal on the
+// pane. Reset at task start, and by any tick that does not see it.
+//
+// Confirmation, not first sight, for the same reason PANE_STALL_CONFIRM_TICKS
+// and CLI_GONE_CONFIRMATIONS exist: acting on one frame is how a momentary
+// misread becomes an outage. It also preserves what #5094 established about
+// this exact pane — a credential that lapses mid-task is reported
+// blocked_on_human first, so a person who IS watching gets their window to log
+// in and rescue the task in place. What #7996 adds is a bound on that window:
+// when nobody comes, the task is handed back with the real reason instead of
+// being held until the 30-minute watchdog calls it a dead host.
+const SIGNIN_WALL_CONFIRM_TICKS = Math.max(2, Number(process.env.HIVE_SIGNIN_WALL_CONFIRM_TICKS) || 2);
+let signinWallTicks = 0;
+
+function resetSigninWallState() {
+  signinWallTicks = 0;
+}
+
 // Post-verdict review state (hivecommons/hive#7759), scoped to the CURRENT
 // task. Budget of exactly one: an advisor that reviews every turn will always
 // have something new to say, so the second HIVE_VERDICT is final no matter
@@ -5160,6 +5353,9 @@ function startProgressReporting() {
   resetTransientNudgeState();
   // And the one-shot autonomy reminder (#5281), for the same reason.
   resetAutonomyNudgeState();
+  // And the sign-in wall confirmation counter (#7996): consecutive ticks are
+  // counted within one task, never across two.
+  resetSigninWallState();
   // And the one-shot post-verdict review follow-up (#7759): the previous
   // task's spent budget, and the notes that were on its pane, say nothing
   // about this one.
@@ -5349,6 +5545,20 @@ function onTaskProgressLeaseExpired() {
       prURL: prFinding.url,
       noWork,
     });
+    return;
+  }
+
+  // #7996: second net for the sign-in wall. The tick loop catches it first and
+  // hands the task back within a progress interval, but only when the refusal
+  // is still in the tick's window — a chatty CLI can scroll it away, and a tick
+  // loop that is not running at all is the very case this timer exists for.
+  // This deep capture is the last place the line can still be read, and reading
+  // it is the difference between "sign in" and "not visibly working", which is
+  // the misattribution the whole issue is about.
+  const signinWall = paneLoginWallLine(paneScanLines.join('\n'));
+  if (signinWall) {
+    enterSigninHold(signinWall);
+    failCurrentTask(signinWallFailureReason(signinWall), { kind: 'environment', skipReady: true });
     return;
   }
 
@@ -5771,6 +5981,15 @@ function progressTick() {
   const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
   const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
 
+  // #7996: the sign-in wall is counted on EVERY tick, not only on the ones that
+  // reach the blocked-on-human branch below. The count has to be CONSECUTIVE to
+  // mean anything, and a tick that classified some other way is a tick that did
+  // not see the wall — counting only where it is acted on would let one misread
+  // sit in the counter for the rest of the task and pair up with a second one
+  // much later.
+  const signinWall = paneLoginWallLine(paneScanLines.join('\n'));
+  if (!signinWall) resetSigninWallState();
+
   // #5321: forward progress renews the max-duration lease. Recorded here,
   // before any branch below can return, so EVERY pane state gets the credit —
   // an agent stepping through blocked_on_human or a retried API error is still
@@ -6061,6 +6280,34 @@ function progressTick() {
     console.log(`Task ${currentTask.task_id}: pane looks idle but no HIVE_VERDICT yet — ${chromeIdleTicks}/${CHROME_IDLE_GRACE_TICKS} checks before completing on chrome alone`);
     send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines, ...progressModelFields() });
   } else if (paneState === PANE_STATE_BLOCKED_ON_HUMAN) {
+    // #7996: a sign-in wall is the one BLOCKED_ON_HUMAN that is not about this
+    // task. Every other member of this bucket is the agent asking a question
+    // somebody can answer while the work stays parked — so reporting
+    // `blocked_on_human` and holding the lease is right for them. A signed-out
+    // CLI answered the prompt and refused; the work never started, this task
+    // cannot proceed, and neither can the next one.
+    //
+    // Holding it was the expensive half of the incident: the pane never changed
+    // again, so the progress lease ran down and the task was handed back thirty
+    // minutes later as "no observed progress … not visibly working" — a
+    // description of a broken host, for a host that was fine. Hand it back NOW,
+    // say what is actually wrong, and stop asking for the next one.
+    if (signinWall) {
+      signinWallTicks++;
+      // A person actively at the pane is the case #5094 was written for, and
+      // they are the one thing that can clear this: keep holding the task while
+      // they are there. Presence is a RECENCY question, not a connection one
+      // (#5277) — an attached-but-quiet dashboard tab is not somebody logging
+      // in — so an idle client falls through to the escalation below.
+      const presence = tmuxSessionHumanPresence();
+      if (signinWallTicks >= SIGNIN_WALL_CONFIRM_TICKS && !presence.active) {
+        enterSigninHold(signinWall);
+        failCurrentTask(signinWallFailureReason(signinWall), { kind: 'environment', skipReady: true });
+        return;
+      }
+      console.warn(`Task ${currentTask.task_id}: the ${BACKEND} CLI is refusing the prompt with "${signinWall}" ` +
+        `(${signinWallTicks}/${SIGNIN_WALL_CONFIRM_TICKS}${presence.active ? ', someone is at the pane' : ''})`);
+    }
     // #5281: before reporting a blocked pane to a human who may not be there,
     // see whether this is a question the agent was already told to answer
     // itself. At most once per task; everything below is unchanged and is what
@@ -6265,6 +6512,12 @@ function handleMessage(data, hub) {
           // during a hold looks like the relay silently losing interest (#6541).
           console.log(`Authenticated, but the provider quota is exhausted — withholding ready for ` +
             `${formatQuotaHoldRemaining(quotaHoldUntil - Date.now())} (${quotaHoldReason})`);
+        } else if (signinHoldActive()) {
+          // Same reasoning as the quota branch (#7996): a reconnect during a
+          // hold that says nothing looks like the relay losing interest, and
+          // this is the one condition where the operator is the fix.
+          console.log(`Authenticated, but the ${BACKEND} CLI is signed out — withholding ready until someone ` +
+            `signs it back in (${ATTACH_COMMAND}). Standing down for ${formatQuotaHoldRemaining(Date.now() - signinHoldSince)} so far (${signinHoldReason})`);
         } else if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
           sendTo(hub, { type: 'ready', seq: nextSeq() });
         } else if (cliReadyFailed) {
@@ -6337,6 +6590,21 @@ function handleMessage(data, hub) {
           seq: nextSeq(),
           task_id: msg.task_id,
           reason: `provider quota exhausted for ${BACKEND} — not a fault of this host; declining work for ${remaining} (${quotaHoldReason})`,
+          failure_kind: 'environment',
+        });
+        break;
+      }
+      // #7996: signed out. Same shape as the quota decline above — withholding
+      // `ready` stops us asking, but a pushed offer would be typed at a CLI
+      // that answers every prompt with "Please run /login", and the hive issue
+      // would be marked failed for a reason that has nothing to do with it.
+      if (signinHoldActive()) {
+        console.log(`Declining ${taskKey(msg)} — the ${BACKEND} CLI is signed out and nobody has fixed it yet`);
+        sendTo(hub, {
+          type: 'task_failed',
+          seq: nextSeq(),
+          task_id: msg.task_id,
+          reason: signinWallFailureReason(signinHoldReason),
           failure_kind: 'environment',
         });
         break;
@@ -6685,6 +6953,7 @@ function cleanup() {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  if (signinHoldTimer) { clearTimeout(signinHoldTimer); signinHoldTimer = null; }
   stopVerdictWatch();
   // A shutdown with a task in flight must run the same task-exit contract as
   // every other way a task stops being ours (kubestellar/hive#5655, #5353).
@@ -6786,6 +7055,22 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     QUOTA_HOLD_MAX_MS,
     QUOTA_HOLD_GRACE_MS,
     paneShowsLoginRequiredError,
+    // Sign-in hold (hivecommons/hive#7996).
+    paneLoginWallLine,
+    SIGNIN_WALL_CONFIRM_TICKS,
+    resetSigninWallState,
+    getSigninWallTicks: () => signinWallTicks,
+    signinHoldActive,
+    enterSigninHold,
+    releaseSigninHold,
+    reprobeSigninHold,
+    signinWallFailureReason,
+    getSigninHoldSince: () => signinHoldSince,
+    getSigninHoldReason: () => signinHoldReason,
+    SIGNIN_HOLD_REPROBE_MS,
+    SIGNIN_HOLD_MAX_MS,
+    // Backdate the hold clock so a test can cross the ceiling without waiting.
+    __ageSigninHold: (ms) => { if (signinHoldSince) signinHoldSince -= ms; },
     handleTransientAPIError,
     resetTransientNudgeState,
     classifyBlockedOnHumanReason,

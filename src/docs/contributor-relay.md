@@ -803,6 +803,83 @@ Only quota takes this path. An authorization refusal is not time-bounded, an ope
 
 The `failure_kind` on the wire is still `environment`: the hub's kinds are `environment` / `task` / `unspecified`, and the field is advisory — the hub records and displays it and does not route or change a work item's failure cooldown on it. A dedicated quota kind, and the cooldown exemption [#6541](https://github.com/hivecommons/hive/issues/6541) asks for, are a hub-side protocol change and are not part of this.
 
+### A signed-out CLI parks the relay too, and says so
+
+Quota expires. A lapsed CLI login does not, which makes it the same shape and a
+worse one.
+
+[#7996](https://github.com/hivecommons/hive/issues/7996). A contributor's Claude
+session expired at 23:23 and the relay worked the same wall until the operator
+noticed at 07:40. Nine assignments; nine identical failures reading
+`[environment] no observed progress for 30min — the agent CLI is not visibly
+working`; nine hive issues put in failure cooldown. The pane said exactly what
+was wrong for eight hours:
+
+```
+● Login expired · Please run /login
+✻ Churned for 0s
+❯
+```
+
+Every piece of that is a trap the relay walked into. The CLI answered the prompt
+and returned to a **fully healthy-looking prompt**, so readiness — which asks
+"is the CLI up and past its gates", from pane chrome — said ready. The pane then
+never changed again, so the progress lease ran down and the task was handed back
+thirty minutes later as a *dead host*, which is what `[environment] … not
+visibly working` means to whoever reads it. And nothing said any of this outside
+the container: the dashboard's AGENT panel is the hub's **own** agents, which
+have their own login and were fine, so every number on screen was accurate and
+the picture was wrong.
+
+The relay now treats it as the account-level refusal it is:
+
+- **The wall is recognised as the CLI's own output, not as a question.** A
+  sign-in refusal used to land in `BLOCKED_ON_HUMAN` alongside "the agent asked
+  something" — right for a question somebody can answer while the work stays
+  parked, wrong here, because the work never started and the next task will not
+  start either. `paneLoginWallLine()` (`bin/lib/pane-classifier.js`) picks it out
+  under the same two-independent-signals rule as the quota and unretryable
+  detectors: the CLI's own chrome (`●`, `⚠`, `Error:`, `API Error:`) **plus** the
+  wording. This repository's own sources contain every one of those strings, and
+  an agent reading them into its pane must not park its own relay. A 403 or a
+  quota banner on the same line is vetoed here and keeps its existing bucket —
+  [#4400](https://github.com/hivecommons/hive/issues/4400)'s rule that `/login`
+  fixes a 401 and fixes nothing about a 403 is unchanged.
+- **The task is handed back at once, with the real reason.** Within a progress
+  interval instead of at the thirty-minute watchdog, and the reason names the
+  backend, quotes the CLI's line verbatim, and gives the attach command. That
+  string is the whole operator surface for this condition, so it has to carry
+  the remedy.
+- **`ready` is withheld** until a person has been at the pane — at the same
+  single choke point the quota hold uses, and a pushed assignment is declined
+  the same way for the same reason.
+- **The relay keeps saying why.** The hold re-states its banner on a fixed
+  cadence rather than printing once and scrolling away; silence is what made the
+  incident eight hours long rather than thirty minutes.
+- **It is confirmed before it is acted on**, over consecutive ticks, exactly as
+  the pane-stall and CLI-death detectors are: acting on one frame is how a
+  momentary misread becomes an outage. And while somebody is *actively* at the
+  tmux session — a recency question, not a connection one
+  ([#5277](https://github.com/hivecommons/hive/issues/5277)) — the task is held
+  for them rather than taken away, which is what
+  [#5094](https://github.com/hivecommons/hive/issues/5094) established for this
+  same pane.
+
+Release is the part quota gets for free and this does not: there is no stated
+expiry to wait out. The signal is tmux client activity newer than the hold —
+somebody attached and typed, which is the act the banner asked for. It is not
+proof the sign-in worked and does not need to be: releasing costs one task, and
+that task re-arms the hold if the wall is still there. A ceiling backs it up so
+that a tmux which cannot report client activity at all costs one task every six
+hours instead of taking the contributor out of the fleet until someone restarts
+the relay.
+
+What is **not** in this: the hub still has no `not-ready` contributor state, so
+a held lease on a signed-out contributor is not rendered differently on the
+triage ladder, and there is no per-contributor consecutive-failure circuit
+breaker hub-side. Both are protocol and dashboard changes rather than relay
+ones. The relay simply stops asking, which is what stops the loop.
+
 ### The GitHub token outlives the task, because the hub re-mints it
 
 The scoped GitHub token the relay pushes with is valid for **55 minutes**
