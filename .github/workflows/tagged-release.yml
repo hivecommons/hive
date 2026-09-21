@@ -837,6 +837,7 @@ jobs:
               --base v4 \
               --head "${scratch}" \
               --title "release: v${VERSION}" \
+              --label v4-freeze-exempt \
               --body "Automated release PR (#5222/#5356). Merges the release commit for v${VERSION}, carrying a successful gate check and mirrored status on ${commit_sha}." 2>&1)"; then
             echo "::error::gh pr create failed: ${pr_url:-<no output captured>}" >&2
             exit 1
