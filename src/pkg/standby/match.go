@@ -29,7 +29,8 @@ const (
 	// Volunteering is not approval.
 	ReasonNotApproved Reason = "not_approved"
 	// ReasonSuspended: this configuration is suspended on this hive until the
-	// owner clears it (the suspend rule lands in S6).
+	// owner clears it. The rule that decides it is SuspendState in suspend.go;
+	// like every other rejection here, it carries no floor value.
 	ReasonSuspended Reason = "suspended"
 	// ReasonConfigurationUnknown: the reported configuration has no entry in
 	// hub.standby_model_tiers, or names no backend or model. Nobody assessed
@@ -70,7 +71,9 @@ type Candidate struct {
 	// caller.
 	Approved bool
 	// Suspended is the suspend rule's verdict for this configuration on this
-	// hive (S6). False until that lands.
+	// hive: Suspended(OutcomesFor(ledger, LedgerKey(contributor, config))),
+	// filled by the caller. It stays false until the persisted outcome ledger
+	// exists, because an empty ledger suspends nobody.
 	Suspended bool
 	// Dispatches are this contributor's donated-task dispatches on THIS lane.
 	// Only those inside DispatchWindow count; the caller may pass a longer
