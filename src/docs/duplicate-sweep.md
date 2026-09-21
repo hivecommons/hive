@@ -4,7 +4,7 @@ A periodic, cross-PR pass that clusters open pull requests by changed-file set
 and **suggests** which one to keep. Off by default.
 
 It exists because nothing in hive could see two PRs at once. The duplicate-PR
-guard (`ApplyDuplicatePRGuard`, `src/pkg/github/prclaims.go:1102`) runs at
+guard (`ApplyDuplicatePRGuard`, `src/pkg/github/prclaims.go:1197`) runs at
 PR-open time and only for hive's own agents, so a duplicate that already exists
 between two PRs — the common case on a large human queue — was invisible. On a
 spoke with hundreds of open PRs and no auto-merge, collapsing duplicates is the
