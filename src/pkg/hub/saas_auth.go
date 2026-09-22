@@ -746,7 +746,25 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath}
+var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath, knowledgeExportPath}
+
+// knowledgeExportPath is the spoke endpoint a containerised contributor
+// fetches its agent.md from (bin/contributor-agent.sh). It MUST bypass the
+// hub's nginx auth_request gate, for the same reason /api/contribute does
+// (#8294): the container has no browser session, so the gated Ingress turned
+// the fetch into an auth-signin 302 to the hub login page and the contributor
+// ran with no hive knowledge at all - silently, on every hosted hive.
+//
+// This does NOT open the knowledge base to anonymous callers. The spoke does
+// the real authentication on this one path: dashboard.isPublicPath does not
+// list it, a hosted spoke always has DASHBOARD_AUTH_TOKEN set, and the
+// authenticate middleware (server.go) admits the request only with a hub
+// session, the shared token, or a non-revoked contributor registration token
+// (#2438) - anything else is a 401. handleKnowledgeExport re-checks the same
+// rule (allowKnowledgeExport) before writing a byte. Waving the path through
+// here simply lets that check run at all. It is the same class of fix as
+// #4050 (/api/v1) and #7453 (/api/contribute/me).
+const knowledgeExportPath = "/api/knowledge/export"
 
 // ssoHandoffPath is the spoke's SSO handoff endpoint. It MUST bypass the hub's
 // nginx auth_request gate.

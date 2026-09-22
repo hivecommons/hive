@@ -51,12 +51,70 @@ knowledge_export_looks_valid() {
   grep -qx "This file is auto-generated from the hive knowledge base\\." "$path"
 }
 
+# KNOWLEDGE_FETCH_REASON is set by fetch_knowledge_export whenever it returns
+# non-zero: one line naming the URL, the HTTP status (or the curl exit code
+# when no status came back) and why the body was rejected. Before #8294 the
+# status was captured and thrown away, so a 302 to the login page, a 200 that
+# was really the hub's HTML landing page, a 404 and a network timeout all
+# produced the same "Agent knowledge unavailable" line.
+KNOWLEDGE_FETCH_REASON=""
+
+# knowledge_fetch_failure_reason prints the one-line diagnosis for a failed
+# fetch. Arguments: url, curl exit code, HTTP status, redirect target (empty
+# when none), path of the body curl wrote.
+knowledge_fetch_failure_reason() {
+  local url="$1" curl_rc="$2" http_code="$3" redirect_url="$4" body="$5"
+  local status reason first_line=""
+
+  if [[ "$curl_rc" -ne 0 ]]; then
+    status="no response (curl exit ${curl_rc})"
+    reason="the request failed before a status was received"
+  else
+    status="HTTP ${http_code}"
+    case "$http_code" in
+      200)
+        if [[ -s "$body" ]]; then
+          IFS= read -r first_line < "$body" || true
+        fi
+        case "$first_line" in
+          '<!DOCTYPE'*|'<!doctype'*|'<html'*|'<HTML'*)
+            # The hub (hive.hivecommons.dev) has no knowledge-export handler;
+            # the request falls through to its single-page-app catch-all and
+            # comes back 200 with the landing page. This is what an unset or
+            # hub-pointed HIVE_HUB looks like - the default in the Justfile.
+            reason="body is an HTML page, not a knowledge export; HIVE_HUB points at the hub, not a hosted spoke; knowledge export is served by the spoke"
+            ;;
+          *)
+            reason="body is not a knowledge export (expected it to start with '# Agent Knowledge')"
+            ;;
+        esac
+        ;;
+      301|302|303|307|308)
+        # Redirects are deliberately not followed (#3013): the login page must
+        # never be written into agent.md. A hosted spoke behind the hub's
+        # auth-proxy answers this way when the path is not allowlisted.
+        case "$redirect_url" in
+          *login*) reason="redirected to the login page instead of serving the export (${redirect_url})" ;;
+          "") reason="redirected instead of serving the export" ;;
+          *) reason="redirected instead of serving the export (${redirect_url})" ;;
+        esac
+        ;;
+      *)
+        reason="status is not 200"
+        ;;
+    esac
+  fi
+
+  printf 'knowledge export fetch failed: %s -> %s: %s\n' "$url" "$status" "$reason"
+}
+
 fetch_knowledge_export() {
   local url="$1"
   local dest="$2"
-  local tmp_body tmp_status http_code curl_rc
+  local tmp_body tmp_status http_code redirect_url curl_rc
   local -a proto_redir_args
 
+  KNOWLEDGE_FETCH_REASON=""
   mkdir -p "$(dirname "$dest")"
   tmp_body=$(mktemp "${dest}.tmp.XXXXXX") || return 1
   tmp_status=$(mktemp "${dest}.status.XXXXXX") || {
@@ -74,10 +132,13 @@ fetch_knowledge_export() {
     --max-time "${KNOWLEDGE_FETCH_MAX_TIME:-15}" \
     --header "Authorization: Bearer ${HIVE_REGISTRATION_TOKEN}" \
     --output "$tmp_body" \
-    --write-out "%{http_code}" \
+    --write-out "%{http_code} %{redirect_url}" \
     "$url" > "$tmp_status" 2>/dev/null || curl_rc=$?
 
-  http_code="$(cat "$tmp_status" 2>/dev/null || echo 000)"
+  http_code=""
+  redirect_url=""
+  read -r http_code redirect_url < "$tmp_status" 2>/dev/null || true
+  http_code="${http_code:-000}"
   if [[ "$curl_rc" -eq 0 && "$http_code" == "200" ]] && knowledge_export_looks_valid "$tmp_body"; then
     if [[ -e "$dest" ]] && cmp -s "$tmp_body" "$dest"; then
       rm -f "$tmp_body"
@@ -88,6 +149,7 @@ fetch_knowledge_export() {
     return 0
   fi
 
+  KNOWLEDGE_FETCH_REASON="$(knowledge_fetch_failure_reason "$url" "$curl_rc" "$http_code" "$redirect_url" "$tmp_body")"
   rm -f "$tmp_body" "$tmp_status"
   return 1
 }
@@ -273,7 +335,7 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
     exit 0
   fi
   rm -f "$AGENT_MD"
-  echo "knowledge_fetch=unavailable"
+  echo "knowledge_fetch=unavailable ${KNOWLEDGE_FETCH_REASON}"
   exit 1
 fi
 
@@ -627,15 +689,33 @@ if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
   echo "Agent knowledge downloaded ($(wc -l < "$AGENT_MD") lines)"
 else
   rm -f "$AGENT_MD"
-  echo "Agent knowledge unavailable; ${AGENT_MD} left absent."
+  echo "Agent knowledge unavailable; ${AGENT_MD} left absent. ${KNOWLEDGE_FETCH_REASON}"
 fi
 
-# Refresh agent.md every 10 minutes in the background
+# Refresh agent.md every 10 minutes in the background. Every failed refresh is
+# logged with the same diagnosis as the startup fetch, and a refresh that
+# succeeds after a failure says so - before #8294 this loop swallowed both, so
+# a contributor could run for days with no knowledge and nothing in the log
+# after the one startup line.
 KNOWLEDGE_REFRESH_SECS=600
 (
+  knowledge_refresh_failing=0
+  [[ -e "$AGENT_MD" ]] || knowledge_refresh_failing=1
   while true; do
     sleep "$KNOWLEDGE_REFRESH_SECS"
-    fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD" || true
+    if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
+      if [[ "$knowledge_refresh_failing" -eq 1 ]]; then
+        echo "Agent knowledge refresh recovered; ${AGENT_MD} installed ($(wc -l < "$AGENT_MD") lines)"
+        knowledge_refresh_failing=0
+      fi
+    else
+      if [[ -e "$AGENT_MD" ]]; then
+        echo "Agent knowledge refresh failed; keeping the previous ${AGENT_MD}. ${KNOWLEDGE_FETCH_REASON}" >&2
+      else
+        echo "Agent knowledge refresh failed; ${AGENT_MD} still absent. ${KNOWLEDGE_FETCH_REASON}" >&2
+      fi
+      knowledge_refresh_failing=1
+    fi
   done
 ) &
 

@@ -1541,7 +1541,7 @@ func TestHandleSaaSAuthCheckPublicPath(t *testing.T) {
 	srv := newHubServerForTest(t)
 
 	// Public paths should pass without auth
-	publicPaths := []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
+	publicPaths := []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", "/api/knowledge/export"}
 	for _, p := range publicPaths {
 		req := httptest.NewRequest("GET", "/api/saas/auth-check?hive=test-hive", nil)
 		req.Header.Set("X-Original-URI", p)

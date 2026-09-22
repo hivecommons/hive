@@ -91,7 +91,7 @@ func TestSaaSAuthCheckPublicPathStaysAnonymousWithoutSession(t *testing.T) {
 	s := newHandlerHub()
 	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
 
-	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath} {
+	for _, uri := range []string{"/api/contribute/me", "/api/contribute/ws", "/contribute/operations", "/api/leaderboard", "/snapshot/x", ssoHandoffPath, knowledgeExportPath} {
 		rec := publicPathAuthCheck(t, s, "owned-hive", uri, "")
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s anonymous: status = %d, want 200 — the leaderboard and the contributor relay must stay reachable signed out", uri, rec.Code)
@@ -137,6 +137,48 @@ func TestContributeIngressAsksWhoIsCallingButNeverRedirects(t *testing.T) {
 		}
 		if ann["nginx.ingress.kubernetes.io/proxy-read-timeout"] != "3600" {
 			t.Errorf("useWildcard=%v: the relay's long-poll timeout was lost", useWildcard)
+		}
+	}
+}
+
+// #8294: a containerised contributor fetches its agent.md from
+// /api/knowledge/export with its registration token and no browser session.
+// The gated Ingress asked the hub, the hub said "not authenticated", and
+// auth-signin turned that into a 302 to the login page - so the spoke's own
+// registration-token check (#2438, server.go) never ran and every hosted
+// contributor started without hive knowledge. The path is public on the hub
+// side exactly like /api/contribute: the spoke authenticates it.
+func TestSaaSAuthCheckKnowledgeExportPassesToTheSpoke(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
+
+	// Anonymous (the contributor container): 200 with no identity and no
+	// proof, so the spoke sees a bare Authorization: Bearer <registration
+	// token> request and applies its own check.
+	rec := publicPathAuthCheck(t, s, "owned-hive", knowledgeExportPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s anonymous: status = %d, want 200 - a 401 here becomes an auth-signin redirect and the contributor never installs agent.md (#8294)", knowledgeExportPath, rec.Code)
+	}
+	for _, h := range []string{"X-Hive-User", "X-Hive-Role", proxyAuthHeader} {
+		if got := rec.Header().Get(h); got != "" {
+			t.Errorf("%s anonymous: %s = %q, want unset", knowledgeExportPath, h, got)
+		}
+	}
+
+	// A signed-in hub user is still identified on the way through (#7453).
+	rec = publicPathAuthCheck(t, s, "owned-hive", knowledgeExportPath, "spoke-owner")
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Hive-User") != "spoke-owner" || rec.Header().Get("X-Hive-Role") != "owner" {
+		t.Errorf("owner on %s: status=%d user=%q role=%q, want 200/spoke-owner/owner", knowledgeExportPath, rec.Code, rec.Header().Get("X-Hive-User"), rec.Header().Get("X-Hive-Role"))
+	}
+
+	// Only the export is public. Its siblings under /api/knowledge (search,
+	// facts, vaults) stay behind the hub gate for an anonymous caller.
+	for _, uri := range []string{"/api/knowledge", "/api/knowledge/search", "/api/knowledge/facts"} {
+		rec = publicPathAuthCheck(t, s, "owned-hive", uri, "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s anonymous: status = %d, want 401 - only the export is a public path", uri, rec.Code)
 		}
 	}
 }

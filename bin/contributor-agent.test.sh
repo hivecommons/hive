@@ -123,6 +123,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(b"<html>redirecting</html>\n")
+        elif mode == "redirect-login":
+            # #8294 variant 1: a hosted spoke behind the hub's auth-proxy,
+            # auth-signin redirecting the token-only fetch to the login page.
+            self.send_response(302)
+            self.send_header("Location", "https://hub.example/login?redirect=%2Fapi%2Fknowledge%2Fexport")
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html>redirecting</html>\n")
+        elif mode == "hub-html":
+            # #8294 variant 2: HIVE_HUB pointed at the hub itself, whose SPA
+            # catch-all answers 200 with the landing page.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"<!DOCTYPE html>\n<html lang=\"en\">\n<head></head></html>\n")
         elif mode == "missing":
             self.send_response(404)
             self.send_header("Content-Type", "text/html")
@@ -180,7 +195,27 @@ grep -qx "This file is auto-generated from the hive knowledge base\\." "${HOME_D
   exit 1
 }
 
-for mode in redirect-body missing truncated; do
+# Each failure mode must fail, leave agent.md absent, and (#8294) name the
+# URL, the HTTP status and the reason on the failure line - before that fix
+# every mode printed the same "unavailable" and the operator could not tell a
+# login redirect from the hub's landing page from a 404.
+expect_failure_reason() {
+  local mode="$1" output="$2"
+  shift 2
+  local needle
+  for needle in "http://127.0.0.1:${PORT}/${mode}/api/knowledge/export" "$@"; do
+    case "$output" in
+      *"$needle"* ) ;;
+      *)
+        echo "expected ${mode} knowledge fetch failure to mention '${needle}'; got:" >&2
+        echo "$output" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+for mode in redirect-body redirect-login hub-html missing truncated; do
   rm -f "${HOME_DIR}/agent.md"
   if output="$(run_knowledge_fetch "$mode" 2>&1)"; then
     echo "expected ${mode} knowledge fetch to fail; got:" >&2
@@ -191,7 +226,57 @@ for mode in redirect-body missing truncated; do
     echo "expected ${mode} knowledge fetch to leave agent.md absent" >&2
     exit 1
   fi
+  case "$mode" in
+    redirect-body)
+      expect_failure_reason "$mode" "$output" "HTTP 302" "redirected instead of serving the export"
+      ;;
+    redirect-login)
+      expect_failure_reason "$mode" "$output" "HTTP 302" "redirected to the login page" "https://hub.example/login"
+      ;;
+    hub-html)
+      expect_failure_reason "$mode" "$output" "HTTP 200" "HIVE_HUB points at the hub, not a hosted spoke; knowledge export is served by the spoke"
+      ;;
+    missing)
+      expect_failure_reason "$mode" "$output" "HTTP 404" "status is not 200"
+      ;;
+    truncated)
+      expect_failure_reason "$mode" "$output" "HTTP 200" "body is not a knowledge export"
+      ;;
+  esac
+  case "$output" in
+    *"test-token"* )
+      echo "${mode} knowledge fetch failure line leaked the registration token" >&2
+      exit 1
+      ;;
+  esac
 done
+
+# No response at all: a closed port must report the curl exit code, not a
+# made-up status.
+rm -f "${HOME_DIR}/agent.md"
+if output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="${HOME_DIR}/agent.md" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL="http://127.0.0.1:9/api/knowledge/export" \
+    KNOWLEDGE_FETCH_MAX_TIME=5 \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>&1
+)"; then
+  echo "expected unreachable knowledge fetch to fail; got:" >&2
+  echo "$output" >&2
+  exit 1
+fi
+case "$output" in
+  *"http://127.0.0.1:9/api/knowledge/export"*"no response (curl exit "* ) ;;
+  *)
+    echo "expected unreachable knowledge fetch to report the URL and curl exit code; got:" >&2
+    echo "$output" >&2
+    exit 1
+    ;;
+esac
 
 echo "contributor-agent hook override tests passed"
 echo "contributor-agent knowledge fetch tests passed"
