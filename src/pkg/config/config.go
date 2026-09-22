@@ -100,6 +100,10 @@ type Config struct {
 	// Turn gates the re-entrant conversation-as-state rollout (#5799). Default
 	// off leaves every agent on the legacy tmux loop until an operator opts in.
 	Turn TurnConfig `yaml:"turn,omitempty" json:"turn,omitempty"`
+	// TaskMCP configures the task-scoped MCP endpoint. Remote contributor
+	// exposure is opt-in; with remote_enabled false the endpoint remains usable
+	// only through the existing dashboard/contribute auth path.
+	TaskMCP TaskMCPConfig `yaml:"task_mcp,omitempty" json:"task_mcp,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -126,6 +130,20 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+const DefaultTaskMCPLeaseRateLimitPerMinute = 60
+
+type TaskMCPConfig struct {
+	RemoteEnabled           bool `yaml:"remote_enabled,omitempty" json:"remote_enabled,omitempty"`
+	LeaseRateLimitPerMinute int  `yaml:"lease_rate_limit_per_minute,omitempty" json:"lease_rate_limit_per_minute,omitempty"`
+}
+
+func (c TaskMCPConfig) LeaseRateLimitPerMinuteOrDefault() int {
+	if c.LeaseRateLimitPerMinute > 0 {
+		return c.LeaseRateLimitPerMinute
+	}
+	return DefaultTaskMCPLeaseRateLimitPerMinute
 }
 
 // DefaultOTelServiceName is the OTLP resource service.name used when the

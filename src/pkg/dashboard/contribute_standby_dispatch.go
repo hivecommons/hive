@@ -246,6 +246,7 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 	c.mu.Unlock()
 
 	turnEnvelopeID := h.persistTurnEnvelopeForAssignment(c, assignment, gen, prompt, item.Labels)
+	mcp := h.mintTaskMCPForAssignment(identityOf(c), assignment, assignedAt.Add(leaseTTL), c.profile.GitHubUsername)
 	msg := &WSMessage{
 		Type:           "task_assign",
 		Seq:            h.nextSeq(),
@@ -261,6 +262,7 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 		SourceType:     item.SourceType,
 		ExternalID:     item.ExternalID,
 		Complexity:     taskComplexityFromLabels(item.Labels),
+		MCP:            mcp,
 		Prompt:         prompt,
 		Labels:         item.Labels,
 		ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},

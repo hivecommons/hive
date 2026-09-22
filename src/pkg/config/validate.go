@@ -38,6 +38,9 @@ func (c *Config) Validate() error {
 	if err := c.GitHub.Actions.Validate(); err != nil {
 		return err
 	}
+	if c.TaskMCP.LeaseRateLimitPerMinute < 0 {
+		return fmt.Errorf("task_mcp.lease_rate_limit_per_minute must be >= 0")
+	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}

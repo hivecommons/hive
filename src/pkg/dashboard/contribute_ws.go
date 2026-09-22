@@ -353,7 +353,8 @@ type WSMessage struct {
 	// Complexity carries the v5 task complexity tier used by contributor-local
 	// quota preflight. Additive: older relays ignore it, and unknown is the safe
 	// conservative default for clients that cannot classify the work.
-	Complexity string `json:"complexity,omitempty"`
+	Complexity string     `json:"complexity,omitempty"`
+	MCP        *WSTaskMCP `json:"mcp,omitempty"`
 	// TaskKey, SourceType and ExternalID carry the assigned item's canonical,
 	// source-aware identity (kubestellar/hive#4245). All additive and omitempty:
 	// a GitHub task_assign is byte-for-byte unchanged, and Repo/Number keep
@@ -520,6 +521,13 @@ type WSTaskAssign struct {
 	// contributor routing. Nil means this task carried no explicit requirements.
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
 	Complexity   string                       `json:"complexity,omitempty"`
+	MCP          *WSTaskMCP                   `json:"mcp,omitempty"`
+}
+
+type WSTaskMCP struct {
+	URL       string `json:"url"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 // identityKey returns the canonical identity of the assigned item. It prefers
@@ -757,6 +765,8 @@ type ContributeWSHub struct {
 	// stays bounded. Guarded by rateMu.
 	assignmentTimes map[string][]time.Time
 	rateMu          sync.Mutex
+	mcpCallTimes    map[string][]time.Time
+	mcpRateMu       sync.Mutex
 	// contributorFailureStreaks tracks, per identity, CONSECUTIVE hub-measured
 	// sub-minute task failures (kubestellar/hive#6450, contribute_failure_streak.go).
 	// Once a streak reaches contributorFailureStreakThreshold, selectTask pauses
@@ -878,6 +888,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		persistTaskLedgers:        taskLedgerPersistenceEnabled,
 		standbyDispatches:         make(map[string][]time.Time),
 		assignmentTimes:           make(map[string][]time.Time),
+		mcpCallTimes:              make(map[string][]time.Time),
 		contributorFailureStreaks: make(map[string]contributorFailureStreak),
 		leases:                    make(map[string]*taskLease),
 		yankExclusions:            make(map[string]time.Time),

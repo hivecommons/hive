@@ -24,6 +24,12 @@ sequenceDiagram
 - The **relay** authenticates with a registration token, receives one task at a time, drives the local CLI inside a tmux session, injects a short-lived GitHub token for the PR, and reports the result. It heartbeats every 30 s and reconnects with exponential backoff; a task is abandoned if the relay observes no forward progress for 30 minutes, or if it crosses an absolute 4-hour backstop. The GitHub token is valid for 55 minutes and is re-minted by the hub before it expires, so a task may outlive any single token ([below](#the-github-token-outlives-the-task-because-the-hub-re-mints-it)).
 - Every contributor has a **trust tier** with per-tier rate limits. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
 
+### What your agent can see
+
+The hub grants task context only for the task it assigned. When `task_mcp.remote_enabled` is on, `task_assign` includes a lease-scoped MCP server (`mcp.url`, `mcp.token`, `mcp.expires_at`). The relay writes it as a standard `mcpServers.hive_task` config for the launched CLI and omits the token from the debug task file.
+
+That MCP lease is read-only and bound to the task id, contributor session identity, repo, issue/PR number, and task-lease expiry. It can call `task_context`, `related_work`, `ci_health`, and `context_bundle` for that task's repo and related issue/PR set only. Asking for another repo or task returns a typed refusal in the tool's `data` field and is audited by the hub. Releasing, completing, failing, yanking, or expiring the task revokes the MCP token with the task lease.
+
 ## Basic setup
 
 From a checkout of this repository:

@@ -138,6 +138,79 @@ func TestContributeMCPCIHealthFromStatusCache(t *testing.T) {
 	}
 }
 
+func TestContributeMCPLeaseBearerScopesAndRefusesCrossTask(t *testing.T) {
+	s := newTestServer()
+	s.authToken = "secret"
+	s.deps = &Dependencies{Config: &config.Config{TaskMCP: config.TaskMCPConfig{RemoteEnabled: true, LeaseRateLimitPerMinute: 10}, Dashboard: config.DashboardConfig{PublicURL: "https://hive.example"}}}
+	s.contributeHub = NewContributeWSHub(s.logger, s)
+	assign := &WSTaskAssign{TaskID: "task-lease", Kind: "issue", Repo: "owner/repo", Number: 42, Title: "leased work"}
+	s.contributeHub.connections["alice"] = &ContributorConnection{
+		profile:        &ContributorProfile{GitHubUsername: "alice", ContributorID: "alice-id"},
+		currentTask:    assign,
+		currentTaskGen: 2,
+		taskAssignedAt: time.Now().Add(-time.Minute),
+	}
+	s.contributeHub.recordLeaseForKey("alice-id", assign.TaskID, assign.Repo, assign.Number, assign.identityKey(), "trusted", 2, time.Now())
+	mcp := s.contributeHub.mintTaskMCPForAssignment("alice-id", assign, time.Now().Add(leaseTTL), "alice")
+	if mcp == nil || mcp.Token == "" || mcp.URL != "https://hive.example"+taskmcp.EndpointPath {
+		t.Fatalf("mcp = %#v", mcp)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_context","arguments":{"task_id":"task-lease","repo":"owner/repo","number":42}}}`))
+	req.Header.Set("Authorization", "Bearer "+mcp.Token)
+	s.handleContributeMCP(rec, req)
+	text := mcpResultText(t, rec.Body.Bytes())
+	var okEnv struct {
+		Data taskmcp.TaskContextData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &okEnv); err != nil {
+		t.Fatal(err)
+	}
+	if okEnv.Data.Assignment.TaskID != "task-lease" {
+		t.Fatalf("assignment = %#v", okEnv.Data.Assignment)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"related_work","arguments":{"task_id":"other","repo":"owner/other","number":7}}}`))
+	req.Header.Set("Authorization", "Bearer "+mcp.Token)
+	s.handleContributeMCP(rec, req)
+	text = mcpResultText(t, rec.Body.Bytes())
+	var refused struct {
+		Data taskmcp.RefusalData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &refused); err != nil {
+		t.Fatal(err)
+	}
+	if refused.Data.Type != "refusal" || refused.Data.Code != "outside_lease_scope" || refused.Data.LeaseID == "" {
+		t.Fatalf("refusal = %#v", refused.Data)
+	}
+
+	s.contributeHub.revokeLease("alice-id", assign.TaskID)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`))
+	req.Header.Set("Authorization", "Bearer "+mcp.Token)
+	s.handleContributeMCP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("revoked lease status = %d, want 403", rec.Code)
+	}
+}
+
+func TestTaskAssignMCPRoundTrip(t *testing.T) {
+	msg := WSMessage{Type: "task_assign", TaskID: "t1", Repo: "owner/repo", Number: 1, MCP: &WSTaskMCP{URL: "https://hive.example/api/contribute/mcp", Token: "tok", ExpiresAt: "2026-09-22T12:00:00Z"}}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got WSMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.MCP == nil || got.MCP.URL != msg.MCP.URL || got.MCP.Token != "tok" || got.MCP.ExpiresAt == "" {
+		t.Fatalf("mcp round trip = %#v json=%s", got.MCP, b)
+	}
+}
+
 func mcpResultText(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {

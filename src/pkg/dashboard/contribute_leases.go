@@ -48,8 +48,10 @@ type taskLease struct {
 	// double-assignment guard's hold on the item to a post-restart grace window;
 	// since #7773 every unexpired lease is a hold (leasedIssueKeys), so this is
 	// diagnostic — it says where a lease came from, not what it does.
-	restored  bool
-	expiresAt time.Time
+	restored     bool
+	expiresAt    time.Time
+	mcpTokenID   string
+	mcpTokenHash string
 }
 
 // leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
@@ -255,14 +257,16 @@ func (h *ContributeWSHub) lookupLease(identity, taskID, repo string, number int,
 // to RE-ADOPT a task the hub already issued to that identity — and never the
 // ability to obtain a fresh credential without passing selectTask's gates.
 type persistedLease struct {
-	Identity  string    `json:"identity"`
-	TaskID    string    `json:"task_id"`
-	Repo      string    `json:"repo"`
-	Number    int       `json:"number"`
-	Key       string    `json:"key,omitempty"`
-	Tier      string    `json:"tier"`
-	Gen       uint64    `json:"gen"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Identity     string    `json:"identity"`
+	TaskID       string    `json:"task_id"`
+	Repo         string    `json:"repo"`
+	Number       int       `json:"number"`
+	Key          string    `json:"key,omitempty"`
+	Tier         string    `json:"tier"`
+	Gen          uint64    `json:"gen"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	MCPTokenID   string    `json:"mcp_token_id,omitempty"`
+	MCPTokenHash string    `json:"mcp_token_hash,omitempty"`
 }
 
 func (h *ContributeWSHub) taskLeasesPath() string {
@@ -297,14 +301,16 @@ func (h *ContributeWSHub) saveLeasesLocked() {
 			continue
 		}
 		records = append(records, persistedLease{
-			Identity:  l.identity,
-			TaskID:    l.taskID,
-			Repo:      l.repo,
-			Number:    l.number,
-			Key:       l.key,
-			Tier:      l.tier,
-			Gen:       l.gen,
-			ExpiresAt: l.expiresAt,
+			Identity:     l.identity,
+			TaskID:       l.taskID,
+			Repo:         l.repo,
+			Number:       l.number,
+			Key:          l.key,
+			Tier:         l.tier,
+			Gen:          l.gen,
+			ExpiresAt:    l.expiresAt,
+			MCPTokenID:   l.mcpTokenID,
+			MCPTokenHash: l.mcpTokenHash,
 		})
 	}
 	data, err := json.Marshal(records)
@@ -428,15 +434,17 @@ func (h *ContributeWSHub) loadLeases() {
 		// one record per identity and loads unchanged; a file written after may
 		// hold several for one identity, each of which must come back.
 		h.leases[leaseKey(rec.Identity, rec.TaskID)] = &taskLease{
-			identity:  rec.Identity,
-			taskID:    rec.TaskID,
-			repo:      rec.Repo,
-			number:    rec.Number,
-			key:       key,
-			tier:      rec.Tier,
-			gen:       rec.Gen,
-			restored:  true,
-			expiresAt: rec.ExpiresAt,
+			identity:     rec.Identity,
+			taskID:       rec.TaskID,
+			repo:         rec.Repo,
+			number:       rec.Number,
+			key:          key,
+			tier:         rec.Tier,
+			gen:          rec.Gen,
+			restored:     true,
+			expiresAt:    rec.ExpiresAt,
+			mcpTokenID:   rec.MCPTokenID,
+			mcpTokenHash: rec.MCPTokenHash,
 		}
 		if rec.Gen > maxGen {
 			maxGen = rec.Gen

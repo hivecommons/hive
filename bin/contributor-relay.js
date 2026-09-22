@@ -151,6 +151,7 @@ const HUBS_SEEN_MIN_WRITE_MS = 60000;
 let hubsSeenWriteTimer = null;
 let hubsSeenDirty = false;
 let lastHubsSeenWrite = 0;
+const MCP_CONFIG_FILE = process.env.HIVE_MCP_CONFIG_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'mcp.json');
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
 // The relay can deliver a task to the backend CLI in one of two ways:
@@ -1903,6 +1904,39 @@ function injectGhToken(token) {
     fs.writeFileSync(GH_TOKEN_CACHE, token, { mode: 0o600 });
   } catch (e) {
     console.error(`Failed to write GitHub token cache ${GH_TOKEN_CACHE}: ${e.message} — continuing without it`);
+  }
+}
+
+function installTaskMCPConfig(mcp) {
+  if (!mcp || !mcp.url || !mcp.token) return;
+  const config = {
+    mcpServers: {
+      hive_task: {
+        type: 'http',
+        url: mcp.url,
+        headers: { Authorization: `Bearer ${mcp.token}` },
+      },
+    },
+  };
+  if (mcp.expires_at) config.mcpServers.hive_task.expires_at = mcp.expires_at;
+  try {
+    fs.mkdirSync(path.dirname(MCP_CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(MCP_CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(MCP_CONFIG_FILE, 0o600); } catch (_) {}
+    const projectMCP = path.join(AGENT_CWD || process.cwd(), '.mcp.json');
+    if (projectMCP !== MCP_CONFIG_FILE) {
+      try {
+        fs.writeFileSync(projectMCP, JSON.stringify(config, null, 2), { mode: 0o600 });
+        try { fs.chmodSync(projectMCP, 0o600); } catch (_) {}
+      } catch (e) {
+        console.error(`Failed to write project MCP config ${projectMCP}: ${e.message} — keeping ${MCP_CONFIG_FILE}`);
+      }
+    }
+    process.env.HIVE_MCP_CONFIG_FILE = MCP_CONFIG_FILE;
+    process.env.MCP_CONFIG_FILE = MCP_CONFIG_FILE;
+    console.log(`Task MCP config installed at ${MCP_CONFIG_FILE}`);
+  } catch (e) {
+    console.error(`Failed to write Task MCP config ${MCP_CONFIG_FILE}: ${e.message} — continuing without remote MCP`);
   }
 }
 
@@ -7434,13 +7468,14 @@ function handleMessage(data, hub) {
         tokenRefreshFailedAt = null;
         lastTokenExpiryWarnAt = 0;
       }
+      installTaskMCPConfig(msg.mcp);
       // TASK_FILE is observability/debug state with no reader that needs the
       // credential; the live token's one legitimate on-disk home is the 0600
       // GH_TOKEN_CACHE written by injectGhToken above. Strip it and keep the
       // file owner-only (chmod covers overwriting a pre-existing 0644 file)
       // so a task-scoped GitHub token never sits world-readable under /tmp
       // (kubestellar/hive#5065).
-      const { github_token: _omittedToken, ...taskFileRecord } = msg;
+      const { github_token: _omittedToken, mcp: _omittedMCP, ...taskFileRecord } = msg;
       // A failed write must never throw out of handleMessage
       // (hivecommons/hive#7777): this runs before task_accepted is sent, so an
       // unwritable path — a full /tmp, a stale file owned by another uid on a
@@ -7821,7 +7856,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     sanitizeDeclaredValue,
     handleMessage,
     injectGhToken,
+    installTaskMCPConfig,
+    MCP_CONFIG_FILE,
     GH_TOKEN_CACHE,
+    TASK_FILE,
     tokenLifetimeStatus,
     warnOnTokenExpiry,
     TOKEN_EXPIRY_WARN_MS,

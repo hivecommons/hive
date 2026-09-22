@@ -2395,7 +2395,35 @@ test('task_assign queues rather than typing when the CLI is not ready', () => {
 });
 
 test('task_assign never persists github_token to the task file (hivecommons/hive#5065)', () => {
-  const relay = loadRelay({ backend: 'copilot' });
+  const relay = loadRelay({ backend: 'copilot'   });
+
+  test('task_assign writes standard mcpServers config and keeps token out of task file', () => {
+    const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+    fs.mkdirSync(scratchRoot, { recursive: true });
+    const mcpDir = fs.mkdtempSync(path.join(scratchRoot, 'mcp-config-'));
+    const relay = loadRelay({ env: { HIVE_MCP_CONFIG_FILE: path.join(mcpDir, 'mcp.json'), HIVE_AGENT_CWD: mcpDir } });
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign',
+      task_id: 'tmcp',
+      task_gen: 9,
+      kind: 'issue',
+      repo: 'foo/bar',
+      number: 9,
+      title: 'remote mcp',
+      mcp: { url: 'https://hive.example/api/contribute/mcp', token: 'lease-token', expires_at: '2026-09-22T12:00:00Z' },
+    }));
+    const config = JSON.parse(fs.readFileSync(path.join(mcpDir, 'mcp.json'), 'utf8'));
+    assert.deepStrictEqual(config.mcpServers.hive_task, {
+      type: 'http',
+      url: 'https://hive.example/api/contribute/mcp',
+      headers: { Authorization: 'Bearer lease-token' },
+      expires_at: '2026-09-22T12:00:00Z',
+    });
+    const projectConfig = JSON.parse(fs.readFileSync(path.join(mcpDir, '.mcp.json'), 'utf8'));
+    assert.strictEqual(projectConfig.mcpServers.hive_task.headers.Authorization, 'Bearer lease-token');
+    const persisted = JSON.parse(fs.readFileSync(relay.TASK_FILE, 'utf8'));
+    assert.ok(!('mcp' in persisted), 'mcp token block must be stripped from the task file');
+  });
   try {
     relay.setCliReady(false);
     relay.setPendingTask(null);

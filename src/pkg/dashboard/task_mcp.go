@@ -23,7 +23,9 @@ type taskMCPSnapshot struct {
 }
 
 func (s *Server) handleContributeMCP(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeTaskMCP(r) {
+	var leaseOK bool
+	r, leaseOK = s.authenticateTaskMCPLease(r)
+	if !leaseOK && !s.authorizeTaskMCP(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -34,19 +36,58 @@ func (s *Server) authorizeTaskMCP(r *http.Request) bool {
 	if s == nil || strings.TrimSpace(s.authToken) == "" {
 		return false
 	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if token == "" {
-		token = r.URL.Query().Get("token")
-	}
+	token := bearerToken(r)
 	return secureCompare(token, s.authToken)
 }
 
 func (p dashboardTaskMCPProvider) Scope(r *http.Request, args map[string]any) (taskmcp.Scope, error) {
+	if lease, ok := taskMCPLeaseFromRequest(r); ok {
+		taskID := strings.TrimSpace(stringArg(args, "task_id"))
+		if taskID == "" {
+			taskID = lease.Claims.TaskID
+		}
+		repo := strings.TrimSpace(stringArg(args, "repo"))
+		if repo == "" {
+			repo = lease.Claims.Repo
+		}
+		number := numberArg(args["number"])
+		if number == 0 {
+			number = lease.Claims.Number
+		}
+		tool := stringArg(args, "_tool")
+		if !lease.Claims.Matches(taskID, repo, number) {
+			if p.server != nil && p.server.logger != nil {
+				p.server.logger.Warn("[task-mcp] lease scope refusal", "lease_id", lease.Claims.ID, "tool", tool, "repo", repo)
+			}
+			return taskmcp.Scope{}, taskmcp.RefusalError{Err: taskmcp.LeaseTokenWrongScopeError(taskID, repo, number), Data: taskmcp.RefusalData{
+				Type: "refusal", Code: "outside_lease_scope", LeaseID: lease.Claims.ID, Tool: tool, Repo: repo,
+				Reason: "requested task or repository is outside this lease scope",
+			}}
+		}
+		if p.server == nil || p.server.contributeHub == nil || !p.server.contributeHub.allowTaskMCPCall(lease.Claims.ID, time.Now()) {
+			return taskmcp.Scope{}, taskmcp.RefusalError{Err: fmt.Errorf("%w: task MCP lease rate limit exceeded", taskmcp.ErrForbidden), Data: taskmcp.RefusalData{
+				Type: "refusal", Code: "rate_limited", LeaseID: lease.Claims.ID, Tool: tool, Repo: repo,
+				Reason: "task MCP lease rate limit exceeded",
+			}}
+		}
+		if p.server != nil && p.server.logger != nil {
+			p.server.logger.Info("[task-mcp] lease tool call", "lease_id", lease.Claims.ID, "tool", tool, "repo", repo)
+		}
+		return taskmcp.Scope{TaskID: lease.Claims.TaskID, Repo: lease.Claims.Repo, Number: lease.Claims.Number}, nil
+	}
 	snap, err := p.snapshot(r, args)
 	if err != nil {
 		return taskmcp.Scope{}, err
 	}
 	return taskmcp.Scope{TaskID: snap.assign.TaskID, Repo: snap.assign.Repo, Number: snap.assign.Number}, nil
+}
+
+func stringArg(args map[string]any, key string) string {
+	if args == nil {
+		return ""
+	}
+	v, _ := args[key].(string)
+	return v
 }
 
 func (p dashboardTaskMCPProvider) TaskContext(_ context.Context, scope taskmcp.Scope) (taskmcp.TaskContextData, error) {

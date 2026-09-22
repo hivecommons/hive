@@ -1160,6 +1160,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	c.mu.Unlock()
 
 	turnEnvelopeID := h.persistTurnEnvelopeForAssignment(c, assignment, gen, prompt, chosen.labels)
+	mcp := h.mintTaskMCPForAssignment(identityOf(c), assignment, assignedAt.Add(leaseTTL), c.profile.GitHubUsername)
 
 	return &WSMessage{
 		Type:    "task_assign",
@@ -1187,6 +1188,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			return &req
 		}(),
 		Complexity: taskComplexityFromLabels(chosen.labels),
+		MCP:        mcp,
 		// #2537: NO github_token / token_expires_at here. The scoped credential is
 		// split out of task_assign and delivered only after acceptance (see
 		// pendingToken / deliverTaskCredential). task_assign now carries exactly the

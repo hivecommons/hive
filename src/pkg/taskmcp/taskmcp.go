@@ -35,6 +35,29 @@ const (
 
 var ErrForbidden = errors.New("task scope forbidden")
 
+type RefusalData struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Reason  string `json:"reason"`
+	LeaseID string `json:"lease_id,omitempty"`
+	Tool    string `json:"tool,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+}
+
+type RefusalError struct {
+	Data RefusalData
+	Err  error
+}
+
+func (e RefusalError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return e.Data.Reason
+}
+
+func (e RefusalError) Unwrap() error { return e.Err }
+
 type Scope struct {
 	TaskID string `json:"task_id,omitempty"`
 	Repo   string `json:"repo,omitempty"`
@@ -262,8 +285,27 @@ func (h *Handler) callTool(r *http.Request, raw json.RawMessage) (any, *rpcError
 	if err := json.Unmarshal(raw, &p); err != nil || p.Name == "" {
 		return nil, &rpcError{Code: -32602, Message: "invalid tool params"}
 	}
+	if p.Arguments == nil {
+		p.Arguments = map[string]any{}
+	}
+	p.Arguments["_tool"] = p.Name
 	scope, err := h.Provider.Scope(r, p.Arguments)
 	if err != nil {
+		var refusal RefusalError
+		if errors.As(err, &refusal) {
+			data := refusal.Data
+			if data.Type == "" {
+				data.Type = "refusal"
+			}
+			if data.Reason == "" {
+				data.Reason = err.Error()
+			}
+			b, marshalErr := json.Marshal(DataEnvelope{Data: data})
+			if marshalErr != nil {
+				return nil, toolErr(marshalErr)
+			}
+			return map[string]any{"content": []map[string]string{{"type": "text", "text": string(b)}}}, nil
+		}
 		code := -32000
 		if errors.Is(err, ErrForbidden) {
 			code = -32003

@@ -128,6 +128,15 @@ func TestHandlerScopesWrongRepo(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsTypedRefusalInDataEnvelope(t *testing.T) {
+	h := NewHandler(fakeProvider{scopeErr: RefusalError{Err: fmt.Errorf("%w: no", ErrForbidden), Data: RefusalData{Code: "outside_lease_scope", LeaseID: "lease-1", Repo: "owner/other"}}})
+	env := resultEnvelope(t, serveRPC(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"related_work","arguments":{"repo":"owner/other"}}}`))
+	data := asMap(t, env["data"])
+	if data["type"] != "refusal" || data["code"] != "outside_lease_scope" || data["lease_id"] != "lease-1" || data["reason"] == "" {
+		t.Fatalf("refusal data = %#v", data)
+	}
+}
+
 func TestToolCallsReturnDataEnvelopes(t *testing.T) {
 	items := make([]RelatedItem, MaxPageSize+5)
 	checks := make([]CheckHealth, MaxPageSize+3)
