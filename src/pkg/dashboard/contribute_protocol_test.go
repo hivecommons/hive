@@ -617,6 +617,77 @@ func TestSelectTask_AllCapabilityMismatchesReturnsReason(t *testing.T) {
 	}
 }
 
+func TestSelectTask_RunStageRequiresCapability(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{Repos: []FrontendRepo{{
+		Name: "repo1",
+		Full: "myorg/repo1",
+		ActionableIssues: []any{map[string]any{
+			"source_type": "run",
+			"external_id": "run-8297:spec",
+			"number":      float64(0),
+			"title":       "spec: staged run",
+			"url":         "https://example.invalid/runs/run-8297",
+			"labels":      []string{"hive-run", "stage/spec"},
+			"author":      "hive",
+			"stage":       StageSpec,
+		}},
+	}}}
+	s.statusMu.Unlock()
+
+	conn := &ContributorConnection{
+		profile:    &ContributorProfile{GitHubUsername: "old", ContributorID: "c-old-run", TrustTier: "contributor"},
+		lastPong:   time.Now(),
+		cliBackend: "copilot",
+	}
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableCapabilityMismatch {
+		t.Fatalf("expected task_unavailable/%s, got %+v", taskUnavailableCapabilityMismatch, msg)
+	}
+}
+
+func TestSelectTask_RunStageAssignsStageAndLease(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{Repos: []FrontendRepo{{
+		Name: "repo1",
+		Full: "myorg/repo1",
+		ActionableIssues: []any{map[string]any{
+			"source_type": "run",
+			"external_id": "run-8297:spec",
+			"number":      float64(0),
+			"title":       "spec: staged run",
+			"url":         "https://example.invalid/runs/run-8297",
+			"labels":      []string{"hive-run", "stage/spec"},
+			"author":      "hive",
+			"stage":       StageSpec,
+		}},
+	}}}
+	s.statusMu.Unlock()
+
+	conn := &ContributorConnection{
+		profile:      &ContributorProfile{GitHubUsername: "new", ContributorID: "c-new-run", TrustTier: "contributor"},
+		lastPong:     time.Now(),
+		cliBackend:   "copilot",
+		capabilities: &ContributorCapabilities{RelayCapabilities: []string{capRunStage}},
+	}
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("expected run-stage task_assign, got %+v", msg)
+	}
+	if msg.Stage != StageSpec || msg.TaskGen == 0 {
+		t.Fatalf("task_assign stage/gen = %q/%d, want spec and nonzero", msg.Stage, msg.TaskGen)
+	}
+	lease := hub.lookupLease(identityOf(conn), msg.TaskID, msg.Repo, msg.Number, msg.TaskGen, time.Now())
+	if lease == nil {
+		t.Fatal("run-stage assignment did not record a re-adoptable lease")
+	}
+	if lease.stage != StageSpec {
+		t.Fatalf("lease stage = %q, want %q", lease.stage, StageSpec)
+	}
+}
+
 func TestSelectTask_UndeclaredCapabilitiesStillReceiveRequiredWork(t *testing.T) {
 	hub, s := covK2Hub(t)
 	s.statusMu.Lock()

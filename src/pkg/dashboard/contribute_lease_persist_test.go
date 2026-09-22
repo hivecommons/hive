@@ -93,6 +93,9 @@ func TestLeasePersist_FileIsOwnerOnly(t *testing.T) {
 	if len(records) != 1 || records[0].Identity != "clanker-7" || records[0].Gen != 3 {
 		t.Errorf("registry round-trip = %+v, want the single clanker-7 gen-3 lease", records)
 	}
+	if records[0].Stage != "" || strings.Contains(string(data), `"stage"`) {
+		t.Errorf("plain lease persisted a stage field: record=%+v json=%s", records[0], data)
+	}
 }
 
 // TestLeasePersist_ExpiredLeaseNeverWritten pins the skip-at-write half of the
@@ -201,6 +204,7 @@ func TestLeasePersist_SaveThenLoadRestoresLease(t *testing.T) {
 		persistTaskLedgers: true,
 		taskLeasesFile:     path,
 	}
+
 	h2.loadLeases()
 
 	h2.leaseMu.Lock()
@@ -217,6 +221,69 @@ func TestLeasePersist_SaveThenLoadRestoresLease(t *testing.T) {
 	}
 	if got := h2.taskGen.Load(); got < 3 {
 		t.Errorf("taskGen = %d after restore, want >= 3 so new assignments cannot alias restored gens", got)
+	}
+}
+
+func TestLeasePersist_StageSurvivesSaveLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task-leases.json")
+	now := time.Now()
+	h := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+	if err := h.recordLeaseForKeyStage("clanker-stage", "task-stage", "hivecommons/hive", 8297,
+		"hivecommons/hive#8297", "C4", StageSpec, 8, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+
+	h2 := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+	h2.loadLeases()
+
+	got := h2.lookupLease("clanker-stage", "task-stage", "hivecommons/hive", 8297, 8, now)
+	if got == nil {
+		t.Fatal("staged lease did not load")
+	}
+	if got.stage != StageSpec {
+		t.Fatalf("loaded stage = %q, want %q", got.stage, StageSpec)
+	}
+}
+
+func TestLeasePersist_AdvanceFailureRestoresMemory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "task-leases.json")
+	now := time.Now()
+	h := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+	if err := h.recordLeaseForKeyStage("clanker-stage", "task-stage", "hivecommons/hive", 8297,
+		"hivecommons/hive#8297", "C4", StageSpec, 8, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove registry before injecting rename failure: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "occupied"), 0o755); err != nil {
+		t.Fatalf("occupy registry path: %v", err)
+	}
+
+	if _, err := h.advanceLeaseStage("clanker-stage", "task-stage", StagePlan, now.Add(time.Minute)); err == nil {
+		t.Fatal("advance reported success despite persist failure")
+	}
+	h.leaseMu.Lock()
+	live := h.leaseForLocked("clanker-stage", "task-stage")
+	h.leaseMu.Unlock()
+	if live == nil {
+		t.Fatal("failed advance removed the live lease")
+	}
+	if live.stage != StageSpec || live.gen != 8 {
+		t.Fatalf("failed advance left live lease mutated: stage=%q gen=%d", live.stage, live.gen)
 	}
 }
 

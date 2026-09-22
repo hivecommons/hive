@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 )
 
 // contribute_lease_test.go covers the kubestellar/hive#2568 completion: the hub-owned
@@ -196,12 +197,78 @@ func TestLeaseExpiry_IdleConnectionIgnored(t *testing.T) {
 		profile:  &ContributorProfile{GitHubUsername: "idle", ContributorID: "c-idle", TrustTier: "contributor"},
 		lastPong: time.Now(),
 	}
+
 	hub.mu.Lock()
 	hub.connections["conn-idle"] = idle
 	hub.mu.Unlock()
 	if got := hub.reclaimExpiredLeases(time.Now()); got != 0 {
 		t.Fatalf("an idle connection must not be reclaimed, got %d", got)
 	}
+}
+
+func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-stage", "task-stage", "myorg/repo1", 8297,
+		"myorg/repo1#8297", "contributor", StageSpec, 11, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+
+	advanced, err := hub.advanceLeaseStage("c-stage", "task-stage", StagePlan, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("advance spec -> plan: %v", err)
+	}
+	if advanced.stage != StagePlan || advanced.gen <= 11 {
+		t.Fatalf("advance returned stage/gen = %q/%d, want plan and > 11", advanced.stage, advanced.gen)
+	}
+	if stale := hub.lookupLease("c-stage", "task-stage", "myorg/repo1", 8297, 11, now); stale != nil {
+		t.Fatalf("old generation still re-adopts after stage advance: %+v", stale)
+	}
+	if cur := hub.lookupLease("c-stage", "task-stage", "myorg/repo1", 8297, advanced.gen, now); cur == nil || cur.stage != StagePlan {
+		t.Fatalf("new generation did not re-adopt staged lease: %+v", cur)
+	}
+	entries := srvAuditEntries(t, hub)
+	if len(entries) == 0 || entries[0].Action != agentaudit.AuditLeaseStageAdvanced ||
+		!strings.Contains(entries[0].Detail, "stage_from=spec") ||
+		!strings.Contains(entries[0].Detail, "stage_to=plan") ||
+		!strings.Contains(entries[0].Detail, "gen=") {
+		t.Fatalf("stage advance audit entry missing or malformed: %+v", entries)
+	}
+
+	if _, err := hub.advanceLeaseStage("c-stage", "task-stage", StageSpec, now.Add(2*time.Minute)); err == nil {
+		t.Fatal("plan -> spec rollback accepted; only the owner reset path may roll back")
+	}
+	if _, err := hub.advanceLeaseStage("c-stage", "task-stage", StageImplement, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("plan -> implement should be the next advance: %v", err)
+	}
+
+	hub2, _ := covK2Hub(t)
+	if err := hub2.recordLeaseForKeyStage("c-skip", "task-skip", "myorg/repo1", 8297,
+		"myorg/repo1#8297", "contributor", StageSpec, 20, now); err != nil {
+		t.Fatalf("record skip lease: %v", err)
+	}
+	if _, err := hub2.advanceLeaseStage("c-skip", "task-skip", StageImplement, now.Add(time.Minute)); err == nil {
+		t.Fatal("spec -> implement skip accepted")
+	}
+
+	retry, err := hub.retryLeaseStage("c-stage", "task-stage", now.Add(4*time.Minute))
+	if err != nil {
+		t.Fatalf("retry current stage: %v", err)
+	}
+	if retry.stage != StageImplement {
+		t.Fatalf("retry changed stage to %q, want %q", retry.stage, StageImplement)
+	}
+	if retry.gen <= advanced.gen {
+		t.Fatalf("retry gen = %d, want greater than prior advanced gen %d", retry.gen, advanced.gen)
+	}
+}
+
+func srvAuditEntries(t *testing.T, hub *ContributeWSHub) []AuditEntry {
+	t.Helper()
+	if hub.server == nil || hub.server.audit == nil {
+		t.Fatal("test hub has no audit log")
+	}
+	return hub.server.audit.Recent(0)
 }
 
 // --- operator requeue: reason + generation bump ------------------------------

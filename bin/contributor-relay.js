@@ -1155,7 +1155,7 @@ const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
 // (handled by the token_refresh case below) and left this at 1.1, so the relay
 // under-declared itself for months with nothing to notice. It is now pinned by
 // TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
-const RELAY_PROTOCOL_VERSION = '1.2';
+const RELAY_PROTOCOL_VERSION = '1.3';
 
 // RELAY_CAPABILITIES is this relay's OUTBOUND capability set — the mirror of the
 // hub's server_capabilities (kubestellar/hive#6954). It is DECLARED to the hub in
@@ -1172,7 +1172,7 @@ const RELAY_PROTOCOL_VERSION = '1.2';
 // contributorProtocolVersion), so RELAY_PROTOCOL_VERSION is deliberately NOT
 // bumped here and stays in step with the hub, keeping
 // TestRelayProtocolVersionMatchesHub honest.
-const RELAY_CAPABILITIES = ['quota_preflight_v1'];
+const RELAY_CAPABILITIES = ['quota_preflight_v1', 'run-stage'];
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),

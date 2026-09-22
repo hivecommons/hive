@@ -49,6 +49,13 @@ const (
 	// failure shape and same operator-login recovery as the Copilot case; the
 	// detail's outcome= distinguishes "missing" from "invalid or expired".
 	AuditClaudeTokenMissing = "claude_token_missing"
+
+	// AuditLeaseStageAdvanced and AuditLeaseStageRetried record Hive-owned run
+	// stage transitions on the existing task lease record. They are system
+	// actions: no contributor can advance or retry a stage by editing client
+	// fields.
+	AuditLeaseStageAdvanced = "lease_stage_advanced"
+	AuditLeaseStageRetried  = "lease_stage_retried"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

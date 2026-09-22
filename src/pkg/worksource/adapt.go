@@ -67,6 +67,7 @@ func ToGitHubIssues(issues []Issue) []github.Issue {
 			AgeMinutes: ageMinutes,
 			URL:        ws.URL,
 			IsTracker:  ws.IsTracker,
+			Stage:      ws.Stage,
 		})
 	}
 	return out
@@ -112,6 +113,7 @@ func projectIssues(issues []Issue) []github.Issue {
 			AgeMinutes: ageMinutes,
 			URL:        ws.URL,
 			IsTracker:  ws.IsTracker,
+			Stage:      ws.Stage,
 		})
 	}
 	return out

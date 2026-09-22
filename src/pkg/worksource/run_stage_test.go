@@ -47,7 +47,7 @@ func TestRunStageSourceListsPendingStages(t *testing.T) {
 	}
 	item := got[0]
 	if item.SourceType != SourceTypeRun || item.Number != 0 || item.ExternalID != "run-123:spec" ||
-		item.Repo != "hivecommons/hive" || item.Title != "spec: imported plan" {
+		item.Repo != "hivecommons/hive" || item.Title != "spec: imported plan" || item.Stage != RunStageSpec {
 		t.Fatalf("run stage shape mismatch: %+v", item)
 	}
 	if !reflect.DeepEqual(item.Labels, []string{"hive-run", "stage/spec"}) {

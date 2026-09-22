@@ -21,6 +21,14 @@ Contributor profiles carry a `trust_tier` field. The current tier order is:
 
 The merger tier is deliberately **never allowed to own its own merge**. Queueing a PR as `merger` or `owner` is rejected when the authenticated dashboard user matches the PR author, and the auto-merge sweep re-checks the queued-by user before merging.
 
+Task leases are also the unit for staged runs. A staged run stays on the same
+server-issued lease while Hive advances its `stage` through `spec`, `plan`, and
+`implement`; each advance or retry mints a new `task_gen`, so stale relays are
+fenced the same way as a reassigned task. Plain tasks have no stage. Staged work
+is offered only to relays that declare the `run-stage` relay capability, so an
+old relay can continue normal work but is not silently handed a staged run it
+does not understand.
+
 ## Merger capability and setup
 
 Operators grant merger from the hosted hive's **Manage Access** UI. The role sits between `read-write` and `owner` for dashboard access:
@@ -73,4 +81,3 @@ hub:
 ```
 
 If the list is empty, Hive uses the safe default: `scanner`, `quality`, and `outreach`. Privileged roles must be both listed here and granted on the contributor profile. The owner UI exposes these grants as chips/check boxes; assigning a privileged role auto-preserves the matching grant so reconnects keep working.
-

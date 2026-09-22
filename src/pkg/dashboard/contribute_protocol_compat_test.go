@@ -161,6 +161,7 @@ func TestRelayProtocolVersionMatchesHub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read bin/contributor-relay.js: %v (if the relay moved, re-point this test rather than deleting it)", err)
 	}
+
 	m := regexp.MustCompile(`(?m)^const RELAY_PROTOCOL_VERSION = '([^']*)';`).FindSubmatch(raw)
 	if m == nil {
 		t.Fatal("could not find RELAY_PROTOCOL_VERSION in bin/contributor-relay.js — if it was renamed, re-point this test in the same PR")
@@ -170,6 +171,29 @@ func TestRelayProtocolVersionMatchesHub(t *testing.T) {
 			"They ship from the same tree and must match. Bumping contributorProtocolVersion "+
 			"means bumping RELAY_PROTOCOL_VERSION in the same PR (hivecommons/hive#2547 / #2567).", got, contributorProtocolVersion)
 	}
+}
+
+func TestRunStageCapabilityNegotiation(t *testing.T) {
+	t.Parallel()
+	if !testContainsString(serverCapabilities(), capRunStage) {
+		t.Fatalf("server capabilities do not advertise %q", capRunStage)
+	}
+	if relaySupportsRunStage(&ContributorConnection{}) {
+		t.Fatal("undeclared relay capability must not opt into run stages")
+	}
+	withCap := &ContributorConnection{capabilities: &ContributorCapabilities{RelayCapabilities: []string{capRunStage}}}
+	if !relaySupportsRunStage(withCap) {
+		t.Fatal("relay declaring run-stage was not accepted")
+	}
+}
+
+func testContainsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRelayComparesHubProtocolVersion asserts the client half of the criterion:

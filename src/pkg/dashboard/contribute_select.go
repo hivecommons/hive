@@ -675,6 +675,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		ref    worksource.Ref
 		title  string
 		url    string
+		stage  string
 		labels []string
 		lane   string
 		isOwn  bool
@@ -747,6 +748,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				return
 			}
 			labels := stringSliceFromAny(issue["labels"])
+			stage := runStageFromIssueMap(issue)
+			if stage != "" && !relaySupportsRunStage(c) {
+				capabilityMismatchSeen = true
+				h.logger.Info("[contribute-ws] skip: run stage requires a relay capability",
+					"repo", repo.Full, "number", number, "stage", stage, "required_capability", capRunStage)
+				return
+			}
 			requirements := TaskRequirementsFromLabels(labels)
 			if !ContributorCanRunTask(declaredCaps, declaredBackend, requirements) {
 				capabilityMismatchSeen = true
@@ -902,6 +910,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				ref:      ref,
 				title:    title,
 				url:      url,
+				stage:    stage,
 				// The issue's own labels travel with the candidate so the chosen
 				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
@@ -1013,6 +1022,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	assignment := &WSTaskAssign{
 		TaskID:     taskID,
 		Kind:       "issue",
+		Stage:      chosen.stage,
 		Role:       requestedRole,
 		Repo:       chosen.repoFull,
 		Number:     chosen.number,
@@ -1063,8 +1073,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// an explicit lease_persist_failed instead of a task_assign the hub would
 	// have no record of after its next restart. No task-MCP lease token is
 	// minted for it either: that mint sits downstream of the task_assign.
-	if err := h.recordLeaseForKey(identityOf(c), taskID, chosen.repoFull, chosen.number,
-		chosen.ref.Key(), c.profile.TrustTier, gen, assignedAt); err != nil {
+	if err := h.recordLeaseForKeyStage(identityOf(c), taskID, chosen.repoFull, chosen.number,
+		chosen.ref.Key(), c.profile.TrustTier, chosen.stage, gen, assignedAt); err != nil {
 		h.rollbackAssignment(c, taskID)
 		h.logger.Warn("[contribute-ws] refusing task: lease could not be persisted — "+
 			"the grant would not survive a hub restart; check the lease registry directory",
@@ -1187,6 +1197,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		Seq:     h.nextSeq(),
 		TaskID:  taskID,
 		TaskGen: gen,
+		Stage:   chosen.stage,
 		Kind:    "issue",
 		Role:    requestedRole,
 		Repo:    chosen.repoFull,
@@ -1257,4 +1268,13 @@ func stringSliceFromAny(v any) []string {
 		}
 	}
 	return out
+}
+
+func runStageFromIssueMap(issue map[string]any) string {
+	for _, key := range []string{"stage", "run_stage"} {
+		if raw, ok := issue[key].(string); ok && validStage(strings.TrimSpace(raw)) {
+			return strings.TrimSpace(raw)
+		}
+	}
+	return ""
 }

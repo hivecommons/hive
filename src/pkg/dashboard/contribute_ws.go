@@ -302,6 +302,7 @@ type WSMessage struct {
 	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
 	// pre-existing TaskID match for those clients. Never a credential.
 	TaskGen uint64   `json:"task_gen,omitempty"`
+	Stage   string   `json:"stage,omitempty"`
 	Kind    string   `json:"kind,omitempty"`
 	Repo    string   `json:"repo,omitempty"`
 	Number  int      `json:"number,omitempty"`
@@ -456,6 +457,7 @@ type WSMessage struct {
 type WSTaskAssign struct {
 	TaskID string `json:"task_id"`
 	Kind   string `json:"kind"`
+	Stage  string `json:"stage,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
@@ -2631,15 +2633,21 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 
 			lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
 			if lease == nil {
+				rejectStage := h.leaseStageForDecision(identity, msg.TaskID)
 				h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"repo", canonRepo,
+					"stage", rejectStage,
 					"client_gen", msg.TaskGen,
 				)
+				detail := "no matching server-issued lease; task_revoke sent"
+				if rejectStage != "" {
+					detail += "; stage=" + rejectStage
+				}
 				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
 					msg.TaskID, canonRepo, msg.Number,
-					"no matching server-issued lease; task_revoke sent")
+					detail)
 				// Tell the relay this task is not (or no longer) its to hold, so
 				// it stops reporting and re-asks for work rather than silently
 				// believing it owns something the hub has no record of.
@@ -2686,6 +2694,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			rebuilt := &WSTaskAssign{
 				TaskID: lease.taskID,
 				Kind:   msg.Kind,
+				Stage:  lease.stage,
 				Repo:   lease.repo,
 				Number: lease.number,
 				Key:    lease.key,

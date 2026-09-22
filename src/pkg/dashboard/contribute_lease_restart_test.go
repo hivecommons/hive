@@ -194,6 +194,7 @@ func TestLeaseRestart_UnexpiredLeaseIsReAdoptable(t *testing.T) {
 	if l == nil {
 		t.Fatalf("#5681: a lease recorded before the restart was not re-adoptable after it")
 	}
+
 	if l.repo != "myorg/repo1" || l.number != 5617 || l.gen != 42 {
 		t.Fatalf("restored lease lost its match tuple: %+v", l)
 	}
@@ -211,6 +212,25 @@ func TestLeaseRestart_UnexpiredLeaseIsReAdoptable(t *testing.T) {
 		if got != nil {
 			t.Errorf("restart must not relax the C4 exact-match contract (%s was accepted)", name)
 		}
+	}
+}
+
+func TestLeaseRestart_StageSurvivesRestart(t *testing.T) {
+	hub1, _ := covK2Hub(t)
+	const identity = "c-stage-restart"
+	now := time.Now()
+	if err := hub1.recordLeaseForKeyStage(identity, "ct-stage", "myorg/repo1", 8297,
+		"myorg/repo1#8297", "contributor", StagePlan, 77, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+
+	hub2 := restartedHub(t)
+	l := hub2.lookupLease(identity, "ct-stage", "myorg/repo1", 8297, 77, now)
+	if l == nil {
+		t.Fatal("staged lease was not re-adoptable after restart")
+	}
+	if l.stage != StagePlan {
+		t.Fatalf("stage after restart = %q, want %q", l.stage, StagePlan)
 	}
 }
 

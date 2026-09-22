@@ -90,6 +90,7 @@ func runStageIssue(stage RunStage) Issue {
 		Title:      stage.Stage + ": " + title,
 		Author:     stage.Author,
 		Labels:     []string{"hive-run", "stage/" + stage.Stage},
+		Stage:      stage.Stage,
 		IsTracker:  false,
 		Priority:   stage.Priority,
 		State:      "open",

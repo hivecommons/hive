@@ -1,0 +1,1 @@
+- Add Hive-owned task lease stages with per-stage generations for staged runs.

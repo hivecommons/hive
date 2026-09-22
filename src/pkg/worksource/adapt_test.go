@@ -21,6 +21,7 @@ func TestToGitHubIssues(t *testing.T) {
 			Labels:     []string{"bug", "urgent"},
 			Assignees:  []string{"marty"},
 			IsTracker:  true,
+			Stage:      "spec",
 			Priority:   "high",
 			State:      "Todo",
 			CreatedAt:  created,
@@ -50,7 +51,7 @@ func TestToGitHubIssues(t *testing.T) {
 	if !g.CreatedAt.Equal(created) || !g.UpdatedAt.Equal(updated) {
 		t.Errorf("timestamps not mapped: created=%v updated=%v", g.CreatedAt, g.UpdatedAt)
 	}
-	if !g.IsTracker || g.Priority != "high" || g.State != "Todo" {
+	if !g.IsTracker || g.Stage != "spec" || g.Priority != "high" || g.State != "Todo" {
 		t.Errorf("worksource fields not mapped: %+v", g)
 	}
 	if len(g.DependsOn) != 2 || g.DependsOn[0].Key != "my-org/my-repo!ENG-100" || g.DependsOn[0].Resolved || !g.DependsOn[1].Resolved {

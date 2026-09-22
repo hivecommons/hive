@@ -347,6 +347,9 @@ type Issue struct {
 	AgeMinutes int       `json:"age_minutes"`
 	URL        string    `json:"url"`
 	IsTracker  bool      `json:"is_tracker"`
+	// Stage marks staged run work (spec, plan, implement). Empty means a plain
+	// task.
+	Stage string `json:"stage,omitempty"`
 	// SourceType and ExternalID carry the work source's own identity through
 	// this GitHub-shaped compatibility envelope (kubestellar/hive#4245).
 	//

@@ -24,6 +24,9 @@ const (
 
 	AuditCopilotTokenMissing = agentaudit.AuditCopilotTokenMissing
 	AuditClaudeTokenMissing  = agentaudit.AuditClaudeTokenMissing
+
+	AuditLeaseStageAdvanced = agentaudit.AuditLeaseStageAdvanced
+	AuditLeaseStageRetried  = agentaudit.AuditLeaseStageRetried
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
@@ -72,6 +75,12 @@ func (m *Manager) auditWithActor(actor, action, agentName string, fields map[str
 // auditFields builds a fields map from alternating key/value pairs; see
 // agentaudit.Fields.
 func auditFields(kv ...any) map[string]any {
+	return agentaudit.Fields(kv...)
+}
+
+// Fields builds a structured audit field map for external emitters that use the
+// agent audit vocabulary without importing pkg/agentaudit directly.
+func Fields(kv ...any) map[string]any {
 	return agentaudit.Fields(kv...)
 }
 

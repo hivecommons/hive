@@ -1,6 +1,9 @@
 package dashboard
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // kubestellar/hive#6909: the clientGen==0 escape made the #2568 Gate opt-in.
 // A client could bypass fencing at every call site just by omitting task_gen,
@@ -50,6 +53,7 @@ func TestGenerationRatchet_ArmsOnFirstStampedMessage(t *testing.T) {
 	if c.sawTaskGen {
 		t.Fatal("ratchet armed before any stamped message")
 	}
+
 	// An unstamped message from a never-fenced connection is accepted and must
 	// NOT arm the ratchet.
 	if gen := uint64(0); gen != 0 {
@@ -70,5 +74,25 @@ func TestGenerationRatchet_ArmsOnFirstStampedMessage(t *testing.T) {
 	// Now the same connection may no longer fall back to unstamped.
 	if generationAccepted(0, c.currentTaskGen, c.sawTaskGen) {
 		t.Fatal("ratchet did not hold: connection downgraded to unstamped after fencing")
+	}
+}
+
+func TestLookupLease_FencesOldGenerationAfterStageAdvance(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-fence", "task-fence", "myorg/repo1", 8297,
+		"myorg/repo1#8297", "contributor", StageSpec, 30, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	advanced, err := hub.advanceLeaseStage("c-fence", "task-fence", StagePlan, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("advance stage: %v", err)
+	}
+
+	if got := hub.lookupLease("c-fence", "task-fence", "myorg/repo1", 8297, 30, now); got != nil {
+		t.Fatalf("old stage generation was accepted after advance: %+v", got)
+	}
+	if got := hub.lookupLease("c-fence", "task-fence", "myorg/repo1", 8297, advanced.gen, now); got == nil {
+		t.Fatal("new stage generation was rejected")
 	}
 }

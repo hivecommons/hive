@@ -36,6 +36,9 @@ type Issue struct {
 	// IsTracker marks coordination-only umbrella work whose children carry the
 	// real implementation tasks.
 	IsTracker bool `json:"is_tracker,omitempty"`
+	// Stage marks staged run work (spec, plan, implement). Empty means a plain
+	// task.
+	Stage string `json:"stage,omitempty"`
 	// Priority is a normalized priority string: "urgent", "high", "medium",
 	// "low", "none". Empty when the source does not provide priority.
 	Priority string `json:"priority,omitempty"`

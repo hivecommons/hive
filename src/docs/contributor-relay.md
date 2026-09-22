@@ -1149,6 +1149,15 @@ mixed-version behaviour is therefore:
   deliberate fallback, logged as such and covered by a test — not an incident.
 - **Hub advertising no capabilities:** treated identically to the old-hub case.
 
+Run-stage assignments add one more negotiated token: `run-stage`
+([#8297](https://github.com/hivecommons/hive/issues/8297)). A staged run is
+still one task lease, but the lease now carries a Hive-owned `stage`
+(`spec`, `plan`, or `implement`) and every stage advance or retry mints a new
+`task_gen`. Plain tasks keep sending no `stage`, so old relays keep working
+there. A relay that is offered staged run work must declare `run-stage` in
+`capabilities.relay_capabilities`; otherwise the hub refuses that staged item
+instead of silently downgrading it to an unstaged task.
+
 **Compatibility boundary with [#6825](https://github.com/hivecommons/hive/issues/6825).**
 Adding a relay→hub capability list is a change to the assignment boundary that
 RFC #6825 is still designing (its status is *proposal — open for maintainer
