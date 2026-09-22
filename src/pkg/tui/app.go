@@ -7,7 +7,7 @@
 // the fleet model, so everything it displays arrives over the documented HTTP
 // contract in dashboard/openapi.json.
 //
-// T3 (#5004): the frame is a header bar, a 2×2 grid of the four panes from
+// T3 (#5004): the frame is a header bar and a responsive grid of panes from
 // pkg/tui/panes, and a footer keybinding strip, per the layout sketch in
 // src/docs/design/tui.md §3.
 //
@@ -64,9 +64,9 @@ import (
 // that does not say how to exit is a trap — especially over SSH.
 const splash = "Hive TUI (q to quit)"
 
-// paneCount is the grid's four cells. Focus arithmetic uses it so adding a
-// pane later cannot silently desynchronize tab cycling from the pane table.
-const paneCount = 4
+// paneCount is the grid's cells. Focus arithmetic uses it so adding a pane
+// later cannot silently desynchronize tab cycling from the pane table.
+const paneCount = 5
 
 // minWidth and minHeight are the smallest terminal the grid is drawn in.
 //
@@ -76,6 +76,14 @@ const paneCount = 4
 // columns wide after two borders and a halved terminal, which is a frame that
 // draws but says nothing. Showing an operator a stack of empty boxes is worse
 // than telling them the window is too small, so this is the floor.
+const (
+	paneAgentsIndex   = 0
+	paneGovernorIndex = 1
+	paneTokensIndex   = 2
+	paneEventsIndex   = 3
+	paneRunsIndex     = 4
+)
+
 const (
 	minWidth          = 60
 	minHeight         = 20
@@ -173,7 +181,7 @@ const (
 // binding that falls off the right edge is simply invisible. The footer is
 // terse by design (`tab focus` already stands for tab and shift+tab); the help
 // overlay is where a binding is spelled out in full.
-const footerText = "tab focus  z zoom  enter zoom  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit"
+const footerText = "tab focus z zoom enter zoom r runs p pause m model K kick a act x reject A acmm H hives ? help q quit"
 
 const hivesOnlyClosedText = "Hives overlay closed — Shift+H reopens, esc/q quit"
 
@@ -229,6 +237,16 @@ type modelSetMsg struct {
 	model    string
 	result   client.ModelSetResult
 	err      error
+}
+
+// runActionMsg is the asynchronous result of approving or rejecting the
+// selected run's checkpoint. The key travels with the result so a late response
+// can still name the row the operator acted on even after the pane refreshes.
+type runActionMsg struct {
+	key     string
+	approve bool
+	result  client.PlanActionResult
+	err     error
 }
 
 // acmmPacksMsg is the asynchronous result of the ACMM overlay's pack list
@@ -492,6 +510,7 @@ func newModel() model {
 			panes.NewGovernor(),
 			panes.NewTokens(),
 			panes.NewEvents(),
+			panes.NewRuns(),
 		},
 		api:               client.New(),
 		reconcileInterval: pollInterval,
@@ -675,6 +694,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentAction(msg)
 	case kickResultMsg:
 		return m.handleKickResult(msg)
+	case runActionMsg:
+		return m.handleRunAction(msg)
 	case modelListMsg:
 		return m.handleModelList(msg)
 	case modelSetMsg:
@@ -771,16 +792,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.focus = (m.focus + 1) % paneCount
 			return m, nil
+		case "r":
+			m.focus = paneRunsIndex
+			return m, nil
 		case "shift+tab":
 			// +paneCount-1 rather than -1: keeps the operand positive, so
 			// the modulo never sees a negative number to round wrongly.
 			m.focus = (m.focus + paneCount - 1) % paneCount
 			return m, nil
 		case "p":
-			if m.focus != 0 {
+			if m.focus != paneAgentsIndex {
 				return m, nil
 			}
-			agents, ok := m.panes[0].(panes.Agents)
+			agents, ok := m.panes[paneAgentsIndex].(panes.Agents)
 			if !ok {
 				return m, nil
 			}
@@ -791,10 +815,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirm = &confirmState{agent: name, pause: !paused}
 			return m, nil
 		case "m":
-			if m.focus != 0 {
+			if m.focus != paneAgentsIndex {
 				return m, nil
 			}
-			agents, ok := m.panes[0].(panes.Agents)
+			agents, ok := m.panes[paneAgentsIndex].(panes.Agents)
 			if !ok {
 				return m, nil
 			}
@@ -837,10 +861,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// whose keys include a removal.
 			return m.openHives()
 		case "K":
-			if m.focus != 0 || m.kickPending != "" {
+			if m.focus != paneAgentsIndex || m.kickPending != "" {
 				return m, nil
 			}
-			agents, ok := m.panes[0].(panes.Agents)
+			agents, ok := m.panes[paneAgentsIndex].(panes.Agents)
 			if !ok {
 				return m, nil
 			}
@@ -852,10 +876,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.footerStatus = ""
 			return m, m.kickAgent(name)
 		case "a":
-			if m.focus != 0 || m.attachPending {
+			if m.focus == paneRunsIndex {
+				return m.approveSelectedRun()
+			}
+			if m.focus != paneAgentsIndex || m.attachPending {
 				return m, nil
 			}
-			agents, ok := m.panes[0].(panes.Agents)
+			agents, ok := m.panes[paneAgentsIndex].(panes.Agents)
 			if !ok {
 				return m, nil
 			}
@@ -866,6 +893,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attachPending = true
 			m.footerStatus = ""
 			return m, prepareAttach(name, m.api)
+		case "x":
+			if m.focus != paneRunsIndex {
+				return m, nil
+			}
+			return m.rejectSelectedRun()
 		}
 		// Any other key belongs to the focused pane. The T3 stubs ignore
 		// everything, but routing through this seam now is what lets a pane
@@ -996,7 +1028,7 @@ func (m model) visiblePaneIndexes(shape gridShape) []int {
 	if shape == gridShapeTwoColumns {
 		return []int{m.focus, (m.focus + 1) % paneCount}
 	}
-	return []int{0, 1, 2, 3}
+	return []int{0, 1, 2, 3, 4}
 }
 
 // View implements tea.Model.
@@ -1061,8 +1093,11 @@ func (m model) View() string {
 		rightW := m.width - leftW
 		top := lipgloss.JoinHorizontal(lipgloss.Top,
 			cell(0, leftW, topH), cell(1, rightW, topH))
+		thirdW := m.width / 3
+		middleW := (m.width - thirdW) / 2
+		lastW := m.width - thirdW - middleW
 		bottom := lipgloss.JoinHorizontal(lipgloss.Top,
-			cell(2, leftW, botH), cell(3, rightW, botH))
+			cell(2, thirdW, botH), cell(3, middleW, botH), cell(4, lastW, botH))
 		grid = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 	}
 
@@ -1191,8 +1226,8 @@ func (m model) handleAgentAction(msg agentActionMsg) (tea.Model, tea.Cmd) {
 	if name == "" {
 		name = msg.agent
 	}
-	if agents, ok := m.panes[0].(panes.Agents); ok {
-		m.panes[0] = agents.SetAgentPaused(name, msg.result.Paused())
+	if agents, ok := m.panes[paneAgentsIndex].(panes.Agents); ok {
+		m.panes[paneAgentsIndex] = agents.SetAgentPaused(name, msg.result.Paused())
 	}
 	if matchesOpenModal {
 		m.confirm = nil
@@ -1238,6 +1273,92 @@ func (m model) handleKickResult(msg kickResultMsg) (tea.Model, tea.Cmd) {
 		m.footerStatus = fmt.Sprintf("Kick returned status %q for %s", msg.result.Status, agent)
 	}
 	return m, nil
+}
+
+func (m model) approveSelectedRun() (tea.Model, tea.Cmd) {
+	return m.runSelectedAction(true)
+}
+
+func (m model) rejectSelectedRun() (tea.Model, tea.Cmd) {
+	return m.runSelectedAction(false)
+}
+
+func (m model) runSelectedAction(approve bool) (tea.Model, tea.Cmd) {
+	runs, ok := m.panes[paneRunsIndex].(panes.Runs)
+	if !ok {
+		return m, nil
+	}
+	run, ok := runs.SelectedRun()
+	if !ok {
+		return m, nil
+	}
+	if run.WaitingOn != client.RunWaitingOnHuman {
+		m.footerStatus = fmt.Sprintf("Run %s is waiting on %s, not human review", run.Key, runWaitingLabel(run.WaitingOn))
+		return m, nil
+	}
+	m.footerStatus = ""
+	return m, m.runAction(run.Key, approve)
+}
+
+func runWaitingLabel(waitingOn string) string {
+	if waitingOn == "" {
+		return client.RunWaitingOnNone
+	}
+	return waitingOn
+}
+
+func (m model) runAction(key string, approve bool) tea.Cmd {
+	return func() tea.Msg {
+		role, err := m.api.Role(context.Background())
+		if err != nil {
+			return runActionMsg{key: key, approve: approve, err: err}
+		}
+		if !role.Owner() {
+			return runActionMsg{key: key, approve: approve, err: &client.APIError{StatusCode: 403, Method: "GET", Path: "/api/role"}}
+		}
+		run, err := m.api.Run(context.Background(), key)
+		if err != nil {
+			return runActionMsg{key: key, approve: approve, err: err}
+		}
+		if run.WaitingOn != client.RunWaitingOnHuman {
+			return runActionMsg{key: key, approve: approve, err: fmt.Errorf("run is waiting on %s, not human review", runWaitingLabel(run.WaitingOn))}
+		}
+		if run.PlanEpicID == "" {
+			return runActionMsg{key: key, approve: approve, err: fmt.Errorf("run has no plan epic id")}
+		}
+		var result client.PlanActionResult
+		if approve {
+			result, err = m.api.ApproveRun(context.Background(), run.PlanEpicID)
+		} else {
+			result, err = m.api.RejectRun(context.Background(), run.PlanEpicID)
+		}
+		return runActionMsg{key: key, approve: approve, result: result, err: err}
+	}
+}
+
+func (m model) handleRunAction(msg runActionMsg) (tea.Model, tea.Cmd) {
+	verb := "Approve"
+	if !msg.approve {
+		verb = "Reject"
+	}
+	if msg.err != nil {
+		if client.IsForbidden(msg.err) {
+			m.footerStatus = verb + " run failed: owner access required"
+		} else {
+			m.footerStatus = fmt.Sprintf("%s run failed: %v", verb, msg.err)
+		}
+		return m, nil
+	}
+	status := msg.result.Status
+	if status == "" {
+		if msg.approve {
+			status = "approved"
+		} else {
+			status = "rejected"
+		}
+	}
+	m.footerStatus = fmt.Sprintf("Run %s %s", msg.key, status)
+	return m, m.poll()
 }
 
 // ── Model picker (T17) ───────────────────────────────────────────────────────
@@ -1337,8 +1458,8 @@ func (m model) handleModelSet(msg modelSetMsg) (tea.Model, tea.Cmd) {
 	if applied == "" {
 		applied = msg.model
 	}
-	if agents, ok := m.panes[0].(panes.Agents); ok {
-		m.panes[0] = agents.SetAgentModel(agent, applied)
+	if agents, ok := m.panes[paneAgentsIndex].(panes.Agents); ok {
+		m.panes[paneAgentsIndex] = agents.SetAgentModel(agent, applied)
 	}
 	if matchesOpenModal {
 		m.picker = nil

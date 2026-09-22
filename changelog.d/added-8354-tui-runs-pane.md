@@ -1,0 +1,1 @@
+- Added a Runs pane to `hivectl tui` with active-run polling and approve/reject controls for human checkpoints.

@@ -233,7 +233,7 @@ hivectl tui
 ```
 
 A full-screen, keyboard-driven view of the fleet — agents, the governor,
-token/cost spend, and recent activity — over the same dashboard API the
+token/cost spend, recent activity, and active runs — over the same dashboard API the
 non-interactive subcommands above use. It is not a second Hive runtime, just
 another client of the API: same auth token, same endpoints, same SSE stream
 the web dashboard consumes. Requires a real terminal.
@@ -323,9 +323,9 @@ is merely *down* is one of the main reasons to open the TUI, and the panes fill
 themselves when it returns. A `403` also opens: that is a working session whose
 role is too narrow for some reads, which the panes already handle individually.
 
-#### The four panes
+#### The panes
 
-A responsive grid — Agents, Governor, Tokens and Events — refreshed from two
+A responsive grid — Agents, Governor, Tokens, Events and Runs — refreshed from two
 independent loops with different cadences. At 120×40 and larger it uses the
 classic 2×2 layout; on wide-but-short terminals it shows the focused pane and
 the next pane side by side; on narrow terminals it gives the focused pane the
@@ -338,6 +338,7 @@ whole grid area. Press `z` (or `enter`) to zoom the focused pane, and `z` or
 | **Governor** | `GET /api/status` (live mode/queue), `GET /api/config/governor` (eval interval) | reconciliation loop |
 | **Tokens** | `GET /api/tokens` (counts, required) + `GET /api/cost` (estimate, optional) | activity loop, fixed |
 | **Events** | `GET /api/audit` (newest-first operator/governor activity) | activity loop, fixed |
+| **Runs** | `GET /api/runs` (active run rows); approve/reject verifies `GET /api/runs/{key}` before posting to the plan gate | activity loop, fixed |
 
 The **reconciliation loop** is what the SSE connection status affects: every
 5 seconds while the stream is down or has not proven itself yet, stretching to
@@ -348,7 +349,7 @@ dropping the connection).
 
 The **activity loop** — Tokens and Events — polls every 5 seconds
 **unconditionally**, whether or not the SSE stream is connected. Nothing on
-the stream carries token counts, estimated cost, or audit rows, so there is
+the stream carries token counts, estimated cost, audit rows, or run rows, so there is
 no push event for those panes to wait on; tying them to the reconciliation
 timer would make a *healthy* connection the reason they went stale. (This is
 what `tui T32` / [#5421](https://github.com/hivecommons/hive/issues/5421)
@@ -377,12 +378,14 @@ simply keeps its last successful snapshot rather than showing an error.
 |---|---|---|
 | `tab` / `shift+tab` | Cycle pane focus forward / backward | global |
 | `z` / `enter` | Zoom the focused pane; `z` or `esc` restores the grid | global |
-| `j` / `k`, `↓` / `↑` | Move the row selection | Agents, Events panes |
+| `j` / `k`, `↓` / `↑` | Move the row selection | Agents, Events, Runs panes |
 | `p` | Pause or resume the selected agent (opens a y/n confirm) | Agents pane |
 | `m` | Open the model picker for the selected agent | Agents pane |
 | `K` | Kick the selected agent now | Agents pane |
+| `r` | Focus the Runs pane | global |
 | `A` | Open the ACMM level overlay | global |
-| `a` | Attach to the selected agent's tmux session (local, or via the dashboard's terminal proxy) | Agents pane |
+| `a` | Attach to the selected agent's tmux session, or approve the selected run checkpoint | Agents / Runs panes |
+| `x` | Reject the selected run checkpoint | Runs pane |
 | `H` | Open the Hives overlay — your contributor profiles, with `enter` to switch | global |
 | `?` | Toggle the help overlay (lists this table; dismisses on any key) | global |
 | `q` / `ctrl+c` | Quit | global |
@@ -392,8 +395,8 @@ the actions with the widest blast radius bound to a bare key, so each sits on
 the shifted member of a pair whose lowercase twin (`k` navigate, `a` attach,
 `h` unbound) is pressed constantly during normal use — a missed shift never
 fires the bigger action by accident. Actions apply to the selection in the
-**focused** pane only; pressing `p`/`m`/`K`/`a` while a pane other than Agents
-is focused is a no-op, never a guess at "the current agent". `A` and `H` are
+**focused** pane only; pressing `p`/`m`/`K` while a pane other than Agents
+is focused, or `a`/`x` while they do not apply to the focused pane, is a no-op, never a guess at "the current agent". `A` and `H` are
 the exceptions and are global: an ACMM level is a property of the whole hive,
 and the hives list is not a property of this hive at all.
 
@@ -403,6 +406,16 @@ overlay is the only way those reach the frame underneath again. The ACMM
 overlay is the one exception to "letters are bindings": once its typed
 confirmation is open, ordinary letters (including `p`, `a`, `A`, `K`) are
 literal text being typed into the confirmation phrase, not actions.
+
+#### Runs
+
+`r` focuses the Runs pane. The pane lists active staged runs from `GET /api/runs`
+with the run key, current stage, what it is waiting on, and the age of the wait
+or stage. `a` on a run whose `waiting_on` value is `human` approves the selected
+checkpoint; `x` rejects it. Before either write the TUI checks `/api/role`,
+refetches the selected row via `GET /api/runs/{key}`, and then posts to the
+plan approve/reject route named by `plan_epic_id`. Non-human waits are no-ops
+with a footer explanation, and a 403 reads `owner access required`.
 
 #### Pause / resume
 

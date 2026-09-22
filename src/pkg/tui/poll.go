@@ -223,6 +223,7 @@ func (m model) pollActivity() tea.Cmd {
 		m.fetchTokens(),
 		m.fetchCosts(),
 		m.fetchEvents(),
+		m.fetchRuns(),
 	)
 }
 
@@ -417,6 +418,18 @@ func (m model) fetchEvents() tea.Cmd {
 			return fetchErrMsg{source: "events", err: err}
 		}
 		return panes.EventsMsg{Events: events}
+	}
+}
+
+// fetchRuns reads the active runs snapshot. Runs are not carried by the SSE
+// stream, so they live on the fixed activity cadence with audit and token data.
+func (m model) fetchRuns() tea.Cmd {
+	return func() tea.Msg {
+		runs, err := m.api.Runs(context.Background())
+		if err != nil {
+			return fetchErrMsg{source: "runs", err: err}
+		}
+		return panes.RunsMsg{Runs: runs, ObservedAt: time.Now()}
 	}
 }
 

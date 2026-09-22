@@ -36,6 +36,14 @@ const eventsFixture = `{"entries":[
 
 const emptyEventsFixture = `{"entries":[]}`
 
+// runsFixture is the /api/runs body served by poll tests. One human wait makes
+// the Runs pane visibly actionable while the second row proves ordinary active
+// runs are preserved too.
+const runsFixture = `[
+  {"key":"hivecommons/hive#8309","title":"[runs] TUI Runs pane","repo":"hivecommons/hive","stage":"plan_review","gen":4,"stage_started_at":"2026-09-22T18:30:00Z","waiting_on":"human","waiting_since":"2026-09-22T18:45:00Z","assignee":"planner","plan_epic_id":"epic-8309"},
+  {"key":"hivecommons/hive#8299","title":"[runs] projection API","repo":"hivecommons/hive","stage":"implement","gen":2,"stage_started_at":"2026-09-22T19:00:00Z","waiting_on":"agent","assignee":"builder"}
+]`
+
 // closedDashboard is an address nothing listens on, used by the tests that
 // must not reach a dashboard at all.
 //
@@ -542,12 +550,15 @@ type dashboardServer struct {
 	failHiveID          atomic.Bool
 	failTokens          atomic.Bool
 	failCost            atomic.Bool
+	failRuns            atomic.Bool
 	hiveID              atomic.Value // string body for /api/hive-id
 	tokens              atomic.Value // string body for /api/tokens
 	cost                atomic.Value // string body for /api/cost
 	audit               atomic.Value // string body for /api/audit
+	runs                atomic.Value // string body for /api/runs
 	auditStatus         atomic.Int64
 	auditRequests       atomic.Int64
+	runsRequests        atomic.Int64
 	eventStreamRequests atomic.Int64
 }
 
@@ -558,6 +569,7 @@ func newDashboardServer(t *testing.T) *dashboardServer {
 	s.tokens.Store(tokensFixture)
 	s.cost.Store(costFixture)
 	s.audit.Store(eventsFixture)
+	s.runs.Store(runsFixture)
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fail := func() {
 			w.WriteHeader(http.StatusForbidden)
@@ -606,6 +618,14 @@ func newDashboardServer(t *testing.T) *dashboardServer {
 				w.WriteHeader(status)
 			}
 			body, _ := s.audit.Load().(string)
+			_, _ = w.Write([]byte(body))
+		case "/api/runs":
+			s.runsRequests.Add(1)
+			if s.failRuns.Load() {
+				fail()
+				return
+			}
+			body, _ := s.runs.Load().(string)
 			_, _ = w.Write([]byte(body))
 		case "/api/events":
 			s.eventStreamRequests.Add(1)
@@ -981,7 +1001,7 @@ func TestPollIssuesEveryRead(t *testing.T) {
 
 	msgs := drain(m.poll())
 
-	var agents, governor, interval, hiveID, tokens, cost, events bool
+	var agents, governor, interval, hiveID, tokens, cost, events, runs bool
 	for _, msg := range msgs {
 		switch msg.(type) {
 		case panes.AgentsMsg:
@@ -998,6 +1018,8 @@ func TestPollIssuesEveryRead(t *testing.T) {
 			cost = true
 		case panes.EventsMsg:
 			events = true
+		case panes.RunsMsg:
+			runs = true
 		}
 	}
 	if !agents {
@@ -1021,17 +1043,19 @@ func TestPollIssuesEveryRead(t *testing.T) {
 	if !events {
 		t.Error("poll did not fetch audit events; the Events pane would stay on its placeholder")
 	}
+	if !runs {
+		t.Error("poll did not fetch runs; the Runs pane would stay on its placeholder")
+	}
 	if got := server.auditRequests.Load(); got != 1 {
 		t.Errorf("poll made %d /api/audit requests, want exactly 1", got)
+	}
+	if got := server.runsRequests.Load(); got != 1 {
+		t.Errorf("poll made %d /api/runs requests, want exactly 1", got)
 	}
 	if got := server.eventStreamRequests.Load(); got != 0 {
 		t.Errorf("poll made %d /api/events requests for activity rows, want none", got)
 	}
 }
-
-// paneEventsIndex is the Events pane's slot in the model's pane array, fixed by
-// the frame layout in app.go.
-const paneEventsIndex = 3
 
 const eventsPlaceholder = "waiting for data"
 
@@ -1224,14 +1248,6 @@ func TestHeaderIsClippedNotWrappedAtTheMinimumWidth(t *testing.T) {
 }
 
 // --- T30: Tokens pane wiring (#5419) ---------------------------------------
-
-// paneTokensIndex is the Tokens pane's slot in the model's pane array, fixed by
-// newModel's construction order and by the design doc's §3 grid.
-//
-// It is a test-local constant rather than something the app exports: the app
-// broadcasts to every pane and never addresses one, so an index is a fact these
-// tests need and production code deliberately does not.
-const paneTokensIndex = 2
 
 // tokensPlaceholder is the pre-data text every pane shows (panes.placeholder,
 // which is unexported). Asserting on the literal is what makes "the pane is
@@ -1920,7 +1936,8 @@ func streamHealthyModel(t *testing.T, url string) model {
 func activityMsgCount(msgs []tea.Msg) int {
 	return countMsg[tokenUsageMsg](msgs) +
 		countMsg[costSummaryMsg](msgs) +
-		countMsg[panes.EventsMsg](msgs)
+		countMsg[panes.EventsMsg](msgs) +
+		countMsg[panes.RunsMsg](msgs)
 }
 
 // findEventsMsg returns the delivered audit snapshot, or nil if no EventsMsg
@@ -1980,8 +1997,8 @@ func TestEachTickFetchesOnlyItsOwnClass(t *testing.T) {
 
 		msgs := runActivityTick(m)
 
-		if got := activityMsgCount(msgs); got != 3 {
-			t.Errorf("an activity tick delivered %d of its 3 reads; a wired endpoint went missing", got)
+		if got := activityMsgCount(msgs); got != 4 {
+			t.Errorf("an activity tick delivered %d of its 4 reads; a wired endpoint went missing", got)
 		}
 		if got := reconcileMsgCount(msgs); got != 0 {
 			t.Errorf("an activity tick delivered %d reconciliation reads, want 0 — those belong to the stretching loop", got)
@@ -2015,8 +2032,8 @@ func TestPollStillIssuesBothClasses(t *testing.T) {
 	if got := reconcileMsgCount(msgs); got != 4 {
 		t.Errorf("poll() delivered %d reconciliation reads, want 4", got)
 	}
-	if got := activityMsgCount(msgs); got != 3 {
-		t.Errorf("poll() delivered %d activity reads, want 3", got)
+	if got := activityMsgCount(msgs); got != 4 {
+		t.Errorf("poll() delivered %d activity reads, want 4", got)
 	}
 	if hasTick(msgs) || hasActivityTick(msgs) {
 		t.Error("poll() armed a tick chain; it is the one-shot refresh, and arming from an action handler would fork a second loop per keypress")
@@ -2071,8 +2088,8 @@ func TestActivityLoopKeepsRefreshingWhileTheStreamIsHealthy(t *testing.T) {
 	m := streamHealthyModel(t, server.URL)
 
 	first := runActivityTick(m)
-	if activityMsgCount(first) != 3 {
-		t.Fatalf("the first activity tick under a healthy stream delivered %d of 3 reads", activityMsgCount(first))
+	if activityMsgCount(first) != 4 {
+		t.Fatalf("the first activity tick under a healthy stream delivered %d of 4 reads", activityMsgCount(first))
 	}
 
 	// The hive does something while the stream is up and says nothing about it.
@@ -2128,8 +2145,8 @@ func TestStreamDropDoesNotRetireTheActivityChain(t *testing.T) {
 		t.Fatal("the activity chain died with the stream; nothing would ever refresh Tokens or Events again")
 	}
 	msgs := drain(cmd)
-	if activityMsgCount(msgs) != 3 {
-		t.Errorf("the activity tick armed before the drop delivered %d of 3 reads afterwards", activityMsgCount(msgs))
+	if activityMsgCount(msgs) != 4 {
+		t.Errorf("the activity tick armed before the drop delivered %d of 4 reads afterwards", activityMsgCount(msgs))
 	}
 	if !hasActivityTick(msgs) {
 		t.Error("the surviving activity tick did not arm its successor")

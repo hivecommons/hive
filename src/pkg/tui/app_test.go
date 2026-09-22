@@ -2,6 +2,9 @@ package tui
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/exp/teatest"
 
+	"github.com/hivecommons/hive/pkg/tui/client"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
@@ -508,12 +512,116 @@ func TestFooterAdvertisesZoom(t *testing.T) {
 }
 
 func TestFooterAdvertisesAttach(t *testing.T) {
-	if !strings.Contains(footerText, "a attach") {
-		t.Errorf("footerText = %q, want it to advertise the attach binding", footerText)
+	if !strings.Contains(footerText, "a act") {
+		t.Errorf("footerText = %q, want it to advertise the a action", footerText)
 	}
 	m := newModel()
 	m.width, m.height = 100, 30
-	if !strings.Contains(m.View(), "a attach") {
-		t.Error("the rendered frame does not advertise a attach")
+	if !strings.Contains(m.View(), "a act") {
+		t.Error("the rendered frame does not advertise a act")
+	}
+}
+
+func TestRunsFocusAndApproveSelectedHumanRun(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/role":
+			_, _ = io.WriteString(w, `{"role":"owner"}`)
+		case "/api/runs/hivecommons/hive#8309":
+			_, _ = io.WriteString(w, `{"key":"hivecommons/hive#8309","waiting_on":"human","plan_epic_id":"epic-8309"}`)
+		case "/api/plan/epic-8309/approve":
+			_, _ = io.WriteString(w, `{"ok":true,"status":"approved"}`)
+		case "/api/agents", "/api/status", "/api/config/governor", "/api/hive-id", "/api/tokens", "/api/cost", "/api/audit", "/api/runs":
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	pinDashboard(t, server.URL)
+
+	m := newModel()
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = next.(model)
+	if m.focus != paneRunsIndex {
+		t.Fatalf("r focus = %d, want runs pane %d", m.focus, paneRunsIndex)
+	}
+	next, _ = m.Update(panes.RunsMsg{Runs: []client.Run{{Key: "hivecommons/hive#8309", WaitingOn: client.RunWaitingOnHuman, PlanEpicID: "epic-8309"}}})
+	m = next.(model)
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("a on a human-waiting run returned no command")
+	}
+	msg := cmd()
+	action, ok := msg.(runActionMsg)
+	if !ok || action.err != nil || !action.approve {
+		t.Fatalf("approve command returned %#v", msg)
+	}
+	next, refresh := m.Update(action)
+	m = next.(model)
+	if !strings.Contains(m.footerStatus, "approved") {
+		t.Fatalf("footer after approve = %q, want approved", m.footerStatus)
+	}
+	if refresh == nil {
+		t.Fatal("successful approve did not trigger a refresh")
+	}
+	want := []string{"GET /api/role", "GET /api/runs/hivecommons%2Fhive%238309", "POST /api/plan/epic-8309/approve"}
+	if strings.Join(paths, ",") != strings.Join(want, ",") {
+		t.Fatalf("paths = %v, want %v", paths, want)
+	}
+}
+
+func TestRunsApproveNoOpsWhenSelectedRunIsNotHuman(t *testing.T) {
+	m := newModel()
+	m.focus = paneRunsIndex
+	next, _ := m.Update(panes.RunsMsg{Runs: []client.Run{{Key: "hivecommons/hive#8299", WaitingOn: client.RunWaitingOnAgent}}})
+	m = next.(model)
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(model)
+	if cmd != nil {
+		t.Fatal("a on a non-human run returned a command; it must be a local no-op")
+	}
+	if !strings.Contains(m.footerStatus, "not human review") {
+		t.Fatalf("footer = %q, want non-human explanation", m.footerStatus)
+	}
+}
+
+func TestRunsRejectUsesRejectRoute(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/role":
+			_, _ = io.WriteString(w, `{"role":"owner"}`)
+		case "/api/runs/hivecommons/hive#8309":
+			_, _ = io.WriteString(w, `{"key":"hivecommons/hive#8309","waiting_on":"human","plan_epic_id":"epic-8309"}`)
+		case "/api/plan/epic-8309/reject":
+			_, _ = io.WriteString(w, `{"ok":true,"status":"draft"}`)
+		default:
+			_, _ = io.WriteString(w, `[]`)
+		}
+	}))
+	defer server.Close()
+	pinDashboard(t, server.URL)
+
+	m := newModel()
+	m.focus = paneRunsIndex
+	next, _ := m.Update(panes.RunsMsg{Runs: []client.Run{{Key: "hivecommons/hive#8309", WaitingOn: client.RunWaitingOnHuman}}})
+	m = next.(model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	msg := cmd()
+	action, ok := msg.(runActionMsg)
+	if !ok || action.err != nil || action.approve {
+		t.Fatalf("reject command returned %#v", msg)
+	}
+	if gotPath != "POST /api/plan/epic-8309/reject" {
+		t.Fatalf("last path = %q, want reject route", gotPath)
 	}
 }

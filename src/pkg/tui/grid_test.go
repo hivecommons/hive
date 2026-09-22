@@ -80,7 +80,7 @@ func TestInitBatchesPaneCommands(t *testing.T) {
 		}
 	}
 
-	for _, title := range []string{"AGENTS", "GOVERNOR", "TOKENS", "EVENTS"} {
+	for _, title := range []string{"AGENTS", "GOVERNOR", "TOKENS", "EVENTS", "RUNS"} {
 		if !seen[title] {
 			t.Errorf("Init() dropped the %s pane's initial command", title)
 		}

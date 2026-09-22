@@ -1,0 +1,33 @@
+[
+  {
+    "key": "hivecommons/hive#8309",
+    "title": "[runs] TUI Runs pane",
+    "repo": "hivecommons/hive",
+    "stage": "plan_review",
+    "gen": 4,
+    "stage_started_at": "2026-09-22T18:30:00Z",
+    "waiting_on": "human",
+    "waiting_since": "2026-09-22T18:45:00Z",
+    "assignee": "planner",
+    "last_receipt": "sha256:abc123",
+    "plan_epic_id": "epic-8309",
+    "stages": [
+      {"name": "intake", "status": "completed", "gen": 1},
+      {"name": "plan_review", "status": "current", "gen": 4, "receipt": "sha256:abc123"}
+    ]
+  },
+  {
+    "key": "hivecommons/hive#8299",
+    "title": "[runs] projection API",
+    "repo": "hivecommons/hive",
+    "stage": "implement",
+    "gen": 2,
+    "stage_started_at": "2026-09-22T19:00:00Z",
+    "waiting_on": "agent",
+    "assignee": "builder",
+    "stages": [
+      {"name": "intake", "status": "completed", "gen": 1},
+      {"name": "implement", "status": "current", "gen": 2}
+    ]
+  }
+]

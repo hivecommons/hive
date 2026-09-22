@@ -69,7 +69,7 @@ func TestHelpListsEveryDesignDocBinding(t *testing.T) {
 	// The rows of src/docs/design/tui.md §4 plus readability-pass bindings.
 	wantKeys := []string{
 		"tab / shift+tab", "z / enter", "?", "q / ctrl+c", "j / k, ↓ / ↑",
-		"p", "m", "K", "A", "a", "H",
+		"p", "m", "K", "r", "A", "a", "x", "H",
 	}
 	if len(bindings) != len(wantKeys) {
 		t.Fatalf("HelpBindings() has %d rows, want %d — the design doc's §4 table", len(bindings), len(wantKeys))
@@ -107,7 +107,9 @@ func TestHelpMarksOnlyWiredBindingsAvailable(t *testing.T) {
 		"p":               true, // T15
 		"m":               true, // T17
 		"K":               true, // T21
-		"a":               true, // T22
+		"r":               true, // #8309
+		"a":               true, // T22 / #8309
+		"x":               true, // #8309
 		"A":               true, // T19
 		"H":               true, // #8128
 	}

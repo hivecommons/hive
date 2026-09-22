@@ -273,6 +273,10 @@ const (
 	integrationAuditRefreshed = `{"entries":[
   {"ts":"2026-09-01T12:09:05Z","user":"operator","action":"auditrefreshed","agent":"scanner"}
 ]}`
+	integrationRuns = `[
+  {"key":"hivecommons/hive#8309","title":"[runs] TUI Runs pane","repo":"hivecommons/hive","stage":"plan_review","gen":4,"stage_started_at":"2026-09-01T12:00:00Z","waiting_on":"human","waiting_since":"2026-09-01T12:05:00Z","assignee":"planner","plan_epic_id":"epic-8309"}
+]`
+	integrationRole   = `{"role":"owner","user":"operator"}`
 	integrationModels = `{"backend":"claude","models":["claude-opus-4-5","claude-sonnet-4-5"],"fallback":false,"partial":false}`
 	// GET /api/packs returns a BARE ARRAY of packs, not an object wrapping one.
 	// The active level travels inside it as the `current` flag; there is no
@@ -298,16 +302,19 @@ func newFixtureDashboard(t *testing.T) *fixtureDashboard {
 
 	f := &fixtureDashboard{
 		bodies: map[string]string{
-			"/api/agents":                   integrationAgents,
-			"/api/status":                   integrationStatus,
-			"/api/hive-id":                  integrationHiveID,
-			"/api/config/governor":          integrationGovernorConfig,
-			"/api/tokens":                   integrationTokens,
-			"/api/cost":                     integrationCost,
-			"/api/audit":                    integrationAudit,
-			"/api/packs":                    integrationPacks,
-			"/api/inference/models/claude":  integrationModels,
-			"/api/inference/models/copilot": `{"backend":"copilot","models":["gpt-5"],"fallback":false,"partial":false}`,
+			"/api/agents":                     integrationAgents,
+			"/api/status":                     integrationStatus,
+			"/api/hive-id":                    integrationHiveID,
+			"/api/config/governor":            integrationGovernorConfig,
+			"/api/tokens":                     integrationTokens,
+			"/api/cost":                       integrationCost,
+			"/api/audit":                      integrationAudit,
+			"/api/runs":                       integrationRuns,
+			"/api/runs/hivecommons/hive#8309": `{"key":"hivecommons/hive#8309","waiting_on":"human","plan_epic_id":"epic-8309"}`,
+			"/api/role":                       integrationRole,
+			"/api/packs":                      integrationPacks,
+			"/api/inference/models/claude":    integrationModels,
+			"/api/inference/models/copilot":   `{"backend":"copilot","models":["gpt-5"],"fallback":false,"partial":false}`,
 		},
 		statuses:   map[string]int{},
 		frames:     make(chan sseFrame, 64),
@@ -425,6 +432,10 @@ func (f *fixtureDashboard) mutationResponse(method, path, body string) (string, 
 		rest := strings.TrimPrefix(path, "/api/model/")
 		agent, modelID, _ := strings.Cut(rest, "/")
 		return fmt.Sprintf(`{"status":"ok","agent":%q,"model":%q}`, agent, modelID), true
+	case method == http.MethodPost && path == "/api/plan/epic-8309/approve":
+		return `{"ok":true,"status":"approved"}`, true
+	case method == http.MethodPost && path == "/api/plan/epic-8309/reject":
+		return `{"ok":true,"status":"draft"}`, true
 	case method == http.MethodPut && path == "/api/packs/level":
 		var req struct {
 			Level int `json:"level"`
@@ -1001,7 +1012,7 @@ func TestStartupLoadsEveryPaneAndBothLiveHeaderFieldsWithoutWaitingAnInterval(t 
 	f := newFixtureDashboard(t)
 	h := newHarness(t, f)
 
-	// The four panes, each asserted through a value that can only be on screen
+	// The panes, each asserted through a value that can only be on screen
 	// if that pane's own message was delivered.
 	h.waitForView("the Agents pane to render the polled roster", func(v string) bool {
 		return strings.Contains(v, "Scanner") && strings.Contains(v, "Reviewer")
@@ -1017,6 +1028,9 @@ func TestStartupLoadsEveryPaneAndBothLiveHeaderFieldsWithoutWaitingAnInterval(t 
 	})
 	h.waitForView("the Events pane to render polled audit rows", func(v string) bool {
 		return strings.Contains(v, "auditnewest")
+	})
+	h.waitForView("the Runs pane to render polled active runs", func(v string) bool {
+		return strings.Contains(v, "hivecommons/hive#8309")
 	})
 
 	// Both LIVE header fields. `ws:` is excluded on purpose — it is connection
@@ -1403,8 +1417,8 @@ func TestFocusCyclesAndNavigationTargetsTheDisplayedSelection(t *testing.T) {
 		return ok && name == "quality"
 	})
 
-	// tab cycles forward through all four panes and back to Agents.
-	for want := 1; want <= 3; want++ {
+	// tab cycles forward through all panes and back to Agents.
+	for want := 1; want <= paneCount-1; want++ {
 		h.key("tab")
 		h.waitFor(fmt.Sprintf("focus to reach pane %d", want), func(m model) bool {
 			return m.focus == want
@@ -1418,6 +1432,8 @@ func TestFocusCyclesAndNavigationTargetsTheDisplayedSelection(t *testing.T) {
 	h.waitFor("shift+tab to wrap backward to the last pane", func(m model) bool {
 		return m.focus == paneCount-1
 	})
+	h.key("shift+tab")
+	h.waitFor("shift+tab to focus Events from Runs", func(m model) bool { return m.focus == paneEventsIndex })
 
 	// With Events focused, j/k drive the EVENTS pane, not Agents. The Agents
 	// selection is the control: it must not move.

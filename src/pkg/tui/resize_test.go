@@ -13,7 +13,7 @@ import (
 // paneTitles is what a drawn grid always shows, at any size at or above the
 // minimum. The too-small frame shows none of them, which is what makes this
 // list usable as the "grid or message?" discriminator below.
-var paneTitles = []string{"AGENTS", "GOVERNOR", "TOKENS", "EVENTS"}
+var paneTitles = []string{"AGENTS", "GOVERNOR", "TOKENS", "EVENTS", "RUNS"}
 
 // TestResizeRendersGridOrMessageBySize is T24's central contract, driven
 // through the real program at three sizes the issue names: comfortably large,
@@ -83,7 +83,7 @@ func TestSelectGridShape(t *testing.T) {
 		wantPanes  int
 		secondPane int
 	}{
-		{"comfortable keeps 2x2", comfortableWidth, comfortableHeight, gridShapeTwoByTwo, 4, 1},
+		{"comfortable shows all panes", comfortableWidth, comfortableHeight, gridShapeTwoByTwo, 5, 1},
 		{"wide but short uses two columns", comfortableWidth, minHeight, gridShapeTwoColumns, 2, 1},
 		{"narrow uses one column", 80, 24, gridShapeColumn, 1, -1},
 	}

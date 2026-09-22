@@ -243,12 +243,14 @@ Notes the sketch encodes, for the tasks that implement it:
 | Key | Action | Scope | Task |
 |---|---|---|---|
 | `tab` / `shift+tab` | Cycle pane focus forward / backward | global | T3 |
-| `j` / `k`, `↓` / `↑` | Move the selection within the focused pane | focused pane | T3, T11 |
+| `j` / `k`, `↓` / `↑` | Move the selection within the focused pane | focused pane | T3, T11, #8309 |
 | `p` | Pause or resume the selected agent | Agents pane | T15 |
 | `m` | Open the model picker for the selected agent | Agents pane | T17 |
 | `K` | Kick the selected agent now | Agents pane | T21 |
+| `r` | Focus the Runs pane | global | [#8309](https://github.com/hivecommons/hive/issues/8309) |
 | `A` | Open the ACMM level overlay | global | T19 |
-| `a` | Attach to the selected agent's tmux session (**local only**) | Agents pane | T22 |
+| `a` | Attach to the selected agent, or approve the selected run checkpoint | Agents / Runs panes | T22, [#8309](https://github.com/hivecommons/hive/issues/8309) |
+| `x` | Reject the selected run checkpoint | Runs pane | [#8309](https://github.com/hivecommons/hive/issues/8309) |
 | `H` | Open the Hives overlay: the contributor profiles this machine can lend a CLI to, with `enter` to switch, `a` add, `d` remove, `r` rename | global | [#8128](https://github.com/hivecommons/hive/issues/8128) |
 | `?` | Toggle the help overlay | global | T23 |
 | `q` / `ctrl+c` | Quit | global | T1 |
@@ -256,7 +258,7 @@ Notes the sketch encodes, for the tasks that implement it:
 Conventions these bindings assume:
 
 - **Case is meaningful.** `K` kicks and `A` opens ACMM, while `k` moves the
-  cursor up and `a` attaches. The destructive-ish member of each pair is the
+  cursor up and `a` attaches or approves only in the pane where that action applies. The destructive-ish member of each pair is the
   shifted one, deliberately: `k` is pressed constantly during navigation and
   must never be one missed shift away from an action.
 - **Actions apply to the selection in the focused pane**, never to a global

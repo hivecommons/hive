@@ -44,15 +44,17 @@ func HelpBindings() []Binding {
 		{Keys: "z / enter", Action: "Zoom the focused pane; z or esc restores the grid", Scope: "global", Available: true},
 		{Keys: "?", Action: "Toggle this help overlay", Scope: "global", Available: true},
 		{Keys: "q / ctrl+c", Action: "Quit", Scope: "global", Available: true},
-		{Keys: "j / k, ↓ / ↑", Action: "Move the selection within the focused pane", Scope: "Agents / Events panes", Available: true},
+		{Keys: "j / k, ↓ / ↑", Action: "Move the selection within the focused pane", Scope: "list panes", Available: true},
 		{Keys: "p", Action: "Pause or resume the selected agent", Scope: "Agents pane", Available: true},
 		{Keys: "m", Action: "Open the model picker for the selected agent", Scope: "Agents pane", Available: true},
 		{Keys: "K", Action: "Kick the selected agent now", Scope: "Agents pane", Available: true},
+		{Keys: "r", Action: "Focus the Runs pane", Scope: "global", Available: true},
 		{Keys: "A", Action: "Open the ACMM level overlay", Scope: "global", Available: true},
 		// "(local)" was dropped from the scope when #5644 landed: `a` now
 		// reaches remote and containerized hives through the dashboard's
 		// terminal proxy, with local tmux kept as the co-located fast path.
-		{Keys: "a", Action: "Attach to the selected agent's tmux session", Scope: "Agents pane", Available: true},
+		{Keys: "a", Action: "Attach agent / approve run", Scope: "Agents/Runs", Available: true},
+		{Keys: "x", Action: "Reject selected run", Scope: "Runs pane", Available: true},
 		// Global like `A`, and for a stronger reason: the hives list is the set
 		// of hives this MACHINE lends a CLI to, not a property of the hive the
 		// rest of the frame describes.
