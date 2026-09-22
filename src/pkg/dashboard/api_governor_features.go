@@ -28,6 +28,7 @@ const (
 //     key is a secret/PEM path and the dashboard overlay is deliberately
 //     secret-free)
 //   - plan_from_label   (Config.Planning.PlanFromLabel, a *bool tri-state)
+//   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -70,6 +71,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		MintIssuer  *string `json:"mintIssuer"`
 
 		PlanFromLabel *bool `json:"planFromLabel"`
+
+		FormalEnabled *bool `json:"formalEnabled"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -142,6 +145,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		v := *body.PlanFromLabel
 		cfg.Planning.PlanFromLabel = &v
 	}
+	if body.FormalEnabled != nil {
+		cfg.Quality.Formal = *body.FormalEnabled
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after features update", "error", err)
@@ -165,6 +171,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		planFromLabel = *cfg.Planning.PlanFromLabel
 	}
 	otelCfg := cfg.EffectiveOTel()
+	acmmLevel := cfg.ACMMLevelOrZero()
 	return map[string]interface{}{
 		"ioscanEnabled":      cfg.Ioscan.IsEnabled(),
 		"tracingEnabled":     otelCfg.Enabled,
@@ -181,6 +188,10 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"mintEnabled":        cfg.Mint.Enabled,
 		"mintIssuer":         cfg.Mint.Issuer,
 		"planFromLabel":      planFromLabel,
+		"formalEnabled":      cfg.Quality.Formal,
+		"formalAvailable":    acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel": config.FormalQualityMinACMMLevel,
+		"acmmLevel":          acmmLevel,
 	}
 }
 

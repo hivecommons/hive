@@ -2023,6 +2023,12 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-switch.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: color-mix(in srgb, var(--muted) 28%, transparent);
+      border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+    }
     .config-toggle-switch::before {
       content: ''; position: absolute; top: 2px; left: 2px;
       width: 16px; height: 16px; border-radius: 50%;
@@ -24453,6 +24459,8 @@ function burnAreaChart() {
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
       const planOn = f.planFromLabel === true;
+      const formalAvailable = f.formalAvailable === true;
+      const formalMinACMMLevel = f.formalMinACMMLevel || 5;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
@@ -24527,6 +24535,11 @@ function burnAreaChart() {
           <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced retro</summary>
             <div class="config-field"><label>Analysis model <span class="config-info">i<span class="config-tooltip">Optional. When set, the retro lane additionally runs a model pass over each reconstructed trajectory using this model. This is the only part of the retro loop that spends tokens — leave it empty for rule-based findings only.</span></span></label>${featureModelInput('retroAnalysisModel', f.retroAnalysisModel || '', 'leave empty for deterministic only')}</div>
           </details>
+          <div class="config-toggle" style="margin-top:12px">
+            <div class="config-toggle-switch ${formalAvailable && f.formalEnabled ? 'on' : ''} ${formalAvailable ? '' : 'disabled'}" data-action="${formalAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="formalEnabled" data-disabled="${formalAvailable ? 'false' : 'true'}" title="${formalAvailable ? '' : 'Requires ACMM L' + formalMinACMMLevel + '+'}"></div>
+            <span class="config-toggle-label">Formal verification (quality lane) <span class="config-info">i<span class="config-tooltip">OFF by default; effective only at ACMM L5 and L6; when on, the quality agent may author Spin/Promela models under formal/&lt;subsystem&gt;/, add a path-gated reporting-only CI job, and keep one deduplicated issue per violated property; see src/docs/formal-verification.md.</span></span></span>
+          </div>
+          ${formalAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Requires ACMM L${formalMinACMMLevel}+</p>`}
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
@@ -25116,6 +25129,7 @@ function burnAreaChart() {
     }
 
     function toggleConfigSwitch(el, section, key) {
+      if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
     }

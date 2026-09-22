@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestCovGov_Features exercises PUT /api/config/governor/features: a bad body is
@@ -51,6 +54,7 @@ func TestCovGov_Features(t *testing.T) {
 		"mintEnabled":        true,
 		"mintIssuer":         "https://mint.example.com",
 		"planFromLabel":      planTrue,
+		"formalEnabled":      true,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("features ok: %d", rec.Code)
 	}
@@ -87,6 +91,9 @@ func TestCovGov_Features(t *testing.T) {
 	if cfg.Planning.PlanFromLabel == nil || *cfg.Planning.PlanFromLabel != true {
 		t.Errorf("plan_from_label pointer = %v (want explicit true)", cfg.Planning.PlanFromLabel)
 	}
+	if !cfg.Quality.Formal {
+		t.Errorf("formal verification toggle not enabled")
+	}
 
 	// An explicit false must flip the pointer to false, not clear it.
 	if rec := doPut(s, "/api/config/governor/features", map[string]any{
@@ -110,6 +117,60 @@ func TestCovGov_Features(t *testing.T) {
 	// Tracing endpoint set earlier must survive the partial update.
 	if cfg.Tracing.Endpoint != "https://otel-collector:4318" {
 		t.Errorf("tracing endpoint lost on partial update: %q", cfg.Tracing.Endpoint)
+	}
+}
+
+func TestCovGov_FeaturesFormalRoundTripAndGate(t *testing.T) {
+	s := covApiServer(t)
+	level := config.FormalQualityMinACMMLevel
+	s.deps.Config.ACMMLevel = &level
+
+	if rec := putFeatures(s, map[string]any{"formalEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT formalEnabled = %d, want 403", rec.Code)
+	}
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"formalEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("formal toggle PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Quality.Formal {
+		t.Fatal("quality.formal was not persisted into config")
+	}
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor config: %d — %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			FormalEnabled      bool `json:"formalEnabled"`
+			FormalAvailable    bool `json:"formalAvailable"`
+			FormalMinACMMLevel int  `json:"formalMinACMMLevel"`
+			ACMMLevel          int  `json:"acmmLevel"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	if !payload.Features.FormalEnabled || !payload.Features.FormalAvailable {
+		t.Fatalf("formal payload = %+v, want enabled and available", payload.Features)
+	}
+	if payload.Features.FormalMinACMMLevel != config.FormalQualityMinACMMLevel || payload.Features.ACMMLevel != level {
+		t.Fatalf("formal gate payload = %+v, want min/acmm %d", payload.Features, level)
+	}
+
+	low := config.FormalQualityMinACMMLevel - 1
+	s.deps.Config.ACMMLevel = &low
+	rec = doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET low-ACMM governor config: %d — %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding low-ACMM governor payload: %v", err)
+	}
+	if !payload.Features.FormalEnabled || payload.Features.FormalAvailable {
+		t.Fatalf("low-ACMM formal payload = %+v, want persisted enabled but unavailable", payload.Features)
 	}
 }
 

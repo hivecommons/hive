@@ -128,6 +128,34 @@ func TestRetroTooltipExplainsTokenCost(t *testing.T) {
 	}
 }
 
+func TestFormalVerificationFeatureTooltipAndACMMGate(t *testing.T) {
+	html := indexHTML(t)
+	body := extractJSFunction(t, html, "renderGovFeatures")
+
+	tooltip := controlTooltip(t, body, "Formal verification (quality lane)")
+	for _, want := range []string{
+		"OFF by default",
+		"effective only at ACMM L5 and L6",
+		"formal/&lt;subsystem&gt;/",
+		"reporting-only CI job",
+		"one deduplicated issue per violated property",
+		"src/docs/formal-verification.md",
+	} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("formal verification tooltip missing %q; got:\n%s", want, tooltip)
+		}
+	}
+	if !strings.Contains(body, `data-section="features" data-key="formalEnabled"`) {
+		t.Fatal("Formal verification toggle must save features.formalEnabled")
+	}
+	if !strings.Contains(body, "f.formalAvailable === true") || !strings.Contains(body, "Requires ACMM L") {
+		t.Fatal("Formal verification toggle no longer renders the ACMM availability gate")
+	}
+	if !strings.Contains(body, "formalAvailable && f.formalEnabled") {
+		t.Fatal("Formal verification toggle must not render on below the ACMM gate")
+	}
+}
+
 // controlTooltip returns the tooltip text attached to the control whose
 // caption starts with the given label.
 func controlTooltip(t *testing.T, body, label string) string {

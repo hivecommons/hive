@@ -14,6 +14,8 @@ quality:
   formal: true
 ```
 
+You can also set the same `quality.formal` toggle from the dashboard under Settings -> Features.
+
 Both conditions are required. `quality.formal` defaults to false, and an
 explicit true is inert below ACMM L5. Downgrading a hive therefore disables
 formal-model authoring immediately without deleting the operator's preference;

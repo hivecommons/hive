@@ -1,0 +1,1 @@
+- Settings -> Features now exposes the formal-verification quality-lane opt-in, including ACMM L5+ gating and durable `quality.formal` persistence ([#8256](https://github.com/hivecommons/hive/issues/8256)).

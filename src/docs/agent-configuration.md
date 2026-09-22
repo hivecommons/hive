@@ -26,6 +26,8 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
+The formal-verification quality-lane opt-in (`quality.formal`) also lives in the dashboard under Settings -> Features.
+
 ## Where configuration lives
 
 Hive's config is layered, and the layering is the point: **a file's location says who owns the setting.**
