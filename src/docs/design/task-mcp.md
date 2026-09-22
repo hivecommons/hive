@@ -7,7 +7,8 @@ Phase 1 is for hub-launched agents only. Hive injects the endpoint through agent
 The initial tools are:
 
 - `task_context()` for the scoped assignment, labels, lease age, hold and level gates, standby tier/lane policy, and PR-template policy slots.
-- `related_work()` and `ci_health()` as capped, paginated cache-only slots; their backing stores arrive in follow-up PRs.
+- `related_work()` returns cache-backed open or recently merged issues and pull requests in the scoped repo when they cite the leased issue, overlap known changed-file metadata, or are tagged as duplicate-sweep candidates. The default recency window is `hub.task_mcp_related_work_recency_days` with the built-in default from `config.DefaultTaskMCPRelatedWorkRecencyDays`.
+- `ci_health()` is a capped, paginated cache-only slot; its backing store arrives in a follow-up PR.
 - `context_bundle()` for backends that prefer one call. It returns the three tool payloads together and is the Phase 1 token-delta measurement surface.
 
 Prompt-injection handling is structural: issue and PR text is only returned inside a fixed-schema `data` field. Tool descriptions and other free-text metadata never interpolate served GitHub text. Answers are scoped to the active task repo, capped, paginated, and read from Hive state/caches only; request handling must not call GitHub.

@@ -83,6 +83,34 @@ func TestContributeMCPRequiresDashboardTokenWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestContributeMCPRelatedWorkFromStatusCache(t *testing.T) {
+	s := newTestServer()
+	s.authToken = "secret"
+	s.deps = &Dependencies{Config: &config.Config{}}
+	s.contributeHub = NewContributeWSHub(s.logger, s)
+	s.contributeHub.connections["alice"] = &ContributorConnection{
+		currentTask: &WSTaskAssign{TaskID: "task-1", Kind: "issue", Repo: "owner/repo", Number: 42, Title: "do work"},
+	}
+	s.status = &StatusPayload{Repos: []FrontendRepo{{
+		Name: "repo", Full: "owner/repo",
+		ActionableIssues: []any{map[string]any{"repo": "owner/repo", "number": 42, "title": "do work", "files": []string{"a.go"}}},
+		OpenPrs:          []any{map[string]any{"repo": "owner/repo", "number": 43, "title": "Fixes #42", "author": "bob", "files": []string{"a.go"}}},
+	}}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath+"?token=secret", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"related_work","arguments":{"task_id":"task-1","repo":"owner/repo"}}}`))
+	s.handleContributeMCP(rec, req)
+	text := mcpResultText(t, rec.Body.Bytes())
+	var env struct {
+		Data taskmcp.RelatedWorkData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data.Items) != 1 || env.Data.Items[0].Number != 43 || len(env.Data.Items[0].Reasons) == 0 {
+		t.Fatalf("related items = %#v", env.Data.Items)
+	}
+}
+
 func mcpResultText(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {

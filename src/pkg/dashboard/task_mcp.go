@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -76,8 +77,13 @@ func (p dashboardTaskMCPProvider) TaskContext(_ context.Context, scope taskmcp.S
 	}, nil
 }
 
-func (p dashboardTaskMCPProvider) RelatedWork(_ context.Context, _ taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.RelatedWorkData, taskmcp.PageInfo, error) {
-	data, info := taskmcp.PaginateRelated(nil, page)
+func (p dashboardTaskMCPProvider) RelatedWork(_ context.Context, scope taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.RelatedWorkData, taskmcp.PageInfo, error) {
+	scope, current, candidates := p.relatedWorkSnapshot(scope)
+	window := time.Duration(config.DefaultTaskMCPRelatedWorkRecencyDays) * 24 * time.Hour
+	if cfg := p.config(); cfg != nil {
+		window = time.Duration(cfg.Hub.TaskMCPRelatedWorkRecencyDaysOrDefault()) * 24 * time.Hour
+	}
+	data, info := taskmcp.FilterRelatedWork(scope, current, candidates, window, time.Now(), page)
 	return data, info, nil
 }
 
@@ -186,6 +192,124 @@ func standbyPolicyData(cfg *config.Config) []taskmcp.StandbyPolicyData {
 		out = append(out, taskmcp.StandbyPolicyData{Lane: name, Enabled: agent.Standby.Enabled, Floor: floor, DailyCap: agent.Standby.DailyCapPerContributor})
 	}
 	return out
+}
+
+func (p dashboardTaskMCPProvider) relatedWorkSnapshot(scope taskmcp.Scope) (taskmcp.Scope, taskmcp.RelatedItem, []taskmcp.RelatedItem) {
+	if p.server == nil || p.server.status == nil {
+		return taskmcp.Scope{}, taskmcp.RelatedItem{}, nil
+	}
+	snap, err := p.snapshotForScope(scope)
+	if err != nil {
+		return taskmcp.Scope{}, taskmcp.RelatedItem{}, nil
+	}
+	scope = taskmcp.Scope{TaskID: snap.assign.TaskID, Repo: snap.assign.Repo, Number: snap.assign.Number}
+	p.server.statusMu.RLock()
+	defer p.server.statusMu.RUnlock()
+	var current taskmcp.RelatedItem
+	var candidates []taskmcp.RelatedItem
+	for _, repo := range p.server.status.Repos {
+		if !strings.EqualFold(repo.Full, scope.Repo) && !strings.EqualFold(repo.Name, scope.Repo) {
+			continue
+		}
+		for _, raw := range repo.ActionableIssues {
+			item, ok := relatedItemFromRaw("issue", repo.Full, raw)
+			if !ok {
+				continue
+			}
+			if item.Number == scope.Number {
+				current = item
+				continue
+			}
+			candidates = append(candidates, item)
+		}
+		for _, raw := range repo.OpenPrs {
+			if item, ok := relatedItemFromRaw("pull_request", repo.Full, raw); ok {
+				candidates = append(candidates, item)
+			}
+		}
+		for _, raw := range repo.HeldIssues {
+			if item, ok := relatedItemFromRaw("issue", repo.Full, raw); ok {
+				candidates = append(candidates, item)
+			}
+		}
+		for _, raw := range repo.HeldPrs {
+			if item, ok := relatedItemFromRaw("pull_request", repo.Full, raw); ok {
+				candidates = append(candidates, item)
+			}
+		}
+	}
+	if current.Repo == "" {
+		current = taskmcp.RelatedItem{Kind: "issue", Repo: scope.Repo, Number: scope.Number}
+	}
+	return scope, current, candidates
+}
+
+func relatedItemFromRaw(kind, fallbackRepo string, raw any) (taskmcp.RelatedItem, bool) {
+	var m map[string]any
+	b, err := json.Marshal(raw)
+	if err != nil || json.Unmarshal(b, &m) != nil {
+		return taskmcp.RelatedItem{}, false
+	}
+	item := taskmcp.RelatedItem{
+		Kind:   kind,
+		Repo:   stringFromMap(m, "repo", fallbackRepo),
+		Number: intFromMap(m, "number"),
+		State:  stringFromMap(m, "state", "open"),
+		Author: stringFromMap(m, "author", ""),
+		URL:    stringFromMap(m, "url", ""),
+		Data: taskmcp.ServedText{
+			Title: stringFromMap(m, "title", ""),
+			Body:  stringFromMap(m, "body", ""),
+		},
+		Files: stringSliceFromAny(firstPresent(m, "files", "changed_files")),
+	}
+	if item.Repo == "" || item.Number == 0 {
+		return taskmcp.RelatedItem{}, false
+	}
+	if merged := timeFromMap(m, "merged_at"); !merged.IsZero() {
+		item.MergedAt = &merged
+	}
+	if updated := timeFromMap(m, "updated_at"); !updated.IsZero() {
+		item.UpdatedAt = &updated
+	}
+	item.Reasons = stringSliceFromAny(m["reasons"])
+	return item, true
+}
+
+func firstPresent(m map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			return v
+		}
+	}
+	return nil
+}
+
+func stringFromMap(m map[string]any, key, fallback string) string {
+	if v, ok := m[key].(string); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return fallback
+}
+
+func intFromMap(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
+}
+
+func timeFromMap(m map[string]any, key string) time.Time {
+	if s, ok := m[key].(string); ok && s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 func leaseAgeSeconds(t time.Time) int64 {

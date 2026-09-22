@@ -4220,6 +4220,9 @@ type HubConfig struct {
 	// left as its own const and is not tuned here (the operator specifically asked
 	// for the week-long period to be adjustable).
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
+	// TaskMCPRelatedWorkRecencyDays bounds how far back task MCP related_work()
+	// includes merged/closed work when serving cache-only context.
+	TaskMCPRelatedWorkRecencyDays int `yaml:"task_mcp_related_work_recency_days,omitempty" json:"task_mcp_related_work_recency_days,omitempty"`
 	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
 	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
 	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
@@ -4329,6 +4332,9 @@ type HubConfig struct {
 // (completedTaskCooldownHours) as the runtime fallback for hubs built without a
 // Config (e.g. direct-in-test construction).
 const (
+	// DefaultTaskMCPRelatedWorkRecencyDays is the cache-only related_work()
+	// recency window when hive.yaml does not override it.
+	DefaultTaskMCPRelatedWorkRecencyDays = 14
 	// contributeCooldownDefaultHours is the with-PR completion cooldown used when
 	// ContributeCooldownHours is unset/0 — one week, matching the historical
 	// hardcoded default.
@@ -4356,6 +4362,13 @@ func (h HubConfig) IsContributeCooldownEnabled() bool {
 // is withheld until the client accepts the assigned task.
 func (h HubConfig) IsContributeRequireExplicitAccept() bool {
 	return h.ContributeRequireExplicitAccept != nil && *h.ContributeRequireExplicitAccept
+}
+
+func (h HubConfig) TaskMCPRelatedWorkRecencyDaysOrDefault() int {
+	if h.TaskMCPRelatedWorkRecencyDays > 0 {
+		return h.TaskMCPRelatedWorkRecencyDays
+	}
+	return DefaultTaskMCPRelatedWorkRecencyDays
 }
 
 const ContributeSkipLabelsEnvVar = "HIVE_CONTRIBUTE_SKIP_LABELS"
