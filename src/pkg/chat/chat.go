@@ -115,10 +115,12 @@ type Service struct {
 	sseReconnectBase  time.Duration
 	sseReconnectMax   time.Duration
 
-	msgQueue          chan msgItem
-	lastState         *statusSnapshot
-	lastTopic         string
-	pendingInterviews map[pendingInterviewKey]*pendingInterview
+	msgQueue           chan msgItem
+	lastState          *statusSnapshot
+	lastRuns           map[string]runSnapshot
+	lastTopic          string
+	pendingInterviews  map[pendingInterviewKey]*pendingInterview
+	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
 }
 
 type msgItem struct {
@@ -155,13 +157,14 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		client: &http.Client{
 			Timeout: httpTimeoutS * time.Second,
 		},
-		messageLimit:      messageLimit,
-		sendInterval:      sendInterval,
-		heartbeatInterval: heartbeatInterval,
-		sseReconnectBase:  sseReconnectBase,
-		sseReconnectMax:   sseReconnectMax,
-		msgQueue:          make(chan msgItem, 100),
-		pendingInterviews: make(map[pendingInterviewKey]*pendingInterview),
+		messageLimit:       messageLimit,
+		sendInterval:       sendInterval,
+		heartbeatInterval:  heartbeatInterval,
+		sseReconnectBase:   sseReconnectBase,
+		sseReconnectMax:    sseReconnectMax,
+		msgQueue:           make(chan msgItem, 100),
+		pendingInterviews:  make(map[pendingInterviewKey]*pendingInterview),
+		pendingCheckpoints: make(map[pendingCheckpointKey]*pendingCheckpoint),
 	}
 }
 

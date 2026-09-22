@@ -33,6 +33,7 @@ func (s *Service) registerBuiltinCommands() {
 	s.RegisterCommand("standby-clear", func(ctx context.Context, args string) (string, error) {
 		return s.cmdStandbyClear(ctx, args)
 	})
+	s.registerRunsCommand()
 	s.registerInceptionCommand()
 }
 
@@ -54,6 +55,9 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	}
 	content = safeContent
 	if !strings.HasPrefix(content, "!") {
+		if s.handlePendingCheckpointReply(ctx, msg, content) {
+			return
+		}
 		s.handlePendingInterviewReply(ctx, msg, content)
 		return
 	}

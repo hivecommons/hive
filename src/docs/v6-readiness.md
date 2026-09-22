@@ -95,6 +95,7 @@ not a unit test:
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
 | Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ |
 | Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ |
+| Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ⬜ |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
 

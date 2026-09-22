@@ -1,0 +1,1 @@
+- Add the shared chat-spine `!runs` command and run checkpoint reply flow so dashboard chat and external backends can list runs, inspect artifacts, and approve or reject a run's human plan gate from the same guarded thread.

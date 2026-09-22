@@ -11,3 +11,22 @@ The transport keeps the v6 guard invariant from [#7563](https://github.com/hivec
 - the browser polls `GET /api/chat/messages?since=<seq>` every two seconds, leaving `/api/events` unchanged for status SSE.
 
 The v6 readiness tracker is [#7683](https://github.com/hivecommons/hive/issues/7683). Its dashboard-chat evidence row is satisfied only after conformance passes and one live `!status` round trip from the panel is linked.
+
+## Run decisions
+
+The shared chat spine exposes the same run controls to the dashboard panel and
+external chat backends:
+
+- `!runs` lists active staged runs with key, stage, wait target, and age.
+- `!runs <key>` shows one run, including reported receipt/artifact links.
+- `!runs approve <key>` approves the run's plan gate.
+- `!runs reject <key> <reason>` rejects the plan gate and records the operator's
+  reason in the chat transcript.
+
+When a run reaches `waiting_on=human`, the spine posts a one-line checkpoint
+prompt: `Run <key> stage <stage> needs a decision: <summary>. Reply approve or
+reject <reason>.` An allowlisted owner with exactly one pending run checkpoint
+may reply with plain `approve` or `reject <reason>`. If more than one run is
+pending for that author, the bot lists the run keys and requires the explicit
+`!runs approve <key>` or `!runs reject <key> <reason>` form. No other plain
+language is interpreted as a run decision.
