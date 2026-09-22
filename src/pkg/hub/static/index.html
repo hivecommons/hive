@@ -1110,7 +1110,7 @@
 
     <section class="ticker" id="ticker"></section>
 
-    <!-- ── Reading List (dynamic: KubeStellar Medium, Apr 2026 onward) ── -->
+    <!-- ── Reading List (dynamic: Hive Commons Substack) ── -->
     <style>
       .reading-list { padding: 3rem clamp(1rem, 4vw, 4.5rem) 4rem; border-top: 1px solid var(--line); }
       .reading-list .rl-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .6rem; margin-bottom: 1.6rem; }
@@ -1130,11 +1130,11 @@
       <div class="rl-head">
         <div>
           <h2>Reading List</h2>
-          <p class="rl-sub">From the KubeStellar Medium &mdash; April 2026 onward.</p>
+          <p class="rl-sub">From the Hive Commons Substack.</p>
         </div>
         <div class="rl-meta">
           <span id="rl-updated"></span>
-          <a href="https://kubestellar.medium.com/list/reading-list" target="_blank" rel="noopener">View full list on Medium &rarr;</a>
+          <a href="https://substack.com/@hivecommons" target="_blank" rel="noopener">View all on Substack &rarr;</a>
         </div>
       </div>
       <div class="rl-grid" id="rl-grid"></div>
@@ -1741,16 +1741,9 @@
     // inline seed copy so the section is never empty on fetch failure. ──
     (function () {
       var RL_SEED = [
-        { title: "We're All Wasting Our Time", author: "KubeStellar", url: "https://kubestellar.medium.com/were-all-wasting-our-time-4d2e8507cd79", dateLabel: "Jul 1, 2026" },
-        { title: "When each step is fine but the destination isn't", author: "KubeStellar", url: "https://kubestellar.medium.com/when-each-step-is-fine-but-the-destination-isnt-fb466b557d8d", dateLabel: "Jun 29, 2026" },
-        { title: "Terminal as Interface: Structured Event Streaming for Reliable AI Agent Orchestration", author: "KubeStellar", url: "https://kubestellar.medium.com/terminal-as-interface-structured-event-streaming-for-reliable-ai-agent-orchestration-692a996a74af", dateLabel: "Jun 9, 2026" },
-        { title: "Hive Hub and Spoke: A Swarm Intelligence Platform for Open Source", author: "KubeStellar", url: "https://kubestellar.medium.com/hive-hub-and-spoke-a-swarm-intelligence-platform-for-open-source-7efa1465e2bf", dateLabel: "Jun 8, 2026" },
-        { title: "When the Feedback Loops Started Closing Themselves", author: "KubeStellar", url: "https://kubestellar.medium.com/when-the-feedback-loops-started-closing-themselves-b9381a7e9773", dateLabel: "May 13, 2026" },
-        { title: "Plaque: The Silent Killer of AI Agent Reliability", author: "KubeStellar", url: "https://kubestellar.medium.com/plaque-the-silent-killer-of-ai-agent-reliability-f5c5318c4e9c", dateLabel: "May 11, 2026" },
-        { title: "Intentional Amnesia: Why I Wipe My AI Agents' Memories Every 15 Minutes", author: "KubeStellar", url: "https://kubestellar.medium.com/intentional-amnesia-why-i-wipe-my-ai-agents-memories-every-15-minutes-1c27e9dcbf0a", dateLabel: "May 4, 2026" },
-        { title: "The Test Suite That Made Autonomy Possible", author: "KubeStellar", url: "https://kubestellar.medium.com/the-test-suite-that-made-autonomy-possible-127d2fcc0b66", dateLabel: "Apr 30, 2026" },
-        { title: "The JSON File That Decides What My AI Gets to Work On", author: "Andy Anderson", url: "https://kubestellar.medium.com/the-json-file-that-decides-what-my-ai-gets-to-work-on-c50da6c18c14", dateLabel: "Apr 16, 2026" },
-        { title: "I Purposely Built a Codebase That Teaches Itself", author: "Andy Anderson", url: "https://kubestellar.medium.com/i-purposely-built-a-codebase-that-teaches-itself-dbf34915b148", dateLabel: "Apr 7, 2026" }
+        { title: "Hive at v5: The Swarm Grew Up, and It Is Learning to Leave the Dashboard", author: "Hive Commons", url: "https://hivecommons.substack.com/p/hive-at-v5-the-swarm-grew-up-and", dateLabel: "Sep 22, 2026" },
+        { title: "Sage Collar: The Idea Economy Needs a Name for the People Building It", author: "Hive Commons", url: "https://hivecommons.substack.com/p/sage-collar-the-idea-economy-needs", dateLabel: "Sep 22, 2026" },
+        { title: "Hive Hub and Spoke: A Swarm Intelligence Platform for Open Source", author: "Hive Commons", url: "https://hivecommons.substack.com/p/hive-hub-and-spoke-a-swarm-intelligence", dateLabel: "Sep 22, 2026" }
       ];
       var RL_MS_PER_MIN = 60000, RL_MS_PER_HOUR = 3600000, RL_MS_PER_DAY = 86400000;
       function rlRelative(iso) {
@@ -1769,7 +1762,7 @@
           return '<div class="rl-card">' +
             '<a class="rl-title" href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.title) + '</a>' +
             '<span class="rl-date">' + esc(a.dateLabel || '') + '</span>' +
-            '<span class="rl-by">' + esc(a.author || '') + '</span>' +
+            '<span class="rl-by">\ud83d\udc1d ' + esc(a.author || '') + '</span>' +
             '</div>';
         }).join('');
         var upd = document.getElementById('rl-updated');

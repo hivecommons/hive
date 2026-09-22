@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,79 +26,78 @@ func resetRLCache(t *testing.T) {
 	rlCache.mu.Unlock()
 }
 
-func TestFirstGroup(t *testing.T) {
-	if got := firstGroup(mediumHeadlinePattern, `"headline":"Hello"`); got != "Hello" {
-		t.Errorf("firstGroup match = %q, want Hello", got)
-	}
-	if got := firstGroup(mediumHeadlinePattern, `no match here`); got != "" {
-		t.Errorf("firstGroup no-match = %q, want empty", got)
-	}
+const rssItem = `<item><title><![CDATA[%s]]></title><link>%s</link><pubDate>%s</pubDate></item>`
+
+func rssBody(items ...string) string {
+	return `<?xml version="1.0"?><rss version="2.0"><channel>` + strings.Join(items, "") + `</channel></rss>`
 }
 
-func TestJSONUnescape(t *testing.T) {
-	if got := jsonUnescape(""); got != "" {
-		t.Errorf("empty = %q", got)
-	}
-	if got := jsonUnescape(`Café`); got != "Café" {
-		t.Errorf("unicode = %q, want Café", got)
-	}
-	if got := jsonUnescape(`a\tb`); got != "a\tb" {
-		t.Errorf("tab = %q", got)
-	}
-	// Invalid escape -> returns input unchanged.
-	if got := jsonUnescape(`bad\x`); got != `bad\x` {
-		t.Errorf("invalid = %q, want unchanged", got)
-	}
-}
-
-func TestParseISODate(t *testing.T) {
-	if _, ok := parseISODate(""); ok {
+func TestParseFeedDate(t *testing.T) {
+	if _, ok := parseFeedDate(""); ok {
 		t.Error("empty should not parse")
 	}
-	if _, ok := parseISODate("garbage"); ok {
+	if _, ok := parseFeedDate("garbage"); ok {
 		t.Error("garbage should not parse")
 	}
-	tm, ok := parseISODate("2026-04-30T01:51:06Z")
-	if !ok || tm.Year() != 2026 || tm.Month() != time.April {
-		t.Errorf("rfc3339 parse failed: %v %v", tm, ok)
+	tm, ok := parseFeedDate("Tue, 22 Sep 2026 19:38:56 GMT")
+	if !ok || tm.Year() != 2026 || tm.Month() != time.September || tm.Day() != 22 {
+		t.Errorf("rfc1123 parse failed: %v %v", tm, ok)
 	}
-	// Date-only fallback (not RFC3339).
-	tm2, ok := parseISODate("2026-05-11 extra")
-	if !ok || tm2.Day() != 11 {
-		t.Errorf("date-only fallback failed: %v %v", tm2, ok)
+	if _, ok := parseFeedDate("Tue, 22 Sep 2026 19:38:56 +0000"); !ok {
+		t.Error("rfc1123z should parse")
+	}
+	if _, ok := parseFeedDate("2026-04-30T01:51:06Z"); !ok {
+		t.Error("rfc3339 should parse")
 	}
 }
 
 func TestParseReadingList(t *testing.T) {
-	// Two valid postings after cutoff + one before cutoff (excluded) + one
-	// dupe URL (deduped).
-	body := `
-	{"@type":"SocialMediaPosting","headline":"New Article","datePublished":"2026-05-01T00:00:00Z","mainEntityOfPage":"https://x/new","author":{"name":"Alice"}}
-	{"@type":"SocialMediaPosting","headline":"Older Article","datePublished":"2026-06-01T00:00:00Z","mainEntityOfPage":"https://x/older","author":{"name":"Bob"}}
-	{"@type":"SocialMediaPosting","headline":"Pre-cutoff","datePublished":"2025-01-01T00:00:00Z","mainEntityOfPage":"https://x/old","author":{"name":"Carol"}}
-	{"@type":"SocialMediaPosting","headline":"Dupe","datePublished":"2026-05-02T00:00:00Z","mainEntityOfPage":"https://x/new","author":{"name":"Dave"}}
-	`
-	arts := parseReadingList(body)
+	// Two valid items after cutoff + one before cutoff (excluded) + one dupe
+	// URL (deduped). Titles use CDATA the way Substack emits them.
+	body := rssBody(
+		fmt.Sprintf(rssItem, "New Article", "https://x/new", "Fri, 01 May 2026 00:00:00 GMT"),
+		fmt.Sprintf(rssItem, "Newer Article", "https://x/newer", "Mon, 01 Jun 2026 00:00:00 GMT"),
+		fmt.Sprintf(rssItem, "Pre-cutoff", "https://x/old", "Wed, 01 Jan 2025 00:00:00 GMT"),
+		fmt.Sprintf(rssItem, "Dupe", "https://x/new", "Sat, 02 May 2026 00:00:00 GMT"),
+	)
+	arts, err := parseReadingList([]byte(body))
+	if err != nil {
+		t.Fatalf("parse err: %v", err)
+	}
 	if len(arts) != 2 {
 		t.Fatalf("expected 2 articles, got %d: %+v", len(arts), arts)
 	}
-	// Newest first.
 	if arts[0].Date < arts[1].Date {
 		t.Errorf("not sorted newest-first: %+v", arts)
+	}
+	for _, a := range arts {
+		if a.Author != readingListAuthor {
+			t.Errorf("author = %q, want %q", a.Author, readingListAuthor)
+		}
 	}
 }
 
 func TestParseReadingListSkipsIncomplete(t *testing.T) {
-	// Missing headline / URL -> skipped.
-	body := `{"@type":"SocialMediaPosting","datePublished":"2026-05-01T00:00:00Z","author":{"name":"Alice"}}`
-	if arts := parseReadingList(body); len(arts) != 0 {
+	// Missing title / link -> skipped.
+	body := rssBody(`<item><pubDate>Fri, 01 May 2026 00:00:00 GMT</pubDate></item>`)
+	arts, err := parseReadingList([]byte(body))
+	if err != nil {
+		t.Fatalf("parse err: %v", err)
+	}
+	if len(arts) != 0 {
 		t.Errorf("expected 0 articles, got %+v", arts)
+	}
+}
+
+func TestParseReadingListRejectsNonXML(t *testing.T) {
+	if _, err := parseReadingList([]byte("<html><body>not a feed")); err == nil {
+		t.Error("expected error for non-XML body")
 	}
 }
 
 func TestFetchReadingListSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"@type":"SocialMediaPosting","headline":"H","datePublished":"2026-05-01T00:00:00Z","mainEntityOfPage":"https://x/1","author":{"name":"A"}}`))
+		w.Write([]byte(rssBody(fmt.Sprintf(rssItem, "H", "https://x/1", "Fri, 01 May 2026 00:00:00 GMT"))))
 	}))
 	defer srv.Close()
 
@@ -137,12 +137,12 @@ func TestReadingListServesFreshCache(t *testing.T) {
 	rlCache.mu.Lock()
 	rlCache.articles = []ReadingArticle{{Title: "Cached", URL: "https://x/c"}}
 	rlCache.fetchedAt = time.Now()
-	rlCache.source = readingListSourceMedium
+	rlCache.source = readingListSourceFeed
 	rlCache.mu.Unlock()
 
 	s := &HubServer{logger: slog.Default()}
 	arts, _, source := s.readingList()
-	if source != readingListSourceMedium || len(arts) != 1 || arts[0].Title != "Cached" {
+	if source != readingListSourceFeed || len(arts) != 1 || arts[0].Title != "Cached" {
 		t.Errorf("expected fresh cache, got %q %+v", source, arts)
 	}
 }
@@ -153,7 +153,7 @@ func TestReadingListStaleCacheFallback(t *testing.T) {
 	rlCache.mu.Lock()
 	rlCache.articles = []ReadingArticle{{Title: "Old", URL: "https://x/o"}}
 	rlCache.fetchedAt = time.Now().Add(-2 * readingListCacheTTL)
-	rlCache.source = readingListSourceMedium
+	rlCache.source = readingListSourceFeed
 	rlCache.mu.Unlock()
 
 	old := readingListURLVar

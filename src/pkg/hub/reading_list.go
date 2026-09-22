@@ -2,55 +2,61 @@ package hub
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Reading List: a dynamic feed of KubeStellar Medium articles dated April 2026
-// and later. The browser cannot fetch Medium directly (CSP/CORS) and Medium
-// exposes no RSS/JSON API for a curated list, so the hub fetches the list page
-// server-side, parses the article markup, filters by date, and serves JSON.
+// Reading List: a dynamic feed of Hive Commons articles published on Substack
+// (https://substack.com/@hivecommons). The browser cannot fetch Substack
+// directly (CSP/CORS), so the hub fetches the publication's RSS feed
+// server-side, parses the items, filters by date, and serves JSON.
 //
 // Reconciling "dynamic" with "always works": the result is cached in-memory for
-// a few hours (so we don't hit Medium on every request) and, on any fetch or
+// a few hours (so we don't hit Substack on every request) and, on any fetch or
 // parse failure, we fall back to the last good cache — or, if we've never had a
-// good fetch, to a baked-in seed list. New Apr-2026+ articles are picked up
-// automatically as Medium updates, while the section is never empty.
+// good fetch, to a baked-in seed list. New articles are picked up automatically
+// as the feed updates, while the section is never empty.
 const (
-	// readingListMediumBase resolves bare "/slug" article hrefs to absolute URLs.
-	readingListMediumBase = "https://kubestellar.medium.com"
+	// readingListPublicationURL is the human-facing publication page the
+	// "View all" link points at.
+	readingListPublicationURL = "https://substack.com/@hivecommons"
+
+	// readingListAuthor is the byline shown on every card. The feed's
+	// dc:creator carries the Substack display name, which is a publication
+	// tagline rather than an author; the project name is what readers expect.
+	readingListAuthor = "Hive Commons"
 
 	// readingListCacheTTL is how long a good fetch is served before we refetch.
 	readingListCacheTTL = 6 * time.Hour
 
-	// readingListFetchTimeout bounds the server-side fetch of the Medium page.
+	// readingListFetchTimeout bounds the server-side fetch of the feed.
 	readingListFetchTimeout = 15 * time.Second
 
-	// readingListMaxBytes caps how much of the Medium HTML we read (defensive).
+	// readingListMaxBytes caps how much of the feed we read (defensive).
 	readingListMaxBytes = 8 << 20 // 8MB
 
-	// readingListSourceMedium/Cache/Seed label the provenance of a response.
-	readingListSourceMedium = "medium"
-	readingListSourceCache  = "cache"
-	readingListSourceSeed   = "seed"
+	// readingListSourceFeed/Cache/Seed label the provenance of a response.
+	readingListSourceFeed  = "substack"
+	readingListSourceCache = "cache"
+	readingListSourceSeed  = "seed"
 )
 
 // readingListCutoff is the inclusive lower bound for the date filter: articles
-// published on or after April 1, 2026 are included; everything earlier (2025,
-// 2024, …) is excluded.
+// published on or after April 1, 2026 are included; everything earlier is
+// excluded.
 var readingListCutoff = time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC)
 
-// readingListURLVar is the KubeStellar Medium curated list fetched server-side.
+// readingListURLVar is the Hive Commons Substack RSS feed fetched server-side.
 // It is a var (not a const) so tests can point fetchReadingList at an httptest
 // server; production never reassigns it.
-var readingListURLVar = "https://kubestellar.medium.com/list/reading-list"
+var readingListURLVar = "https://hivecommons.substack.com/feed"
 
-// ReadingArticle is a single Medium article in the reading list.
+// ReadingArticle is a single article in the reading list.
 type ReadingArticle struct {
 	Title     string `json:"title"`
 	Author    string `json:"author"`
@@ -66,20 +72,15 @@ type ReadingListResponse struct {
 	Source    string           `json:"source"`
 }
 
-// readingListSeed is the baked-in seed list of the current Apr-2026+ articles,
-// newest first. It is the always-available fallback and is kept in this one
-// place. The frontend keeps a minimal copy for the no-JS/failed-fetch case.
+// readingListSeed is the baked-in seed list of the articles currently on the
+// Hive Commons Substack, newest first. It is the always-available fallback and
+// is kept in this one place. The frontend keeps a minimal copy for the
+// no-JS/failed-fetch case. Articles still on the legacy Medium publication are
+// not listed; they reappear here as they are republished on Substack.
 var readingListSeed = []ReadingArticle{
-	{Title: "We're All Wasting Our Time", Author: "KubeStellar", URL: readingListMediumBase + "/were-all-wasting-our-time-4d2e8507cd79", Date: "2026-07-01", DateLabel: "Jul 1, 2026"},
-	{Title: "When each step is fine but the destination isn't", Author: "KubeStellar", URL: readingListMediumBase + "/when-each-step-is-fine-but-the-destination-isnt-fb466b557d8d", Date: "2026-06-29", DateLabel: "Jun 29, 2026"},
-	{Title: "Terminal as Interface: Structured Event Streaming for Reliable AI Agent Orchestration", Author: "KubeStellar", URL: readingListMediumBase + "/terminal-as-interface-structured-event-streaming-for-reliable-ai-agent-orchestration-692a996a74af", Date: "2026-06-09", DateLabel: "Jun 9, 2026"},
-	{Title: "Hive Hub and Spoke: A Swarm Intelligence Platform for Open Source", Author: "KubeStellar", URL: readingListMediumBase + "/hive-hub-and-spoke-a-swarm-intelligence-platform-for-open-source-7efa1465e2bf", Date: "2026-06-08", DateLabel: "Jun 8, 2026"},
-	{Title: "When the Feedback Loops Started Closing Themselves", Author: "KubeStellar", URL: readingListMediumBase + "/when-the-feedback-loops-started-closing-themselves-b9381a7e9773", Date: "2026-05-13", DateLabel: "May 13, 2026"},
-	{Title: "Plaque: The Silent Killer of AI Agent Reliability", Author: "KubeStellar", URL: readingListMediumBase + "/plaque-the-silent-killer-of-ai-agent-reliability-f5c5318c4e9c", Date: "2026-05-11", DateLabel: "May 11, 2026"},
-	{Title: "Intentional Amnesia: Why I Wipe My AI Agents' Memories Every 15 Minutes", Author: "KubeStellar", URL: readingListMediumBase + "/intentional-amnesia-why-i-wipe-my-ai-agents-memories-every-15-minutes-1c27e9dcbf0a", Date: "2026-05-04", DateLabel: "May 4, 2026"},
-	{Title: "The Test Suite That Made Autonomy Possible", Author: "KubeStellar", URL: readingListMediumBase + "/the-test-suite-that-made-autonomy-possible-127d2fcc0b66", Date: "2026-04-30", DateLabel: "Apr 30, 2026"},
-	{Title: "The JSON File That Decides What My AI Gets to Work On", Author: "Andy Anderson", URL: readingListMediumBase + "/the-json-file-that-decides-what-my-ai-gets-to-work-on-c50da6c18c14", Date: "2026-04-16", DateLabel: "Apr 16, 2026"},
-	{Title: "I Purposely Built a Codebase That Teaches Itself", Author: "Andy Anderson", URL: readingListMediumBase + "/i-purposely-built-a-codebase-that-teaches-itself-dbf34915b148", Date: "2026-04-07", DateLabel: "Apr 7, 2026"},
+	{Title: "Hive at v5: The Swarm Grew Up, and It Is Learning to Leave the Dashboard", Author: readingListAuthor, URL: "https://hivecommons.substack.com/p/hive-at-v5-the-swarm-grew-up-and", Date: "2026-09-22", DateLabel: "Sep 22, 2026"},
+	{Title: "Sage Collar: The Idea Economy Needs a Name for the People Building It", Author: readingListAuthor, URL: "https://hivecommons.substack.com/p/sage-collar-the-idea-economy-needs", Date: "2026-09-22", DateLabel: "Sep 22, 2026"},
+	{Title: "Hive Hub and Spoke: A Swarm Intelligence Platform for Open Source", Author: readingListAuthor, URL: "https://hivecommons.substack.com/p/hive-hub-and-spoke-a-swarm-intelligence", Date: "2026-09-22", DateLabel: "Sep 22, 2026"},
 }
 
 // readingListCache holds the last successfully-fetched list and its provenance.
@@ -88,13 +89,13 @@ type readingListCache struct {
 	mu        sync.Mutex
 	articles  []ReadingArticle
 	fetchedAt time.Time
-	source    string // readingListSourceMedium once a real fetch has succeeded
+	source    string // readingListSourceFeed once a real fetch has succeeded
 }
 
 var rlCache = &readingListCache{}
 
 // handleReadingList serves GET /api/reading-list. It returns a cached response
-// when fresh, otherwise refetches from Medium; on failure it serves the last
+// when fresh, otherwise refetches from the feed; on failure it serves the last
 // good cache or the baked-in seed. It never fails the request.
 func (s *HubServer) handleReadingList(w http.ResponseWriter, r *http.Request) {
 	articles, updatedAt, source := s.readingList()
@@ -110,7 +111,7 @@ func (s *HubServer) handleReadingList(w http.ResponseWriter, r *http.Request) {
 }
 
 // readingList returns the current article list, its as-of time, and provenance,
-// refetching from Medium when the cache is stale. It is safe for concurrent use.
+// refetching from the feed when the cache is stale. It is safe for concurrent use.
 func (s *HubServer) readingList() ([]ReadingArticle, time.Time, string) {
 	rlCache.mu.Lock()
 	defer rlCache.mu.Unlock()
@@ -125,7 +126,7 @@ func (s *HubServer) readingList() ([]ReadingArticle, time.Time, string) {
 	if err == nil && len(articles) > 0 {
 		rlCache.articles = articles
 		rlCache.fetchedAt = time.Now()
-		rlCache.source = readingListSourceMedium
+		rlCache.source = readingListSourceFeed
 		return rlCache.articles, rlCache.fetchedAt, rlCache.source
 	}
 	if err != nil {
@@ -144,8 +145,8 @@ func (s *HubServer) readingList() ([]ReadingArticle, time.Time, string) {
 	return readingListSeed, time.Now(), readingListSourceSeed
 }
 
-// fetchReadingList fetches the Medium list page server-side, parses the
-// articles, filters to the cutoff date, and returns them newest-first. It
+// fetchReadingList fetches the Substack RSS feed server-side, parses the
+// items, filters to the cutoff date, and returns them newest-first. It
 // follows the outbound-HTTP pattern used elsewhere in this package
 // (&http.Client{Timeout: ...}, http.NewRequest).
 func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
@@ -153,9 +154,8 @@ func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A browser-like UA gets the fully server-rendered list markup.
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HiveHub/1.0; +https://hive.hivecommons.dev)")
-	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
 
 	client := &http.Client{Timeout: readingListFetchTimeout}
 	resp, err := client.Do(req)
@@ -168,67 +168,51 @@ func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseReadingList(string(body)), nil
+	return parseReadingList(body)
 }
 
-// mediumPostingPattern matches each per-article JSON-LD "SocialMediaPosting"
-// object Medium embeds in the list page. Medium ships one such object per
-// article with clean, structured fields (headline, author, datePublished,
-// mainEntityOfPage) — far more stable than scraping presentational HTML tags.
-// The [^{}] body match is deliberately shallow: these objects contain nested
-// author/publisher objects, so we capture the whole flat run of the posting up
-// to its author sub-object and pull individual fields with the patterns below.
-var mediumPostingPattern = regexp.MustCompile(`"@type":"SocialMediaPosting"`)
+// rssFeed is the subset of RSS 2.0 the reading list needs. Substack's feed
+// wraps title in CDATA, which encoding/xml unwraps for us; pubDate is RFC 1123
+// with a "GMT" zone; link is the canonical post URL without tracking params.
+type rssFeed struct {
+	Channel struct {
+		Items []rssItem `xml:"item"`
+	} `xml:"channel"`
+}
 
-var (
-	// mediumHeadlinePattern captures an article headline (JSON-escaped).
-	mediumHeadlinePattern = regexp.MustCompile(`"headline":"((?:[^"\\]|\\.)*)"`)
-	// mediumAuthorNamePattern captures the first author "name" after a posting.
-	mediumAuthorNamePattern = regexp.MustCompile(`"name":"((?:[^"\\]|\\.)*)"`)
-	// mediumDatePublishedPattern captures the ISO-8601 publish timestamp.
-	mediumDatePublishedPattern = regexp.MustCompile(`"datePublished":"([^"]+)"`)
-	// mediumMainEntityPattern captures the canonical article URL.
-	mediumMainEntityPattern = regexp.MustCompile(`"mainEntityOfPage":"([^"]+)"`)
-)
+type rssItem struct {
+	Title   string `xml:"title"`
+	Link    string `xml:"link"`
+	PubDate string `xml:"pubDate"`
+}
 
-// parseReadingList extracts articles from Medium list-page HTML by reading the
-// embedded JSON-LD "SocialMediaPosting" objects (one per article), filtering to
-// the cutoff date, and returning them newest-first. It is deliberately
-// defensive: Medium markup changes, so any object it cannot fully parse is
-// skipped rather than fatal, and a zero-length result signals the caller to
-// fall back to cache/seed.
-func parseReadingList(htmlBody string) []ReadingArticle {
+// parseReadingList extracts articles from an RSS 2.0 feed body, filtering to
+// the cutoff date and returning them newest-first. It is deliberately
+// defensive: any item it cannot fully parse is skipped rather than fatal, and
+// a zero-length result signals the caller to fall back to cache/seed. A body
+// that is not XML at all is an error so the caller can log it.
+func parseReadingList(body []byte) ([]ReadingArticle, error) {
+	var feed rssFeed
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		return nil, err
+	}
+
 	seen := make(map[string]bool) // dedupe by URL
 	var articles []ReadingArticle
-
-	// Each posting object is a bounded window starting at its @type marker and
-	// ending at the next posting (or end of document).
-	starts := mediumPostingPattern.FindAllStringIndex(htmlBody, -1)
-	for i, s := range starts {
-		start := s[0]
-		end := len(htmlBody)
-		if i+1 < len(starts) {
-			end = starts[i+1][0]
-		}
-		obj := htmlBody[start:end]
-
-		iso := firstGroup(mediumDatePublishedPattern, obj)
-		date, ok := parseISODate(iso)
+	for _, it := range feed.Channel.Items {
+		date, ok := parseFeedDate(it.PubDate)
 		if !ok || date.Before(readingListCutoff) {
 			continue
 		}
-
-		title := jsonUnescape(firstGroup(mediumHeadlinePattern, obj))
-		url := jsonUnescape(firstGroup(mediumMainEntityPattern, obj))
-		author := jsonUnescape(firstGroup(mediumAuthorNamePattern, obj))
+		title := strings.TrimSpace(it.Title)
+		url := strings.TrimSpace(it.Link)
 		if title == "" || url == "" || seen[url] {
 			continue
 		}
-
 		seen[url] = true
 		articles = append(articles, ReadingArticle{
 			Title:     title,
-			Author:    author,
+			Author:    readingListAuthor,
 			URL:       url,
 			Date:      date.Format("2006-01-02"),
 			DateLabel: date.Format("Jan 2, 2006"),
@@ -239,46 +223,19 @@ func parseReadingList(htmlBody string) []ReadingArticle {
 	sort.SliceStable(articles, func(i, j int) bool {
 		return articles[i].Date > articles[j].Date
 	})
-	return articles
+	return articles, nil
 }
 
-// firstGroup returns the first capture group of re in s, or "".
-func firstGroup(re *regexp.Regexp, s string) string {
-	m := re.FindStringSubmatch(s)
-	if m == nil {
-		return ""
-	}
-	return m[1]
-}
-
-// jsonUnescape decodes a JSON string body (the inside of the quotes) into its
-// literal text, resolving \uXXXX and common escapes. On any decode error it
-// returns the input unchanged so a partial value is still usable.
-func jsonUnescape(s string) string {
-	if s == "" {
-		return ""
-	}
-	var out string
-	if err := json.Unmarshal([]byte(`"`+s+`"`), &out); err != nil {
-		return s
-	}
-	return strings.TrimSpace(out)
-}
-
-// parseISODate parses an ISO-8601 timestamp (e.g. "2026-04-30T01:51:06Z") from
-// Medium's datePublished field into a UTC date. It returns ok=false when empty
-// or unparseable.
-func parseISODate(iso string) (time.Time, bool) {
-	iso = strings.TrimSpace(iso)
-	if iso == "" {
+// parseFeedDate parses an RSS pubDate. Substack emits RFC 1123 ("Tue, 22 Sep
+// 2026 19:38:56 GMT"); RFC 1123Z and RFC 3339 are accepted for other feeds.
+// It returns ok=false when empty or unparseable.
+func parseFeedDate(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return time.Time{}, false
 	}
-	if t, err := time.Parse(time.RFC3339, iso); err == nil {
-		return t.UTC(), true
-	}
-	// Fall back to a date-only prefix if the full timestamp doesn't parse.
-	if len(iso) >= 10 {
-		if t, err := time.Parse("2006-01-02", iso[:10]); err == nil {
+	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC3339} {
+		if t, err := time.Parse(layout, raw); err == nil {
 			return t.UTC(), true
 		}
 	}

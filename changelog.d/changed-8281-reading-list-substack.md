@@ -1,0 +1,1 @@
+- The hub Reading List (home, Learn, and /reading pages plus `GET /api/reading-list`) now sources articles from the Hive Commons Substack RSS feed instead of scraping the KubeStellar Medium list page; cards carry a Hive Commons byline, the "View all" link points at https://substack.com/@hivecommons, and the fallback seed lists the articles currently on Substack (#8281).
