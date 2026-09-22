@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -2423,6 +2424,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	failClosed := false
 	limit := s.prCap()
 	shown := fairShareByRepo(actionable.PRs.Items, limit, func(pr github.PullRequest) string { return pr.Repo })
+	verdicts := s.loadReviewVerdicts()
 	for _, pr := range shown {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
@@ -2437,7 +2439,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		}
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
-		annotation, annotationVerdict := s.enforceIssueTextVerdict(prKickAnnotation(pr, agentName))
+		annotation, annotationVerdict := s.enforceIssueTextVerdict(prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, pr, s.cfg.Project.Org))
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))
 	}
@@ -2445,6 +2447,42 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		b.WriteString(prListOverflowLine(omitted, limit))
 	}
 	return b.String(), failClosed
+}
+
+// loadReviewVerdicts reads the review-verdicts artifact for ${PR_LIST}
+// annotation. A missing or unreadable artifact is an empty one: the list is
+// still correct without it, just unannotated.
+func (s *Scheduler) loadReviewVerdicts() review.Artifact {
+	art, err := review.LoadArtifact("")
+	if err != nil {
+		return review.Artifact{}
+	}
+	return art
+}
+
+// reviewedAnnotation marks a PR whose CURRENT head already carries a hive
+// review verdict: " [hive-reviewed: <verdict>@<sha7>]", or "" when it does
+// not. The cadence reviewer works ${PR_LIST} on every kick and, with no such
+// mark, re-read and re-commented the same PR each cycle — actions#548 collected
+// six "duplicate of #554" notices in two hours. The head SHA is part of the
+// key so a PR whose author pushed since the verdict reads as unreviewed again,
+// which is the behaviour the dispatch lane already has. Verdict repos are
+// always owner/name while the enumeration may carry the bare governor name;
+// qualify before comparing, as applyHumanDecisionLabels does (#8133).
+func reviewedAnnotation(verdicts review.Artifact, pr github.PullRequest, org string) string {
+	head := strings.TrimSpace(pr.HeadSHA)
+	if head == "" || len(verdicts.Items) == 0 {
+		return ""
+	}
+	agg, ok := verdicts.AggregateFor(config.QualifyRepo(org, pr.Repo), pr.Number, head)
+	if !ok {
+		return ""
+	}
+	const shortSHA = 7
+	if len(head) > shortSHA {
+		head = head[:shortSHA]
+	}
+	return fmt.Sprintf(" [hive-reviewed: %s@%s]", agg.Verdict, head)
 }
 
 func prKickAnnotation(pr github.PullRequest, agentName string) string {

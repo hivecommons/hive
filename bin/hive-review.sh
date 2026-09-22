@@ -165,10 +165,38 @@ if verdict.strip():
     # it: a verdict silently dropped server-side is exactly the failure mode
     # this flag exists to end.
     try:
-        json.loads(verdict)
+        parsed = json.loads(verdict)
     except ValueError as exc:
         sys.stderr.write("hive-review: --verdict-file is not valid JSON: %s\n" % exc)
         raise SystemExit(2)
+    # Shape check, same keys the relay's validator requires. The relay refuses
+    # the whole request (comment included) on a bad verdict, so catching the
+    # common mistakes here — a bare {"repo","pr","verdict","summary"} — saves
+    # a round trip and names the fix.
+    required = ("lane", "kind", "perspective", "verdict", "repo", "number",
+                "summary", "findings", "prs_opened", "beads_filed")
+    example = ('{"lane":"review-swarm","kind":"review","perspective":"correctness",'
+               '"verdict":"requires_human","repo":"owner/repo","number":123,'
+               '"head_sha":"<head sha>","summary":"...","findings":[],'
+               '"prs_opened":[],"beads_filed":[]}')
+    objs = parsed if isinstance(parsed, list) else [parsed]
+    for i, obj in enumerate(objs):
+        if not isinstance(obj, dict):
+            sys.stderr.write("hive-review: verdict %d is not a JSON object\n" % i)
+            raise SystemExit(2)
+        missing = [k for k in required if k not in obj]
+        if missing:
+            sys.stderr.write("hive-review: verdict %d is missing required keys: %s\n"
+                             "hive-review: each verdict must look like %s\n"
+                             % (i, ", ".join(missing), example))
+            raise SystemExit(2)
+        if obj.get("kind") != "review" or obj.get("lane") != "review-swarm":
+            sys.stderr.write("hive-review: verdict %d must set kind=\"review\" and lane=\"review-swarm\"\n" % i)
+            raise SystemExit(2)
+        if str(obj.get("repo", "")) != repo or str(obj.get("number", "")) != str(number):
+            sys.stderr.write("hive-review: verdict %d names %s#%s but this request is for %s#%s; the relay discards a verdict about a different PR\n"
+                             % (i, obj.get("repo"), obj.get("number"), repo, number))
+            raise SystemExit(2)
     req["report"] = verdict
 with open(temporary, "w") as fh:
     json.dump(req, fh)

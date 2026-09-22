@@ -364,3 +364,63 @@ func TestReviewRequestWatcher_ConfidenceLine(t *testing.T) {
 		t.Fatalf("no verdict must mean no score, got %q", got)
 	}
 }
+
+// A verdict that fails validation must refuse the WHOLE request before the
+// comment is posted. Posting first and dropping the verdict afterwards left the
+// PR unrecorded, so the next kick handed it back and the same comment landed
+// again — actions#548 collected six duplicate notices in two hours.
+func TestReviewRequestWatcher_MalformedVerdictRefusesWholeRequest(t *testing.T) {
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/reviews") {
+			posts++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"state":"COMMENTED"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+
+	// The shape the cadence reviewer actually produced on a live hive.
+	freeform := `{"repo":"o/r","pr":5,"verdict":"requires_human","summary":"duplicate of #6"}`
+	path, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: "This appears to duplicate #6", Report: freeform})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+
+	if posts != 0 {
+		t.Fatalf("a malformed verdict must post nothing, posted %d reviews", posts)
+	}
+	if _, err := os.Stat(path + ".bad"); err != nil {
+		t.Fatalf("malformed request must be quarantined as .bad: %v", err)
+	}
+	raw, err := os.ReadFile(strings.TrimSuffix(path, ".json") + ".result.json")
+	if err != nil {
+		t.Fatalf("result file: %v", err)
+	}
+	var resp ReviewResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatalf("result must report failure, got %+v", resp)
+	}
+	for _, want := range []string{"nothing posted", "lane: is required", `"lane":"review-swarm"`} {
+		if !strings.Contains(resp.Error, want) {
+			t.Errorf("error %q must contain %q so the agent can fix the JSON from the result alone", resp.Error, want)
+		}
+	}
+
+	// A well-formed verdict on the same PR still goes through.
+	if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: "This appears to duplicate #6", Report: validVerdictJSON(t, "o/r", 5, "intent-alignment", "requires_human")}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if posts != 1 {
+		t.Fatalf("valid verdict must post exactly once, posted %d", posts)
+	}
+}

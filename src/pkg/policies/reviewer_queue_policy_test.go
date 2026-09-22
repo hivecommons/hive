@@ -93,3 +93,30 @@ func TestReviewerQueuePolicyShips(t *testing.T) {
 		}
 	}
 }
+
+// The policy must carry the verdict schema itself and the skip rule for PRs
+// already judged at their current head. Without the first the reviewer
+// invented a four-key shape every verdict of which was rejected; without the
+// second it re-commented the same PR on every kick.
+func TestReviewerQueuePolicy_SchemaAndSkipRule(t *testing.T) {
+	data, err := DefaultPolicies.ReadFile("defaults/reviewer-queue.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		`"lane":"review-swarm"`,
+		`"kind":"review"`,
+		`"perspective":"correctness"`,
+		`"prs_opened":[]`,
+		`"beads_filed":[]`,
+		"[hive-reviewed:",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reviewer-queue.md must contain %q", want)
+		}
+	}
+	if strings.Contains(body, "Your kick names the exact schema") {
+		t.Error("reviewer-queue.md still defers the schema to a kick that never carried it")
+	}
+}

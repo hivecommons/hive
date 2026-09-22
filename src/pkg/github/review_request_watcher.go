@@ -262,6 +262,19 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		// review_redaction_guard.go.
 		shapeErr = redactedQuoteRefusal(req.Body)
 	}
+	// A verdict that will not validate is refused BEFORE anything is posted.
+	// Recording it after the comment went out used to log a warning the agent
+	// never saw and drop the verdict: the PR then read as never reviewed, was
+	// handed back on the next kick, and collected the same comment again —
+	// six near-identical duplicate notices on one PR in two hours. Failing
+	// the whole request instead keeps the two artifacts atomic and puts the
+	// validator's message where the agent reads it, so it can fix the JSON
+	// and resubmit inside the same kick.
+	if shapeErr == "" && strings.TrimSpace(req.Report) != "" {
+		if _, err := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), c.perspectives); err != nil {
+			shapeErr = malformedVerdictRefusal(err)
+		}
+	}
 	if shapeErr != "" {
 		c.writeReviewResult(path, ReviewResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
@@ -596,4 +609,14 @@ func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) str
 		return line
 	}
 	return body + "\n\n" + line
+}
+
+// malformedVerdictRefusal is the result an agent reads when its --verdict-file
+// does not validate. It carries the validator's exact complaint and a complete
+// example object, because the agent that produced the bad shape is the one
+// that has to fix it, in this kick, from this message alone.
+func malformedVerdictRefusal(err error) string {
+	return "verdict rejected, nothing posted: " + err.Error() +
+		". Fix the JSON and resubmit the same comment with it. One object per perspective, or an array of them, shaped exactly like: " +
+		review.VerdictSchemaExample
 }

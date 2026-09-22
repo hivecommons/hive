@@ -39,6 +39,10 @@ The collector reads review report artifacts from `/var/run/hive-metrics/review-r
 
 Those artifacts are written by the **review relay**, not by the reviewing agent. `/var/run/hive-metrics` is owned by the hive and each agent runs under its own account, so an agent-side write is refused by the filesystem; returning the JSON in kick output stores it nowhere. The agent hands its verdict over with `hive-review --verdict-file <path>` alongside the comment, or with `hive-review --record-verdict --verdict-file <path>` when it has nothing to post. The watcher validates the report, checks it names the PR that was actually reviewed, and writes the artifact server-side — so a malformed or mis-targeted verdict never reaches the collector, which fails the whole collection on the first unparseable file.
 
+Validation happens **before** the comment is posted, and a verdict that fails it refuses the whole request: nothing is posted, the request is quarantined as `.bad`, and the `.result.json` the agent polls carries `ok: false` with the validator's message and a complete example object. The two artifacts are atomic on purpose — a comment that landed without its verdict left the PR reading as never reviewed, so the next kick handed it back and the same comment was posted again. `hive-review` runs the same key check in the agent's own shell first, so the common mistake (a bare `{"repo","pr","verdict","summary"}`) fails immediately with the required shape.
+
+The cadence reviewer's kick template (`reviewer-queue.md`) quotes that schema verbatim, and every `${PR_LIST}` row whose current head already carries a verdict is marked `[hive-reviewed: <verdict>@<sha7>]` so the reviewer skips it. The mark is keyed on the head SHA exactly as the dispatch lane is, so a new push reads as unreviewed again.
+
 A verdict that is never handed over is not a neutral outcome: aggregation reports "never reviewed", and the PR is dispatched for review again from scratch.
 
 Aggregation rules are deterministic:

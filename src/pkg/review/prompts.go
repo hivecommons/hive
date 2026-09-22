@@ -364,6 +364,17 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 // that: two well-cited findings, no summary key, nothing recorded. Naming only
 // the top-level fields and leaving the finding shape to be guessed is not a
 // schema, it is a trap.
+// VerdictSchemaExample is one complete verdict object exactly as the relay
+// validates it. It is quoted wherever an agent is told to produce a verdict —
+// the cadence reviewer's kick template, and the relay's refusal message when a
+// verdict fails validation — so the schema an agent is held to is never
+// described only by reference. The queue-mode policy used to say "your kick
+// names the exact schema" while the kick never did, and the reviewer filled
+// the gap with {"repo","pr","verdict","summary"}: every verdict it produced
+// was rejected and every PR it judged was handed straight back to it.
+// TestVerdictSchemaExampleValidates keeps this literal honest.
+const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41}],"prs_opened":[],"beads_filed":[]}`
+
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional). A finding missing title, severity or summary fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
 
