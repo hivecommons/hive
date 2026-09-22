@@ -179,7 +179,7 @@ choice rather than the source of correctness.
 
 ## Compatibility and rollout
 
-The compatibility contract from the phased roadmap remains binding:
+The compatibility contract from the [phased roadmap](rfc-4002-phased-roadmap.md) remains binding:
 
 1. A re-entrant turn reconstructs everything from the conversation envelope,
    structured input, and existing session/context model.
@@ -204,6 +204,6 @@ Rollout sequence:
 
 This issue asked for an RFC/spike before a direct rewrite. The v5 artifacts now
 provide the current-state inventory, prototype, replay/idempotency evidence,
-handoff evaluation, phased roadmap, and this accepted design. Remaining
+handoff evaluation, [phased roadmap](rfc-4002-phased-roadmap.md), and this accepted design. Remaining
 production wiring is intentionally split to follow-up issues so #4002 can close
 as the umbrella RFC.
