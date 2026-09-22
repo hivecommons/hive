@@ -111,6 +111,33 @@ func TestContributeMCPRelatedWorkFromStatusCache(t *testing.T) {
 	}
 }
 
+func TestContributeMCPCIHealthFromStatusCache(t *testing.T) {
+	s := newTestServer()
+	s.authToken = "secret"
+	s.deps = &Dependencies{Config: &config.Config{AutoMerge: config.AutoMergeConfig{RequiredChecks: []string{"build", "test"}}}}
+	s.contributeHub = NewContributeWSHub(s.logger, s)
+	s.contributeHub.connections["alice"] = &ContributorConnection{
+		currentTask: &WSTaskAssign{TaskID: "task-1", Kind: "issue", Repo: "owner/repo", Number: 42, Title: "do work"},
+	}
+	s.status = &StatusPayload{Timestamp: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), Repos: []FrontendRepo{{
+		Name: "repo", Full: "owner/repo",
+		OpenPrs: []any{map[string]any{"repo": "owner/repo", "number": 43, "failing_checks": []string{"build"}}},
+	}}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath+"?token=secret", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ci_health","arguments":{"task_id":"task-1","repo":"owner/repo"}}}`))
+	s.handleContributeMCP(rec, req)
+	text := mcpResultText(t, rec.Body.Bytes())
+	var env struct {
+		Data taskmcp.CIHealthData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data.Checks) != 2 || !env.Data.CacheStale {
+		t.Fatalf("ci health = %#v", env.Data)
+	}
+}
+
 func mcpResultText(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {

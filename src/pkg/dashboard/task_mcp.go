@@ -87,8 +87,9 @@ func (p dashboardTaskMCPProvider) RelatedWork(_ context.Context, scope taskmcp.S
 	return data, info, nil
 }
 
-func (p dashboardTaskMCPProvider) CIHealth(_ context.Context, _ taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.CIHealthData, taskmcp.PageInfo, error) {
-	data, info := taskmcp.PaginateChecks(nil, page)
+func (p dashboardTaskMCPProvider) CIHealth(_ context.Context, scope taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.CIHealthData, taskmcp.PageInfo, error) {
+	input := p.ciHealthSnapshot(scope)
+	data, info := taskmcp.BuildCIHealth(input, time.Now(), page)
 	return data, info, nil
 }
 
@@ -274,6 +275,58 @@ func relatedItemFromRaw(kind, fallbackRepo string, raw any) (taskmcp.RelatedItem
 	}
 	item.Reasons = stringSliceFromAny(m["reasons"])
 	return item, true
+}
+
+func (p dashboardTaskMCPProvider) ciHealthSnapshot(scope taskmcp.Scope) taskmcp.CICacheInput {
+	var input taskmcp.CICacheInput
+	cfg := p.config()
+	if cfg != nil {
+		input.RequiredChecks = append([]string(nil), cfg.AutoMerge.RequiredChecks...)
+		input.DefaultBranch = cfg.Project.PrimaryRepo
+	}
+	input.States = map[string]string{}
+	input.FailingPRs = map[string]int{}
+	input.LastGreenSHA = map[string]string{}
+	if p.server == nil || p.server.status == nil {
+		return input
+	}
+	p.server.statusMu.RLock()
+	defer p.server.statusMu.RUnlock()
+	if ts, err := time.Parse(time.RFC3339, p.server.status.Timestamp); err == nil {
+		input.CachedAt = ts
+	}
+	for _, repo := range p.server.status.Repos {
+		if !strings.EqualFold(repo.Full, scope.Repo) && !strings.EqualFold(repo.Name, scope.Repo) {
+			continue
+		}
+		for _, raw := range repo.OpenPrs {
+			var m map[string]any
+			b, err := json.Marshal(raw)
+			if err != nil || json.Unmarshal(b, &m) != nil {
+				continue
+			}
+			for _, check := range stringSliceFromAny(firstPresent(m, "failing_checks", "failingChecks")) {
+				if strings.TrimSpace(check) == "" {
+					continue
+				}
+				input.FailingPRs[check]++
+				if input.States[check] == "" {
+					input.States[check] = "failure"
+				}
+			}
+			for _, check := range stringSliceFromAny(firstPresent(m, "pending_checks", "pendingChecks")) {
+				if strings.TrimSpace(check) != "" && input.States[check] == "" {
+					input.States[check] = "pending"
+				}
+			}
+		}
+	}
+	for _, check := range input.RequiredChecks {
+		if input.States[check] == "" {
+			input.States[check] = "unknown"
+		}
+	}
+	return input
 }
 
 func firstPresent(m map[string]any, keys ...string) any {

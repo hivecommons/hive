@@ -1,0 +1,1 @@
+- Add cache-backed ci_health results to the task-scoped MCP context bundle.
