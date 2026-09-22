@@ -379,6 +379,7 @@ jobs:
       - name: Assert embedded commit matches build (freshness guard)
         env:
           EXPECTED_SHA: ${{ needs.gate.outputs.sha }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
@@ -389,7 +390,7 @@ jobs:
             docker buildx build --load \
               -f src/Dockerfile \
               --build-arg GIT_HASH="$EXPECTED_SHA" \
-              --build-arg GIT_BRANCH="${{ github.ref_name }}" \
+              --build-arg GIT_BRANCH="$REF_NAME" \
               -t "$IMG" .
           fi
           ACTUAL=$(docker run --rm --entrypoint /usr/local/bin/hive "$IMG" --version)
@@ -476,10 +477,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          GATE_SHA: ${{ needs.gate.outputs.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive /tmp/digests \
-            '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
+            "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
       # ---- Cross-org mirror (kubestellar <-> hivecommons dual-publish) ----
@@ -682,10 +687,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create contributor manifest list and push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          GATE_SHA: ${{ needs.gate.outputs.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive-contributor /tmp/contrib-digests \
-            '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
+            "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and
@@ -873,10 +882,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create hub manifest list and push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          GATE_SHA: ${{ needs.gate.outputs.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive-hub /tmp/hub-digests \
-            '${{ github.ref_name }}' '${{ needs.gate.outputs.sha }}' '${{ github.run_number }}' \
+            "$REF_NAME" "$GATE_SHA" "$RUN_NUMBER" \
             v5 true candidate
 
       # Cross-org mirror — same mechanics, same missing-secret asymmetry, and

@@ -203,14 +203,14 @@ jobs:
         branch: [v4, v5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name != 'push' || matrix.branch == github.ref_name
+        if: github.event_name != 'push' || github.ref == format('refs/heads/{0}', matrix.branch)
         with:
           ref: ${{ matrix.branch }}
           fetch-depth: 0
 
       - name: Check recent DCO trailers
         id: dco
-        if: github.event_name != 'push' || matrix.branch == github.ref_name
+        if: github.event_name != 'push' || github.ref == format('refs/heads/{0}', matrix.branch)
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -233,7 +233,7 @@ jobs:
           exit 0
 
       - name: Create or update DCO issue
-        if: (github.event_name != 'push' || matrix.branch == github.ref_name) && steps.dco.outputs.failed == 'true'
+        if: (github.event_name != 'push' || github.ref == format('refs/heads/{0}', matrix.branch)) && steps.dco.outputs.failed == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -336,5 +336,5 @@ jobs:
             });
 
       - name: Fail when DCO trailers are invalid
-        if: (github.event_name != 'push' || matrix.branch == github.ref_name) && steps.dco.outputs.failed == 'true'
+        if: (github.event_name != 'push' || github.ref == format('refs/heads/{0}', matrix.branch)) && steps.dco.outputs.failed == 'true'
         run: exit 1
