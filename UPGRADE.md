@@ -11,12 +11,11 @@ entrypoint in `src/deploy/` remain the source of truth.
 > **Status**: v5 is released — v5.0.0 shipped 2026-09-21 and the v5 line is
 > current (see `CHANGELOG.md` for the latest v5.x.y entry). The release
 > channels were re-based the same day (`latest` and `candidate` follow v5,
-> `edge` follows v6), and v4 is frozen to security and critical fixes only;
-> no v4 EOL date is announced yet
-> ([announcement](src/docs/v5-migration-announcement.md)). The v5.0.0
-> changelog entry records **no `/data` schema migration** — the notes below
-> on `/data` ownership and per-agent UIDs describe how the shipped v5
-> entrypoint behaves.
+> `edge` follows v6), and v4 is frozen to security and critical fixes only until
+> its 2026-12-21 EOL. For the operator runbook, see the
+> [v4 → v5 migration guide](src/docs/migration-v4-v5.md). The v5.0.0 changelog
+> entry records **no `/data` schema migration** — the notes below on `/data`
+> ownership and per-agent UIDs describe how the shipped v5 entrypoint behaves.
 
 ### Hosted hub domain cutover
 
