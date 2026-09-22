@@ -75,6 +75,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/trends", s.handleTrends)
 	s.mux.HandleFunc("GET /api/timeline", s.handleTimeline)
 	s.mux.HandleFunc("GET /api/lifecycle-timeline", s.handleLifecycleTimeline)
+	s.mux.HandleFunc("GET /api/runs", s.handleRunsList)
+	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).

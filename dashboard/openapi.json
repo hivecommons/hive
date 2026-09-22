@@ -854,7 +854,11 @@
                     },
                     "tracking": {
                       "type": "string",
-                      "enum": ["floating", "pinned", "unknown"],
+                      "enum": [
+                        "floating",
+                        "pinned",
+                        "unknown"
+                      ],
                       "description": "Shared Hive image-tracking classification, independent of the channel and running commit"
                     },
                     "dirty": {
@@ -18522,7 +18526,7 @@
           "Status"
         ],
         "summary": "List the repositories currently paused",
-        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it — the same state is already on the repository cards.",
+        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it \u2014 the same state is already on the repository cards.",
         "responses": {
           "200": {
             "description": "Current repo pauses",
@@ -19308,6 +19312,246 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "List active runs",
+        "description": "Read-only projection of active staged runs computed from task leases, plans, and lifecycle timeline data. Nothing is stored by this endpoint.",
+        "responses": {
+          "200": {
+            "description": "Active runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "key",
+                      "title",
+                      "repo",
+                      "stage",
+                      "gen",
+                      "waiting_on",
+                      "stages"
+                    ],
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "Canonical work-item key, e.g. owner/repo#123. URL-escape this value for /api/runs/{key}."
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "Log-scrubbed work item title."
+                      },
+                      "repo": {
+                        "type": "string"
+                      },
+                      "stage": {
+                        "type": "string",
+                        "enum": [
+                          "spec",
+                          "plan",
+                          "implement"
+                        ]
+                      },
+                      "gen": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "stage_started_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "waiting_on": {
+                        "type": "string",
+                        "enum": [
+                          "agent",
+                          "remote",
+                          "human",
+                          "ci",
+                          "none"
+                        ]
+                      },
+                      "waiting_since": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "assignee": {
+                        "type": "string"
+                      },
+                      "last_receipt": {
+                        "type": "string"
+                      },
+                      "plan_epic_id": {
+                        "type": "string"
+                      },
+                      "stages": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "current",
+                                "completed",
+                                "observed"
+                              ]
+                            },
+                            "gen": {
+                              "type": "integer",
+                              "format": "int64"
+                            },
+                            "receipt": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
+    "/api/runs/{key}": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get one active run",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active run with timeline-derived stage history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "title",
+                    "repo",
+                    "stage",
+                    "gen",
+                    "waiting_on",
+                    "stages"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Canonical work-item key, e.g. owner/repo#123. URL-escape this value for /api/runs/{key}."
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "Log-scrubbed work item title."
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "spec",
+                        "plan",
+                        "implement"
+                      ]
+                    },
+                    "gen": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "stage_started_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "waiting_on": {
+                      "type": "string",
+                      "enum": [
+                        "agent",
+                        "remote",
+                        "human",
+                        "ci",
+                        "none"
+                      ]
+                    },
+                    "waiting_since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "assignee": {
+                      "type": "string"
+                    },
+                    "last_receipt": {
+                      "type": "string"
+                    },
+                    "plan_epic_id": {
+                      "type": "string"
+                    },
+                    "stages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "current",
+                              "completed",
+                              "observed"
+                            ]
+                          },
+                          "gen": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "receipt": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found."
+          },
+          "503": {
+            "description": "Run lease registry unavailable or unreadable."
           }
         }
       }

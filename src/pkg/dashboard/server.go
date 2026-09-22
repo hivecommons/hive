@@ -398,6 +398,7 @@ type StatusPayload struct {
 	Repos            []FrontendRepo            `json:"repos"`
 	Beads            FrontendBeads             `json:"beads"`
 	Planning         FrontendPlanning          `json:"planning"`
+	Runs             RunsSummary               `json:"runs"`
 	Health           map[string]any            `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
@@ -1927,6 +1928,11 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 
 	status.InferenceBackends = s.buildInferenceBackends()
+	if runs, err := s.activeRuns(false); err == nil {
+		status.Runs = summarizeRuns(runs)
+	} else if s.logger != nil {
+		s.logger.Warn("run projection unavailable for status payload", "error", err)
+	}
 
 	// Deep checks travel inside the status payload so every dashboard surface
 	// (header pill included) renders the same truth the heartbeat sends the
