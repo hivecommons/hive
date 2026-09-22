@@ -2562,9 +2562,16 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 			handler := mention.NewHandler(mention.Options{
 				Config:     b.cfg.GitHub.Mentions,
+				Actions:    b.cfg.GitHub.Actions,
 				ReviewBots: b.cfg.Classification.ReviewBots,
 				Roles: func(login string) (string, bool) {
 					return b.cfg.Dashboard.AuthorizedRole(login)
+				},
+				Repos: func() []string {
+					if b.ghClient == nil {
+						return nil
+					}
+					return b.ghClient.ActiveRepositories()
 				},
 				Agents:     mentionAgents,
 				GitHubFunc: func() mention.GitHub { return b.ghClient },

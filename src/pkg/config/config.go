@@ -1885,6 +1885,53 @@ const (
 	DefaultMentionWebhookMinGap  = 30 * time.Second
 )
 
+type GitHubActionsConfig struct {
+	Enabled         bool              `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	SourceLabel     string            `yaml:"source_label,omitempty" json:"source_label,omitempty"`
+	AllowedCommands []string          `yaml:"allowed_commands,omitempty" json:"allowed_commands,omitempty"`
+	AllowApply      bool              `yaml:"allow_apply,omitempty" json:"allow_apply,omitempty"`
+	IdentityMap     map[string]string `yaml:"identity_map,omitempty" json:"identity_map,omitempty"`
+}
+
+const (
+	DefaultGitHubActionSourceLabel = "action"
+)
+
+var DefaultGitHubActionAllowedCommands = []string{"status", "review"}
+
+func (a GitHubActionsConfig) SourceLabelEffective() string {
+	if strings.TrimSpace(a.SourceLabel) != "" {
+		return strings.TrimSpace(a.SourceLabel)
+	}
+	return DefaultGitHubActionSourceLabel
+}
+
+func (a GitHubActionsConfig) AllowedCommandsEffective() []string {
+	if len(a.AllowedCommands) == 0 {
+		return append([]string(nil), DefaultGitHubActionAllowedCommands...)
+	}
+	out := make([]string, 0, len(a.AllowedCommands))
+	for _, cmd := range a.AllowedCommands {
+		if trimmed := strings.ToLower(strings.TrimSpace(cmd)); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func (a GitHubActionsConfig) Validate() error {
+	if strings.TrimSpace(a.SourceLabelEffective()) == "" {
+		return fmt.Errorf("github.actions.source_label must be non-empty")
+	}
+	valid := map[string]bool{"status": true, "review": true, "kick": true}
+	for _, cmd := range a.AllowedCommandsEffective() {
+		if !valid[cmd] {
+			return fmt.Errorf("github.actions.allowed_commands contains unknown command %q", cmd)
+		}
+	}
+	return nil
+}
+
 func (m GitHubMentionsConfig) PollIntervalEffective() time.Duration {
 	if m.PollInterval > 0 {
 		return m.PollInterval
@@ -3441,6 +3488,7 @@ type GitHubConfig struct {
 	Token              string               `yaml:"token"`
 	OAuthClientID      string               `yaml:"oauth_client_id"`
 	Mentions           GitHubMentionsConfig `yaml:"mentions,omitempty" json:"mentions,omitempty"`
+	Actions            GitHubActionsConfig  `yaml:"actions,omitempty" json:"actions,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are

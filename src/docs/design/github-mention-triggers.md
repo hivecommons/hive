@@ -362,3 +362,27 @@ the decision follows each one, with the code on `v6` that now carries it.
   [ADR-0008](../adr/0008-ioscan-untrusted-input.md) — untrusted kick input.
 - `src/cmd/hive/merge_eligibility.go:50` — `trustedMergerFunc`, the role-list lookup to
   reuse for summoners.
+
+## GitHub Actions trigger transport
+
+Issue #8206 adds a second producer for the same mention path: GitHub Actions can post an `@hive` comment that the poller already understands. This is transport A, the comment-relay transport. It deliberately adds no inbound spoke port and no new authorization path.
+
+The repository-local composite action is `hivecommons/hive/.github/actions/hive@v6`. It accepts `command`, optional `issue`, optional `prompt`, and `token`, then posts:
+
+```text
+@hive <command> <prompt>
+
+<!-- hive:source=action run_id=<run_id> run_attempt=<run_attempt> workflow=<workflow> actor=<actor> -->
+```
+
+The marker is machine-readable only. The mention handler strips it before ioscan, before building the agent kick, and before any human-visible echo. When the marker is present, the kick source is recorded with the `action` source label instead of `mention`, and the poller dedupes on `run_id` plus `run_attempt` in the same persistent store that tracks seen comment ids.
+
+Action-originated comments keep the existing mention guards and add transport-specific deltas:
+
+- the marker actor maps through `github.actions.identity_map` or directly to a known dashboard identity, then the usual role floor applies;
+- bot actors are refused unless the repo is already one of the hive's governed repositories and the command is explicitly listed in `github.actions.allowed_commands`;
+- the repo allowlist is the existing governed-repository list used by the mention poller;
+- free text from `with: prompt` is scanned with `ioscan.EnforceInput` after the marker is removed;
+- action kicks stay in plan/review behavior by default; apply-like `kick` commands require an owner identity and `github.actions.allow_apply: true`.
+
+Transport B, hub-relayed OIDC dispatch, remains deferred. It should be designed and filed separately after the comment-relay path has live evidence.

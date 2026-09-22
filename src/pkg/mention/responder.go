@@ -113,7 +113,8 @@ func (r *Responder) lockThread(repo string, number int) func() {
 
 func mentionSource(source string) bool {
 	source = strings.TrimSpace(source)
-	return source == SourceMention || strings.HasPrefix(source, SourceMention+":")
+	return source == SourceMention || strings.HasPrefix(source, SourceMention+":") ||
+		source == SourceAction || strings.HasPrefix(source, SourceAction+":")
 }
 
 func kickObserverDetailSource(detail string) string {

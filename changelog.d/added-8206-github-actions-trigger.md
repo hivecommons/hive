@@ -1,0 +1,1 @@
+- Add the v6 GitHub Actions comment-relay trigger, including `source=action` mention handling, guard conformance, smoke workflow, and operator docs.

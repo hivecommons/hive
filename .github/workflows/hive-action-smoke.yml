@@ -1,0 +1,32 @@
+name: Hive action smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to receive the manual @hive status smoke comment.
+        required: true
+        type: number
+      prompt:
+        description: Optional prompt text after status.
+        required: false
+        type: string
+        default: manual smoke from workflow_dispatch
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  status:
+    name: Relay @hive status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out action
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Post manual hive status comment
+        uses: ./.github/actions/hive
+        with:
+          command: status
+          issue: ${{ inputs.issue }}
+          prompt: ${{ inputs.prompt }}

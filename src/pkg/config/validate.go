@@ -35,6 +35,9 @@ func (c *Config) Validate() error {
 	if err := c.GitHub.Mentions.Validate(); err != nil {
 		return err
 	}
+	if err := c.GitHub.Actions.Validate(); err != nil {
+		return err
+	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}

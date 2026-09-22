@@ -11,9 +11,19 @@ type Parsed struct {
 	Text      string
 }
 
+type ActionMarker struct {
+	Source     string
+	RunID      string
+	RunAttempt string
+	Workflow   string
+	Actor      string
+}
+
 var askSelectorRe = regexp.MustCompile(`(?is)^ask\s+([A-Za-z0-9_.-]+)\b\s*(.*)$`)
+var actionMarkerRe = regexp.MustCompile(`(?s)<!--\s*hive:([^>]*)-->`)
 
 func Parse(body, appBotLogin string) Parsed {
+	body, _ = ExtractActionMarker(body)
 	login := strings.TrimSpace(appBotLogin)
 	if login == "" {
 		return Parsed{}
@@ -30,6 +40,56 @@ func Parse(body, appBotLogin string) Parsed {
 		p.Text = strings.TrimSpace(m[2])
 	}
 	return p
+}
+
+func ExtractActionMarker(body string) (string, ActionMarker) {
+	matches := actionMarkerRe.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) == 0 {
+		return body, ActionMarker{}
+	}
+	cleaned := body
+	var marker ActionMarker
+	for i := len(matches) - 1; i >= 0; i-- {
+		m := matches[i]
+		if m[2] >= 0 && m[3] >= 0 {
+			candidate := parseActionMarkerFields(body[m[2]:m[3]])
+			if strings.EqualFold(candidate.Source, SourceAction) {
+				marker = candidate
+			}
+		}
+		cleaned = strings.TrimSpace(cleaned[:m[0]] + cleaned[m[1]:])
+	}
+	return cleaned, marker
+}
+
+func parseActionMarkerFields(s string) ActionMarker {
+	return ActionMarker{
+		Source:     markerField(s, "source"),
+		RunID:      markerField(s, "run_id"),
+		RunAttempt: markerField(s, "run_attempt"),
+		Workflow:   markerField(s, "workflow"),
+		Actor:      markerField(s, "actor"),
+	}
+}
+
+func markerField(s, key string) string {
+	s = strings.TrimSpace(s)
+	needle := key + "="
+	idx := strings.Index(s, needle)
+	if idx < 0 {
+		return ""
+	}
+	start := idx + len(needle)
+	end := len(s)
+	for _, next := range []string{"source=", "run_id=", "run_attempt=", "workflow=", "actor="} {
+		if next == needle {
+			continue
+		}
+		if pos := strings.Index(s[start:], " "+next); pos >= 0 && start+pos < end {
+			end = start + pos
+		}
+	}
+	return strings.TrimSpace(s[start:end])
 }
 
 func findMention(lowerBody, appBotLogin string) (int, int) {

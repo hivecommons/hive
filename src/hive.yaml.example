@@ -613,6 +613,15 @@ github:
   # app_id: 12345
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
+  # mentions:
+  #   enabled: true
+  # actions:
+  #   enabled: false
+  #   source_label: action
+  #   allowed_commands: [status, review]
+  #   allow_apply: false
+  #   identity_map:
+  #     octo-ci-bot: alice
 
 # Optional: OIDC token mint — issues short-lived scoped JWTs alongside the
 # GitHub App token, for in-process agent-credential consumers. Disabled by

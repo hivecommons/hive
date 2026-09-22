@@ -49,6 +49,26 @@ func TestGitHubMentionsConfigDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestGitHubActionsConfigDefaultsAndValidation(t *testing.T) {
+	var a GitHubActionsConfig
+	if a.SourceLabelEffective() != DefaultGitHubActionSourceLabel {
+		t.Fatalf("source label = %q", a.SourceLabelEffective())
+	}
+	if got := strings.Join(a.AllowedCommandsEffective(), ","); got != "status,review" {
+		t.Fatalf("allowed command defaults = %q", got)
+	}
+	custom := GitHubActionsConfig{SourceLabel: "ci", AllowedCommands: []string{"status", "kick"}}
+	if got := strings.Join(custom.AllowedCommandsEffective(), ","); got != "status,kick" {
+		t.Fatalf("custom allowed commands = %q", got)
+	}
+	if err := custom.Validate(); err != nil {
+		t.Fatalf("valid custom actions config rejected: %v", err)
+	}
+	if err := (GitHubActionsConfig{AllowedCommands: []string{"merge"}}).Validate(); err == nil {
+		t.Fatal("unknown action command accepted")
+	}
+}
+
 func TestValidateChannelsAcceptsMentionRuntime(t *testing.T) {
 	if err := ValidateChannels("scanner", []ChannelConfig{{Type: ChannelTypeKick}, {Type: ChannelTypeMention}}); err != nil {
 		t.Fatalf("mention+kick channel rejected: %v", err)

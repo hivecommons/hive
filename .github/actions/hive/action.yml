@@ -1,0 +1,64 @@
+name: Hive comment relay
+description: Post an @hive command comment for the v6 mention poller to process.
+inputs:
+  command:
+    description: Hive command to relay (for example status or review).
+    required: true
+  issue:
+    description: Issue or pull request number to comment on. Defaults to github.event issue or PR number.
+    required: false
+  prompt:
+    description: Optional free-text prompt appended after the command.
+    required: false
+    default: ''
+  token:
+    description: GitHub token used to create the comment.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Post hive mention comment
+      shell: bash
+      env:
+        HIVE_COMMAND: ${{ inputs.command }}
+        HIVE_ISSUE_INPUT: ${{ inputs.issue }}
+        HIVE_PROMPT: ${{ inputs.prompt }}
+        GH_TOKEN: ${{ inputs.token || github.token }}
+        GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+        GITHUB_EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
+        GITHUB_EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+        GITHUB_RUN_ATTEMPT_VALUE: ${{ github.run_attempt }}
+        GITHUB_WORKFLOW_NAME: ${{ github.workflow }}
+        GITHUB_ACTOR_LOGIN: ${{ github.actor }}
+      run: |
+        set -euo pipefail
+
+        issue_number="${HIVE_ISSUE_INPUT}"
+        if [[ -z "${issue_number}" ]]; then
+          issue_number="${GITHUB_EVENT_ISSUE_NUMBER}"
+        fi
+        if [[ -z "${issue_number}" ]]; then
+          issue_number="${GITHUB_EVENT_PR_NUMBER}"
+        fi
+        if [[ -z "${issue_number}" ]]; then
+          echo "hive action requires an issue input or an issue/pull_request event" >&2
+          exit 1
+        fi
+        if [[ -z "${HIVE_COMMAND}" ]]; then
+          echo "hive action requires command" >&2
+          exit 1
+        fi
+
+        body="@hive ${HIVE_COMMAND}"
+        if [[ -n "${HIVE_PROMPT}" ]]; then
+          body="${body} ${HIVE_PROMPT}"
+        fi
+        marker="<!-- hive:source=action run_id=${GITHUB_RUN_ID_VALUE} run_attempt=${GITHUB_RUN_ATTEMPT_VALUE} workflow=${GITHUB_WORKFLOW_NAME} actor=${GITHUB_ACTOR_LOGIN} -->"
+        body="${body}"$'\n\n'"${marker}"
+
+        gh api \
+          --method POST \
+          "repos/${GITHUB_REPOSITORY_NAME}/issues/${issue_number}/comments" \
+          -f body="${body}"

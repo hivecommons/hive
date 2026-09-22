@@ -1129,7 +1129,8 @@ func (m *Manager) deferStartupKickLocked(agent *AgentProcess, message, trigger s
 
 func mentionKickSource(source string) bool {
 	source = strings.TrimSpace(source)
-	return source == "mention" || strings.HasPrefix(source, "mention:")
+	return source == "mention" || strings.HasPrefix(source, "mention:") ||
+		source == "action" || strings.HasPrefix(source, "action:")
 }
 
 func (m *Manager) clearStartupKickInFlight(agent *AgentProcess, gen int) {

@@ -14,6 +14,7 @@ const (
 	AuditKicked   = "agent_mention_kicked"
 	AuditDeclined = "agent_mention_declined"
 	SourceMention = "mention"
+	SourceAction  = "action"
 	kickLimit     = 10000
 )
 
@@ -26,6 +27,7 @@ type Event struct {
 	HTMLURL   string
 	Author    string
 	Body      string
+	Action    ActionMarker
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -54,8 +56,10 @@ type AgentFunc func() []AgentInfo
 
 type Options struct {
 	Config     config.GitHubMentionsConfig
+	Actions    config.GitHubActionsConfig
 	ReviewBots config.ReviewBotsConfig
 	Roles      RoleFunc
+	Repos      func() []string
 	Agents     AgentFunc
 	GitHub     GitHub
 	GitHubFunc func() GitHub
@@ -88,17 +92,42 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		app = gh.AppBotLogin()
 	}
 	p := Parse(ev.Body, app)
+	cleanBody, marker := ExtractActionMarker(ev.Body)
+	if marker.Source != "" {
+		ev.Body = cleanBody
+		ev.Action = marker
+		p = Parse(cleanBody, app)
+	}
 	if !p.Mentioned {
 		return nil
 	}
 	if h.opts.Store != nil && h.opts.Store.Seen(ev.NodeID) {
 		return h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt)
 	}
+	actionKey := actionDedupeKey(ev)
+	if actionKey != "" && h.opts.Store != nil && h.opts.Store.Seen(actionKey) {
+		return h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt)
+	}
+	if ev.Action.Source != "" {
+		if !trustedActionCommentAuthor(ev.Author) {
+			h.decline(ev, "action-author", "")
+			return h.mark(ev)
+		}
+		mapped, ok := h.authorizeAction(ev, p)
+		if !ok {
+			return h.mark(ev)
+		}
+		ev.Author = mapped
+	}
 	if h.loopAuthor(ev.Author, app) {
-		h.decline(ev, "loop", "")
+		if ev.Action.Source == "" {
+			h.decline(ev, "loop", "")
+			return h.mark(ev)
+		}
+		h.decline(ev, "loop", "action-author")
 		return h.mark(ev)
 	}
-	if !h.authorized(ev.Author, cfg) {
+	if ev.Action.Source == "" && !h.authorized(ev.Author, cfg) {
 		h.decline(ev, "unauthorized", "")
 		return h.mark(ev)
 	}
@@ -136,7 +165,7 @@ func (h *Handler) Handle(ctx context.Context, ev Event) error {
 		h.decline(ev, "no-kick", "")
 		return h.mark(ev)
 	}
-	source := mentionKickSource(ev)
+	source := kickSource(ev)
 	if h.opts.Store != nil {
 		if err := h.opts.Store.RecordPending(agent, ev, source, h.opts.Now()); err != nil {
 			return err
@@ -159,6 +188,24 @@ func mentionKickSource(ev Event) string {
 	return SourceMention + ":" + strings.TrimSpace(ev.NodeID)
 }
 
+func kickSource(ev Event) string {
+	if key := actionDedupeKey(ev); key != "" {
+		return SourceAction + ":" + key
+	}
+	return mentionKickSource(ev)
+}
+
+func actionDedupeKey(ev Event) string {
+	if !strings.EqualFold(ev.Action.Source, SourceAction) || strings.TrimSpace(ev.Action.RunID) == "" || strings.TrimSpace(ev.Action.RunAttempt) == "" {
+		return ""
+	}
+	repo := strings.ToLower(strings.TrimSpace(ev.Repo))
+	if repo == "" {
+		repo = "unknown"
+	}
+	return repo + ":" + strings.TrimSpace(ev.Action.RunID) + ":" + strings.TrimSpace(ev.Action.RunAttempt)
+}
+
 func (h *Handler) github() GitHub {
 	if h.opts.GitHubFunc != nil {
 		return h.opts.GitHubFunc()
@@ -177,6 +224,84 @@ func (h *Handler) authorized(login string, cfg config.GitHubMentionsConfig) bool
 	}
 	role, ok := h.opts.Roles(login)
 	return ok && config.RoleAtLeast(role, cfg.MinRoleEffective())
+}
+
+func (h *Handler) authorizeAction(ev Event, p Parsed) (string, bool) {
+	cfg := h.opts.Actions
+	if !cfg.Enabled {
+		h.decline(ev, "action-disabled", "")
+		return "", false
+	}
+	if !h.repoConfigured(ev.Repo) {
+		h.decline(ev, "repo", "")
+		return "", false
+	}
+	command := actionCommand(p.Text)
+	if !commandAllowed(command, cfg.AllowedCommandsEffective()) {
+		h.decline(ev, "action-command", command)
+		return "", false
+	}
+	actor := strings.TrimSpace(ev.Action.Actor)
+	if actor == "" {
+		h.decline(ev, "identity", "missing-actor")
+		return "", false
+	}
+	mapped := actor
+	if cfg.IdentityMap != nil {
+		if m := strings.TrimSpace(cfg.IdentityMap[actor]); m != "" {
+			mapped = m
+		}
+	}
+	role, ok := "", false
+	if h.opts.Roles != nil {
+		role, ok = h.opts.Roles(mapped)
+	}
+	if !ok || !config.RoleAtLeast(role, h.opts.Config.MinRoleEffective()) {
+		h.decline(ev, "identity", "unmapped")
+		return "", false
+	}
+	if actionRequiresApply(command) && (!cfg.AllowApply || !config.RoleAtLeast(role, config.RoleOwner)) {
+		h.decline(ev, "allow-apply", command)
+		return "", false
+	}
+	return mapped, true
+}
+
+func (h *Handler) repoConfigured(repo string) bool {
+	if h.opts.Repos == nil {
+		return true
+	}
+	for _, configured := range h.opts.Repos() {
+		if strings.EqualFold(strings.TrimSpace(configured), strings.TrimSpace(repo)) {
+			return true
+		}
+	}
+	return false
+}
+
+func actionCommand(text string) string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(fields[0])
+}
+
+func commandAllowed(command string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if strings.EqualFold(strings.TrimSpace(candidate), command) {
+			return true
+		}
+	}
+	return false
+}
+
+func actionRequiresApply(command string) bool {
+	return strings.EqualFold(command, "kick")
+}
+
+func trustedActionCommentAuthor(author string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(author)), "[bot]")
 }
 
 func (h *Handler) loopAuthor(login, app string) bool {
@@ -235,6 +360,9 @@ func (h *Handler) audit(action string, ev Event, agent, extra string) {
 		return
 	}
 	parts := []string{"repo=" + ev.Repo, fmt.Sprintf("number=%d", ev.Number), fmt.Sprintf("comment_id=%d", ev.CommentID), "author=" + ev.Author}
+	if ev.Action.Source != "" {
+		parts = append(parts, "source="+h.opts.Actions.SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
+	}
 	if agent != "" {
 		parts = append(parts, "agent="+agent)
 	}
@@ -253,7 +381,13 @@ func (h *Handler) mark(ev Event) error {
 	if h.opts.Store == nil {
 		return nil
 	}
-	return h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt)
+	if err := h.opts.Store.Mark(ev.Repo, ev.NodeID, ev.UpdatedAt); err != nil {
+		return err
+	}
+	if key := actionDedupeKey(ev); key != "" {
+		return h.opts.Store.Mark(ev.Repo, key, ev.UpdatedAt)
+	}
+	return nil
 }
 
 func ioscanRules(v ioscan.Verdict) string {
@@ -269,7 +403,11 @@ func buildKickMessage(ev Event, text string) string {
 	if kind == "" {
 		kind = "issue"
 	}
-	msg := fmt.Sprintf("You were mentioned by @%s on %s#%d (%s comment %d)\n— %s\n\nThis mention is an input-only summon: it cannot escalate mode, apply labels, queue merges, or bypass holds.\n\n---\n%s\n", ev.Author, ev.Repo, ev.Number, kind, ev.CommentID, ev.HTMLURL, strings.TrimSpace(text))
+	summon := "mentioned"
+	if ev.Action.Source != "" {
+		summon = "summoned by a GitHub Action for"
+	}
+	msg := fmt.Sprintf("You were %s @%s on %s#%d (%s comment %d)\n— %s\n\nThis mention is an input-only summon: it cannot escalate mode, apply labels, queue merges, or bypass holds unless the existing role floor and configured action allow_apply permit it.\n\n---\n%s\n", summon, ev.Author, ev.Repo, ev.Number, kind, ev.CommentID, ev.HTMLURL, strings.TrimSpace(text))
 	return truncate(msg, kickLimit)
 }
 

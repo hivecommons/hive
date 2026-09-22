@@ -70,7 +70,9 @@ func (c *Client) listMentionIssueComments(ctx context.Context, owner, repoName s
 		if strings.Contains(ic.GetHTMLURL(), "/pull/") {
 			kind = "pr"
 		}
-		out = append(out, mention.Event{Repo: owner + "/" + repoName, Kind: kind, Number: number, NodeID: ic.GetNodeID(), CommentID: ic.GetID(), HTMLURL: ic.GetHTMLURL(), Author: safeGetLogin(ic.GetUser()), Body: ic.GetBody(), CreatedAt: ic.GetCreatedAt().Time, UpdatedAt: ic.GetUpdatedAt().Time})
+		body := ic.GetBody()
+		_, marker := mention.ExtractActionMarker(body)
+		out = append(out, mention.Event{Repo: owner + "/" + repoName, Kind: kind, Number: number, NodeID: ic.GetNodeID(), CommentID: ic.GetID(), HTMLURL: ic.GetHTMLURL(), Author: safeGetLogin(ic.GetUser()), Body: body, Action: marker, CreatedAt: ic.GetCreatedAt().Time, UpdatedAt: ic.GetUpdatedAt().Time})
 	}
 	return out, nil
 }
@@ -84,6 +86,8 @@ func (c *Client) listMentionReviewComments(ctx context.Context, owner, repoName 
 			return nil, fmt.Errorf("listing mention review comments for %s/%s: %w", owner, repoName, err)
 		}
 		for _, rc := range comments {
+			body := rc.GetBody()
+			_, marker := mention.ExtractActionMarker(body)
 			out = append(out, mention.Event{
 				Repo:      owner + "/" + repoName,
 				Kind:      "review_comment",
@@ -92,7 +96,8 @@ func (c *Client) listMentionReviewComments(ctx context.Context, owner, repoName 
 				CommentID: rc.GetID(),
 				HTMLURL:   rc.GetHTMLURL(),
 				Author:    safeGetLogin(rc.GetUser()),
-				Body:      rc.GetBody(),
+				Body:      body,
+				Action:    marker,
 				CreatedAt: rc.GetCreatedAt().Time,
 				UpdatedAt: rc.GetUpdatedAt().Time,
 			})
@@ -117,6 +122,8 @@ func (c *Client) listMentionOpenedIssues(ctx context.Context, owner, repoName st
 			if issue.IsPullRequest() {
 				continue
 			}
+			body := strings.TrimSpace(issue.GetTitle() + "\n\n" + issue.GetBody())
+			_, marker := mention.ExtractActionMarker(body)
 			out = append(out, mention.Event{
 				Repo:      owner + "/" + repoName,
 				Kind:      "issue",
@@ -124,7 +131,8 @@ func (c *Client) listMentionOpenedIssues(ctx context.Context, owner, repoName st
 				NodeID:    issue.GetNodeID(),
 				HTMLURL:   issue.GetHTMLURL(),
 				Author:    safeGetLogin(issue.GetUser()),
-				Body:      strings.TrimSpace(issue.GetTitle() + "\n\n" + issue.GetBody()),
+				Body:      body,
+				Action:    marker,
 				CreatedAt: issue.GetCreatedAt().Time,
 				UpdatedAt: issue.GetUpdatedAt().Time,
 			})
