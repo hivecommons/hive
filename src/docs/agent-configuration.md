@@ -808,6 +808,14 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 | a higher ACMM level | your review capacity, CI trust, and appetite for autonomy have all grown — raise the level and let the pack reconcile the roster |
 | an inference method | you have GPUs (or a LiteLLM gateway) and want agents off subscription seats |
 
+## Stage receipt agent report
+
+Agents that hand work from one stage to another can emit a `kind: stage_receipt` report at `AgentReportPath(agentName)` under `AgentReportDir`. The receipt is the validated handoff document; it uses the existing `outputschema` contract rather than a new store, CRD, or directory.
+
+A stage receipt includes the normal report envelope (`lane`, `kind`, `findings`, `prs_opened`, `beads_filed`, and `summary`) plus a `stage_receipt` object. Version `stage-receipt/v1` requires `work_key`, `assignment_id`, `generation`, `stage`, `contract_revision`, `execution_key`, `engine.name`, `engine.version`, `input_revision`, `output_digest`, `result_class`, `started_at`, `ended_at`, `provenance`, and `artifacts`; `remote_run_id` and `remote_incarnation` are optional. `started_at` and `ended_at` are RFC3339 timestamps, and `ended_at` must not be before `started_at`.
+
+`result_class` is one of `completed`, `no_change`, `blocked`, `failed`, or `unknown`. `completed` requires at least one artifact. `no_change` and `blocked` are separate classes, not successful completion aliases, so a `no_change` receipt with no artifacts is valid. When artifacts are inline, `output_digest` must match the stable digest of that artifact set.
+
 ## What to read next
 
 - **[Supervisor agent](supervisor.md)** — what the supervisor does, how it differs from the governor, when to enable it, `bead_role` semantics, and policy modes.
