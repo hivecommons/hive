@@ -14,16 +14,23 @@ plan (Now / Next / Later, item by item), see the
 
 | Line | Branch | Status | Publishes channels |
 | --- | --- | --- | --- |
-| v4 | `v4` (default) | Supported stable line | `stable`, `candidate` |
-| v5 | `v5` | Active development, RFC-gated | `edge` |
-| v6 | `v6` | Open line, tracks v5; the #7563 dashboard-optional tracks are merged on the branch (see [v6 section](#v6--dashboard-optional-operation-line-open)) | none yet |
+| v4 | `v4` | Maintenance line (feature-frozen; security/critical fixes only) | none — builds publish `v4-latest` and short-SHA tags only ([#7721](https://github.com/hivecommons/hive/issues/7721) Phase 1) |
+| v5 | `v5` (default) | Supported stable line since the 2026-09-21 cut-over | `stable`, `candidate`, `latest` |
+| v6 | `v6` | Active development, tracks v5 by forward-merge; the #7563 dashboard-optional tracks are merged on the branch (see [v6 section](#v6--dashboard-optional-operation-line-open)) | `edge` |
 
 Operators select a line by pointing a hive at a
 [release channel](src/docs/release-channels.md) rather than a branch tag.
 
-## v4 — Stable Line
+## v4 — Maintenance Line
 
-v4 is the default branch and the supported stable line.
+v4 was the default branch and supported stable line until 2026-09-21, when
+the channels were re-based onto v5 and `v5` became the default branch
+([#7721](https://github.com/hivecommons/hive/issues/7721); the cut-over was
+executed as an emergency exception to the announced sequencing — see the
+deviation record at the top of that tracker and the post-hoc operator
+notice, [#8105](https://github.com/hivecommons/hive/pull/8105)). v4 now
+publishes no release channel: its builds carry `v4-latest` and short-SHA
+tags only.
 
 - Bug fixes, security fixes, dependency updates, docs, and operability
   improvements (for example, the operator TUI shipped here in August 2026).
@@ -45,17 +52,23 @@ v4 is the default branch and the supported stable line.
   the
   [v4 lifecycle policy](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md#v4-lifecycle-policy-accepted)
   section for the full accepted text.
-- Support window: v4 remains supported through v5 development. The v4 EOL
-  announcement is **blocked on completion of the
-  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)**
-  (live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)):
-  no EOL date is announced before that checklist is closed, and any EOL is
-  stated relative to the first stable v5 release.
+- Support window: v4 receives security and critical fixes until EOL. The
+  v4 EOL announcement was blocked on completion of the
+  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md);
+  its live tracker ([#6016](https://github.com/hivecommons/hive/issues/6016))
+  **closed on 2026-09-21**, so the EOL announcement is now unblocked. No
+  EOL date has been announced yet — that is a pending maintainer decision,
+  and any EOL is stated relative to the first stable v5 release
+  (v5.0.0, released 2026-09-21).
 
-## v5 — Next Generation
+## v5 — Current Stable Line
 
-v5 development happens on the `v5` branch, gated by public `[v5 RFC]`
-issues. Accepted workstreams:
+v5 is the default branch and the supported stable line: since the
+2026-09-21 cut-over ([#7721](https://github.com/hivecommons/hive/issues/7721)
+Phases 1–3, releases v5.0.0–v5.2.0), every green merge to `v5` retags
+`candidate` and `latest`, and `stable` advances by digest through the
+soak-gated promotion workflow. Structural changes were gated by public
+`[v5 RFC]` issues during development. Accepted workstreams:
 
 - **Reviewer lane.** A dedicated agent role with authority to adjudicate
   escalated (`needs-human`) PRs, so the human-escalation queue has an
@@ -80,11 +93,12 @@ issues. Accepted workstreams:
   the same PR.
 - **Channel-based release trains.** The three channels — `edge` (newest
   good build), `candidate` (awaiting soak), `stable` (promoted after
-  soak) — exist as moving GHCR tags with enforced divergence: `v4` builds
-  publish `candidate`, the stable-promotion workflow advances `stable` by
-  digest after the soak/evidence/blocker/smoke gate, and `v5` builds
-  publish `edge`. Remaining work is digest-verifiable deployment, so what
-  a spoke runs is provable rather than inferred from a tag. See
+  soak) — exist as moving GHCR tags with enforced divergence: since the
+  2026-09-21 re-base, `v5` builds publish `candidate` (and `latest`), the
+  stable-promotion workflow advances `stable` by digest after the
+  soak/evidence/blocker/smoke gate, and `v6` builds publish `edge`; `v4`
+  publishes no channel. Remaining work is digest-verifiable deployment, so
+  what a spoke runs is provable rather than inferred from a tag. See
   [release channels](src/docs/release-channels.md).
 - **Multi-spoke constellations.** A production external deployment
   (tunaos.org: a self-hosted hub coordinating two spokes at ACMM L5/L6
@@ -122,10 +136,11 @@ issues. Accepted workstreams:
   ([#6825](https://github.com/hivecommons/hive/issues/6825),
   [RFC doc](docs/rfc-6825-capability-aware-contributor-task-assignment.md)).
 
-A documented migration path from v4 hubs and spokes, with dual-version
-operation during the transition, is part of the
-[v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
-(live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)).
+The [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
+(live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016),
+closed 2026-09-21) governed this line's promotion to `stable`; the
+post-hoc soak evidence for the emergency promotion is recorded in
+[#8062](https://github.com/hivecommons/hive/issues/8062).
 
 ## v6 — Dashboard-Optional Operation (line open)
 
@@ -137,16 +152,17 @@ tracks v5 through the same forward-merge convention v5 uses for v4.
 The epic tracking the whole line is
 [#7563](https://github.com/hivecommons/hive/issues/7563).
 
-**Priority relative to v5 GA.** Opening the v6 line does not change what
-ships next: the next stable release is v5, and the remaining GA distance
-is the open evidence rows on the
-[v5 GA bar tracker](https://github.com/hivecommons/hive/issues/6016).
-Until the GA bar's **Release train** rows are green, those evidence rows
-outrank v6 tracks whenever the two compete for maintainer or agent
-attention — this matches the intent of the accepted v4 feature-freeze
-policy ([#6346](https://github.com/hivecommons/hive/issues/6346)), whose
-calendar backstop is **2026-10-15**. v6 work proceeds in the gaps, not
-instead. (Decision context: [#7577](https://github.com/hivecommons/hive/issues/7577).)
+**Priority relative to v5 GA — resolved.** This gate is satisfied: the v5
+GA bar tracker ([#6016](https://github.com/hivecommons/hive/issues/6016))
+closed on 2026-09-21 and the channel re-base shipped the same day
+([#7721](https://github.com/hivecommons/hive/issues/7721) Phases 1–3, with
+the emergency-exception deviation recorded on that tracker). `v6` now
+publishes the `edge` channel, and v6 work no longer queues behind v5 GA
+evidence. The line's own release bar is
+[`src/docs/v6-readiness.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md)
+with live tracker [#7683](https://github.com/hivecommons/hive/issues/7683).
+(Original sequencing decision: [#7577](https://github.com/hivecommons/hive/issues/7577);
+v4 freeze policy: [#6346](https://github.com/hivecommons/hive/issues/6346).)
 
 **Theme.** Every operator interaction the dashboard offers should be
 reachable from the places humans already are — a GitHub thread, a chat
@@ -161,9 +177,10 @@ scrubbing on all outbound text. No surface grows its own authz.
 
 Workstreams (details and sequencing in
 [#7563](https://github.com/hivecommons/hive/issues/7563)). **Status below is
-`v6`-branch status, not a release claim** — none of this code exists on `v4`
-or `v5`, and no channel publishes v6 builds, so an operator tracking `stable`
-or `edge` does not have these surfaces:
+`v6`-branch status, not a stable-release claim** — none of this code exists
+on `v4` or `v5`. Since the 2026-09-21 re-base, `edge` is built from `v6`,
+so an operator tracking `edge` runs these surfaces as active-development
+builds; operators on `stable`/`candidate` (v5) do not have them:
 
 - **`pkg/chat` spine** — the transport-agnostic core of the Discord bot
   (command router, dashboard REST/SSE client, notification fan-out) so every
@@ -206,9 +223,14 @@ or `edge` does not have these surfaces:
   scheduled kicks.
 
 With those tracks merged, what the line still owes is **release-path work,
-not features**: v6 publishes no channel today, so the surfaces above reach
-operators only when a v6 line ships or the work lands forward on a released
-line. That sequencing stays behind the v5 GA bar above.
+not features**: since 2026-09-21, `v6` publishes the `edge` channel
+([#8060](https://github.com/hivecommons/hive/pull/8060)), so the surfaces
+above reach operators tracking `edge` — but `edge` is an active-development
+build, not a stable claim. The line's promotion bar is
+[`src/docs/v6-readiness.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/v6-readiness.md)
+(live tracker: [#7683](https://github.com/hivecommons/hive/issues/7683)):
+guard-invariant conformance rows are checked for all eight shipped
+surfaces; the per-surface live exercises remain open.
 
 ## Hosted Hive Hub
 
