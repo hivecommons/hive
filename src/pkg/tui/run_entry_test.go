@@ -11,11 +11,14 @@ package tui
 // to run).
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/tui/client"
 )
@@ -41,6 +44,33 @@ func TestRunRefusesOnUnauthorized(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Run() error does not name %s:\n%v", want, err)
 		}
+	}
+}
+
+func TestRunHivesOnlySkipsPreflight(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	old := preflightDashboard
+	preflightDashboard = func(context.Context, *client.Client) error {
+		called = true
+		return errors.New("preflight should not run")
+	}
+	t.Cleanup(func() { preflightDashboard = old })
+
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- run(bytes.NewReader([]byte("q")), &out, runOptions{hivesOnly: true}) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("hives-only run() = %v, want nil", err)
+		}
+	case <-time.After(finalWait):
+		t.Fatal("hives-only run() did not return after q on stdin")
+	}
+	if called {
+		t.Fatal("hives-only run called preflight")
 	}
 }
 

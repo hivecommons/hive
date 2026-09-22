@@ -1,0 +1,1 @@
+- Add `hivectl tui --hives` for contributor profile switching without dashboard credentials.

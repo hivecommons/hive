@@ -1966,11 +1966,11 @@ contribute-status:
       echo ""
     done
 
-# Open the terminal dashboard; press Shift+H for the Hives overlay.
+# Open the contributor Hives overlay in the terminal dashboard.
 contribute-tui:
     #!/usr/bin/env bash
     set -euo pipefail
-    exec ./bin/hivectl-bootstrap.sh tui
+    exec ./bin/hivectl-bootstrap.sh tui --hives
 
 # Manage your named hive profiles: list (default), add, use, rename, remove
 contribute-hives *ARGS:

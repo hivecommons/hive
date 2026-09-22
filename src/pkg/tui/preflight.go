@@ -32,6 +32,7 @@ const unauthorizedHelp = "the dashboard rejected these credentials (401)\n\n" +
 	"  " + client.CookieEnv + "  session cookie header, e.g. \"hive_session=…\" —\n" +
 	"                          hub-hosted hives and spokes with an authorized_users\n" +
 	"                          allowlist, which do not accept the shared token\n\n" +
+	"For contributor profile switching only, run `hivectl tui --hives`.\n\n" +
 	"See src/docs/hivectl.md, \"Credentials\"."
 
 // preflight refuses to start the TUI when the dashboard has already said the

@@ -198,7 +198,7 @@ func TestRunOverPipes(t *testing.T) {
 	var out bytes.Buffer
 
 	done := make(chan error, 1)
-	go func() { done <- run(bytes.NewReader([]byte("q")), &out) }()
+	go func() { done <- run(bytes.NewReader([]byte("q")), &out, runOptions{}) }()
 
 	select {
 	case err := <-done:

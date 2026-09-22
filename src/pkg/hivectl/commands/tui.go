@@ -10,6 +10,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	runTUI          = tui.Run
+	runTUIHivesOnly = tui.RunHivesOnly
+)
+
 // newTUICommand registers the full-screen terminal dashboard (#4907) on the
 // existing hivectl root.
 //
@@ -30,20 +35,28 @@ import (
 // names too. Later tasks in the epic that need a configured client get those
 // for free here, rather than re-deriving them in a standalone main.
 func newTUICommand(_ *commandEnv) *cobra.Command {
-	return &cobra.Command{
+	var hivesOnly bool
+	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Open the full-screen terminal dashboard",
 		Long: "Open the full-screen terminal dashboard: a keyboard-driven view of the\n" +
 			"agent fleet, governor, token spend and event feed, over the same dashboard\n" +
 			"API that hivectl's non-interactive subcommands use.\n\n" +
+			"Use --hives to open only the contributor Hives overlay, without a\n" +
+			"dashboard API client or dashboard credentials.\n\n" +
 			"Requires a terminal. Press q or ctrl+c to exit.",
 		Args:    argsNone(),
-		Example: "  hivectl tui",
+		Example: "  hivectl tui\n  hivectl tui --hives",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if hivesOnly {
+				return runTUIHivesOnly()
+			}
 			exportCachedSessionForTUI()
-			return tui.Run()
+			return runTUI()
 		},
 	}
+	cmd.Flags().BoolVar(&hivesOnly, "hives", false, "open only the contributor Hives overlay")
+	return cmd
 }
 
 // exportCachedSessionForTUI hands a session cached by `hivectl login` (#5651)
@@ -51,8 +64,8 @@ func newTUICommand(_ *commandEnv) *cobra.Command {
 // (#5645/#5649) — by setting the variable in this process when the operator
 // has not.
 //
-// WHY THE ENV VAR AND NOT A PARAMETER. `hivectl tui` deliberately takes no
-// flags and builds its client from environment variables alone (the epic's
+// WHY THE ENV VAR AND NOT A PARAMETER. Operator-mode `hivectl tui`
+// deliberately builds its client from environment variables alone (the epic's
 // fixed Data source decision, documented above). Feeding the cache through the
 // variable the TUI already reads keeps that contract intact and keeps this
 // package out of pkg/tui's construction: precedence stays exactly the

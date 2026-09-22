@@ -70,3 +70,49 @@ func TestTUICommandHelpNamesTheQuitKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestTUICommandHelpNamesHivesOnlyMode(t *testing.T) {
+	stdout, _, root := newTestRoot()
+	root.SetArgs([]string{"tui", "--help"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := stdout.String()
+	for _, want := range []string{"--hives", "Hives overlay"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("`hivectl tui --help` does not mention %q:\n%s", want, help)
+		}
+	}
+}
+
+func TestTUICommandHivesFlagRunsHivesOnlyEntry(t *testing.T) {
+	oldRun, oldHives := runTUI, runTUIHivesOnly
+	t.Cleanup(func() {
+		runTUI = oldRun
+		runTUIHivesOnly = oldHives
+	})
+
+	operatorCalled := false
+	hivesCalled := false
+	runTUI = func() error {
+		operatorCalled = true
+		return nil
+	}
+	runTUIHivesOnly = func() error {
+		hivesCalled = true
+		return nil
+	}
+
+	_, _, root := newTestRoot()
+	root.SetArgs([]string{"tui", "--hives"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !hivesCalled {
+		t.Fatal("`hivectl tui --hives` did not call the hives-only TUI entry")
+	}
+	if operatorCalled {
+		t.Fatal("`hivectl tui --hives` called the operator TUI entry")
+	}
+}

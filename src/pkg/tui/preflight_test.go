@@ -37,7 +37,7 @@ func TestPreflightRefusesOnUnauthorized(t *testing.T) {
 	// Both credentials must be named. Which one this hive wants depends on how
 	// it was deployed, and an operator sent to fix only the token would keep
 	// regenerating a secret a direct-route spoke will never accept.
-	for _, want := range []string{client.TokenEnv, client.CookieEnv} {
+	for _, want := range []string{client.TokenEnv, client.CookieEnv, "hivectl tui --hives"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("preflight() error does not name %s:\n%s", want, err)
 		}

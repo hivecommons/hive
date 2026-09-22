@@ -48,6 +48,25 @@ type hivesHarness struct {
 	regFn    func(ctx context.Context, base, user string) (hivectl.Registration, error)
 }
 
+type stubHivesStore struct {
+	set       *hivectl.ProfileSet
+	loadErr   error
+	commitErr error
+}
+
+func (s *stubHivesStore) LoadOrMigrate() (*hivectl.ProfileSet, bool, error) {
+	return s.set, false, s.loadErr
+}
+
+func (s *stubHivesStore) Commit(set *hivectl.ProfileSet) error {
+	s.set = set
+	return s.commitErr
+}
+
+func (s *stubHivesStore) Path() string { return "profiles.yml" }
+
+func (s *stubHivesStore) EnvPath() string { return "contributor.env" }
+
 // seededHives is the fixture: two hives, "acme" active, matching the shape
 // `hivectl hives list` prints in its docs.
 func seededHives() *hivectl.ProfileSet {
@@ -169,6 +188,191 @@ func (h *hivesHarness) env(t *testing.T) string {
 		t.Fatalf("read contributor.env: %v", err)
 	}
 	return string(data)
+}
+
+func TestHivesOnlyModelStartsWithNoDashboardClient(t *testing.T) {
+	h := newHivesHarness(t, seededHives())
+	m := newHivesOnlyModel()
+	m.width, m.height = 110, 34
+	m.hivesEnv = h.model.hivesEnv
+
+	if m.api != nil {
+		t.Fatal("hives-only model has a dashboard client")
+	}
+	if m.hives == nil {
+		t.Fatal("hives-only model did not start with the Hives overlay open")
+	}
+
+	h.model = m
+	h.run(t, h.model.Init())
+
+	view := h.view()
+	if !strings.Contains(view, "acme") || !strings.Contains(view, "wss://acme.example/contribute") {
+		t.Fatalf("hives-only startup did not load the profile rows:\n%s", view)
+	}
+	for _, paneTitle := range []string{"Agents", "Governor", "Tokens", "Events"} {
+		if strings.Contains(view, paneTitle) {
+			t.Fatalf("hives-only view rendered dashboard pane %q:\n%s", paneTitle, view)
+		}
+	}
+
+	_, cmd := h.model.Update(key("q"))
+	if cmd == nil {
+		t.Fatal("q in hives-only mode did not request program exit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("q command returned %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestNewHivesOnlyExposesHivesOnlyModel(t *testing.T) {
+	m, ok := NewHivesOnly().(model)
+	if !ok {
+		t.Fatalf("NewHivesOnly returned %T, want tui.model", NewHivesOnly())
+	}
+	if !m.hivesOnly || m.api != nil || m.hives == nil {
+		t.Fatalf("NewHivesOnly model = hivesOnly:%v api:%v hives:%v, want hives-only with no client and an open overlay",
+			m.hivesOnly, m.api, m.hives)
+	}
+	next, cmd := m.Update(panes.AgentsMsg{Agents: []client.Agent{{Name: "scanner"}}})
+	if cmd != nil {
+		t.Fatal("hives-only model returned a command for a dashboard pane message")
+	}
+	if got := next.(model); got.hives == nil || got.api != nil {
+		t.Fatalf("hives-only model changed after ignored dashboard message: hives:%v api:%v", got.hives, got.api)
+	}
+}
+
+func TestRegisterHiveRefusals(t *testing.T) {
+	env := hivesEnv{
+		login: func(context.Context) (string, error) {
+			return "octocat", nil
+		},
+		register: func(context.Context, string, string) (hivectl.Registration, error) {
+			return hivectl.Registration{Message: "already registered"}, nil
+		},
+	}
+	for _, tc := range []struct {
+		name string
+		hive string
+		hub  string
+		want string
+	}{
+		{name: "bad name", hive: "bad name", hub: "wss://acme.example/contribute", want: "profile name"},
+		{name: "bad hub", hive: "acme", hub: "not a url", want: "hub may not contain"},
+		{name: "no token", hive: "acme", hub: "wss://acme.example/contribute", want: "already registered"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := registerHive(env, tc.hive, tc.hub)
+			if err == nil {
+				t.Fatal("registerHive() = nil, want refusal")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("registerHive() error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyHivesActionReceipts(t *testing.T) {
+	h := newHivesHarness(t, seededHives())
+
+	t.Run("already active", func(t *testing.T) {
+		set := seededHives()
+		note, err := applyHivesAction(h.model.hivesEnv, set, panes.HivesAction{Kind: panes.HivesActionUse, Name: "acme"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(note, "already active") {
+			t.Fatalf("use receipt = %q, want already-active note", note)
+		}
+	})
+
+	t.Run("remove last hive", func(t *testing.T) {
+		set := &hivectl.ProfileSet{
+			Version: hivectl.ProfilesVersion,
+			Active:  "solo",
+			Profiles: []hivectl.Profile{
+				{Name: "solo", Hub: "wss://solo.example/contribute", RegistrationToken: "tok-solo"},
+			},
+		}
+		note, err := applyHivesAction(h.model.hivesEnv, set, panes.HivesAction{Kind: panes.HivesActionRemove, Name: "solo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(note, "no hives left") {
+			t.Fatalf("remove receipt = %q, want no-hives-left note", note)
+		}
+	})
+
+	t.Run("unsupported", func(t *testing.T) {
+		const unsupportedAction = panes.HivesActionRename + 1
+		if _, err := applyHivesAction(h.model.hivesEnv, seededHives(), panes.HivesAction{Kind: unsupportedAction}); err == nil {
+			t.Fatal("applyHivesAction() = nil for unsupported action, want error")
+		}
+	})
+}
+
+func TestRunHivesActionRefusalsAndEmptyAdd(t *testing.T) {
+	sentinel := errors.New("boom")
+
+	t.Run("no store", func(t *testing.T) {
+		msg := (model{}).runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionUse, Name: "acme"})().(hivesActionMsg)
+		if !errors.Is(msg.err, errNoHivesStore) {
+			t.Fatalf("runHivesAction() error = %v, want errNoHivesStore", msg.err)
+		}
+	})
+
+	t.Run("load error", func(t *testing.T) {
+		m := newModel()
+		m.hivesEnv.store = &stubHivesStore{loadErr: sentinel}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionUse, Name: "acme"})().(hivesActionMsg)
+		if !errors.Is(msg.err, sentinel) {
+			t.Fatalf("runHivesAction() error = %v, want load error", msg.err)
+		}
+	})
+
+	t.Run("commit error", func(t *testing.T) {
+		m := newModel()
+		m.hivesEnv.store = &stubHivesStore{set: seededHives(), commitErr: sentinel}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionRename, Name: "other", NewName: "renamed"})().(hivesActionMsg)
+		if !errors.Is(msg.err, sentinel) {
+			t.Fatalf("runHivesAction() error = %v, want commit error", msg.err)
+		}
+	})
+
+	t.Run("signal error", func(t *testing.T) {
+		m := newModel()
+		m.hivesEnv.store = &stubHivesStore{set: seededHives()}
+		m.hivesEnv.signalRelay = func(context.Context) (hivectl.RelaySwitchResult, error) {
+			return hivectl.RelaySwitchResult{}, sentinel
+		}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionUse, Name: "other"})().(hivesActionMsg)
+		if !errors.Is(msg.err, sentinel) {
+			t.Fatalf("runHivesAction() error = %v, want signal error", msg.err)
+		}
+	})
+
+	t.Run("add from empty store", func(t *testing.T) {
+		store := &stubHivesStore{loadErr: hivectl.ErrNoProfiles}
+		m := newModel()
+		m.hivesEnv = hivesEnv{
+			store: store,
+			login: func(context.Context) (string, error) {
+				return "octocat", nil
+			},
+			register: func(context.Context, string, string) (hivectl.Registration, error) {
+				return hivectl.Registration{RegistrationToken: "tok-new", ContributorID: "contrib-new"}, nil
+			},
+		}
+		msg := m.runHivesAction(1, panes.HivesAction{Kind: panes.HivesActionAdd, Name: "new", Hub: "wss://new.example/contribute"})().(hivesActionMsg)
+		if msg.err != nil {
+			t.Fatalf("runHivesAction() error = %v, want nil", msg.err)
+		}
+		if store.set == nil || len(store.set.Profiles) != 1 {
+			t.Fatalf("committed set = %+v, want one added profile", store.set)
+		}
+	})
 }
 
 // ── the list ────────────────────────────────────────────────────────────────

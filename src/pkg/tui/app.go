@@ -269,11 +269,18 @@ type model struct {
 	// there is no "nothing focused" state to handle everywhere else.
 	focus int
 
-	// api is the dashboard client every poll goes through. client.New cannot
-	// fail — a bad HIVE_DASHBOARD_URL surfaces as a request error on the first
-	// tick rather than as a constructor error the TUI has no frame to render
-	// yet — so the model always has one and poll never has to nil-check it.
+	// api is the dashboard client every operator-mode poll goes through.
+	// client.New cannot fail — a bad HIVE_DASHBOARD_URL surfaces as a request
+	// error on the first tick rather than as a constructor error the TUI has no
+	// frame to render yet. It is nil only in hivesOnly mode, where no poll,
+	// action or SSE command is scheduled.
 	api *client.Client
+
+	// hivesOnly is the contributor entry: the Hives overlay is the whole TUI.
+	// It deliberately has no dashboard client, no panes behind it and no
+	// poll/SSE loops, because profile switching is backed by hivectl's local
+	// ProfileStore plus direct hub probes rather than by the dashboard API.
+	hivesOnly bool
 
 	// helpVisible is whether the help overlay is up. While it is, the overlay
 	// swallows EVERY key — including q — so a reader dismissing it cannot
@@ -482,12 +489,30 @@ func newModel() model {
 	}
 }
 
+func newHivesOnlyModel() model {
+	overlay := panes.NewHivesOverlay()
+	return model{
+		hivesOnly: true,
+		hives:     &overlay,
+		hivesSeq:  1,
+		hivesID:   1,
+		hivesEnv:  defaultHivesEnv(),
+	}
+}
+
 // New returns the TUI's root model for embedding in another bubbletea program
 // or driving under teatest. The panes' golden test lives next to the panes
 // (pkg/tui/panes/testdata, per the design doc's testing convention) and this
 // is its entry point; hivectl's own entry stays Run.
 func New() tea.Model {
 	return newModel()
+}
+
+// NewHivesOnly returns the contributor profile-switching TUI with no dashboard
+// client. It exists for tests and embedders; hivectl enters through
+// RunHivesOnly so the same alt-screen setup is used as the operator TUI.
+func NewHivesOnly() tea.Model {
+	return newHivesOnlyModel()
 }
 
 // Init implements tea.Model.
@@ -507,6 +532,9 @@ func New() tea.Model {
 // it. Only the reconciliation loop stretches, and only once the stream has
 // proved itself.
 func (m model) Init() tea.Cmd {
+	if m.hivesOnly {
+		return m.loadHives(m.hivesID)
+	}
 	cmds := []tea.Cmd{m.poll(), m.scheduleReconcileTick(), m.scheduleActivityTick(), m.connectSSE()}
 	for _, p := range m.panes {
 		if c := p.Init(); c != nil {
@@ -518,6 +546,9 @@ func (m model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.hivesOnly {
+		return m.updateHivesOnly(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -830,6 +861,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
+func (m model) updateHivesOnly(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case hivesLoadedMsg:
+		return m.handleHivesLoaded(msg)
+	case hivesProbeMsg:
+		return m.handleHivesProbe(msg)
+	case hivesActionMsg:
+		return m.handleHivesAction(msg)
+	case tea.KeyMsg:
+		if m.hives != nil && !m.hives.Typing() {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
+		}
+		if m.hives != nil {
+			return m.updateHives(msg)
+		}
+	}
+	return m, nil
+}
+
 // broadcast delivers one message to every pane and returns the updated model
 // with their commands batched.
 //
@@ -898,6 +954,13 @@ func (m model) View() string {
 
 	if m.width < minWidth || m.height < minHeight {
 		return m.tooSmallView()
+	}
+
+	if m.hivesOnly {
+		if m.hives == nil {
+			return ""
+		}
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
 	}
 
 	// One line each for header and footer; the grid gets the rest, split
@@ -1910,11 +1973,19 @@ func sseObservedAt(timestamp string) time.Time {
 	return observed
 }
 
-// Run starts the TUI on this process's own terminal and blocks until the
-// operator quits. It returns whatever error bubbletea reports, including the
-// failure to open a terminal when the program is run without a TTY.
+var preflightDashboard = preflight
+
+// Run starts the operator TUI on this process's own terminal and blocks until
+// the operator quits. It returns whatever error bubbletea reports, including
+// the failure to open a terminal when the program is run without a TTY.
 func Run() error {
-	return run(os.Stdin, os.Stdout)
+	return run(os.Stdin, os.Stdout, runOptions{})
+}
+
+// RunHivesOnly starts the contributor profile-switching TUI. It does not build
+// or preflight a dashboard client, and it schedules no dashboard polling.
+func RunHivesOnly() error {
+	return run(os.Stdin, os.Stdout, runOptions{hivesOnly: true})
 }
 
 // run is Run with its terminal injected.
@@ -1926,15 +1997,24 @@ func Run() error {
 // WithAltScreen being dropped. Alt-screen is not cosmetic — it is what restores
 // the operator's scrollback on exit, so `hivectl tui` leaves the terminal the
 // way it found it.
-func run(in io.Reader, out io.Writer) error {
+type runOptions struct {
+	hivesOnly bool
+}
+
+func run(in io.Reader, out io.Writer, opts runOptions) error {
 	m := newModel()
+	if opts.hivesOnly {
+		m = newHivesOnlyModel()
+	}
 
 	// Ask once, before the alt screen, whether this hive will talk to us at
 	// all. The model's own client is reused rather than a second one built
 	// here: a probe that authenticated differently from the polls could pass
 	// while every pane went on to fail, which is worse than not probing.
-	if err := preflight(context.Background(), m.api); err != nil {
-		return err
+	if !opts.hivesOnly {
+		if err := preflightDashboard(context.Background(), m.api); err != nil {
+			return err
+		}
 	}
 
 	_, err := tea.NewProgram(

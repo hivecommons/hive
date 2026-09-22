@@ -245,10 +245,9 @@ rationale and the fixed architecture decisions behind it are recorded in
 
 #### Launch and endpoint selection
 
-`hivectl tui` takes no flags — it is a bare subcommand. In particular it does
-**not** honour the root `--server` / `--token-env` flags the other `hivectl`
-commands read: it builds its own client directly from three environment
-variables, checked once at startup:
+`hivectl tui` does **not** honour the root `--server` / `--token-env` flags the
+other `hivectl` commands read: it builds its own client directly from three
+environment variables, checked once at startup:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -263,6 +262,10 @@ purpose. The base URL default differs by one detail from `--server`'s
 same loopback dashboard, but set `HIVE_DASHBOARD_URL` explicitly if you also
 pass `--server` to other commands against a non-default host, since the TUI
 will not pick that flag up.
+
+For contributor profile switching without the dashboard panes, use
+`hivectl tui --hives`. That mode opens directly to the Hives overlay and does
+not build a dashboard API client.
 
 #### Credentials
 
@@ -690,7 +693,7 @@ credential at the wrong hive; fix the file (or re-run
 
 Notes:
 
-- **The same list is in the TUI.** `just contribute-tui` (or `hivectl tui`), then `Shift+H`, opens the
+- **The same list is in the TUI.** `just contribute-tui` (or `hivectl tui --hives`) opens the
   [Hives overlay](#hives-switching-the-hive-you-contribute-to): the same rows,
   with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls
   these same functions, so either surface leaves the files in the same state.
