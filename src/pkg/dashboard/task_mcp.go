@@ -15,6 +15,10 @@ import (
 
 type dashboardTaskMCPProvider struct{ server *Server }
 
+type activeLaunchLookup interface {
+	ActiveLaunches() []taskmcp.LaunchScope
+}
+
 type taskMCPSnapshot struct {
 	assign     WSTaskAssign
 	labels     []string
@@ -144,6 +148,16 @@ func (p dashboardTaskMCPProvider) snapshot(r *http.Request, args map[string]any)
 	}
 	repo, _ := args["repo"].(string)
 	number := numberArg(args["number"])
+	q := r.URL.Query()
+	if taskID == "" {
+		taskID = q.Get("task_id")
+	}
+	if strings.TrimSpace(repo) == "" {
+		repo = q.Get("repo")
+	}
+	if number <= 0 {
+		number = queryNumber(q.Get("number"))
+	}
 	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(repo) == "" {
 		return taskMCPSnapshot{}, fmt.Errorf("%w: task_id and repo are required", taskmcp.ErrForbidden)
 	}
@@ -183,7 +197,66 @@ func (p dashboardTaskMCPProvider) snapshotMatching(taskID, repo string, number i
 			return *found, nil
 		}
 	}
+	if lookup := p.activeLaunchLookup(); lookup != nil {
+		for _, launch := range lookup.ActiveLaunches() {
+			if launchMatches(launch, taskID, repo, number) {
+				assign := WSTaskAssign{
+					TaskID: launch.TaskID,
+					Kind:   "issue",
+					Repo:   launch.Repo,
+					Number: launch.Number,
+					Role:   launch.Agent,
+					Key:    taskKey(launch.Repo, launch.Number),
+				}
+				return taskMCPSnapshot{
+					assign:     assign,
+					labels:     append([]string(nil), launch.Labels...),
+					generation: launch.Generation,
+					assignedAt: launch.StartedAt,
+				}, nil
+			}
+		}
+	}
 	return taskMCPSnapshot{}, fmt.Errorf("%w: no active scoped task", taskmcp.ErrForbidden)
+}
+
+func (p dashboardTaskMCPProvider) activeLaunchLookup() activeLaunchLookup {
+	if p.server == nil || p.server.deps == nil || p.server.deps.AgentMgr == nil {
+		if p.server != nil && p.server.deps != nil && p.server.deps.TaskMCPActiveLaunches != nil {
+			return activeLaunchFunc(p.server.deps.TaskMCPActiveLaunches)
+		}
+		return nil
+	}
+	return p.server.deps.AgentMgr
+}
+
+type activeLaunchFunc func() []taskmcp.LaunchScope
+
+func (f activeLaunchFunc) ActiveLaunches() []taskmcp.LaunchScope { return f() }
+
+func launchMatches(launch taskmcp.LaunchScope, taskID, repo string, number int) bool {
+	if strings.TrimSpace(taskID) != "" && launch.TaskID != strings.TrimSpace(taskID) {
+		return false
+	}
+	if strings.TrimSpace(repo) != "" && !strings.EqualFold(launch.Repo, strings.TrimSpace(repo)) {
+		return false
+	}
+	if number > 0 && launch.Number != number {
+		return false
+	}
+	return true
+}
+
+func queryNumber(raw string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(raw))
+	return n
+}
+
+func taskKey(repo string, number int) string {
+	if strings.TrimSpace(repo) == "" || number <= 0 {
+		return strings.TrimSpace(repo)
+	}
+	return fmt.Sprintf("%s#%d", repo, number)
 }
 
 func (p dashboardTaskMCPProvider) policyData(snap taskMCPSnapshot) taskmcp.PolicyData {

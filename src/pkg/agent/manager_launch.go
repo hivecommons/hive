@@ -3,14 +3,17 @@ package agent
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 // backendDefersStartupKick reports whether a backend's bootstrap prompt is
@@ -168,7 +171,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd = backendLaunchCmd(binary, model, backend, isInference, effort)
 	}
 
-	if mcpFlags := connectionMCPFlags(agent.Config.Connections, backend); mcpFlags != "" {
+	launchCfg := withTaskMCPConnection(agent.Config, m.project.TaskMCPURL, m.launchScopeForAgentLocked(agent, agent.launchGen+1))
+	if mcpFlags := connectionMCPFlags(launchCfg.Connections, backend); mcpFlags != "" {
 		launchCmd += mcpFlags
 	}
 
@@ -958,20 +962,63 @@ func connectionMCPFlags(conns []config.ConnectionConfig, backend string) string 
 	return flags
 }
 
-func withTaskMCPConnection(cfg config.AgentConfig, uri string) config.AgentConfig {
+func withTaskMCPConnection(cfg config.AgentConfig, uri string, scope taskmcp.LaunchScope) config.AgentConfig {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return cfg
 	}
+	scopedURI := taskMCPURIWithScope(uri, scope)
 	for _, conn := range cfg.Connections {
 		if conn.Type == "mcp" && conn.Name == "hive-task" {
+			if sameTaskMCPEndpoint(conn.URI, uri) {
+				for i := range cfg.Connections {
+					if cfg.Connections[i].Type == "mcp" && cfg.Connections[i].Name == "hive-task" {
+						cfg.Connections[i].URI = scopedURI
+						break
+					}
+				}
+			}
 			return cfg
 		}
 	}
 	cfg.Connections = append(cfg.Connections, config.ConnectionConfig{
 		Name: "hive-task",
 		Type: "mcp",
-		URI:  uri,
+		URI:  scopedURI,
 	})
 	return cfg
+}
+
+func taskMCPURIWithScope(raw string, scope taskmcp.LaunchScope) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	if strings.TrimSpace(scope.TaskID) != "" {
+		q.Set("task_id", strings.TrimSpace(scope.TaskID))
+	}
+	if strings.TrimSpace(scope.Repo) != "" {
+		q.Set("repo", strings.TrimSpace(scope.Repo))
+	}
+	if strings.TrimSpace(scope.TaskID) != "" || strings.TrimSpace(scope.Repo) != "" || scope.Number > 0 {
+		q.Set("number", strconv.Itoa(scope.Number))
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func sameTaskMCPEndpoint(existing, base string) bool {
+	e, errE := url.Parse(strings.TrimSpace(existing))
+	b, errB := url.Parse(strings.TrimSpace(base))
+	if errE != nil || errB != nil {
+		return strings.TrimSpace(existing) == strings.TrimSpace(base)
+	}
+	stripScope := func(v url.Values) string {
+		v.Del("task_id")
+		v.Del("repo")
+		v.Del("number")
+		return v.Encode()
+	}
+	return e.Scheme == b.Scheme && e.Host == b.Host && e.Path == b.Path && stripScope(e.Query()) == stripScope(b.Query())
 }

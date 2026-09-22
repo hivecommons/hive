@@ -1646,6 +1646,7 @@ func (b *boot) bootGovernor() {
 	// one (#3498). Explicit thresholds are unaffected.
 	b.gov.SetRepoCount(b.cfg.Project.RepoCount())
 	b.sched = scheduler.New(b.cfg, b.logger)
+	b.sched.SetTaskMCPURL(b.taskMCPURLForAgents())
 	// A kick_template that resolves nowhere used to fail silently: the kick
 	// fell through to the pack/convention template with no log line, and the
 	// dashboard prompt editor showed an empty box (hivecommons/hive#7390).
@@ -1945,11 +1946,12 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 }
 
 func (b *boot) taskMCPURLForAgents() string {
+	if b == nil || b.cfg == nil || b.dashboardURLForFreshHeartbeat == nil {
+		return ""
+	}
 	base := strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
 	token := ""
-	if b != nil && b.cfg != nil {
-		token = strings.TrimSpace(b.cfg.Dashboard.AuthToken)
-	}
+	token = strings.TrimSpace(b.cfg.Dashboard.AuthToken)
 	if token == "" {
 		return base
 	}

@@ -21,16 +21,20 @@ import (
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 type Dependencies struct {
-	Config    *config.Config
-	AgentMgr  *agent.Manager
-	Governor  *governor.Governor
-	GHClient  *ghpkg.Client
-	GHAppAuth *ghpkg.AppAuth
+	Config   *config.Config
+	AgentMgr *agent.Manager
+	// TaskMCPActiveLaunches is the optional narrow dashboard seam for the
+	// manager's active hub-launched agent scopes. Nil falls back to AgentMgr.
+	TaskMCPActiveLaunches func() []taskmcp.LaunchScope
+	Governor              *governor.Governor
+	GHClient              *ghpkg.Client
+	GHAppAuth             *ghpkg.AppAuth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not

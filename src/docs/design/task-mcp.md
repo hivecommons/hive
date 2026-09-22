@@ -2,7 +2,11 @@
 
 Hive serves the Phase 1 task MCP endpoint on the dashboard mux at `POST /api/contribute/mcp`, under the existing contributor API prefix. The transport is streamable HTTP JSON-RPC 2.0 and is read-only.
 
-Phase 1 was for hub-launched agents only. Hive injects the endpoint through agent `connections` as an MCP server so existing `connectionMCPFlags` launch handling can pass it to supported CLIs.
+Phase 1 was for hub-launched agents only. Hive injects the endpoint through agent `connections` as the `hive-task` MCP server so existing `connectionMCPFlags` launch handling can pass it to supported CLIs.
+
+Scope resolution accepts `task_id`, `repo`, and `number` from the `X-Hive-Task-ID` header, tool arguments, then URL query parameters in that order. The per-launch `hive-task` URI carries those query parameters while preserving the existing `token` query parameter. Dashboard lookup first checks active contributor relay connections for backward compatibility, then falls through to the agent manager's active hub-launched agents. The active-launch entry supplies the agent, repo, launch generation, and started-at timestamp; until the manager has a stable issue/bead id for a launch, Hive derives the task id deterministically as `<agent>:<repo>#<number>:<generation>`.
+
+Hub-launched kick prompts include one short pointer when the task MCP URL is configured: call `context_bundle` on `hive-task` first instead of re-reading the issue/PR and CI from scratch. Hives without a task MCP URL keep the old prompt text.
 
 The initial tools are:
 
@@ -35,4 +39,4 @@ All tools resolve scope from the lease when a lease bearer is used. A request fo
 
 ## Token-delta measurement
 
-Phase 1 measures the token delta on `context_bundle()`, not on each individual tool. For one real lane over a week, record the assignment prompt tokens before the MCP pointer and after replacing stuffed context with the pointer. Compare the median per-task prompt-token count and keep the lane, backend, model, and date range with the measurement so Phase 2 can judge whether remote-contributor wiring is worth the added lease-auth surface.
+Phase 1 measures the token delta on `context_bundle()`, not on each individual tool. For one real lane over a week, record the assignment prompt tokens before the measured hub-launched kick-prompt pointer above and after replacing stuffed context with that pointer. Compare the median per-task prompt-token count and keep the lane, backend, model, and date range with the measurement so Phase 2 can judge whether remote-contributor wiring is worth the added lease-auth surface.

@@ -40,6 +40,7 @@ type Scheduler struct {
 	classifierBudget     int
 	inflight             InflightLookup
 	lifecycle            timeline.Recorder
+	taskMCPURL           string
 	mu                   sync.RWMutex
 	laneDepths           map[string]int
 }
@@ -101,6 +102,18 @@ func New(cfg *config.Config, logger *slog.Logger) *Scheduler {
 		cfg:    cfg,
 		logger: logger,
 	}
+}
+
+func (s *Scheduler) SetTaskMCPURL(raw string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskMCPURL = strings.TrimSpace(raw)
+}
+
+func (s *Scheduler) hasTaskMCPURL() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.taskMCPURL) != ""
 }
 
 // SetGitHubPromptResolver attaches a resolver used to fetch an agent's kick
@@ -863,6 +876,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// policy maps onto Linear (identity, auth, filing, PR linking, hold).
 		// Same seam, same reason — a customized template cannot omit it.
 		message = s.addWorkTrackerSection(message)
+		message = s.addTaskMCPPointer(message)
 		// Items a live session already holds were dropped from the list
 		// above; say so at the same seam so a customized template cannot
 		// leave the agent wondering where its delegated issue went.
@@ -887,6 +901,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 				Path:  agentCfg.PromptSource.Path,
 				Ref:   agentCfg.PromptSource.Ref,
 			}
+
 			if res := resolver.Resolve(context.Background(), src); res.Ok && res.Body != "" {
 				s.logger.Info("using GitHub-sourced kick prompt", "agent", agentName, "source", res.Source)
 				body, failClosed := s.substituteTemplateWithPolicy(res.Body, actionable, agentName, issues)
@@ -975,6 +990,17 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	default:
 		return s.buildGenericMessage(agentName, issues, actionable)
 	}
+}
+
+func (s *Scheduler) addTaskMCPPointer(message string) string {
+	if message == "" || !s.hasTaskMCPURL() {
+		return message
+	}
+	section := "## Task context MCP\n\nThe `hive-task` MCP server is connected for this launch. Call `context_bundle` first for the assigned task, related work, and CI summary instead of re-reading the issue/PR and CI from scratch.\n\n"
+	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
+		return message[:newline+1] + "\n" + section + message[newline+1:]
+	}
+	return section + message
 }
 
 // addHeldPRCoordination makes open, human-review-gated work visible before a

@@ -134,6 +134,16 @@ func TestBootGovernor_WiresSchedulerAndPrimer(t *testing.T) {
 	}
 }
 
+func TestTaskMCPURLForAgentsMinimalBootIsDisabled(t *testing.T) {
+	if got := ((*boot)(nil)).taskMCPURLForAgents(); got != "" {
+		t.Fatalf("nil boot task MCP URL = %q, want empty", got)
+	}
+	b := &boot{cfg: &config.Config{}}
+	if got := b.taskMCPURLForAgents(); got != "" {
+		t.Fatalf("minimal boot task MCP URL = %q, want empty", got)
+	}
+}
+
 func TestBootSupervision_WatchdogFollowsConfiguredMode(t *testing.T) {
 	newBoot := func(t *testing.T, cfg *config.Config) *boot {
 		t.Helper()

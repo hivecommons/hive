@@ -64,6 +64,16 @@ type Scope struct {
 	Number int    `json:"number,omitempty"`
 }
 
+type LaunchScope struct {
+	TaskID     string
+	Repo       string
+	Number     int
+	Agent      string
+	Labels     []string
+	Generation uint64
+	StartedAt  time.Time
+}
+
 type PageRequest struct {
 	Limit  int    `json:"limit,omitempty"`
 	Cursor string `json:"cursor,omitempty"`

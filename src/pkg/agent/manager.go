@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
+	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
@@ -771,7 +772,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	}
 
 	for name, cfg := range agents {
-		cfg = withTaskMCPConnection(cfg, project.TaskMCPURL)
+		cfg = withTaskMCPConnection(cfg, project.TaskMCPURL, taskmcp.LaunchScope{})
 		if !AgentAvailableAtACMMLevel(name, project.ACMMLevel) {
 			logger.Info("agent below ACMM gate; not instantiating", "agent", name, "level", project.ACMMLevel)
 			continue
@@ -1117,6 +1118,7 @@ func (m *Manager) Stop(name string) error {
 func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{})
 
 	if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
 		m.logger.Info("agent below ACMM gate; not adding", "agent", name, "level", m.project.ACMMLevel)
@@ -1209,6 +1211,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 	allowedConfigs := make(map[string]config.AgentConfig, len(configs))
 
 	for name, cfg := range configs {
+		cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{})
 		if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
 			continue
 		}
