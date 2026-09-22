@@ -236,14 +236,19 @@ discipline):
   endpoint, so the environment is queried rather than pasted into prompts
   ([#8033](https://github.com/hivecommons/hive/issues/8033),
   [design doc](https://github.com/hivecommons/hive/blob/v6/src/docs/design/task-mcp.md)).
-  **Phase 1 merged on `v6`**
+  **Phases 1–3 merged on `v6`**: Phase 1
   ([#8164](https://github.com/hivecommons/hive/pull/8164),
   [#8177](https://github.com/hivecommons/hive/pull/8177),
-  [#8179](https://github.com/hivecommons/hive/pull/8179)): `pkg/taskmcp`,
+  [#8179](https://github.com/hivecommons/hive/pull/8179)) — `pkg/taskmcp`,
   the `/api/contribute/mcp` endpoint, agent-manager wiring, and the
-  `task_context`, `context_bundle`, `related_work` and `ci_health` tools.
-  Phase 2 (lease-scoped auth for remote contributors) waits on the Phase 1
-  token-delta measurement.
+  `task_context`, `context_bundle`, `related_work` and `ci_health` tools;
+  Phase 2 (lease-scoped auth for remote contributors,
+  [#8228](https://github.com/hivecommons/hive/pull/8228)); Phase 3 (repo
+  tools, [#8244](https://github.com/hivecommons/hive/pull/8244)). The RFC
+  closed on 2026-09-22 with the first live token-delta measurement, and
+  the remaining saving — eliding stuffed issue/PR lists when the MCP
+  pointer is present ([#8261](https://github.com/hivecommons/hive/issues/8261)) —
+  shipped in [#8272](https://github.com/hivecommons/hive/pull/8272).
 - **Standby contributors** — a lane paused for budget hands its queue to
   volunteer contributors, behind a model floor
   ([#7629](https://github.com/hivecommons/hive/issues/7629),
