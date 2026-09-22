@@ -218,12 +218,34 @@ builds; operators on `stable`/`candidate` (v5) do not have them:
   [design doc](src/docs/design/escalation-surfaces.md)): `pkg/escalate`
   severity routing, SMTP sink with daily digest, and the three push sinks.
   Inbound reply-to-act is still unbuilt, as the design sequenced it.
+
+Beyond the dashboard-optional theme, the line has begun accepting new
+tracks by RFC, each measured against the same readiness bar
+([#7683](https://github.com/hivecommons/hive/issues/7683) §Scope
+discipline):
+
+- **Task-scoped MCP** — expose the hive's view of a task (issue, PR,
+  advisory context) to contributor agents as a Model Context Protocol
+  endpoint, so the environment is queried rather than pasted into prompts
+  ([#8033](https://github.com/hivecommons/hive/issues/8033),
+  [design doc](src/docs/design/task-mcp.md)). **Merged on `v6`**
+  ([#8164](https://github.com/hivecommons/hive/pull/8164)): `pkg/taskmcp`,
+  the dashboard endpoint, and agent-manager wiring.
+- **Standby contributors** — a lane paused for budget hands its queue to
+  volunteer contributors, behind a model floor
+  ([#7629](https://github.com/hivecommons/hive/issues/7629),
+  [design doc](src/docs/design/standby-contributors.md),
+  [RFC doc](docs/rfc-7629-standby-contributors.md)). **Design S0 merged on
+  `v6`** ([#8038](https://github.com/hivecommons/hive/pull/8038));
+  implementation not started.
 - Named for later, not scheduled: Jira (mirroring the Linear agent), an
   IDE extension over the dashboard API, a subscribable calendar feed of
   scheduled kicks.
 
-With those tracks merged, what the line still owes is **release-path work,
-not features**: since 2026-09-21, `v6` publishes the `edge` channel
+With the dashboard-optional tracks merged, what *that theme* still owes is
+**release-path evidence**, while the line itself stays open to new tracks
+entering via RFC (as the two above did): since 2026-09-21, `v6` publishes
+the `edge` channel
 ([#8060](https://github.com/hivecommons/hive/pull/8060)), so the surfaces
 above reach operators tracking `edge` — but `edge` is an active-development
 build, not a stable claim. The line's promotion bar is
