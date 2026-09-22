@@ -8,7 +8,7 @@ Hive Federation lets independent Hive instances publish themselves in a registry
 
 > This section was originally written while the source lived under the retired
 > `v2/` tree (v2 was retired in August 2026). The endpoints it describes are
-> live on the current `v4` branch, under `src/`.
+> live on the current `v5` branch, under `src/`.
 
 The Go dashboard API implements the federation endpoints in `src/pkg/dashboard/api_contribute.go`:
 

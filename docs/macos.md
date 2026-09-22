@@ -2,7 +2,7 @@
 
 > **Legacy v1/launchd documentation.** This page maps the original
 > systemd-style supervised agent workflow to macOS launchd. It does not describe
-> the current containerized Go deployment (branch `v4`; code under `src/`). For that, start with
+> the current containerized Go deployment (branch `v5`; code under `src/`). For that, start with
 > [`src/docs/README.md`](../src/docs/README.md), plus
 > [`src/docs/operator-reference.md`](../src/docs/operator-reference.md) and
 > [`src/docs/deployment-scripts.md`](../src/docs/deployment-scripts.md).
