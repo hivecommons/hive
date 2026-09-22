@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -59,10 +61,30 @@ var (
 	ErrUnknownOperation = errors.New("no journal entry exists for this operation")
 	// ErrInvalidEffect: the effect description fails validation.
 	ErrInvalidEffect = errors.New("effect description is invalid")
+	// ErrJournalLocked: the cross-process journal lock could not be taken
+	// within the bounded wait. The transition was NOT applied; the executor
+	// treats it as an uncertain result, never as success.
+	ErrJournalLocked = errors.New("mutation journal lock could not be acquired within the bounded wait")
 )
 
 const journalFileMode = 0o660
 const journalFormatVersion = 1
+
+// journalLockFileSuffix names the flock sibling of the journal path, mirroring
+// the claim ledger's cross-process discipline: every accepted transition takes
+// the exclusive file lock, reloads the on-disk snapshot, applies, persists,
+// then releases, so two processes sharing one journal can never persist an
+// older snapshot over each other's operations. Atomic rename stays as crash
+// safety; the flock adds multi-writer safety.
+const journalLockFileSuffix = ".lock"
+
+// DefaultJournalLockTimeout bounds how long one transition waits for the
+// cross-process lock before surfacing ErrJournalLocked.
+const DefaultJournalLockTimeout = 10 * time.Second
+
+// journalLockPollInterval is the spacing between non-blocking flock attempts
+// while waiting out the bounded lock timeout.
+const journalLockPollInterval = 10 * time.Millisecond
 
 // DeriveLogicalID is the canonical operation-id derivation for Hive effects.
 // The caller supplies the already-ordered, load-bearing identity fields and any
@@ -172,43 +194,106 @@ type persistedJournal struct {
 
 // Journal is the durable idempotent operation record: an in-memory index over
 // one JSON file, reloaded on boot, rewritten atomically on every accepted
-// transition, serialized per logical-ID under the journal mutex. Process
-// memory is never authority.
+// transition, serialized per logical-ID under the journal mutex and across
+// processes under the exclusive .lock flock (refreshed from disk before every
+// transition, exactly like the claim ledger). Process memory is never
+// authority.
 type Journal struct {
-	path string
-	mu   sync.Mutex
-	ops  map[string]*Operation
+	path        string
+	lockTimeout time.Duration
+	mu          sync.Mutex
+	ops         map[string]*Operation
 }
 
 // OpenJournal loads the operation journal at path, creating an empty one when
 // the file does not exist; a corrupt file is a refusal that leaves the bytes
-// untouched for inspection.
+// untouched for inspection. The cross-process lock file beside the path is
+// created here so a later transition can take it even when the directory has
+// since become unwritable.
 func OpenJournal(path string) (*Journal, error) {
-	j := &Journal{path: path, ops: make(map[string]*Operation)}
-	data, err := os.ReadFile(path)
+	j := &Journal{path: path, lockTimeout: DefaultJournalLockTimeout, ops: make(map[string]*Operation)}
+	if err := j.reloadLocked(); err != nil {
+		return nil, err
+	}
+	lockPath := path + journalLockFileSuffix
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o770); err != nil {
+		return nil, fmt.Errorf("creating mutation journal lock directory: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, journalFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("creating mutation journal lock %s: %w", lockPath, err)
+	}
+	_ = f.Close()
+	return j, nil
+}
+
+// reloadLocked replaces the in-memory index with the on-disk snapshot. Callers
+// hold j.mu.
+func (j *Journal) reloadLocked() error {
+	data, err := os.ReadFile(j.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return j, nil
+		j.ops = make(map[string]*Operation)
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading mutation journal %s: %w", path, err)
+		return fmt.Errorf("reading mutation journal %s: %w", j.path, err)
 	}
 	var persisted persistedJournal
 	if err := json.Unmarshal(data, &persisted); err != nil {
-		return nil, fmt.Errorf("mutation journal %s is unparseable and is left untouched for inspection: %w", path, err)
+		return fmt.Errorf("mutation journal %s is unparseable and is left untouched for inspection: %w", j.path, err)
 	}
+	ops := make(map[string]*Operation, len(persisted.Operations))
 	for i := range persisted.Operations {
 		op := persisted.Operations[i]
 		want := op.Effect.LogicalID()
 		if want == "" || want != op.LogicalID {
-			return nil, fmt.Errorf("mutation journal %s holds an entry whose id does not derive from its effect", path)
+			return fmt.Errorf("mutation journal %s holds an entry whose id does not derive from its effect", j.path)
 		}
-		if _, dup := j.ops[op.LogicalID]; dup {
-			return nil, fmt.Errorf("mutation journal %s holds conflicting entries for %s", path, op.LogicalID)
+		if _, dup := ops[op.LogicalID]; dup {
+			return fmt.Errorf("mutation journal %s holds conflicting entries for %s", j.path, op.LogicalID)
 		}
 		cp := op.clone()
-		j.ops[op.LogicalID] = &cp
+		ops[op.LogicalID] = &cp
 	}
-	return j, nil
+	j.ops = ops
+	return nil
+}
+
+// lockAndRefreshLocked takes the exclusive cross-process flock on the journal's
+// .lock sibling within the bounded wait, then reloads the on-disk snapshot so
+// the transition applies to the peer's latest persisted state. The returned
+// func releases the lock. Callers hold j.mu.
+func (j *Journal) lockAndRefreshLocked() (func(), error) {
+	lockPath := j.path + journalLockFileSuffix
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, journalFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("opening mutation journal lock %s: %w", lockPath, err)
+	}
+	deadline := time.Now().Add(j.lockTimeout)
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			_ = f.Close()
+			return nil, fmt.Errorf("locking mutation journal %s: %w", lockPath, err)
+		}
+		if !time.Now().Before(deadline) {
+			_ = f.Close()
+			return nil, fmt.Errorf("%s after %s: %w", lockPath, j.lockTimeout, ErrJournalLocked)
+		}
+		time.Sleep(journalLockPollInterval)
+	}
+	if err := j.reloadLocked(); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 func (o Operation) clone() Operation {
@@ -225,6 +310,10 @@ func (o Operation) clone() Operation {
 func (j *Journal) Get(id string) (Operation, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	unlock, err := j.lockAndRefreshLocked()
+	if err == nil {
+		defer unlock()
+	}
 	op, ok := j.ops[id]
 	if !ok {
 		return Operation{}, false
@@ -254,6 +343,11 @@ func (j *Journal) Begin(e Effect, epoch uint64, holder string, now time.Time) (O
 	id := e.LogicalID()
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	unlock, err := j.lockAndRefreshLocked()
+	if err != nil {
+		return Operation{}, err
+	}
+	defer unlock()
 	if op, ok := j.ops[id]; ok {
 		switch op.Status {
 		case StatusApplied:
@@ -292,6 +386,11 @@ func (j *Journal) RecordResult(id string, epoch uint64, status, result string, n
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	unlock, err := j.lockAndRefreshLocked()
+	if err != nil {
+		return Operation{}, err
+	}
+	defer unlock()
 	op, ok := j.ops[id]
 	if !ok {
 		return Operation{}, fmt.Errorf("%s: %w", id, ErrUnknownOperation)
@@ -345,6 +444,11 @@ type ExternalState struct {
 func (j *Journal) Reconcile(id string, state ExternalState, now time.Time) (Operation, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	unlock, err := j.lockAndRefreshLocked()
+	if err != nil {
+		return Operation{}, err
+	}
+	defer unlock()
 	op, ok := j.ops[id]
 	if !ok {
 		return Operation{}, fmt.Errorf("%s: %w", id, ErrUnknownOperation)
