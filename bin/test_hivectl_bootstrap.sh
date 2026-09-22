@@ -51,11 +51,28 @@ assert_file_contains() {
 make_fixture() {
   local dir="${TEST_TMP}/${CASE}"
   rm -rf "$dir"
-  mkdir -p "${dir}/bin" "${dir}/home"
+  mkdir -p "${dir}/bin" "${dir}/home" "${dir}/src/pkg/hivectl/commands"
   cp "$BOOTSTRAP" "${dir}/bin/hivectl-bootstrap.sh"
   cp "${ROOT}/bin/hive-podman-cleanup.sh" "${dir}/bin/hive-podman-cleanup.sh"
   chmod +x "${dir}/bin/hivectl-bootstrap.sh"
   printf '%s\n' "$dir"
+}
+
+init_fixture_git() {
+  local fixture="$1"
+  git -C "$fixture" init -q
+  git -C "$fixture" config user.email "test@example.invalid"
+  git -C "$fixture" config user.name "Hive Test"
+  printf 'package commands\n' >"${fixture}/src/pkg/hivectl/commands/tui.go"
+  git -C "$fixture" add bin src
+  git -C "$fixture" commit -q -m "initial hivectl"
+}
+
+advance_fixture_hivectl() {
+  local fixture="$1"
+  printf '\n// newer checkout hivectl change\n' >>"${fixture}/src/pkg/hivectl/commands/tui.go"
+  git -C "$fixture" add src/pkg/hivectl/commands/tui.go
+  git -C "$fixture" commit -q -m "update hivectl"
 }
 
 write_fake_hivectl() {
@@ -74,13 +91,23 @@ EOF_HIVECTL
 cat >"${FAKE_BIN}/podman" <<'EOF_PODMAN'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" >>"$FAKE_PODMAN_LOG"
+is_unavailable() {
+  local image="$1" unavailable="${FAKE_UNAVAILABLE_IMAGE:-}"
+  [[ -n "$unavailable" && "$image" == "$unavailable" ]]
+}
 case "${1:-} ${2:-}" in
   "image inspect")
     [[ "${FAKE_IMAGE_INSPECT_FAIL:-0}" == "1" ]] && exit 125
+    is_unavailable "${5:-}" && exit 125
+    if [[ "${3:-}" == "--format" && "${4:-}" == *".Labels"* ]]; then
+      printf '%s\n' "${FAKE_IMAGE_REVISION:-}"
+      exit 0
+    fi
     printf '%s\n' "${FAKE_IMAGE_DIGEST:-sha256:fresh}"
     ;;
-  "pull test-image")
+  "pull "*)
     [[ "${FAKE_PULL_FAIL:-0}" == "1" ]] && exit 125
+    is_unavailable "${2:-}" && exit 125
     ;;
   "create --name")
     printf 'ctr\n'
@@ -94,7 +121,7 @@ case "${1:-} ${2:-}" in
     cat >"$dest" <<EOF_STAGED
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "version" ]]; then
-  printf 'staged version from %s\n' "${FAKE_IMAGE_DIGEST:-sha256:fresh}"
+  printf 'hivectl %s commit %s\n' "${FAKE_BINARY_VERSION:-staged}" "${FAKE_BINARY_COMMIT:-}"
   exit 0
 fi
 printf 'staged %s\n' "\$*" >>"$FAKE_HIVECTL_RUN_LOG"
@@ -117,7 +144,11 @@ run_bootstrap() {
     FAKE_PODMAN_LOG="$CALL_LOG" \
     FAKE_HIVECTL_RUN_LOG="$RUN_LOG" \
     FAKE_IMAGE_DIGEST="${FAKE_IMAGE_DIGEST:-sha256:fresh}" \
-    HIVECTL_BOOTSTRAP_IMAGE="test-image" \
+    FAKE_IMAGE_REVISION="${FAKE_IMAGE_REVISION:-}" \
+    FAKE_BINARY_VERSION="${FAKE_BINARY_VERSION:-staged}" \
+    FAKE_BINARY_COMMIT="${FAKE_BINARY_COMMIT:-}" \
+    FAKE_UNAVAILABLE_IMAGE="${FAKE_UNAVAILABLE_IMAGE:-}" \
+    HIVECTL_BOOTSTRAP_IMAGE="${HIVECTL_BOOTSTRAP_IMAGE-test-image}" \
     "$fixture/bin/hivectl-bootstrap.sh" "$@"
   )
 }
@@ -211,6 +242,94 @@ fixture="$(make_fixture)"
 status=$?
 if [[ "$status" -ne 0 ]]; then pass "missing podman and binary refuses"; else fail "missing podman unexpectedly succeeded"; fi
 assert_file_contains "${fixture}/stderr" "podman is required to bootstrap" "refusal names podman requirement"
+
+CASE="ahead-of-image-refuses"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+binary_commit="$(git -C "$fixture" rev-parse HEAD)"
+advance_fixture_hivectl "$fixture"
+FAKE_BINARY_COMMIT="$binary_commit" run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 66 ]]; then pass "ahead checkout refuses with skew exit"; else fail "ahead checkout exited ${status}, want 66"; fi
+assert_file_contains "${fixture}/stderr" "refusing to run a skewed hivectl" "skew refusal names the condition"
+assert_file_contains "${fixture}/stderr" "staged binary commit ${binary_commit}" "skew refusal names binary commit"
+assert_file_contains "${fixture}/stderr" "you overrode the image with test-image" "skew refusal names selected image override"
+assert_file_contains "${fixture}/stderr" "HIVECTL_BOOTSTRAP_IMAGE=" "skew refusal names image override escape hatch"
+assert_file_contains "${fixture}/stderr" "HIVECTL=/path/to/hivectl" "skew refusal names explicit binary escape hatch"
+
+CASE="old-source-record-refuses"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+binary_commit="$(git -C "$fixture" rev-parse HEAD)"
+advance_fixture_hivectl "$fixture"
+write_fake_hivectl "${fixture}/bin/hivectl" local
+cat >"${fixture}/bin/.hivectl.source" <<'EOF_OLD_RECORD'
+image=test-image
+path=/usr/local/share/hive/hivectl
+digest=sha256:fresh
+version<<HIVECTL_VERSION
+local version without commit
+HIVECTL_VERSION
+EOF_OLD_RECORD
+FAKE_IMAGE_REVISION="$binary_commit" run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 66 ]]; then pass "old source record refuses with skew exit"; else fail "old source record exited ${status}, want 66"; fi
+assert_file_contains "${fixture}/stderr" "staged binary commit ${binary_commit}" "old source record falls back to image revision"
+
+CASE="at-tag-prefers-release-image"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+git -C "$fixture" tag v5.4.0
+head_commit="$(git -C "$fixture" rev-parse HEAD)"
+HIVECTL_BOOTSTRAP_IMAGE="" FAKE_BINARY_COMMIT="$head_commit" run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 0 ]]; then pass "tag checkout bootstraps successfully"; else fail "tag checkout exited ${status}"; fi
+assert_file_contains "${fixture}/stderr" "using release image ghcr.io/hivecommons/hive:v5.4.0" "release tag image is announced"
+assert_file_contains "${fixture}/bin/.hivectl.source" "image=ghcr.io/hivecommons/hive:v5.4.0" "release tag image is recorded"
+assert_file_contains "$RUN_LOG" "staged hives list" "release tag binary handles command"
+
+CASE="at-stable-rev-uses-branch-channel"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+git -C "$fixture" checkout -q -b v5
+head_commit="$(git -C "$fixture" rev-parse HEAD)"
+HIVECTL_BOOTSTRAP_IMAGE="" FAKE_BINARY_COMMIT="$head_commit" run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 0 ]]; then pass "branch channel checkout bootstraps successfully"; else fail "branch channel checkout exited ${status}"; fi
+assert_file_contains "${fixture}/bin/.hivectl.source" "image=ghcr.io/hivecommons/hive:stable" "v5 branch falls back to stable channel"
+assert_file_contains "$RUN_LOG" "staged hives list" "stable-channel binary handles command"
+
+CASE="image-override-wins"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+git -C "$fixture" tag v5.4.0
+head_commit="$(git -C "$fixture" rev-parse HEAD)"
+HIVECTL_BOOTSTRAP_IMAGE="custom-image" FAKE_BINARY_COMMIT="$head_commit" run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 0 ]]; then pass "image override bootstraps successfully"; else fail "image override exited ${status}"; fi
+assert_file_contains "${fixture}/bin/.hivectl.source" "image=custom-image" "explicit image override is recorded"
+assert_not_contains "$(cat "$CALL_LOG")" "ghcr.io/hivecommons/hive:v5.4.0" "explicit image override skips release probe"
+
+CASE="offline-release-probe-falls-back"
+: >"$CALL_LOG"; : >"$RUN_LOG"
+fixture="$(make_fixture)"
+init_fixture_git "$fixture"
+git -C "$fixture" checkout -q -b v5
+git -C "$fixture" tag v5.4.0
+head_commit="$(git -C "$fixture" rev-parse HEAD)"
+HIVECTL_BOOTSTRAP_IMAGE="" \
+  FAKE_UNAVAILABLE_IMAGE="ghcr.io/hivecommons/hive:v5.4.0" \
+  FAKE_BINARY_COMMIT="$head_commit" \
+  run_bootstrap "$fixture" hives list >"${fixture}/stdout" 2>"${fixture}/stderr"
+status=$?
+if [[ "$status" -eq 0 ]]; then pass "offline release probe falls back successfully"; else fail "offline release probe exited ${status}"; fi
+assert_file_contains "${fixture}/stderr" "falling back to the branch channel" "offline probe fallback is announced"
+assert_file_contains "${fixture}/bin/.hivectl.source" "image=ghcr.io/hivecommons/hive:stable" "offline probe records fallback channel"
 
 CASE="justfile-routing"
 justfile_content="$(cat "$JUSTFILE")"

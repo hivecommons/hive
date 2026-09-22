@@ -1,0 +1,1 @@
+- Resolve hivectl bootstrap images from the checkout and refuse staged binaries that are stale for checkout-local hivectl changes.
