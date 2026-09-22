@@ -1047,10 +1047,57 @@ func ValidateReasoningEffort(backend, effort string) error {
 		effort, backend, strings.Join(accepted, ", "))
 }
 
-type AgentConfig struct {
-	ID      string `yaml:"id" json:"id,omitempty"`
+const (
+	ReviewModelsFallbackPinned        = "pinned"
+	ReviewModelsFallbackSkip          = "skip"
+	ReviewModelsFallbackRequiresHuman = "requires_human"
+)
+
+type ReviewModelPoolEntry struct {
 	Backend string `yaml:"backend" json:"backend,omitempty"`
 	Model   string `yaml:"model" json:"model,omitempty"`
+}
+
+type ReviewModelsConfig struct {
+	Pool                []ReviewModelPoolEntry `yaml:"pool,omitempty" json:"pool,omitempty"`
+	ExcludeAuthorModel  *bool                  `yaml:"exclude_author_model,omitempty" json:"exclude_author_model,omitempty"`
+	ExcludeAuthorFamily bool                   `yaml:"exclude_author_family,omitempty" json:"exclude_author_family,omitempty"`
+	Fallback            string                 `yaml:"fallback,omitempty" json:"fallback,omitempty"`
+}
+
+func (r ReviewModelsConfig) Configured() bool {
+	return len(r.Pool) > 0 || r.ExcludeAuthorModel != nil || r.ExcludeAuthorFamily || strings.TrimSpace(r.Fallback) != ""
+}
+
+func (r ReviewModelsConfig) ExcludeAuthorModelEnabled() bool {
+	return r.ExcludeAuthorModel == nil || *r.ExcludeAuthorModel
+}
+
+func (r ReviewModelsConfig) EffectiveFallback() string {
+	switch strings.TrimSpace(r.Fallback) {
+	case "":
+		return ReviewModelsFallbackPinned
+	case ReviewModelsFallbackSkip, ReviewModelsFallbackRequiresHuman:
+		return strings.TrimSpace(r.Fallback)
+	default:
+		return strings.TrimSpace(r.Fallback)
+	}
+}
+
+func ValidateReviewModelsFallback(v string) bool {
+	switch strings.TrimSpace(v) {
+	case "", ReviewModelsFallbackPinned, ReviewModelsFallbackSkip, ReviewModelsFallbackRequiresHuman:
+		return true
+	default:
+		return false
+	}
+}
+
+type AgentConfig struct {
+	ID           string             `yaml:"id" json:"id,omitempty"`
+	Backend      string             `yaml:"backend" json:"backend,omitempty"`
+	Model        string             `yaml:"model" json:"model,omitempty"`
+	ReviewModels ReviewModelsConfig `yaml:"review_models,omitempty" json:"review_models,omitempty"`
 	// ReasoningEffort pins the reasoning effort the agent's CLI is launched
 	// with, for backends that expose one (see ReasoningEffortsByBackend):
 	// codex is passed `-c model_reasoning_effort="<v>"`, agy `--effort <v>`.

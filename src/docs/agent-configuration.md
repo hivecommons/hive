@@ -104,6 +104,32 @@ The dashboard API can update this field through [`POST /api/effort/{agent}/{effo
 
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
 
+### Reviewer independence
+
+Reviewer agents can declare an ordered `review_models` pool so a PR is reviewed
+by a model independent from the one that authored it:
+
+```yaml
+agents:
+  reviewer:
+    backend: copilot
+    model: claude-fable-5
+    review_models:
+      pool:
+        - {backend: copilot, model: gpt-5.6-terra}
+        - {backend: copilot, model: gemini-3.7-flash}
+        - {backend: copilot, model: claude-opus-4-6}
+      exclude_author_model: true
+      exclude_author_family: false
+      fallback: pinned
+```
+
+`exclude_author_model` defaults to true. `exclude_author_family` compares the
+normalized vendor prefix before the first dash (`claude`, `gpt`, `gemini`,
+`grok`, ...). If no pool entry is eligible, `fallback` is `pinned` (use the
+agent's configured `model`), `skip` (omit the PR from that kick), or
+`requires_human` (keep the PR visible with a human-review marker).
+
 ### BYO-agent specs
 
 `agent_spec` wires ADR-0012's bring-your-own-agent contract into the launcher.

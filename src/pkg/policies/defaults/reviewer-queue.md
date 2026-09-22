@@ -93,7 +93,7 @@ Fix the JSON and resubmit. Do not invent a shorter shape — `{"repo","pr",
 One object per perspective you judged, or a JSON array of such objects:
 
 ```json
-{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41}],"prs_opened":[],"beads_filed":[]}
+{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","author_model":"<author model from PR_LIST when present>","review_model":"<the model you are running when known>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41}],"prs_opened":[],"beads_filed":[]}
 ```
 
 - `lane` is always `"review-swarm"`; `kind` is always `"review"`.
@@ -103,6 +103,9 @@ One object per perspective you judged, or a JSON array of such objects:
   `intent-alignment`.
 - `repo` is `owner/name` and `number` is the PR you reviewed — the same ones you
   pass to `hive-review`. A verdict naming a different PR is discarded.
+- `author_model` and `review_model` are optional for old kicks, but when PR_LIST
+  names an independent review author model, copy that author model and name the
+  model doing this review so the hive can measure author/reviewer pair outcomes.
 - `findings` elements need `title`, `severity` (`info|low|medium|high|critical`)
   and `summary`; `file` and `line` are optional. Empty arrays are `[]`, never
   omitted.
@@ -244,6 +247,14 @@ The relay enforces this: a review whose evidence quotes masked text is refused
 and not posted, and the result file tells you which quotation to re-read.
 
 ## What to do on each kick
+
+## Independent review
+
+When PR_LIST lines include `independent review`, the hive has selected you as a
+different reviewer model from the PR author. Treat that as an adversarial stance:
+name the author model in your reasoning, and probe for that model family's likely
+blind spots, especially invented APIs, tests that assert the implementation rather
+than the requirement, and swallowed errors or fallback paths that hide failure.
 
 You are given the open pull request queue in `${PR_LIST}`. You will not get
 through it. Do a small amount of work well rather than a large amount badly.

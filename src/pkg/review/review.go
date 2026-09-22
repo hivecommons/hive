@@ -111,6 +111,8 @@ type PerspectiveReport struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
 	HeadSHA     string      `json:"head_sha,omitempty"`
+	AuthorModel string      `json:"author_model,omitempty"`
+	ReviewModel string      `json:"review_model,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -133,6 +135,8 @@ type Aggregate struct {
 	Repo             string                  `json:"repo"`
 	Number           int                     `json:"number"`
 	HeadSHA          string                  `json:"head_sha,omitempty"`
+	AuthorModel      string                  `json:"author_model,omitempty"`
+	ReviewModel      string                  `json:"review_model,omitempty"`
 	Verdict          Verdict                 `json:"verdict"`
 	MergeEligible    bool                    `json:"merge_eligible"`
 	FixCycle         bool                    `json:"fix_cycle"`
@@ -240,6 +244,13 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	for _, r := range reports {
 		if agg.Repo == "" {
 			agg.Repo, agg.Number, agg.HeadSHA = r.Repo, r.Number, r.HeadSHA
+			agg.AuthorModel, agg.ReviewModel = r.AuthorModel, r.ReviewModel
+		}
+		if agg.AuthorModel == "" {
+			agg.AuthorModel = r.AuthorModel
+		}
+		if agg.ReviewModel == "" {
+			agg.ReviewModel = r.ReviewModel
 		}
 		agg.Perspectives[r.Perspective] = r.Verdict
 		seenVerdicts[r.Verdict] = true

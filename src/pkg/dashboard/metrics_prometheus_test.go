@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -90,6 +91,28 @@ func TestHandleMetricsPRsByModelExposition(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics missing %q\n---\n%s", want, body)
 		}
+	}
+}
+
+func TestHandleMetricsReviewModelPairExposition(t *testing.T) {
+	dir := t.TempDir()
+	orig := review.ReviewVerdictsPath
+	review.ReviewVerdictsPath = dir + "/review-verdicts.json"
+	t.Cleanup(func() { review.ReviewVerdictsPath = orig })
+	if err := review.WriteArtifact("", review.Artifact{Items: []review.Aggregate{{AuthorModel: "gpt-5.6-terra", ReviewModel: "gemini-3.7-flash", Verdict: review.VerdictApprove}}}); err != nil {
+		t.Fatalf("WriteArtifact: %v", err)
+	}
+	s := covApiServer(t)
+	s.deps.Config.HiveID = "test-hive"
+	t.Setenv("HIVE_METRICS_TOKEN", "sk-metrics")
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer sk-metrics")
+	rec := httptest.NewRecorder()
+	s.handleMetrics(rec, req)
+	body := rec.Body.String()
+	want := `hive_reviews_by_model_pair_total{hive_id="test-hive",author_model="gpt-5.6-terra",review_model="gemini-3.7-flash",verdict="approve"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("metrics missing %q\n---\n%s", want, body)
 	}
 }
 

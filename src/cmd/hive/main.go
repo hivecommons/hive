@@ -6440,6 +6440,11 @@ func runEvalCycle(
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
+			restartThenSendKickWithOverrides: func(agentName, message, backend, model string) error {
+				return agentMgr.RestartAfterIdleThenSendKickWithOverrides(ctx, agentName, message, backend, model)
+			},
+			setModelOverride:   agentMgr.SetModelOverride,
+			setBackendOverride: agentMgr.SetBackendOverride,
 			startKickSpan: func(agentName string) func(error) {
 				agentCfg := cfg.Agents[agentName]
 				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(

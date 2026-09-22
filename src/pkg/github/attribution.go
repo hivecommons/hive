@@ -73,6 +73,9 @@ const (
 	// (approved|changes_requested|commented). This makes reviews a first-class
 	// audited activity instead of an invisible agent-CLI write.
 	AuditActionPRReviewed = "agent_pr_reviewed"
+	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
+	// pool has no independent candidate and the configured fallback is used.
+	AuditActionReviewModelFallback = "review_model_fallback"
 )
 
 // System "agent" names recorded for creations no single coding agent
@@ -299,6 +302,17 @@ func NormalizeAttributionValue(value string) string {
 
 func NormalizeAttributionModel(model string) string {
 	return NormalizeAttributionValue(model)
+}
+
+func ModelFamily(model string) string {
+	m := NormalizeAttributionModel(model)
+	if m == "unknown" {
+		return "unknown"
+	}
+	if i := strings.Index(m, "-"); i >= 0 {
+		return m[:i]
+	}
+	return m
 }
 
 // RequestedModel normalizes the model recorded in the trail: bob has no model

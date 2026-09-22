@@ -77,6 +77,22 @@ func (c *Config) Validate() error {
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
 			return fmt.Errorf("agent %s: %w", label, err)
 		}
+		if agent.ReviewModels.Configured() {
+			if !ValidateReviewModelsFallback(agent.ReviewModels.Fallback) {
+				return fmt.Errorf("agent %s: invalid review_models.fallback %q (must be pinned, skip, or requires_human)", label, agent.ReviewModels.Fallback)
+			}
+			for i, entry := range agent.ReviewModels.Pool {
+				if strings.TrimSpace(entry.Backend) == "" {
+					return fmt.Errorf("agent %s: review_models.pool[%d]: backend is required", label, i)
+				}
+				if err := c.Governor.ValidateBackend(strings.TrimSpace(entry.Backend)); err != nil {
+					return fmt.Errorf("agent %s: review_models.pool[%d]: %w", label, i, err)
+				}
+				if strings.TrimSpace(entry.Model) == "" {
+					return fmt.Errorf("agent %s: review_models.pool[%d]: model is required", label, i)
+				}
+			}
+		}
 		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
 			return fmt.Errorf("agent %s: %w", label, err)
 		}

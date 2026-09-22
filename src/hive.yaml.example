@@ -148,6 +148,24 @@ agents:
     #       type: env
     #       env_var: JIRA_TOKEN
     #     env_name: JIRA_BASE_URL
+  reviewer:
+    enabled: true
+    backend: copilot
+    model: claude-fable-5
+    role: reviewer
+    mode: ADVISORY
+    converse: true
+    kick_template: reviewer-queue.md
+    include_repos: true
+    clear_on_kick: true
+    review_models:
+      pool:
+        - {backend: copilot, model: gpt-5.6-terra}
+        - {backend: copilot, model: gemini-3.7-flash}
+        - {backend: copilot, model: claude-opus-4-6}
+      exclude_author_model: true     # default true; never review with the author model
+      exclude_author_family: false   # default false; true also skips same vendor prefix
+      fallback: pinned               # pinned | skip | requires_human
   ci-maintainer:
     enabled: true
     backend: claude

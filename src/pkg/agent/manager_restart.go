@@ -434,6 +434,59 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	return m.launchInTmux(ctx, agent)
 }
 
+// RestartAfterIdleThenSendKick waits for any currently-running turn to return to
+// the input prompt, then restarts the agent so launch-time backend/model
+// overrides take effect before delivering the kick. It is used for reviewer
+// model buckets: dispatch may have several buckets for one reviewer, and an
+// immediate restart would kill the previous bucket before it can finish.
+func (m *Manager) RestartAfterIdleThenSendKick(ctx context.Context, name, message string) error {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	state := StateStopped
+	if ok {
+		state = agent.State
+	}
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	if state == StateRunning && !m.waitForInputPromptForAgent(agent) {
+		return fmt.Errorf("agent %s did not become idle before restart", name)
+	}
+	return m.RestartThenSendKick(ctx, name, message)
+}
+
+// RestartAfterIdleThenSendKickWithOverrides waits for the current turn to finish,
+// applies launch-time backend/model overrides, then restarts and delivers the
+// kick. Applying overrides after the idle wait avoids rerouting an in-flight
+// inference-backed turn to the next bucket's model.
+func (m *Manager) RestartAfterIdleThenSendKickWithOverrides(ctx context.Context, name, message, backend, model string) error {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	state := StateStopped
+	if ok {
+		state = agent.State
+	}
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	if state == StateRunning && !m.waitForInputPromptForAgent(agent) {
+		return fmt.Errorf("agent %s did not become idle before restart", name)
+	}
+	if backend != "" {
+		if err := m.SetBackendOverride(name, backend); err != nil {
+			return err
+		}
+	}
+	if model != "" {
+		if err := m.SetModelOverride(name, model); err != nil {
+			return err
+		}
+	}
+	return m.RestartThenSendKick(ctx, name, message)
+}
+
 // RestartThenSendKick restarts the agent with a clean slate (no bootstrap
 // override), waits for the CLI to become ready, then delivers the message
 // via SendKick. This combines the clean-context benefit of restart with

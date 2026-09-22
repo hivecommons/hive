@@ -302,6 +302,17 @@ agents:
   sort_order: 26
   backend: copilot
   model: claude-fable-5
+  review_models:
+    pool:
+    - backend: copilot
+      model: gpt-5.6-terra
+    - backend: copilot
+      model: gemini-3.7-flash
+    - backend: copilot
+      model: claude-opus-4-6
+    exclude_author_model: true
+    exclude_author_family: true
+    fallback: pinned
   bead_role: worker
   mode: ADVISORY
   converse: true
