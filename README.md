@@ -567,6 +567,12 @@ A relay can subscribe to multiple hives — manage them as named profiles with `
 
 See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
 
+## Repositories
+
+Hive is one of several repositories in the hivecommons organization. See
+[docs/repositories.md](docs/repositories.md) for the full list, what each one is
+for, and which ones ship inside a Hive release.
+
 ## Contributing
 
 See the [Hive Hub](https://hive.hivecommons.dev) to browse registered hives, view leaderboards, and find hives accepting contributions.
