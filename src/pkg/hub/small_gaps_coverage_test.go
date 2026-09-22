@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -72,7 +73,7 @@ func TestCreateOCIFileSystemMissingID(t *testing.T) {
 func TestReadingListMediumSource(t *testing.T) {
 	resetRLCache(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"@type":"SocialMediaPosting","headline":"H","datePublished":"2026-05-01T00:00:00Z","mainEntityOfPage":"https://x/1","author":{"name":"A"}}`))
+		w.Write([]byte(rssBody(fmt.Sprintf(rssItem, "H", "https://x/1", "Fri, 01 May 2026 00:00:00 GMT"))))
 	}))
 	defer srv.Close()
 	old := readingListURLVar
@@ -81,8 +82,8 @@ func TestReadingListMediumSource(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default()}
 	arts, _, source := s.readingList()
-	if source != readingListSourceMedium {
-		t.Errorf("expected medium source after good fetch, got %q", source)
+	if source != readingListSourceFeed {
+		t.Errorf("expected substack source after good fetch, got %q", source)
 	}
 	if len(arts) != 1 {
 		t.Errorf("expected 1 article, got %d", len(arts))

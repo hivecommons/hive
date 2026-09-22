@@ -171,16 +171,16 @@ func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
 	return parseReadingList(body)
 }
 
-// rssFeed is the subset of RSS 2.0 the reading list needs. Substack's feed
+// feedDocument is the subset of RSS 2.0 the reading list needs. Substack's feed
 // wraps title in CDATA, which encoding/xml unwraps for us; pubDate is RFC 1123
 // with a "GMT" zone; link is the canonical post URL without tracking params.
-type rssFeed struct {
+type feedDocument struct {
 	Channel struct {
-		Items []rssItem `xml:"item"`
+		Items []feedEntry `xml:"item"`
 	} `xml:"channel"`
 }
 
-type rssItem struct {
+type feedEntry struct {
 	Title   string `xml:"title"`
 	Link    string `xml:"link"`
 	PubDate string `xml:"pubDate"`
@@ -192,7 +192,7 @@ type rssItem struct {
 // a zero-length result signals the caller to fall back to cache/seed. A body
 // that is not XML at all is an error so the caller can log it.
 func parseReadingList(body []byte) ([]ReadingArticle, error) {
-	var feed rssFeed
+	var feed feedDocument
 	if err := xml.Unmarshal(body, &feed); err != nil {
 		return nil, err
 	}
