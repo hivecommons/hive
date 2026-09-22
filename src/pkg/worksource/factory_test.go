@@ -47,6 +47,21 @@ func TestFromConfig_UnknownType(t *testing.T) {
 	}
 }
 
+func TestFromConfig_RunStagesWrapsPrimary(t *testing.T) {
+	ws, err := FromConfig(config.WorkSourceConfig{Type: "jira", RunStages: true, Jira: config.JiraSourceConfig{
+		BaseURL: "https://example.atlassian.net", Email: "bot@example.com", APIToken: "tok", Repo: "acme/repo",
+	}}, nil, "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("FromConfig: %v", err)
+	}
+	if _, ok := ws.(*Composite); !ok {
+		t.Fatalf("RunStages=true should wrap primary in Composite, got %T", ws)
+	}
+	if got := ws.SourceType(); got != "jira" {
+		t.Fatalf("SourceType = %q, want primary source type", got)
+	}
+}
+
 // TestFromConfig_GitHubProjectsOrgFallback verifies the org falls back to the
 // hive's project org when the source config does not set one.
 func TestFromConfig_GitHubProjectsOrgFallback(t *testing.T) {

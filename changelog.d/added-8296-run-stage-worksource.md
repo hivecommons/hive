@@ -1,0 +1,1 @@
+- Run stages can now be appended to `governor.work_source` with `run_stages: true`, letting `spec`, `plan`, and `implement` work items enter the contributor queue without fabricating GitHub issues ([#8296](https://github.com/hivecommons/hive/issues/8296)).

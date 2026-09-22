@@ -14,7 +14,7 @@ import (
 // at their zero value.
 type Issue struct {
 	// SourceType identifies which work source produced this item
-	// ("github", "github_projects", "linear", "jira").
+	// ("github", "github_projects", "linear", "jira", "run").
 	SourceType string `json:"source_type"`
 	// Repo is the GitHub repo (owner/name) agents should clone and open PRs
 	// against for this issue.

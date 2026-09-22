@@ -57,6 +57,17 @@ func TestWorkSourceIssuesForCycle(t *testing.T) {
 			filter:     config.IssueFilterConfig{RequireLabels: []string{"hive"}},
 			wantTitles: []string{"yes"}, wantCalls: 1,
 		},
+		{ // #8296: run stages bypass ToGitHubIssues but still enter the cycle.
+			name: "run stage is admitted through run-stage projection",
+			ws: &fakeWorkSource{issues: []worksource.Issue{{
+				SourceType: worksource.SourceTypeRun,
+				Repo:       "hivecommons/hive",
+				ExternalID: "run-1:spec",
+				Title:      "spec: imported plan",
+				Labels:     []string{"hive-run", "stage/spec"},
+			}}},
+			wantTitles: []string{"spec: imported plan"}, wantCalls: 1,
+		},
 		{ // constructor failure: fail closed, never consult the source
 			name:       "config error fails closed and skips ListIssues",
 			ws:         &fakeWorkSource{issues: []worksource.Issue{{Title: "stale"}}},

@@ -2,7 +2,10 @@
 
 `work_source` selects where a hive reads actionable work items from (Step 01
 of the governor loop — see [Architecture](architecture.md)). It accepts four
-`type` values: `github` (default), `github_projects`, `linear`, and `jira`.
+primary `type` values: `github` (default), `github_projects`, `linear`, and
+`jira`. A fifth item kind, `type: run`, is additive rather than a primary
+adapter: enable it with `run_stages: true` to append pending long-running run
+stages as work items without fabricating GitHub issues.
 Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
 (`pkg/config/config.go:1336-1348`, `pkg/worksource/factory.go:15-89`).
@@ -12,6 +15,26 @@ This page documents all four. Linear has its own deeper guide —
 integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
 the other three.
+
+## Run stages (`run_stages: true`)
+
+Run stages let the governor offer a pending run stage such as `spec`, `plan`,
+or `implement` as a non-issue-shaped work item. The primary source remains the
+configured adapter; run stages are appended only when the flag is enabled:
+
+```yaml
+governor:
+  work_source:
+    type: github
+    run_stages: true
+```
+
+With the flag omitted or set to `false`, `ListIssues` output is unchanged. With
+it enabled, pending stages use source type `run`, `Number: 0`, and an external
+ID of `<runKey>:<stage>`. Their stable key is therefore
+`<owner/repo>!<runKey>:<stage>`, not a fabricated `repo#0`. Later stages carry
+a dependency on the previous stage's run key, so `plan` records its dependency
+on `spec` and `implement` records its dependency on `plan`.
 
 ## `type: github` (default)
 

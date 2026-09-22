@@ -41,7 +41,8 @@ func workSourceIssuesForCycle(
 		logger.Error("work_source enumeration failed; failing closed for issues while preserving GitHub PR maintenance", "source", ws.SourceType(), "error", listErr)
 		return github.IssueResultFromItems([]github.Issue{})
 	}
-	items := github.FilterExemptIssues(worksource.ToGitHubIssues(wsIssues), exempt)
+	items := append(worksource.ToGitHubIssues(wsIssues), worksource.RunStagesToGitHubIssues(wsIssues)...)
+	items = github.FilterExemptIssues(items, exempt)
 	filtered := items[:0]
 	for _, issue := range items {
 		if filter.Admits(issue.Labels) {

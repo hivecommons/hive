@@ -27,7 +27,7 @@ const externalKeySeparator = "!"
 // treat that as "not identifiable", never as a key.
 type Ref struct {
 	// SourceType is the work source that produced the item ("github",
-	// "github_projects", "linear", "jira"). Empty is treated as GitHub for
+	// "github_projects", "linear", "jira", "run"). Empty is treated as GitHub for
 	// backward compatibility with envelopes written before this field existed.
 	SourceType string
 	// Repo is the GitHub repository (owner/name) work happens against. It scopes
@@ -84,6 +84,12 @@ func (r Ref) Key() string {
 // under a fabricated "#0", which would match an unrelated record or invent one.
 func (r Ref) IsGitHubIssue() bool {
 	return r.Repo != "" && r.Number > 0
+}
+
+// IsRunStage reports whether this reference is one run-stage work item rather
+// than a GitHub issue or external tracker item.
+func (r Ref) IsRunStage() bool {
+	return r.SourceType == SourceTypeRun && r.Repo != "" && r.Number == 0 && r.ExternalID != ""
 }
 
 // Display returns the short human form used in kick messages and prompts:
@@ -148,7 +154,28 @@ func ParseKey(raw string) (Ref, bool) {
 		if repo == "" || ext == "" {
 			return Ref{}, false
 		}
-		return Ref{Repo: repo, ExternalID: ext}, true
+		ref := Ref{Repo: repo, ExternalID: ext}
+		if isRunStageExternalID(ext) {
+			ref.SourceType = SourceTypeRun
+		}
+		return ref, true
 	}
 	return Ref{}, false
+}
+
+func isRunStageExternalID(ext string) bool {
+	i := strings.LastIndex(ext, ":")
+	if i <= 0 || i == len(ext)-1 {
+		return false
+	}
+	runKey, stage := ext[:i], ext[i+1:]
+	if strings.TrimSpace(runKey) == "" {
+		return false
+	}
+	switch stage {
+	case RunStageSpec, RunStagePlan, RunStageImplement:
+		return true
+	default:
+		return false
+	}
 }
