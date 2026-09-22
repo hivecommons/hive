@@ -85,19 +85,26 @@ func TestTwoOpenJournalsInterleavedCommitsLoseNothing(t *testing.T) {
 	}
 }
 
-// TestOpenJournalCreatesLockFileBesidePath verifies the flock sibling exists
-// as soon as the journal opens, so a transition can still take it after the
-// directory has become unwritable.
-func TestOpenJournalCreatesLockFileBesidePath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "journal.json")
-	if _, err := OpenJournal(path); err != nil {
-		t.Fatalf("OpenJournal: %v", err)
+// TestJournalLockFileCreatedLazilyBesidePath verifies opening never touches
+// the directory (an absent data dir must not refuse boot) and that the flock
+// sibling appears beside the journal path on the first transition.
+func TestJournalLockFileCreatedLazilyBesidePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent", "journal.json")
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatalf("OpenJournal on an absent directory must succeed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("opening must not create the journal directory: %v", err)
+	}
+	if _, err := j.Begin(crossProcessEffect("acme/widgets#6", "feature-f"), 1, "spoke-a", time.Now()); err != nil {
+		t.Fatalf("Begin: %v", err)
 	}
 	if _, err := os.Stat(path + journalLockFileSuffix); err != nil {
-		t.Fatalf("lock file must exist beside the journal path: %v", err)
+		t.Fatalf("lock file must exist beside the journal path after the first transition: %v", err)
 	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("opening an empty journal must not create the journal file itself: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("journal file must exist after the first transition: %v", err)
 	}
 }
 

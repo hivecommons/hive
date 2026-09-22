@@ -207,23 +207,15 @@ type Journal struct {
 
 // OpenJournal loads the operation journal at path, creating an empty one when
 // the file does not exist; a corrupt file is a refusal that leaves the bytes
-// untouched for inspection. The cross-process lock file beside the path is
-// created here so a later transition can take it even when the directory has
-// since become unwritable.
+// untouched for inspection. Opening never touches the directory: the
+// cross-process lock file beside the path is created lazily by the first
+// transition, exactly like the claim ledger, so a missing or unwritable data
+// directory defers persistence rather than refusing boot.
 func OpenJournal(path string) (*Journal, error) {
 	j := &Journal{path: path, lockTimeout: DefaultJournalLockTimeout, ops: make(map[string]*Operation)}
 	if err := j.reloadLocked(); err != nil {
 		return nil, err
 	}
-	lockPath := path + journalLockFileSuffix
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o770); err != nil {
-		return nil, fmt.Errorf("creating mutation journal lock directory: %w", err)
-	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, journalFileMode)
-	if err != nil {
-		return nil, fmt.Errorf("creating mutation journal lock %s: %w", lockPath, err)
-	}
-	_ = f.Close()
 	return j, nil
 }
 
@@ -265,6 +257,9 @@ func (j *Journal) reloadLocked() error {
 // func releases the lock. Callers hold j.mu.
 func (j *Journal) lockAndRefreshLocked() (func(), error) {
 	lockPath := j.path + journalLockFileSuffix
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o770); err != nil {
+		return nil, fmt.Errorf("creating mutation journal lock directory: %w", err)
+	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, journalFileMode)
 	if err != nil {
 		return nil, fmt.Errorf("opening mutation journal lock %s: %w", lockPath, err)
