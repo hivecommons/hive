@@ -4068,6 +4068,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["onDemand"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.OnDemand = b
+			// An explicit operator choice; ApplyPack must not reconcile it
+			// back to the pack's value on the next restart.
+			agentCfg.OnDemandOwner = config.FieldOwnerOperator
 		}
 	}
 	if v, ok := body["displayName"]; ok {

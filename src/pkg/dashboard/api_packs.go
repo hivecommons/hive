@@ -222,6 +222,21 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				changed = true
 			}
 
+			// on_demand is a pack-behavior field like kick_template: it says
+			// whether the agent wakes on the governor's cadence at all. It was
+			// missing from this list, so a flag written by a PREVIOUS pack
+			// definition stuck forever — hives whose L5/L6 pack once shipped
+			// an on-demand reviewer kept it on-demand after the pack moved to
+			// the cadenced design (#8023): the new kick_template landed, and
+			// nothing ever kicked it. Reconciled while pack-owned; an operator
+			// who toggled it in the settings dialog (#7446) owns it from then.
+			prevOnDemand := existing.OnDemand
+			if existing.OnDemand != pa.OnDemand && !existing.OnDemandIsOperatorOwned() {
+				existing.OnDemand = pa.OnDemand
+				existing.OnDemandOwner = config.FieldOwnerPack
+				changed = true
+			}
+
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice.
@@ -236,6 +251,23 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				s.deps.Config.Agents[pa.Name] = existing
 				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
 				updated = append(updated, pa.Name)
+				// A flag flip is a statement about whether a process should
+				// EXIST (#7446): leaving on-demand starts the agent — nothing
+				// else will, it was skipped at launch for being on-demand —
+				// and becoming on-demand stops the one the governor will
+				// never kick again.
+				switch onDemandTransition(prevOnDemand, existing.OnDemand, existing.Enabled) {
+				case onDemandStart:
+					if err := s.deps.AgentMgr.Start(s.deps.Ctx, pa.Name); err != nil {
+						s.logger.Warn("could not start agent after pack took it off on-demand", "agent", pa.Name, "error", err)
+					} else {
+						s.logger.Info("started agent after pack took it off on-demand", "agent", pa.Name)
+					}
+				case onDemandStop:
+					if err := s.deps.AgentMgr.Stop(pa.Name); err != nil {
+						s.logger.Warn("could not stop agent after pack made it on-demand", "agent", pa.Name, "error", err)
+					}
+				}
 			} else {
 				skipped = append(skipped, pa.Name)
 			}

@@ -1183,9 +1183,19 @@ type AgentConfig struct {
 	// The shape this exists for is `mode: ADVISORY` + `converse: true` — an
 	// agent that can reply on a thread it was mentioned in but cannot file,
 	// edit or relabel anything.
-	Converse    *bool  `yaml:"converse,omitempty" json:"converse,omitempty"`
-	OnDemand    bool   `yaml:"on_demand" json:"on_demand,omitempty"`
-	CavemanMode string `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	Converse *bool `yaml:"converse,omitempty" json:"converse,omitempty"`
+	OnDemand bool  `yaml:"on_demand" json:"on_demand,omitempty"`
+	// OnDemandOwner records WHO last set OnDemand, with the same FieldOwner*
+	// vocabulary as ModelOwner. on_demand is a pack-behavior field — it says
+	// whether the agent wakes on the governor's cadence or only when something
+	// asks for it — so ApplyPack reconciles it to the current pack like
+	// kick_template and mode. Before it did, the flag written by a previous
+	// pack definition stuck forever: a hive whose L5/L6 pack once shipped an
+	// on-demand reviewer kept it on-demand after the pack moved to the cadenced
+	// design, so the new template was applied but never kicked. The operator's
+	// own toggle (#7446) stamps FieldOwnerOperator and is left alone.
+	OnDemandOwner string `yaml:"on_demand_owner,omitempty" json:"on_demand_owner,omitempty"`
+	CavemanMode   string `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 	// ExplainMode opts this agent into emitting EXPLAIN-prefixed reasoning
 	// lines alongside its tool calls, so an operator debugging "why did it do
 	// that" has something to read (#3887). Off by default because the
@@ -1530,6 +1540,13 @@ const (
 // agent's model, which makes it immune to pack reconciliation.
 func (a AgentConfig) ModelIsOperatorOwned() bool {
 	return a.ModelOwner == FieldOwnerOperator
+}
+
+// OnDemandIsOperatorOwned reports whether an operator explicitly set this
+// agent's on_demand flag from the settings dialog (#7446), which makes it
+// immune to pack reconciliation.
+func (a AgentConfig) OnDemandIsOperatorOwned() bool {
+	return a.OnDemandOwner == FieldOwnerOperator
 }
 
 // BackendIsOperatorOwned reports whether an operator explicitly chose this
