@@ -24,6 +24,7 @@ func TestParseKeyRoundTripsBothShapes(t *testing.T) {
 	for _, ref := range []Ref{
 		{Repo: "acme/repo", Number: 42, ExternalID: "42"},
 		{Repo: "acme/repo", ExternalID: "ENG-123"},
+		{SourceType: SourceTypeRun, Repo: "acme/repo", ExternalID: "run-123:spec"},
 	} {
 		key := ref.Key()
 		parsed, ok := ParseKey(key)
@@ -36,6 +37,24 @@ func TestParseKeyRoundTripsBothShapes(t *testing.T) {
 		if parsed.IsGitHubIssue() != ref.IsGitHubIssue() {
 			t.Errorf("round trip changed GitHub-backedness for %q", key)
 		}
+	}
+}
+
+func TestRunStageRefRoundTrip(t *testing.T) {
+	ref := Ref{SourceType: SourceTypeRun, Repo: "acme/repo", ExternalID: "run-123:plan"}
+	key := ref.Key()
+	if key != "acme/repo!run-123:plan" {
+		t.Fatalf("run key = %q", key)
+	}
+	parsed, ok := ParseKey(key)
+	if !ok {
+		t.Fatalf("ParseKey(%q) failed", key)
+	}
+	if !parsed.IsRunStage() {
+		t.Fatalf("parsed run stage not recognized: %+v", parsed)
+	}
+	if parsed.Key() != key {
+		t.Fatalf("round trip = %q", parsed.Key())
 	}
 }
 

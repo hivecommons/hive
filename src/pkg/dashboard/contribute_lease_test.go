@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -474,5 +476,71 @@ func TestAtMostOneAuthoritativeLease(t *testing.T) {
 	msg := hub.selectTask(second)
 	if msg != nil && msg.Type == "task_assign" {
 		t.Fatalf("two authoritative leases on the same issue: %s#%d handed out twice", msg.Repo, msg.Number)
+	}
+}
+
+// --- #8287: revocation is never blocked by disk state ------------------------
+
+// TestLeaseRevoke_SucceedsWhenRegistryUnwritable pins the asymmetry #8287
+// draws: a GRANT that cannot be persisted is refused, but a REVOKE that cannot
+// be persisted still stands, because leaving a stale grant live is the worse
+// outcome. With the lease directory read-only, revokeLease removes the
+// in-memory lease and the lease-TTL backstop still releases a wedged task —
+// the in-memory delete is what fences the released task right now, and the
+// next successful save carries it to disk.
+func TestLeaseRevoke_SucceedsWhenRegistryUnwritable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory modes do not stop root; cannot inject a write failure")
+	}
+	hub, _ := covK2Hub(t)
+	dir := filepath.Join(t.TempDir(), "ws-state")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("building leases directory: %v", err)
+	}
+	hub.persistTaskLedgers = true
+	hub.taskLeasesFile = filepath.Join(dir, "task-leases.json")
+
+	now := time.Now()
+	if err := hub.recordLease("c-direct", "t-direct", "myorg/repo1", 41, "contributor", 6, now); err != nil {
+		t.Fatalf("recording lease on a writable registry: %v", err)
+	}
+	if err := hub.recordLease("c-wedged", "t-wedged", "myorg/repo1", 42, "contributor", 7, now); err != nil {
+		t.Fatalf("recording lease on a writable registry: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("making leases directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// Direct revoke: the lease is gone in memory even though the save failed.
+	hub.revokeLease("c-direct", "t-direct")
+	if hub.lookupLease("c-direct", "t-direct", "myorg/repo1", 41, 6, now) != nil {
+		t.Fatal("#8287: revokeLease left the lease live because the registry could not be written")
+	}
+
+	// Lease-TTL backstop: the wedged task is still auto-released and its lease
+	// revoked; the unwritable registry blocks neither.
+	wedged := &ContributorConnection{
+		profile:        &ContributorProfile{GitHubUsername: "wedged", ContributorID: "c-wedged", TrustTier: "contributor"},
+		currentTask:    &WSTaskAssign{TaskID: "t-wedged", Repo: "myorg/repo1", Number: 42},
+		currentTaskGen: 7,
+		lastLeaseRenew: now.Add(-(wsTaskTimeout + time.Minute)),
+		lastPong:       now,
+	}
+	hub.mu.Lock()
+	hub.connections["conn-wedged"] = wedged
+	hub.mu.Unlock()
+
+	if released := hub.reclaimExpiredLeases(now); released != 1 {
+		t.Fatalf("#8287: expected the wedged task to be reclaimed despite the unwritable registry, got %d", released)
+	}
+	wedged.mu.Lock()
+	still := wedged.currentTask
+	wedged.mu.Unlock()
+	if still != nil {
+		t.Fatalf("#8287: currentTask not cleared on lease expiry: %+v", still)
+	}
+	if hub.lookupLease("c-wedged", "t-wedged", "myorg/repo1", 42, 7, now) != nil {
+		t.Fatal("#8287: the reclaimed task's lease is still re-adoptable")
 	}
 }

@@ -1,0 +1,39 @@
+{
+  "lane": "runs",
+  "kind": "stage_receipt",
+  "findings": [],
+  "prs_opened": [],
+  "beads_filed": [],
+  "summary": "stage completed with one artifact",
+  "stage_receipt": {
+    "schema_version": "stage-receipt/v1",
+    "work_key": "hivecommons/hive#8295",
+    "assignment_id": "assign-8295",
+    "generation": 7,
+    "stage": "implementation",
+    "contract_revision": "runs-contract/v1",
+    "execution_key": "hivecommons/hive#8295|assign-8295|7|implementation",
+    "engine": {
+      "name": "copilot",
+      "version": "cli-1.0.0"
+    },
+    "remote_run_id": "run-123",
+    "remote_incarnation": "attempt-1",
+    "input_revision": "0123456789abcdef0123456789abcdef01234567",
+    "output_digest": "b8fc098dc8c7e83e70d3c14179154d2805575b85adf7feabc26a531117aaeca7",
+    "result_class": "completed",
+    "started_at": "2026-09-22T17:00:00Z",
+    "ended_at": "2026-09-22T17:10:00Z",
+    "provenance": {
+      "check_run_ids": [101, 202],
+      "query": "ListCheckRunsForRef@0123456789abcdef0123456789abcdef01234567"
+    },
+    "artifacts": [
+      {
+        "repo": "hivecommons/hive",
+        "path": "runs/output.json",
+        "description": "normalized stage output"
+      }
+    ]
+  }
+}

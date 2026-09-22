@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-22 (v5.8.0)
+
+### Added
+
+- Run stages can now be appended to `governor.work_source` with `run_stages: true`, letting `spec`, `plan`, and `implement` work items enter the contributor queue without fabricating GitHub issues ([#8296](https://github.com/hivecommons/hive/issues/8296)).
+- Add the stage receipt agent report schema and validation contract for runs handoffs.
+
+### Fixed
+
+- A task lease that fails to persist is no longer handed out as if it were durable ([#8287](https://github.com/hivecommons/hive/issues/8287)). Previously `saveLeasesLocked` logged every write failure and returned nothing, so a contributor could be assigned work whose lease lived only in hub memory; on the next hub restart the grant was gone and the relay resumed against a hub with no record of it. The save now returns its error: an assignment whose lease cannot be written is refused with an explicit `task_unavailable` reason of `lease_persist_failed`, the claim is rolled back so the item is offerable again at once, and the refusal is recorded in the hub decision log. A failed renew persist keeps the in-memory lease (a live task is never revoked over disk state), and revocation still succeeds when the registry is unwritable, so the live registry and the on-disk file always agree about which grants exist (#8287).
+- The mutation operation journal now takes the same exclusive cross-process file lock as the claim ledger before every `Begin`, `RecordResult`, and `Reconcile`, reloading the on-disk snapshot under a `.lock` sibling before applying and persisting, so two processes sharing one journal can no longer overwrite each other's recorded external effects; a lock that cannot be taken within the bounded wait surfaces as `ErrJournalLocked` rather than a silent skip or a false success (#8288)
+
 ## 2026-09-22 (v5.7.1)
 
 ### Changed

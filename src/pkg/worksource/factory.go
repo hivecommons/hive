@@ -15,12 +15,13 @@ import (
 // When cfg.Type is "" or "github", returns a githubIssuesSource wrapping the
 // existing ghClient — no config change needed for existing hives.
 func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, ghOrg string, logger *slog.Logger) (WorkSource, error) {
+	var primary WorkSource
 	switch cfg.Type {
 	case "", "github":
-		return NewGitHubIssuesSource(ghClient), nil
+		primary = NewGitHubIssuesSource(ghClient)
 	case "github_projects":
 		c := cfg.GitHubProjects
-		return NewGitHubProjectsSource(GitHubProjectsConfig{
+		primary = NewGitHubProjectsSource(GitHubProjectsConfig{
 			Token:          ghToken,
 			Org:            coalesce(c.Org, ghOrg),
 			ProjectNumber:  c.ProjectNumber,
@@ -28,7 +29,7 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			PriorityField:  c.PriorityField,
 			IterationField: c.IterationField,
 			DefaultRepo:    c.DefaultRepo,
-		}), nil
+		})
 	case "linear":
 		c := cfg.Linear
 		if c.APIKey == "" {
@@ -71,20 +72,20 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 				return nil, fmt.Errorf("work_source.linear.assigned_only requires the Linear agent to be connected (no install found at %s)", linearagent.DefaultStorePath())
 			}
 		}
-		return NewLinearSource(LinearConfig{
+		primary = NewLinearSource(LinearConfig{
 			APIKey:     apiKey,
 			Teams:      teams,
 			HoldLabels: c.HoldLabels,
 			ViewerID:   viewerID,
 			Logger:     logger,
-		}, nil), nil
+		}, nil)
 	case "jira":
 		c := cfg.Jira
 		apiToken, err := resolveSecretRef("work_source.jira.api_token", c.APIToken)
 		if err != nil {
 			return nil, err
 		}
-		return NewJiraSource(JiraConfig{
+		primary = NewJiraSource(JiraConfig{
 			BaseURL:     c.BaseURL,
 			Email:       c.Email,
 			APIToken:    apiToken,
@@ -92,10 +93,14 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			JQL:         c.JQL,
 			Repo:        c.Repo,
 			HoldLabels:  c.HoldLabels,
-		}), nil
+		})
 	default:
 		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, or jira)", cfg.Type)
 	}
+	if cfg.RunStages {
+		return NewComposite(primary, NewRunStageSource(nil)), nil
+	}
+	return primary, nil
 }
 
 // secretRefPattern matches a credential written as a whole-value environment

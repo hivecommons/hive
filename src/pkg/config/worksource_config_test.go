@@ -48,6 +48,10 @@ func TestWorkSourceConfig_YAMLRoundTrip(t *testing.T) {
 				HoldLabels:  []string{"hold"},
 			},
 		}},
+		{"github with run stages", WorkSourceConfig{
+			Type:      "github",
+			RunStages: true,
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,6 +101,7 @@ func TestGovernorConfig_WorkSourceParsed(t *testing.T) {
 	src := `
 work_source:
   type: linear
+  run_stages: true
   linear:
     api_key: lin_key
     teams:
@@ -115,6 +120,9 @@ work_source:
 	}
 	if g.WorkSource.Type != "linear" {
 		t.Fatalf("Type = %q, want linear", g.WorkSource.Type)
+	}
+	if !g.WorkSource.RunStages {
+		t.Fatalf("RunStages = false, want true")
 	}
 	if g.WorkSource.Linear.APIKey != "lin_key" {
 		t.Errorf("APIKey = %q", g.WorkSource.Linear.APIKey)

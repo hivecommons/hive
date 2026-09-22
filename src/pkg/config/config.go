@@ -2140,6 +2140,9 @@ func (m GitHubMentionsConfig) Validate() error {
 type WorkSourceConfig struct {
 	// Type selects the work source: "" | "github" | "github_projects" | "linear" | "jira"
 	Type string `yaml:"type" json:"type"`
+	// RunStages appends pending long-running run stages as non-issue-shaped work
+	// items. Default false preserves byte-identical ListIssues output.
+	RunStages bool `yaml:"run_stages,omitempty" json:"run_stages,omitempty"`
 	// GitHubProjects configures the GitHub Projects v2 adapter.
 	GitHubProjects GitHubProjectsSourceConfig `yaml:"github_projects,omitempty" json:"github_projects,omitempty"`
 	// Linear configures the Linear GraphQL adapter.
@@ -2153,6 +2156,7 @@ type WorkSourceConfig struct {
 // decide whether the overlay carries an operator-set work source.
 func (w WorkSourceConfig) IsZero() bool {
 	return w.Type == "" &&
+		!w.RunStages &&
 		reflect.DeepEqual(w.GitHubProjects, GitHubProjectsSourceConfig{}) &&
 		reflect.DeepEqual(w.Linear, LinearSourceConfig{}) &&
 		reflect.DeepEqual(w.Jira, JiraSourceConfig{})

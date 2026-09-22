@@ -41,6 +41,12 @@ const (
 	// token_mint_failed so an operator reading the reason knows to fix the repo
 	// list rather than the App credential.
 	taskUnavailableRepoUnmintable = "repo_unmintable"
+	// taskUnavailableLeasePersistFailed: the assignment's server-issued lease
+	// could not be written to the lease registry on disk (#8287). The grant is
+	// refused rather than handed out, because a lease that exists only in memory
+	// is gone on the next restart — the contributor would resume against a hub
+	// with no record of it. The item goes back to the queue untouched.
+	taskUnavailableLeasePersistFailed = "lease_persist_failed"
 	// taskUnavailableTierDisabled: the contributor's TrustTier is listed in
 	// hub.disabled_tiers, so the operator has switched that tier off.
 	taskUnavailableTierDisabled = "tier_disabled"
@@ -1051,8 +1057,23 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// #5681: record the item's canonical key too, so the double-assignment guard can
 	// recognise the lease after a restart — including for external work, whose
 	// identity is Key rather than repo#number (#4245).
-	h.recordLeaseForKey(identityOf(c), taskID, chosen.repoFull, chosen.number,
-		chosen.ref.Key(), c.profile.TrustTier, gen, assignedAt)
+	// #8287: a grant whose lease did not reach disk is refused, not handed out.
+	// The claim is rolled back in full — the item is offerable again at once, no
+	// slot or lease records a task that never shipped — and the contributor gets
+	// an explicit lease_persist_failed instead of a task_assign the hub would
+	// have no record of after its next restart. No task-MCP lease token is
+	// minted for it either: that mint sits downstream of the task_assign.
+	if err := h.recordLeaseForKey(identityOf(c), taskID, chosen.repoFull, chosen.number,
+		chosen.ref.Key(), c.profile.TrustTier, gen, assignedAt); err != nil {
+		h.rollbackAssignment(c, taskID)
+		h.logger.Warn("[contribute-ws] refusing task: lease could not be persisted — "+
+			"the grant would not survive a hub restart; check the lease registry directory",
+			"username", identityOf(c), "task", taskID, "repo", chosen.repoFull,
+			"number", chosen.number, "reason", taskUnavailableLeasePersistFailed, "error", err)
+		h.recordDecision(decisionUsername(c), decisionRefused, taskID, chosen.repoFull, chosen.number,
+			"reason="+taskUnavailableLeasePersistFailed+": "+err.Error())
+		return h.taskUnavailable(taskUnavailableLeasePersistFailed)
+	}
 
 	// #2566: record this assignment against the identity's rolling hourly/daily
 	// windows so the next selectTask enforces tier_limits.max_per_hour /

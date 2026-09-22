@@ -473,3 +473,81 @@ func seedTwoIssues(s *Server, a, b int) {
 	}
 	s.statusMu.Unlock()
 }
+
+// --- 5. #8287: a failed save never leaves memory and disk disagreeing ----------
+
+// TestLeaseRestart_FailedThenSuccessfulSaveMatchesLive pins the invariant #8287
+// exists for: whatever a save's outcome, the live registry and the file agree.
+// One grant is refused because its save fails (the directory is read-only), the
+// next succeeds once the directory is writable again, and a hub restarted over
+// the file restores EXACTLY the live registry — the refused grant is absent from
+// both, the persisted one is present in both, and nothing else differs.
+func TestLeaseRestart_FailedThenSuccessfulSaveMatchesLive(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory modes do not stop root; cannot inject a write failure")
+	}
+	dir := filepath.Join(t.TempDir(), "ws-state")
+	path := filepath.Join(dir, "task-leases.json")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("building leases directory: %v", err)
+	}
+	now := time.Now()
+	hub1 := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+
+	// A save that fails: the grant is refused and withdrawn.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("making leases directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := hub1.recordLease("c-refused", "ct-refused", "myorg/repo1", 1, "contributor", 11, now); err == nil {
+		t.Fatal("#8287: the grant whose save failed was reported as issued")
+	}
+
+	// A save that succeeds: the grant is issued and durable.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("making leases directory writable: %v", err)
+	}
+	if err := hub1.recordLease("c-issued", "ct-issued", "myorg/repo1", 2, "contributor", 12, now); err != nil {
+		t.Fatalf("the grant whose save succeeded was refused: %v", err)
+	}
+
+	hub2 := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+	hub2.loadLeases()
+
+	hub1.leaseMu.Lock()
+	live := hub1.leases
+	hub1.leaseMu.Unlock()
+	hub2.leaseMu.Lock()
+	restored := hub2.leases
+	hub2.leaseMu.Unlock()
+
+	if len(restored) != len(live) {
+		t.Fatalf("#8287: restarted hub restored %d leases, live registry holds %d", len(restored), len(live))
+	}
+	for k, want := range live {
+		got, ok := restored[k]
+		if !ok || got == nil {
+			t.Errorf("#8287: live lease %s is missing after the restart", k)
+			continue
+		}
+		if got.identity != want.identity || got.taskID != want.taskID || got.repo != want.repo ||
+			got.number != want.number || got.key != want.key || got.tier != want.tier ||
+			got.gen != want.gen || !got.expiresAt.Equal(want.expiresAt) {
+			t.Errorf("#8287: restored lease %s = %+v, live = %+v", k, got, want)
+		}
+	}
+	if _, ok := restored[leaseKey("c-refused", "ct-refused")]; ok {
+		t.Error("#8287: the refused grant came back from disk")
+	}
+	if hub2.lookupLease("c-issued", "ct-issued", "myorg/repo1", 2, 12, now) == nil {
+		t.Error("the persisted grant is not re-adoptable after the restart")
+	}
+}

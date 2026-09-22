@@ -86,3 +86,48 @@ func TestToGitHubIssues_Empty(t *testing.T) {
 		t.Errorf("want empty non-nil slice, got %v", out)
 	}
 }
+
+func TestToGitHubIssuesSkipsRunStages(t *testing.T) {
+	out := ToGitHubIssues([]Issue{
+		{SourceType: SourceTypeRun, Repo: "acme/repo", ExternalID: "run-1:spec", Title: "spec: one"},
+		{SourceType: "linear", Repo: "acme/repo", ExternalID: "ENG-1", Title: "linear"},
+	})
+	if len(out) != 1 || out[0].ExternalID != "ENG-1" {
+		t.Fatalf("run stage went through GitHub bridge: %+v", out)
+	}
+}
+
+func TestListRunStages(t *testing.T) {
+	in := []Issue{
+		{SourceType: SourceTypeRun, Repo: "acme/repo", ExternalID: "run-1:spec", Title: "spec: one"},
+		{SourceType: "linear", Repo: "acme/repo", ExternalID: "ENG-1", Title: "linear"},
+	}
+	got := ListRunStages(in)
+	if len(got) != 1 || got[0].ExternalID != "run-1:spec" {
+		t.Fatalf("ListRunStages = %+v", got)
+	}
+}
+
+func TestRunStagesToGitHubIssues(t *testing.T) {
+	created := time.Now().Add(-time.Hour)
+	out := RunStagesToGitHubIssues([]Issue{{
+		SourceType: SourceTypeRun,
+		Repo:       "acme/repo",
+		ExternalID: "run-1:plan",
+		Title:      "plan: one",
+		Labels:     []string{"hive-run", "stage/plan"},
+		CreatedAt:  created,
+		DependsOn: []Dependency{{
+			Ref: Ref{SourceType: SourceTypeRun, Repo: "acme/repo", ExternalID: "run-1:spec"},
+		}},
+	}})
+	if len(out) != 1 {
+		t.Fatalf("len = %d, want 1", len(out))
+	}
+	if out[0].SourceType != SourceTypeRun || out[0].Number != 0 || out[0].DependsOn[0].Key != "acme/repo!run-1:spec" {
+		t.Fatalf("projected run stage = %+v", out[0])
+	}
+	if out[0].AgeMinutes <= 0 {
+		t.Fatalf("AgeMinutes = %d, want positive", out[0].AgeMinutes)
+	}
+}
