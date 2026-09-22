@@ -43,3 +43,43 @@ func TestFilterRelatedWorkCitationDoesNotPrefixMatch(t *testing.T) {
 		t.Fatalf("items = %#v, want no prefix citation match", data.Items)
 	}
 }
+
+func TestFilterHistoryRequiresRecentClosedAndSameThreadOrPath(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	merged := now.Add(-time.Hour)
+	old := now.Add(-72 * time.Hour)
+	items := FilterHistory(Scope{Repo: "owner/repo", Number: 10}, RelatedItem{Kind: "issue", Repo: "owner/repo", Number: 10, Files: []string{"a.go"}}, []RelatedItem{
+		{Kind: "pull_request", Repo: "owner/repo", Number: 11, State: "closed", MergedAt: &merged, Files: []string{"a.go"}, Data: ServedText{Title: "same file"}},
+		{Kind: "issue", Repo: "owner/repo", Number: 12, State: "closed", UpdatedAt: &merged, Data: ServedText{Body: "refs #10"}},
+		{Kind: "pull_request", Repo: "owner/repo", Number: 13, State: "closed", MergedAt: &old, Files: []string{"a.go"}},
+		{Kind: "pull_request", Repo: "owner/repo", Number: 14, State: "open", Files: []string{"a.go"}},
+		{Kind: "pull_request", Repo: "other/repo", Number: 15, State: "closed", MergedAt: &merged, Files: []string{"a.go"}},
+		{Kind: "pull_request", Repo: "owner/repo", Number: 16, State: "closed", UpdatedAt: &merged, Files: []string{"a.go"}},
+		{Kind: "pull_request", Repo: "owner/repo", Number: 17, State: "closed", MergedAt: &old, UpdatedAt: &merged, Files: []string{"a.go"}},
+	}, 24*time.Hour, now, 10)
+	if len(items) != 2 {
+		t.Fatalf("history = %#v", items)
+	}
+	for _, item := range items {
+		if len(item.Reasons) == 0 || item.Repo != "owner/repo" {
+			t.Fatalf("bad history item: %#v", item)
+		}
+	}
+}
+
+func TestFilterHistoryCapsAndDefaults(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	merged := now.Add(-time.Hour)
+	candidates := make([]RelatedItem, DefaultTaskMCPHistoryLimit+2)
+	for i := range candidates {
+		candidates[i] = RelatedItem{Kind: "pull_request", Repo: "owner/repo", Number: i + 2, State: "closed", MergedAt: &merged, Files: []string{"a.go"}}
+	}
+	items := FilterHistory(Scope{Repo: "owner/repo", Number: 1}, RelatedItem{Repo: "owner/repo", Number: 1, Files: []string{"a.go"}}, candidates, 24*time.Hour, now, 0)
+	if len(items) != DefaultTaskMCPHistoryLimit {
+		t.Fatalf("history len = %d", len(items))
+	}
+	items = FilterHistory(Scope{Repo: "owner/repo", Number: 1}, RelatedItem{Repo: "owner/repo", Number: 1, Files: []string{"a.go"}}, candidates, 24*time.Hour, now, DefaultTaskMCPHistoryLimit+2)
+	if len(items) != DefaultTaskMCPHistoryLimit+2 {
+		t.Fatalf("configured history len = %d", len(items))
+	}
+}

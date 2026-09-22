@@ -12,13 +12,21 @@ import (
 )
 
 type fakeProvider struct {
-	scope      Scope
-	items      []RelatedItem
-	checks     []CheckHealth
-	scopeErr   error
-	contextErr error
-	relatedErr error
-	ciErr      error
+	scope        Scope
+	items        []RelatedItem
+	checks       []CheckHealth
+	conventions  []RepoConvention
+	deps         DependenciesData
+	history      []RelatedItem
+	knowledge    []KnowledgeItem
+	scopeErr     error
+	contextErr   error
+	relatedErr   error
+	ciErr        error
+	convErr      error
+	depErr       error
+	historyErr   error
+	knowledgeErr error
 }
 
 func (f fakeProvider) Scope(r *http.Request, args map[string]any) (Scope, error) {
@@ -54,6 +62,38 @@ func (f fakeProvider) CIHealth(_ context.Context, _ Scope, p PageRequest) (CIHea
 	data, info := PaginateChecks(f.checks, p)
 	return data, info, nil
 }
+func (f fakeProvider) RepoConventions(_ context.Context, s Scope, p PageRequest) (RepoConventionsData, PageInfo, error) {
+	if f.convErr != nil {
+		return RepoConventionsData{}, PageInfo{}, f.convErr
+	}
+	items, info := PaginateConventions(f.conventions, p)
+	source := "human"
+	if len(items) == 0 {
+		source = "none"
+	}
+	return RepoConventionsData{Repo: s.Repo, Source: source, Conventions: items}, info, nil
+}
+func (f fakeProvider) Dependencies(_ context.Context, _ Scope, p PageRequest) (DependenciesData, PageInfo, error) {
+	if f.depErr != nil {
+		return DependenciesData{}, PageInfo{}, f.depErr
+	}
+	data, info := PaginateDependencies(f.deps, p)
+	return data, info, nil
+}
+func (f fakeProvider) History(_ context.Context, _ Scope, p PageRequest) (HistoryData, PageInfo, error) {
+	if f.historyErr != nil {
+		return HistoryData{}, PageInfo{}, f.historyErr
+	}
+	data, info := PaginateHistory(f.history, p)
+	return data, info, nil
+}
+func (f fakeProvider) Knowledge(_ context.Context, _ Scope, _ string, p PageRequest) (KnowledgeData, PageInfo, error) {
+	if f.knowledgeErr != nil {
+		return KnowledgeData{}, PageInfo{}, f.knowledgeErr
+	}
+	data, info := PaginateKnowledge(f.knowledge, p)
+	return data, info, nil
+}
 
 func TestHandlerProtocolMethods(t *testing.T) {
 	h := NewHandler(fakeProvider{})
@@ -70,7 +110,7 @@ func TestHandlerProtocolMethods(t *testing.T) {
 		}},
 		{"tools list", `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, func(t *testing.T, resp rpcResponse) {
 			tools := asSlice(t, asMap(t, resp.Result)["tools"])
-			if len(tools) != 4 {
+			if len(tools) != 8 {
 				t.Fatalf("tools = %#v", tools)
 			}
 		}},
@@ -216,6 +256,45 @@ func TestContextBundleComposesEmptySlots(t *testing.T) {
 	}
 }
 
+func TestPhase3ToolCallsAreCappedAndDataScoped(t *testing.T) {
+	fp := fakeProvider{scope: Scope{TaskID: "t1", Repo: "owner/repo", Number: 7}}
+	for i := 0; i < MaxPageSize+2; i++ {
+		fp.conventions = append(fp.conventions, RepoConvention{Slug: fmt.Sprintf("c%d", i), Source: "human", Data: ServedText{Title: "conv", Body: "text"}})
+		fp.history = append(fp.history, RelatedItem{Kind: "pull_request", Repo: "owner/repo", Number: i + 10, Data: ServedText{Title: "hist", Body: "text"}})
+		fp.knowledge = append(fp.knowledge, KnowledgeItem{Repo: "owner/repo", Slug: fmt.Sprintf("k%d", i), Data: ServedText{Title: "know", Body: "text"}})
+		fp.deps.BlockedBy = append(fp.deps.BlockedBy, DependencyNode{ID: fmt.Sprintf("b%d", i), Title: "blocker"})
+	}
+	h := NewHandler(fp)
+	for _, tc := range []struct{ tool, key string }{{ToolRepoConventions, "conventions"}, {ToolDependencies, "blocked_by"}, {ToolHistory, "items"}, {ToolKnowledge, "items"}} {
+		t.Run(tc.tool, func(t *testing.T) {
+			body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":{"repo":"owner/repo","limit":99,"query":"text"}}}`, tc.tool)
+			env := resultEnvelope(t, serveRPC(t, h, body))
+			data := asMap(t, env["data"])
+			if got := len(asSlice(t, data[tc.key])); got != MaxPageSize {
+				t.Fatalf("%s len = %d", tc.key, got)
+			}
+			if asMap(t, env["page"])["more"] != true {
+				t.Fatalf("page = %#v", env["page"])
+			}
+			if strings.Contains(fmt.Sprint(env), "instructions") {
+				t.Fatalf("served text leaked outside data-shaped payload: %#v", env)
+			}
+		})
+	}
+}
+
+func TestContextBundleIncludeOptInPhase3(t *testing.T) {
+	h := NewHandler(fakeProvider{scope: Scope{TaskID: "t1", Repo: "owner/repo", Number: 7}, conventions: []RepoConvention{{Source: "human", Data: ServedText{Title: "conv"}}}, knowledge: []KnowledgeItem{{Repo: "owner/repo", Data: ServedText{Title: "know"}}}})
+	env := resultEnvelope(t, serveRPC(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"context_bundle","arguments":{"repo":"owner/repo","include":["task_context","repo_conventions","knowledge"],"query":"know"}}}`))
+	data := asMap(t, env["data"])
+	if data["related_work"] != nil || data["ci_health"] != nil {
+		t.Fatalf("default-only slots should be omitted when include is explicit: %#v", data)
+	}
+	if asMap(t, data["repo_conventions"])["conventions"] == nil || asMap(t, data["knowledge"])["items"] == nil {
+		t.Fatalf("phase3 slots missing: %#v", data)
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -230,6 +309,16 @@ func TestErrorMapping(t *testing.T) {
 		{"context generic", fakeProvider{contextErr: errors.New("boom")}, "task_context", -32000},
 		{"related generic", fakeProvider{relatedErr: errors.New("boom")}, "related_work", -32000},
 		{"ci generic", fakeProvider{ciErr: errors.New("boom")}, "ci_health", -32000},
+		{"conventions generic", fakeProvider{convErr: errors.New("boom")}, "repo_conventions", -32000},
+		{"dependencies generic", fakeProvider{depErr: errors.New("boom")}, "dependencies", -32000},
+		{"history generic", fakeProvider{historyErr: errors.New("boom")}, "history", -32000},
+		{"knowledge generic", fakeProvider{knowledgeErr: errors.New("boom")}, "knowledge", -32000},
+		{"bundle phase3 forbidden", fakeProvider{convErr: ErrForbidden}, "context_bundle", -32003},
+		{"bundle related generic", fakeProvider{relatedErr: errors.New("boom")}, "context_bundle", -32000},
+		{"bundle ci generic", fakeProvider{ciErr: errors.New("boom")}, "context_bundle", -32000},
+		{"bundle deps generic", fakeProvider{depErr: errors.New("boom")}, "context_bundle", -32000},
+		{"bundle history generic", fakeProvider{historyErr: errors.New("boom")}, "context_bundle", -32000},
+		{"bundle knowledge generic", fakeProvider{knowledgeErr: errors.New("boom")}, "context_bundle", -32000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var h *Handler
@@ -238,11 +327,43 @@ func TestErrorMapping(t *testing.T) {
 			} else {
 				h = NewHandler(tc.p)
 			}
-			resp := serveRPC(t, h, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":{}}}`, tc.tool))
+			args := `{}`
+			if strings.HasPrefix(tc.name, "bundle ") {
+				args = `{"include":["repo_conventions"]}`
+			}
+			if tc.name == "bundle related generic" {
+				args = `{"include":["related_work"]}`
+			}
+			if tc.name == "bundle ci generic" {
+				args = `{"include":["ci_health"]}`
+			}
+			if tc.name == "bundle deps generic" {
+				args = `{"include":["dependencies"]}`
+			}
+			if tc.name == "bundle history generic" {
+				args = `{"include":["history"]}`
+			}
+			if tc.name == "bundle knowledge generic" {
+				args = `{"include":["knowledge"]}`
+			}
+			resp := serveRPC(t, h, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tc.tool, args))
 			if resp.Error == nil || resp.Error.Code != tc.code {
 				t.Fatalf("error = %#v, want %d", resp.Error, tc.code)
 			}
+
 		})
+	}
+}
+
+func TestRefusalError(t *testing.T) {
+	base := errors.New("denied")
+	err := RefusalError{Data: RefusalData{Reason: "outside"}, Err: base}
+	if err.Error() != "denied" || !errors.Is(err, base) {
+		t.Fatalf("wrapped refusal = %v", err)
+	}
+	err = RefusalError{Data: RefusalData{Reason: "outside"}}
+	if err.Error() != "outside" || err.Unwrap() != nil {
+		t.Fatalf("data refusal = %v unwrap=%v", err, err.Unwrap())
 	}
 }
 
@@ -260,6 +381,33 @@ func TestHelpers(t *testing.T) {
 	}
 	if cursorIndex("bad") != 0 || cursorIndex("-1") != 0 || cursorIndex("3") != 3 {
 		t.Fatalf("cursorIndex failed")
+	}
+	if queryFromArgs(nil) != "" || queryFromArgs(map[string]any{"query": "  q  "}) != "q" {
+		t.Fatalf("queryFromArgs failed")
+	}
+	inc := includeSet(map[string]any{"include": "task_context,knowledge,bogus"})
+	if !inc[ToolTaskContext] || !inc[ToolKnowledge] || inc[ToolRelatedWork] {
+		t.Fatalf("includeSet string = %#v", inc)
+	}
+	inc = includeSet(map[string]any{"include": []any{ToolDependencies, 7}})
+	if !inc[ToolDependencies] || inc[ToolTaskContext] {
+		t.Fatalf("includeSet slice = %#v", inc)
+	}
+	if got := combinePages(2, PageInfo{Limit: 2, More: true, NextCursor: "2"}); !got.More || got.NextCursor != "2" || got.Limit != 2 {
+		t.Fatalf("combinePages = %#v", got)
+	}
+}
+
+func TestPhase3PaginationEmptyAndCursorPastEnd(t *testing.T) {
+	if items, page := PaginateConventions(nil, PageRequest{Limit: 2, Cursor: "9"}); len(items) != 0 || page.More {
+		t.Fatalf("conventions=%#v page=%#v", items, page)
+	}
+	if data, page := PaginateKnowledge(nil, PageRequest{Limit: 2}); len(data.Items) != 0 || page.More {
+		t.Fatalf("knowledge=%#v page=%#v", data, page)
+	}
+	deps, page := PaginateDependencies(DependenciesData{BlockedBy: []DependencyNode{{ID: "a"}, {ID: "b"}}, Blocks: []DependencyNode{{ID: "c"}}}, PageRequest{Limit: 2, Cursor: "1"})
+	if len(deps.BlockedBy) != 1 || len(deps.Blocks) != 1 || page.More {
+		t.Fatalf("deps=%#v page=%#v", deps, page)
 	}
 }
 

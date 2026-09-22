@@ -202,6 +202,7 @@ const (
 	FactIntegration FactType = "integration"
 	FactCoverage    FactType = "coverage_rule"
 	FactReference   FactType = "reference"
+	FactConventions FactType = "conventions"
 
 	// Ideation fact types (L1 — project inception)
 	FactIdea         FactType = "idea"

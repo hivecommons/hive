@@ -97,6 +97,7 @@ func (g *GitSource) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("git source %s: index failed: %w", g.config.Name, err)
 	}
+	g.injectRepoConventions(store)
 
 	g.mu.Lock()
 	g.store = store
@@ -153,8 +154,54 @@ func (g *GitSource) Sync(ctx context.Context) error {
 
 	if store != nil {
 		store.Reindex()
+		g.injectRepoConventions(store)
 	}
 	return nil
+}
+
+func (g *GitSource) injectRepoConventions(store *FileStore) {
+	if store == nil {
+		return
+	}
+	repo := repoNameFromGitSource(g.config)
+	if repo == "" {
+		return
+	}
+	store.InjectDerivedRepoConventions(repo, derivedConventionsBody(g.cloneDir))
+}
+
+func repoNameFromGitSource(cfg GitSourceConfig) string {
+	if cfg.Name != "" && strings.Count(cfg.Name, "/") == 1 {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cfg.Name), ".git"))
+	}
+	u, err := url.Parse(cfg.URL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(u.Path, ".git"), "/"), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.ToLower(parts[len(parts)-2] + "/" + parts[len(parts)-1])
+}
+
+func derivedConventionsBody(repoDir string) string {
+	var b strings.Builder
+	for _, name := range []string{"AGENTS.md", ".github/CODEOWNERS", "CODEOWNERS"} {
+		data, err := os.ReadFile(filepath.Join(repoDir, name))
+		if err != nil {
+			continue
+		}
+		text := strings.TrimSpace(string(data))
+		if text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s", name, text)
+	}
+	return b.String()
 }
 
 // StartSyncLoop runs periodic git pull + reindex until ctx is cancelled.

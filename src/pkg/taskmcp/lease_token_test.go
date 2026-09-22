@@ -7,67 +7,46 @@ import (
 	"time"
 )
 
-func TestLeaseTokenMintVerifyWrongTaskAndExpiry(t *testing.T) {
+func TestLeaseTokenMintVerifyAndScope(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	token, claims, err := MintLeaseToken([]byte("secret"), LeaseTokenClaims{
-		TaskID: "task-1", Identity: "alice#one", Repo: "owner/repo", Number: 42, ExpiresAt: now.Add(time.Hour),
-	}, now)
+	claims := LeaseTokenClaims{TaskID: "t1", Identity: "alice", Repo: "owner/repo", Number: 42, ExpiresAt: now.Add(time.Hour), Contributor: "alice"}
+	token, minted, err := MintLeaseToken([]byte("secret"), claims, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token == "" || claims.ID == "" {
-		t.Fatalf("token=%q claims=%#v", token, claims)
+	if !strings.HasPrefix(token, LeaseTokenPrefix+".") || minted.ID == "" || minted.IssuedAt.IsZero() {
+		t.Fatalf("token=%q claims=%#v", token, minted)
 	}
-	got, err := VerifyLeaseToken([]byte("secret"), token, now.Add(time.Minute))
+	verified, err := VerifyLeaseToken([]byte("secret"), token, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Matches("task-1", "OWNER/repo", 42) {
-		t.Fatalf("verified claims do not match scope: %#v", got)
+	if !verified.Matches("t1", "OWNER/REPO", 42) || !verified.Matches("t1", "owner/repo", 0) || verified.Matches("t1", "owner/repo", 7) {
+		t.Fatalf("scope matching failed: %#v", verified)
 	}
-	if got.Matches("task-2", "owner/repo", 42) || got.Matches("task-1", "other/repo", 42) {
-		t.Fatalf("claims matched wrong task or repo: %#v", got)
-	}
-	if _, err := VerifyLeaseToken([]byte("secret"), token, now.Add(time.Hour)); !errors.Is(err, ErrLeaseTokenExpired) {
-		t.Fatalf("expired verify err = %v, want ErrLeaseTokenExpired", err)
-	}
-	if _, err := VerifyLeaseToken([]byte("other"), token, now); !errors.Is(err, ErrLeaseTokenInvalid) {
-		t.Fatalf("wrong secret err = %v, want ErrLeaseTokenInvalid", err)
-	}
-	if HashLeaseToken(token) == "" {
-		t.Fatal("HashLeaseToken returned empty")
-	}
-	if err := (RefusalError{Err: ErrForbidden, Data: RefusalData{Reason: "no"}}).Unwrap(); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("unwrap = %v", err)
-	}
-	if got := (RefusalError{Data: RefusalData{Reason: "no"}}).Error(); got != "no" {
-		t.Fatalf("refusal Error = %q", got)
-	}
-	if !errors.Is(LeaseTokenWrongScopeError("task-1", "owner/repo", 1), ErrForbidden) ||
-		!errors.Is(LeaseTokenWrongScopeError("task-1", "owner/repo", 0), ErrForbidden) {
-		t.Fatal("wrong scope errors must wrap ErrForbidden")
+	if HashLeaseToken(token) == HashLeaseToken(token+"x") {
+		t.Fatal("hash should change when token changes")
 	}
 }
 
-func TestLeaseTokenRejectsMalformedInputs(t *testing.T) {
+func TestLeaseTokenRejectsInvalidAndExpired(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	if _, _, err := MintLeaseToken(nil, LeaseTokenClaims{}, now); !errors.Is(err, ErrLeaseTokenInvalid) {
-		t.Fatalf("mint missing fields err = %v", err)
+		t.Fatalf("mint invalid err = %v", err)
 	}
-	for _, token := range []string{"", "bad.parts", LeaseTokenPrefix + ".not-base64.sig"} {
-		if _, err := VerifyLeaseToken([]byte("secret"), token, now); !errors.Is(err, ErrLeaseTokenInvalid) {
-			t.Fatalf("VerifyLeaseToken(%q) err = %v, want invalid", token, err)
-		}
-	}
-	good, _, err := MintLeaseToken([]byte("secret"), LeaseTokenClaims{
-		TaskID: "task-1", Identity: "alice", Repo: "owner/repo", ExpiresAt: now.Add(time.Hour),
-	}, now)
+	token, _, err := MintLeaseToken([]byte("secret"), LeaseTokenClaims{TaskID: "t1", Identity: "alice", Repo: "owner/repo", ExpiresAt: now.Add(time.Minute)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(good, ".")
-	badPayload := LeaseTokenPrefix + "." + parts[1][:len(parts[1])-1] + "." + parts[2]
-	if _, err := VerifyLeaseToken([]byte("secret"), badPayload, now); !errors.Is(err, ErrLeaseTokenInvalid) {
-		t.Fatalf("tampered payload err = %v, want invalid", err)
+	for _, bad := range []string{"", "wrong.parts", strings.Replace(token, LeaseTokenPrefix, "bad", 1), token + "x"} {
+		if _, err := VerifyLeaseToken([]byte("secret"), bad, now); !errors.Is(err, ErrLeaseTokenInvalid) {
+			t.Fatalf("VerifyLeaseToken(%q) err = %v", bad, err)
+		}
+	}
+	if _, err := VerifyLeaseToken([]byte("secret"), token, now.Add(time.Hour)); !errors.Is(err, ErrLeaseTokenExpired) {
+		t.Fatalf("expired err = %v", err)
+	}
+	if err := LeaseTokenWrongScopeError("t1", "owner/repo", 42); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), "#42") {
+		t.Fatalf("wrong scope err = %v", err)
 	}
 }

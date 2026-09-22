@@ -4289,6 +4289,12 @@ type HubConfig struct {
 	// TaskMCPRelatedWorkRecencyDays bounds how far back task MCP related_work()
 	// includes merged/closed work when serving cache-only context.
 	TaskMCPRelatedWorkRecencyDays int `yaml:"task_mcp_related_work_recency_days,omitempty" json:"task_mcp_related_work_recency_days,omitempty"`
+	// TaskMCPHistoryLimit bounds cached history() rows before pagination.
+	TaskMCPHistoryLimit int `yaml:"task_mcp_history_limit,omitempty" json:"task_mcp_history_limit,omitempty"`
+	// TaskMCPKnowledgeLimit bounds cached knowledge() results before pagination.
+	TaskMCPKnowledgeLimit int `yaml:"task_mcp_knowledge_limit,omitempty" json:"task_mcp_knowledge_limit,omitempty"`
+	// TaskMCPDependenciesLimit bounds dependency graph rows before pagination.
+	TaskMCPDependenciesLimit int `yaml:"task_mcp_dependencies_limit,omitempty" json:"task_mcp_dependencies_limit,omitempty"`
 	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
 	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
 	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
@@ -4401,6 +4407,9 @@ const (
 	// DefaultTaskMCPRelatedWorkRecencyDays is the cache-only related_work()
 	// recency window when hive.yaml does not override it.
 	DefaultTaskMCPRelatedWorkRecencyDays = 14
+	DefaultTaskMCPHistoryLimit           = 20
+	DefaultTaskMCPKnowledgeLimit         = 20
+	DefaultTaskMCPDependenciesLimit      = 20
 	// contributeCooldownDefaultHours is the with-PR completion cooldown used when
 	// ContributeCooldownHours is unset/0 — one week, matching the historical
 	// hardcoded default.
@@ -4435,6 +4444,27 @@ func (h HubConfig) TaskMCPRelatedWorkRecencyDaysOrDefault() int {
 		return h.TaskMCPRelatedWorkRecencyDays
 	}
 	return DefaultTaskMCPRelatedWorkRecencyDays
+}
+
+func (h HubConfig) TaskMCPHistoryLimitOrDefault() int {
+	if h.TaskMCPHistoryLimit > 0 {
+		return h.TaskMCPHistoryLimit
+	}
+	return DefaultTaskMCPHistoryLimit
+}
+
+func (h HubConfig) TaskMCPKnowledgeLimitOrDefault() int {
+	if h.TaskMCPKnowledgeLimit > 0 {
+		return h.TaskMCPKnowledgeLimit
+	}
+	return DefaultTaskMCPKnowledgeLimit
+}
+
+func (h HubConfig) TaskMCPDependenciesLimitOrDefault() int {
+	if h.TaskMCPDependenciesLimit > 0 {
+		return h.TaskMCPDependenciesLimit
+	}
+	return DefaultTaskMCPDependenciesLimit
 }
 
 const ContributeSkipLabelsEnvVar = "HIVE_CONTRIBUTE_SKIP_LABELS"

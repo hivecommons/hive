@@ -39,6 +39,56 @@ func FilterRelatedWork(scope Scope, current RelatedItem, candidates []RelatedIte
 	return PaginateRelated(out, page)
 }
 
+func FilterHistory(scope Scope, current RelatedItem, candidates []RelatedItem, recencyWindow time.Duration, now time.Time, limit int) []RelatedItem {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if limit <= 0 {
+		limit = DefaultTaskMCPHistoryLimit
+	}
+	var out []RelatedItem
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.Repo) == "" || !strings.EqualFold(candidate.Repo, scope.Repo) {
+			continue
+		}
+		if candidate.Number == scope.Number && strings.EqualFold(candidate.Kind, current.Kind) {
+			continue
+		}
+		relevant := overlaps(current.Files, candidate.Files) || citesIssue(candidate.Data.Title, scope) || citesIssue(candidate.Data.Body, scope)
+		if !isHistorical(candidate, recencyWindow, now) || !relevant {
+			continue
+		}
+		candidate.Reasons = mergeReasons(candidate.Reasons, historyReasons(scope, current, candidate, recencyWindow, now))
+		out = append(out, candidate)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		it, jt := relatedTime(out[i]), relatedTime(out[j])
+		if !it.Equal(jt) {
+			return it.After(jt)
+		}
+		return out[i].Number < out[j].Number
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func historyReasons(scope Scope, current, candidate RelatedItem, recencyWindow time.Duration, now time.Time) []string {
+	var reasons []string
+	if overlaps(current.Files, candidate.Files) {
+		reasons = append(reasons, "file_overlap")
+	}
+	if citesIssue(candidate.Data.Title, scope) || citesIssue(candidate.Data.Body, scope) {
+		reasons = append(reasons, "citation")
+	}
+	if isHistorical(candidate, recencyWindow, now) {
+		reasons = append(reasons, "recent_history")
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
 func relatedReasons(scope Scope, current, candidate RelatedItem, recencyWindow time.Duration, now time.Time) []string {
 	seen := map[string]bool{}
 	add := func(reason string) {
@@ -102,11 +152,28 @@ func overlaps(a, b []string) bool {
 	return false
 }
 
+func isHistorical(item RelatedItem, window time.Duration, now time.Time) bool {
+	if strings.EqualFold(item.Kind, "pull_request") {
+		return item.MergedAt != nil && withinWindow(*item.MergedAt, window, now)
+	}
+	if strings.EqualFold(item.State, "closed") {
+		return withinWindow(relatedTime(item), window, now)
+	}
+	return false
+}
+
 func recentlyMerged(item RelatedItem, window time.Duration, now time.Time) bool {
 	if item.MergedAt == nil || window <= 0 {
 		return false
 	}
-	age := now.Sub(*item.MergedAt)
+	return withinWindow(*item.MergedAt, window, now)
+}
+
+func withinWindow(t time.Time, window time.Duration, now time.Time) bool {
+	if t.IsZero() || window <= 0 {
+		return false
+	}
+	age := now.Sub(t)
 	return age >= 0 && age <= window
 }
 

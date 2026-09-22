@@ -541,3 +541,18 @@ func TestFileStore_ListPagesSnippetTruncation(t *testing.T) {
 		t.Errorf("body rune length = %d, expected truncation to ~200", len([]rune(pages[0].Body)))
 	}
 }
+
+func TestFileStoreInjectDerivedRepoConventionsRemovesStale(t *testing.T) {
+	fs, err := NewFileStore(t.TempDir(), "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.InjectDerivedRepoConventions("owner/repo", "rules")
+	if got := fs.ListPages("kind:conventions"); len(got) != 1 {
+		t.Fatalf("derived pages after inject = %d", len(got))
+	}
+	fs.InjectDerivedRepoConventions("owner/repo", "")
+	if got := fs.ListPages("kind:conventions"); len(got) != 0 {
+		t.Fatalf("derived pages after removal = %#v", got)
+	}
+}

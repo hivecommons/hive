@@ -770,8 +770,66 @@ func (k *KnowledgeAPI) VaultFact(slug string) (*Fact, error) {
 		if err == nil {
 			return fact, nil
 		}
+
 	}
 	return nil, fmt.Errorf("fact not found in any vault: %s", slug)
+}
+
+// FullFact resolves a previously listed/searched fact to its full body when the
+// backing store supports exact reads. List/search APIs may return snippets.
+func (k *KnowledgeAPI) FullFact(ctx context.Context, fact Fact) Fact {
+	if strings.TrimSpace(fact.Slug) == "" {
+		return fact
+	}
+	for _, v := range k.vaults {
+		if full, err := v.ReadPage(fact.Slug); err == nil {
+			mergeFullFact(&fact, full)
+			return fact
+		}
+	}
+	k.mu.RLock()
+	sources := append([]*GitSource(nil), k.gitSources...)
+	layers := append([]layerClient(nil), k.layers...)
+	k.mu.RUnlock()
+	for _, gs := range sources {
+		if !gs.Ready() || gs.Config().Layer != fact.Layer {
+			continue
+		}
+		if store := gs.Store(); store != nil {
+			if full, err := store.ReadPage(fact.Slug); err == nil {
+				mergeFullFact(&fact, full)
+				return fact
+			}
+		}
+	}
+	for _, lc := range layers {
+		if lc.layerType != fact.Layer {
+			continue
+		}
+		if page, err := lc.client.ReadPage(ctx, fact.Slug); err == nil {
+			fact.Title = page.Title
+			fact.Body = page.Body
+			fact.Type = FactType(page.Type)
+			fact.Confidence = page.Confidence
+			fact.Status = page.Status
+			fact.Tags = page.Tags
+			return fact
+		}
+	}
+	return fact
+}
+
+func mergeFullFact(dst *Fact, src *Fact) {
+	if src == nil {
+		return
+	}
+	dst.Title = src.Title
+	dst.Body = src.Body
+	dst.Type = src.Type
+	dst.Confidence = src.Confidence
+	dst.Status = src.Status
+	dst.Tags = src.Tags
+	dst.Related = src.Related
 }
 
 // Layers returns the configured layer types for the frontend.

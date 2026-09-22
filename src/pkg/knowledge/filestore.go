@@ -34,6 +34,7 @@ type FileStore struct {
 	name          string
 	mu            sync.RWMutex
 	pages         map[string]filePage
+	derivedPages  map[string]filePage
 	lastIndexed   time.Time
 	logger        *slog.Logger
 	prevPageCount int
@@ -68,6 +69,7 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 		rootDir:      rootDir,
 		name:         name,
 		pages:        make(map[string]filePage),
+		derivedPages: make(map[string]filePage),
 		logger:       logger,
 		embedCache:   embedder,
 		accessCounts: make(map[string]int),
@@ -200,6 +202,9 @@ func (s *FileStore) reindex() {
 	s.embedCache.Clear()
 	s.mu.Lock()
 	prevCount := s.prevPageCount
+	for slug, page := range s.derivedPages {
+		pages[slug] = page
+	}
 	s.pages = pages
 	s.lastIndexed = time.Now()
 	s.prevPageCount = len(pages)
@@ -215,6 +220,48 @@ func (s *FileStore) reindex() {
 	}
 
 	s.persistAccessCounts()
+}
+
+// InjectDerivedRepoConventions adds a cache-derived conventions fact to this
+// store. It is used by git-source indexing to surface AGENTS.md/CODEOWNERS
+// guidance without reading hive.yaml or calling the forge during MCP requests.
+func (s *FileStore) InjectDerivedRepoConventions(repo, body string) {
+	repo = strings.TrimSpace(repo)
+	body = strings.TrimSpace(body)
+	if repo == "" {
+		return
+	}
+	slug := derivedRepoConventionsSlug(repo)
+	if body == "" {
+		s.mu.Lock()
+		delete(s.derivedPages, slug)
+		delete(s.pages, slug)
+		s.mu.Unlock()
+		return
+	}
+	page := filePage{
+		Slug:       slug,
+		Title:      "Repository conventions for " + repo,
+		Body:       body,
+		Tags:       []string{"kind:conventions", "repo:" + strings.ToLower(repo), "source:derived"},
+		Confidence: defaultFactConfidence,
+		ModTime:    time.Now().UTC(),
+		Embedding:  s.embedCache.Embed("Repository conventions " + repo + " " + body),
+	}
+	s.mu.Lock()
+	if s.derivedPages == nil {
+		s.derivedPages = make(map[string]filePage)
+	}
+	s.derivedPages[slug] = page
+	if s.pages == nil {
+		s.pages = make(map[string]filePage)
+	}
+	s.pages[slug] = page
+	s.mu.Unlock()
+}
+
+func derivedRepoConventionsSlug(repo string) string {
+	return "derived/repo-conventions/" + strings.ToLower(strings.TrimSpace(repo))
 }
 
 func (s *FileStore) refreshIfStale() {
