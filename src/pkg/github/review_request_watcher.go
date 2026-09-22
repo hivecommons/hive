@@ -75,7 +75,10 @@ type ReviewResponse struct {
 	State    string `json:"state,omitempty"`
 	ThreadID string `json:"thread_id,omitempty"`
 	Error    string `json:"error,omitempty"`
-	At       string `json:"at"`
+	// Note explains a successful result that did less than asked — the
+	// per-head cap recording a verdict but suppressing its comment.
+	Note string `json:"note,omitempty"`
+	At   string `json:"at"`
 }
 
 // Review-thread states recorded in the audit detail (state=) for the two
@@ -310,13 +313,25 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Per-head backstop. Everything above depends on the agent doing the
 	// right thing; this does not. A head that already carries as many hive
 	// reviews as it can legitimately receive (one in combined mode, one per
-	// perspective otherwise) gets no further top-level review from an agent
-	// unless it is revising its own (--revise) or replying in a thread. This
-	// is the guard that would have stopped 21 reviews landing on one head of
-	// actions#548 in a day whatever the reviewer's prompt said.
+	// perspective otherwise) gets no further top-level review comment from
+	// an agent unless it is revising its own (--revise) or replying in a
+	// thread. This is the guard that would have stopped 21 reviews landing
+	// on one head of actions#548 in a day whatever the reviewer's prompt said.
+	//
+	// The COMMENT is what is suppressed, not the judgement. The verdict is
+	// still recorded (it may be the dispatch lane's, binding this head's
+	// pending entries); dropping it with the comment would leave the PR
+	// pending forever with nothing left to post. The result is ok:true with
+	// state record_verdict and a note, so the agent's own loop is done.
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
-			c.denyReviewRequest(path, req, reason, nowFn)
+			c.recordReviewVerdict(req, "")
+			c.writeReviewResult(path, ReviewResponse{OK: true, Number: req.Number, State: ReviewEventRecordVerdict, Note: "comment suppressed: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
+			_ = os.Remove(path)
+			c.reviewRetries.clear(path)
+			c.logger.Warn("review-request watcher: comment suppressed by per-head cap, verdict recorded",
+				slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+				slog.Int("number", req.Number), slog.String("reason", reason))
 			return
 		}
 	}

@@ -476,14 +476,14 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 	}
 
 	path, resp := submit("looks correct to me, again")
-	if resp.OK || posts != 1 {
-		t.Fatalf("second review on the same head must be denied without posting: %+v posts=%d", resp, posts)
+	if !resp.OK || resp.State != ReviewEventRecordVerdict || posts != 1 {
+		t.Fatalf("second review on the same head must record the verdict but post nothing: %+v posts=%d", resp, posts)
 	}
-	if !strings.Contains(resp.Error, "already carries 1 hive review") || !strings.Contains(resp.Error, "--revise") {
-		t.Fatalf("denial must explain the cap and the way out: %q", resp.Error)
+	if !strings.Contains(resp.Note, "already carries 1 hive review") || !strings.Contains(resp.Note, "--revise") {
+		t.Fatalf("note must explain the cap and the way out: %q", resp.Note)
 	}
-	if _, err := os.Stat(path + ".denied"); err != nil {
-		t.Fatalf("denied request must be quarantined, not retried: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("suppressed request must be consumed, not retried: %v", err)
 	}
 
 	head = "bbbbbbb000000000000000000000000000000000"
