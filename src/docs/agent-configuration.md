@@ -152,6 +152,11 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     include_repos: true          # append the project repo list to each kick (default true).
                                  #   Prompt text only — it authorizes repos, it does
                                  #   NOT clone, mount, or provision anything on disk.
+    task_mcp:
+      drop_stuffed_context: false # default false. When the hub gives this agent a
+                                  #   task MCP URL, render ISSUE_LIST/PR_LIST and
+                                  #   MERGE_ELIGIBLE as repo#N refs only and rely on
+                                  #   context_bundle / related_work for full context.
     repos: [console]             # WHICH repos this agent serves. Omit (the default) for
                                  #   the whole hive. Naming repos makes the agent a
                                  #   specialist: it is only handed work on these, its

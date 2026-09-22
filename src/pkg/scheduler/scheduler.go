@@ -425,8 +425,9 @@ func (s *Scheduler) describeTemplateFallback(baseName string) string {
 
 // substituteTemplateWithPolicy replaces ${VAR} placeholders in a prompt
 // template, reporting whether any substituted value tripped fail-closed policy.
-func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) (string, bool) {
-	return s.substituteTemplateWithVars(template, actionable, agentName, issues, nil)
+func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, elideOpt ...bool) (string, bool) {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
+	return s.substituteTemplateWithVars(template, actionable, agentName, issues, nil, elideStuffed)
 }
 
 func (s *Scheduler) formatIssueList(issues []github.Issue) string {
@@ -456,12 +457,23 @@ func (s *Scheduler) issueFilterNotice() string {
 }
 
 func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
+	return s.formatIssueListWithPolicyForAgent(issues, false)
+}
+
+func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, refsOnly bool) (string, bool) {
 	notice := s.issueFilterNotice()
 	if len(issues) == 0 {
 		return notice + "(none)", false
 	}
 	var b strings.Builder
 	b.WriteString(notice)
+	if refsOnly {
+		shown := fairShareByRepo(issues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+		for _, issue := range shown {
+			b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
+		}
+		return b.String(), false
+	}
 	b.WriteString(issuePriorityNote)
 	failClosed := false
 	shown := fairShareByRepo(issues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
@@ -507,7 +519,7 @@ func (s *Scheduler) formatPRList(actionable *github.ActionableResult) string {
 }
 
 func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) (string, bool) {
-	return s.formatPRListWithPolicyForAgent(actionable, "")
+	return s.formatPRListWithPolicyForAgent(actionable, "", false)
 }
 
 // forkAnnotation is the inline marker every PR list carries for a PR whose
@@ -570,26 +582,17 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		if repo != "" {
 			targetIssues = filterIssuesByRepo(classifiedIssues, repo)
 		}
-		msg := s.BuildAgentMessage(agentName, targetIssues, targetActionable)
+		elideStuffed := s.dropStuffedContext(agentName)
+		msg := s.buildAgentMessage(agentName, targetIssues, targetActionable, elideStuffed)
 		if msg != "" {
-			includeRepos := true
-			if agentCfg, ok := s.cfg.Agents[agentName]; ok {
-				includeRepos = agentCfg.ShouldIncludeRepos()
-			} else if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
-				includeRepos = agentCfg.ShouldIncludeRepos()
-			} else if s.cfg.BaseAgentName(agentName) == "outreach" {
-				includeRepos = false
+			msg = s.finalizeKickMessage(agentName, repo, msg)
+			if elideStuffed && s.logger != nil {
+				fullMsg := s.buildAgentMessage(agentName, targetIssues, targetActionable, false)
+				if fullMsg != "" {
+					fullMsg = s.finalizeKickMessage(agentName, repo, fullMsg)
+					s.logger.Info("task MCP stuffed context elided", "agent", agentName, "full_bytes", len(fullMsg), "elided_bytes", len(msg))
+				}
 			}
-			if repo != "" {
-				msg = fmt.Sprintf("REPO-SCOPED CADENCE TARGET: %s\n\n%s", repo, msg)
-			}
-			if includeRepos {
-				// Built per agent, not once for the fleet: a repo-scoped agent
-				// must be told its own AUTHORIZED REPOS, or the one section
-				// every agent sees would name repos it cannot write to (#6204).
-				msg += "\n" + s.buildReposSectionFor(agentName)
-			}
-			msg = s.addCanaryPreamble(agentName, msg)
 			messages = append(messages, KickMessage{
 				Agent:     agentName,
 				Repo:      repo,
@@ -599,6 +602,27 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		}
 	}
 	return messages
+}
+
+func (s *Scheduler) finalizeKickMessage(agentName, repo, msg string) string {
+	includeRepos := true
+	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
+		includeRepos = agentCfg.ShouldIncludeRepos()
+	} else if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
+		includeRepos = agentCfg.ShouldIncludeRepos()
+	} else if s.cfg.BaseAgentName(agentName) == "outreach" {
+		includeRepos = false
+	}
+	if repo != "" {
+		msg = fmt.Sprintf("REPO-SCOPED CADENCE TARGET: %s\n\n%s", repo, msg)
+	}
+	if includeRepos {
+		// Built per agent, not once for the fleet: a repo-scoped agent
+		// must be told its own AUTHORIZED REPOS, or the one section
+		// every agent sees would name repos it cannot write to (#6204).
+		msg += "\n" + s.buildReposSectionFor(agentName)
+	}
+	return s.addCanaryPreamble(agentName, msg)
 }
 
 func actionableForRepo(actionable *github.ActionableResult, repo string) *github.ActionableResult {
@@ -847,6 +871,10 @@ const (
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
 func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) (message string) {
+	return s.buildAgentMessage(agentName, issues, actionable, s.dropStuffedContext(agentName))
+}
+
+func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult, elideStuffed bool) (message string) {
 	// Hold-gated PRs are deliberately absent from actionable.PRs: fetchPRs moves
 	// them into actionable.Hold as soon as it sees the hold label. Wrap every
 	// resolution path here so config templates, repo-sourced prompts, embedded
@@ -876,7 +904,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// policy maps onto Linear (identity, auth, filing, PR linking, hold).
 		// Same seam, same reason — a customized template cannot omit it.
 		message = s.addWorkTrackerSection(message)
-		message = s.addTaskMCPPointer(message)
+		message = s.addTaskMCPPointer(message, elideStuffed)
 		// Items a live session already holds were dropped from the list
 		// above; say so at the same seam so a customized template cannot
 		// leave the agent wondering where its delegated issue went.
@@ -904,7 +932,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 
 			if res := resolver.Resolve(context.Background(), src); res.Ok && res.Body != "" {
 				s.logger.Info("using GitHub-sourced kick prompt", "agent", agentName, "source", res.Source)
-				body, failClosed := s.substituteTemplateWithPolicy(res.Body, actionable, agentName, issues)
+				body, failClosed := s.substituteTemplateWithPolicy(res.Body, actionable, agentName, issues, elideStuffed)
 				if failClosed {
 					return ""
 				}
@@ -918,7 +946,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		template, source, tried := s.resolveNamedTemplate(agentCfg.KickTemplate)
 		if template != "" {
 			s.logger.Info("using config kick_template", "agent", agentName, "template", agentCfg.KickTemplate, "source", source)
-			body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+			body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 			if failClosed {
 				return ""
 			}
@@ -941,7 +969,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 				if pa.Name == baseName && pa.KickTemplate != "" {
 					if template := s.loadNamedTemplate(pa.KickTemplate); template != "" {
 						s.logger.Info("using ACMM pack template", "agent", agentName, "level", *s.cfg.ACMMLevel, "template", pa.KickTemplate)
-						body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+						body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 						if failClosed {
 							return ""
 						}
@@ -955,7 +983,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	// 3. Convention: look for <agent>.md template file
 	if template := s.loadPromptTemplate(baseName); template != "" {
 		s.logger.Info("using prompt template for kick", "agent", agentName)
-		body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+		body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 		if failClosed {
 			return ""
 		}
@@ -974,29 +1002,45 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	}
 	switch baseName {
 	case "scanner":
-		return s.buildScannerMessage(issues, actionable)
+		return s.buildScannerMessage(issues, actionable, elideStuffed)
 	case "ci-maintainer":
 		return s.buildCIMaintainerMessage(actionable)
 	case "supervisor":
 		return s.buildSupervisorMessage(actionable)
 	case "quality":
-		return s.buildQualityMessage(issues, actionable)
+		return s.buildQualityMessage(issues, actionable, elideStuffed)
 	case "architect":
-		return s.buildArchitectMessage(issues, actionable)
+		return s.buildArchitectMessage(issues, actionable, elideStuffed)
 	case "outreach":
 		return s.buildOutreachMessage(actionable)
 	case "sec-check":
 		return s.buildSecCheckMessage(actionable)
 	default:
-		return s.buildGenericMessage(agentName, issues, actionable)
+		return s.buildGenericMessage(agentName, issues, actionable, elideStuffed)
 	}
 }
 
-func (s *Scheduler) addTaskMCPPointer(message string) string {
+func (s *Scheduler) dropStuffedContext(agentName string) bool {
+	if !s.hasTaskMCPURL() {
+		return false
+	}
+	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
+		return agentCfg.TaskMCP != nil && agentCfg.TaskMCP.DropStuffedContext
+	}
+	if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
+		return agentCfg.TaskMCP != nil && agentCfg.TaskMCP.DropStuffedContext
+	}
+	return false
+}
+
+func (s *Scheduler) addTaskMCPPointer(message string, elideStuffed bool) string {
 	if message == "" || !s.hasTaskMCPURL() {
 		return message
 	}
 	section := "## Task context MCP\n\nThe `hive-task` MCP server is connected for this launch. Call `context_bundle` first for the assigned task, related work, and CI summary instead of re-reading the issue/PR and CI from scratch.\n\n"
+	if elideStuffed {
+		section = "## Task context MCP\n\nThe `hive-task` MCP server is connected for this launch. Call `context_bundle` first for the assigned task, related work, and CI summary instead of re-reading the issue/PR and CI from scratch.\n\nStuffed work lists in this prompt were elided to `repo#N` refs only; `context_bundle` and `related_work` are the source of truth for titles, labels, age, annotations, and related context.\n\n"
+	}
 	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
 		return message[:newline+1] + "\n" + section + message[newline+1:]
 	}
@@ -1480,7 +1524,8 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 	return strings.TrimSuffix(b.String(), "\n"), failClosed
 }
 
-func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *github.ActionableResult) string {
+func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *github.ActionableResult, elideOpt ...bool) string {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
 	var b strings.Builder
 
 	b.WriteString("[agent:scanner]\n")
@@ -1490,49 +1535,61 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	scannerIssues := issues
 
 	b.WriteString(fmt.Sprintf("ACTIONABLE ISSUES (%d, human/priority first):\n", len(scannerIssues)))
-	if len(scannerIssues) > 0 {
+	if elideStuffed {
+		shown := fairShareByRepo(scannerIssues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+		for _, issue := range shown {
+			b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
+		}
+	} else if len(scannerIssues) > 0 {
 		b.WriteString(issuePriorityNote)
-	}
-	shown := 0
-	for _, issue := range scannerIssues {
-		if shown >= s.issueCap() {
-			break
+		shown := 0
+		for _, issue := range scannerIssues {
+			if shown >= s.issueCap() {
+				break
+			}
+			tier := string(issue.ComplexityTier)
+			if len(tier) > 0 {
+				tier = tier[:1]
+			}
+			tracker := ""
+			if issue.IsTracker {
+				tracker = " [TRACKER]"
+			}
+			title := issue.Title
+			const maxTitleRunes = 60
+			if runes := []rune(title); len(runes) > maxTitleRunes {
+				title = string(runes[:maxTitleRunes])
+			}
+			b.WriteString(fmt.Sprintf("  %dm %s %s [%s/%s] [%s] %s%s\n",
+				issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
+				tier, issue.ModelRec,
+				strings.Join(issue.Labels, ","),
+				title, tracker))
+			shown++
 		}
-		tier := string(issue.ComplexityTier)
-		if len(tier) > 0 {
-			tier = tier[:1]
-		}
-		tracker := ""
-		if issue.IsTracker {
-			tracker = " [TRACKER]"
-		}
-		title := issue.Title
-		const maxTitleRunes = 60
-		if runes := []rune(title); len(runes) > maxTitleRunes {
-			title = string(runes[:maxTitleRunes])
-		}
-		b.WriteString(fmt.Sprintf("  %dm %s %s [%s/%s] [%s] %s%s\n",
-			issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
-			tier, issue.ModelRec,
-			strings.Join(issue.Labels, ","),
-			title, tracker))
-		shown++
 	}
 
 	b.WriteString(fmt.Sprintf("ACTIONABLE PRs (%d):\n", actionable.PRs.Count))
 	prLimit := s.prCap()
-	for i, pr := range actionable.PRs.Items {
-		if i >= prLimit {
-			b.WriteString(prListOverflowLine(len(actionable.PRs.Items)-i, prLimit))
-			break
+	if elideStuffed {
+		prRefs, _ := s.formatPRListWithPolicyForAgent(actionable, "scanner", true)
+		if prRefs != "(none)" {
+			b.WriteString(prRefs)
 		}
-		title := pr.Title
-		const maxPRTitleRunes = 70
-		if runes := []rune(title); len(runes) > maxPRTitleRunes {
-			title = string(runes[:maxPRTitleRunes])
+	} else {
+		for i, pr := range actionable.PRs.Items {
+			if i >= prLimit {
+				b.WriteString(prListOverflowLine(len(actionable.PRs.Items)-i, prLimit))
+				break
+			}
+			title := pr.Title
+			const maxPRTitleRunes = 70
+			if runes := []rune(title); len(runes) > maxPRTitleRunes {
+				title = string(runes[:maxPRTitleRunes])
+			}
+			annotation, _ := s.enforceIssueTextVerdict(prKickAnnotation(pr, "scanner"))
+			b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), annotation, title))
 		}
-		annotation, _ := s.enforceIssueTextVerdict(prKickAnnotation(pr, "scanner"))
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), annotation, title))
 	}
 
 	if actionable.Issues.SLAViolations > 0 {
@@ -1617,7 +1674,7 @@ var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 var ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func formatMergeEligibleData(data []byte, limit int) string {
-	return formatMergeEligibleDataFor(data, nil, limit)
+	return formatMergeEligibleDataFor(data, nil, limit, false)
 }
 
 // heldMarker annotates a red PR that is under hold. Held PRs entered this list
@@ -1734,7 +1791,8 @@ func (s *Scheduler) reposSection() string {
 	return b.String()
 }
 
-func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult, elideOpt ...bool) string {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
 	baseName := s.cfg.BaseAgentName(agentName)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[agent:%s]\n", agentName))
@@ -1743,9 +1801,16 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) > 0 {
 		b.WriteString(fmt.Sprintf("Work items (%d):\n", len(agentIssues)))
-		b.WriteString(issuePriorityNote)
-		for _, issue := range agentIssues {
-			b.WriteString(fmt.Sprintf("  %s %s %s\n", issueDisplayRef(issue), issuePriorityMarker(issue), issue.Title))
+		if elideStuffed {
+			shown := fairShareByRepo(agentIssues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+			for _, issue := range shown {
+				b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
+			}
+		} else {
+			b.WriteString(issuePriorityNote)
+			for _, issue := range agentIssues {
+				b.WriteString(fmt.Sprintf("  %s %s %s\n", issueDisplayRef(issue), issuePriorityMarker(issue), issue.Title))
+			}
 		}
 	}
 
@@ -1759,7 +1824,8 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 
 const defaultCoverageTargetPct = 91.0
 
-func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *github.ActionableResult) string {
+func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *github.ActionableResult, elideOpt ...bool) string {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
 	var b strings.Builder
 
 	b.WriteString("[agent:quality]\n")
@@ -1770,22 +1836,29 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 	qualityIssues := filterByLane(issues, "quality")
 	if len(qualityIssues) > 0 {
 		b.WriteString(fmt.Sprintf("\nTEST-RELATED ISSUES (%d):\n", len(qualityIssues)))
-		b.WriteString(issuePriorityNote)
-		shown := 0
-		for _, issue := range qualityIssues {
-			if shown >= s.issueCap() {
-				break
+		if elideStuffed {
+			shown := fairShareByRepo(qualityIssues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+			for _, issue := range shown {
+				b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
 			}
-			title := issue.Title
-			const maxTitleRunes = 60
-			if runes := []rune(title); len(runes) > maxTitleRunes {
-				title = string(runes[:maxTitleRunes])
+		} else {
+			b.WriteString(issuePriorityNote)
+			shown := 0
+			for _, issue := range qualityIssues {
+				if shown >= s.issueCap() {
+					break
+				}
+				title := issue.Title
+				const maxTitleRunes = 60
+				if runes := []rune(title); len(runes) > maxTitleRunes {
+					title = string(runes[:maxTitleRunes])
+				}
+				b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
+					issueDisplayRef(issue), issuePriorityMarker(issue),
+					strings.Join(issue.Labels, ","),
+					title))
+				shown++
 			}
-			b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
-				issueDisplayRef(issue), issuePriorityMarker(issue),
-				strings.Join(issue.Labels, ","),
-				title))
-			shown++
 		}
 	}
 
@@ -1819,7 +1892,8 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 	return b.String()
 }
 
-func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *github.ActionableResult) string {
+func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *github.ActionableResult, elideOpt ...bool) string {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
 	var b strings.Builder
 	b.WriteString("[agent:architect]\n")
 	b.WriteString("Full architect pass — refactor/perf scan across all repos.\n\n")
@@ -1829,22 +1903,29 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 	architectIssues := filterByLane(issues, "architect")
 	if len(architectIssues) > 0 {
 		b.WriteString(fmt.Sprintf("ARCHITECTURE-RELATED ISSUES (%d):\n", len(architectIssues)))
-		b.WriteString(issuePriorityNote)
-		shown := 0
-		for _, issue := range architectIssues {
-			if shown >= s.issueCap() {
-				break
+		if elideStuffed {
+			shown := fairShareByRepo(architectIssues, s.issueCap(), func(issue github.Issue) string { return issue.Repo })
+			for _, issue := range shown {
+				b.WriteString(fmt.Sprintf("  %s\n", issueDisplayRef(issue)))
 			}
-			title := issue.Title
-			const maxTitleRunes = 60
-			if runes := []rune(title); len(runes) > maxTitleRunes {
-				title = string(runes[:maxTitleRunes])
+		} else {
+			b.WriteString(issuePriorityNote)
+			shown := 0
+			for _, issue := range architectIssues {
+				if shown >= s.issueCap() {
+					break
+				}
+				title := issue.Title
+				const maxTitleRunes = 60
+				if runes := []rune(title); len(runes) > maxTitleRunes {
+					title = string(runes[:maxTitleRunes])
+				}
+				b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
+					issueDisplayRef(issue), issuePriorityMarker(issue),
+					strings.Join(issue.Labels, ","),
+					title))
+				shown++
 			}
-			b.WriteString(fmt.Sprintf("  %s %s [%s] %s\n",
-				issueDisplayRef(issue), issuePriorityMarker(issue),
-				strings.Join(issue.Labels, ","),
-				title))
-			shown++
 		}
 		b.WriteString("\n")
 	}
@@ -2308,7 +2389,8 @@ func (s *Scheduler) inceptionVars() (idea, phase, mode, answers, slug, repoURL s
 //
 // The built-ins still WIN on a name collision, so an extra var can never shadow
 // ${GH_AUTH} or ${AGENT_NAME}.
-func (s *Scheduler) substituteTemplateWithVars(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string) (string, bool) {
+func (s *Scheduler) substituteTemplateWithVars(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue, extra map[string]func() string, elideOpt ...bool) (string, bool) {
+	elideStuffed := len(elideOpt) > 0 && elideOpt[0]
 	baseName := s.cfg.BaseAgentName(agentName)
 	if actionable == nil {
 		actionable = &github.ActionableResult{}
@@ -2338,8 +2420,8 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		agentIssuesForList = filterByLane(issues, baseName)
 	}
 	agentIssuesForList, heldInflight := s.splitInflight(agentIssuesForList)
-	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
-	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName)
+	issueList, issueFailClosed := s.formatIssueListWithPolicyForAgent(agentIssuesForList, elideStuffed)
+	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName, elideStuffed)
 	if issueFailClosed || prFailClosed {
 		s.logger.Warn("ioscan fail-closed blocked kick", "agent", agentName)
 		return "", true
@@ -2403,7 +2485,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// files, so they need the same narrowing: a scoped agent asked to fix red CI
 	// must not be handed a red PR on a repo it cannot push to (#6204).
 	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
-	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope)
+	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope, elideStuffed)
 	ciFailingList := s.buildCIFailingListFor(repoInScope)
 
 	// The built-in per-kick variables. Each value is already computed above, so
@@ -2475,7 +2557,7 @@ func issuePriorityMarker(issue github.Issue) string {
 	return "[hive-filed]"
 }
 
-func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.ActionableResult, agentName string) (string, bool) {
+func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.ActionableResult, agentName string, refsOnly ...bool) (string, bool) {
 	if len(actionable.PRs.Items) == 0 {
 		return "(none)", false
 	}
@@ -2483,6 +2565,12 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	failClosed := false
 	limit := s.prCap()
 	shown := fairShareByRepo(actionable.PRs.Items, limit, func(pr github.PullRequest) string { return pr.Repo })
+	if len(refsOnly) > 0 && refsOnly[0] {
+		for _, pr := range shown {
+			b.WriteString(fmt.Sprintf("  %s#%d\n", pr.Repo, pr.Number))
+		}
+		return b.String(), false
+	}
 	verdicts := s.loadReviewVerdicts()
 	links := loadReviewLinks()
 	for _, pr := range shown {
@@ -2750,18 +2838,19 @@ Your workdir is, at most, a checkout of the primary repo — never of the others
 // buildMergeEligibleListFor renders the merge-eligible section of a kick,
 // narrowed to the repos the predicate accepts (#6204). A nil predicate keeps
 // everything, which is what an unscoped agent gets.
-func (s *Scheduler) buildMergeEligibleListFor(keep func(repo string) bool) string {
+func (s *Scheduler) buildMergeEligibleListFor(keep func(repo string) bool, refsOnly bool) string {
 	data, err := os.ReadFile(mergeEligiblePath)
 	if err != nil {
 		return "(none)\n"
 	}
-	return formatMergeEligibleDataFor(data, keep, s.prCap())
+	return formatMergeEligibleDataFor(data, keep, s.prCap(), refsOnly)
 }
 
 // formatMergeEligibleDataFor narrows to the repos keep accepts (#6204, nil =
 // all) and caps the rendered list at limit (governor.kick_limits.max_prs,
 // hivecommons/hive#7368; 0 = uncapped).
-func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit int) string {
+func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit int, refsOnly ...bool) string {
+	refsOnlyList := len(refsOnly) > 0 && refsOnly[0]
 	var payload struct {
 		Items []struct {
 			Number int    `json:"number"`
@@ -2780,7 +2869,9 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit 
 			continue
 		}
 		if limit > 0 && shown >= limit {
-			b.WriteString(prListOverflowLine(len(payload.Items)-i, limit))
+			if !refsOnlyList {
+				b.WriteString(prListOverflowLine(len(payload.Items)-i, limit))
+			}
 			break
 		}
 		shown++
@@ -2788,7 +2879,11 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit 
 		if pr.Queued {
 			queued = " [queued for auto-merge]"
 		}
-		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
+		if refsOnlyList {
+			b.WriteString(fmt.Sprintf("  %s#%d\n", pr.Repo, pr.Number))
+		} else {
+			b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
+		}
 	}
 	if b.Len() == 0 {
 		return "(none)\n"

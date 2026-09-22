@@ -139,6 +139,13 @@ type TaskMCPConfig struct {
 	LeaseRateLimitPerMinute int  `yaml:"lease_rate_limit_per_minute,omitempty" json:"lease_rate_limit_per_minute,omitempty"`
 }
 
+type AgentTaskMCPConfig struct {
+	// DropStuffedContext makes task-MCP-enabled kicks render stuffed work
+	// lists as refs only. Default false preserves existing prompts until an
+	// operator opts one lane in and verifies positive token delta.
+	DropStuffedContext bool `yaml:"drop_stuffed_context,omitempty" json:"drop_stuffed_context,omitempty"`
+}
+
 func (c TaskMCPConfig) LeaseRateLimitPerMinuteOrDefault() int {
 	if c.LeaseRateLimitPerMinute > 0 {
 		return c.LeaseRateLimitPerMinute
@@ -1155,14 +1162,15 @@ type AgentConfig struct {
 	Description     string `yaml:"description" json:"description,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
-	Role           string   `yaml:"role" json:"role,omitempty"`
-	SortOrder      int      `yaml:"sort_order" json:"sort_order,omitempty"`
-	Emoji          string   `yaml:"emoji" json:"emoji,omitempty"`
-	Color          string   `yaml:"color" json:"color,omitempty"`
-	Aliases        []string `yaml:"aliases" json:"aliases,omitempty"`
-	LaneKeywords   []string `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
-	DetectKeywords []string `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
-	KickTemplate   string   `yaml:"kick_template" json:"kick_template,omitempty"`
+	Role           string              `yaml:"role" json:"role,omitempty"`
+	SortOrder      int                 `yaml:"sort_order" json:"sort_order,omitempty"`
+	Emoji          string              `yaml:"emoji" json:"emoji,omitempty"`
+	Color          string              `yaml:"color" json:"color,omitempty"`
+	Aliases        []string            `yaml:"aliases" json:"aliases,omitempty"`
+	LaneKeywords   []string            `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
+	DetectKeywords []string            `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
+	KickTemplate   string              `yaml:"kick_template" json:"kick_template,omitempty"`
+	TaskMCP        *AgentTaskMCPConfig `yaml:"task_mcp,omitempty" json:"task_mcp,omitempty"`
 	// PromptSource, when set, sources the agent's kick prompt from a GitHub repo
 	// instead of (or in addition to) an inline KickTemplate. It is resolved live
 	// at kick time via the hive's GitHub App token, with graceful fallback to the

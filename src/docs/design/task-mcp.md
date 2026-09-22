@@ -55,6 +55,8 @@ Phase 3 keeps the same read-only, cache/state-only invariant: request handling d
 
 Phase 1 measures the token delta on `context_bundle()`, not on each individual tool. For one real lane over a week, record the assignment prompt tokens before the measured hub-launched kick-prompt pointer above and after replacing stuffed context with that pointer. Compare the median per-task prompt-token count and keep the lane, backend, model, and date range with the measurement so Phase 2 can judge whether remote-contributor wiring is worth the added lease-auth surface.
 
+The per-agent flag `agents.<name>.task_mcp.drop_stuffed_context: true` enables the replacement only when the hub supplies a task MCP URL. With the flag active, `${ISSUE_LIST}`, `${PR_LIST}`, and `${MERGE_ELIGIBLE}` keep their caps but render as `repo#N` refs only, and the pointer tells agents that `context_bundle` / `related_work` is the source of truth for titles, labels, age, annotations, and related context. Scheduler kick logs include `full_bytes` and `elided_bytes`; record the post-change week-long lane measurement in this section once one lane has run with the flag enabled.
+
 ### First live measurement (2026-09-22)
 
 Spoke `hive-hosted-hosted-kubestellar-console-4vkt` (kubestellar/console, 6 repos), image `edge` @ `ecba67e`, backend `copilot`. Kick prompts were read back from `GET /api/config/agent/{name}` (`prompt` = last kick) and the bundle from a live `tools/call context_bundle`. Bytes/4 is used as the token estimate.

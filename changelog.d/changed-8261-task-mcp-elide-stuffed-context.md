@@ -1,0 +1,1 @@
+- Add per-agent task MCP stuffed-context elision so opted-in hub kicks render ISSUE_LIST, PR_LIST, and MERGE_ELIGIBLE as repo#N refs with prompt byte delta logging.
