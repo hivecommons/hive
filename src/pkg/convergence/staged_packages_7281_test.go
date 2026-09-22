@@ -26,6 +26,7 @@ const stagedMarker = "deliberately not wired into any hive binary"
 // On v5, mutation and proof are wired through cmd/hive/mutationwire.go
 // (#6064), so only outcome remains staged here.
 var stagedConvergencePackages = []string{
+	"pkg/convergence/audit",
 	"pkg/convergence/outcome",
 }
 

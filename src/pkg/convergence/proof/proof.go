@@ -41,12 +41,20 @@ import (
 // receipts recorded under this one.
 const PredicateExactHeadGreen = "github.checks.exact-head-green/v1"
 
+// PredicateInspectionRecorded proves that a report-only audit inspection was
+// recorded for a pinned component scope without implying any publication.
+const PredicateInspectionRecorded = "hive.inspection.recorded/v1"
+
 // ProducerGitHubChecksAPI is the sole accepted producer authority for the
 // exact-head-green predicate: the GitHub Checks API of the subject repository.
 // Producer identity is explicit — another vendor's checks, or Hive's own
 // review harness, is NOT this producer, and multiplicity of producers is
 // never inferred to be independence.
 const ProducerGitHubChecksAPI = "github-checks-api"
+
+// ProducerHiveAuditLane is the accepted producer for report-only audit
+// inspection receipts.
+const ProducerHiveAuditLane = "hive-audit-lane"
 
 // keyFieldSeparator joins the load-bearing fingerprint fields into the
 // receipt key. "|" cannot appear in an outcome key ("project/repo@outcome"
@@ -120,6 +128,12 @@ type Fingerprint struct {
 	// Producer is the explicit producer authority; this vertical only ever
 	// writes ProducerGitHubChecksAPI.
 	Producer string `json:"producer"`
+	// InspectionBeadID binds the report-only inspection predicate to the bead
+	// that records the component inspection state.
+	InspectionBeadID string `json:"inspection_bead_id,omitempty"`
+	// ReceiptDigest binds the report-only inspection predicate to the emitted
+	// StageReceipt digest for the component.
+	ReceiptDigest string `json:"receipt_digest,omitempty"`
 }
 
 // Validate reports why a Fingerprint cannot serve as an immutable subject
@@ -132,11 +146,30 @@ func (f Fingerprint) Validate() error {
 	if strings.ContainsAny(f.OutcomeKey, keyFieldSeparator+" \t") {
 		return fmt.Errorf("outcome key %q may not contain %q or whitespace", f.OutcomeKey, keyFieldSeparator)
 	}
-	if f.PredicateID != PredicateExactHeadGreen {
-		return fmt.Errorf("predicate %q is not implemented by this vertical (only %s)", f.PredicateID, PredicateExactHeadGreen)
+	if f.PredicateID != PredicateExactHeadGreen && f.PredicateID != PredicateInspectionRecorded {
+		return fmt.Errorf("predicate %q is not implemented by this vertical (known: %s, %s)",
+			f.PredicateID, PredicateExactHeadGreen, PredicateInspectionRecorded)
 	}
 	if f.DesiredGeneration < 1 {
 		return fmt.Errorf("desired generation %d is impossible (generations start at 1)", f.DesiredGeneration)
+	}
+	if f.PredicateID == PredicateInspectionRecorded {
+		if f.InspectionBeadID == "" {
+			return fmt.Errorf("inspection predicate requires an inspection bead id")
+		}
+		if strings.ContainsAny(f.InspectionBeadID, keyFieldSeparator+" \t") {
+			return fmt.Errorf("inspection bead id %q may not contain %q or whitespace", f.InspectionBeadID, keyFieldSeparator)
+		}
+		if f.ReceiptDigest == "" {
+			return fmt.Errorf("inspection predicate requires a receipt digest")
+		}
+		if strings.ContainsAny(f.ReceiptDigest, keyFieldSeparator+" \t") {
+			return fmt.Errorf("receipt digest %q may not contain %q or whitespace", f.ReceiptDigest, keyFieldSeparator)
+		}
+		if f.Producer != ProducerHiveAuditLane {
+			return fmt.Errorf("producer %q is not the accepted authority %s", f.Producer, ProducerHiveAuditLane)
+		}
+		return nil
 	}
 	if f.Repo == "" || strings.Count(f.Repo, "/") != 1 || strings.ContainsAny(f.Repo, keyFieldSeparator+"@#! \t") {
 		return fmt.Errorf("repo %q is not a canonical owner/repo spelling", f.Repo)
@@ -172,8 +205,15 @@ func (f Fingerprint) Key() string {
 		return ""
 	}
 	return strings.Join([]string{
-		f.OutcomeKey, f.PredicateID, fmt.Sprintf("%d", f.DesiredGeneration), f.HeadSHA,
+		f.OutcomeKey, f.PredicateID, fmt.Sprintf("%d", f.DesiredGeneration), f.keySubject(),
 	}, keyFieldSeparator)
+}
+
+func (f Fingerprint) keySubject() string {
+	if f.PredicateID == PredicateInspectionRecorded {
+		return f.InspectionBeadID
+	}
+	return f.HeadSHA
 }
 
 // Provenance is the bounded replay handle: enough to re-issue the exact

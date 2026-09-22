@@ -69,6 +69,9 @@ func (f Fingerprint) DeclaredAssumptions() []Assumption {
 	if err := f.Validate(); err != nil {
 		return nil
 	}
+	if f.PredicateID == PredicateInspectionRecorded {
+		return nil
+	}
 	out := []Assumption{
 		{Name: AssumptionName(AssumptionBaseSHA, f.Repo), Value: f.BaseSHA},
 		{Name: AssumptionName(AssumptionCheckPolicy, f.Repo), Value: f.CheckPolicyID},

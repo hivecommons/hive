@@ -86,6 +86,7 @@ type Finding struct {
 	Title    string
 	Detail   string
 	Severity string
+	Files    []string
 }
 
 type AttemptReader interface {
@@ -256,7 +257,7 @@ func (l *Lane) ingestLesson(ctx context.Context, r RetroRecord, analysis *Analys
 }
 
 func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool {
-	if l.openDuplicate(f.Title) {
+	if l.openDuplicate(f.Title, f.Files) {
 		return false
 	}
 	b, err := l.advisoryStore.Create(f.Title, beads.TypeAdvisory, severityToPriority(f.Severity), Actor, r.PRRef)
@@ -275,6 +276,9 @@ func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool
 		metadataSourceIssue:     r.IssueRef,
 		metadataPattern:         f.Pattern,
 		metadataRecordWallClock: r.ClaimToClose.String(),
+	}
+	if len(f.Files) > 0 {
+		meta["file_set"] = strings.Join(normalizeDuplicateFiles(f.Files), ",")
 	}
 	if analysis != nil {
 		meta[metadataAnalysisRootCause] = analysis.RootCauseHypothesis
@@ -307,13 +311,56 @@ func advisoryNotes(f Finding, analysis *Analysis) string {
 	return b.String()
 }
 
-func (l *Lane) openDuplicate(title string) bool {
+func (l *Lane) openDuplicate(title string, files ...[]string) bool {
+	wantFiles := []string(nil)
+	if len(files) > 0 {
+		wantFiles = normalizeDuplicateFiles(files[0])
+	}
+	wantTitle := normalizeDuplicateTitle(title)
 	for _, b := range l.advisoryStore.List(beads.ListFilter{}) {
-		if b.Type == beads.TypeAdvisory && b.Title == title && b.Status != beads.StatusClosed && b.Status != beads.StatusDone {
+		if b.Type != beads.TypeAdvisory || b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+			continue
+		}
+		if len(wantFiles) == 0 {
+			if b.Title == title {
+				return true
+			}
+			continue
+		}
+		if normalizeDuplicateTitle(b.Title) == wantTitle && sameDuplicateFiles(wantFiles, splitDuplicateFiles(metaString(b, "file_set"))) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeDuplicateTitle(title string) string {
+	return strings.Join(strings.Fields(strings.ToLower(title)), " ")
+}
+
+func normalizeDuplicateFiles(files []string) []string {
+	out := append([]string(nil), files...)
+	sort.Strings(out)
+	return out
+}
+
+func splitDuplicateFiles(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return normalizeDuplicateFiles(strings.Split(raw, ","))
+}
+
+func sameDuplicateFiles(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func Reconstruct(b *beads.Bead, tl *timeline.Store, attempts AttemptReader) RetroRecord {
