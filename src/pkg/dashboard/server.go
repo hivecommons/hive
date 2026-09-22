@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -457,6 +458,14 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+	Inception      *FrontendInception      `json:"inception,omitempty"`
+}
+
+type FrontendInception struct {
+	Active    bool                     `json:"active"`
+	Phase     knowledge.InceptionPhase `json:"phase,omitempty"`
+	Questions []knowledge.Question     `json:"questions,omitempty"`
+	Answers   map[string]string        `json:"answers,omitempty"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.
@@ -1907,6 +1916,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		}
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
+	status.Inception = s.buildFrontendInception()
 	if s.contributeHub != nil {
 		// The paused lanes' own queues, so the count honours item tiers
 		// (RFC #7629 S7). Nil when no enumeration has run yet, which is only
@@ -2345,6 +2355,26 @@ func (s *Server) RefreshAgentSnapshot(payload *AgentStatusPayload) {
 	patched.HiddenAgents = payload.HiddenAgents
 	patched.ConfiguredAgents = payload.ConfiguredAgents
 	s.status = &patched
+}
+
+func (s *Server) buildFrontendInception() *FrontendInception {
+	if s.deps == nil || s.deps.Inception == nil {
+		return &FrontendInception{Active: false}
+	}
+	state := s.deps.Inception.GetState()
+	if state == nil {
+		return &FrontendInception{Active: false}
+	}
+	answers := make(map[string]string, len(state.Answers))
+	for k, v := range state.Answers {
+		answers[k] = v
+	}
+	return &FrontendInception{
+		Active:    true,
+		Phase:     state.Phase,
+		Questions: append([]knowledge.Question(nil), state.Questions...),
+		Answers:   answers,
+	}
 }
 
 // BroadcastAgentStatus sends a lightweight agent-only SSE event on a fast

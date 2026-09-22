@@ -94,6 +94,7 @@ not a unit test:
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
 | Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ |
+| Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
 

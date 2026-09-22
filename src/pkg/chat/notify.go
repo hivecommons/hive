@@ -16,9 +16,10 @@ const (
 )
 
 type statusSnapshot struct {
-	Agents   []agentSnapshot  `json:"agents"`
-	Governor governorSnapshot `json:"governor"`
-	Budget   budgetSnapshot   `json:"budget"`
+	Agents    []agentSnapshot   `json:"agents"`
+	Governor  governorSnapshot  `json:"governor"`
+	Budget    budgetSnapshot    `json:"budget"`
+	Inception inceptionSnapshot `json:"inception"`
 }
 
 type agentSnapshot struct {
@@ -88,6 +89,9 @@ func (s *Service) consumeSSE(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if s.dashboardToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.dashboardToken)
+	}
 
 	sseClient := &http.Client{Timeout: 0}
 	resp, err := sseClient.Do(req)
@@ -144,6 +148,7 @@ func (s *Service) onSSEEvent(snap *statusSnapshot) {
 
 	s.diffAgents(prev, snap)
 	s.diffGovernor(prev, snap)
+	s.diffInception(prev, snap)
 	s.updateTopic(snap)
 }
 

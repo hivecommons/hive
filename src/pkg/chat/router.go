@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 func (s *Service) registerBuiltinCommands() {
@@ -31,6 +33,7 @@ func (s *Service) registerBuiltinCommands() {
 	s.RegisterCommand("standby-clear", func(ctx context.Context, args string) (string, error) {
 		return s.cmdStandbyClear(ctx, args)
 	})
+	s.registerInceptionCommand()
 }
 
 func (s *Service) Deliver(ctx context.Context, msg Message) {
@@ -43,7 +46,15 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	}
 
 	content := strings.TrimSpace(msg.Text)
+	safeContent, verdict := ioscan.EnforceInput(content)
+	if verdict.Blocked {
+		s.logger.Warn("discord: ignoring message rejected by safety scanner",
+			"user_id", msg.AuthorID)
+		return
+	}
+	content = safeContent
 	if !strings.HasPrefix(content, "!") {
+		s.handlePendingInterviewReply(ctx, msg, content)
 		return
 	}
 
@@ -60,11 +71,13 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 			"user_id", msg.AuthorID, "content", content)
 		return
 	}
-	if _, ok := s.allowedUsers[msg.AuthorID]; !ok {
+	role, ok := s.allowedUsers[msg.AuthorID]
+	if !ok {
 		s.logger.Warn("discord: ignoring command from non-allowlisted user",
 			"user_id", msg.AuthorID, "content", content)
 		return
 	}
+	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
 
 	content = content[1:]
 

@@ -4150,12 +4150,6 @@ func dashboardChatAllowedUsers(cfg *config.Config) []string {
 	allowed := make([]string, 0, len(cfg.Dashboard.AuthorizedUsers))
 	for _, entry := range cfg.Dashboard.AuthorizedUsers {
 		user := strings.TrimSpace(entry)
-		if user == "" {
-			continue
-		}
-		if head, _, ok := strings.Cut(user, ":"); ok {
-			user = strings.TrimSpace(head)
-		}
 		if user != "" {
 			allowed = append(allowed, user)
 		}

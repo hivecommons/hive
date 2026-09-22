@@ -71,7 +71,7 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
 - Starting a new inception (`Start` / `StartBrownfield`) is rejected unless
   the previous run reached `complete`, or `force: true` is passed.
 
-## Operator workflow (dashboard)
+## Operator workflow (dashboard or chat spine)
 
 1. Open the Inception panel on the dashboard. With no active run, it shows a
    mode selector (idea text box for greenfield, repo URL box for
@@ -100,6 +100,18 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
 8. If anything goes wrong, `POST /api/inception/reset` clears the in-memory
    state and state file (but intentionally leaves prior wiki facts visible
    in the KB until a *new* inception writes fresh ones).
+
+The same interview can run through the chat spine, including the dashboard
+chat panel and external chat backends. Use `!inception start <idea>` for a
+greenfield run or `!inception scan <repo-url>` for brownfield. When the
+engine enters `clarify`, the spine posts the numbered question list; owner
+allowlisted users can answer with ordinary unprefixed replies, which are
+submitted to the next unanswered question. Explicit commands remain available:
+`!inception state`, `!inception answer <n> <text>`,
+`!inception facts <json-array-of-facts>`, `!inception approve`, and
+`!inception reset`. Owner-only actions still go through the existing
+`/api/inception/*` routes and owner gate; the dashboard form remains available
+as a fallback for this release.
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:

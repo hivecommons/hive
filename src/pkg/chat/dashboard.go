@@ -208,6 +208,9 @@ func (s *Service) dashboardGet(ctx context.Context, path string) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	if s.dashboardToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.dashboardToken)
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err

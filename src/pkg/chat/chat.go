@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -100,7 +103,7 @@ type Service struct {
 	backend           Backend
 	dashboardURL      string
 	dashboardToken    string
-	allowedUsers      map[string]struct{}
+	allowedUsers      map[string]string
 	commands          map[string]CommandHandler
 	agentNames        []string
 	mu                sync.RWMutex
@@ -112,9 +115,10 @@ type Service struct {
 	sseReconnectBase  time.Duration
 	sseReconnectMax   time.Duration
 
-	msgQueue  chan msgItem
-	lastState *statusSnapshot
-	lastTopic string
+	msgQueue          chan msgItem
+	lastState         *statusSnapshot
+	lastTopic         string
+	pendingInterviews map[pendingInterviewKey]*pendingInterview
 }
 
 type msgItem struct {
@@ -122,10 +126,11 @@ type msgItem struct {
 }
 
 func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
-	allowed := make(map[string]struct{}, len(cfg.AllowedUsers))
-	for _, id := range cfg.AllowedUsers {
-		if id = strings.TrimSpace(id); id != "" {
-			allowed[id] = struct{}{}
+	allowed := make(map[string]string, len(cfg.AllowedUsers))
+	for i, entry := range cfg.AllowedUsers {
+		id, role := parseAllowedUser(entry, i)
+		if id != "" {
+			allowed[id] = role
 		}
 	}
 	messageLimit := cfg.MessageLimit
@@ -156,7 +161,31 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		sseReconnectBase:  sseReconnectBase,
 		sseReconnectMax:   sseReconnectMax,
 		msgQueue:          make(chan msgItem, 100),
+		pendingInterviews: make(map[pendingInterviewKey]*pendingInterview),
 	}
+}
+
+func parseAllowedUser(entry string, index int) (string, string) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return "", ""
+	}
+	role := ""
+	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
+		head, tail := strings.TrimSpace(entry[:idx]), strings.TrimSpace(entry[idx+1:])
+		if config.ValidRole(tail) {
+			entry = head
+			role = strings.ToLower(tail)
+		}
+	}
+	if role == "" {
+		if index == 0 {
+			role = config.RoleOwner
+		} else {
+			role = config.RoleRead
+		}
+	}
+	return entry, role
 }
 
 func (s *Service) SetAgentNames(names []string) {
@@ -190,6 +219,7 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) enqueue(content string) {
+	content = logscrub.ScrubString(content)
 	select {
 	case s.msgQueue <- msgItem{content: content}:
 	default:
