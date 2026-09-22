@@ -3259,6 +3259,13 @@ metadata:
   namespace: {{.Namespace}}
 spec:
   replicas: 1
+  # Every :stable roll leaves a scaled-to-zero ReplicaSet behind; the apps/v1
+  # default keeps ten of them per spoke. Old ReplicaSets still carry the image
+  # reference they were created with, and a pod that gets stuck Pending under
+  # one of them keeps that (possibly retired) image visible to cluster security
+  # scanners (ACS flagged five hosted spokes on a pre-transfer image this way).
+  # Two revisions is enough for kubectl rollout undo.
+  revisionHistoryLimit: 2
   # Zero-downtime rollout: maxUnavailable=0 keeps the old pod serving until the
   # surge pod passes its readinessProbe, so the OpenShift router never sees zero
   # Ready endpoints (which renders as "Application is not available"). This
