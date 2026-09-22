@@ -1,0 +1,1 @@
+- Add dashboard run visibility with run cards, detail lookups, agent current-run badges, and blocked/stalled run health signals.

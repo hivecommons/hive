@@ -83,6 +83,22 @@ Top-level YAML keys accepted by `config.Config`:
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
 
+## Dashboard Runs section
+
+The dashboard's **Runs** section shows the active long-running run projection
+from `GET /api/runs` and the `/api/status` SSE stream. Each card names the run,
+current `spec → plan → implement` stage, who or what it is waiting on, how long
+it has been in that wait state, and any plan/receipt artifacts the run exposed.
+Owner users see inline **Approve** and **Reject** buttons for runs waiting on a
+human plan gate; non-owner users see the same state without mutation controls.
+
+Click **detail** on a run to fetch `GET /api/runs/{key}` and inspect the full
+stage/artifact chain plus matching audit or approval entries. Agent cards also
+show the current run held by that agent, and the Governor/Health surfaces call
+out runs blocked on a human or stalled beyond the default 60-minute wait
+threshold. If an older spoke omits the `runs` field entirely, the dashboard
+renders `runs: unknown` instead of substituting zero.
+
 ## App self-merge sweep (`auto_merge`)
 
 Three different mechanisms merge PRs automatically, and they share the word

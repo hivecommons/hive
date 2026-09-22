@@ -3266,6 +3266,7 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Control</div>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
+      <a class="oc-nav-item" data-section="runs-section" data-action="ocNavigate" data-arg0="runs-section"><span class="oc-nav-emoji">🏃</span><span class="oc-nav-text">Runs</span><span id="runs-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
@@ -3472,6 +3473,14 @@
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="governor" id="governor"></div>
+
+  <div id="runs-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="runs-section"><span class="section-chevron">▼</span> 🏃 Runs <span id="runs-summary-badge" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)"></span></h2>
+    <div class="section-body">
+      <div id="runs" class="repo-grid"></div>
+      <div id="run-detail" style="display:none;margin-top:12px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px"></div>
+    </div>
+  </div>
 
   <div id="advisory-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
     <h2 style="margin-bottom: 8px;" class="section-label section-group-header section-header-toggle" data-action="toggleSection" data-arg0="advisory-section"><span class="section-chevron">▼</span> 🧭 Hive Advisory</h2>
@@ -7334,6 +7343,7 @@
           <div class="agent-card-details">
           <div class="agent-field"><span class="label" title="${isInferenceBackendName(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${isInferenceBackendName(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
+          ${agentCurrentRunRow(a)}
           <div class="agent-field"><span class="label" title="Agent operating mode — controls what GitHub actions this agent can take (advisory, issues, PRs, merge).">mode</span><span class="value">${modeLabel(a)}${a.needsRestart ? ' <span class="status-badge needs-context" title="CLI flags are stale — restart agent to apply new mode">⚠ restart needed</span>' : ''}</span></div>
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
           <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : a.cadence}</span></div>
@@ -8012,7 +8022,193 @@
       }
     }
 
-    function renderHealth(health) {
+    const RUN_STALL_THRESHOLD_MS = 60 * 60 * 1000;
+
+    function dashboardRunsFromStatus(data) {
+      if (!data || !Object.prototype.hasOwnProperty.call(data, 'runs')) return null;
+      return Array.isArray(data.runs) ? data.runs : [];
+    }
+
+    function runDateMs(value) {
+      if (!value) return 0;
+      const ms = new Date(value).getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    }
+
+    function formatRunDurationSince(value) {
+      const ms = runDateMs(value);
+      if (!ms) return '—';
+      const age = Math.max(0, Date.now() - ms);
+      const mins = Math.floor(age / 60000);
+      if (mins < 1) return '<1m';
+      if (mins < 60) return mins + 'm';
+      const hours = Math.floor(mins / 60);
+      if (hours < 48) return hours + 'h ' + (mins % 60) + 'm';
+      return Math.floor(hours / 24) + 'd ' + (hours % 24) + 'h';
+    }
+
+    function runCurrentAge(run) {
+      return formatRunDurationSince(run.waiting_since || run.stage_started_at);
+    }
+
+    function runStageRail(run) {
+      const names = ['spec', 'plan', 'implement'];
+      const stages = Array.isArray(run.stages) ? run.stages : [];
+      return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + names.map(name => {
+        const st = stages.find(s => s && s.name === name) || {};
+        const lit = run.stage === name || st.status === 'current';
+        const done = st.status === 'completed' || st.status === 'observed';
+        const color = lit ? 'var(--green)' : done ? 'var(--blue)' : 'var(--muted)';
+        const bg = lit ? 'color-mix(in srgb, var(--green) 18%, transparent)' : 'transparent';
+        return `<span class="status-badge" style="border-color:${color};color:${color};background:${bg}" title="${escapeHtml(st.receipt || st.status || 'pending')}">${escapeHtml(name)}</span>`;
+      }).join('<span style="color:var(--muted)">→</span>') + '</div>';
+    }
+
+    function runArtifactLinks(run) {
+      const links = [];
+      if (run.plan_epic_id) links.push(`<a href="#plan=${encodeURIComponent(run.plan_epic_id)}" data-action="gh3" title="Open plan review">plan ${escapeHtml(run.plan_epic_id)}</a>`);
+      if (run.last_receipt) {
+        const receipt = String(run.last_receipt);
+        if (/^https?:\/\//.test(receipt)) links.push(`<a href="${escapeHtml(receipt)}" target="_blank" rel="noopener">receipt</a>`);
+        else links.push(`<span title="${escapeHtml(receipt)}">receipt ${escapeHtml(receipt.slice(0, 18))}${receipt.length > 18 ? '…' : ''}</span>`);
+      }
+      const observed = (Array.isArray(run.stages) ? run.stages : []).filter(s => s && s.receipt && s.receipt !== run.last_receipt).slice(0, 3);
+      for (const st of observed) links.push(`<span title="${escapeHtml(st.receipt)}">${escapeHtml(st.name || 'stage')} artifact</span>`);
+      return links.length ? links.join(' · ') : '<span style="color:var(--muted)">No artifacts yet</span>';
+    }
+
+    function runMatchesAgent(run, agent) {
+      const assignee = String(run.assignee || '').toLowerCase();
+      if (!assignee || !agent) return false;
+      return [agent.name, agent.id, agent.displayName].filter(Boolean).map(v => String(v).toLowerCase()).includes(assignee);
+    }
+
+    function currentRunForAgent(agent) {
+      const runs = Array.isArray(window._lastRuns) ? window._lastRuns : [];
+      return runs.find(run => runMatchesAgent(run, agent) && run.waiting_on !== 'none');
+    }
+
+    function agentCurrentRunRow(agent) {
+      const run = currentRunForAgent(agent);
+      if (!run) return '<div class="agent-field"><span class="label" title="Run lease currently held by this agent">current run</span><span class="value">—</span></div>';
+      const label = run.key || run.title || 'run';
+      return `<div class="agent-field"><span class="label" title="Run lease currently held by this agent">current run</span><span class="value"><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(run.key)}" style="padding:2px 8px;font-size:0.7rem" title="${escapeHtml(run.title || label)}">${escapeHtml(label)}</button> <span class="status-badge">${escapeHtml(run.stage || 'run')}</span></span></div>`;
+    }
+
+    function renderRuns(runs) {
+      const el = document.getElementById('runs');
+      const badge = document.getElementById('runs-summary-badge');
+      const sideBadge = document.getElementById('runs-sidebar-badge');
+      if (!el) return;
+      if (runs === null) {
+        setIfChanged(el, '<div class="loading">runs: unknown</div>');
+        if (badge) badge.textContent = 'unknown';
+        if (sideBadge) sideBadge.style.display = 'none';
+        return;
+      }
+      runs = Array.isArray(runs) ? runs : [];
+      const human = runs.filter(r => r && r.waiting_on === 'human').length;
+      if (badge) badge.textContent = runs.length + ' active' + (human ? ' · ' + human + ' blocked on human' : '');
+      if (sideBadge) { sideBadge.style.display = runs.length ? 'inline-flex' : 'none'; sideBadge.textContent = runs.length; }
+      if (!runs.length) {
+        setIfChanged(el, '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>');
+        return;
+      }
+      const canApprove = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const isFinishedRun = (run) => run && (run.outcome || run.status === 'finished' || run.waiting_on === 'none');
+      const activeRuns = runs.filter(run => !isFinishedRun(run));
+      const finishedRuns = runs.filter(isFinishedRun);
+      const cards = activeRuns.map(run => {
+        const key = run.key || '';
+        const waiting = run.waiting_on || 'unknown';
+        const waitCls = waiting === 'human' ? 'needs-context' : waiting === 'agent' ? 'done' : '';
+        const actions = canApprove && waiting === 'human' && run.plan_epic_id
+          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn" style="color:var(--green)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="approve">✓ Approve</button><button class="btn" style="color:var(--red)" data-action="runPlanAction" data-arg0="${escapeHtml(run.plan_epic_id)}" data-arg1="reject">✕ Reject</button></div>`
+          : '';
+        return `<div class="repo-card" style="min-width:260px">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+            <div><strong>${escapeHtml(run.title || key || 'run')}</strong><div style="color:var(--muted);font-size:0.75rem">${escapeHtml(key)}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div>
+            <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(key)}" style="font-size:0.7rem;padding:3px 8px">detail</button>
+          </div>
+          <div style="margin-top:10px">${runStageRail(run)}</div>
+          <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span class="status-badge ${waitCls}" title="Waiting on ${escapeHtml(waiting)}">waiting: ${escapeHtml(waiting)}</span>
+            <span class="status-badge" title="${escapeHtml(run.waiting_since || run.stage_started_at || '')}">age ${escapeHtml(runCurrentAge(run))}</span>
+            ${run.assignee ? `<span class="status-badge" title="Assignee">${escapeHtml(run.assignee)}</span>` : ''}
+          </div>
+          <div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">${runArtifactLinks(run)}</div>
+          ${actions}
+        </div>`;
+      }).join('');
+      const history = finishedRuns.length
+        ? `<details style="grid-column:1/-1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px"><summary style="cursor:pointer">Run history (${finishedRuns.length})</summary><div style="margin-top:8px">${finishedRuns.map(run => `<div style="font-size:0.8rem;padding:4px 0;border-top:1px solid var(--border)"><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(run.key || '')}" style="font-size:0.68rem;padding:2px 6px">detail</button> ${escapeHtml(run.key || run.title || 'run')} <span class="status-badge">${escapeHtml(run.outcome || run.status || 'finished')}</span></div>`).join('')}</div></details>`
+        : '';
+      setIfChanged(el, (cards || '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>') + history);
+    }
+
+    async function runPlanAction(epicID, action) {
+      if (!epicID || !['approve', 'reject'].includes(action)) return;
+      try {
+        const res = await fetch('/api/plan/' + encodeURIComponent(epicID) + '/' + action, { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(await res.text());
+        showToast(action === 'approve' ? 'Run plan approved.' : 'Run plan rejected.', 'success');
+        refreshStatus();
+      } catch (e) {
+        showToast('Run plan action failed: ' + (e && e.message ? e.message : e), 'error');
+      }
+    }
+    window.runPlanAction = runPlanAction;
+
+    async function openRunDetail(key) {
+      const panel = document.getElementById('run-detail');
+      if (!panel || !key) return;
+      panel.style.display = 'block';
+      panel.innerHTML = '<div class="loading">Loading run detail…</div>';
+      try {
+        const res = await fetch('/api/runs/' + encodeURIComponent(key), { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(await res.text());
+        const run = await res.json();
+        let auditRows = '';
+        try {
+          const auditRes = await fetch('/api/audit', { headers: _inceptionAuthHeaders() });
+          if (auditRes.ok) {
+            const audit = await auditRes.json();
+            const needle = String(key);
+            const epic = String(run.plan_epic_id || '');
+            auditRows = ((audit.entries || []).filter(e => {
+              const text = JSON.stringify(e || {});
+              return text.includes('run=' + needle) || text.includes(needle) || (epic && text.includes(epic));
+            }).slice(0, 8).map(e => `<div style="font-size:0.75rem;padding:4px 0;border-top:1px solid var(--border)"><strong>${escapeHtml(e.action || 'audit')}</strong> ${escapeHtml(e.actor || '')} <span style="color:var(--muted)">${escapeHtml(e.at || e.time || '')}</span><div style="color:var(--muted)">${escapeHtml(e.detail || e.message || '')}</div></div>`).join(''));
+          }
+        } catch (_) {}
+        const stages = (Array.isArray(run.stages) ? run.stages : []).map(st => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border)"><span>${escapeHtml(st.name || 'stage')} <span class="status-badge">${escapeHtml(st.status || '')}</span></span><span style="color:var(--muted)">${escapeHtml(st.receipt || (st.gen ? 'gen ' + st.gen : ''))}</span></div>`).join('');
+        const approval = auditRows || '<div style="color:var(--muted);font-size:0.8rem">No approval or audit records matched this run yet.</div>';
+        panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3 style="margin:0 0 4px">${escapeHtml(run.title || run.key || 'Run detail')}</h3><div style="color:var(--muted);font-size:0.8rem">${escapeHtml(run.key || '')}${run.repo ? ' · ' + escapeHtml(run.repo) : ''}</div></div><button class="btn" data-action="closeRunDetail">Close</button></div>
+          <div style="margin-top:12px">${runStageRail(run)}</div>
+          <div style="margin-top:12px;font-size:0.82rem">Artifacts: ${runArtifactLinks(run)}</div>
+          <h4 style="margin:14px 0 6px">Artifact chain</h4>${stages || '<div style="color:var(--muted);font-size:0.8rem">No stage artifacts recorded.</div>'}
+          <h4 style="margin:14px 0 6px">Approval and audit records</h4>${approval}`;
+      } catch (e) {
+        panel.innerHTML = `<div style="color:var(--red)">Failed to load run detail: ${escapeHtml(e && e.message ? e.message : e)}</div>`;
+      }
+    }
+    window.openRunDetail = openRunDetail;
+
+    function closeRunDetail() {
+      const panel = document.getElementById('run-detail');
+      if (panel) panel.style.display = 'none';
+    }
+    window.closeRunDetail = closeRunDetail;
+
+    function stalledRunHealthRows(runs) {
+      if (!Array.isArray(runs)) return '';
+      return runs.filter(run => run && run.waiting_since && (Date.now() - runDateMs(run.waiting_since)) >= RUN_STALL_THRESHOLD_MS).map(run => {
+        const label = `Run ${run.key || run.title || ''} stalled`;
+        return `<div class="health-item" title="${escapeHtml(run.waiting_since)}"><span class="health-dot fail"></span><span class="health-label">${escapeHtml(label)} <span class="status-badge">${escapeHtml(run.waiting_on || 'waiting')}</span> <span class="status-badge">${escapeHtml(formatRunDurationSince(run.waiting_since))}</span></span></div>`;
+      }).join('');
+    }
+
+    function renderHealth(health, runs) {
       const el = document.getElementById('health');
       if (!health || Object.keys(health).length === 0) { setIfChanged(el, '<span style="color:var(--muted);font-size:0.8rem">Loading…</span>'); return; }
       const items = [
@@ -8034,7 +8230,7 @@
         }
         const dotCls = v === 1 ? 'ok' : v === 0 ? 'fail' : 'unknown';
         return `<div class="health-item"><span class="health-dot ${dotCls}"></span><span class="health-label">${it.label}</span></div>`;
-      }).join(''));
+      }).join('') + stalledRunHealthRows(runs));
     }
 
     function formatFixTime(minutes) {
@@ -8166,6 +8362,7 @@
           <div class="gov-stat" title="PRS — open pull requests in flight.&#10;&#10;WHAT: How many PRs are currently open across the fleet. The sparkline shows the recent trend.&#10;&#10;HOW: Count of open pull requests across all monitored KubeStellar repos at the last scan (includes both agent-authored and human PRs; does not subtract held PRs)."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
+          <div class="gov-stat" title="RUNS BLOCKED ON HUMAN — active long-running runs whose projection says waiting_on=human."><div class="label">blocked on human</div><div class="val">${(Array.isArray(data.runs) ? data.runs : []).filter(r => r && r.waiting_on === 'human').length}</div></div>
           ${(() => {
             // Planning tile: active plan-trees, with plans-awaiting-review highlighted
             // amber (human-action-required, like on-hold). Reads /api/status planning
@@ -15119,6 +15316,7 @@ function burnAreaChart() {
       window._tokensByAgent = (data.tokens || {}).byAgent || {};
       window._lastAgents = data.agents || [];
       window._configuredAgents = data.configuredAgents || [];
+      window._lastRuns = dashboardRunsFromStatus(data);
       window._lastStatus = data;
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
@@ -15218,6 +15416,7 @@ function burnAreaChart() {
       renderTokens(data.tokens || {});
       renderAdvisoryDigest(data.advisoryDigest || null);
       renderRepos(data.repos || []);
+      renderRuns(dashboardRunsFromStatus(data));
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) { var rc = (data.repos || []).length; if (rc > 0) { reposBadge.style.display = 'inline-flex'; reposBadge.textContent = rc; } else { reposBadge.style.display = 'none'; } }
       renderBeads(data.beads || {});
@@ -15242,7 +15441,7 @@ function burnAreaChart() {
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section',
-        'repos-section', 'beads-section', 'acmm-eval-section',
+        'runs-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
@@ -16080,6 +16279,8 @@ function burnAreaChart() {
         const val = k === 'ci' ? `${v}%` : skip ? 'skipped' : ok ? 'ok' : 'fail';
         healthRows += `<div style="${rowStyle}">${labelHtml}<span style="color:${color};font-weight:600">${dot} ${val}</span></div>`;
       }
+      const stalledRows = stalledRunHealthRows(dashboardRunsFromStatus(data));
+      if (stalledRows) healthRows += stalledRows;
 
       const { sorted: sortedForStates, groups: stateGroups } = _sortAgentsBySidebar(agents);
       let agentRows = '';

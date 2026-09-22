@@ -48,6 +48,8 @@ type Run struct {
 	Stages         []RunStage   `json:"stages"`
 }
 
+type RunSummary = Run
+
 type RunsSummary struct {
 	Active         int `json:"active"`
 	WaitingOnHuman int `json:"waiting_on_human"`

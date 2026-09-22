@@ -55,8 +55,8 @@ func TestRunsListNoRunLeasesAndStatusZeros(t *testing.T) {
 
 	status := &StatusPayload{}
 	s.UpdateStatus(status)
-	if status.Runs.Active != 0 || status.Runs.WaitingOnHuman != 0 {
-		t.Fatalf("status runs = %+v, want zeros", status.Runs)
+	if len(status.Runs) != 0 {
+		t.Fatalf("status runs = %+v, want empty list", status.Runs)
 	}
 }
 
@@ -101,6 +101,11 @@ func TestRunsPlanDraftWaitsOnHuman(t *testing.T) {
 	}
 	if run.PlanEpicID != epic.ID {
 		t.Fatalf("plan_epic_id = %q, want %q", run.PlanEpicID, epic.ID)
+	}
+	status := &StatusPayload{}
+	s.UpdateStatus(status)
+	if len(status.Runs) != 1 || status.Runs[0].Key != run.Key || status.Runs[0].WaitingOn != RunWaitingOnHuman {
+		t.Fatalf("status runs = %+v, want human-waiting run %q", status.Runs, run.Key)
 	}
 }
 
