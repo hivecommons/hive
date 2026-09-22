@@ -54,3 +54,17 @@ Phase 3 keeps the same read-only, cache/state-only invariant: request handling d
 ## Token-delta measurement
 
 Phase 1 measures the token delta on `context_bundle()`, not on each individual tool. For one real lane over a week, record the assignment prompt tokens before the measured hub-launched kick-prompt pointer above and after replacing stuffed context with that pointer. Compare the median per-task prompt-token count and keep the lane, backend, model, and date range with the measurement so Phase 2 can judge whether remote-contributor wiring is worth the added lease-auth surface.
+
+### First live measurement (2026-09-22)
+
+Spoke `hive-hosted-hosted-kubestellar-console-4vkt` (kubestellar/console, 6 repos), image `edge` @ `ecba67e`, backend `copilot`. Kick prompts were read back from `GET /api/config/agent/{name}` (`prompt` = last kick) and the bundle from a live `tools/call context_bundle`. Bytes/4 is used as the token estimate.
+
+| Item | Bytes | ≈ tokens |
+|---|---|---|
+| `## Task context MCP` pointer (additive, every hub kick) | 215 | 54 |
+| `context_bundle` result for `quality:kubestellar/console#0:1` (task_context + related_work + ci_health) | 845 | 169 |
+| Stuffed `ACTIONABLE ISSUES` + `ACTIONABLE PRs` + `MERGE-ELIGIBLE` in the scanner kick (0 issues, 1 PR, 0 eligible) | ≈190 | ≈48 |
+| One stuffed PR line / one stuffed issue line | 152 / ≈100 | 38 / ≈25 |
+| Whole scanner kick / whole sec-check kick | 12168 / 10185 | 3042 / 2546 |
+
+Reading: today the pointer is **additive** (`addTaskMCPPointer` appends; `${ISSUE_LIST}`/`${PR_LIST}` still render), so on a quiet spoke the delta is negative (+54 tokens per kick, +169 per bundle call, against ≈48 tokens of stuffed lists). The stuffed lists only break even against pointer+bundle at roughly 6–9 queue lines, and only once the stuffed sections are actually dropped when a task MCP URL is set. That conditional-drop is the follow-up (#8261); the MCP path itself is verified end-to-end (tools/list 200, scoped bundle, refusal for non-matching generations, all seven tools answering).
