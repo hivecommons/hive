@@ -85,6 +85,7 @@ type Dispatcher struct {
 	pauser    Pauser
 	annotator Annotator
 	approvals ApprovalQueue
+	kicker    Kicker
 
 	audit  AuditSink
 	logger *slog.Logger
@@ -113,6 +114,9 @@ func WithAnnotator(a Annotator) Option { return func(d *Dispatcher) { d.annotato
 // WithApprovalQueue wires the #4000 tool-approval queue for the
 // enqueue-approval action. See the ApprovalQueue doc for the wiring point.
 func WithApprovalQueue(q ApprovalQueue) Option { return func(d *Dispatcher) { d.approvals = q } }
+
+// WithKicker wires the audited agent wake-up path for the kick action.
+func WithKicker(k Kicker) Option { return func(d *Dispatcher) { d.kicker = k } }
 
 // WithAuditSink wires durable audit recording of every firing.
 func WithAuditSink(s AuditSink) Option { return func(d *Dispatcher) { d.audit = s } }

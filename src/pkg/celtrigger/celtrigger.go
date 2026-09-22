@@ -41,6 +41,7 @@ const (
 	KindPRClosed       = "pr.closed"
 	KindPRMerged       = "pr.merged"
 	KindCommentCreated = "comment.created"
+	KindStageCompleted = "run.stage_completed"
 )
 
 // maxEvalCost bounds CEL runtime work per rule evaluation. The budget is high
@@ -84,6 +85,15 @@ type NormalizedEvent struct {
 	Assignees []string `cel:"assignees"`
 	// Comment is the body of the triggering comment (comment.created). Exposed as event.comment.
 	Comment string `cel:"comment"`
+	// Run identifies a long-running hive run/lease. Exposed as event.run.
+	Run string `cel:"run"`
+	// StageFrom and StageTo identify run-stage handoff transitions. Exposed as
+	// event.stage_from and event.stage_to.
+	StageFrom string `cel:"stage_from"`
+	StageTo   string `cel:"stage_to"`
+	// Gen is the server-issued lease generation after the stage transition.
+	// Exposed as event.gen.
+	Gen int64 `cel:"gen"`
 }
 
 // activation renders the event as a CEL activation keyed by the top-level

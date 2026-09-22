@@ -126,9 +126,9 @@ func TestHooksAppearInConfigProvenance(t *testing.T) {
 // TestNoExecCapabilityInActionSet is the "why no exec" invariant, asserted
 // three ways so it cannot regress silently.
 func TestNoExecCapabilityInActionSet(t *testing.T) {
-	// 1. The vetted set contains exactly the four declarative actions.
+	// 1. The vetted set contains exactly the five declarative actions.
 	got := KnownActions()
-	want := []Action{ActionAnnotate, ActionEnqueueApproval, ActionNotify, ActionPause}
+	want := []Action{ActionAnnotate, ActionEnqueueApproval, ActionKick, ActionNotify, ActionPause}
 	if len(got) != len(want) {
 		t.Fatalf("action set changed to %v — adding an action is a security review", got)
 	}

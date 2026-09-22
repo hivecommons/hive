@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -155,6 +156,7 @@ type Dependencies struct {
 	// "no churn data" and disables the guard.
 	IssueChurn func(repo string, number int) (ghpkg.IssueChurn, bool)
 	HookFire   func(context.Context, hooks.Payload)
+	CELTrigger func(context.Context, celtrigger.NormalizedEvent, string)
 }
 
 type NousState struct {

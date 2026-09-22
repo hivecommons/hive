@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/agentaudit"
+	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // contribute_lease_test.go covers the kubestellar/hive#2568 completion: the hub-owned
@@ -260,6 +264,51 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	}
 	if retry.gen <= advanced.gen {
 		t.Fatalf("retry gen = %d, want greater than prior advanced gen %d", retry.gen, advanced.gen)
+	}
+}
+
+func TestLeaseStageAdvanceEmitsHookCELAndTimeline(t *testing.T) {
+	hub, srv := covK2Hub(t)
+	now := time.Now()
+	capture := &hookCapture{}
+	var celEvents []celtrigger.NormalizedEvent
+	var celReasons []string
+	srv.deps.HookFire = capture.fire
+	srv.deps.CELTrigger = func(_ context.Context, ev celtrigger.NormalizedEvent, reason string) {
+		celEvents = append(celEvents, ev)
+		celReasons = append(celReasons, reason)
+	}
+	if err := hub.recordLeaseForKeyStage("c-stage", "task-stage", "myorg/repo1", 8298,
+		"myorg/repo1#8298", "contributor", StageSpec, 11, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	advanced, err := hub.advanceLeaseStage("c-stage", "task-stage", StagePlan, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("advance spec -> plan: %v", err)
+	}
+	payloads := capture.all()
+	if len(payloads) != 1 {
+		t.Fatalf("hook payloads = %d, want 1", len(payloads))
+	}
+	p := payloads[0]
+	if p.Transition != hooks.TransitionStageCompleted || p.Run != "task-stage" ||
+		p.StageFrom != StageSpec || p.StageTo != StagePlan || p.Gen != advanced.gen || p.Repo != "myorg/repo1" {
+		t.Fatalf("unexpected hook payload: %+v", p)
+	}
+	if len(celEvents) != 1 || len(celReasons) != 1 {
+		t.Fatalf("cel events/reasons = %d/%d, want 1/1", len(celEvents), len(celReasons))
+	}
+	if celEvents[0].Kind != celtrigger.KindStageCompleted || celEvents[0].StageTo != StagePlan ||
+		celEvents[0].Run != "task-stage" || celEvents[0].Gen != int64(advanced.gen) {
+		t.Fatalf("unexpected CEL event: %+v", celEvents[0])
+	}
+	j, ok := srv.LifecycleTimeline().Journey("myorg/repo1#8298")
+	if !ok {
+		t.Fatal("stage transition not recorded on lifecycle timeline")
+	}
+	stage := j.Stages[timeline.KindStageCompleted]
+	if stage == nil || stage.Attrs["stage_from"] != StageSpec || stage.Attrs["stage_to"] != StagePlan {
+		t.Fatalf("timeline stage missing attrs: %+v", stage)
 	}
 }
 

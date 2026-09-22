@@ -537,6 +537,25 @@ governor:
 #     expr: event.kind == "pr.opened" && !event.is_draft && event.base_branch == "main"
 #     agent: reviewer
 
+# State-triggered hooks — optional vetted actions on durable hive transitions.
+# Default is absent/empty (no hooks fire). These examples hand run stages to
+# their next owner without adding a scheduler; rate limits still apply.
+# hooks:
+#   - name: run-plan-owner
+#     on: stage_completed
+#     action: kick
+#     when: t.stage_to == "plan"
+#     params:
+#       agent: architect
+#       reason: plan stage is ready
+#   - name: run-implement-owner
+#     on: stage_completed
+#     action: kick
+#     when: t.stage_to == "implement"
+#     params:
+#       agent: quality
+#       reason: implement stage is ready
+
 # Review swarm merge gate — optional structured multi-perspective PR review.
 # Default is false to preserve existing merge eligibility behavior; when true,
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.

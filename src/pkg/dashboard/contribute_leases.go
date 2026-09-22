@@ -1,13 +1,18 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -259,6 +264,7 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, retry bo
 	h.leaseMu.Unlock()
 
 	h.recordLeaseStageAudit(auditAction, taskID, from, to, out.gen)
+	h.emitLeaseStageCompleted(from, to, out)
 	return out, nil
 }
 
@@ -268,6 +274,62 @@ func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to string,
 	}
 	h.server.AgentAuditSink().Record("system", action, taskID,
 		agent.Fields("stage_from", from, "stage_to", to, "gen", gen))
+}
+
+func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) {
+	if h == nil || h.server == nil {
+		return
+	}
+	attrs := map[string]string{
+		"stage_from": from,
+		"stage_to":   to,
+		"gen":        strconv.FormatUint(l.gen, 10),
+	}
+	if l.key != "" {
+		attrs["issue_ref"] = l.key
+	}
+	h.server.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: firstNonEmptyString(l.key, worksource.Ref{Repo: l.repo, Number: l.number}.Key()),
+		Kind:     timeline.KindStageCompleted,
+		Agent:    l.identity,
+		Attrs:    attrs,
+	})
+	payload := hooks.Payload{
+		Transition: hooks.TransitionStageCompleted,
+		Run:        l.taskID,
+		StageFrom:  from,
+		StageTo:    to,
+		Gen:        l.gen,
+		Repo:       l.repo,
+		Agent:      l.identity,
+		Attrs:      attrs,
+	}
+	if h.server.deps != nil {
+		if h.server.deps.HookFire != nil {
+			h.server.deps.HookFire(context.Background(), payload)
+		}
+		if h.server.deps.CELTrigger != nil {
+			h.server.deps.CELTrigger(context.Background(), celtrigger.NormalizedEvent{
+				Kind:      celtrigger.KindStageCompleted,
+				Repo:      l.repo,
+				Number:    l.number,
+				State:     "completed",
+				Run:       l.taskID,
+				StageFrom: from,
+				StageTo:   to,
+				Gen:       int64(l.gen),
+			}, fmt.Sprintf("stage_completed %s→%s for %s", from, to, l.taskID))
+		}
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // renewLease extends an identity's server-issued lease window when the relay proves

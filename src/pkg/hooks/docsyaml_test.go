@@ -57,6 +57,13 @@ func TestDocExamplesValidate(t *testing.T) {
     on: review_rejected
     action: notify
     when: attr(t.attrs, "pr") != ""`,
+		`hooks:
+  - name: plan-stage-owner
+    on: stage_completed
+    action: kick
+    when: t.stage_to == "plan"
+    params:
+      agent: architect`,
 	}
 	for i, ex := range examples {
 		var cfg config.Config
@@ -66,6 +73,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		if len(cfg.Hooks) == 0 {
 			t.Fatalf("example %d: parsed no hooks (yaml tag mismatch?)", i)
 		}
+		cfg.Agents = map[string]config.AgentConfig{"architect": {}}
 		if _, err := CompileFromConfig(&cfg); err != nil {
 			t.Errorf("example %d (%s): docs example does not validate: %v", i, cfg.Hooks[0].Name, err)
 		}

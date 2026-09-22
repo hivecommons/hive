@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -10,6 +11,10 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 )
+
+type celKickSender interface {
+	SendKick(name, message string) error
+}
 
 // celTriggerSource identifies which forge object produced a CEL-evaluated event,
 // used only for audit logging.
@@ -223,6 +228,70 @@ func celMatchedAgents(
 		matched = append(matched, agentName)
 	}
 	return matched
+}
+
+func celTriggerKickAgents(
+	ctx context.Context,
+	engine *celtrigger.Engine,
+	event celtrigger.NormalizedEvent,
+	cfg *config.Config,
+	gov *governor.Governor,
+	isPaused func(string) bool,
+	kicker celKickSender,
+	reason string,
+	logger *slog.Logger,
+) []string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if engine == nil || engine.Len() == 0 || cfg == nil || kicker == nil {
+		return nil
+	}
+	var kicked []string
+	for _, agentName := range engine.MatchAgents(event) {
+		select {
+		case <-ctx.Done():
+			logger.Warn("celtrigger: kick cancelled", "event", event.Kind, "error", ctx.Err())
+			return kicked
+		default:
+		}
+		ac, ok := cfg.Agents[agentName]
+		if !ok {
+			logger.Warn("celtrigger: rule references unknown agent; skipping",
+				"agent", agentName, "event", event.Kind)
+			continue
+		}
+		if !ac.Enabled || ac.Paused {
+			logger.Debug("celtrigger: matched agent is disabled or paused; skipping",
+				"agent", agentName, "enabled", ac.Enabled, "paused", ac.Paused, "event", event.Kind)
+			continue
+		}
+		if isPaused != nil && isPaused(agentName) {
+			logger.Debug("celtrigger: matched agent is paused (manager); skipping",
+				"agent", agentName, "event", event.Kind)
+			continue
+		}
+		if gov != nil && !gov.AgentEligibleForCELKick(agentName) {
+			logger.Debug("celtrigger: matched agent gated by governor; skipping",
+				"agent", agentName, "event", event.Kind)
+			continue
+		}
+		if reason == "" {
+			reason = fmt.Sprintf("celtrigger %s", event.Kind)
+		}
+		if err := kicker.SendKick(agentName, reason); err != nil {
+			logger.Error("celtrigger: kick failed", "agent", agentName, "event", event.Kind, "error", err)
+			continue
+		}
+		if gov != nil {
+			gov.RecordKick(agentName)
+		}
+		kicked = append(kicked, agentName)
+	}
+	return kicked
 }
 
 // unionAgents appends any names from add that are not already in base, preserving

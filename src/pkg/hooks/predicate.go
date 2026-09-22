@@ -61,6 +61,10 @@ type celPayload struct {
 	Backend    string            `cel:"backend"`
 	Pin        string            `cel:"pin"`
 	ACMMLevel  int               `cel:"acmm_level"`
+	Run        string            `cel:"run"`
+	StageFrom  string            `cel:"stage_from"`
+	StageTo    string            `cel:"stage_to"`
+	Gen        uint64            `cel:"gen"`
 	Attrs      map[string]string `cel:"attrs"`
 }
 
@@ -85,6 +89,10 @@ func (p Payload) forCEL() celPayload {
 		Backend:    p.Backend,
 		Pin:        p.Pin,
 		ACMMLevel:  p.ACMMLevel,
+		Run:        p.Run,
+		StageFrom:  p.StageFrom,
+		StageTo:    p.StageTo,
+		Gen:        p.Gen,
 		Attrs:      attrs,
 	}
 }

@@ -36,6 +36,11 @@ const (
 	// tool-approval queue. It CONSUMES that queue's API (see ApprovalQueue);
 	// this package does not implement an approvals store of its own.
 	ActionEnqueueApproval Action = "enqueue-approval"
+
+	// ActionKick wakes an existing configured agent through the same kick API
+	// used by the dashboard and governor. It does not grant authority; the
+	// agent's mode ladder and proxy gates still decide what writes are allowed.
+	ActionKick Action = "kick"
 )
 
 // vettedActions is the closed action set, used for validation and error text.
@@ -44,6 +49,7 @@ var vettedActions = map[Action]string{
 	ActionPause:           "Pause an agent through the audited pause API.",
 	ActionAnnotate:        "Record an entry on the lifecycle timeline.",
 	ActionEnqueueApproval: "Enqueue an approval request into the tool-approval queue.",
+	ActionKick:            "Kick an existing configured agent through the audited agent manager.",
 }
 
 // KnownActions returns the vetted action names in sorted order.
@@ -127,6 +133,13 @@ type Annotator interface {
 // and it is why this slice could ship before theirs merged.
 type ApprovalQueue interface {
 	EnqueueApproval(ctx context.Context, req ApprovalRequest) error
+}
+
+// Kicker is the existing agent wake-up path. Implementations should route to
+// the same manager method used by dashboard/governor kicks; this interface only
+// narrows the surface exposed to hooks.
+type Kicker interface {
+	Kick(agent, reason string) error
 }
 
 // ApprovalRequest is what an enqueue-approval hook places on the queue. Fields
@@ -228,6 +241,18 @@ func (d *Dispatcher) execute(ctx context.Context, h Hook, p Payload) error {
 			HookName:   h.Name,
 			Cause:      p.Causation.Child(h.Name, p.Transition),
 		})
+
+	case ActionKick:
+		if d.kicker == nil {
+			return fmt.Errorf("kick: no kicker wired")
+		}
+		agent := strings.TrimSpace(h.Params["agent"])
+		if agent == "" {
+			return fmt.Errorf("kick: params.agent is required")
+		}
+		reason := firstNonEmpty(h.Params["reason"],
+			fmt.Sprintf("hook %q on %s", h.Name, p.Transition))
+		return d.kicker.Kick(agent, reason)
 	}
 
 	// Unreachable for a registry-validated hook: an unknown action is rejected

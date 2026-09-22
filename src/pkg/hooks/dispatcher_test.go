@@ -121,6 +121,53 @@ func (f *fakeApprovals) EnqueueApproval(ctx context.Context, r ApprovalRequest) 
 	return nil
 }
 
+type kickCall struct {
+	agent, reason string
+}
+
+type fakeKicker struct {
+	mu    sync.Mutex
+	calls []kickCall
+	err   error
+}
+
+func (f *fakeKicker) Kick(agent, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, kickCall{agent, reason})
+	return f.err
+}
+
+func (f *fakeKicker) all() []kickCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]kickCall(nil), f.calls...)
+}
+
+func TestDispatcherKickActionUsesKicker(t *testing.T) {
+	reg, err := Compile([]Hook{{
+		Name:   "next-stage",
+		On:     TransitionStageCompleted,
+		Action: ActionKick,
+		Params: map[string]string{"agent": "architect", "reason": "plan stage ready"},
+	}})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	kicker := &fakeKicker{}
+	d := NewDispatcher(reg, quietLogger(), WithKicker(kicker))
+	d.Fire(context.Background(), Payload{Transition: TransitionStageCompleted, StageTo: "plan"})
+	d.Wait()
+
+	calls := kicker.all()
+	if len(calls) != 1 {
+		t.Fatalf("kick calls = %d, want 1", len(calls))
+	}
+	if calls[0].agent != "architect" || calls[0].reason != "plan stage ready" {
+		t.Fatalf("kick call = %+v", calls[0])
+	}
+}
+
 func (f *fakeApprovals) all() []ApprovalRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -157,6 +204,32 @@ func (f *fakeAudit) withAction(action string) []auditEntry {
 		}
 	}
 	return out
+}
+
+func TestDispatcherStageCompletedKickRateLimited(t *testing.T) {
+	now := time.Unix(0, 0)
+	reg, err := Compile([]Hook{{
+		Name: "handoff", On: TransitionStageCompleted, Action: ActionKick,
+		RateLimitPerMinute: 1,
+		Params:             map[string]string{"agent": "quality"},
+	}})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	kicker := &fakeKicker{}
+	audit := &fakeAudit{}
+	d := NewDispatcher(reg, quietLogger(), WithKicker(kicker), WithAuditSink(audit), WithClock(func() time.Time { return now }))
+	payload := Payload{Transition: TransitionStageCompleted, StageFrom: "plan", StageTo: "implement"}
+	d.Fire(context.Background(), payload)
+	d.Fire(context.Background(), payload)
+	d.Wait()
+
+	if got := len(kicker.all()); got != 1 {
+		t.Fatalf("kick count = %d, want 1", got)
+	}
+	if got := len(audit.withAction(AuditHookRateLimited)); got != 1 {
+		t.Fatalf("rate-limited audit count = %d, want 1", got)
+	}
 }
 
 // panickingNotifier models a sink that blows up, to prove failure isolation

@@ -42,6 +42,7 @@ A hook may read transition payloads and send notifications without restriction. 
 | `pause` | the **audited** agent-manager pause — the same call the dashboard's pause button makes |
 | `annotate` | the existing lifecycle timeline (`pkg/timeline`) |
 | `enqueue-approval` | the tool-approval queue ([#4000](https://github.com/hivecommons/hive/issues/4000)) |
+| `kick` | the existing agent-manager kick path used by the dashboard and governor |
 
 Those four interfaces are the *complete* mutation surface of the feature. A dispatcher with no sinks wired can do nothing at all — there is no fallback path that writes directly.
 
@@ -49,7 +50,7 @@ The `pause` sink deliberately offers **no resume**. A hook may stop work; restar
 
 ### Why there is no `exec`
 
-The action vocabulary is a **closed, vetted set**: `notify`, `pause`, `annotate`, `enqueue-approval`. There is deliberately no `exec`, `script`, `shell`, or `webhook` action.
+The action vocabulary is a **closed, vetted set**: `notify`, `pause`, `annotate`, `enqueue-approval`, `kick`. There is deliberately no `exec`, `script`, `shell`, or `webhook` action.
 
 Arbitrary code execution on a state transition is a fundamentally different security problem — it needs a sandbox story, a credential-isolation story, and a resource-bounding story, none of which this slice has. Shipping `exec` "just for trusted operators" would mean any config-write escalation becomes remote code execution.
 
@@ -75,6 +76,7 @@ Rejected at config-load time:
 - a negative or over-maximum rate limit
 - a `notify` with an unknown priority
 - a `pause` on a transition that carries no agent, with no explicit `params.agent`
+- a `kick` without `params.agent`, or with an agent absent from config
 
 At runtime, a predicate that errors or exceeds its cost budget is treated as **no-match**. A predicate hive cannot evaluate must never be able to trigger a pause.
 
@@ -112,6 +114,7 @@ The window is *sliding and half-open*: the guarantee is "at most `limit` firings
 | `acmm_level_change` | the ACMM level changes via the audited path | `from`, `to`, `actor` |
 | `upgrade_pause` | the #3836 upgrade kill switch flips (`to` is `on`/`off`) | `to`, `actor`, `reason` |
 | `review_rejected` | an owner denies a queued agent action on the approval desk (`POST /api/approvals/resolve` or `/bulk` with `approved: false`), sending that agent's output back | `agent`, `repo`, `actor`, `reason`, `model`, `backend`, `pin`, `acmm_level`, `attrs.pr`, `attrs.model_knob_url` |
+| `stage_completed` | a run lease stage advances or retries after the lease registry persists | `run`, `stage_from`, `stage_to`, `gen`, `repo` |
 
 For `agent_paused`/`agent_resumed`, `trigger` carries the `paused_trigger` provenance, so you can tell an operator pause from a governor pause from the login-detector's.
 
@@ -174,6 +177,17 @@ Places a request on the [#4000](https://github.com/hivecommons/hive/issues/4000)
 | `agent`, `repo` | scope; default to the transition's values |
 
 **Status:** functional on v5. The backing queue landed with [#4057](https://github.com/hivecommons/hive/issues/4057) as `toolapprove.Inbox`, connected by an adapter in `cmd/hive/hookwire.go` passed via `WithApprovalQueue`. It is gated by `tool_approval.enabled` (default off); with the desk disabled the sink is nil and an `enqueue-approval` hook records an unwired-sink error rather than silently dropping the request. Nothing in `pkg/hooks` changed when it landed.
+
+### `kick`
+
+Kicks a configured agent through the existing agent-manager path.
+
+| Param | Meaning |
+| --- | --- |
+| `agent` | required configured agent to kick |
+| `reason` | kick prompt/reason; defaults to naming the hook and transition |
+
+A kick does not widen authority. The agent's configured mode, capabilities, and proxy gates still decide what it can do.
 
 ## Predicates (`when:`)
 
@@ -271,6 +285,26 @@ hooks:
     rate_limit_per_minute: 2
     params:
       priority: low
+```
+
+### Kick the owner of the next run stage
+
+```yaml
+hooks:
+  - name: plan-stage-owner
+    on: stage_completed
+    action: kick
+    when: t.stage_to == "plan"
+    params:
+      agent: architect
+      reason: plan stage is ready
+  - name: implement-stage-owner
+    on: stage_completed
+    action: kick
+    when: t.stage_to == "implement"
+    params:
+      agent: quality
+      reason: implement stage is ready
 ```
 
 ## Operational notes

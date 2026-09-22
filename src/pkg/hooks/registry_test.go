@@ -196,7 +196,7 @@ func TestCatalogAndActionsAreClosedSets(t *testing.T) {
 	wantTransitions := []Transition{
 		TransitionACMMLevelChange, TransitionAgentPaused, TransitionAgentResumed,
 		TransitionEscalationRed, TransitionGovernorModeChange, TransitionReviewRejected,
-		TransitionSweepCompleted, TransitionUpgradePause,
+		TransitionStageCompleted, TransitionSweepCompleted, TransitionUpgradePause,
 	}
 	got := KnownTransitions()
 	if len(got) != len(wantTransitions) {
@@ -208,9 +208,9 @@ func TestCatalogAndActionsAreClosedSets(t *testing.T) {
 		}
 	}
 
-	// The action set must remain exactly the four vetted actions. In
+	// The action set must remain exactly the five vetted actions. In
 	// particular there must be no exec.
-	if len(KnownActions()) != 4 {
+	if len(KnownActions()) != 5 {
 		t.Errorf("action set changed: %v — this is a security review, not a refactor", KnownActions())
 	}
 	for _, forbidden := range []Action{"exec", "script", "shell", "run"} {
@@ -380,5 +380,28 @@ func TestFromConfigNilAndEmpty(t *testing.T) {
 	reg, err := CompileFromConfig(&config.Config{})
 	if err != nil || reg.Len() != 0 {
 		t.Errorf("empty config should compile to an empty registry: %v, %d", err, reg.Len())
+	}
+}
+
+func TestCompileRejectsKickWithoutAgent(t *testing.T) {
+	_, err := Compile([]Hook{{
+		Name: "kick", On: TransitionStageCompleted, Action: ActionKick,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "params.agent is required") {
+		t.Fatalf("expected missing kick agent rejection, got: %v", err)
+	}
+}
+
+func TestCompileFromConfigRejectsKickUnknownAgent(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{"architect": {}},
+		Hooks: []config.HookRule{{
+			Name: "kick-missing", On: string(TransitionStageCompleted), Action: string(ActionKick),
+			Params: map[string]string{"agent": "quality"},
+		}},
+	}
+	_, err := CompileFromConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("expected unknown agent rejection, got: %v", err)
 	}
 }

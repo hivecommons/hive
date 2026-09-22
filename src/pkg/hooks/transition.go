@@ -95,6 +95,12 @@ const (
 	// deep-link the model-pin knob in the moment the quality problem is seen,
 	// rather than making the owner hunt for it in the admin UI.
 	TransitionReviewRejected Transition = "review_rejected"
+
+	// TransitionStageCompleted fires when a run lease stage is durably advanced
+	// or retried. It is the run-stage handoff point: hooks and CEL rules may
+	// kick the owner of the next stage, but authority still comes from the
+	// kicked agent's normal mode/capability gates.
+	TransitionStageCompleted Transition = "stage_completed"
 )
 
 // catalogEntry documents one transition for validation, docs generation, and
@@ -153,6 +159,11 @@ var catalog = map[Transition]catalogEntry{
 			"agent", "repo", "actor", "reason",
 			"model", "backend", "pin", "acmm_level", "attrs.pr", "attrs.model_knob_url",
 		},
+	},
+	TransitionStageCompleted: {
+		Name:   TransitionStageCompleted,
+		Doc:    "A run lease stage advanced or retried after the lease registry persisted.",
+		Fields: []string{"run", "stage_from", "stage_to", "gen", "repo"},
 	},
 }
 
@@ -230,6 +241,12 @@ type Payload struct {
 	Pin     string `json:"pin,omitempty"`
 	// ACMMLevel is the autonomy level in effect, 0 when unknown.
 	ACMMLevel int `json:"acmm_level,omitempty"`
+
+	// Run, StageFrom, StageTo, and Gen identify a run lease stage transition.
+	Run       string `json:"run,omitempty"`
+	StageFrom string `json:"stage_from,omitempty"`
+	StageTo   string `json:"stage_to,omitempty"`
+	Gen       uint64 `json:"gen,omitempty"`
 
 	// At is the transition time in Unix milliseconds. Fire stamps it when zero.
 	At int64 `json:"at,omitempty"`

@@ -1,6 +1,9 @@
 package hooks
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -35,11 +38,34 @@ func FromConfig(cfg *config.Config) []Hook {
 // A config with no hooks yields an empty Registry (not an error), which makes
 // every Fire a cheap no-op.
 func CompileFromConfig(cfg *config.Config) (*Registry, error) {
-	return Compile(FromConfig(cfg))
+	hooks := FromConfig(cfg)
+	if err := validateConfigAgents(cfg, hooks); err != nil {
+		return nil, err
+	}
+	return Compile(hooks)
 }
 
 // SignatureFromConfig returns a stable identity for the config's hook list, so
 // the wiring layer can recompile only when the operator actually changed it.
 func SignatureFromConfig(cfg *config.Config) string {
 	return Signature(FromConfig(cfg))
+}
+
+func validateConfigAgents(cfg *config.Config, hooks []Hook) error {
+	if cfg == nil {
+		return nil
+	}
+	for _, h := range hooks {
+		if h.Action != ActionKick {
+			continue
+		}
+		agent := strings.TrimSpace(h.Params["agent"])
+		if agent == "" {
+			continue
+		}
+		if _, ok := cfg.Agents[agent]; !ok {
+			return fmt.Errorf("hooks: %q: kick: unknown agent %q", h.Name, agent)
+		}
+	}
+	return nil
 }

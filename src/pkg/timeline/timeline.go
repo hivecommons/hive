@@ -63,11 +63,13 @@ const (
 	// KindBlocked: the issue/PR is blocked (needs attention). Not strictly
 	// terminal: progress recorded after the block clears it.
 	KindBlocked Kind = "blocked"
+	// KindStageCompleted: a long-running run lease stage advanced/retried.
+	KindStageCompleted Kind = "stage_completed"
 )
 
 // progressKinds are the non-terminal stages in furthest-first order, used to
 // derive a Journey's current stage.
-var progressKinds = []Kind{KindPROpened, KindKicked, KindClassified, KindEnumerated}
+var progressKinds = []Kind{KindPROpened, KindStageCompleted, KindKicked, KindClassified, KindEnumerated}
 
 // Event is a single lifecycle datapoint. It is a plain value type with JSON
 // tags so producers and the FromSpan shim can stay decoupled from the Store's

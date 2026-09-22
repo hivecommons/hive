@@ -88,6 +88,26 @@ func TestBuildHookDispatcherKeepsPreviousSetOnInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestBuildHookDispatcherRevalidatesKickHooksWhenAgentsChange(t *testing.T) {
+	resetHookDispatcher(t)
+	t.Cleanup(func() { resetHookDispatcher(t) })
+
+	cfg := &config.Config{Hooks: []config.HookRule{{
+		Name: "handoff", On: "stage_completed", Action: "kick",
+		Params: map[string]string{"agent": "architect"},
+	}}}
+	buildHookDispatcher(cfg, hookSinks{}, hookTestLogger())
+	if hookDispatcher() != nil {
+		t.Fatal("kick hook targeting an unknown agent should not arm")
+	}
+
+	cfg.Agents = map[string]config.AgentConfig{"architect": {}}
+	buildHookDispatcher(cfg, hookSinks{}, hookTestLogger())
+	if d := hookDispatcher(); d == nil || d.Len() != 1 {
+		t.Fatalf("agent roster change should revalidate and arm the hook, dispatcher=%v", d)
+	}
+}
+
 // TestBuildHookDispatcherReloadPreservesRateLimitWindow: swapping the registry
 // in place (rather than rebuilding) is what stops a reload loop from clearing
 // the anti-storm ceiling.

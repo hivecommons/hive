@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hivecommons/hive/pkg/agent"
@@ -71,7 +73,7 @@ func buildHookDispatcher(cfg *config.Config, sinks hookSinks, logger *slog.Logge
 	if cfg == nil {
 		return
 	}
-	sig := hooks.SignatureFromConfig(cfg)
+	sig := hookDispatcherSignature(cfg)
 
 	globalHookDispatcher.mu.Lock()
 	defer globalHookDispatcher.mu.Unlock()
@@ -120,6 +122,7 @@ func buildHookDispatcher(cfg *config.Config, sinks hookSinks, logger *slog.Logge
 	}
 	if sinks.AgentMgr != nil {
 		opts = append(opts, hooks.WithPauser(&pauserAdapter{mgr: sinks.AgentMgr}))
+		opts = append(opts, hooks.WithKicker(&kickerAdapter{mgr: sinks.AgentMgr}))
 	}
 	if sinks.Timeline != nil {
 		opts = append(opts, hooks.WithAnnotator(&annotatorAdapter{store: sinks.Timeline}))
@@ -133,6 +136,29 @@ func buildHookDispatcher(cfg *config.Config, sinks hookSinks, logger *slog.Logge
 
 	globalHookDispatcher.dispatcher = hooks.NewDispatcher(reg, logger, opts...)
 	logger.Info("hooks: compiled hook set", "hooks", reg.Len())
+}
+
+func hookDispatcherSignature(cfg *config.Config) string {
+	sig := hooks.SignatureFromConfig(cfg)
+	if cfg == nil {
+		return sig
+	}
+	needsAgents := false
+	for _, h := range cfg.Hooks {
+		if hooks.Action(h.Action) == hooks.ActionKick {
+			needsAgents = true
+			break
+		}
+	}
+	if !needsAgents {
+		return sig
+	}
+	agents := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		agents = append(agents, name)
+	}
+	sort.Strings(agents)
+	return sig + "\x1d" + strings.Join(agents, "\x1e")
 }
 
 // installGovernorModeChangeEmitter wires the governor_mode_change transition to
@@ -269,6 +295,15 @@ func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string
 		HookName:         cause.HookName,
 		OriginTransition: string(cause.OriginTransition),
 	})
+}
+
+type kickerAdapter struct{ mgr *agent.Manager }
+
+func (a *kickerAdapter) Kick(agentName, reason string) error {
+	if a == nil || a.mgr == nil {
+		return errNoAgentManager
+	}
+	return a.mgr.SendKick(agentName, reason)
 }
 
 // hookPauseActor is the PausedBy identity recorded for a hook-driven pause.

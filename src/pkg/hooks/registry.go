@@ -179,6 +179,10 @@ func validateParams(h Hook) error {
 		if strings.TrimSpace(h.Params["agent"]) == "" && !transitionCarriesAgent(h.On) {
 			return fmt.Errorf("pause: transition %q carries no agent; set params.agent explicitly", h.On)
 		}
+	case ActionKick:
+		if strings.TrimSpace(h.Params["agent"]) == "" {
+			return fmt.Errorf("kick: params.agent is required")
+		}
 	}
 	return nil
 }

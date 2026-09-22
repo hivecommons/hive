@@ -28,6 +28,7 @@ func TestCompileFromConfig_ValidAndMatch(t *testing.T) {
 			{Name: "pr", Expr: `event.kind == "pr.opened"`, Agent: "reviewer", Priority: 5},
 		},
 	}
+
 	eng, err := CompileFromConfig(cfg)
 	if err != nil {
 		t.Fatalf("CompileFromConfig error: %v", err)
@@ -38,6 +39,23 @@ func TestCompileFromConfig_ValidAndMatch(t *testing.T) {
 	agents := eng.MatchAgents(NormalizedEvent{Kind: KindIssueLabeled, Labels: []string{"bug"}})
 	if len(agents) != 1 || agents[0] != "triager" {
 		t.Fatalf("MatchAgents = %v, want [triager]", agents)
+	}
+}
+
+func TestMatchAgents_StageCompletedEvent(t *testing.T) {
+	cfg := &config.Config{
+		Triggers: []config.TriggerRule{{
+			Name: "plan-owner", Expr: `event.kind == "run.stage_completed" && event.stage_to == "plan" && event.gen > 0`,
+			Agent: "architect",
+		}},
+	}
+	eng, err := CompileFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("CompileFromConfig error: %v", err)
+	}
+	agents := eng.MatchAgents(NormalizedEvent{Kind: KindStageCompleted, StageTo: "plan", Gen: 12})
+	if len(agents) != 1 || agents[0] != "architect" {
+		t.Fatalf("MatchAgents = %v, want [architect]", agents)
 	}
 }
 
