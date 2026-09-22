@@ -1,0 +1,1 @@
+- v4 end-of-life date set to 2026-12-21 (v5.0.0 + 90 days); recorded in ROADMAP.md and the v4 freeze runbook (#8168).

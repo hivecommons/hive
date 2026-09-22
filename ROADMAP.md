@@ -52,14 +52,21 @@ tags only.
   the
   [v4 lifecycle policy](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md#v4-lifecycle-policy-accepted)
   section for the full accepted text.
-- Support window: v4 receives security and critical fixes until EOL. The
-  v4 EOL announcement was blocked on completion of the
-  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md);
-  its live tracker ([#6016](https://github.com/hivecommons/hive/issues/6016))
-  **closed on 2026-09-21**, so the EOL announcement is now unblocked. No
-  EOL date has been announced yet — that is a pending maintainer decision,
-  and any EOL is stated relative to the first stable v5 release
-  (v5.0.0, released 2026-09-21).
+- Support window: **v4 reaches end-of-life on 2026-12-21** — 90 days after
+  the first stable v5 release (v5.0.0, 2026-09-21), the conventional
+  security/critical support window. Until that date v4 receives security and
+  critical fixes only (see the freeze rules above); after it, no further v4
+  releases or image retags are produced, the `v4` branch is archived
+  read-only, and operators still on v4 should follow the
+  [v4→v5 migration guide](https://github.com/hivecommons/hive/blob/v5/src/docs/migration-v4-v5.md).
+  The date was set on 2026-09-22
+  ([#8168](https://github.com/hivecommons/hive/issues/8168)) once the
+  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
+  tracker ([#6016](https://github.com/hivecommons/hive/issues/6016)) closed
+  and v5.0.0 shipped, per the accepted lifecycle policy
+  ([#6346](https://github.com/hivecommons/hive/issues/6346),
+  [#6140](https://github.com/hivecommons/hive/issues/6140)); the operator
+  notice thread is [#8105](https://github.com/hivecommons/hive/pull/8105).
 
 ## v5 — Current Stable Line
 

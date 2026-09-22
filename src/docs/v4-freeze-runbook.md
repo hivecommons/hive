@@ -165,9 +165,12 @@ sequence before starting.
       ([#4393](https://github.com/hivecommons/hive/issues/4393)).
       Evidence: repo settings change reflected in the API, green Scorecard
       run on the new default.
-- [ ] v4 EOL announcement is drafted only after #6016 closes, per the
+- [x] v4 EOL announcement is drafted only after #6016 closes, per the
       accepted dependency ([#6140](https://github.com/hivecommons/hive/issues/6140)).
-      Evidence: announcement link.
+      Evidence: EOL set to **2026-12-21** (v5.0.0 + 90 days) in
+      [ROADMAP.md](../../ROADMAP.md#v4--maintenance-line) and announced on the
+      operator notice thread ([#8105](https://github.com/hivecommons/hive/pull/8105));
+      decision recorded in [#8168](https://github.com/hivecommons/hive/issues/8168).
 
 ## Tracker
 
