@@ -300,14 +300,6 @@ type kickDispatchDeps struct {
 	backoffRemaining func(agent string) (time.Duration, string, string, bool)
 	// sendKick delivers the kick. A non-nil error means nothing was sent.
 	sendKick func(agent, message string) error
-	// restartThenSendKickWithOverrides waits for idle, applies route overrides,
-	// then relaunches before delivery for model-bucketed reviewer kicks. Nil falls
-	// back to the legacy set-override/send path used by tests.
-	restartThenSendKickWithOverrides func(agent, message, backend, model string) error
-	// setModelOverride/setBackendOverride retarget an agent for one model-bucketed
-	// reviewer kick. Nil preserves the historical no-override path used by tests.
-	setModelOverride   func(agent, model string) error
-	setBackendOverride func(agent, backend string) error
 	// startKickSpan opens the agent.kick tracing span and returns its closer;
 	// the closer takes the SendKick error (nil on success) so a failed kick is
 	// recorded on the span before it ends.
@@ -360,27 +352,7 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		}
 		endSpan := deps.startKickSpan(msg.Agent)
 		logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
-		var err error
-		if (msg.BackendOverride != "" || msg.ModelOverride != "") && deps.restartThenSendKickWithOverrides != nil {
-			err = deps.restartThenSendKickWithOverrides(msg.Agent, msg.Message, msg.BackendOverride, msg.ModelOverride)
-		} else {
-			if msg.BackendOverride != "" && deps.setBackendOverride != nil {
-				if err := deps.setBackendOverride(msg.Agent, msg.BackendOverride); err != nil {
-					endSpan(err)
-					logger.Warn("failed to set kick backend override", "agent", msg.Agent, "backend", msg.BackendOverride, "error", err)
-					continue
-				}
-			}
-			if msg.ModelOverride != "" && deps.setModelOverride != nil {
-				if err := deps.setModelOverride(msg.Agent, msg.ModelOverride); err != nil {
-					endSpan(err)
-					logger.Warn("failed to set kick model override", "agent", msg.Agent, "model", msg.ModelOverride, "error", err)
-					continue
-				}
-			}
-			err = deps.sendKick(msg.Agent, msg.Message)
-		}
-		if err != nil {
+		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
 			endSpan(err)
 			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
 			continue

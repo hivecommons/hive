@@ -505,12 +505,10 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 }
 
 type KickMessage struct {
-	Agent           string
-	Repo            string
-	Message         string
-	IssueRefs       []string
-	ModelOverride   string
-	BackendOverride string
+	Agent     string
+	Repo      string
+	Message   string
+	IssueRefs []string
 }
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
@@ -526,15 +524,8 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		if repo != "" {
 			targetIssues = filterIssuesByRepo(classifiedIssues, repo)
 		}
-		for _, bucket := range s.reviewModelBuckets(agentName, targetActionable) {
-			bucketActionable := targetActionable
-			if bucket.prs != nil {
-				bucketActionable = actionableWithPRItems(targetActionable, bucket.prs)
-			}
-			msg := s.BuildAgentMessage(agentName, targetIssues, bucketActionable)
-			if msg == "" {
-				continue
-			}
+		msg := s.BuildAgentMessage(agentName, targetIssues, targetActionable)
+		if msg != "" {
 			includeRepos := true
 			if agentCfg, ok := s.cfg.Agents[agentName]; ok {
 				includeRepos = agentCfg.ShouldIncludeRepos()
@@ -543,9 +534,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			} else if s.cfg.BaseAgentName(agentName) == "outreach" {
 				includeRepos = false
 			}
-			if bucket.model != "" {
-				msg = fmt.Sprintf("## Independent review model\n\nreview_backend=%s review_model=%s\n\n%s", bucket.backend, bucket.model, msg)
-			}
+			msg = s.addIndependentReviewSection(agentName, msg)
 			if repo != "" {
 				msg = fmt.Sprintf("REPO-SCOPED CADENCE TARGET: %s\n\n%s", repo, msg)
 			}
@@ -557,70 +546,14 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			}
 			msg = s.addCanaryPreamble(agentName, msg)
 			messages = append(messages, KickMessage{
-				Agent:           agentName,
-				Repo:            repo,
-				Message:         msg,
-				IssueRefs:       issueRefsForAgent(agentName, s.freeOfInflight(targetIssues), s.issueCap()),
-				ModelOverride:   bucket.model,
-				BackendOverride: bucket.backend,
+				Agent:     agentName,
+				Repo:      repo,
+				Message:   msg,
+				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(targetIssues), s.issueCap()),
 			})
 		}
 	}
 	return messages
-}
-
-type reviewModelBucket struct {
-	backend string
-	model   string
-	prs     []github.PullRequest
-}
-
-func (s *Scheduler) reviewModelBuckets(agentName string, actionable *github.ActionableResult) []reviewModelBucket {
-	baseName := s.cfg.BaseAgentName(agentName)
-	agentCfg, ok := s.cfg.Agents[baseName]
-	if !ok || !agentCfg.ReviewModels.Configured() || len(agentCfg.ReviewModels.Pool) == 0 || actionable == nil || len(actionable.PRs.Items) == 0 {
-		return []reviewModelBucket{{}}
-	}
-	shown := fairShareByRepo(actionable.PRs.Items, s.prCap(), func(pr github.PullRequest) string { return pr.Repo })
-	byModel := map[string][]github.PullRequest{}
-	backendByModel := map[string]string{}
-	order := []string{}
-	for _, pr := range shown {
-		backend, model, fallback := s.selectReviewModel(agentCfg, pr)
-		if model == "" {
-			s.logger.Info("review model fallback skipped PR", "agent", agentName, "repo", pr.Repo, "number", pr.Number, "author_model", pr.HiveModel)
-			if s.auditFunc != nil {
-				s.auditFunc(github.AuditActionReviewModelFallback, fmt.Sprintf("repo=%s number=%d fallback=skip author_model=%s", pr.Repo, pr.Number, github.NormalizeAttributionModel(pr.HiveModel)), agentName)
-			}
-			continue
-		}
-		if fallback && s.auditFunc != nil {
-			s.auditFunc(github.AuditActionReviewModelFallback, fmt.Sprintf("repo=%s number=%d fallback=%s author_model=%s review_model=%s", pr.Repo, pr.Number, agentCfg.ReviewModels.EffectiveFallback(), github.NormalizeAttributionModel(pr.HiveModel), model), agentName)
-		}
-		if _, ok := byModel[model]; !ok {
-			order = append(order, model)
-			backendByModel[model] = backend
-		}
-		byModel[model] = append(byModel[model], pr)
-	}
-	if len(order) == 0 {
-		return []reviewModelBucket{{prs: []github.PullRequest{}}}
-	}
-	out := make([]reviewModelBucket, 0, len(order))
-	for _, model := range order {
-		out = append(out, reviewModelBucket{backend: backendByModel[model], model: model, prs: byModel[model]})
-	}
-	return out
-}
-
-func actionableWithPRItems(actionable *github.ActionableResult, prs []github.PullRequest) *github.ActionableResult {
-	if actionable == nil {
-		return nil
-	}
-	out := *actionable
-	out.PRs.Items = prs
-	out.PRs.Count = len(prs)
-	return &out
 }
 
 func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.PullRequest) (string, string, bool) {
@@ -774,7 +707,7 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 		classified = classify.ClassifyAll(actionable.Issues.Items)
 		s.recordClassified(classified)
 	}
-	return s.BuildAgentMessage(agentName, classified, actionable)
+	return s.addIndependentReviewSection(agentName, s.BuildAgentMessage(agentName, classified, actionable))
 }
 
 // buildReposSection is buildReposSectionFor with no agent: the hive-wide list.
@@ -2529,10 +2462,17 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		}
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
-		annotationText := prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + s.independentReviewAnnotation(pr, agentName)
+		annotationText, skip := s.prReviewAnnotation(pr, agentName)
+		if skip {
+			continue
+		}
+		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText
 		annotation, annotationVerdict := s.enforceIssueTextVerdict(annotationText)
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))
+	}
+	if b.Len() == 0 {
+		return "(none)", failClosed
 	}
 	if omitted := len(actionable.PRs.Items) - len(shown); omitted > 0 {
 		b.WriteString(prListOverflowLine(omitted, limit))
@@ -2540,20 +2480,53 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	return b.String(), failClosed
 }
 
-func (s *Scheduler) independentReviewAnnotation(pr github.PullRequest, agentName string) string {
+func (s *Scheduler) independentReviewSection(agentName string) string {
 	baseName := s.cfg.BaseAgentName(agentName)
 	agentCfg, ok := s.cfg.Agents[baseName]
 	if !ok || !agentCfg.ReviewModels.Configured() {
 		return ""
 	}
-	authorModel := github.NormalizeAttributionModel(pr.HiveModel)
-	authorBackend := github.NormalizeAttributionValue(pr.HiveBackend)
-	_, _, fallback := s.selectReviewModel(agentCfg, pr)
-	marker := fmt.Sprintf(" [independent review: author_model=%s author_backend=%s; probe author-model failure modes: invented APIs, implementation-shaped tests, swallowed errors]", authorModel, authorBackend)
-	if fallback && agentCfg.ReviewModels.EffectiveFallback() == config.ReviewModelsFallbackRequiresHuman {
-		marker += " [needs human review — no independent model available]"
+	return "## Independent review\n\nFor each PR whose list line includes `review_with=<backend>/<model>`, launch a sub-agent (Agent tool) with `model` set to the PR's `review_with` model value. Give the sub-agent the PR URL plus the review checklist, and have it probe author-model failure modes: invented APIs, tests that assert the implementation rather than the requirement, and swallowed errors. Record the sub-agent's verdict and model in the verdict artifact as `review_model`. Never review a PR yourself with the author's model."
+}
+
+func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
+	if msg == "" {
+		return msg
 	}
-	return marker
+	if section := s.independentReviewSection(agentName); section != "" && !strings.Contains(msg, "## Independent review") {
+		return section + "\n\n" + msg
+	}
+	return msg
+}
+
+func (s *Scheduler) prReviewAnnotation(pr github.PullRequest, agentName string) (string, bool) {
+	baseName := s.cfg.BaseAgentName(agentName)
+	agentCfg, ok := s.cfg.Agents[baseName]
+	if !ok || !agentCfg.ReviewModels.Configured() {
+		return "", false
+	}
+	authorModel := github.NormalizeAttributionModel(pr.HiveModel)
+	backend, model, fallback := s.selectReviewModel(agentCfg, pr)
+	if model == "" {
+		s.logger.Info("review model fallback skipped PR", "agent", agentName, "repo", pr.Repo, "number", pr.Number, "author_model", pr.HiveModel)
+		if s.auditFunc != nil {
+			s.auditFunc(github.AuditActionReviewModelFallback, fmt.Sprintf("repo=%s number=%d fallback=skip author_model=%s", pr.Repo, pr.Number, authorModel), agentName)
+		}
+		return "", true
+	}
+	fallbackMode := agentCfg.ReviewModels.EffectiveFallback()
+	if fallback && s.auditFunc != nil {
+		detail := fmt.Sprintf("repo=%s number=%d fallback=%s author_model=%s", pr.Repo, pr.Number, fallbackMode, authorModel)
+		if fallbackMode != config.ReviewModelsFallbackRequiresHuman {
+			detail += fmt.Sprintf(" review_model=%s", model)
+		}
+		s.auditFunc(github.AuditActionReviewModelFallback, detail, agentName)
+	}
+	if fallback && fallbackMode == config.ReviewModelsFallbackRequiresHuman {
+		return fmt.Sprintf(" [author=%s] [needs human review — no independent model available]", authorModel), false
+	}
+	marker := fmt.Sprintf(" [author=%s review_with=%s/%s]", authorModel, backend, model)
+	return marker, false
 }
 
 // loadReviewVerdicts reads the review-verdicts artifact for ${PR_LIST}

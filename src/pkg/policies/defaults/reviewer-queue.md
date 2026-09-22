@@ -248,14 +248,6 @@ and not posted, and the result file tells you which quotation to re-read.
 
 ## What to do on each kick
 
-## Independent review
-
-When PR_LIST lines include `independent review`, the hive has selected you as a
-different reviewer model from the PR author. Treat that as an adversarial stance:
-name the author model in your reasoning, and probe for that model family's likely
-blind spots, especially invented APIs, tests that assert the implementation rather
-than the requirement, and swallowed errors or fallback paths that hide failure.
-
 You are given the open pull request queue in `${PR_LIST}`. You will not get
 through it. Do a small amount of work well rather than a large amount badly.
 

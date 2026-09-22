@@ -107,7 +107,10 @@ The dashboard API can update this field through [`POST /api/effort/{agent}/{effo
 ### Reviewer independence
 
 Reviewer agents can declare an ordered `review_models` pool so a PR is reviewed
-by a model independent from the one that authored it:
+by a model independent from the one that authored it. The reviewer still receives
+one queue kick; each PR line carries `review_with=<backend>/<model>`, and the
+reviewer delegates that PR to an in-session Agent/task sub-agent with the listed
+model override:
 
 ```yaml
 agents:
@@ -128,7 +131,9 @@ agents:
 normalized vendor prefix before the first dash (`claude`, `gpt`, `gemini`,
 `grok`, ...). If no pool entry is eligible, `fallback` is `pinned` (use the
 agent's configured `model`), `skip` (omit the PR from that kick), or
-`requires_human` (keep the PR visible with a human-review marker).
+`requires_human` (keep the PR visible with a human-review marker). Reviewers
+record the delegated sub-agent's model as `review_model` in the verdict artifact,
+which feeds the author/reviewer model-pair metrics.
 
 ### BYO-agent specs
 
