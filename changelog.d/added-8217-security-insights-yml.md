@@ -1,0 +1,1 @@
+- Add an OpenSSF Security Insights `security-insights.yml` (schema 2.1.0) at the repo root declaring the project's repositories, administrators, vulnerability reporting, license and distribution points, so LFX Insights can read the subproject list for OSPS-QA-04.01 and the distribution channel for OSPS-BR-03.02 (#8217).

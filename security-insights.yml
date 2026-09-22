@@ -1,0 +1,115 @@
+header:
+  schema-version: 2.1.0
+  last-updated: '2026-09-22'
+  last-reviewed: '2026-09-22'
+  url: https://raw.githubusercontent.com/hivecommons/hive/v5/security-insights.yml
+  comment: |
+    Hive is the primary codebase of the Hive Commons project. The project
+    section lists every repository in the hivecommons GitHub organization;
+    docs/repositories.md in this repository carries the same list with the
+    status and intent of each one.
+
+project:
+  name: Hive Commons
+  homepage: https://hivecommons.dev
+  administrators:
+    - name: Andy Anderson
+      affiliation: IBM
+      social: https://github.com/clubanderson
+      primary: true
+  documentation:
+    quickstart-guide: https://github.com/hivecommons/hive/blob/v5/README.md#quick-start
+    detailed-guide: https://docs.hivecommons.dev
+    code-of-conduct: https://github.com/hivecommons/.github/blob/main/CODE_OF_CONDUCT.md
+  repositories:
+    - name: hive
+      url: https://github.com/hivecommons/hive
+      comment: |
+        This repository. The Hive orchestrator: governor, agent manager,
+        dashboard, hub and contributor relay. Publishes the hive, hive-hub
+        and hive-contributor container images.
+    - name: pluk
+      url: https://github.com/hivecommons/pluk
+      comment: |
+        Pub-sub event streaming for tmux sessions running AI coding agents.
+        Installed into the hive image at build time.
+    - name: hotshot
+      url: https://github.com/hivecommons/hotshot
+      comment: Screenshot capture delivered into an AI coding assistant's terminal. Standalone tool.
+    - name: promptargs
+      url: https://github.com/hivecommons/promptargs
+      comment: Template expansion and variable substitution for AI prompts. Standalone tool.
+    - name: rationguard
+      url: https://github.com/hivecommons/rationguard
+      comment: Detects and rebuts rationalization patterns in AI agent output. Standalone tool.
+    - name: dibs
+      url: https://github.com/hivecommons/dibs
+      comment: Contributor attribution layer for AI-agent-era contributions. Standalone service.
+    - name: homebrew-hive
+      url: https://github.com/hivecommons/homebrew-hive
+      comment: Homebrew tap for the Hive contribute app. Packaging only.
+    - name: docs
+      url: https://github.com/hivecommons/docs
+      comment: Source for docs.hivecommons.dev. Project docs are synced from their repositories at build time.
+    - name: infra
+      url: https://github.com/hivecommons/infra
+      comment: Shared CI workflows, Prow configuration and organization automation.
+    - name: .github
+      url: https://github.com/hivecommons/.github
+      comment: Organization profile and community health files.
+    - name: hive-redirect
+      url: https://github.com/hivecommons/hive-redirect
+      comment: GitHub Pages redirect from hive.hivecommons.dev to the hosted hub. Placeholder.
+    - name: hivecommons.github.io
+      url: https://github.com/hivecommons/hivecommons.github.io
+      comment: Placeholder site for hivecommons.dev.
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    security-policy: https://github.com/hivecommons/hive/blob/v5/SECURITY.md
+    comment: |
+      Reports are accepted through GitHub private vulnerability reporting on
+      the hive repository (Security tab, Report a vulnerability). Please do
+      not file security issues publicly.
+
+repository:
+  url: https://github.com/hivecommons/hive
+  status: active
+  accepts-change-request: true
+  accepts-automated-change-request: true
+  core-team:
+    - name: Andy Anderson
+      affiliation: IBM
+      social: https://github.com/clubanderson
+      primary: true
+    - name: hanthor
+      social: https://github.com/hanthor
+      primary: false
+    - name: Danathar
+      social: https://github.com/Danathar
+      primary: false
+  documentation:
+    contributing-guide: https://github.com/hivecommons/hive/blob/v5/CONTRIBUTING.md
+    security-policy: https://github.com/hivecommons/hive/blob/v5/SECURITY.md
+    governance: https://github.com/hivecommons/hive/blob/v5/GOVERNANCE.md
+  license:
+    url: https://github.com/hivecommons/hive/blob/v5/LICENSE
+    expression: Apache-2.0
+  release:
+    automated-pipeline: true
+    changelog: https://github.com/hivecommons/hive/blob/v5/CHANGELOG.md
+    distribution-points:
+      - uri: pkg:docker/hivecommons/hive?repository_url=ghcr.io
+        comment: The hive orchestrator image, multi-arch (linux/amd64, linux/arm64), built and pushed by .github/workflows/docker.yml.
+      - uri: pkg:docker/hivecommons/hive-hub?repository_url=ghcr.io
+        comment: The hosted hub image.
+      - uri: pkg:docker/hivecommons/hive-contributor?repository_url=ghcr.io
+        comment: The contributor relay image.
+      - uri: https://github.com/hivecommons/hive/releases
+        comment: Tagged source releases with release notes.
+  security:
+    assessments:
+      self:
+        comment: |
+          Threat model and security design notes are maintained in
+          src/docs/security-threat-model.md and src/docs/security.md.
