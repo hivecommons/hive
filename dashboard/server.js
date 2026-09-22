@@ -2745,13 +2745,23 @@ function selectAdvisorTask(profile) {
 }
 
 // REST API for contributor management
+
+// SECURITY (#8165): stored profiles carry registration_token_plain (the live
+// credential the relay authenticates with). These GET endpoints are
+// unauthenticated, so the plaintext token must never leave the process —
+// mirror the Go dashboard, which blanks TokenPlain before every response.
+function publicContributorView(profile) {
+  const { registration_token_plain, ...rest } = profile;
+  return rest;
+}
+
 app.get('/api/contributors', (_req, res) => {
   const profiles = listContributors();
   const active = [];
   for (const [id, conn] of contributorConnections) {
     active.push(id);
   }
-  res.json({ contributors: profiles.map(p => ({ ...p, active: active.includes(p.contributor_id) })) });
+  res.json({ contributors: profiles.map(p => ({ ...publicContributorView(p), active: active.includes(p.contributor_id) })) });
 });
 
 app.get('/api/contributors/:id', (req, res) => {
@@ -2759,10 +2769,11 @@ app.get('/api/contributors/:id', (req, res) => {
   const profile = profiles.find(p => p.contributor_id === req.params.id || p.github_username === req.params.id);
   if (!profile) return res.status(404).json({ error: 'Contributor not found' });
   const conn = contributorConnections.get(profile.contributor_id);
-  res.json({ ...profile, active: !!conn, currentTask: conn ? conn.currentTask : null, lastTmuxOutput: conn ? conn.lastTmuxOutput : [] });
+  res.json({ ...publicContributorView(profile), active: !!conn, currentTask: conn ? conn.currentTask : null, lastTmuxOutput: conn ? conn.lastTmuxOutput : [] });
 });
 
 app.put('/api/contributors/:id/trust', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return; // #8165 — parity with Go requireContributorWrite
   const profiles = listContributors();
   const profile = profiles.find(p => p.contributor_id === req.params.id || p.github_username === req.params.id);
   if (!profile) return res.status(404).json({ error: 'Contributor not found' });
@@ -2775,6 +2786,7 @@ app.put('/api/contributors/:id/trust', (req, res) => {
 });
 
 app.post('/api/contributors/:id/revoke', (req, res) => {
+  if (!requireLegacyOwnerRole(req, res)) return; // #8165 — parity with Go requireContributorWrite
   const profiles = listContributors();
   const profile = profiles.find(p => p.contributor_id === req.params.id || p.github_username === req.params.id);
   if (!profile) return res.status(404).json({ error: 'Contributor not found' });
