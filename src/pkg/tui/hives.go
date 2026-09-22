@@ -130,6 +130,9 @@ func (m model) openHives() (model, tea.Cmd) {
 	m.hivesSeq++
 	m.hivesID = m.hivesSeq
 	overlay := panes.NewHivesOverlay()
+	if m.hivesOnly {
+		overlay = overlay.WithEscQuit()
+	}
 	m.hives = &overlay
 	m.footerStatus = ""
 	return m, m.loadHives(m.hivesID)
@@ -181,6 +184,9 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
+		if m.hivesOnly {
+			return m.stopSSE(), tea.Quit
+		}
 		m.hives = nil
 		return m, nil
 	case "enter":

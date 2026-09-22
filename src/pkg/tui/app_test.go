@@ -43,6 +43,92 @@ func TestAppQuitsOnCtrlC(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(finalWait))
 }
 
+func requireQuitCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("command is nil, want tea.Quit")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Fatalf("command returned %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestHivesOnlyEscAndCtrlCQuit(t *testing.T) {
+	_, escCmd := newHivesOnlyModel().Update(tea.KeyMsg{Type: tea.KeyEsc})
+	requireQuitCmd(t, escCmd)
+
+	nilOverlay := newHivesOnlyModel()
+	nilOverlay.hives = nil
+	_, nilOverlayEscCmd := nilOverlay.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	requireQuitCmd(t, nilOverlayEscCmd)
+
+	_, ctrlCCmd := newHivesOnlyModel().Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	requireQuitCmd(t, ctrlCCmd)
+}
+
+func TestHivesOnlyViewNeverBlank(t *testing.T) {
+	sized := func(m model) model {
+		m.width, m.height = 100, 30
+		return m
+	}
+
+	afterEsc := sized(newHivesOnlyModel())
+	next, _ := afterEsc.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	afterEsc = next.(model)
+
+	afterShiftH := sized(newHivesOnlyModel())
+	afterShiftH.hives = nil
+	next, _ = afterShiftH.Update(hivesKey)
+	afterShiftH = next.(model)
+
+	tooSmall := newHivesOnlyModel()
+	tooSmall.width, tooSmall.height = minWidth-1, minHeight
+
+	for name, m := range map[string]model{
+		"initial":      sized(newHivesOnlyModel()),
+		"after esc":    afterEsc,
+		"after H":      afterShiftH,
+		"too small":    tooSmall,
+		"closed guard": func() model { m := sized(newHivesOnlyModel()); m.hives = nil; return m }(),
+	} {
+		if got := m.View(); got == "" {
+			t.Fatalf("%s hives-only View() is blank", name)
+		}
+	}
+}
+
+func TestOperatorEscHivesOverlayBehaviorUnchanged(t *testing.T) {
+	m := newModel()
+	m.width, m.height = 100, 30
+
+	next, cmd := m.Update(hivesKey)
+	if cmd == nil {
+		t.Fatal("H did not start loading the Hives overlay")
+	}
+	opened := next.(model)
+	if opened.hives == nil {
+		t.Fatal("H did not open the Hives overlay")
+	}
+
+	next, cmd = opened.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatal("Esc with the operator Hives overlay open returned a command; it must not quit")
+	}
+	if got := next.(model); got.hives != nil {
+		t.Fatal("Esc with the operator Hives overlay open did not close it")
+	}
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatal("Esc with no operator overlay returned a command; it must be a no-op")
+	}
+	if got := next.(model); got.hives != nil || got.focus != m.focus || got.helpVisible {
+		t.Fatalf("Esc with no operator overlay changed state: hives=%v focus=%d help=%v",
+			got.hives, got.focus, got.helpVisible)
+	}
+}
+
 // TestAppRendersGrid pins what a sized frame draws since T3: all four pane
 // titles, on screen at once. Asserting on the titles rather than a golden
 // file keeps this test stable across layout refinement — the full frame's

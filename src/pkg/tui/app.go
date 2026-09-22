@@ -170,6 +170,8 @@ const (
 // overlay is where a binding is spelled out in full.
 const footerText = "tab focus  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit"
 
+const hivesOnlyClosedText = "Hives overlay closed — Shift+H reopens, esc/q quit"
+
 // confirmState is the pause/resume dialog. It remains present while the HTTP
 // command is in flight so every other key stays behind the modal, and it also
 // holds a failed call's message so an API error becomes UI rather than a
@@ -490,7 +492,7 @@ func newModel() model {
 }
 
 func newHivesOnlyModel() model {
-	overlay := panes.NewHivesOverlay()
+	overlay := panes.NewHivesOverlay().WithEscQuit()
 	return model{
 		hivesOnly: true,
 		hives:     &overlay,
@@ -873,10 +875,20 @@ func (m model) updateHivesOnly(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hivesActionMsg:
 		return m.handleHivesAction(msg)
 	case tea.KeyMsg:
-		if m.hives != nil && !m.hives.Typing() {
-			switch msg.String() {
-			case "q", "ctrl+c":
-				return m, tea.Quit
+		switch msg.String() {
+		case "ctrl+c":
+			return m.stopSSE(), tea.Quit
+		case "H":
+			if m.hives == nil {
+				return m.openHives()
+			}
+		case "q":
+			if m.hives == nil || !m.hives.Typing() {
+				return m.stopSSE(), tea.Quit
+			}
+		case "esc":
+			if m.hives == nil || !m.hives.Typing() {
+				return m.stopSSE(), tea.Quit
 			}
 		}
 		if m.hives != nil {
@@ -958,7 +970,8 @@ func (m model) View() string {
 
 	if m.hivesOnly {
 		if m.hives == nil {
-			return ""
+			return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+				footerStyle.Render(hivesOnlyClosedText))
 		}
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
 	}

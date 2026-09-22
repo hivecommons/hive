@@ -80,6 +80,10 @@ type HivesOverlay struct {
 	// note is the last successful mutation's receipt, held on the list screen
 	// so the operator reads what happened without it flashing past.
 	note string
+
+	// escQuits is set by the hives-only entry, where the overlay is the whole
+	// program rather than a modal above the operator grid.
+	escQuits bool
 }
 
 // HiveRow is one hive as the overlay draws it.
@@ -149,6 +153,13 @@ type HivesAction struct {
 // open but nothing has been asked for, so there is no state for one.
 func NewHivesOverlay() HivesOverlay {
 	return HivesOverlay{loading: true}
+}
+
+// WithEscQuit changes list-screen hints for the hives-only entry, where Esc
+// exits the program instead of closing back to an operator grid.
+func (o HivesOverlay) WithEscQuit() HivesOverlay {
+	o.escQuits = true
+	return o
 }
 
 // Loading reports whether the profile read is still outstanding.
@@ -758,6 +769,10 @@ func (o HivesOverlay) inputLine(label, value string, focused bool) string {
 }
 
 func (o HivesOverlay) footer() string {
+	closeHint := "esc close"
+	if o.escQuits {
+		closeHint = "esc/q quit"
+	}
 	switch {
 	case o.pending:
 		// No cancel offered while pending: the write is already under way and
@@ -770,11 +785,11 @@ func (o HivesOverlay) footer() string {
 	case o.mode == hivesModeRename:
 		return "type to edit  backspace edit  enter rename  esc cancel"
 	case o.loading:
-		return "esc close"
+		return closeHint
 	case o.loaded && len(o.rows) > 0:
-		return "j/k move  enter use  a add  d remove  r rename  esc close"
+		return "j/k move  enter use  a add  d remove  r rename  " + closeHint
 	default:
-		return "a add  esc close"
+		return "a add  " + closeHint
 	}
 }
 
