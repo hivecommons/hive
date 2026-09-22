@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -462,7 +463,8 @@ func TestListenContextCancelClosesIdleSocket(t *testing.T) {
 
 func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 	var calls atomic.Int64
-	var times []time.Time
+	var mu sync.Mutex
+	var delays []time.Duration
 	apiBase := ""
 	upgrader := websocket.Upgrader{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -476,7 +478,6 @@ func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 			return
 		}
 		n := calls.Add(1)
-		times = append(times, time.Now())
 		if n == 3 {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": strings.Replace(apiBase+"/socket", "http", "ws", 1)})
 			return
@@ -489,9 +490,18 @@ func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 	b := newTestBot(ts.URL)
 	b.reconnectBase = 20 * time.Millisecond
 	b.reconnectMax = 200 * time.Millisecond
+	b.sleep = func(d time.Duration) {
+		mu.Lock()
+		delays = append(delays, d)
+		mu.Unlock()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go b.Listen(ctx, func(chat.Message) {})
+	done := make(chan struct{})
+	go func() {
+		b.Listen(ctx, func(chat.Message) {})
+		close(done)
+	}()
 	deadline := time.After(2 * time.Second)
 	for calls.Load() < 4 {
 		select {
@@ -502,12 +512,22 @@ func TestListenBackoffResetsAfterConnectedSession(t *testing.T) {
 		}
 	}
 	cancel()
-	if len(times) < 4 {
-		t.Fatalf("times = %d, want 4", len(times))
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Listen did not exit after context cancellation")
 	}
-	postSuccessDelay := times[3].Sub(times[2])
-	if postSuccessDelay > 35*time.Millisecond {
-		t.Fatalf("post-success reconnect delay = %v, want near base", postSuccessDelay)
+	mu.Lock()
+	defer mu.Unlock()
+	// fail -> base, fail -> 2*base, connected session -> reset to base.
+	want := []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 20 * time.Millisecond}
+	if len(delays) < len(want) {
+		t.Fatalf("delays = %v, want at least %d entries", delays, len(want))
+	}
+	for i, d := range want {
+		if delays[i] != d {
+			t.Fatalf("delays[%d] = %v, want %v (delays=%v)", i, delays[i], d, delays)
+		}
 	}
 }
 

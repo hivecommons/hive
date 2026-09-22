@@ -178,10 +178,8 @@ func (b *telegramBackend) Listen(ctx context.Context, deliver func(chat.Message)
 			}
 			continue
 		}
-		select {
-		case <-ctx.Done():
+		if b.sleep(ctx, delay) != nil {
 			return
-		case <-time.After(delay):
 		}
 		if err != nil {
 			delay = min(delay*2, maxDelay)

@@ -1,0 +1,1 @@
+- Removed the wall-clock ceilings from the Slack and Telegram reconnect backoff reset tests by routing the Listen delay through the injectable sleeper and asserting the exact computed delays (#8336)

@@ -302,12 +302,9 @@ func TestPollOnceSkipsWrongChatEmptyTextAndMarksBot(t *testing.T) {
 
 func TestListenBackoffResetsAfterSuccessfulPoll(t *testing.T) {
 	var mu sync.Mutex
-	var times []time.Time
+	var delays []time.Duration
 	var calls atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		times = append(times, time.Now())
-		mu.Unlock()
 		n := calls.Add(1)
 		if n == 3 {
 			writeTelegramOK(w, []any{})
@@ -319,26 +316,50 @@ func TestListenBackoffResetsAfterSuccessfulPoll(t *testing.T) {
 	b := newTestBot(ts.URL)
 	b.backoffBase = 20 * time.Millisecond
 	b.backoffMax = time.Second
+	b.sleep = func(_ context.Context, d time.Duration) error {
+		mu.Lock()
+		delays = append(delays, d)
+		mu.Unlock()
+		return nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go b.Listen(ctx, func(chat.Message) {})
+	done := make(chan struct{})
+	go func() {
+		b.Listen(ctx, func(chat.Message) {})
+		close(done)
+	}()
+	// fail -> base, fail -> 2*base, successful poll resets, next fail -> base.
+	want := []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 20 * time.Millisecond}
+	recorded := func() []time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Duration(nil), delays...)
+	}
 	deadline := time.After(2 * time.Second)
-	for calls.Load() < 4 {
+	for len(recorded()) < len(want) {
 		select {
 		case <-deadline:
-			t.Fatalf("timed out waiting for polls; calls=%d", calls.Load())
+			t.Fatalf("timed out waiting for polls; calls=%d delays=%v", calls.Load(), recorded())
 		default:
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Listen did not exit after context cancellation")
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(times) < 4 {
-		t.Fatalf("times = %d", len(times))
+	if len(delays) < len(want) {
+		t.Fatalf("delays = %v, want at least %d entries", delays, len(want))
 	}
-	if delay := times[3].Sub(times[2]); delay > 60*time.Millisecond {
-		t.Fatalf("post-success delay = %v, want reset near base", delay)
+	for i, d := range want {
+		if delays[i] != d {
+			t.Fatalf("delays[%d] = %v, want %v (delays=%v)", i, delays[i], d, delays)
+		}
 	}
 }
 

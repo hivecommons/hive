@@ -180,14 +180,40 @@ func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
 				delay = socketReconnectBase
 			}
 		}
-		select {
-		case <-ctx.Done():
+		if !sleepWithContext(ctx, b.sleep, delay) {
 			return
-		case <-time.After(delay):
 		}
 		if !connected {
 			delay = min(delay*2, maxDelay)
 		}
+	}
+}
+
+// sleepWithContext waits for d using the injected sleep so tests can observe
+// the computed reconnect delays without wall-clock timing; it returns false
+// when ctx is canceled before the sleep completes.
+func sleepWithContext(ctx context.Context, sleep func(time.Duration), d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	if sleep == nil {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(d):
+			return true
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sleep(d)
+	}()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-done:
+		return true
 	}
 }
 
