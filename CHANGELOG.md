@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-22 (v5.4.0)
+
+### Added
+
+- Add `docs/repositories.md`, the authoritative list of hivecommons subproject repositories with intent, status and whether each ships in a Hive release, linked from the README, closing OpenSSF Baseline OSPS-QA-04.01 (#8212).
+- Add an OpenSSF Security Insights `security-insights.yml` (schema 2.1.0) at the repo root declaring the project's repositories, administrators, vulnerability reporting, license and distribution points, so LFX Insights can read the subproject list for OSPS-QA-04.01 and the distribution channel for OSPS-BR-03.02 (#8217).
+
+### Changed
+
+- v4 end-of-life date set to 2026-12-21 (v5.0.0 + 90 days); recorded in ROADMAP.md and the v4 freeze runbook (#8168).
+
+### Fixed
+
+- Add `hivectl tui --hives` for contributor profile switching without dashboard credentials.
+- Hosted-spoke Deployments now set `revisionHistoryLimit: 2` instead of inheriting the Kubernetes default of ten. Each `:stable` roll left another scaled-to-zero ReplicaSet behind, and a pod stuck Pending under an old one kept a retired image reference (including the pre-transfer `ghcr.io/kubestellar/hive` tag) visible to cluster security scanners long after the live pod had moved on. Existing spokes pick the limit up on their next provision apply; operators can patch it in place with `kubectl patch deploy hive -n hive-hosted-<id> -p '{"spec":{"revisionHistoryLimit":2}}'`.
+
 ## 2026-09-22 (v5.3.0)
 
 ### Added

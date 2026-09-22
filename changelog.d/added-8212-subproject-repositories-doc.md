@@ -1,1 +1,0 @@
-- Add `docs/repositories.md`, the authoritative list of hivecommons subproject repositories with intent, status and whether each ships in a Hive release, linked from the README, closing OpenSSF Baseline OSPS-QA-04.01 (#8212).
