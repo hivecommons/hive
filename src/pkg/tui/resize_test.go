@@ -58,13 +58,47 @@ func TestResizeRendersGridOrMessageBySize(t *testing.T) {
 			assertFrameFits(t, final.View(), tc.w, tc.h)
 
 			view := final.View()
-			for _, title := range paneTitles {
-				if got := strings.Contains(view, title); got != tc.wantGrid {
-					t.Fatalf("%dx%d: frame contains %q = %v, want %v", tc.w, tc.h, title, got, tc.wantGrid)
+			if tc.wantGrid && !strings.Contains(view, paneTitles[0]) {
+				t.Fatalf("%dx%d: grid frame does not contain the focused pane title %q", tc.w, tc.h, paneTitles[0])
+			}
+			if tc.wantGrid && selectGridShape(tc.w, tc.h) == gridShapeTwoByTwo {
+				for _, title := range paneTitles {
+					if !strings.Contains(view, title) {
+						t.Fatalf("%dx%d: 2x2 frame is missing %q", tc.w, tc.h, title)
+					}
 				}
 			}
 			if got := strings.Contains(view, tooSmallText); got == tc.wantGrid {
 				t.Fatalf("%dx%d: frame contains the too-small message = %v, want %v", tc.w, tc.h, got, !tc.wantGrid)
+			}
+		})
+	}
+}
+
+func TestSelectGridShape(t *testing.T) {
+	cases := []struct {
+		name       string
+		w, h       int
+		want       gridShape
+		wantPanes  int
+		secondPane int
+	}{
+		{"comfortable keeps 2x2", comfortableWidth, comfortableHeight, gridShapeTwoByTwo, 4, 1},
+		{"wide but short uses two columns", comfortableWidth, minHeight, gridShapeTwoColumns, 2, 1},
+		{"narrow uses one column", 80, 24, gridShapeColumn, 1, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selectGridShape(tc.w, tc.h); got != tc.want {
+				t.Fatalf("selectGridShape(%d,%d) = %v, want %v", tc.w, tc.h, got, tc.want)
+			}
+			m := newModel()
+			gotPanes := m.visiblePaneIndexes(tc.want)
+			if len(gotPanes) != tc.wantPanes {
+				t.Fatalf("visible panes = %v, want %d panes", gotPanes, tc.wantPanes)
+			}
+			if tc.secondPane >= 0 && gotPanes[1] != tc.secondPane {
+				t.Fatalf("visible panes = %v, want second pane %d", gotPanes, tc.secondPane)
 			}
 		})
 	}

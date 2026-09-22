@@ -77,14 +77,19 @@ const paneCount = 4
 // draws but says nothing. Showing an operator a stack of empty boxes is worse
 // than telling them the window is too small, so this is the floor.
 const (
-	minWidth  = 60
-	minHeight = 20
+	minWidth          = 60
+	minHeight         = 20
+	comfortableWidth  = 120
+	comfortableHeight = 40
+	twoColumnMinWidth = comfortableWidth
+	twoRowMinHeight   = comfortableHeight
 )
 
 // tooSmallText is the whole below-minimum frame's content. It is derived from
 // the constants rather than spelled out, so the numbers an operator is told to
 // resize to cannot drift away from the numbers actually enforced.
-var tooSmallText = fmt.Sprintf("terminal too small (need at least %dx%d)", minWidth, minHeight)
+var tooSmallText = fmt.Sprintf("terminal too small (need %dx%d; comfortable %dx%d)",
+	minWidth, minHeight, comfortableWidth, comfortableHeight)
 
 // Border styles for the grid cells. The focused pane gets a THICK border, not
 // only a color change: test and CI environments render through termenv's
@@ -96,8 +101,8 @@ var tooSmallText = fmt.Sprintf("terminal too small (need at least %dx%d)", minWi
 // at the call site is a value chosen against ONE background, and the focus
 // border in particular was invisible on a light terminal. See theme.go.
 var (
-	unfocusedBorder = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
+	unfocusedRule = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(theme.Border)
 	focusedBorder = lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder()).
@@ -168,7 +173,7 @@ const (
 // binding that falls off the right edge is simply invisible. The footer is
 // terse by design (`tab focus` already stands for tab and shift+tab); the help
 // overlay is where a binding is spelled out in full.
-const footerText = "tab focus  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit"
+const footerText = "tab focus  z zoom  enter zoom  p pause  m model  A acmm  K kick  a attach  H hives  ? help  q quit"
 
 const hivesOnlyClosedText = "Hives overlay closed — Shift+H reopens, esc/q quit"
 
@@ -270,6 +275,10 @@ type model struct {
 	// focus indexes the focused pane. Exactly one pane is always focused;
 	// there is no "nothing focused" state to handle everywhere else.
 	focus int
+
+	// zoomed makes the focused pane fill the whole grid area. It is layout
+	// state only: panes keep their own content and receive a larger box.
+	zoomed bool
 
 	// api is the dashboard client every operator-mode poll goes through.
 	// client.New cannot fail — a bad HIVE_DASHBOARD_URL surfaces as a request
@@ -749,6 +758,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.helpVisible = true
 			return m, nil
+		case "z", "enter":
+			m.zoomed = !m.zoomed
+			return m, nil
+		case "esc":
+			if m.zoomed {
+				m.zoomed = false
+			}
+			return m, nil
 		case "q", "ctrl+c":
 			return m.stopSSE(), tea.Quit
 		case "tab":
@@ -954,6 +971,34 @@ func (m model) broadcast(msg tea.Msg) (model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+type gridShape int
+
+const (
+	gridShapeColumn gridShape = iota
+	gridShapeTwoColumns
+	gridShapeTwoByTwo
+)
+
+func selectGridShape(width, height int) gridShape {
+	if width >= twoColumnMinWidth && height >= twoRowMinHeight {
+		return gridShapeTwoByTwo
+	}
+	if width >= twoColumnMinWidth {
+		return gridShapeTwoColumns
+	}
+	return gridShapeColumn
+}
+
+func (m model) visiblePaneIndexes(shape gridShape) []int {
+	if m.zoomed || shape == gridShapeColumn {
+		return []int{m.focus}
+	}
+	if shape == gridShapeTwoColumns {
+		return []int{m.focus, (m.focus + 1) % paneCount}
+	}
+	return []int{0, 1, 2, 3}
+}
+
 // View implements tea.Model.
 func (m model) View() string {
 	if m.width <= 0 || m.height <= 0 {
@@ -976,34 +1021,50 @@ func (m model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
 	}
 
-	// One line each for header and footer; the grid gets the rest, split
-	// into two rows and two columns. The right column and bottom row absorb
-	// the odd remainder so the frame always fills the terminal exactly.
+	// One line each for header and footer; the grid gets the rest. At the
+	// comfortable size the historic 2x2 grid is preserved. Short wide
+	// terminals show the focused pane and its next neighbour side by side; a
+	// narrow terminal spends the whole grid area on the focused pane. Zoom is
+	// the same pure layout choice, forced to one focused pane.
 	gridH := m.height - 2
-	topH := gridH / 2
-	botH := gridH - topH
-	leftW := m.width / 2
-	rightW := m.width - leftW
+	shape := selectGridShape(m.width, m.height)
 
 	cell := func(i, outerW, outerH int) string {
-		style := unfocusedBorder
+		style := unfocusedRule
+		innerW := outerW
+		innerH := max(0, outerH-1)
 		if i == m.focus {
 			style = focusedBorder
+			innerW = max(0, outerW-2)
+			innerH = max(0, outerH-2)
 		}
-		// The border consumes one row/column on every side; the pane
-		// renders only the interior. The clamp stays after T24 even though
-		// the minimum-size guard now keeps the grid out of the sizes that
-		// need it: it is a defence against a later layout change reserving
-		// more chrome, not a duplicate of the guard.
-		innerW := max(0, outerW-2)
-		innerH := max(0, outerH-2)
+		// Chrome consumes whatever the selected style draws; the pane renders
+		// only the remaining interior. The clamp stays as a defence against
+		// later layout changes reserving more chrome.
 		return style.Render(m.panes[i].View(innerW, innerH))
 	}
 
-	top := lipgloss.JoinHorizontal(lipgloss.Top,
-		cell(0, leftW, topH), cell(1, rightW, topH))
-	bottom := lipgloss.JoinHorizontal(lipgloss.Top,
-		cell(2, leftW, botH), cell(3, rightW, botH))
+	grid := ""
+	visible := m.visiblePaneIndexes(shape)
+	switch {
+	case m.zoomed || shape == gridShapeColumn:
+		grid = cell(visible[0], m.width, gridH)
+	case shape == gridShapeTwoColumns:
+		leftW := m.width / 2
+		rightW := m.width - leftW
+		grid = lipgloss.JoinHorizontal(lipgloss.Top,
+			cell(visible[0], leftW, gridH), cell(visible[1], rightW, gridH))
+	default:
+		topH := gridH / 2
+		botH := gridH - topH
+		leftW := m.width / 2
+		rightW := m.width - leftW
+		top := lipgloss.JoinHorizontal(lipgloss.Top,
+			cell(0, leftW, topH), cell(1, rightW, topH))
+		bottom := lipgloss.JoinHorizontal(lipgloss.Top,
+			cell(2, leftW, botH), cell(3, rightW, botH))
+		grid = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	}
 
 	// CLIPPED INLINE, THEN PADDED. Width() WRAPS text that overflows rather
 	// than truncating it, so a header wider than the terminal silently becomes
@@ -1029,7 +1090,7 @@ func (m model) View() string {
 	footer := footerStyle.Width(m.width).Render(
 		lipgloss.NewStyle().Inline(true).MaxWidth(m.width).Render(footerTextForFrame))
 
-	frame := lipgloss.JoinVertical(lipgloss.Left, header, top, bottom, footer)
+	frame := lipgloss.JoinVertical(lipgloss.Left, header, grid, footer)
 	if m.confirm != nil {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.confirmView())
 	}

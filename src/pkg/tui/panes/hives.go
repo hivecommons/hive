@@ -511,11 +511,20 @@ var (
 	hivesBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder()).
 			BorderForeground(theme.BorderFocus).
+			Foreground(theme.Text).
 			Padding(0, 1)
-	hivesTitleStyle  = lipgloss.NewStyle().Bold(true)
-	hivesErrorStyle  = lipgloss.NewStyle().Bold(true)
-	hivesNoteStyle   = lipgloss.NewStyle().Faint(true)
-	hivesCursorStyle = lipgloss.NewStyle().Bold(true)
+	hivesTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
+	hivesHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(theme.Muted)
+	hivesRuleStyle     = lipgloss.NewStyle().Foreground(theme.Border)
+	hivesFooterStyle   = lipgloss.NewStyle().Foreground(theme.Muted)
+	hivesErrorStyle    = lipgloss.NewStyle().Bold(true).Foreground(theme.Danger)
+	hivesNoteStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
+	hivesCursorStyle   = lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
+	hivesActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
+	hivesSuccessStyle  = lipgloss.NewStyle().Foreground(theme.Success)
+	hivesWarningStyle  = lipgloss.NewStyle().Foreground(theme.Warning)
+	hivesDangerStyle   = lipgloss.NewStyle().Foreground(theme.Danger)
+	hivesSelectedStyle = lipgloss.NewStyle().Background(theme.Selected)
 )
 
 // hivesVisibleRows bounds the list so a contributor with many hives cannot grow
@@ -539,22 +548,24 @@ const hivesSwitchNote = "the running relay is signaled when present"
 // View renders the overlay's box, sized to its own content. Placing it over the
 // frame is the app's job, matching every other overlay.
 func (o HivesOverlay) View(width int) string {
+	boxWidth := max(1, width-4)
+	contentWidth := max(1, boxWidth-2)
+
 	var body strings.Builder
 	body.WriteString(hivesTitleStyle.Render("Hives"))
 	body.WriteString("\n")
 	body.WriteString(hivesNoteStyle.Render(o.subtitle()))
 	body.WriteString("\n\n")
-	body.WriteString(o.bodyText())
+	body.WriteString(o.bodyText(contentWidth))
 	body.WriteString("\n\n")
-	body.WriteString(hivesNoteStyle.Render(o.footer()))
+	body.WriteString(hivesFooterStyle.Render(o.footer()))
 
-	// Wider than the ACMM overlay, which is the widest thing this TUI draws.
+	// Wider than the ACMM overlay when the terminal is wide enough.
 	// A row carries a name, a FULL hub URL, a contributor id and two short
 	// columns, and the hub is the field an operator most needs to read whole:
 	// two profiles for the same hive differ only in their session, and two
 	// hives under one domain differ only in the part a truncated URL cuts off.
-	contentWidth := min(92, max(1, width-6))
-	return hivesBoxStyle.Width(contentWidth).Render(body.String())
+	return hivesBoxStyle.Width(boxWidth).Render(body.String())
 }
 
 func (o HivesOverlay) subtitle() string {
@@ -569,7 +580,7 @@ func (o HivesOverlay) subtitle() string {
 	return "no active hive"
 }
 
-func (o HivesOverlay) bodyText() string {
+func (o HivesOverlay) bodyText(contentWidth int) string {
 	switch {
 	case o.pending:
 		return o.pendingWhat + "…"
@@ -580,11 +591,11 @@ func (o HivesOverlay) bodyText() string {
 	case o.mode == hivesModeRename:
 		return o.renameBody()
 	default:
-		return o.listBody()
+		return o.listBody(contentWidth)
 	}
 }
 
-func (o HivesOverlay) listBody() string {
+func (o HivesOverlay) listBody(contentWidth int) string {
 	switch {
 	case o.loading:
 		return "Reading hive profiles…"
@@ -600,69 +611,168 @@ func (o HivesOverlay) listBody() string {
 		return hivesNone
 	}
 
+	cols := o.hiveColumns(contentWidth)
 	var out strings.Builder
-	out.WriteString(hivesNoteStyle.Render(hivesHeader()))
+	out.WriteString(hivesHeaderStyle.Render(hivesHeader(cols)))
+	out.WriteString("\n")
+	out.WriteString(hivesRuleStyle.Render(strings.Repeat("─", contentWidth)))
 	out.WriteString("\n")
 	start, end := o.window()
 	for i := start; i < end; i++ {
-		out.WriteString(o.hiveRow(i))
+		out.WriteString(o.hiveRow(i, cols, contentWidth))
 		out.WriteString("\n")
 	}
-	out.WriteString(hivesNoteStyle.Render(fmt.Sprintf("%d of %d   %s", o.selected+1, len(o.rows), hivesActiveLegend)))
 	if o.actionErr != "" {
 		out.WriteString("\n" + hivesErrorStyle.Render(o.actionErr))
 	}
 	if o.note != "" {
-		out.WriteString("\n" + hivesNoteStyle.Render(o.note))
+		out.WriteString("\n" + hivesNoteStyle.Render(strings.ReplaceAll(o.note, "; ", ";\n")))
 	}
 	return out.String()
 }
 
-// The row's column widths. They sum — with the cursor, the active marker and
-// the single spaces between them — to 89, which fits inside the 90 columns the
-// box's content area has at the width above. A change here that overflows does
-// not clip, it WRAPS: lipgloss re-flows the line and every row becomes two.
 const (
-	hiveNameWidth    = 12
-	hiveHubWidth     = 42
+	hiveMinNameWidth = 7
 	hiveContribWidth = 12
 	hiveSessionWidth = 7
 	// Wide enough for "checking…", the longest of the three probe states.
 	hiveReachableWidth = 9
+	hiveRowChromeWidth = 7 // cursor + active marker + spaces between columns
 )
 
-func hivesHeader() string {
+type hiveColumns struct {
+	name int
+	hub  int
+}
+
+func (o HivesOverlay) hiveColumns(contentWidth int) hiveColumns {
+	nameNeed := lipgloss.Width("NAME")
+	hubNeed := lipgloss.Width("HUB")
+	for _, row := range o.rows {
+		nameNeed = max(nameNeed, lipgloss.Width(row.Name))
+		hubNeed = max(hubNeed, lipgloss.Width(row.Hub))
+	}
+	remaining := max(0, contentWidth-hiveRowChromeWidth-hiveContribWidth-hiveSessionWidth-hiveReachableWidth)
+	nameReserve := min(nameNeed, min(hiveMinNameWidth, remaining))
+	hubWidth := min(hubNeed, max(0, remaining-nameReserve))
+	nameWidth := min(nameNeed, max(0, remaining-hubWidth))
+	if nameWidth < lipgloss.Width("NAME") && remaining >= lipgloss.Width("NAME") {
+		nameWidth = lipgloss.Width("NAME")
+	}
+	if hubWidth < lipgloss.Width("HUB") && remaining-nameWidth >= lipgloss.Width("HUB") {
+		hubWidth = lipgloss.Width("HUB")
+	}
+	return hiveColumns{name: nameWidth, hub: hubWidth}
+}
+
+func hivesHeader(cols hiveColumns) string {
 	return fmt.Sprintf("   %s %s %s %s %s",
-		hiveColumn("NAME", hiveNameWidth),
-		hiveColumn("HUB", hiveHubWidth),
-		hiveColumn("CONTRIB ID", hiveContribWidth),
-		hiveColumn("SESSION", hiveSessionWidth),
-		hiveColumn("REACHABLE", hiveReachableWidth),
+		hiveColumn("NAME", cols.name, false),
+		hiveColumn("HUB", cols.hub, false),
+		hiveColumn("CONTRIB ID", hiveContribWidth, false),
+		hiveColumn("SESSION", hiveSessionWidth, false),
+		hiveColumn("REACHABLE", hiveReachableWidth, false),
 	)
 }
 
-func (o HivesOverlay) hiveRow(i int) string {
+func (o HivesOverlay) hiveRow(i int, cols hiveColumns, contentWidth int) string {
 	row := o.rows[i]
+	selected := i == o.selected
 	cursor := "  "
-	if i == o.selected {
-		cursor = hivesCursorStyle.Render("▸ ")
+	cursorStyle := hivesCellStyle(lipgloss.NewStyle(), selected)
+	if selected {
+		cursorStyle = hivesCellStyle(hivesCursorStyle, selected)
+		cursor = "▸ "
 	}
+	cursor = cursorStyle.Render(cursor)
 	marker := " "
 	if row.Active {
 		marker = "*"
 	}
-	return fmt.Sprintf("%s%s%s %s %s %s %s",
+	marker = hivesCellStyle(hivesActiveStyle, selected).Render(marker)
+	space := hivesCellStyle(lipgloss.NewStyle(), selected).Render(" ")
+	line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
 		cursor, marker,
-		hiveColumn(row.Name, hiveNameWidth),
-		hiveColumn(row.Hub, hiveHubWidth),
-		hiveColumn(hiveDash(row.ContributorID), hiveContribWidth),
-		hiveColumn(hiveDash(row.Session), hiveSessionWidth),
-		hiveColumn(reachableLabel(row.Reachable), hiveReachableWidth),
+		hiveColumn(row.Name, cols.name, selected), space,
+		hiveHubColumn(row.Hub, cols.hub, selected), space,
+		hiveColumn(hiveDash(row.ContributorID), hiveContribWidth, selected), space,
+		hiveColumn(hiveDash(row.Session), hiveSessionWidth, selected), space,
+		hiveReachableColumn(row.Reachable, hiveReachableWidth, selected),
 	)
+	return padCells(line, contentWidth, selected)
 }
 
-func hiveColumn(value string, width int) string {
-	return lipgloss.NewStyle().Inline(true).Width(width).MaxWidth(width).Render(value)
+func padCells(s string, width int, selected bool) string {
+	if extra := width - lipgloss.Width(s); extra > 0 {
+		return s + hivesCellStyle(lipgloss.NewStyle(), selected).Render(strings.Repeat(" ", extra))
+	}
+	return lipgloss.NewStyle().Inline(true).MaxWidth(width).Render(s)
+}
+
+func hiveColumn(value string, width int, selected bool) string {
+	return hiveStyledColumn(truncateEnd(value, width), width, lipgloss.NewStyle(), selected)
+}
+
+func hiveHubColumn(value string, width int, selected bool) string {
+	return hiveStyledColumn(truncateMiddle(value, width), width, lipgloss.NewStyle(), selected)
+}
+
+func hiveStyledColumn(value string, width int, style lipgloss.Style, selected bool) string {
+	return hivesCellStyle(style, selected).Inline(true).Width(width).MaxWidth(width).Render(value)
+}
+
+func hiveReachableColumn(reachable *bool, width int, selected bool) string {
+	label := reachableLabel(reachable)
+	style := hivesWarningStyle
+	if reachable != nil && *reachable {
+		style = hivesSuccessStyle
+	} else if reachable != nil {
+		style = hivesDangerStyle
+	}
+	return hiveStyledColumn(label, width, style, selected)
+}
+
+func hivesCellStyle(style lipgloss.Style, selected bool) lipgloss.Style {
+	if selected {
+		return style.Inherit(hivesSelectedStyle)
+	}
+	return style
+}
+
+func truncateEnd(s string, width int) string {
+	r := []rune(s)
+	if width <= 0 {
+		return ""
+	}
+	if len(r) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	return string(r[:width-1]) + "…"
+}
+
+func truncateMiddle(s string, width int) string {
+	r := []rune(s)
+	if width <= 0 {
+		return ""
+	}
+	if len(r) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	prefix := (width - 1) / 2
+	if scheme := strings.Index(s, "://"); scheme >= 0 {
+		schemeWidth := len([]rune(s[:scheme+3]))
+		if schemeWidth < width-1 {
+			prefix = max(prefix, schemeWidth)
+		}
+	}
+	suffix := width - prefix - 1
+	return string(r[:prefix]) + "…" + string(r[len(r)-suffix:])
 }
 
 func hiveDash(value string) string {
@@ -773,24 +883,29 @@ func (o HivesOverlay) footer() string {
 	if o.escQuits {
 		closeHint = "esc/q quit"
 	}
+	keys := ""
 	switch {
 	case o.pending:
 		// No cancel offered while pending: the write is already under way and
 		// closing the overlay would neither undo it nor show its result.
-		return "working…"
+		keys = "working…"
 	case o.mode == hivesModeAdd:
-		return "type to edit  tab next field  enter add  esc cancel"
+		keys = "type to edit  tab next field  enter add  esc cancel"
 	case o.mode == hivesModeRemove:
-		return "type the name  backspace edit  enter remove  esc cancel"
+		keys = "type the name  backspace edit  enter remove  esc cancel"
 	case o.mode == hivesModeRename:
-		return "type to edit  backspace edit  enter rename  esc cancel"
+		keys = "type to edit  backspace edit  enter rename  esc cancel"
 	case o.loading:
-		return closeHint
+		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		return "j/k move  enter use  a add  d remove  r rename  " + closeHint
+		keys = "j/k move  enter use  a add  d remove  r rename  " + closeHint
 	default:
-		return "a add  " + closeHint
+		keys = "a add  " + closeHint
 	}
+	if o.loaded && len(o.rows) > 0 && o.mode == hivesModeList {
+		return fmt.Sprintf("%d of %d   %s\n%s", o.selected+1, len(o.rows), hivesActiveLegend, keys)
+	}
+	return keys
 }
 
 // HivesUseNote is the receipt `use` leaves on the list, and the note the

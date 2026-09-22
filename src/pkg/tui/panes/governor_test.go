@@ -34,11 +34,11 @@ func TestGovernorRendersPopulatedStatus(t *testing.T) {
 	}
 	view := next.View(48, 12)
 	for _, want := range []string{
-		"mode          BUSY",
-		"queue depth   7 actionable",
-		"next eval     in 5m",
-		"eval interval 5m",
-		"acmm level    L4",
+		"mode     BUSY",
+		"queue    7 actionable",
+		"next eval in 5m",
+		"interval 5m",
+		"acmm     L4",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("populated view missing %q:\n%s", want, view)
@@ -73,8 +73,8 @@ func TestGovernorScheduleRequiresNextKickAndInterval(t *testing.T) {
 			msg: GovernorMsg{Status: client.GovernorStatus{GovernorState: client.GovernorState{
 				Active: true, Mode: "idle",
 			}}},
-			wantNext: "next eval     —",
-			wantInt:  "eval interval —",
+			wantNext: "next eval —",
+			wantInt:  "interval —",
 		},
 		{
 			name: "cadence without live schedule",
@@ -84,8 +84,8 @@ func TestGovernorScheduleRequiresNextKickAndInterval(t *testing.T) {
 				}},
 				EvalInterval: 90 * time.Second,
 			},
-			wantNext: "next eval     —",
-			wantInt:  "eval interval 1m30s",
+			wantNext: "next eval —",
+			wantInt:  "interval 1m30s",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -67,7 +67,7 @@ func (p Governor) View(width, height int) string {
 	return contentView(p.Title(), p.body(), width, height)
 }
 
-const governorLabelWidth = len("eval interval")
+const governorLabelWidth = len("interval")
 
 // body renders the design sketch's label/value rows. Text alignment, rather
 // than pane-owned borders or colors, supplies the structure: the app owns all
@@ -99,10 +99,10 @@ func (p Governor) body() string {
 
 	rows := [][2]string{
 		{"mode", mode},
-		{"queue depth", queue},
+		{"queue", queue},
 		{"next eval", nextEval},
-		{"eval interval", interval},
-		{"acmm level", acmm},
+		{"interval", interval},
+		{"acmm", acmm},
 	}
 	lines := make([]string, 0, len(rows))
 	for _, row := range rows {

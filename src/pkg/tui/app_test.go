@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/exp/teatest"
+
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // finalWait bounds every WaitFinished. Generous enough that a loaded CI runner
@@ -134,7 +136,7 @@ func TestOperatorEscHivesOverlayBehaviorUnchanged(t *testing.T) {
 // file keeps this test stable across layout refinement — the full frame's
 // exact bytes are pinned separately by the golden test in pkg/tui/panes.
 func TestAppRendersGrid(t *testing.T) {
-	tm := teatest.NewTestModel(t, newModel(), teatest.WithInitialTermSize(80, 24))
+	tm := teatest.NewTestModel(t, newModel(), teatest.WithInitialTermSize(comfortableWidth, comfortableHeight))
 
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		for _, title := range paneTitles {
@@ -242,7 +244,7 @@ func TestViewBeforeSizeMsg(t *testing.T) {
 // rendered line overflows the width — the remainder-absorbing split, off by
 // one, would do both.
 func TestViewFillsTerminalExactly(t *testing.T) {
-	const w, h = 80, 24
+	const w, h = comfortableWidth, comfortableHeight
 	m, _ := newModel().Update(tea.WindowSizeMsg{Width: w, Height: h})
 
 	view := m.(model).View()
@@ -259,6 +261,31 @@ func TestViewFillsTerminalExactly(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sized View() missing %q", want)
 		}
+	}
+}
+
+func TestZoomToggleAndRestore(t *testing.T) {
+	sized, _ := newModel().Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m := sized.(model)
+	if m.zoomed {
+		t.Fatal("zoom starts enabled")
+	}
+	zoomed, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	z := zoomed.(model)
+	if !z.zoomed {
+		t.Fatal("z did not enable zoom")
+	}
+	if view := z.View(); !strings.Contains(view, "AGENTS") || strings.Contains(view, "GOVERNOR") {
+		t.Fatalf("zoomed frame should show only the focused pane:\n%s", view)
+	}
+	restored, _ := z.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	r := restored.(model)
+	if r.zoomed {
+		t.Fatal("esc did not restore the grid")
+	}
+	toggled, _ := r.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !toggled.(model).zoomed {
+		t.Fatal("enter did not toggle zoom")
 	}
 }
 
@@ -468,6 +495,15 @@ func TestFooterAdvertisesHelp(t *testing.T) {
 	m.width, m.height = 100, 30
 	if !strings.Contains(m.View(), "? help") {
 		t.Error("the rendered frame does not advertise ? help")
+	}
+}
+
+func TestFooterAdvertisesZoom(t *testing.T) {
+	if !strings.Contains(footerText, "z zoom") {
+		t.Errorf("footerText = %q, want it to advertise z zoom", footerText)
+	}
+	if !strings.Contains(panes.Help(), "z / enter") {
+		t.Error("help does not advertise the zoom binding")
 	}
 }
 

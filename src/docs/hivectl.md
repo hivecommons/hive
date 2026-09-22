@@ -325,8 +325,12 @@ role is too narrow for some reads, which the panes already handle individually.
 
 #### The four panes
 
-A 2×2 grid — Agents and Governor on top, Tokens and Events on the bottom —
-refreshed from two independent loops with different cadences:
+A responsive grid — Agents, Governor, Tokens and Events — refreshed from two
+independent loops with different cadences. At 120×40 and larger it uses the
+classic 2×2 layout; on wide-but-short terminals it shows the focused pane and
+the next pane side by side; on narrow terminals it gives the focused pane the
+whole grid area. Press `z` (or `enter`) to zoom the focused pane, and `z` or
+`esc` to restore the grid.
 
 | Pane | Source | Cadence |
 |---|---|---|
@@ -372,6 +376,7 @@ simply keeps its last successful snapshot rather than showing an error.
 | Key | Action | Scope |
 |---|---|---|
 | `tab` / `shift+tab` | Cycle pane focus forward / backward | global |
+| `z` / `enter` | Zoom the focused pane; `z` or `esc` restores the grid | global |
 | `j` / `k`, `↓` / `↑` | Move the row selection | Agents, Events panes |
 | `p` | Pause or resume the selected agent (opens a y/n confirm) | Agents pane |
 | `m` | Open the model picker for the selected agent | Agents pane |

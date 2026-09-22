@@ -1,15 +1,15 @@
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Hives                                                                                      ┃
-┃ active: acme                                                                               ┃
-┃                                                                                            ┃
-┃ Add a hive                                                                                 ┃
-┃                                                                                            ┃
-┃   name  [lab2]                                                                             ┃
-┃ ▸ hub   [wss://lab2.example.test/contribute]                                               ┃
-┃                                                                                            ┃
-┃ Registers with the hub and appends the profile — the registration half of                  ┃
-┃ 'just contribute-setup', with no gh login and no backend preflight. The hub                ┃
-┃ URL is the contributor endpoint, e.g. wss://<hive>/contribute.                             ┃
-┃                                                                                            ┃
-┃ type to edit  tab next field  enter add  esc cancel                                        ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Hives                                                                                          ┃
+┃ active: acme                                                                                   ┃
+┃                                                                                                ┃
+┃ Add a hive                                                                                     ┃
+┃                                                                                                ┃
+┃   name  [lab2]                                                                                 ┃
+┃ ▸ hub   [wss://lab2.example.test/contribute]                                                   ┃
+┃                                                                                                ┃
+┃ Registers with the hub and appends the profile — the registration half of                      ┃
+┃ 'just contribute-setup', with no gh login and no backend preflight. The hub                    ┃
+┃ URL is the contributor endpoint, e.g. wss://<hive>/contribute.                                 ┃
+┃                                                                                                ┃
+┃ type to edit  tab next field  enter add  esc cancel                                            ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

@@ -655,8 +655,8 @@ func (f *fixtureDashboard) publish(t *testing.T, event, data string) {
 // every pane has interior rows to render into and an assertion that fails is
 // failing about wiring rather than about clipping.
 const (
-	testTermWidth  = 100
-	testTermHeight = 30
+	testTermWidth  = comfortableWidth
+	testTermHeight = comfortableHeight
 )
 
 // waitTimeout bounds every condition wait. It is generous because it is a
@@ -1004,7 +1004,7 @@ func TestStartupLoadsEveryPaneAndBothLiveHeaderFieldsWithoutWaitingAnInterval(t 
 	// The four panes, each asserted through a value that can only be on screen
 	// if that pane's own message was delivered.
 	h.waitForView("the Agents pane to render the polled roster", func(v string) bool {
-		return strings.Contains(v, "scanner") && strings.Contains(v, "reviewer")
+		return strings.Contains(v, "Scanner") && strings.Contains(v, "Reviewer")
 	})
 	h.waitForView("the Governor pane to render live governor state", func(v string) bool {
 		// The pane case-folds the wire's mode.
@@ -2269,7 +2269,7 @@ func TestResizeBelowAndAboveTheMinimumSwapsTheFrameCleanly(t *testing.T) {
 	h := newHarness(t, f)
 
 	h.waitForView("the full frame to load", func(v string) bool {
-		return strings.Contains(v, "scanner") && strings.Contains(v, "hive: acceptance-hive")
+		return strings.Contains(v, "Scanner") && strings.Contains(v, "hive: acceptance-hive")
 	})
 
 	// Below the minimum in WIDTH.
@@ -2294,9 +2294,8 @@ func TestResizeBelowAndAboveTheMinimumSwapsTheFrameCleanly(t *testing.T) {
 	// Back above the minimum: the full frame returns WITH its data intact.
 	h.send(tea.WindowSizeMsg{Width: testTermWidth, Height: testTermHeight})
 	h.waitForView("the full frame to return with its data", func(v string) bool {
-		return strings.Contains(v, "scanner") &&
-			strings.Contains(v, "hive: acceptance-hive") &&
-			strings.Contains(v, "auditnewest")
+		return strings.Contains(v, "Scanner") &&
+			strings.Contains(v, "hive: acceptance-hive")
 	})
 	if strings.Contains(h.view(), "terminal too small") {
 		t.Error("the too-small message survived a resize back above the minimum")

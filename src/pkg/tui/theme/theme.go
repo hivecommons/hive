@@ -15,14 +15,9 @@
 // (explicitly out of scope here) would plug into: swap the values here, not
 // the call sites.
 //
-// SCOPE. The tokens below are the ones with real call sites today. The issue
-// sketches header/status-glyph/muted-text tokens too, and they are
-// deliberately absent: nothing renders a status glyph yet, and the header and
-// footer carry Bold and Faint rather than a color. Defining tokens for them
-// now would mean inventing colors for roles nothing draws — new visual design,
-// which this task puts out of scope — and dead tokens are how a palette starts
-// disagreeing with what is on screen. A pane task that needs one adds it here
-// with its consumer, in the same change.
+// SCOPE. The tokens below are the roles with call sites in the frame and the
+// overlays. They are named for meaning (accent, warning, selected) rather than
+// hue so a later theme can retint the TUI without changing callers.
 //
 // WHERE THIS LIVES. A leaf package under pkg/tui, imported by both pkg/tui and
 // pkg/tui/panes. It began life in package tui, on the reasoning that panes/
@@ -36,34 +31,53 @@ package theme
 
 import "github.com/charmbracelet/lipgloss"
 
-// The values are ANSI-256 indices, matching what
-// the frame already used and what T25 was told not to expand on: the dark
-// halves are exactly the colors that shipped, and each light half is its
-// counterpart for a light background, not a new choice of hue.
+// The values use the terminal's first 16 ANSI slots wherever possible. Those
+// slots inherit an operator's terminal theme, unlike fixed xterm-256 cube
+// indices, and therefore have a better chance of staying legible on terminals
+// this project has never seen.
 //
 // The pairs are matched by CONTRAST AGAINST THEIR OWN BACKGROUND, not by
 // looking similar to each other, because that is what makes the frame read the
 // same way in both:
 //
-//   - Border: 240 (#585858) is ~2.9:1 on black — present but recessive. The
-//     same grey on white is ~6.8:1, which would make the unfocused borders
-//     the loudest thing on screen. 245 (#8a8a8a) is ~3.5:1 on white, so the
-//     border stays chrome rather than becoming content.
-//   - BorderFocus: 205 (#ff5fd7) is ~7.9:1 on black. 127 (#af00af) is ~6.3:1
-//     on white — the same magenta hue, darkened until it carries the same
-//     emphasis on a light terminal that 205 carries on a dark one.
+//   - Border: black/bright-black remain recessive chrome on the background
+//     they are paired with.
+//   - BorderFocus and Accent: magenta is the frame's emphasis color.
+//   - Success/Warning/Danger use the conventional green/yellow/red state
+//     slots, reinforced by words and glyphs so color is never the only signal.
 //
 // Under termenv's Ascii profile — which is what `go test` renders through —
 // both halves resolve to no color at all, so the golden files are unaffected
 // by this change and by which background a machine reports.
 var (
+	// Text is normal foreground content.
+	Text = lipgloss.AdaptiveColor{Light: "0", Dark: "15"}
+
+	// Muted is secondary text and rules.
+	Muted = lipgloss.AdaptiveColor{Light: "8", Dark: "7"}
+
+	// Accent is the active/emphasized foreground.
+	Accent = lipgloss.AdaptiveColor{Light: "5", Dark: "13"}
+
+	// Success marks healthy affirmative state.
+	Success = lipgloss.AdaptiveColor{Light: "2", Dark: "10"}
+
+	// Warning marks pending or cautionary state.
+	Warning = lipgloss.AdaptiveColor{Light: "3", Dark: "11"}
+
+	// Danger marks destructive actions and failed state.
+	Danger = lipgloss.AdaptiveColor{Light: "1", Dark: "9"}
+
+	// Selected is the selected row background.
+	Selected = lipgloss.AdaptiveColor{Light: "7", Dark: "8"}
+
 	// Border is the frame's de-emphasized chrome: the border around every
 	// pane that does not have focus.
-	Border = lipgloss.AdaptiveColor{Light: "245", Dark: "240"}
+	Border = lipgloss.AdaptiveColor{Light: "8", Dark: "7"}
 
 	// BorderFocus is the border around the focused pane, and the border of
 	// the help overlay's box. It is the frame's only emphasis color, so it
 	// must read as clearly emphasized on either background — see the
 	// contrast note above.
-	BorderFocus = lipgloss.AdaptiveColor{Light: "127", Dark: "205"}
+	BorderFocus = lipgloss.AdaptiveColor{Light: "5", Dark: "13"}
 )

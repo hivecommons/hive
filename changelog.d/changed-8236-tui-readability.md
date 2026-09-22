@@ -1,0 +1,1 @@
+- Improve TUI readability with pane zoom, responsive grid layouts, leaner chrome, wider hives overlay columns, and expanded theme palette.

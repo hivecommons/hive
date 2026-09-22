@@ -87,6 +87,13 @@ func TestTokensAreDistinctPerBackground(t *testing.T) {
 	for name, c := range map[string]lipgloss.AdaptiveColor{
 		"Border":      Border,
 		"BorderFocus": BorderFocus,
+		"Text":        Text,
+		"Muted":       Muted,
+		"Accent":      Accent,
+		"Success":     Success,
+		"Warning":     Warning,
+		"Danger":      Danger,
+		"Selected":    Selected,
 	} {
 		if c.Light == c.Dark {
 			t.Errorf("theme.%s uses %q on both backgrounds — one of them was not chosen for its own background",

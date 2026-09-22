@@ -66,9 +66,9 @@ func TestHelpOverlayGolden(t *testing.T) {
 func TestHelpListsEveryDesignDocBinding(t *testing.T) {
 	bindings := panes.HelpBindings()
 
-	// The ten rows of src/docs/design/tui.md §4.
+	// The rows of src/docs/design/tui.md §4 plus readability-pass bindings.
 	wantKeys := []string{
-		"tab / shift+tab", "?", "q / ctrl+c", "j / k, ↓ / ↑",
+		"tab / shift+tab", "z / enter", "?", "q / ctrl+c", "j / k, ↓ / ↑",
 		"p", "m", "K", "A", "a", "H",
 	}
 	if len(bindings) != len(wantKeys) {
@@ -100,6 +100,7 @@ func TestHelpListsEveryDesignDocBinding(t *testing.T) {
 func TestHelpMarksOnlyWiredBindingsAvailable(t *testing.T) {
 	wantAvailable := map[string]bool{
 		"tab / shift+tab": true, // T3
+		"z / enter":       true, // #8236
 		"?":               true, // T23, this task
 		"q / ctrl+c":      true, // T1
 		"j / k, ↓ / ↑":    true, // T5 and T11

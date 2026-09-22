@@ -41,6 +41,7 @@ type Binding struct {
 func HelpBindings() []Binding {
 	return []Binding{
 		{Keys: "tab / shift+tab", Action: "Cycle pane focus forward / backward", Scope: "global", Available: true},
+		{Keys: "z / enter", Action: "Zoom the focused pane; z or esc restores the grid", Scope: "global", Available: true},
 		{Keys: "?", Action: "Toggle this help overlay", Scope: "global", Available: true},
 		{Keys: "q / ctrl+c", Action: "Quit", Scope: "global", Available: true},
 		{Keys: "j / k, ↓ / ↑", Action: "Move the selection within the focused pane", Scope: "Agents / Events panes", Available: true},

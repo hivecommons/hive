@@ -4,11 +4,11 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  
   ┃ Keybindings                                                                                  ┃  
   ┃                                                                                              ┃  
   ┃ tab / shift+tab  Cycle pane focus forward / backward                   global                ┃  
+  ┃ z / enter        Zoom the focused pane; z or esc restores the grid     global                ┃  
   ┃ ?                Toggle this help overlay                              global                ┃  
   ┃ q / ctrl+c       Quit                                                  global                ┃  
   ┃ j / k, ↓ / ↑     Move the selection within the focused pane            Agents / Events panes ┃  
