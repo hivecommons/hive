@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"strings"
@@ -25,9 +26,10 @@ import (
 // auto-upgrade block below has a real behind/ahead decision to make).
 func newTickTestServer() *HubServer {
 	s := &HubServer{
-		logger:     slog.Default(),
-		saveCh:     make(chan struct{}, 1),
-		hubGitHash: "oldhubsha",
+		logger:       slog.Default(),
+		saveCh:       make(chan struct{}, 1),
+		hubGitBranch: "v2",
+		hubGitHash:   "oldhubsha",
 	}
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 	return s
@@ -57,13 +59,22 @@ func TestPollLatestSHAsTick_PersistsOnlyOnChange(t *testing.T) {
 			w.Write([]byte(`{}`))
 		}
 	})
+	resetSHACaches(t)
 
 	s := newTickTestServer()
 	ctx := context.Background()
 
 	// First tick: v2 has no cached SHA yet, so this fetch is a change and must
 	// persist.
+	beforeFirstTick := snapshotBranchSHAs()
+	if info, ok := beforeFirstTick["v2"]; ok {
+		t.Fatalf("v2 SHA cache was populated before first tick after resetSHACaches: %+v (full snapshot=%+v)", info, beforeFirstTick)
+	}
 	s.pollLatestSHAsTick(ctx, time.Now())
+	afterFirstTick := snapshotBranchSHAs()
+	if maps.Equal(afterFirstTick, beforeFirstTick) {
+		t.Fatalf("first tick did not change SHA cache: before=%+v after=%+v", beforeFirstTick, afterFirstTick)
+	}
 	data, err := os.ReadFile(latestSHAsPath)
 	if err != nil {
 		t.Fatalf("expected persisted file after first tick (changed SHA), got error: %v", err)

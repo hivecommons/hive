@@ -1,0 +1,1 @@
+- Harden hub SHA poller test isolation so leaked background pollers cannot mask first-tick cache changes.
