@@ -24612,6 +24612,10 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>
             <span class="config-toggle-label">Comment even when there are no findings <span class="config-info">i<span class="config-tooltip">A reviewer with nothing useful to say stays silent by default, which keeps PRs uncluttered but is indistinguishable from a reviewer that never ran. Turn this on to have a clean review leave one short line recording that it reviewed and found nothing, so review coverage is visible on the PR itself. The acknowledgement is capped at a single line &mdash; it is evidence, not a report. Requires &quot;post review comments&quot;.</span></span></span>
           </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${rv.confidence_score ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="confidence_score"></div>
+            <span class="config-toggle-label">Show a mergeability confidence score <span class="config-info">i<span class="config-tooltip">Appends one line to each review comment: <b>Confidence: 4/5</b> (safe) &mdash; 1 medium finding. The score is derived from the verdicts and finding severities the perspectives reported, never asked of the model, so it means the same thing on every PR: 4&ndash;5 safe, 1&ndash;3 needs attention, 0 do not merge. Always recorded in the verdict artifact; this only controls whether the comment shows it.</span></span></span>
+          </div>
           <div class="config-field" style="margin-top:10px">
             <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review.</span></span></label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="fixer" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">

@@ -65,6 +65,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		AllAuthors         *bool     `json:"all_authors"`
 		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string   `json:"human_decision_label"`
+		ConfidenceScore    *bool     `json:"confidence_score"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
 		// perspective is only valid once its prompt exists, so validating one
 		// without the other would reject a correct pair sent in two requests.
@@ -201,6 +202,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	// time, where the review marker still carries the signal.
 	if body.HumanDecisionLabel != nil {
 		cfg.Review.HumanDecisionLabel = strings.TrimSpace(*body.HumanDecisionLabel)
+	}
+	if body.ConfidenceScore != nil {
+		cfg.Review.ConfidenceScore = *body.ConfidenceScore
 	}
 	// Repo names are trimmed but NOT validated against the watched set: a
 	// hive's repo list changes underneath a dialog that was opened minutes

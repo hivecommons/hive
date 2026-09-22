@@ -6609,6 +6609,15 @@ type ReviewConfig struct {
 	// resolves nowhere for most hives while looking configured. Each hive
 	// names a label its own governed repos already maintain.
 	HumanDecisionLabel string `yaml:"human_decision_label,omitempty" json:"human_decision_label,omitempty"`
+	// ConfidenceScore appends a one-line 0–5 mergeability score to each review
+	// comment the hive posts (hivecommons/hive#8182): "**Confidence: 4/5**
+	// (safe) — 1 medium finding". The score is derived from the verdicts and
+	// finding severities the perspectives reported, never asked of the model,
+	// so it means the same thing on every PR. It is always recorded in the
+	// verdict artifact; this only controls whether the comment shows it. Off
+	// by default: a review surface a repo did not ask for is noise, and the
+	// verdict marker already routes the decision.
+	ConfidenceScore bool `yaml:"confidence_score,omitempty" json:"confidence_score,omitempty"`
 	// Recommendations maintains a single, continuously-updated issue per
 	// repository that answers "what should I merge next?" for a human working
 	// the queue by hand.

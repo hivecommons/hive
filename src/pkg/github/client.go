@@ -97,6 +97,8 @@ type Client struct {
 	approvalDesk ApprovalDeskHook
 	reviseRepos  []string
 	perspectives review.PerspectiveSet
+	// confidenceScore gates the Confidence line on review comments.
+	confidenceScore func() bool
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
@@ -293,6 +295,21 @@ func (c *Client) SetPerspectives(set review.PerspectiveSet) {
 		return
 	}
 	c.perspectives = set
+}
+
+// SetConfidenceScore turns on the one-line mergeability score the relay
+// appends to each review comment (review.confidence_score,
+// hivecommons/hive#8182). Read through a func so a live config edit takes
+// effect on the next review without rebuilding the client.
+func (c *Client) SetConfidenceScore(enabled func() bool) {
+	if c == nil {
+		return
+	}
+	c.confidenceScore = enabled
+}
+
+func (c *Client) confidenceScoreOn() bool {
+	return c != nil && c.confidenceScore != nil && c.confidenceScore()
 }
 
 type Issue struct {

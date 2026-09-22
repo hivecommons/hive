@@ -14,6 +14,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // ReviewRequestDir is where agents drop PR-review requests. An agent that wants
@@ -308,6 +309,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 
 	meta := c.attributionMeta(req.Agent)
 	body := req.Body
+	if c.confidenceScoreOn() {
+		body = appendConfidenceLine(body, req.Report, c.perspectives)
+	}
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}
@@ -568,4 +572,28 @@ func WriteReviewRequest(dir string, req ReviewRequest) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// appendConfidenceLine adds the derived mergeability score to a review comment
+// (hivecommons/hive#8182). It is computed from the verdict file the agent
+// hands over with the comment — the same reports the collector routes on — so
+// the number a maintainer reads and the one in review-verdicts.json can never
+// disagree. A request without a parseable verdict gets no line: the score is
+// a function of the verdict, and a guess would be worse than silence. The
+// line goes above the attribution trailer so it reads as part of the review.
+func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) string {
+	raw := strings.TrimSpace(rawReport)
+	if raw == "" {
+		return body
+	}
+	reports, err := review.ValidateReportsFor([]byte(raw), set)
+	if err != nil || len(reports) == 0 {
+		return body
+	}
+	line := review.ScoreConfidence(reports, set.Len()).Render()
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return line
+	}
+	return body + "\n\n" + line
 }

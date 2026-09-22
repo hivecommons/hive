@@ -52,6 +52,30 @@ Aggregation rules are deterministic:
 
 The default human threshold is `high`. Review-triggered fix cycles use the same cap value as the escalation re-engagement circuit breaker (`escalation.MaxReEngagements`) so bot loops remain bounded.
 
+### Confidence score
+
+Every aggregate also carries a derived 0–5 **mergeability confidence** (`confidence.score`, with `confidence.reasons`) so a maintainer working a queue can sort or glance without reading each finding (hivecommons/hive#8182). It is computed from the same reports as the verdict — never asked of the model — so it means the same thing on every PR:
+
+| Input | Effect |
+|---|---|
+| clean, fully covered, unanimous approve | 5 |
+| each `medium` finding | −1 |
+| each `high` finding | −2 |
+| any `critical` finding | 0 |
+| any `changes_requested` or `requires_human` perspective | capped at 3 |
+| a configured perspective that did not report | capped at 3 |
+| any `reject` | 0 |
+
+`info` and `low` findings cost nothing. Bands: 4–5 *safe*, 1–3 *needs attention*, 0 *do not merge*. `reasons` lists only what actually moved the score, worst first.
+
+With `review.confidence_score: true` the relay appends one line to each posted review comment, above the attribution trailer:
+
+```
+**Confidence: 3/5** (needs attention) — 1 high finding
+```
+
+The line is derived from the verdict file the agent hands over with the comment; a request without a parseable verdict gets no line. It is off by default — the verdict marker already routes the decision, and a repo that did not ask for a score should not see one.
+
 ## Configuration
 
 Merge-gate and fan-out use are opt-in and preserve existing behavior by default:
@@ -63,6 +87,7 @@ review:
   max_parallel_reviews: 5
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
+  confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
 ```
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.

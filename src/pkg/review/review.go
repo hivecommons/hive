@@ -144,6 +144,9 @@ type Aggregate struct {
 	Reasons          []string                `json:"reasons,omitempty"`
 	Findings         []PerspectiveFinding    `json:"findings,omitempty"`
 	Perspectives     map[Perspective]Verdict `json:"perspectives"`
+	// Confidence is the derived 0–5 mergeability score (hivecommons/hive#8182),
+	// computed from the same reports as the verdict so the two never disagree.
+	Confidence Confidence `json:"confidence"`
 	// RecordedAt is when this verdict was last merged into the durable
 	// artifact. It exists so stale entries (PRs long since merged or closed)
 	// can be pruned instead of accumulating forever.
@@ -226,6 +229,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		MaxFixAttempts: maxFix,
 		Perspectives:   map[Perspective]Verdict{},
 	}
+	agg.Confidence = ScoreConfidence(reports, opts.Perspectives.Len())
 	if len(reports) == 0 {
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true

@@ -1448,8 +1448,7 @@ func (b *boot) wireBootClosures() {
 				if b.ghClient == nil {
 					return
 				}
-				b.ghClient.SetReviseRepos(rc.ReviseRepos)
-				b.ghClient.SetPerspectives(reviewPerspectiveSet(b.cfg, b.logger))
+				installReviewRelaySettings(b.ghClient, b.cfg, b.logger)
 			},
 			EnumerateFunc: func() {
 				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
@@ -1509,6 +1508,7 @@ func (b *boot) wireBootClosures() {
 				installReviewBots(newClient, b.cfg, b.logger)
 				newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 				newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
+				installReviewRelaySettings(newClient, b.cfg, b.logger)
 				syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
 				b.ghClient = newClient
 				b.installMutationBoundary(b.ghClient)
@@ -2138,8 +2138,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(b.cfg))
 		b.ghClient.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) })
-		b.ghClient.SetReviseRepos(b.cfg.Review.ReviseRepos)
-		b.ghClient.SetPerspectives(reviewPerspectiveSet(b.cfg, b.logger))
+		installReviewRelaySettings(b.ghClient, b.cfg, b.logger)
 		// github.app_signed_commits: re-author each agent branch through
 		// createCommitOnBranch before the PR opens, so its commit is
 		// GitHub-signed and authored by the App bot. Read through a func so a
@@ -3632,6 +3631,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					installReviewBots(newClient, b.cfg, b.logger)
 					newClient.SetRepoPausedFunc(b.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
 					newClient.SetAgentRepoScopeFunc(b.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
+					installReviewRelaySettings(newClient, b.cfg, b.logger)
 					syncAutoMergePolicyToGitHubClient(b.cfg, newClient)
 					b.ghClient = newClient
 					b.installMutationBoundary(b.ghClient)
@@ -7904,6 +7904,21 @@ func fullRepoName(repo, org string) string {
 		return repo
 	}
 	return org + "/" + repo
+}
+
+// installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
+// review-relay knobs that live in cfg.Review: which repos may be revised in
+// place, which perspectives a verdict may name, and whether comments carry a
+// confidence score (hivecommons/hive#8182). One place, so an app-auth rebuild
+// cannot silently drop a setting the first client had — the perspective set
+// was previously installed only on the boot path.
+func installReviewRelaySettings(client *github.Client, cfg *config.Config, logger *slog.Logger) {
+	if client == nil || cfg == nil {
+		return
+	}
+	client.SetReviseRepos(cfg.Review.ReviseRepos)
+	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
+	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
 }
 
 // installReviewBots installs classification.review_bots on a (possibly

@@ -311,3 +311,56 @@ func TestReviewRequestWatcher_IdenticalBodyOnNewRequestIsNotAReplay(t *testing.T
 		}
 	}
 }
+
+// review.confidence_score appends the derived score to the posted comment,
+// above the attribution trailer, computed from the verdict file that rides
+// with the request (hivecommons/hive#8182). Off, the body is untouched; a
+// request with no parseable verdict gets no line rather than a guess.
+func TestReviewRequestWatcher_ConfidenceLine(t *testing.T) {
+	var posted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/reviews") {
+			var body struct {
+				Body string `json:"body"`
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			posted = body.Body
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"state":"COMMENTED"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+	enabled := false
+	c.SetConfidenceScore(func() bool { return enabled })
+
+	report := validVerdictJSON(t, "o/r", 5, "correctness", "changes_requested")
+	post := func(rep string) string {
+		posted = ""
+		if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: "**correctness** — off by one", Report: rep}); err != nil {
+			t.Fatal(err)
+		}
+		c.ProcessReviewRequestsOnce(context.Background())
+		return posted
+	}
+
+	if got := post(report); strings.Contains(got, "Confidence:") {
+		t.Fatalf("disabled must not add a score, got %q", got)
+	}
+	enabled = true
+	got := post(report)
+	want := "**Confidence: 3/5** (needs attention) — 1 perspective requested changes"
+	if !strings.Contains(got, want) {
+		t.Fatalf("enabled body = %q, want it to contain %q", got, want)
+	}
+	if strings.Index(got, "Confidence:") > strings.Index(got, AttributionTrailerPrefix) && strings.Contains(got, AttributionTrailerPrefix) {
+		t.Fatalf("confidence line must precede the attribution trailer: %q", got)
+	}
+	if got := post(""); strings.Contains(got, "Confidence:") {
+		t.Fatalf("no verdict must mean no score, got %q", got)
+	}
+}
