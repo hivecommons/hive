@@ -334,7 +334,12 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			Kind:   effects.KindReviewSubmit,
 			Target: strconv.Itoa(req.Number),
 			Actor:  req.Agent,
-			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body)},
+			// The request file is the unit of intent: retries of one file must
+			// dedupe, but two files carrying byte-identical text (a second
+			// "no findings" pass on a newer head) are two reviews, not a
+			// replay. Without this the journal refused the second one as
+			// already applied and the request retried until quarantine.
+			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body), "request": filepath.Base(path)},
 		}, func(ctx context.Context) (effects.Result, error) {
 			var apiErr error
 			created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)

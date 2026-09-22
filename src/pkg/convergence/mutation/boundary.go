@@ -100,7 +100,27 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 		out = res
 		return res.Provenance, err
 	})
+	// The claim guards the window of the external call only. Every exit path
+	// must release it: a claim left ActiveMutation after a refused or failed
+	// effect holds the repo's writer slot until TTL, and at enforce that
+	// denies every other mutation on the repo for ten minutes (observed on a
+	// live hive as "writers exhausted (max 1)" behind one stuck review).
+	b.release(executor, claim, mclaim, entry)
 	if execErr != nil {
+		if errors.Is(execErr, ErrAlreadyApplied) {
+			// The journal says this exact effect already happened. The
+			// caller's desired state holds, so this is idempotent success:
+			// hand back the recorded provenance rather than an error that a
+			// retry loop would replay forever.
+			if op, ok := executor.Journal.Get(mutEffect.LogicalID()); ok {
+				out.Provenance = op.Result
+			}
+			if b.Logger != nil {
+				b.Logger.Info("external mutation already applied; treating as idempotent success",
+					"repo", claim.Repo, "kind", claim.Kind, "target", claim.Target)
+			}
+			return out, nil
+		}
 		if errors.Is(execErr, ErrClaimHeld) || errors.Is(execErr, ErrStaleEpoch) {
 			if b.Stats != nil {
 				b.Stats.IncDenied()
@@ -112,12 +132,16 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 	if b.Stats != nil && op.LogicalID != "" {
 		b.Stats.IncJournaled()
 	}
-	if entry.Epoch != 0 {
-		if _, err := executor.Ledger.Release(mclaim.Key(), entry.Epoch, executor.now()); err != nil && b.Logger != nil {
-			b.Logger.Warn("mutation claim release failed", "repo", claim.Repo, "kind", claim.Kind, "target", claim.Target, "error", err)
-		}
-	}
 	return out, nil
+}
+
+func (b *Boundary) release(executor Executor, claim effects.Claim, mclaim Claim, entry Entry) {
+	if entry.Epoch == 0 {
+		return
+	}
+	if _, err := executor.Ledger.Release(mclaim.Key(), entry.Epoch, executor.now()); err != nil && b.Logger != nil {
+		b.Logger.Warn("mutation claim release failed", "repo", claim.Repo, "kind", claim.Kind, "target", claim.Target, "error", err)
+	}
 }
 
 func claimSubject(claim effects.Claim) string {

@@ -153,3 +153,57 @@ func TestBoundaryNilFallsThrough(t *testing.T) {
 		t.Fatalf("nil boundary = (%+v, %v)", res, err)
 	}
 }
+
+// A refused or failed effect must not leave the claim ActiveMutation. Before
+// this, one stuck review held a repo's only writer slot for the full TTL and
+// every other mutation on that repo was fenced as "writers exhausted".
+func TestBoundaryReleasesClaimWhenEffectFails(t *testing.T) {
+	b := testBoundary(t, "enforce")
+	claim := effects.Claim{Repo: "acme/widget", Kind: effects.KindIssueCreate, Target: "title"}
+	_, err := b.Execute(context.Background(), claim, func(context.Context) (effects.Result, error) {
+		return effects.Result{}, errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("expected the effect error to surface")
+	}
+	entry, ok := b.Executor.Ledger.Get(TaskClaim("acme/widget", "acme/widget#issue_create/title").Key())
+	if !ok || entry.State == StateActiveMutation {
+		t.Fatalf("entry = %+v ok=%v, want released after failure", entry, ok)
+	}
+	// The slot is free again: an unrelated mutation on the same repo proceeds.
+	if _, err := b.Execute(context.Background(), effects.Claim{Repo: "acme/widget", Kind: effects.KindIssueCreate, Target: "other"}, func(context.Context) (effects.Result, error) {
+		return effects.Result{Provenance: "ok"}, nil
+	}); err != nil {
+		t.Fatalf("second mutation fenced after failed first: %v", err)
+	}
+}
+
+// Replaying an effect the journal already recorded as applied is idempotent
+// success carrying the original provenance — not an error a retry loop would
+// hammer until quarantine. The claim is released either way.
+func TestBoundaryAlreadyAppliedIsIdempotentSuccess(t *testing.T) {
+	b := testBoundary(t, "enforce")
+	claim := effects.Claim{Repo: "acme/widget", Kind: effects.KindReviewSubmit, Target: "7", Inputs: map[string]string{"body": "abc"}}
+	calls := 0
+	effect := func(context.Context) (effects.Result, error) {
+		calls++
+		return effects.Result{Provenance: "acme/widget#7"}, nil
+	}
+	if _, err := b.Execute(context.Background(), claim, effect); err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Execute(context.Background(), claim, effect)
+	if err != nil {
+		t.Fatalf("replay must succeed idempotently, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("effect ran %d times, want exactly once", calls)
+	}
+	if res.Provenance != "acme/widget#7" {
+		t.Fatalf("replay provenance = %q, want the journaled one", res.Provenance)
+	}
+	entry, ok := b.Executor.Ledger.Get(TaskClaim("acme/widget", "acme/widget#review_submit/7").Key())
+	if !ok || entry.State == StateActiveMutation {
+		t.Fatalf("entry = %+v ok=%v, want released after replay", entry, ok)
+	}
+}

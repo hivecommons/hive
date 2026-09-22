@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 )
 
 func newReviewMockServer(t *testing.T, reviewed *int, lastEvent *string) *httptest.Server {
@@ -264,5 +267,47 @@ func TestReviewRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
 	}
 	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
 		t.Errorf("original request should be renamed away")
+	}
+}
+
+// Two request files with byte-identical bodies for the same PR are two
+// reviews (the reviewer's "no findings" text repeats across heads), while a
+// retry of one file is a replay. The mutation journal must see the first as
+// distinct and the second as already applied — and neither may leave the
+// request retrying (hivecommons/hive: chairlift#182 sat in backoff for hours
+// behind "operation effect is already applied").
+func TestReviewRequestWatcher_IdenticalBodyOnNewRequestIsNotAReplay(t *testing.T) {
+	reviewed := 0
+	var apiEvent string
+	srv := newReviewMockServer(t, &reviewed, &apiEvent)
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+
+	ledger, err := mutation.OpenLedger(filepath.Join(t.TempDir(), "claims.json"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := mutation.OpenJournal(filepath.Join(t.TempDir(), "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetMutationBoundary(&mutation.Boundary{Executor: mutation.Executor{Ledger: ledger, Journal: journal, Mode: "enforce"}, Holder: "hive"})
+
+	req := ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: "**Reviewed** — no findings"}
+	for i := 0; i < 2; i++ {
+		if _, err := WriteReviewRequest(dir, req); err != nil {
+			t.Fatal(err)
+		}
+		c.ProcessReviewRequestsOnce(context.Background())
+	}
+	if reviewed != 2 {
+		t.Fatalf("expected both requests to post, got %d reviews", reviewed)
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	for _, f := range left {
+		if !strings.HasSuffix(f, ".result.json") {
+			t.Fatalf("request left behind (still retrying): %s", filepath.Base(f))
+		}
 	}
 }
