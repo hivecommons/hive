@@ -2425,6 +2425,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	limit := s.prCap()
 	shown := fairShareByRepo(actionable.PRs.Items, limit, func(pr github.PullRequest) string { return pr.Repo })
 	verdicts := s.loadReviewVerdicts()
+	links := loadReviewLinks()
 	for _, pr := range shown {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
@@ -2439,7 +2440,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		}
 		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
-		annotation, annotationVerdict := s.enforceIssueTextVerdict(prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, pr, s.cfg.Project.Org))
+		annotation, annotationVerdict := s.enforceIssueTextVerdict(prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org))
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))
 	}
@@ -2469,20 +2470,45 @@ func (s *Scheduler) loadReviewVerdicts() review.Artifact {
 // which is the behaviour the dispatch lane already has. Verdict repos are
 // always owner/name while the enumeration may carry the bare governor name;
 // qualify before comparing, as applyHumanDecisionLabels does (#8133).
-func reviewedAnnotation(verdicts review.Artifact, pr github.PullRequest, org string) string {
+//
+// Two sources, either suffices. The verdict artifact gives the verdict word;
+// the review-links ledger (what the relay actually POSTED, with the head it
+// posted at) covers a review whose verdict was discarded — a PR the fan-out
+// lane never dispatched, so the relay had nothing to bind the verdict to.
+// Without the second source such a PR stayed unmarked and was re-reviewed on
+// every kick exactly like the malformed-verdict case.
+func reviewedAnnotation(verdicts review.Artifact, links map[string]github.ReviewLink, pr github.PullRequest, org string) string {
 	head := strings.TrimSpace(pr.HeadSHA)
-	if head == "" || len(verdicts.Items) == 0 {
+	if head == "" {
 		return ""
 	}
-	agg, ok := verdicts.AggregateFor(config.QualifyRepo(org, pr.Repo), pr.Number, head)
-	if !ok {
-		return ""
-	}
+	full := config.QualifyRepo(org, pr.Repo)
 	const shortSHA = 7
-	if len(head) > shortSHA {
-		head = head[:shortSHA]
+	short := head
+	if len(short) > shortSHA {
+		short = short[:shortSHA]
 	}
-	return fmt.Sprintf(" [hive-reviewed: %s@%s]", agg.Verdict, head)
+	if agg, ok := verdicts.AggregateFor(full, pr.Number, head); ok {
+		return fmt.Sprintf(" [hive-reviewed: %s@%s]", agg.Verdict, short)
+	}
+	if link, ok := links[github.ReviewLinkKey(full, pr.Number)]; ok && link.HeadSHA != "" && strings.EqualFold(link.HeadSHA, head) {
+		state := strings.TrimSpace(link.State)
+		if state == "" {
+			state = "commented"
+		}
+		return fmt.Sprintf(" [hive-reviewed: %s@%s]", state, short)
+	}
+	return ""
+}
+
+// loadReviewLinks reads the relay's posted-review ledger for ${PR_LIST}
+// annotation; unreadable is empty, same as loadReviewVerdicts.
+func loadReviewLinks() map[string]github.ReviewLink {
+	links, err := github.LoadReviewLinks("")
+	if err != nil {
+		return map[string]github.ReviewLink{}
+	}
+	return links
 }
 
 func prKickAnnotation(pr github.PullRequest, agentName string) string {

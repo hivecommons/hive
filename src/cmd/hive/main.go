@@ -7919,6 +7919,10 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
+	client.SetReviewCadenceLimits(
+		func() bool { return cfg.Review.CombinedPerspectives },
+		func() int { return cfg.Review.MaxReviewsPerHead },
+	)
 }
 
 // installReviewBots installs classification.review_bots on a (possibly

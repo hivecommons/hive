@@ -64,6 +64,11 @@ type ReviewLink struct {
 	// duplicate-review problem directly, so it is worth carrying even though
 	// URL points only at the most recent one.
 	Count int `json:"count,omitempty"`
+	// HeadCount is how many hive reviews have been posted at HeadSHA. It
+	// resets to 1 when the head moves, so it is the number the per-head
+	// backstop compares against: Count is lifetime and says nothing about
+	// whether the CURRENT head has been judged.
+	HeadCount int `json:"head_count,omitempty"`
 }
 
 type reviewLinkLedger struct {
@@ -133,8 +138,14 @@ func RecordReviewLink(path, repo string, number int, link ReviewLink) error {
 	link.At = link.At.UTC()
 	if prev, ok := links[key]; ok {
 		link.Count = prev.Count + 1
+		if link.HeadSHA != "" && prev.HeadSHA == link.HeadSHA {
+			link.HeadCount = prev.HeadCount + 1
+		} else {
+			link.HeadCount = 1
+		}
 	} else {
 		link.Count = 1
+		link.HeadCount = 1
 	}
 	links[key] = link
 	pruneReviewLinks(links)

@@ -6556,6 +6556,11 @@ type ReviewConfig struct {
 	// is done once instead of five times. The verdicts stay separate, so any
 	// single perspective can still withhold approval.
 	CombinedPerspectives bool `yaml:"combined_perspectives,omitempty" json:"combined_perspectives,omitempty"`
+	// MaxReviewsPerHead caps how many top-level hive reviews one PR head may
+	// receive before the relay refuses further ones (revisions and thread
+	// replies excepted). 0 derives the cap: 1 with combined_perspectives, one
+	// per perspective otherwise. Negative disables the backstop.
+	MaxReviewsPerHead int `yaml:"max_reviews_per_head,omitempty" json:"max_reviews_per_head,omitempty"`
 	// AllAuthors makes every open PR eligible for review regardless of who
 	// opened it. By default the review swarm looks only at agent-authored
 	// PRs — the work the hive is answerable for. On a repo whose queue is the

@@ -29,12 +29,33 @@ func TestReviewedAnnotation(t *testing.T) {
 		{"no head known", github.PullRequest{Repo: "actions", Number: 548}, ""},
 	}
 	for _, tc := range cases {
-		if got := reviewedAnnotation(verdicts, tc.pr, "projectbluefin"); got != tc.want {
+		if got := reviewedAnnotation(verdicts, nil, tc.pr, "projectbluefin"); got != tc.want {
 			t.Errorf("%s: got %q want %q", tc.name, got, tc.want)
 		}
 	}
-	if got := reviewedAnnotation(review.Artifact{}, cases[0].pr, "projectbluefin"); got != "" {
+	if got := reviewedAnnotation(review.Artifact{}, nil, cases[0].pr, "projectbluefin"); got != "" {
 		t.Errorf("empty artifact must annotate nothing, got %q", got)
+	}
+}
+
+// A review the relay posted but whose verdict was discarded (no dispatch to
+// bind to) must still mark the row, from the links ledger.
+func TestReviewedAnnotation_FromLinksLedger(t *testing.T) {
+	links := map[string]github.ReviewLink{
+		"projectbluefin/server#234": {HeadSHA: "1de66eb000000000000000000000000000000000", State: "commented", HeadCount: 1},
+	}
+	pr := github.PullRequest{Repo: "server", Number: 234, HeadSHA: "1de66eb000000000000000000000000000000000"}
+	if got := reviewedAnnotation(review.Artifact{}, links, pr, "projectbluefin"); got != " [hive-reviewed: commented@1de66eb]" {
+		t.Fatalf("links-ledger mark: got %q", got)
+	}
+	pr.HeadSHA = "2222222000000000000000000000000000000000"
+	if got := reviewedAnnotation(review.Artifact{}, links, pr, "projectbluefin"); got != "" {
+		t.Fatalf("new head must clear the links mark, got %q", got)
+	}
+	links["projectbluefin/server#234"] = github.ReviewLink{State: "commented", HeadCount: 3}
+	pr.HeadSHA = "1de66eb000000000000000000000000000000000"
+	if got := reviewedAnnotation(review.Artifact{}, links, pr, "projectbluefin"); got != "" {
+		t.Fatalf("a legacy link with no head must not mark, got %q", got)
 	}
 }
 

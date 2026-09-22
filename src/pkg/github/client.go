@@ -99,6 +99,12 @@ type Client struct {
 	perspectives review.PerspectiveSet
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore func() bool
+	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
+	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
+	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
+	// a negative value disables the backstop.
+	combinedPerspectivesFn func() bool
+	maxReviewsPerHeadFn    func() int
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
@@ -301,6 +307,12 @@ func (c *Client) SetPerspectives(set review.PerspectiveSet) {
 // appends to each review comment (review.confidence_score,
 // hivecommons/hive#8182). Read through a func so a live config edit takes
 // effect on the next review without rebuilding the client.
+// SetReviewCadenceLimits wires the per-head review backstop's inputs.
+func (c *Client) SetReviewCadenceLimits(combined func() bool, maxPerHead func() int) {
+	c.combinedPerspectivesFn = combined
+	c.maxReviewsPerHeadFn = maxPerHead
+}
+
 func (c *Client) SetConfidenceScore(enabled func() bool) {
 	if c == nil {
 		return

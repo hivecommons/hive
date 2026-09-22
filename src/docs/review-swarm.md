@@ -43,6 +43,10 @@ Validation happens **before** the comment is posted, and a verdict that fails it
 
 The cadence reviewer's kick template (`reviewer-queue.md`) quotes that schema verbatim, and every `${PR_LIST}` row whose current head already carries a verdict is marked `[hive-reviewed: <verdict>@<sha7>]` so the reviewer skips it. The mark is keyed on the head SHA exactly as the dispatch lane is, so a new push reads as unreviewed again.
 
+The mark has two sources: the verdict artifact, and the relay's own `review-links.json` ledger of what it actually posted (with the head it posted at), so a review whose verdict was discarded — a PR the fan-out lane never dispatched — still marks the row.
+
+**Per-head backstop.** Independently of any prompt, the relay refuses a new top-level review on a head that already carries its quota of hive reviews: one in `combined_perspectives` mode, one per perspective otherwise, or `review.max_reviews_per_head` when set (negative disables). `--revise` (update the existing review), `--thread` (reply in it) and APPROVE are exempt. The current head is read from GitHub, not from the verdict; a failed lookup proceeds, since this is a backstop against a loop rather than the primary gate. The denial names the existing review and the way out.
+
 A verdict that is never handed over is not a neutral outcome: aggregation reports "never reviewed", and the PR is dispatched for review again from scratch.
 
 Aggregation rules are deterministic:

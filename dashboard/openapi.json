@@ -17534,6 +17534,10 @@
                     "confidence_score": {
                       "type": "boolean",
                       "description": "Append a derived 0-5 mergeability confidence line to each posted review comment (hivecommons/hive#8182)."
+                    },
+                    "max_reviews_per_head": {
+                      "type": "integer",
+                      "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
                     }
                   }
                 }
@@ -17583,6 +17587,11 @@
                     "type": "boolean",
                     "nullable": true,
                     "description": "Append a derived 0-5 mergeability confidence line to each posted review comment (hivecommons/hive#8182)."
+                  },
+                  "max_reviews_per_head": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
                   }
                 }
               }

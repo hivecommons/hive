@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -422,5 +423,86 @@ func TestReviewRequestWatcher_MalformedVerdictRefusesWholeRequest(t *testing.T) 
 	c.ProcessReviewRequestsOnce(context.Background())
 	if posts != 1 {
 		t.Fatalf("valid verdict must post exactly once, posted %d", posts)
+	}
+}
+
+// The per-head backstop: once a head carries its quota of hive reviews, a
+// further top-level review from an agent is denied without touching the API,
+// whatever the agent's prompt said. A new head lifts the denial.
+func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
+	head := "aaaaaaa000000000000000000000000000000000"
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/reviews"):
+			posts++
+			fmt.Fprintf(w, `{"id":%d,"state":"COMMENTED","commit_id":%q,"html_url":"https://x/pr/5#r%d"}`, posts, head, posts)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls/5"):
+			fmt.Fprintf(w, `{"number":5,"head":{"sha":%q}}`, head)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+	oldLinks := ReviewLinksPath
+	ReviewLinksPath = filepath.Join(t.TempDir(), "review-links.json")
+	t.Cleanup(func() { ReviewLinksPath = oldLinks })
+	c.SetReviewCadenceLimits(func() bool { return true }, func() int { return 0 })
+
+	submit := func(body string) (string, ReviewResponse) {
+		path, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 5, Event: "comment", Agent: "reviewer", Body: body, Report: validVerdictJSON(t, "o/r", 5, "correctness", "approve")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.ProcessReviewRequestsOnce(context.Background())
+		raw, err := os.ReadFile(strings.TrimSuffix(path, ".json") + ".result.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp ReviewResponse
+		_ = json.Unmarshal(raw, &resp)
+		return path, resp
+	}
+
+	if _, resp := submit("looks correct to me"); !resp.OK || posts != 1 {
+		t.Fatalf("first review must post: %+v posts=%d", resp, posts)
+	}
+	links, _ := LoadReviewLinks("")
+	if l := links["o/r#5"]; l.HeadSHA != head || l.HeadCount != 1 {
+		t.Fatalf("ledger must carry the created review's head: %+v", l)
+	}
+
+	path, resp := submit("looks correct to me, again")
+	if resp.OK || posts != 1 {
+		t.Fatalf("second review on the same head must be denied without posting: %+v posts=%d", resp, posts)
+	}
+	if !strings.Contains(resp.Error, "already carries 1 hive review") || !strings.Contains(resp.Error, "--revise") {
+		t.Fatalf("denial must explain the cap and the way out: %q", resp.Error)
+	}
+	if _, err := os.Stat(path + ".denied"); err != nil {
+		t.Fatalf("denied request must be quarantined, not retried: %v", err)
+	}
+
+	head = "bbbbbbb000000000000000000000000000000000"
+	if _, resp := submit("re-read at the new head"); !resp.OK || posts != 2 {
+		t.Fatalf("a new head must be reviewable again: %+v posts=%d", resp, posts)
+	}
+	links, _ = LoadReviewLinks("")
+	if l := links["o/r#5"]; l.HeadSHA != head || l.HeadCount != 1 || l.Count != 2 {
+		t.Fatalf("ledger must reset the per-head count on a new head: %+v", l)
+	}
+
+	// Non-combined mode allows one review per perspective.
+	c.SetReviewCadenceLimits(func() bool { return false }, func() int { return 0 })
+	if _, resp := submit("security perspective"); !resp.OK || posts != 3 {
+		t.Fatalf("non-combined must allow up to one per perspective: %+v posts=%d", resp, posts)
+	}
+	// Negative disables the backstop entirely.
+	c.SetReviewCadenceLimits(func() bool { return true }, func() int { return -1 })
+	if _, resp := submit("backstop off"); !resp.OK || posts != 4 {
+		t.Fatalf("negative cap must disable the backstop: %+v posts=%d", resp, posts)
 	}
 }

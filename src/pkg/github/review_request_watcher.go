@@ -307,6 +307,20 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	// Per-head backstop. Everything above depends on the agent doing the
+	// right thing; this does not. A head that already carries as many hive
+	// reviews as it can legitimately receive (one in combined mode, one per
+	// perspective otherwise) gets no further top-level review from an agent
+	// unless it is revising its own (--revise) or replying in a thread. This
+	// is the guard that would have stopped 21 reviews landing on one head of
+	// actions#548 in a day whatever the reviewer's prompt said.
+	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
+		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
+			c.denyReviewRequest(path, req, reason, nowFn)
+			return
+		}
+	}
+
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
@@ -399,9 +413,13 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// that posts it a second time.
 	if created != nil {
 		if err := RecordReviewLink("", req.Repo, req.Number, ReviewLink{
-			URL:     created.GetHTMLURL(),
-			State:   state,
-			HeadSHA: reviewReq.GetCommitID(),
+			URL:   created.GetHTMLURL(),
+			State: state,
+			// The CREATED review's commit_id, not the request's: the request
+			// never sets one, so the ledger recorded every review with an
+			// empty head and could not tell a re-review of the same head from
+			// a review of a new one.
+			HeadSHA: created.GetCommitID(),
 			At:      nowFn().UTC(),
 		}); err != nil {
 			c.logger.Warn("review-request watcher: could not record review link",
@@ -619,4 +637,50 @@ func malformedVerdictRefusal(err error) string {
 	return "verdict rejected, nothing posted: " + err.Error() +
 		". Fix the JSON and resubmit the same comment with it. One object per perspective, or an array of them, shaped exactly like: " +
 		review.VerdictSchemaExample
+}
+
+// perHeadReviewRefusal returns a denial reason when the PR's current head has
+// already received the maximum number of hive reviews, or "" to proceed. It
+// reads the head from GitHub (one GET) rather than trusting the verdict's
+// head_sha, which the agent writes. A failed GET or an unreadable ledger
+// proceeds: this is a backstop against a loop, not the primary gate, and a
+// GitHub blip must not turn into a lost review.
+func (c *Client) perHeadReviewRefusal(ctx context.Context, req ReviewRequest) string {
+	limit := c.maxReviewsPerHead()
+	if limit <= 0 {
+		return ""
+	}
+	links, err := LoadReviewLinks("")
+	if err != nil {
+		return ""
+	}
+	link, ok := links[ReviewLinkKey(req.Repo, req.Number)]
+	if !ok || link.HeadSHA == "" || link.HeadCount < limit {
+		return ""
+	}
+	owner, repoName := c.splitRepo(req.Repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, req.Number)
+	if err != nil || pr.GetHead().GetSHA() == "" {
+		return ""
+	}
+	if !strings.EqualFold(pr.GetHead().GetSHA(), link.HeadSHA) {
+		return ""
+	}
+	return fmt.Sprintf("head %s of %s#%d already carries %d hive review(s) (limit %d): %s — pass --revise to update the existing review, --thread to reply in it, or wait for the author to push",
+		link.HeadSHA[:min(7, len(link.HeadSHA))], req.Repo, req.Number, link.HeadCount, limit, link.URL)
+}
+
+// maxReviewsPerHead is how many top-level hive reviews one head may receive:
+// the operator's review.max_reviews_per_head when set, else 1 in combined
+// mode (one session, one comment) and one per perspective otherwise.
+func (c *Client) maxReviewsPerHead() int {
+	if c.maxReviewsPerHeadFn != nil {
+		if n := c.maxReviewsPerHeadFn(); n != 0 {
+			return n
+		}
+	}
+	if c.combinedPerspectivesFn != nil && c.combinedPerspectivesFn() {
+		return 1
+	}
+	return c.perspectives.Len()
 }
