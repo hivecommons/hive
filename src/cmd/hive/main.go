@@ -66,6 +66,7 @@ import (
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
+	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -1937,8 +1938,28 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PRsAllowed:       b.cfg.Project.PRsAllowed(),
 		PolicyDir:        b.policyDirPath,
 		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		TaskMCPURL:       b.taskMCPURLForAgents(),
 	}
 	return true
+}
+
+func (b *boot) taskMCPURLForAgents() string {
+	base := strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
+	token := ""
+	if b != nil && b.cfg != nil {
+		token = strings.TrimSpace(b.cfg.Dashboard.AuthToken)
+	}
+	if token == "" {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("token", token)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // bootAgents constructs the agent manager and everything that hangs off it

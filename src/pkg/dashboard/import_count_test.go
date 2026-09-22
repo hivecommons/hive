@@ -15,8 +15,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// pkg/review for the perspective-set config API that lets the hive
 	// choose its review perspectives (hivecommons/hive#7717), plus
 	// pkg/ioscan for the design-gate plan handlers (RFC #7993), plus
-	// pkg/standby for the S4 qualified-standby tile count.
-	const maxDashboardInternalImports = 40
+	// pkg/standby for the S4 qualified-standby tile count, plus pkg/taskmcp for
+	// the contributor task-scoped MCP adapter.
+	const maxDashboardInternalImports = 41
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

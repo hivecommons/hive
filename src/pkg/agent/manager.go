@@ -433,6 +433,9 @@ type ProjectContext struct {
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+	// TaskMCPURL is the hub-served, read-only task context endpoint for
+	// hub-launched agents. Empty keeps launches byte-for-byte unchanged.
+	TaskMCPURL string
 	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
 	// a live predicate rather than a snapshot list because ProjectContext is
 	// built once at boot and a pause is taken mid-run — a repo frozen for a
@@ -726,6 +729,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	}
 
 	for name, cfg := range agents {
+		cfg = withTaskMCPConnection(cfg, project.TaskMCPURL)
 		if !AgentAvailableAtACMMLevel(name, project.ACMMLevel) {
 			logger.Info("agent below ACMM gate; not instantiating", "agent", name, "level", project.ACMMLevel)
 			continue

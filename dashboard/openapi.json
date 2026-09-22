@@ -11947,6 +11947,70 @@
         }
       }
     },
+    "/api/contribute/mcp": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Task-scoped contributor MCP endpoint",
+        "description": "Serves the read-only streamable-HTTP MCP JSON-RPC endpoint for hub-launched contributor agents. Tools are scoped to the active task and return attacker-controlled issue or pull request text only inside fixed-schema data fields.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "enum": [
+                      "2.0"
+                    ]
+                  },
+                  "id": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "jsonrpc",
+                  "method"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {},
+                    "result": {},
+                    "error": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/contribute/run-stats": {
       "get": {
         "tags": [

@@ -1,0 +1,1 @@
+- Add a read-only task-scoped MCP endpoint with task_context and context_bundle for hub-launched contributor agents.

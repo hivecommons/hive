@@ -957,3 +957,21 @@ func connectionMCPFlags(conns []config.ConnectionConfig, backend string) string 
 	}
 	return flags
 }
+
+func withTaskMCPConnection(cfg config.AgentConfig, uri string) config.AgentConfig {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return cfg
+	}
+	for _, conn := range cfg.Connections {
+		if conn.Type == "mcp" && conn.Name == "hive-task" {
+			return cfg
+		}
+	}
+	cfg.Connections = append(cfg.Connections, config.ConnectionConfig{
+		Name: "hive-task",
+		Type: "mcp",
+		URI:  uri,
+	})
+	return cfg
+}

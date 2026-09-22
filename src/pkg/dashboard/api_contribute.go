@@ -150,6 +150,10 @@ func (s *Server) registerContributeRoutes() {
 	// username parameter, so this endpoint can only ever answer for its caller
 	// (an anonymous caller gets 401, not someone else's numbers). GET only.
 	s.mux.HandleFunc("GET /api/contribute/me", s.handleContributeMe)
+	// Read-only streamable-HTTP MCP endpoint for hub-launched contributor
+	// agents. It stays under /api/contribute/ so it inherits the same gateway
+	// identity path as the rest of the contributor API.
+	s.mux.HandleFunc("POST /api/contribute/mcp", s.handleContributeMCP)
 	// Read-only per-backend RUN SCENARIOS: aggregates over the durable task-run
 	// log (task_run_log.go) — scenario counts, sentinel-compliance share, and
 	// duration percentiles per backend. Public like the other /api/contribute*
