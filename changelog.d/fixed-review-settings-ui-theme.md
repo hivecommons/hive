@@ -1,0 +1,1 @@
+- Dashboard Features → Review gate: perspective focus textareas and the new-perspective input now use the shared themed input recipe (they rendered white-on-dark); the Fixer agent placeholder reads `scanner (default)` instead of `fixer` (no such agent — the code default is scanner) and the tooltip says it is the agent ID.

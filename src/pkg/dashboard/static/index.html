@@ -2717,6 +2717,7 @@
     .config-field textarea,
     .nous-config-section textarea, .nous-config-section input[type="text"], .nous-config-section input[type="number"],
     .config-list-add input,
+    .rv-perspective-focus, #rv-new-perspective,
     .kick-prompt, .kb-search-box, .oc-chat-input, .hive-chat-input, .backend-select {
       background: var(--bg-soft);
       border: 1px solid var(--line);
@@ -2731,12 +2732,14 @@
     .config-field textarea:focus,
     .nous-config-section textarea:focus, .nous-config-section input[type="text"]:focus, .nous-config-section input[type="number"]:focus,
     .config-list-add input:focus,
+    .rv-perspective-focus:focus, #rv-new-perspective:focus,
     .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus,
     #audit-search:focus {
       border-color: color-mix(in srgb, var(--amber) 60%, var(--line));
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent);
     }
     .config-field input::placeholder, .config-field textarea::placeholder,
+    .rv-perspective-focus::placeholder, #rv-new-perspective::placeholder,
     .nous-config-section textarea::placeholder,
     .nous-config-section input::placeholder, .config-list-add input::placeholder,
     .kick-prompt::placeholder, .kb-search-box::placeholder,
@@ -24835,8 +24838,8 @@ function burnAreaChart() {
             <span class="config-toggle-label">Show a mergeability confidence score <span class="config-info">i<span class="config-tooltip">Appends one line to each review comment: <b>Confidence: 4/5</b> (safe) &mdash; 1 medium finding. The score is derived from the verdicts and finding severities the perspectives reported, never asked of the model, so it means the same thing on every PR: 4&ndash;5 safe, 1&ndash;3 needs attention, 0 do not merge. Always recorded in the verdict artifact; this only controls whether the comment shows it.</span></span></span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review.</span></span></label>
-            <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="fixer" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
+            <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review. Use the agent ID (the key in the roster, not its display name). Blank falls back to the PR's authoring agent, then scanner.</span></span></label>
+            <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="scanner (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
