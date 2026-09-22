@@ -8,6 +8,10 @@ metadata:
     app.kubernetes.io/component: controller
 spec:
   replicas: 1
+  # Keep two old ReplicaSets (enough for kubectl rollout undo) instead of the
+  # apps/v1 default of ten; retired ReplicaSets keep stale image references
+  # visible to cluster security scanners.
+  revisionHistoryLimit: 2
   strategy:
     type: Recreate
   selector:
