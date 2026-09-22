@@ -22,10 +22,6 @@ import (
 // good fetch, to a baked-in seed list. New articles are picked up automatically
 // as the feed updates, while the section is never empty.
 const (
-	// readingListPublicationURL is the human-facing publication page the
-	// "View all" link points at.
-	readingListPublicationURL = "https://substack.com/@hivecommons"
-
 	// readingListAuthor is the byline shown on every card. The feed's
 	// dc:creator carries the Substack display name, which is a publication
 	// tagline rather than an author; the project name is what readers expect.
