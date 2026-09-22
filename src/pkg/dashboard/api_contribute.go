@@ -154,6 +154,7 @@ func (s *Server) registerContributeRoutes() {
 	// agents. It stays under /api/contribute/ so it inherits the same gateway
 	// identity path as the rest of the contributor API.
 	s.mux.HandleFunc("POST /api/contribute/mcp", s.handleContributeMCP)
+	s.mux.HandleFunc("POST /api/contribute/actions/dispatch", s.handleActionsDispatch)
 	// Read-only per-backend RUN SCENARIOS: aggregates over the durable task-run
 	// log (task_run_log.go) — scenario counts, sentinel-compliance share, and
 	// duration percentiles per backend. Public like the other /api/contribute*

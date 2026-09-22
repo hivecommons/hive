@@ -48,6 +48,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | --- | --- | --- |
 | GitHub @-mention triggers | #7582 / #7597 / #7623 | ✅ [`src/pkg/mention/conformance_v6_test.go`](../pkg/mention/conformance_v6_test.go) ([#8041](https://github.com/hivecommons/hive/issues/8041)) |
 | GitHub Actions trigger (comment relay) | #8206 phase 1 | ✅ [`src/pkg/mention/conformance_v6_actions_test.go`](../pkg/mention/conformance_v6_actions_test.go) ([#8206](https://github.com/hivecommons/hive/issues/8206)) |
+| GitHub Actions trigger (hub OIDC dispatch) | #8221 phase 2 | ✅ [`src/pkg/mention/conformance_v6_actions_oidc_test.go`](../pkg/mention/conformance_v6_actions_oidc_test.go) ([#8221](https://github.com/hivecommons/hive/issues/8221)) |
 | Slack (Socket Mode) | #7585 | ✅ [`src/pkg/slack/conformance_v6_test.go`](../pkg/slack/conformance_v6_test.go) ([#8042](https://github.com/hivecommons/hive/issues/8042)) |
 | Discord (spine port + reliability) | #7572 / #7586 | ✅ [`src/pkg/discord/conformance_v6_test.go`](../pkg/discord/conformance_v6_test.go) ([#8043](https://github.com/hivecommons/hive/issues/8043)) |
 | Microsoft Teams | #7621 | ✅ [`src/pkg/msteams/conformance_v6_test.go`](../pkg/msteams/conformance_v6_test.go) ([#8044](https://github.com/hivecommons/hive/issues/8044)) |
@@ -87,6 +88,7 @@ not a unit test:
 | --- | --- | --- |
 | GitHub @-mention triggers | A human mentions the App on a real issue/PR; the kick runs; the 👀 ack and audit entries are linked. | ⬜ |
 | GitHub Actions trigger (comment relay) | One manual `workflow_dispatch` of `hive-action-smoke` against a real issue; kick recorded with `source=action`; 👀 ack and audit are linked. | ⬜ |
+| GitHub Actions trigger (hub OIDC dispatch) | One manual `workflow_dispatch` of `hive-action-smoke` with `transport=oidc`; kick recorded with `source=action, transport=oidc`; audit is linked. | ⬜ |
 | Slack | One command round-trip and one notification delivery over Socket Mode from a pull-only cluster. | ⬜ |
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |

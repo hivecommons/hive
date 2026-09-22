@@ -1395,6 +1395,7 @@ func (b *boot) wireBootClosures() {
 			NewLinearAgent:       newLinearAgentGateway(b.logger),
 			LinearStoredViewerID: linearStoredViewerID,
 			MentionWebhook:       b.mentionWebhook,
+			MentionStore:         b.mentionStore,
 			Governor:             b.gov,
 			GHClient:             b.ghClient,
 			GHAppAuth:            b.appAuth,
@@ -2541,72 +2542,79 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 		})
 	}
 
-	if b.ghClient != nil && b.cfg.GitHub.HasUsableApp() && b.cfg.GitHub.Mentions.Enabled {
+	var mentionStore *mention.Store
+	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		store, err := mention.NewStore("/data/github-mention-triggers.json")
 		if err != nil {
-			b.logger.Warn("mention trigger store unavailable; poller not started", "error", err)
+			b.logger.Warn("mention trigger store unavailable", "error", err)
 		} else {
-			mentionAgents := func() []mention.AgentInfo {
-				out := make([]mention.AgentInfo, 0, len(b.cfg.Agents))
-				for name, ac := range b.cfg.Agents {
-					out = append(out, mention.AgentInfo{
-						Name:         name,
-						Enabled:      ac.Enabled,
-						Converse:     ac.Converse != nil && *ac.Converse,
-						Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
-						GovernorKick: ac.UsesGovernorKick(),
-					})
-				}
-				return out
+			b.mentionStore = store
+			mentionStore = store
+		}
+	}
+
+	if b.ghClient != nil && b.cfg.GitHub.HasUsableApp() && b.cfg.GitHub.Mentions.Enabled && mentionStore != nil {
+		store := mentionStore
+		mentionAgents := func() []mention.AgentInfo {
+			out := make([]mention.AgentInfo, 0, len(b.cfg.Agents))
+			for name, ac := range b.cfg.Agents {
+				out = append(out, mention.AgentInfo{
+					Name:         name,
+					Enabled:      ac.Enabled,
+					Converse:     ac.Converse != nil && *ac.Converse,
+					Mention:      ac.HasEnabledChannel(config.ChannelTypeMention),
+					GovernorKick: ac.UsesGovernorKick(),
+				})
 			}
-			handler := mention.NewHandler(mention.Options{
-				Config:     b.cfg.GitHub.Mentions,
-				Actions:    b.cfg.GitHub.Actions,
-				ReviewBots: b.cfg.Classification.ReviewBots,
-				Roles: func(login string) (string, bool) {
-					return b.cfg.Dashboard.AuthorizedRole(login)
-				},
-				Repos: func() []string {
-					if b.ghClient == nil {
-						return nil
-					}
-					return b.ghClient.ActiveRepositories()
-				},
-				Agents:     mentionAgents,
-				GitHubFunc: func() mention.GitHub { return b.ghClient },
-				Store:      store,
-				Kick: func(agentName, message, source string) error {
-					return b.agentMgr.SendKickWithSource(agentName, message, source)
-				},
-				Audit: func(action, detail, agentName string) {
-					b.dashSrv.AuditLog("system", action, detail, agentName)
-					recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agentName)
-				},
-			})
-			poller := mention.NewPoller(nil, func() []string {
+			return out
+		}
+		handler := mention.NewHandler(mention.Options{
+			Config:     b.cfg.GitHub.Mentions,
+			Actions:    b.cfg.GitHub.Actions,
+			ReviewBots: b.cfg.Classification.ReviewBots,
+			Roles: func(login string) (string, bool) {
+				return b.cfg.Dashboard.AuthorizedRole(login)
+			},
+			Repos: func() []string {
 				if b.ghClient == nil {
 					return nil
 				}
 				return b.ghClient.ActiveRepositories()
-			}, store, handler, b.cfg.GitHub.Mentions.PollIntervalEffective(), b.logger)
-			poller.SetGitHubGetter(func() mention.GitHub { return b.ghClient })
-			if b.cfg.GitHub.Mentions.WebhookEnabled {
-				receiver := mention.NewWebhookReceiver(func() string {
-					return b.cfg.GitHub.Mentions.WebhookSecretEffective()
-				}, poller, b.cfg.GitHub.Mentions.WebhookMinGapEffective(), b.logger)
-				receiver.SetReposFunc(func() []string {
-					if b.ghClient == nil {
-						return nil
-					}
-					return b.ghClient.ActiveRepositories()
-				})
-				b.mentionWebhook = receiver
+			},
+			Agents:     mentionAgents,
+			GitHubFunc: func() mention.GitHub { return b.ghClient },
+			Store:      store,
+			Kick: func(agentName, message, source string) error {
+				return b.agentMgr.SendKickWithSource(agentName, message, source)
+			},
+			Audit: func(action, detail, agentName string) {
+				b.dashSrv.AuditLog("system", action, detail, agentName)
+				recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, action, detail, agentName)
+			},
+		})
+		poller := mention.NewPoller(nil, func() []string {
+			if b.ghClient == nil {
+				return nil
 			}
-			go poller.Run(b.ctx)
-			responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.Classification.ReviewBots, b.logger)
-			b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
-			b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
+			return b.ghClient.ActiveRepositories()
+		}, store, handler, b.cfg.GitHub.Mentions.PollIntervalEffective(), b.logger)
+		poller.SetGitHubGetter(func() mention.GitHub { return b.ghClient })
+		if b.cfg.GitHub.Mentions.WebhookEnabled {
+			receiver := mention.NewWebhookReceiver(func() string {
+				return b.cfg.GitHub.Mentions.WebhookSecretEffective()
+			}, poller, b.cfg.GitHub.Mentions.WebhookMinGapEffective(), b.logger)
+			receiver.SetReposFunc(func() []string {
+				if b.ghClient == nil {
+					return nil
+				}
+				return b.ghClient.ActiveRepositories()
+			})
+			b.mentionWebhook = receiver
 		}
+		go poller.Run(b.ctx)
+		responder := mention.NewResponder(store, func() mention.GitHub { return b.ghClient }, mentionAgents, b.cfg.Classification.ReviewBots, b.logger)
+		b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
+		b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
 	}
 
 	// Seed token sparkline history now that the dashboard server exists

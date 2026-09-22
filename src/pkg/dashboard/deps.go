@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -128,6 +129,15 @@ type Dependencies struct {
 	// MentionWebhook is the public GitHub mention webhook accelerator. It is
 	// HMAC-verified by pkg/mention and only triggers a poll cycle.
 	MentionWebhook http.Handler
+	// MentionStore is shared by GitHub mention polling and Actions dispatch so
+	// run_id/run_attempt dedupe is transport-independent.
+	MentionStore *mention.Store
+	// ActionDispatch hooks let tests drive the Actions dispatch endpoint without
+	// constructing a full agent manager. Production leaves them nil.
+	ActionDispatchKick   func(agentName, message, source string) error
+	ActionDispatchAgents func() []mention.AgentInfo
+	ActionsJWKSFetcher   func(ctx context.Context, url string) ([]byte, error)
+	ActionsClock         func() time.Time
 	// LinearStoredViewerID reports the persisted Linear install's viewer id
 	// ("" when none) plus the store path, for the assigned_only validation
 	// message. Nil disables the check's install probe.

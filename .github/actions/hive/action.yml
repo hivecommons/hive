@@ -1,5 +1,5 @@
-name: Hive comment relay
-description: Post an @hive command comment for the v6 mention poller to process.
+name: Hive GitHub Actions trigger
+description: "Dispatch an @hive command by comment relay or hub OIDC dispatch. OIDC workflows need permissions id-token: write."
 inputs:
   command:
     description: Hive command to relay (for example status or review).
@@ -12,18 +12,33 @@ inputs:
     required: false
     default: ''
   token:
-    description: GitHub token used to create the comment.
+    description: GitHub token used to create the comment transport.
     required: false
     default: ''
+  transport:
+    description: "Dispatch transport: comment or oidc."
+    required: false
+    default: comment
+  hub_url:
+    description: Hub base URL. Required when transport is oidc.
+    required: false
+    default: ''
+  audience:
+    description: OIDC token audience requested from GitHub when transport is oidc.
+    required: false
+    default: hive
 runs:
   using: composite
   steps:
-    - name: Post hive mention comment
+    - name: Dispatch hive command
       shell: bash
       env:
         HIVE_COMMAND: ${{ inputs.command }}
         HIVE_ISSUE_INPUT: ${{ inputs.issue }}
         HIVE_PROMPT: ${{ inputs.prompt }}
+        HIVE_TRANSPORT: ${{ inputs.transport }}
+        HIVE_HUB_URL: ${{ inputs.hub_url }}
+        HIVE_AUDIENCE: ${{ inputs.audience }}
         GH_TOKEN: ${{ inputs.token || github.token }}
         GITHUB_REPOSITORY_NAME: ${{ github.repository }}
         GITHUB_EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -51,14 +66,41 @@ runs:
           exit 1
         fi
 
-        body="@hive ${HIVE_COMMAND}"
-        if [[ -n "${HIVE_PROMPT}" ]]; then
-          body="${body} ${HIVE_PROMPT}"
-        fi
-        marker="<!-- hive:source=action run_id=${GITHUB_RUN_ID_VALUE} run_attempt=${GITHUB_RUN_ATTEMPT_VALUE} workflow=${GITHUB_WORKFLOW_NAME} actor=${GITHUB_ACTOR_LOGIN} -->"
-        body="${body}"$'\n\n'"${marker}"
+        case "${HIVE_TRANSPORT}" in
+          comment)
+            body="@hive ${HIVE_COMMAND}"
+            if [[ -n "${HIVE_PROMPT}" ]]; then
+              body="${body} ${HIVE_PROMPT}"
+            fi
+            marker="<!-- hive:source=action run_id=${GITHUB_RUN_ID_VALUE} run_attempt=${GITHUB_RUN_ATTEMPT_VALUE} workflow=${GITHUB_WORKFLOW_NAME} actor=${GITHUB_ACTOR_LOGIN} transport=comment -->"
+            body="${body}"$'\n\n'"${marker}"
 
-        gh api \
-          --method POST \
-          "repos/${GITHUB_REPOSITORY_NAME}/issues/${issue_number}/comments" \
-          -f body="${body}"
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY_NAME}/issues/${issue_number}/comments" \
+              -f body="${body}"
+            ;;
+          oidc)
+            if [[ -z "${HIVE_HUB_URL}" ]]; then
+              echo "hive action transport=oidc requires hub_url" >&2
+              exit 1
+            fi
+            if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+              echo "hive action transport=oidc requires permissions: id-token: write" >&2
+              exit 1
+            fi
+            token_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${HIVE_AUDIENCE}"
+            oidc_json="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${token_url}")"
+            oidc_token="$(OIDC_JSON="${oidc_json}" python3 -c 'import json, os; print(json.loads(os.environ["OIDC_JSON"])["value"])')"
+            body_json="$(HIVE_COMMAND="${HIVE_COMMAND}" HIVE_PROMPT="${HIVE_PROMPT}" HIVE_ISSUE="${issue_number}" GITHUB_RUN_ID_VALUE="${GITHUB_RUN_ID_VALUE}" GITHUB_RUN_ATTEMPT_VALUE="${GITHUB_RUN_ATTEMPT_VALUE}" python3 -c 'import json, os; print(json.dumps({"command": os.environ["HIVE_COMMAND"], "prompt": os.environ["HIVE_PROMPT"], "issue": int(os.environ["HIVE_ISSUE"]), "run_id": os.environ["GITHUB_RUN_ID_VALUE"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT_VALUE"]}))')"
+            curl -fsS \
+              -H "Authorization: Bearer ${oidc_token}" \
+              -H "Content-Type: application/json" \
+              --data "${body_json}" \
+              "${HIVE_HUB_URL%/}/api/contribute/actions/dispatch"
+            ;;
+          *)
+            echo "hive action transport must be comment or oidc" >&2
+            exit 1
+            ;;
+        esac

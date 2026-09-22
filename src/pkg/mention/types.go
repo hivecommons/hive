@@ -362,6 +362,17 @@ func (h *Handler) audit(action string, ev Event, agent, extra string) {
 	parts := []string{"repo=" + ev.Repo, fmt.Sprintf("number=%d", ev.Number), fmt.Sprintf("comment_id=%d", ev.CommentID), "author=" + ev.Author}
 	if ev.Action.Source != "" {
 		parts = append(parts, "source="+h.opts.Actions.SourceLabelEffective(), "actor="+ev.Action.Actor, "run_id="+ev.Action.RunID, "run_attempt="+ev.Action.RunAttempt)
+		if ev.Action.Workflow != "" {
+			parts = append(parts, "workflow="+ev.Action.Workflow)
+		}
+		if ev.Action.Ref != "" {
+			parts = append(parts, "ref="+ev.Action.Ref)
+		}
+		transport := ev.Action.Transport
+		if transport == "" {
+			transport = "comment"
+		}
+		parts = append(parts, "transport="+transport)
 	}
 	if agent != "" {
 		parts = append(parts, "agent="+agent)

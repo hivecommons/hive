@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: Issue number to receive the manual @hive status smoke comment.
+        description: Issue number to receive the manual @hive status smoke comment or OIDC dispatch context.
         required: true
         type: number
       prompt:
@@ -12,8 +12,26 @@ on:
         required: false
         type: string
         default: manual smoke from workflow_dispatch
+      transport:
+        description: Dispatch transport.
+        required: false
+        type: choice
+        default: comment
+        options:
+          - comment
+          - oidc
+      hub_url:
+        description: Hub URL for transport=oidc.
+        required: false
+        type: string
+      audience:
+        description: OIDC audience for transport=oidc.
+        required: false
+        type: string
+        default: hive
 
 permissions:
+  id-token: write
   issues: write
   pull-requests: write
 
@@ -24,9 +42,12 @@ jobs:
     steps:
       - name: Check out action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Post manual hive status comment
+      - name: Dispatch manual hive status
         uses: ./.github/actions/hive
         with:
           command: status
           issue: ${{ inputs.issue }}
           prompt: ${{ inputs.prompt }}
+          transport: ${{ inputs.transport }}
+          hub_url: ${{ inputs.hub_url }}
+          audience: ${{ inputs.audience }}

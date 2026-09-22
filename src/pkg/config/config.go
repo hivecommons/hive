@@ -1904,15 +1904,25 @@ const (
 )
 
 type GitHubActionsConfig struct {
-	Enabled         bool              `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	SourceLabel     string            `yaml:"source_label,omitempty" json:"source_label,omitempty"`
-	AllowedCommands []string          `yaml:"allowed_commands,omitempty" json:"allowed_commands,omitempty"`
-	AllowApply      bool              `yaml:"allow_apply,omitempty" json:"allow_apply,omitempty"`
-	IdentityMap     map[string]string `yaml:"identity_map,omitempty" json:"identity_map,omitempty"`
+	Enabled         bool                    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	SourceLabel     string                  `yaml:"source_label,omitempty" json:"source_label,omitempty"`
+	AllowedCommands []string                `yaml:"allowed_commands,omitempty" json:"allowed_commands,omitempty"`
+	AllowApply      bool                    `yaml:"allow_apply,omitempty" json:"allow_apply,omitempty"`
+	IdentityMap     map[string]string       `yaml:"identity_map,omitempty" json:"identity_map,omitempty"`
+	OIDC            GitHubActionsOIDCConfig `yaml:"oidc,omitempty" json:"oidc,omitempty"`
+}
+
+type GitHubActionsOIDCConfig struct {
+	Enabled  bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Audience string        `yaml:"audience,omitempty" json:"audience,omitempty"`
+	JWKSURL  string        `yaml:"jwks_url,omitempty" json:"jwks_url,omitempty"`
+	MaxSkew  time.Duration `yaml:"max_skew,omitempty" json:"max_skew,omitempty"`
 }
 
 const (
-	DefaultGitHubActionSourceLabel = "action"
+	DefaultGitHubActionSourceLabel  = "action"
+	DefaultGitHubActionsOIDCJWKSURL = "https://token.actions.githubusercontent.com/.well-known/jwks"
+	DefaultGitHubActionsOIDCMaxSkew = 2 * time.Minute
 )
 
 var DefaultGitHubActionAllowedCommands = []string{"status", "review"}
@@ -1946,6 +1956,30 @@ func (a GitHubActionsConfig) Validate() error {
 		if !valid[cmd] {
 			return fmt.Errorf("github.actions.allowed_commands contains unknown command %q", cmd)
 		}
+	}
+	if err := a.OIDC.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o GitHubActionsOIDCConfig) JWKSURLEffective() string {
+	if strings.TrimSpace(o.JWKSURL) != "" {
+		return strings.TrimSpace(o.JWKSURL)
+	}
+	return DefaultGitHubActionsOIDCJWKSURL
+}
+
+func (o GitHubActionsOIDCConfig) MaxSkewEffective() time.Duration {
+	if o.MaxSkew > 0 {
+		return o.MaxSkew
+	}
+	return DefaultGitHubActionsOIDCMaxSkew
+}
+
+func (o GitHubActionsOIDCConfig) Validate() error {
+	if o.Enabled && strings.TrimSpace(o.Audience) == "" {
+		return fmt.Errorf("github.actions.oidc.audience is required when github.actions.oidc.enabled is true")
 	}
 	return nil
 }

@@ -622,6 +622,9 @@ github:
   #   allow_apply: false
   #   identity_map:
   #     octo-ci-bot: alice
+  #   oidc:
+  #     enabled: false
+  #     audience: hive-prod
 
 # Optional: OIDC token mint — issues short-lived scoped JWTs alongside the
 # GitHub App token, for in-process agent-credential consumers. Disabled by

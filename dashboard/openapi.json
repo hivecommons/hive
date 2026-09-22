@@ -12011,6 +12011,84 @@
         }
       }
     },
+    "/api/contribute/actions/dispatch": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "GitHub Actions OIDC dispatch",
+        "description": "Accepts a GitHub Actions OIDC bearer token and dispatches a v6 action-originated Hive command through the same role, ioscan, allow_apply, audit, and dedupe guards as the comment relay transport.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "integer"
+                  },
+                  "run_id": {
+                    "type": "string"
+                  },
+                  "run_attempt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command",
+                  "issue",
+                  "run_id",
+                  "run_attempt"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Dispatch accepted or replay deduped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": {
+                      "type": "boolean"
+                    },
+                    "kick_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "accepted",
+                    "kick_id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "OIDC token missing or invalid"
+          },
+          "403": {
+            "description": "OIDC dispatch disabled or action guard refused the command"
+          }
+        }
+      }
+    },
     "/api/contribute/run-stats": {
       "get": {
         "tags": [
@@ -19477,6 +19555,13 @@
             "type": "integer"
           }
         }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "GitHub Actions OIDC JWT"
       }
     }
   }

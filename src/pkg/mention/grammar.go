@@ -17,6 +17,8 @@ type ActionMarker struct {
 	RunAttempt string
 	Workflow   string
 	Actor      string
+	Ref        string
+	Transport  string
 }
 
 var askSelectorRe = regexp.MustCompile(`(?is)^ask\s+([A-Za-z0-9_.-]+)\b\s*(.*)$`)
@@ -69,6 +71,8 @@ func parseActionMarkerFields(s string) ActionMarker {
 		RunAttempt: markerField(s, "run_attempt"),
 		Workflow:   markerField(s, "workflow"),
 		Actor:      markerField(s, "actor"),
+		Ref:        markerField(s, "ref"),
+		Transport:  markerField(s, "transport"),
 	}
 }
 
@@ -81,7 +85,7 @@ func markerField(s, key string) string {
 	}
 	start := idx + len(needle)
 	end := len(s)
-	for _, next := range []string{"source=", "run_id=", "run_attempt=", "workflow=", "actor="} {
+	for _, next := range []string{"source=", "run_id=", "run_attempt=", "workflow=", "actor=", "ref=", "transport="} {
 		if next == needle {
 			continue
 		}
