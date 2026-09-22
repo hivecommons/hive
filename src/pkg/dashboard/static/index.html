@@ -1219,6 +1219,30 @@
     /* planning-alert: plans awaiting human review — amber, to draw the eye like
        the "N Issues" / on-hold indicators. */
     .gov-stat .val.planning-alert { color: var(--yellow); }
+    .gov-pr-models { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--panel) 82%, transparent); }
+    .gov-pr-models-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .gov-pr-models-title { font-size: var(--fs-xs); font-weight:800; letter-spacing:0.12em; text-transform:uppercase; color:var(--amber); }
+    .gov-pr-models-toggle { display:flex; gap:4px; }
+    .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:999px; background:var(--bg); color:var(--muted); padding:3px 8px; font-size:0.68rem; cursor:pointer; }
+    .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
+    .gov-pr-models-empty { color:var(--muted); font-size:0.82rem; padding:8px 0; }
+    .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(160px, 3fr) auto; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
+    .gov-pr-model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-weight:600; }
+    .gov-pr-model-sub { color:var(--muted); font-size:0.68rem; font-weight:400; }
+    .gov-pr-model-bar { height:12px; display:flex; overflow:hidden; border-radius:999px; background:var(--bg); border:1px solid var(--border); }
+    .gov-pr-model-seg.merged { background:var(--green); }
+    .gov-pr-model-seg.open { background:var(--blue); }
+    .gov-pr-model-seg.closed { background:var(--yellow); }
+    .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .gov-pr-model-legend { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:0.68rem; margin-top:8px; }
+    .gov-pr-model-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+    .gov-pr-model-legend .merged::before { background:var(--green); }
+    .gov-pr-model-legend .open::before { background:var(--blue); }
+    .gov-pr-model-legend .closed::before { background:var(--yellow); }
+    @media (max-width: 620px) {
+      .gov-pr-model-row { grid-template-columns:1fr; gap:4px; }
+      .gov-pr-model-share { justify-self:start; }
+    }
 
     /* ── ACMM level-up recommendation (advisory) + lifecycle timeline ── */
     .reco-badge {
@@ -7978,6 +8002,64 @@
       return `${Math.round(minutes)}m`;
     }
 
+    let govPRModelsWindow = '7d';
+    let govPRModelsLoading = false;
+    let govPRModelsData = null;
+
+    function setGovernorPRModelsWindow(windowName) {
+      govPRModelsWindow = ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
+      loadGovernorPRModels(true);
+    }
+    window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
+
+    async function loadGovernorPRModels(force) {
+      if (govPRModelsLoading) return;
+      if (!force && govPRModelsData && govPRModelsData.window === govPRModelsWindow) return;
+      govPRModelsLoading = true;
+      try {
+        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(govPRModelsWindow)}`);
+        if (res.ok) govPRModelsData = await res.json();
+      } catch (_) {
+        govPRModelsData = { window: govPRModelsWindow, total: 0, buckets: [] };
+      } finally {
+        govPRModelsLoading = false;
+        if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
+      }
+    }
+
+    function renderGovernorPRModelsTile() {
+      const data = govPRModelsData && govPRModelsData.window === govPRModelsWindow ? govPRModelsData : null;
+      const total = data?.total || 0;
+      const buttons = ['7d', '30d', 'all'].map(w => `<button type="button" class="${govPRModelsWindow === w ? 'active' : ''}" data-action="setGovernorPRModelsWindow" data-arg0="${w}" title="Show PRs authored in ${w === 'all' ? 'all time' : 'the last ' + w}">${w}</button>`).join('');
+      const rows = !data
+        ? '<div class="gov-pr-models-empty">Loading PRs by model…</div>'
+        : total === 0
+          ? '<div class="gov-pr-models-empty">No agent-authored PRs in window.</div>'
+          : (data.buckets || []).map(b => {
+              const prs = b.prs || 0;
+              const share = total ? (prs / total * 100) : 0;
+              const mergedPct = prs ? (b.merged || 0) / prs * 100 : 0;
+              const openPct = prs ? (b.open || 0) / prs * 100 : 0;
+              const closedPct = Math.max(0, 100 - mergedPct - openPct);
+              const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
+              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              return `<div class="gov-pr-model-row" title="${escapeHtml(tip)}">
+                <div><div class="gov-pr-model-name">${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
+                <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
+                  <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
+                  <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
+                  <div class="gov-pr-model-seg closed" style="width:${closedPct}%"></div>
+                </div>
+                <div class="gov-pr-model-share">${prs} · ${share.toFixed(1)}%</div>
+              </div>`;
+            }).join('');
+      return `<div class="gov-pr-models">
+        <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">PRs by model</div><div class="gov-pr-model-sub">${total} agent-authored PR${total === 1 ? '' : 's'}</div></div><div class="gov-pr-models-toggle">${buttons}</div></div>
+        ${rows}
+        <div class="gov-pr-model-legend"><span class="merged">merged</span><span class="open">open</span><span class="closed">closed-unmerged</span></div>
+      </div>`;
+    }
+
     function renderGovernor(gov, cadenceMatrix, data) {
       const el = document.getElementById('governor');
       const isStarting = !gov.active && !gov.mode;
@@ -8031,6 +8113,7 @@
       // > tests) then age (#6183); the class tag makes that order legible.
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
       const holdSpark = sparkline('govHold');
+      loadGovernorPRModels(false);
 
       el.innerHTML = `
         <div class="gov-title">Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
@@ -8087,6 +8170,7 @@
           </div>
         </div>
         ${renderBudgetBar(data.budget || {})}
+        ${renderGovernorPRModelsTile()}
         ${renderCadenceMatrix(cadenceMatrix, currentMode, modes)}`;
     }
 

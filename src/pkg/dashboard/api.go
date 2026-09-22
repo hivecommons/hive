@@ -125,6 +125,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
 	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
+	s.mux.HandleFunc("GET /api/governor/pr-models", s.handleGovernorPRModels)
 	s.mux.HandleFunc("GET /api/budget-ignore", s.handleBudgetIgnoreGet)
 	s.mux.HandleFunc("POST /api/budget-ignore", s.handleBudgetIgnoreSet)
 

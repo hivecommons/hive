@@ -407,6 +407,9 @@ type PullRequest struct {
 	Labels      []string  `json:"labels"`
 	Draft       bool      `json:"draft"`
 	CreatedAt   time.Time `json:"created_at"`
+	ClosedAt    time.Time `json:"closed_at,omitempty"`
+	MergedAt    time.Time `json:"merged_at,omitempty"`
+	State       string    `json:"state,omitempty"`
 	URL         string    `json:"url"`
 	// HiveAttributed is true when the PR body carries the `— hive:`
 	// attribution trailer (HasAttributionTrailer). It is how a PR a hive agent
@@ -416,7 +419,10 @@ type PullRequest struct {
 	// review-thread reconciler keys on it alongside the author login
 	// (hivecommons/hive#7638). Derived from the list payload at enumeration
 	// time; the body itself is not kept, so the queue snapshot stays small.
-	HiveAttributed bool `json:"hive_attributed,omitempty"`
+	HiveAttributed bool   `json:"hive_attributed,omitempty"`
+	HiveAgent      string `json:"hive_agent,omitempty"`
+	HiveBackend    string `json:"hive_backend,omitempty"`
+	HiveModel      string `json:"hive_model,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
@@ -588,6 +594,11 @@ func IssueResultFromItems(items []Issue) IssueResult {
 type PRResult struct {
 	Count int           `json:"count"`
 	Items []PullRequest `json:"items"`
+	// Attributed carries every PR in the governed repos that has the trailing
+	// `— hive:` attribution footer, including merged and closed-unmerged PRs.
+	// It is populated during repository enumeration so dashboard aggregate
+	// endpoints and Prometheus scrapes never call GitHub at request time.
+	Attributed []PullRequest `json:"attributed,omitempty"`
 	// StaleDrafts are the App's OWN draft PRs older than staleDraftAfter.
 	// Ordinary drafts (someone's in-progress work, human or agent) are
 	// excluded from Items entirely and stay that way here — nobody should be
@@ -756,6 +767,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 	var allIssues []Issue
 	var allPRs []PullRequest
+	var allAttributedPRs []PullRequest
 	var holdItems []HoldItem
 	var allHeldPRs []PullRequest
 	var allStaleDrafts []PullRequest
@@ -780,7 +792,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldItems, heldPRs, staleDrafts, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo)
+		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -789,6 +801,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			continue
 		}
 		allPRs = append(allPRs, prs...)
+		allAttributedPRs = append(allAttributedPRs, attributedPRs...)
 		holdItems = append(holdItems, heldItems...)
 		allHeldPRs = append(allHeldPRs, heldPRs...)
 		allStaleDrafts = append(allStaleDrafts, staleDrafts...)
@@ -828,6 +841,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	result.PRs = PRResult{
 		Count:       len(allPRs),
 		Items:       allPRs,
+		Attributed:  allAttributedPRs,
 		StaleDrafts: allStaleDrafts,
 		Held:        allHeldPRs,
 	}
@@ -985,7 +999,7 @@ func prBaseRef(pr *gh.PullRequest) string {
 	return pr.GetBase().GetRef()
 }
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
+func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -997,7 +1011,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, nil, nil, 0, RepoPRBreakdown{}, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -1009,6 +1023,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
+		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 
 		if isHeld(labels) {
 			breakdown.Hold++
@@ -1041,8 +1056,12 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 					Author:         safeGetLogin(pr.GetUser()),
 					Labels:         labels,
 					CreatedAt:      pr.GetCreatedAt().Time,
+					State:          pr.GetState(),
 					URL:            pr.GetHTMLURL(),
-					HiveAttributed: HasAttributionTrailer(pr.GetBody()),
+					HiveAttributed: hasAttr,
+					HiveAgent:      attrMeta.Agent,
+					HiveBackend:    attrMeta.Backend,
+					HiveModel:      attrMeta.Model,
 					HeadSHA:        prHeadSHA(pr),
 					HeadRef:        headRef,
 					HeadRepo:       headRepo,
@@ -1097,10 +1116,14 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			Labels:      labels,
 			Draft:       pr.GetDraft(),
 			CreatedAt:   pr.GetCreatedAt().Time,
+			State:       pr.GetState(),
 			URL:         pr.GetHTMLURL(),
 			// The list payload carries the body, so the hive-mediated test
 			// costs no extra call (hivecommons/hive#7638).
-			HiveAttributed: HasAttributionTrailer(pr.GetBody()),
+			HiveAttributed: hasAttr,
+			HiveAgent:      attrMeta.Agent,
+			HiveBackend:    attrMeta.Backend,
+			HiveModel:      attrMeta.Model,
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it
@@ -1116,10 +1139,70 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		})
 	}
 
+	attributed = append(attributed, collectAttributedPRsFromList(repo, allPRs)...)
+	closed, err := c.fetchAttributedClosedPRs(ctx, owner, repoName, repo)
+	if err != nil {
+		return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, err
+	}
+	attributed = append(attributed, closed...)
+
 	if unclassified := totalPRs - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified
 	}
-	return actionable, held, heldPRs, staleDrafts, totalPRs, breakdown, nil
+
+	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, nil
+}
+
+func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequest {
+	var out []PullRequest
+	for _, pr := range prs {
+		meta, ok := ParseAttributionTrailer(pr.GetBody())
+		if !ok {
+			continue
+		}
+		out = append(out, pullRequestAttributionRecord(repo, pr, meta))
+	}
+	return out
+}
+
+func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, repo string) ([]PullRequest, error) {
+	opts := &gh.PullRequestListOptions{
+		State:       "closed",
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	var out []PullRequest
+	for {
+		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing closed PRs for %s/%s: %w", owner, repoName, err)
+		}
+		out = append(out, collectAttributedPRsFromList(repo, prs)...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta InvocationMeta) PullRequest {
+	return PullRequest{
+		Repo:           repo,
+		Number:         pr.GetNumber(),
+		Title:          pr.GetTitle(),
+		Author:         safeGetLogin(pr.GetUser()),
+		Labels:         extractPRLabels(pr.Labels),
+		Draft:          pr.GetDraft(),
+		CreatedAt:      pr.GetCreatedAt().Time,
+		ClosedAt:       pr.GetClosedAt().Time,
+		MergedAt:       pr.GetMergedAt().Time,
+		State:          pr.GetState(),
+		URL:            pr.GetHTMLURL(),
+		HiveAttributed: true,
+		HiveAgent:      meta.Agent,
+		HiveBackend:    meta.Backend,
+		HiveModel:      meta.Model,
+	}
 }
 
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit

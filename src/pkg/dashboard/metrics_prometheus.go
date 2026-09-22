@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // metricsEnabled reports whether the /metrics Prometheus endpoint is turned on.
@@ -49,6 +50,7 @@ func metricsToken() string {
 //	hive_estimated_cost_usd_total{hive_id}          — grand total $
 //	hive_model_input_tokens_total{hive_id,model}    — per-model input tokens
 //	hive_model_output_tokens_total{hive_id,model}   — per-model output tokens
+//	hive_prs_by_model_total{hive_id,model,outcome}  — attributed PR outcomes
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Mandatory bearer auth (#3399, hardened in #3785): the cost/agent series
 	// are business-sensitive, so /metrics FAILS CLOSED when metrics are enabled
@@ -112,9 +114,40 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	for _, m := range sortedByName(est.ByModel) {
 		fmt.Fprintf(&b, "hive_model_output_tokens_total{hive_id=%q,model=%q} %d\n", hiveID, m.Name, m.Output)
 	}
+	writeHeader("hive_prs_by_model_total",
+		"All-time cumulative agent-authored pull requests per model and outcome.", "counter")
+	for _, s := range s.prometheusPRModelSeries() {
+		fmt.Fprintf(&b, "hive_prs_by_model_total{hive_id=%q,model=%q,outcome=%q} %d\n", hiveID, s.Model, s.Outcome, s.Count)
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
+}
+
+type prModelPrometheusSeries struct {
+	Model   string
+	Outcome string
+	Count   int
+}
+
+func (s *Server) prometheusPRModelSeries() []prModelPrometheusSeries {
+	actionable := s.lastActionableForPRModels()
+	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, governorPRModelsWindowAll, time.Now())
+	var out []prModelPrometheusSeries
+	for _, b := range resp.Buckets {
+		out = append(out,
+			prModelPrometheusSeries{Model: b.Model, Outcome: "merged", Count: b.Merged},
+			prModelPrometheusSeries{Model: b.Model, Outcome: "open", Count: b.Open},
+			prModelPrometheusSeries{Model: b.Model, Outcome: "closed_unmerged", Count: b.ClosedUnmerged},
+		)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Outcome < out[j].Outcome
+	})
+	return out
 }
 
 // sortedByName returns the entries sorted by Name so the exposition output is

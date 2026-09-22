@@ -1709,6 +1709,79 @@
         }
       }
     },
+    "/api/governor/pr-models": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Governor PRs by model",
+        "description": "Returns cached agent-authored pull request counts grouped by normalized attribution model and backend for window=7d, 30d, or all.",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "all"
+              ],
+              "default": "7d"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PR model distribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "unknown": {
+                      "type": "integer"
+                    },
+                    "buckets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string"
+                          },
+                          "prs": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed_unmerged": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/gh-auth": {
       "get": {
         "tags": [

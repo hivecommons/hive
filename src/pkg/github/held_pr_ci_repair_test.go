@@ -41,7 +41,7 @@ func TestFetchPRs_HeldPRIsReturnedInFullForCIRepair(t *testing.T) {
 
 	c := newTestClient(t, server, "acme", []string{"widget"})
 
-	actionable, held, heldPRs, _, total, _, err := c.fetchPRs(t.Context(), "widget")
+	actionable, held, heldPRs, _, _, total, _, err := c.fetchPRs(t.Context(), "widget")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestFetchPRs_HeldDraftIsNotRepairable(t *testing.T) {
 
 	c := newTestClient(t, server, "acme", []string{"widget"})
 
-	_, held, heldPRs, _, _, _, err := c.fetchPRs(t.Context(), "widget")
+	_, held, heldPRs, _, _, _, _, err := c.fetchPRs(t.Context(), "widget")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
