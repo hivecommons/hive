@@ -47,7 +47,7 @@ just contribute-browse
 HIVE_HUB=wss://drasi-hive.example.com:3001/contribute just contribute-hive
 ```
 
-Multiple hubs are supported by comma-separated `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` values in the same order. The relay keeps separate WebSocket connections/heartbeats and works on one task at a time.
+Multiple hubs are supported: manage them as named profiles with [`hivectl hives`](../src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) (`add`, `use`, `list`), which generates the comma-separated `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` lists the relay reads, aligned by construction. The relay keeps separate WebSocket connections/heartbeats and works on one task at a time.
 
 ## Architecture
 
