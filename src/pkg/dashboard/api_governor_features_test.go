@@ -188,3 +188,113 @@ func TestCovGov_FeaturesEndpointOnlyPreservesLegacyEnabled(t *testing.T) {
 		t.Fatalf("effective otel after endpoint-only update = %+v", got)
 	}
 }
+
+func TestGovernorFeaturesRotationRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"rotationEnabled":            true,
+		"rotationThresholdPct":       72,
+		"rotationHighVolumeCadenceS": 900,
+		"rotationProviders": map[string]any{
+			"github": map[string]any{
+				"class":             "subscription",
+				"backends":          []string{"copilot"},
+				"monthly_allowance": 1000,
+			},
+			"anthropic": map[string]any{
+				"class":    "metered",
+				"backends": []string{"claude"},
+			},
+		},
+		"rotationAgents": map[string]string{"worker": "T1", "planner": "T2"},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("rotation features update status = %d; body=%q", rec.Code, rec.Body.String())
+	}
+
+	rot := s.deps.Config.Governor.Rotation
+	if !rot.Enabled || rot.ThresholdPct != 72 || rot.HighVolumeCadenceS != 900 {
+		t.Fatalf("rotation scalars = %+v", rot)
+	}
+	if got := rot.Providers["github"].Backends; len(got) != 1 || got[0] != "copilot" {
+		t.Fatalf("github backends = %v", got)
+	}
+	if rot.Providers["github"].MonthlyAllowance != 1000 || rot.Providers["github"].Class != "subscription" {
+		t.Fatalf("github provider config = %+v", rot.Providers["github"])
+	}
+	if rot.AgentTiers["worker"] != "T1" || rot.AgentTiers["planner"] != "T2" {
+		t.Fatalf("agent tiers = %+v", rot.AgentTiers)
+	}
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("governor config status = %d; body=%q", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			RotationEnabled            bool                      `json:"rotationEnabled"`
+			RotationThresholdPct       int                       `json:"rotationThresholdPct"`
+			RotationHighVolumeCadenceS int                       `json:"rotationHighVolumeCadenceS"`
+			RotationProviders          map[string]map[string]any `json:"rotationProviders"`
+			RotationAgents             map[string]string         `json:"rotationAgents"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid governor JSON: %v", err)
+	}
+	if !payload.Features.RotationEnabled || payload.Features.RotationThresholdPct != 72 || payload.Features.RotationHighVolumeCadenceS != 900 {
+		t.Fatalf("rotation features response = %+v", payload.Features)
+	}
+	if payload.Features.RotationAgents["worker"] != "T1" {
+		t.Fatalf("rotation agents response = %+v", payload.Features.RotationAgents)
+	}
+	if payload.Features.RotationProviders["github"]["class"] != "subscription" {
+		t.Fatalf("rotation providers response = %+v", payload.Features.RotationProviders)
+	}
+}
+
+func TestGovernorFeaturesRotationDefaults(t *testing.T) {
+	s := covApiServer(t)
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("governor config status = %d; body=%q", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			RotationThresholdPct       int `json:"rotationThresholdPct"`
+			RotationHighVolumeCadenceS int `json:"rotationHighVolumeCadenceS"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid governor JSON: %v", err)
+	}
+	if payload.Features.RotationThresholdPct != 85 || payload.Features.RotationHighVolumeCadenceS != 1800 {
+		t.Fatalf("rotation defaults = %+v", payload.Features)
+	}
+}
+
+func TestGovernorFeaturesRotationValidation(t *testing.T) {
+	s := covApiServer(t)
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "threshold zero", body: map[string]any{"rotationThresholdPct": 0}},
+		{name: "threshold too high", body: map[string]any{"rotationThresholdPct": 101}},
+		{name: "bad tier", body: map[string]any{"rotationAgents": map[string]string{"worker": "T4"}}},
+		{name: "unknown backend", body: map[string]any{
+			"rotationProviders": map[string]any{
+				"github": map[string]any{"class": "subscription", "backends": []string{"unknown-cli"}},
+			},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := doPut(s, "/api/config/governor/features", tc.body); rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

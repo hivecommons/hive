@@ -9292,6 +9292,7 @@
     const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    let CONFIG_BACKEND_OPTIONS = [];
     function includesNameCI(list, name) {
       const want = String(name || '').toLowerCase();
       return !!want && list.some(v => String(v || '').toLowerCase() === want);
@@ -9659,6 +9660,8 @@
         const resp = await fetch('/api/config/backends');
         const list = await resp.json();
         _cliModelsFetchedAt = now;
+        CONFIG_BACKEND_OPTIONS = (list || []).map(b => b && b.id).filter(Boolean);
+        if (document.getElementById('rotation-providers-table')) renderConfigTab('Features');
         (list || []).forEach(b => {
           if (!CLI_BACKENDS.includes(b.id)) return; // inference backends handled by fetchInferenceModels
           // b.notice: discovery did not merely fail, it was REJECTED — the
@@ -24183,6 +24186,172 @@ function burnAreaChart() {
       markDirty('features', 'otelHeaders', headers);
     }
 
+    function rotationFeaturesState() {
+      if (!_configState.data) _configState.data = {};
+      if (!_configState.data.features) _configState.data.features = {};
+      const f = _configState.data.features;
+      if (!f.rotationProviders || typeof f.rotationProviders !== 'object') f.rotationProviders = {};
+      if (!f.rotationAgents || typeof f.rotationAgents !== 'object') f.rotationAgents = {};
+      return f;
+    }
+
+    function rotationBackendOptions() {
+      const opts = (CONFIG_BACKEND_OPTIONS && CONFIG_BACKEND_OPTIONS.length) ? CONFIG_BACKEND_OPTIONS : KNOWN_BACKENDS;
+      return opts.filter((v, i, a) => v && a.indexOf(v) === i);
+    }
+
+    function rotationProviderRows(providers) {
+      return Object.entries(providers || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    }
+
+    function renderRotationBackendSelect(provider, selected) {
+      selected = Array.isArray(selected) ? selected : [];
+      const selectedSet = new Set(selected);
+      return '<select multiple size="4" data-provider="' + esc(provider) + '" data-change-action="rotationProviderChanged" style="min-width:150px">' +
+        rotationBackendOptions().map(b => '<option value="' + esc(b) + '" ' + (selectedSet.has(b) ? 'selected' : '') + '>' + esc(b) + '</option>').join('') +
+        '</select>';
+    }
+
+    function renderRotationHeadroomAge(observedAt) {
+      if (!observedAt) return '';
+      const observedMs = new Date(observedAt).getTime();
+      if (Number.isNaN(observedMs)) return '';
+      const ageSec = Math.max(0, Math.floor((Date.now() - observedMs) / 1000));
+      const ageStr = ageSec < 60 ? ageSec + 's ago' : ageSec < 3600 ? Math.floor(ageSec / 60) + 'm ago' : Math.floor(ageSec / 3600) + 'h ago';
+      const stale = ageSec >= 300;
+      const color = stale ? 'var(--yellow)' : 'var(--muted)';
+      const title = stale
+        ? 'This reading has not refreshed recently — treat the headroom above as a floor, not a live value'
+        : 'When this provider headroom reading was taken';
+      return '<span style="color:' + color + ';font-size:0.68rem" title="' + esc(title) + '">measured ' + esc(ageStr) + '</span>';
+    }
+
+    function renderRotationHeadroomValue(reading) {
+      if (!reading) return '<span style="color:var(--muted)">no reading yet</span>';
+      const pct = reading.pct_remaining ?? reading.pctRemaining;
+      const available = reading.available === true;
+      const cause = reading.cause || reading.probe_error || reading.probeError || reading.probe_error_cause || reading.probeErrorCause || '';
+      const value = pct !== undefined && pct !== null
+        ? String(pct) + '% remaining'
+        : (available ? 'available' : 'unknown');
+      const color = available ? 'var(--green)' : 'var(--yellow)';
+      const observed = reading.observed_at || reading.observedAt || reading.captured_at || reading.capturedAt;
+      return '<span style="color:' + color + ';font-weight:600">' + esc(value) + '</span>' +
+        (cause ? ' <span style="color:var(--muted);font-size:0.68rem" title="' + esc(cause) + '">(' + esc(cause) + ')</span>' : '') +
+        '<div>' + renderRotationHeadroomAge(observed) + '</div>';
+    }
+
+    function renderRotationProvidersTable(providers, headroomByProvider) {
+      const rows = rotationProviderRows(providers);
+      const body = rows.map(([name, cfg]) => `
+        <tr data-provider="${esc(name)}">
+          <td><input type="text" value="${esc(name)}" data-provider="${esc(name)}" data-change-action="rotationProviderRenamed" style="width:120px"></td>
+          <td><input type="text" value="${esc(cfg.class || '')}" placeholder="subscription" data-provider="${esc(name)}" data-change-action="rotationProviderChanged" style="width:120px"></td>
+          <td>${renderRotationBackendSelect(name, cfg.backends || [])}</td>
+          <td><input type="number" min="0" step="1" value="${cfg.monthly_allowance || cfg.monthlyAllowance || ''}" data-provider="${esc(name)}" data-change-action="rotationProviderChanged" style="width:110px"></td>
+          <td class="rotation-headroom-cell">${renderRotationHeadroomValue((headroomByProvider || {})[name])}</td>
+          <td><button type="button" class="btn-small" data-action="rotationRemoveProvider" data-arg0="${esc(name)}">remove</button></td>
+        </tr>`).join('');
+      return `<table id="rotation-providers-table" style="width:100%;border-collapse:collapse;font-size:0.75rem;margin-top:8px">
+        <thead><tr><th style="text-align:left">Provider</th><th style="text-align:left">Class</th><th style="text-align:left">Backends</th><th style="text-align:left">Allowance</th><th style="text-align:left">Live headroom</th><th></th></tr></thead>
+        <tbody>${body || '<tr><td colspan="6" style="color:var(--muted);padding:8px 0">No providers configured.</td></tr>'}</tbody>
+      </table>`;
+    }
+
+    function rotationStageProviders() {
+      const f = rotationFeaturesState();
+      markDirty('features', 'rotationProviders', f.rotationProviders);
+    }
+
+    function rotationProviderChanged() {
+      const f = rotationFeaturesState();
+      const table = document.getElementById('rotation-providers-table');
+      if (!table) return;
+      const providers = {};
+      table.querySelectorAll('tbody tr[data-provider]').forEach(row => {
+        const name = row.dataset.provider;
+        if (!name) return;
+        const inputs = row.querySelectorAll('input');
+        const backendSelect = row.querySelector('select[multiple]');
+        providers[name] = {
+          class: (inputs[1]?.value || '').trim(),
+          backends: backendSelect ? Array.from(backendSelect.selectedOptions).map(o => o.value) : [],
+          monthly_allowance: Math.max(0, parseInt(inputs[2]?.value || '0', 10) || 0),
+        };
+      });
+      f.rotationProviders = providers;
+      rotationStageProviders();
+    }
+
+    function rotationProviderRenamed() {
+      const oldName = this.dataset.provider || '';
+      const newName = (this.value || '').trim();
+      const f = rotationFeaturesState();
+      if (!oldName || !newName || oldName === newName) return;
+      if (f.rotationProviders[newName]) {
+        showToast('Provider already exists: ' + newName, 'error');
+        this.value = oldName;
+        return;
+      }
+      f.rotationProviders[newName] = f.rotationProviders[oldName] || {};
+      delete f.rotationProviders[oldName];
+      rotationStageProviders();
+      renderConfigTab('Features');
+    }
+
+    function rotationAddProvider() {
+      const f = rotationFeaturesState();
+      let i = Object.keys(f.rotationProviders).length + 1;
+      let name = 'provider-' + i;
+      while (f.rotationProviders[name]) name = 'provider-' + (++i);
+      f.rotationProviders[name] = { class: 'subscription', backends: [], monthly_allowance: 0 };
+      rotationStageProviders();
+      renderConfigTab('Features');
+    }
+
+    function rotationRemoveProvider(name) {
+      const f = rotationFeaturesState();
+      delete f.rotationProviders[name];
+      rotationStageProviders();
+      renderConfigTab('Features');
+    }
+
+    function rotationAgentTierChanged(agent, tier) {
+      const f = rotationFeaturesState();
+      f.rotationAgents[agent] = tier;
+      markDirty('features', 'rotationAgents', f.rotationAgents);
+    }
+
+    function rotationToggleSwitch(el) {
+      el = el || this;
+      const isOn = el.classList.toggle('on');
+      const f = rotationFeaturesState();
+      f.rotationEnabled = isOn;
+      markDirty('features', 'rotationEnabled', isOn);
+      renderConfigTab('Features');
+    }
+
+    async function loadRotationHeadroom() {
+      const host = document.getElementById('rotation-headroom-host');
+      if (!host) return;
+      try {
+        const resp = await fetch('/api/providers/headroom');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+        const byProvider = {};
+        (data.providers || []).forEach(p => {
+          if (!p.provider) return;
+          if (!p.observed_at && !p.observedAt && data.updated_at) p.observed_at = data.updated_at;
+          byProvider[p.provider] = p;
+        });
+        const f = rotationFeaturesState();
+        host.innerHTML = renderRotationProvidersTable(f.rotationProviders, byProvider);
+      } catch (e) {
+        host.innerHTML = '<div style="color:var(--yellow);font-size:0.72rem;margin-top:8px">Headroom unavailable: ' + esc(e.message) + '</div>' +
+          renderRotationProvidersTable(rotationFeaturesState().rotationProviders, {});
+      }
+    }
+
     function renderSecuritySection(title, html) {
       return '<section style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">' +
         '<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">' + esc(title) + '</div>' +
@@ -24496,6 +24665,19 @@ function burnAreaChart() {
       const trajModel = traj.effectiveModel || '';
       const trajInterval = traj.intervalS || 0;
       const trajDiv = traj.onDivergence || 'pause';
+      const rotationOn = f.rotationEnabled === true;
+      const rotationProviders = (f.rotationProviders && typeof f.rotationProviders === 'object') ? f.rotationProviders : {};
+      const rotationAgents = (f.rotationAgents && typeof f.rotationAgents === 'object') ? f.rotationAgents : {};
+      const rotationAgentNames = ((_configState.data || {}).agents || []).map(a => typeof a === 'string' ? a : (a && a.name) || '').filter(Boolean).sort();
+      const rotationAgentRows = rotationAgentNames.map(name => {
+        const tier = rotationAgents[name] || 'T2';
+        return `<tr><td style="padding:4px 8px 4px 0"><code>${esc(name)}</code></td><td><select data-change-action="rotationAgentTierChanged" data-arg0="${esc(name)}" data-arg-types="s,v">
+          <option value="T1" ${tier === 'T1' ? 'selected' : ''}>T1</option>
+          <option value="T2" ${tier === 'T2' ? 'selected' : ''}>T2</option>
+          <option value="T3" ${tier === 'T3' ? 'selected' : ''}>T3</option>
+        </select></td></tr>`;
+      }).join('');
+      setTimeout(() => { if (rotationOn) loadRotationHeadroom(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -24560,6 +24742,29 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-plan from label <span class="config-info">i<span class="config-tooltip">When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Provider rotation</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>
+            <span class="config-toggle-label">Provider rotation <span class="config-info">i<span class="config-tooltip">Rotate a lane off a provider whose measured usage crosses the threshold. Opt-in; see the backend capacity RFC.</span></span></span>
+          </div>
+          ${rotationOn ? `
+            <div class="config-field-row" style="margin-top:10px">
+              <div class="config-field"><label>Threshold percent <span class="config-info">i<span class="config-tooltip">Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.</span></span></label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>High-volume cadence seconds <span class="config-info">i<span class="config-tooltip">Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.</span></span></label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
+            </div>
+            <div class="config-field" style="margin-top:10px">
+              <label>Providers <span class="config-info">i<span class="config-tooltip">Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.</span></span></label>
+              <div id="rotation-headroom-host">${renderRotationProvidersTable(rotationProviders, {})}</div>
+              <button type="button" class="btn-small" style="margin-top:8px" data-action="rotationAddProvider">Add provider</button>
+            </div>
+            <div class="config-field" style="margin-top:12px">
+              <label>Agent tiers <span class="config-info">i<span class="config-tooltip">Assign each agent to capability tier T1, T2, or T3. Rotation stays within tier before dropping when nothing has headroom.</span></span></label>
+              <table style="border-collapse:collapse;font-size:0.75rem">${rotationAgentRows || '<tr><td style="color:var(--muted)">No agents in the roster.</td></tr>'}</table>
+            </div>
+          ` : ''}
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">

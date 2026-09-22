@@ -292,6 +292,26 @@ governor:
   #                                       #  idle agent with an empty queue is correct)
   #   auth_probe: true                    # Per-provider credential probes (rotation machinery)
 
+  # Optional provider rotation (RFC #5698 phase 1): move agents away from a
+  # provider whose measured usage crosses the threshold. This surfaces existing
+  # headroom probes only; capacity normalization, placement, pacing, and tier
+  # floors remain outside this block.
+  # rotation:
+  #   enabled: false                      # Opt in; default false
+  #   threshold_pct: 85                   # Exhausted at this usage percentage (1-100)
+  #   high_volume_cadence_s: 1800         # Agents at/below this cadence avoid subscription providers
+  #   providers:
+  #     github:
+  #       class: subscription             # subscription or metered
+  #       backends: [copilot]             # Backend IDs from GET /api/config/backends
+  #       monthly_allowance: 1000         # Optional entitlement when APIs report usage only
+  #     anthropic:
+  #       class: metered
+  #       backends: [claude]
+  #   agents:
+  #     planner: T2                       # Capability tier: T1, T2, or T3
+  #     ci-maintainer: T1
+
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues

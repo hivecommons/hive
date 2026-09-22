@@ -73,6 +73,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PlanFromLabel *bool `json:"planFromLabel"`
 
 		FormalEnabled *bool `json:"formalEnabled"`
+
+		RotationEnabled            *bool                                     `json:"rotationEnabled"`
+		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
+		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
+		RotationProviders          *map[string]config.ProviderRotationConfig `json:"rotationProviders"`
+		RotationAgents             *map[string]string                        `json:"rotationAgents"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -96,6 +102,29 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		if *sampleRatio < minTracingSampleRatio || *sampleRatio > maxTracingSampleRatio {
 			jsonError(w, "otel sample_ratio must be between 0.0 and 1.0", http.StatusBadRequest)
 			return
+		}
+	}
+	if body.RotationThresholdPct != nil && (*body.RotationThresholdPct < 1 || *body.RotationThresholdPct > 100) {
+		jsonError(w, "rotation threshold must be between 1 and 100", http.StatusBadRequest)
+		return
+	}
+	if body.RotationAgents != nil {
+		for agent, tier := range *body.RotationAgents {
+			if !validRotationTier(tier) {
+				jsonError(w, fmt.Sprintf("invalid rotation tier for %s: %s", agent, tier), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+	if body.RotationProviders != nil {
+		knownBackends := governorFeatureBackendIDs()
+		for provider, providerCfg := range *body.RotationProviders {
+			for _, backend := range providerCfg.Backends {
+				if _, ok := knownBackends[backend]; !ok {
+					jsonError(w, fmt.Sprintf("unknown backend for rotation provider %s: %s", provider, backend), http.StatusBadRequest)
+					return
+				}
+			}
 		}
 	}
 
@@ -148,6 +177,21 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.FormalEnabled != nil {
 		cfg.Quality.Formal = *body.FormalEnabled
 	}
+	if body.RotationEnabled != nil {
+		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
+	}
+	if body.RotationThresholdPct != nil {
+		cfg.Governor.Rotation.ThresholdPct = *body.RotationThresholdPct
+	}
+	if body.RotationHighVolumeCadenceS != nil {
+		cfg.Governor.Rotation.HighVolumeCadenceS = *body.RotationHighVolumeCadenceS
+	}
+	if body.RotationProviders != nil {
+		cfg.Governor.Rotation.Providers = *body.RotationProviders
+	}
+	if body.RotationAgents != nil {
+		cfg.Governor.Rotation.AgentTiers = *body.RotationAgents
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after features update", "error", err)
@@ -172,26 +216,48 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	}
 	otelCfg := cfg.EffectiveOTel()
 	acmmLevel := cfg.ACMMLevelOrZero()
+	rotationCfg := cfg.Governor.Rotation
 	return map[string]interface{}{
-		"ioscanEnabled":      cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":     otelCfg.Enabled,
-		"tracingEndpoint":    otelCfg.Endpoint,
-		"tracingSampleRatio": otelCfg.SampleRatio,
-		"otelEnabled":        otelCfg.Enabled,
-		"otelEndpoint":       otelCfg.Endpoint,
-		"otelServiceName":    otelCfg.ServiceName,
-		"otelInsecure":       otelCfg.Insecure,
-		"otelSampleRatio":    otelCfg.SampleRatio,
-		"otelHasHeaders":     len(otelCfg.Headers) > 0,
-		"retroEnabled":       cfg.Retro.Enabled,
-		"retroAnalysisModel": cfg.Retro.AnalysisModel,
-		"mintEnabled":        cfg.Mint.Enabled,
-		"mintIssuer":         cfg.Mint.Issuer,
-		"planFromLabel":      planFromLabel,
-		"formalEnabled":      cfg.Quality.Formal,
-		"formalAvailable":    acmmLevel >= config.FormalQualityMinACMMLevel,
-		"formalMinACMMLevel": config.FormalQualityMinACMMLevel,
-		"acmmLevel":          acmmLevel,
+		"ioscanEnabled":              cfg.Ioscan.IsEnabled(),
+		"tracingEnabled":             otelCfg.Enabled,
+		"tracingEndpoint":            otelCfg.Endpoint,
+		"tracingSampleRatio":         otelCfg.SampleRatio,
+		"otelEnabled":                otelCfg.Enabled,
+		"otelEndpoint":               otelCfg.Endpoint,
+		"otelServiceName":            otelCfg.ServiceName,
+		"otelInsecure":               otelCfg.Insecure,
+		"otelSampleRatio":            otelCfg.SampleRatio,
+		"otelHasHeaders":             len(otelCfg.Headers) > 0,
+		"retroEnabled":               cfg.Retro.Enabled,
+		"retroAnalysisModel":         cfg.Retro.AnalysisModel,
+		"mintEnabled":                cfg.Mint.Enabled,
+		"mintIssuer":                 cfg.Mint.Issuer,
+		"planFromLabel":              planFromLabel,
+		"formalEnabled":              cfg.Quality.Formal,
+		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
+		"acmmLevel":                  acmmLevel,
+		"rotationEnabled":            rotationCfg.Enabled,
+		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),
+		"rotationHighVolumeCadenceS": rotationCfg.EffectiveHighVolumeCadenceS(),
+		"rotationProviders":          rotationCfg.Providers,
+		"rotationAgents":             rotationCfg.AgentTiers,
+	}
+}
+
+func validRotationTier(tier string) bool {
+	switch tier {
+	case "T1", "T2", "T3":
+		return true
+	default:
+		return false
+	}
+}
+
+func governorFeatureBackendIDs() map[string]struct{} {
+	return map[string]struct{}{
+		"claude": {}, "copilot": {}, bobBackendID: {}, "gemini": {}, "goose": {}, agyBackendID: {},
+		"vllm": {}, "llm-d": {}, "litellm": {},
 	}
 }
 
