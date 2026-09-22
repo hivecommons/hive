@@ -2707,8 +2707,13 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// #4260: a resume is itself proof of life, so restart the lease
 			// window alongside lastLeaseRenew. Without this a relay that
 			// reconnected twice inside one lease window would be refused the
-			// second time even though it never stopped working.
-			h.renewLease(identity, lease.taskID, time.Now())
+			// second time even though it never stopped working. A persist
+			// failure is logged only (#8287): the in-memory window is kept, a
+			// failed renew persist must not revoke a live task.
+			if err := h.renewLease(identity, lease.taskID, time.Now()); err != nil {
+				h.logger.Warn("[contribute-ws] resumed lease renewed in memory but not persisted",
+					"username", identity, "task", lease.taskID, "error", err)
+			}
 
 			// #5322: the disconnect that preceded this resume booked a
 			// speculative release cooldown on the issue (#2356's
@@ -2814,8 +2819,13 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 		// lastLeaseRenew above. Stamping it only at assignment meant a task
 		// still healthily reporting progress past leaseTTL was never reclaimed
 		// yet could no longer be re-adopted, so the next socket drop cost the
-		// relay its in-flight work.
-		h.renewLease(identityOf(s.contributor), heldTaskID, time.Now())
+		// relay its in-flight work. A persist failure is logged only (#8287):
+		// the in-memory window is kept, a failed renew persist must not revoke
+		// a live task.
+		if err := h.renewLease(identityOf(s.contributor), heldTaskID, time.Now()); err != nil {
+			h.logger.Warn("[contribute-ws] lease renewed in memory but not persisted",
+				"username", identityOf(s.contributor), "task", heldTaskID, "error", err)
+		}
 	}
 
 }

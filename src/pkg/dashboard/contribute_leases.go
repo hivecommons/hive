@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -99,8 +100,8 @@ func (h *ContributeWSHub) leaseForLocked(identity, taskID string) *taskLease {
 // reconnect can be validated against what the server actually handed out — never
 // reconstructed from client-supplied fields. Called from selectTask under the new
 // assignment's generation.
-func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int, tier string, gen uint64, now time.Time) {
-	h.recordLeaseForKey(identity, taskID, repo, number, "", tier, gen, now)
+func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int, tier string, gen uint64, now time.Time) error {
+	return h.recordLeaseForKey(identity, taskID, repo, number, "", tier, gen, now)
 }
 
 // recordLeaseForKey is recordLease plus the assignment's canonical work-item key.
@@ -112,18 +113,29 @@ func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int,
 // holding task X on one connection and being assigned task Y on another keeps
 // both, and each stays re-adoptable on its own. Re-recording the SAME task
 // replaces that task's lease, as before.
-func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, number int, key, tier string, gen uint64, now time.Time) {
+//
+// A lease that did not reach disk is NOT a lease (#8287). The registry file is
+// what the next process boots from, so a grant that lives only in memory
+// vanishes on restart and the contributor resumes against a hub with no record
+// of it. When the persist fails the new entry is withdrawn again — the task's
+// previous lease, if any, is put back — and the error is returned so the caller
+// refuses the grant instead of reporting success for a record that does not
+// exist. In-memory and on-disk state therefore never disagree about a grant.
+func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, number int, key, tier string, gen uint64, now time.Time) error {
 	if identity == "" || taskID == "" {
-		return
+		return nil
 	}
 	if key == "" {
 		key = worksource.Ref{Repo: repo, Number: number}.Key()
 	}
 	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
 	if h.leases == nil {
 		h.leases = make(map[string]*taskLease)
 	}
-	h.leases[leaseKey(identity, taskID)] = &taskLease{
+	k := leaseKey(identity, taskID)
+	prev := h.leases[k]
+	h.leases[k] = &taskLease{
 		identity:  identity,
 		taskID:    taskID,
 		repo:      repo,
@@ -134,8 +146,15 @@ func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, numbe
 		expiresAt: now.Add(leaseTTL),
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
-	h.saveLeasesLocked()
-	h.leaseMu.Unlock()
+	if err := h.saveLeasesLocked(); err != nil {
+		if prev != nil {
+			h.leases[k] = prev
+		} else {
+			delete(h.leases, k)
+		}
+		return fmt.Errorf("persisting lease for %s: %w", taskID, err)
+	}
+	return nil
 }
 
 // renewLease extends an identity's server-issued lease window when the relay proves
@@ -151,20 +170,28 @@ func (h *ContributeWSHub) recordLeaseForKey(identity, taskID, repo string, numbe
 // lease is absent and stays absent. Only expiresAt moves — the {task, repo, number,
 // tier, generation} tuple lookupLease matches on is never rewritten, so the C4
 // exact-match contract and the #2568 generation fence are untouched.
-func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
+//
+// A persist failure is returned, not acted on (#8287): the extended window stays
+// in memory regardless, because a failed renew persist must never revoke a live
+// task — the relay is provably still working it. The caller logs; the next
+// successful save (a later renew, any release) carries the window to disk.
+func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) error {
 	if identity == "" || taskID == "" {
-		return
+		return nil
 	}
 	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
 	if l := h.leaseForLocked(identity, taskID); l != nil {
 		l.expiresAt = now.Add(leaseTTL)
 		// #5681: persist the EXTENDED window. Without this a restart would restore
 		// the window as it stood at assignment, so a task that had been progressing
 		// for longer than leaseTTL — the exact case #4260 fixed in memory — would
 		// come back already expired and could not be resumed.
-		h.saveLeasesLocked()
+		if err := h.saveLeasesLocked(); err != nil {
+			return fmt.Errorf("persisting renewed lease for %s: %w", taskID, err)
+		}
 	}
-	h.leaseMu.Unlock()
+	return nil
 }
 
 // revokeLease removes the server-authoritative lease for one task an identity holds,
@@ -197,8 +224,15 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 	if revoked {
 		// #5681: a revoke that did not reach disk would be undone by the next
 		// restart, resurrecting a released task. Persist it with the same urgency
-		// as the in-memory delete.
-		h.saveLeasesLocked()
+		// as the in-memory delete. A persist failure is logged and the revoke
+		// stands (#8287): revocation must never be blocked by disk state, because
+		// leaving a stale grant live is the worse outcome — the in-memory delete
+		// is what fences a released task right now, and the next successful
+		// save carries it to disk.
+		if err := h.saveLeasesLocked(); err != nil {
+			h.logger.Warn("[contribute-ws] lease revoked in memory but not persisted",
+				"identity", identity, "task", taskID, "error", err)
+		}
 	}
 	h.leaseMu.Unlock()
 }
@@ -231,8 +265,13 @@ func (h *ContributeWSHub) lookupLease(identity, taskID, repo string, number int,
 	}
 	if now.After(l.expiresAt) {
 		// Expired: drop it so it can never be re-adopted, and treat as no lease.
+		// The in-memory drop is what refuses the resume; a persist failure only
+		// means loadLeases must skip the expired record itself, which it does.
 		delete(h.leases, leaseKey(identity, taskID))
-		h.saveLeasesLocked()
+		if err := h.saveLeasesLocked(); err != nil {
+			h.logger.Warn("[contribute-ws] expired lease dropped in memory but not persisted",
+				"identity", identity, "task", taskID, "error", err)
+		}
 		return nil
 	}
 	if l.gen != clientGen {
@@ -286,9 +325,19 @@ func (h *ContributeWSHub) taskLeasesPath() string {
 //
 // Leases already past their expiry are skipped rather than written: a lease that
 // can no longer be re-adopted must not be able to come back from disk.
-func (h *ContributeWSHub) saveLeasesLocked() {
+//
+// Every failure — marshal, mkdir, temp-file create, chmod, write, fsync, close,
+// rename, directory fsync — is logged AND returned (#8287). It used to be logged
+// and swallowed, so a caller that had just handed out a lease had no way to know
+// the grant was not durable and reported success for a record that would be gone
+// on the next restart. Callers decide what a failure means for them: a grant is
+// refused (recordLeaseForKey), a renew keeps its in-memory window (renewLease),
+// and a revoke stands regardless (revokeLease). The file is left describing the
+// last registry that was successfully committed; a failed attempt never leaves a
+// partial file or a stray temp file behind.
+func (h *ContributeWSHub) saveLeasesLocked() error {
 	if h == nil || !h.persistTaskLedgers {
-		return
+		return nil
 	}
 	now := time.Now()
 	records := make([]persistedLease, 0, len(h.leases))
@@ -310,12 +359,12 @@ func (h *ContributeWSHub) saveLeasesLocked() {
 	data, err := json.Marshal(records)
 	if err != nil {
 		h.logger.Warn("[contribute-ws] task leases marshal failed", "error", err)
-		return
+		return fmt.Errorf("task leases marshal: %w", err)
 	}
 	path := h.taskLeasesPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		h.logger.Warn("[contribute-ws] task leases directory creation failed", "error", err)
-		return
+		return fmt.Errorf("task leases directory creation: %w", err)
 	}
 	// Crash-safe persist per the #5625 idiom: a UNIQUE temp name (a fixed name
 	// lets a non-cooperating process clobber a commit in flight), fsync of the
@@ -326,7 +375,7 @@ func (h *ContributeWSHub) saveLeasesLocked() {
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {
 		h.logger.Warn("[contribute-ws] task leases temp creation failed", "error", err)
-		return
+		return fmt.Errorf("task leases temp creation: %w", err)
 	}
 	tmpPath := tmp.Name()
 	keep := false
@@ -344,34 +393,36 @@ func (h *ContributeWSHub) saveLeasesLocked() {
 	// inheriting it.
 	if err := tmp.Chmod(0o600); err != nil {
 		h.logger.Warn("[contribute-ws] task leases chmod failed", "error", err)
-		return
+		return fmt.Errorf("task leases chmod: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		h.logger.Warn("[contribute-ws] task leases write failed", "error", err)
-		return
+		return fmt.Errorf("task leases write: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		h.logger.Warn("[contribute-ws] task leases sync failed", "error", err)
-		return
+		return fmt.Errorf("task leases sync: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		h.logger.Warn("[contribute-ws] task leases close failed", "error", err)
-		return
+		return fmt.Errorf("task leases close: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		h.logger.Warn("[contribute-ws] task leases rename failed", "error", err)
-		return
+		return fmt.Errorf("task leases rename: %w", err)
 	}
 	keep = true
 	directory, err := os.Open(dir)
 	if err != nil {
 		h.logger.Warn("[contribute-ws] task leases directory open failed", "error", err)
-		return
+		return fmt.Errorf("task leases directory open: %w", err)
 	}
 	defer func() { _ = directory.Close() }()
 	if err := directory.Sync(); err != nil {
 		h.logger.Warn("[contribute-ws] task leases directory sync failed", "error", err)
+		return fmt.Errorf("task leases directory sync: %w", err)
 	}
+	return nil
 }
 
 // loadLeases restores the server-issued lease registry at hub startup (#5681).
@@ -480,7 +531,12 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 		}
 	}
 	if dropped > 0 {
-		h.saveLeasesLocked()
+		// Log and continue (#8287): the in-memory drop is what matters, and
+		// loadLeases skips expired records on its own if the file is stale.
+		if err := h.saveLeasesLocked(); err != nil {
+			h.logger.Warn("[contribute-ws] expired leases pruned in memory but not persisted",
+				"dropped", dropped, "error", err)
+		}
 	}
 	h.leaseMu.Unlock()
 	return dropped

@@ -219,3 +219,105 @@ func TestLeasePersist_SaveThenLoadRestoresLease(t *testing.T) {
 		t.Errorf("taskGen = %d after restore, want >= 3 so new assignments cannot alias restored gens", got)
 	}
 }
+
+// readOnlyLeaseDir returns a lease-registry path inside a directory the test
+// cannot create files in (0500), so os.CreateTemp fails and every save is a
+// write failure. The mode is restored on cleanup so t.TempDir can remove it.
+// Root ignores directory modes, so the caller is skipped under uid 0.
+func readOnlyLeaseDir(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("directory modes do not stop root; cannot inject a write failure")
+	}
+	dir := filepath.Join(t.TempDir(), "ws-state")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("building leases directory: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("making leases directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	return filepath.Join(dir, "task-leases.json")
+}
+
+// TestLeasePersist_WriteFailureRefusesGrant pins #8287: a lease that did not
+// reach disk is not a lease. saveLeasesLocked used to log every failure and
+// return nothing, so recordLeaseForKey reported success for a grant that would
+// be gone on the next restart. Now the save's error propagates, the grant is
+// withdrawn from the live registry, and lookupLease finds nothing for the
+// identity — the same answer a restarted hub would have given.
+func TestLeasePersist_WriteFailureRefusesGrant(t *testing.T) {
+	path := readOnlyLeaseDir(t)
+	now := time.Now()
+	h := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+
+	err := h.recordLeaseForKey("clanker-8287", "task-8287", "hivecommons/hive", 8287,
+		"hivecommons/hive#8287", "C4", 5, now)
+	if err == nil {
+		t.Fatal("#8287: recordLeaseForKey reported success for a lease that never reached disk")
+	}
+	if got := h.lookupLease("clanker-8287", "task-8287", "hivecommons/hive", 8287, 5, now); got != nil {
+		t.Errorf("#8287: refused grant is still re-adoptable from the live registry: %+v", got)
+	}
+	h.leaseMu.Lock()
+	live := h.leaseForLocked("clanker-8287", "task-8287")
+	h.leaseMu.Unlock()
+	if live != nil {
+		t.Errorf("#8287: refused grant left in the live registry: %+v", live)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("registry written despite the read-only directory (stat err=%v)", statErr)
+	}
+	if temps := listStaleTemps(t, path); len(temps) != 0 {
+		t.Errorf("failed save left stale temp files beside the registry: %v", temps)
+	}
+
+	// The error is the save's own, not something recordLeaseForKey invented: a
+	// direct save into the same directory fails the same way.
+	h.leaseMu.Lock()
+	saveErr := h.saveLeasesLocked()
+	h.leaseMu.Unlock()
+	if saveErr == nil {
+		t.Error("#8287: saveLeasesLocked returned nil for a write into a read-only directory")
+	}
+}
+
+// TestLeasePersist_WriteFailureKeepsPreviousLease pins the re-record half of
+// the withdrawal: when re-recording a task the identity already holds fails to
+// persist, the task's PREVIOUS (persisted) lease is put back rather than the
+// task being dropped, so the live registry keeps describing what is on disk.
+func TestLeasePersist_WriteFailureKeepsPreviousLease(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory modes do not stop root; cannot inject a write failure")
+	}
+	dir := filepath.Join(t.TempDir(), "ws-state")
+	path := filepath.Join(dir, "task-leases.json")
+	now := time.Now()
+	h := &ContributeWSHub{
+		logger:             covBLogger(),
+		persistTaskLedgers: true,
+		taskLeasesFile:     path,
+	}
+	if err := h.recordLease("clanker-7", "task-5681", "hivecommons/hive", 5681, "C4", 3, now); err != nil {
+		t.Fatalf("persisting the first lease: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("making leases directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := h.recordLease("clanker-7", "task-5681", "hivecommons/hive", 5681, "C4", 9, now); err == nil {
+		t.Fatal("#8287: re-record reported success for a lease that never reached disk")
+	}
+	got := h.lookupLease("clanker-7", "task-5681", "hivecommons/hive", 5681, 3, now)
+	if got == nil || got.gen != 3 {
+		t.Fatalf("#8287: the persisted gen-3 lease was not restored after the failed re-record: %+v", got)
+	}
+	if h.lookupLease("clanker-7", "task-5681", "hivecommons/hive", 5681, 9, now) != nil {
+		t.Error("#8287: the unpersisted gen-9 lease is re-adoptable from the live registry")
+	}
+}
