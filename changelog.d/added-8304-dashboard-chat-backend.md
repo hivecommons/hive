@@ -1,0 +1,1 @@
+- Added the dashboard Hive Chat backend as a v6 chat-spine transport with guarded submit/poll APIs, inbound ioscan enforcement, and scrubbed outbound messages.

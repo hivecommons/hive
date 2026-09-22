@@ -17010,8 +17010,8 @@
         "tags": [
           "System"
         ],
-        "summary": "Chat query (stub)",
-        "description": "Chat is not yet fully implemented; echoes the submitted query back in a stub answer.",
+        "summary": "Submit a dashboard chat message",
+        "description": "Submits an authenticated dashboard chat message to the v6 chat spine. Inbound text is safety-scanned before routing.",
         "requestBody": {
           "required": true,
           "content": {
@@ -17036,18 +17036,18 @@
         },
         "responses": {
           "200": {
-            "description": "Stub answer",
+            "description": "Message accepted",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "answer": {
-                      "type": "string"
+                    "accepted": {
+                      "type": "boolean"
                     },
-                    "status": {
-                      "type": "string",
-                      "example": "stub"
+                    "seq": {
+                      "type": "integer",
+                      "format": "uint64"
                     }
                   }
                 }
@@ -17055,7 +17055,77 @@
             }
           },
           "400": {
-            "description": "message is required"
+            "description": "message is required or refused by safety scanner"
+          },
+          "403": {
+            "description": "read-write access required"
+          },
+          "503": {
+            "description": "dashboard chat is not configured"
+          }
+        }
+      }
+    },
+    "/api/chat/messages": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Poll dashboard chat messages",
+        "description": "Returns dashboard chat outbox entries with a sequence greater than the optional since query parameter.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "uint64"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages after the requested sequence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer",
+                            "format": "uint64"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string"
+                          },
+                          "author_id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "since must be a sequence number"
+          },
+          "403": {
+            "description": "read access required"
+          },
+          "503": {
+            "description": "dashboard chat is not configured"
           }
         }
       }

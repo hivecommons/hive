@@ -26,6 +26,13 @@ import (
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
+type ChatOutbound struct {
+	Seq      uint64 `json:"seq"`
+	Text     string `json:"text"`
+	Role     string `json:"role"`
+	AuthorID string `json:"author_id,omitempty"`
+}
+
 type Dependencies struct {
 	Config   *config.Config
 	AgentMgr *agent.Manager
@@ -142,6 +149,8 @@ type Dependencies struct {
 	ActionDispatchAgents func() []mention.AgentInfo
 	ActionsJWKSFetcher   func(ctx context.Context, url string) ([]byte, error)
 	ActionsClock         func() time.Time
+	DashboardChatSubmit  func(user, text string) (uint64, error)
+	DashboardChatDrain   func(since uint64) []ChatOutbound
 	// LinearStoredViewerID reports the persisted Linear install's viewer id
 	// ("" when none) plus the store path, for the assigned_only validation
 	// message. Nil disables the check's install probe.

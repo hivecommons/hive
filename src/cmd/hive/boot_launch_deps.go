@@ -8,6 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/discord"
 )
 
@@ -22,6 +23,7 @@ const agentLaunchStagger = 15 * time.Second
 // through spawn.
 type bootLaunchDeps struct {
 	spawn            func(name string, fn func())
+	startDashChat    func(ctx context.Context, cfg dashchat.Config, agentNames []string, logger *slog.Logger) (*dashchat.Bot, error)
 	startDiscordBot  func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) error
 	onDemandFromPack func() map[string]bool
 	// waitStagger blocks for the launch stagger; it returns false when ctx
@@ -34,6 +36,11 @@ type bootLaunchDeps struct {
 func defaultBootLaunchDeps() bootLaunchDeps {
 	return bootLaunchDeps{
 		spawn: func(_ string, fn func()) { go fn() },
+		startDashChat: func(ctx context.Context, cfg dashchat.Config, agentNames []string, logger *slog.Logger) (*dashchat.Bot, error) {
+			bot := dashchat.NewBot(cfg, logger)
+			bot.SetAgentNames(agentNames)
+			return bot, bot.Start(ctx)
+		},
 		startDiscordBot: func(ctx context.Context, cfg discord.Config, agentNames []string, logger *slog.Logger) error {
 			bot := discord.NewBot(cfg, logger)
 			bot.SetAgentNames(agentNames)

@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -1396,17 +1397,29 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			MentionWebhook:       b.mentionWebhook,
 			MentionStore:         b.mentionStore,
-			Governor:             b.gov,
-			GHClient:             b.ghClient,
-			GHAppAuth:            b.appAuth,
-			GHTokenScopes:        b.ghAuth.TokenScopes,
-			Tokens:               b.tokenCollector,
-			Knowledge:            b.knowledgeAPI,
-			Inception:            b.inceptionEngine,
-			Nous:                 b.nousState,
-			Scheduler:            b.sched,
-			MetricsCollector:     b.metricsCollector,
-			RotationMgr:          b.rotationMgr,
+			DashboardChatSubmit: func(user, text string) (uint64, error) {
+				if b.dashChat == nil {
+					return 0, fmt.Errorf("dashboard chat is not configured")
+				}
+				return b.dashChat.Submit(user, text)
+			},
+			DashboardChatDrain: func(since uint64) []dashboard.ChatOutbound {
+				if b.dashChat == nil {
+					return nil
+				}
+				return dashboardChatDrain(b.dashChat, since)
+			},
+			Governor:         b.gov,
+			GHClient:         b.ghClient,
+			GHAppAuth:        b.appAuth,
+			GHTokenScopes:    b.ghAuth.TokenScopes,
+			Tokens:           b.tokenCollector,
+			Knowledge:        b.knowledgeAPI,
+			Inception:        b.inceptionEngine,
+			Nous:             b.nousState,
+			Scheduler:        b.sched,
+			MetricsCollector: b.metricsCollector,
+			RotationMgr:      b.rotationMgr,
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.
@@ -4130,9 +4143,64 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 // persistent agents in the background.
 func (b *boot) bootLaunch() { b.bootLaunchWith(defaultBootLaunchDeps()) }
 
+func dashboardChatAllowedUsers(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	allowed := make([]string, 0, len(cfg.Dashboard.AuthorizedUsers))
+	for _, entry := range cfg.Dashboard.AuthorizedUsers {
+		user := strings.TrimSpace(entry)
+		if user == "" {
+			continue
+		}
+		if head, _, ok := strings.Cut(user, ":"); ok {
+			user = strings.TrimSpace(head)
+		}
+		if user != "" {
+			allowed = append(allowed, user)
+		}
+	}
+	return allowed
+}
+
+func dashboardChatDrain(bot *dashchat.Bot, since uint64) []dashboard.ChatOutbound {
+	if bot == nil {
+		return nil
+	}
+	msgs := bot.Drain(since)
+	out := make([]dashboard.ChatOutbound, 0, len(msgs))
+	for _, msg := range msgs {
+		out = append(out, dashboard.ChatOutbound{
+			Seq:      msg.Seq,
+			Text:     msg.Text,
+			Role:     msg.Role,
+			AuthorID: msg.AuthorID,
+		})
+	}
+	return out
+}
+
 // bootLaunchWith is bootLaunch with its goroutines, Discord bot, stagger
 // wait, and agent starts injected; see bootLaunchDeps.
 func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
+	var agentNameList []string
+	for name := range b.cfg.EnabledAgents() {
+		agentNameList = append(agentNameList, name)
+	}
+	if deps.startDashChat != nil {
+		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
+			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   dashboardChatAllowedUsers(b.cfg),
+		}, agentNameList, b.logger)
+		if err != nil {
+			b.logger.Warn("dashboard chat failed to start", "error", err)
+		} else {
+			b.dashChat = bot
+			b.logger.Info("dashboard chat started")
+		}
+	}
+
 	deps.spawn("dashboard-serve", func() {
 		if err := deps.serve(b.dashSrv); err != nil {
 			b.logger.Error("dashboard server failed", "error", err)
@@ -4140,10 +4208,6 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	})
 
 	if b.cfg.Notifications.Discord != nil && b.cfg.Notifications.Discord.BotToken != "" && b.cfg.Notifications.Discord.ChannelID != "" {
-		var agentNameList []string
-		for name := range b.cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
 		err := deps.startDiscordBot(b.ctx, discord.Config{
 			Token:          b.cfg.Notifications.Discord.BotToken,
 			ChannelID:      b.cfg.Notifications.Discord.ChannelID,
@@ -4167,10 +4231,6 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
 			AllowedUsers:   b.cfg.Notifications.Slack.AllowedUsers,
 		}, b.logger)
-		var agentNameList []string
-		for name := range b.cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
 		slackBot.SetAgentNames(agentNameList)
 		if err := slackBot.Start(b.ctx); err != nil {
 			b.logger.Warn("slack bot failed to start", "error", err)
@@ -4187,10 +4247,6 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
 			AllowedUsers:   b.cfg.Notifications.Telegram.AllowedUsers,
 		}, b.logger)
-		var agentNameList []string
-		for name := range b.cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
 		telegramBot.SetAgentNames(agentNameList)
 		if err := telegramBot.Start(b.ctx); err != nil {
 			b.logger.Warn("telegram bot failed to start", "error", err)
@@ -4208,10 +4264,6 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
 			AllowedUsers:   b.cfg.Notifications.Matrix.AllowedUsers,
 		}, b.logger)
-		var agentNameList []string
-		for name := range b.cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
 		matrixBot.SetAgentNames(agentNameList)
 		if err := matrixBot.Start(b.ctx); err != nil {
 			b.logger.Warn("matrix bot failed to start", "error", err)
@@ -4232,10 +4284,6 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
 			AllowedUsers:   b.cfg.Notifications.MSTeams.AllowedUsers,
 		}, b.logger)
-		var agentNameList []string
-		for name := range b.cfg.EnabledAgents() {
-			agentNameList = append(agentNameList, name)
-		}
 		teamsBot.SetAgentNames(agentNameList)
 		if err := teamsBot.Start(b.ctx); err != nil {
 			b.logger.Warn("msteams bot failed to start", "error", err)

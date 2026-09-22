@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -348,6 +349,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/plan/{epicID}/child/{childID}", s.handlePlanChild)
 
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
+	s.mux.HandleFunc("GET /api/chat/messages", s.handleChatMessages)
 
 	s.mux.HandleFunc("GET /api/nous/status", s.handleNousStatus)
 	s.mux.HandleFunc("GET /api/nous/ledger", s.handleNousLedger)
@@ -6446,6 +6448,14 @@ func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	if !config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleReadWrite) {
+		jsonError(w, "read-write access required", http.StatusForbidden)
+		return
+	}
+	if s.deps == nil || s.deps.DashboardChatSubmit == nil {
+		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
+		return
+	}
 	var body struct {
 		Query   string `json:"query"`
 		History []any  `json:"history"`
@@ -6454,10 +6464,46 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "message is required", http.StatusBadRequest)
 		return
 	}
+	query := strings.TrimSpace(body.Query)
+	if query == "" {
+		jsonError(w, "message is required", http.StatusBadRequest)
+		return
+	}
+	safeQuery, verdict := ioscan.EnforceInput(query)
+	if verdict.Blocked {
+		s.auditFromRequest(r, "chat.dashboard.refused", auditDetail("reason", "ioscan_blocked"), "")
+		jsonError(w, "message refused by safety scanner", http.StatusBadRequest)
+		return
+	}
+	seq, err := s.deps.DashboardChatSubmit(requestUser(r), safeQuery)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
 
 	jsonResponse(w, map[string]interface{}{
-		"answer": fmt.Sprintf("Chat is not yet fully implemented. You asked: %s", sanitizeString(body.Query)),
-		"status": "stub",
+		"accepted": true,
+		"seq":      seq,
+	})
+	s.auditFromRequest(r, "chat.dashboard.message", auditDetail("seq", strconv.FormatUint(seq, 10)), "")
+}
+
+func (s *Server) handleChatMessages(w http.ResponseWriter, r *http.Request) {
+	if !config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleRead) {
+		jsonError(w, "read access required", http.StatusForbidden)
+		return
+	}
+	if s.deps == nil || s.deps.DashboardChatDrain == nil {
+		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	since, err := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
+	if err != nil && r.URL.Query().Get("since") != "" {
+		jsonError(w, "since must be a sequence number", http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"messages": s.deps.DashboardChatDrain(since),
 	})
 }
 

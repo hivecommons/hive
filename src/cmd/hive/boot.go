@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/github"
@@ -80,6 +81,7 @@ type boot struct {
 	agentMgr                      *agent.Manager
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
+	dashChat                      *dashchat.Bot
 	dashSrv                       *dashboard.Server
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int

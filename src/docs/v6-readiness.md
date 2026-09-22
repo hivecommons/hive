@@ -54,6 +54,7 @@ suite) that fails if that surface bypasses any of the five mechanisms:
 | Microsoft Teams | #7621 | ✅ [`src/pkg/msteams/conformance_v6_test.go`](../pkg/msteams/conformance_v6_test.go) ([#8044](https://github.com/hivecommons/hive/issues/8044)) |
 | Matrix | #7617 | ✅ [`src/pkg/matrix/conformance_v6_test.go`](../pkg/matrix/conformance_v6_test.go) ([#8045](https://github.com/hivecommons/hive/issues/8045)) |
 | Telegram | #7616 | ✅ [`src/pkg/telegram/conformance_v6_test.go`](../pkg/telegram/conformance_v6_test.go) ([#8046](https://github.com/hivecommons/hive/issues/8046)) |
+| Dashboard chat | #8304 | ✅ [`src/pkg/dashchat/conformance_v6_test.go`](../pkg/dashchat/conformance_v6_test.go) ([dashboard chat](dashboard-chat.md), [#7683](https://github.com/hivecommons/hive/issues/7683)) |
 | Email escalation (outbound + reply-to-act) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_email_test.go`](../pkg/escalate/conformance_v6_email_test.go) ([#8047](https://github.com/hivecommons/hive/issues/8047)) |
 | Push / on-call (ntfy / Pushover / PagerDuty) | #7613 / #7618 | ✅ [`src/pkg/escalate/conformance_v6_test.go`](../pkg/escalate/conformance_v6_test.go) ([#8048](https://github.com/hivecommons/hive/issues/8048)) |
 
@@ -92,6 +93,7 @@ not a unit test:
 | Slack | One command round-trip and one notification delivery over Socket Mode from a pull-only cluster. | ⬜ |
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
+| Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
 

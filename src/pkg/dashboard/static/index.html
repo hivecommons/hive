@@ -26380,6 +26380,7 @@ function burnAreaChart() {
     const CHAT_CONTEXT_LIMIT = 6;
     const CHAT_STORAGE_KEY = 'hive-chat-history';
     let chatContext = [];
+    let chatLastSeq = 0;
 
     function saveChatHistory() {
       const msgs = [];
@@ -26423,7 +26424,9 @@ function burnAreaChart() {
       const isOpen = chatPanel.classList.toggle('open');
       chatFab.classList.toggle('open', isOpen);
       if (isOpen) {
+        chatFab.classList.remove('has-unread');
         chatInput.focus();
+        chatPollMessages();
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
     };
@@ -26551,16 +26554,40 @@ function burnAreaChart() {
       return el;
     }
 
+    function chatRenderOutbound(msg) {
+      if (!msg || !msg.text) return;
+      const seq = Number(msg.seq || 0);
+      if (seq && seq <= chatLastSeq) return;
+      if (seq) chatLastSeq = Math.max(chatLastSeq, seq);
+      if (msg.role === 'user') {
+        chatAddMsg(esc(msg.text), 'user');
+        chatContext.push({ role: 'user', text: msg.text });
+      } else {
+        chatAddMsg(formatChatHtml(msg.text), 'system');
+        chatContext.push({ role: 'assistant', text: msg.text });
+        if (!chatPanel.classList.contains('open')) chatFab.classList.add('has-unread');
+      }
+      if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
+    }
+
+    async function chatPollMessages() {
+      try {
+        const resp = await fetch('/api/chat/messages?since=' + encodeURIComponent(chatLastSeq), {
+          headers: _inceptionAuthHeaders(),
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        (data.messages || []).forEach(chatRenderOutbound);
+      } catch (_) {}
+    }
+    setInterval(chatPollMessages, 2000);
+
     async function chatSendQuery() {
       const q = chatInput.value.trim();
       if (!q || chatBusy) return;
       chatBusy = true;
       chatSend.disabled = true;
       chatInput.value = '';
-      chatAddMsg(esc(q), 'user');
-      chatContext.push({ role: 'user', text: q });
-      if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
-      const thinking = chatAddMsg('Thinking…', 'thinking');
       try {
         const resp = await fetch('/api/chat', {
           method: 'POST',
@@ -26568,25 +26595,12 @@ function burnAreaChart() {
           body: JSON.stringify({ query: q, history: chatContext.slice(0, -1) }),
         });
         const data = await resp.json();
-        thinking.remove();
         if (data.error) {
           chatAddMsg('Error: ' + esc(data.error), 'system');
         } else {
-          const answer = data.answer || 'No results found.';
-          chatContext.push({ role: 'assistant', text: answer });
-          if (chatContext.length > CHAT_CONTEXT_LIMIT) chatContext = chatContext.slice(-CHAT_CONTEXT_LIMIT);
-          let html = formatChatHtml(answer);
-          if (data.raw) {
-            const rawId = 'chat-raw-' + Date.now();
-            html += `<details class="chat-raw-details"><summary>Search data</summary><pre id="${rawId}">${esc(data.raw)}</pre></details>`;
-          }
-          if (data.sources && data.sources.length) {
-            html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + esc(s) + '</span>').join('') + '</div>';
-          }
-          chatAddMsg(html, 'system');
+          await chatPollMessages();
         }
       } catch (err) {
-        thinking.remove();
         chatAddMsg('Network error: ' + esc(err.message), 'system');
       }
       chatBusy = false;

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashchat"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -57,6 +58,7 @@ func testDeps(t *testing.T) *Dependencies {
 
 	var refreshCalled atomic.Bool
 	var persistCalled atomic.Bool
+	chatBot := dashchat.NewBot(dashchat.Config{}, logger)
 
 	_ = &refreshCalled
 	_ = &persistCalled
@@ -72,8 +74,17 @@ func testDeps(t *testing.T) *Dependencies {
 		OpenRouter:           testOpenRouterGateway{},
 		NewLinearAgent:       newTestLinearAgentFactory(logger, "", ""),
 		LinearStoredViewerID: testLinearStoredViewerID,
-		RefreshFunc:          func() { refreshCalled.Store(true) },
-		PersistFunc:          func() { persistCalled.Store(true) },
+		DashboardChatSubmit:  chatBot.Submit,
+		DashboardChatDrain: func(since uint64) []ChatOutbound {
+			msgs := chatBot.Drain(since)
+			out := make([]ChatOutbound, 0, len(msgs))
+			for _, msg := range msgs {
+				out = append(out, ChatOutbound{Seq: msg.Seq, Text: msg.Text, Role: msg.Role, AuthorID: msg.AuthorID})
+			}
+			return out
+		},
+		RefreshFunc: func() { refreshCalled.Store(true) },
+		PersistFunc: func() { persistCalled.Store(true) },
 	}
 }
 
@@ -724,8 +735,8 @@ func TestHandleChat(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	result := decodeJSON(t, rec)
-	if result["status"] != "stub" {
-		t.Errorf("status = %v, want stub", result["status"])
+	if result["accepted"] != true {
+		t.Errorf("accepted = %v, want true", result["accepted"])
 	}
 }
 
