@@ -1,0 +1,1 @@
+- Serialize the three GHCR prune jobs (kubestellar twin) behind one another and list package versions with `per_page=100`, so the shared `GHCR_PRUNE_TOKEN` no longer exhausts its hourly API budget mid-run (#8202).

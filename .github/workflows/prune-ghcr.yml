@@ -59,6 +59,10 @@ jobs:
   # tag with no matching live branch, sparing SHA tags (7 hex chars) and the
   # long-lived branches themselves.
   prune-orphan-branch-tags:
+    # Serialized behind `prune`: all three jobs share GHCR_PRUNE_TOKEN and
+    # running them in parallel exhausted its hourly budget (#8202).
+    needs: prune
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Delete orphaned <branch>-latest tags
@@ -89,7 +93,7 @@ jobs:
             #   * version has NO -latest tag (pure SHA) -> KEEP (may be pinned;
             #     small; untagged pruning handles genuine garbage).
             gh api --paginate \
-              "/orgs/kubestellar/packages/container/$image/versions" \
+              "/orgs/kubestellar/packages/container/$image/versions?per_page=100" \
               --jq '.[] | {id: .id, tags: .metadata.container.tags}' \
             | jq -c '.' | while read -r row; do
                 id=$(echo "$row" | jq -r '.id')
@@ -126,6 +130,8 @@ jobs:
   # (v4-latest, stable, candidate, edge, latest, or future channel names) are
   # never deleted by this job.
   prune-old-sha-tags:
+    needs: prune-orphan-branch-tags
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Delete old pure short-SHA image tags
@@ -139,7 +145,7 @@ jobs:
           for image in hive hive-hub hive-contributor; do
             echo "=== image: $image (pure short-SHA tags older than ${RETENTION_DAYS}d) ==="
             gh api --paginate \
-              "/orgs/kubestellar/packages/container/$image/versions" \
+              "/orgs/kubestellar/packages/container/$image/versions?per_page=100" \
               --jq '.[] | {id: .id, created_at: .created_at, tags: .metadata.container.tags}' \
             | jq -c '.' | while read -r row; do
                 id=$(echo "$row" | jq -r '.id')
