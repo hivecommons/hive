@@ -73,7 +73,8 @@ The root [`Justfile`](Justfile) exposes the public contributor relay workflow. R
 | `just contribute-setup <backend>` | Checks the Justfile version, verifies the backend CLI, signs in with GitHub, registers with the configured hub, and writes `${HOME}/.config/hive/contributor.env`. |
 | `just contribute-hive [backend] [mode]` | Starts the contributor relay. The default mode is containerized; pass `local` as the mode to run natively when the local tools are installed. |
 | `just contribute-status` | Queries the configured hub for status and contributor profile information. |
-| `just contribute-hives [args]` | Manages the named hive profiles in `${HOME}/.config/hive/profiles.yml` — `list` (the default), `add`, `use`, `rename`, `remove`. A thin alias for `hivectl hives`; see [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to). |
+| `just contribute-tui` | Opens the `hivectl tui` dashboard; press `Shift+H` for the Hives overlay. If this checkout has no `hivectl`, the recipe stages `./bin/hivectl` from the Hive image and records the source digest so later runs refresh or refuse instead of using a stale binary. |
+| `just contribute-hives [args]` | Manages the named hive profiles in `${HOME}/.config/hive/profiles.yml` — `list` (the default), `add`, `use`, `rename`, `remove`. A thin alias for `hivectl hives` that uses the same checkout-local bootstrap as `contribute-tui`; see [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to). |
 | `just contribute-browse` | Discovers available public hive projects. |
 | `just contribute-stop` | Stops a background contributor relay if one is running. |
 | `just contribute-k8s [namespace] [outfile] [image_tag]` | Emits Kubernetes manifests for a headless contributor workload. It writes to stdout or the requested file; it does not apply the manifest. |

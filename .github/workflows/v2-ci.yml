@@ -624,6 +624,10 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_setup.sh
 
+      - name: hivectl contributor bootstrap (#8200)
+        working-directory: .
+        run: bash bin/test_hivectl_bootstrap.sh
+
       # #4378: the deliberate manual update and rollback. The unit ships a
       # FLOATING tag, so the pin that makes a rollback possible lives in a
       # Quadlet drop-in; the suite holds the two properties that make it a

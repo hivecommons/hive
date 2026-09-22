@@ -1,0 +1,1 @@
+- Add `just contribute-tui` and bootstrap checkout-local `hivectl` from the Hive image for contributor commands when no Go-built binary is present.

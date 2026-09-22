@@ -18,6 +18,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKERFILE="${ROOT}/src/Dockerfile"
 SETUP="${ROOT}/bin/hive-podman-setup.sh"
+BOOTSTRAP="${ROOT}/bin/hivectl-bootstrap.sh"
 DOCS="${ROOT}/src/docs/hivectl.md"
 
 pass_count=0
@@ -109,7 +110,21 @@ else
   fail "path drift: Dockerfile stows at '${image_path:-<missing>}', installer extracts from '${setup_path}'"
 fi
 
-# --- 6. The documented manual route names the real path ---------------------
+# --- 6. The contributor bootstrap extracts from the SAME path ---------------
+#
+# just contribute-tui/contribute-hives use the same image cargo path when a
+# checkout has no hivectl yet. Pin that third spelling to the Dockerfile too.
+
+bootstrap_path="$(sed -n 's|^HIVECTL_IMAGE_PATH_DEFAULT="\(/[^"]*\)"$|\1|p' "$BOOTSTRAP" | head -n1)"
+if [ -z "$bootstrap_path" ]; then
+  fail "bin/hivectl-bootstrap.sh no longer declares HIVECTL_IMAGE_PATH_DEFAULT"
+elif [ "$bootstrap_path" = "$image_path" ]; then
+  ok "contributor bootstrap extracts from ${bootstrap_path}, exactly where the Dockerfile stows it"
+else
+  fail "path drift: Dockerfile stows at '${image_path:-<missing>}', contributor bootstrap extracts from '${bootstrap_path}'"
+fi
+
+# --- 7. The documented manual route names the real path ---------------------
 #
 # src/docs/hivectl.md leads with extraction (the #5646 acceptance criterion);
 # a doc quoting a stale path fails only for the reader.

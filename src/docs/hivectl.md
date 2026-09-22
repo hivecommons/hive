@@ -26,10 +26,12 @@ podman cp hivectl-extract:/usr/local/share/hive/hivectl ~/.local/bin/hivectl
 podman rm hivectl-extract
 ```
 
-Contributors working from a checkout build it from source instead:
+Contributors working from a checkout usually do not need a Go toolchain: `just contribute-tui` and `just contribute-hives` call `bin/hivectl-bootstrap.sh`, which resolves `HIVECTL`, `./bin/hivectl`, user/system installs, and `PATH` in that order. If none exists, it extracts the binary from `ghcr.io/hivecommons/hive:stable` (override with `HIVECTL_BOOTSTRAP_IMAGE`) into `./bin/hivectl`, records the image digest plus `hivectl version` in `./bin/.hivectl.source`, and refreshes when the digest changes. If Podman is missing or the image cannot be inspected/pulled while the checkout-local binary is stale or unverifiable, it refuses instead of silently running the old binary. An explicit `HIVECTL=/path/to/hivectl` bypasses that freshness check because the user chose the binary.
+
+To build from source manually, run from the repository root:
 
 ```bash
-go build -o bin/hivectl ./cmd/hivectl
+(cd src && go build -o ../bin/hivectl ./cmd/hivectl)
 ```
 
 ### First commands
@@ -688,7 +690,7 @@ credential at the wrong hive; fix the file (or re-run
 
 Notes:
 
-- **The same list is in the TUI.** `hivectl tui`, then `H`, opens the
+- **The same list is in the TUI.** `just contribute-tui` (or `hivectl tui`), then `Shift+H`, opens the
   [Hives overlay](#hives-switching-the-hive-you-contribute-to): the same rows,
   with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls
   these same functions, so either surface leaves the files in the same state.
