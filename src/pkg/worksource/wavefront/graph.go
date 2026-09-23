@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,6 +68,15 @@ const externalIDSeparator = ":"
 // escape the receipt directory, and whitespace breaks the plan-list line
 // format DecomposeFromOutput parses.
 const reservedIdentifierChars = "#!:/ \t\r\n"
+
+// Structural defects Validate reports. Undefined edges are checked before
+// cycles, so a dangling edge is never misreported as a cycle.
+var (
+	// ErrUndefinedEdge means a node depends on an id the graph does not define.
+	ErrUndefinedEdge = errors.New("wavefront: edge to undefined node")
+	// ErrCycle means the dependency graph is not a DAG.
+	ErrCycle = errors.New("wavefront: dependency cycle")
+)
 
 // ExternalID returns the work item identifier for node in graph.
 func ExternalID(graph, node string) string {
@@ -121,7 +131,7 @@ func (g Graph) Validate() error {
 	for _, n := range g.Nodes {
 		for _, dep := range n.DependsOn {
 			if !ids[dep] {
-				return fmt.Errorf("wavefront: node %q depends on undefined node %q", n.ID, dep)
+				return fmt.Errorf("%w: node %q depends on %q", ErrUndefinedEdge, n.ID, dep)
 			}
 			if dep == n.ID {
 				return fmt.Errorf("wavefront: node %q depends on itself", n.ID)
@@ -176,17 +186,24 @@ func (g Graph) Node(id string) (Node, bool) {
 
 // Waves returns the nodes grouped into dependency waves: wave 0 holds every
 // node with no dependencies, wave k holds nodes whose deepest dependency is in
-// wave k-1. Within a wave nodes are sorted by ID. It reports an error when the
-// graph has a cycle, which is the one structural defect Hive refuses rather
-// than repairs: cycle handling belongs to Wavefront.
+// wave k-1. Within a wave nodes are sorted by ID. It reports ErrCycle when the
+// graph is not a DAG, which is the one structural defect Hive refuses rather
+// than repairs: cycle handling belongs to Wavefront. An edge to an id the
+// graph does not define is ignored here (Validate reports it separately as
+// ErrUndefinedEdge), so a dangling edge can never masquerade as a cycle.
 func (g Graph) Waves() ([][]Node, error) {
 	byID := make(map[string]Node, len(g.Nodes))
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
 	indegree := make(map[string]int, len(g.Nodes))
 	dependents := make(map[string][]string, len(g.Nodes))
 	for _, n := range g.Nodes {
-		byID[n.ID] = n
-		indegree[n.ID] = len(n.DependsOn)
 		for _, dep := range n.DependsOn {
+			if _, known := byID[dep]; !known {
+				continue
+			}
+			indegree[n.ID]++
 			dependents[dep] = append(dependents[dep], n.ID)
 		}
 	}
@@ -216,7 +233,7 @@ func (g Graph) Waves() ([][]Node, error) {
 		frontier = next
 	}
 	if placed != len(g.Nodes) {
-		return nil, fmt.Errorf("wavefront: graph %q has a dependency cycle", g.Name)
+		return nil, fmt.Errorf("%w: graph %q", ErrCycle, g.Name)
 	}
 	return waves, nil
 }

@@ -536,6 +536,16 @@ func TestParseGraphRejectsStructuralDefects(t *testing.T) {
 			t.Errorf("%s: ParseGraph accepted %s", name, doc)
 		}
 	}
+	if _, err := wavefront.ParseGraph([]byte(cases["undefined dep"])); !errors.Is(err, wavefront.ErrUndefinedEdge) || errors.Is(err, wavefront.ErrCycle) {
+		t.Fatalf("undefined edge = %v, want ErrUndefinedEdge and not ErrCycle", err)
+	}
+	if _, err := wavefront.ParseGraph([]byte(cases["cycle"])); !errors.Is(err, wavefront.ErrCycle) {
+		t.Fatalf("cycle = %v, want ErrCycle", err)
+	}
+	dangling := wavefront.Graph{Name: "d", Revision: "r", Nodes: []wavefront.Node{{ID: "a", DependsOn: []string{"ghost"}}, {ID: "b"}}}
+	if waves, err := dangling.Waves(); err != nil || len(waves) != 1 || len(waves[0]) != 2 {
+		t.Fatalf("Waves must skip unknown ids, not report a cycle: %v, %v", waves, err)
+	}
 	g, err := wavefront.ParseGraph([]byte(`{"graph":"g","revision":"r","nodes":[{"id":"c","depends_on":["a","b"]},{"id":"b"},{"id":"a"},{"id":"d","depends_on":["c"]}]}`))
 	if err != nil {
 		t.Fatalf("ParseGraph: %v", err)
