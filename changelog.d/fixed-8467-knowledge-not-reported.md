@@ -1,0 +1,1 @@
+- Operations fleet cards now show old contributor relays that predate knowledge reporting as a neutral `knowledge: not reported — relay too old` badge instead of an orange unknown warning ([#8467](https://github.com/hivecommons/hive/issues/8467)).

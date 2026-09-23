@@ -223,10 +223,11 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	// /auth/return trampoline and come back to this tab) or this spoke's own
 	// device flow (the dashboard root). A JS boolean literal, never user input.
 	hubProxiedJS := "false"
+	knowledgeStateProtocolVersionJS := jsStringLiteral(knowledgeStateProtocolVersion)
 	if s.hubProxied() {
 		hubProxiedJS = "true"
 	}
-	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
+	fmt.Fprintf(&page, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
      visitor who pinned a theme never sees a frame of the other one. Kept to the
@@ -1043,6 +1044,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .clanker-proto{margin-top:3px;font-size:.68rem;color:var(--cc-amber)}
 .clanker-proto.incompatible{color:var(--cc-red)}
 .clanker-knowledge{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(218,54,51,.10);color:var(--cc-amber);border:1px solid rgba(210,153,34,.35)}
+.clanker-knowledge.neutral{background:rgba(139,148,158,.10);color:var(--cc-muted);border-color:rgba(139,148,158,.35)}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
    route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
@@ -4348,11 +4350,34 @@ function protocolLine(p){
   return '<div class="'+cls+'" title="'+esc(p.detail||'')+' The hub does not gate on this — the client is served exactly as before.">'+
     'protocol: client '+shown+' &middot; hub '+esc(p.hub||'')+' &middot; '+label+'</div>';
 }
+var knowledgeStateProtocolVersion={{KNOWLEDGE_STATE_PROTOCOL_VERSION}};
+function parseContributorProtocolVersion(v){
+  v=String(v||'').trim();
+  var m=/^(\d+)\.(\d+)$/.exec(v);
+  return m?{major:parseInt(m[1],10),minor:parseInt(m[2],10)}:null;
+}
+function protocolAtLeast(v,min){
+  var got=parseContributorProtocolVersion(v),want=parseContributorProtocolVersion(min);
+  if(!got||!want)return false;
+  return got.major>want.major||(got.major===want.major&&got.minor>=want.minor);
+}
 function knowledgeLine(c){
   if(c&&c.knowledge_loaded===true)return '';
-  var known=c&&c.knowledge_loaded===false;
-  var title=c&&c.knowledge_error?(' title="'+esc(c.knowledge_error)+'"'):'';
-  return '<div class="clanker-sub"><span class="clanker-knowledge"'+title+'>'+(known?'no knowledge loaded':'knowledge: unknown')+'</span></div>';
+  if(c&&c.knowledge_loaded===false){
+    var missingTitle=c.knowledge_error?(' title="'+esc(c.knowledge_error)+'"'):'';
+    return '<div class="clanker-sub"><span class="clanker-knowledge"'+missingTitle+'>no knowledge loaded</span></div>';
+  }
+  var peer=c&&c.protocol&&c.protocol.peer?c.protocol.peer:'';
+  var supports=protocolAtLeast(peer,knowledgeStateProtocolVersion);
+  if(c&&c.knowledge_loaded!=null&&c.knowledge_loaded!==undefined){
+    return '<div class="clanker-sub"><span class="clanker-knowledge" title="Relay reported an unrecognized knowledge state.">knowledge: unknown</span></div>';
+  }
+  if(!supports){
+    var cli=c&&c.capabilities&&c.capabilities.agent_cli_version?('relay cli '+c.capabilities.agent_cli_version+' '):'This relay ';
+    var oldTitle=cli+'predates knowledge reporting. Update it with \u0060git pull\u0060 in the hive checkout and restart \u0060just contribute-hive\u0060. See the docs and the protocol line: this client is older than this hub.';
+    return '<div class="clanker-sub"><span class="clanker-knowledge neutral" title="'+esc(oldTitle)+'">knowledge: not reported — relay too old</span></div>';
+  }
+  return '<div class="clanker-sub"><span class="clanker-knowledge" title="This relay supports knowledge reporting but did not send a state; this may indicate a relay or hub bug.">knowledge: not reported</span></div>';
 }
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
 // raw reason as a fallback so a new server-side reason still renders legibly.
@@ -6503,7 +6528,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), projectName, webstatic.MichromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), projectName, webstatic.MichromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())
 	_, _ = w.Write(page.Bytes())
 }

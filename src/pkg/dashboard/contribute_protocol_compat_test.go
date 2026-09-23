@@ -489,10 +489,54 @@ func TestOpsPage_KnowledgeLoadedChipIsVisible(t *testing.T) {
 		"clanker-knowledge",
 		"no knowledge loaded",
 		"knowledge: unknown",
+		"knowledge: not reported",
 		"knowledgeLine(c)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("ops page missing %q — knowledge-loaded state must be visible on contributor rows (#8343)", want)
+		}
+	}
+}
+
+func TestOpsPage_KnowledgeLineRenderingDecision(t *testing.T) {
+	body := renderContributePage(t)
+	knowledge := funcSourceJS(t, body, "knowledgeLine")
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{
+			name: "reported valid state keeps existing missing-export badge",
+			want: []string{"knowledge_loaded===true", "knowledge_loaded===false", "no knowledge loaded", "knowledge_error"},
+		},
+		{
+			name: "reported unrecognized state remains the orange unknown warning",
+			want: []string{"knowledge_loaded!=null", "Relay reported an unrecognized knowledge state.", "knowledge: unknown"},
+		},
+		{
+			name: "old relay with no state is neutral not-reported copy",
+			want: []string{"!supports", "clanker-knowledge neutral", "knowledge: not reported — relay too old", "this client is older than this hub"},
+		},
+		{
+			name: "new relay with no state is a warning not an old-relay hint",
+			want: []string{"This relay supports knowledge reporting but did not send a state", "knowledge: not reported"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, want := range tc.want {
+				if !strings.Contains(knowledge, want) {
+					t.Errorf("knowledgeLine missing %q", want)
+				}
+			}
+		})
+	}
+	for _, want := range []string{
+		"var knowledgeStateProtocolVersion=\"" + knowledgeStateProtocolVersion + "\"",
+		"function protocolAtLeast",
+		"protocolAtLeast(peer,knowledgeStateProtocolVersion)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ops page missing %q — the minimum knowledge-reporting protocol must come from the shared protocol constant (#8467)", want)
 		}
 	}
 }

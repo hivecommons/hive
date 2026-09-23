@@ -1475,10 +1475,16 @@ Protocol 1.4 adds one optional relay health report: `auth_response` may carry
 `knowledge_loaded: true|false` plus `knowledge_error` when the relay's
 `~/agent.md` is missing or fails the knowledge-export shape check. The hub stores
 that state on the contributor profile and surfaces it on the Operations clanker
-row as either `no knowledge loaded` or `knowledge: unknown` for old relays that
-omit the field. A relay may later send `knowledge_state` with the same two fields
-when its background knowledge refresh changes the loaded state; old hubs ignore
-the new message, and new hubs treat an absent field as unknown rather than false.
+row: loaded knowledge renders no badge, a reported missing or invalid export shows
+`no knowledge loaded` with the relay's reason in the tooltip, and a protocol 1.4+
+relay that omits the state shows the warning `knowledge: not reported` because a
+current relay should have sent it. Older relays (protocol before 1.4, or no
+declared protocol) instead get a neutral grey `knowledge: not reported — relay
+too old` badge whose tooltip points at the protocol mismatch line and tells the
+contributor to update the checkout and restart `just contribute-hive`. A relay
+may later send `knowledge_state` with the same two fields when its background
+knowledge refresh changes the loaded state; old hubs ignore the new message, and
+new hubs treat an absent field as not reported rather than false.
 
 ## Custom stylesheets
 

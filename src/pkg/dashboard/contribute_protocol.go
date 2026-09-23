@@ -15,6 +15,12 @@ import (
 // here).
 const contributorProtocolVersion = "1.4"
 
+// knowledgeStateProtocolVersion is the first contributor-protocol version whose
+// relay reports ~/agent.md knowledge state during auth_response and subsequent
+// knowledge_state updates. Older relays omit the field entirely, so operator
+// surfaces must describe that as "not reported" rather than a contributor fault.
+const knowledgeStateProtocolVersion = "1.4"
+
 // Server capability tokens advertised on auth_ok (#2567). Each names a message
 // type or feature this hub supports so a client can adapt without probing. They
 // are stable identifiers, not free text; add new ones as features land.
