@@ -242,3 +242,40 @@ func TestContributeAgySurface(t *testing.T) {
 		t.Error("agy must stay out of K8S_HEADLESS_BACKENDS — a pod cannot complete agy's sign-in")
 	}
 }
+
+// TestContributeOmpOnboardingSurface pins Oh My Pi (`omp`) as a contributor
+// picker option. The backend already exists in config/backends.conf and the
+// contributor image; this page needs to surface the documented install/sign-in
+// steps, tile metadata, model flag, generated launch commands, and the
+// Kubernetes warning caused by omp staying out of K8S_HEADLESS_BACKENDS.
+func TestContributeOmpOnboardingSurface(t *testing.T) {
+	body := renderContributePage(t)
+
+	for _, want := range []string{
+		// The CLI select option and its documented host setup.
+		`<option value="omp"`,
+		`curl -fsSL https://omp.sh/install.sh | sh`,
+		`omp   # run once, finish provider setup with /login, then quit`,
+		`data-model-flag="--model" data-default-model=""`,
+		`Oh My Pi</option>`,
+		`id="omp-confinement-note"`,
+		`HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED`,
+		// Tile metadata + emblem so the find-by-sight picker renders it.
+		`omp:'<svg viewBox="0 0 24 24"`,
+		`omp:{name:'Oh My Pi',tag:'omp'}`,
+		// Generated commands use the selected backend in container and host modes.
+		`just contribute-hive CLI';`,
+		`just contribute-hive CLI local`,
+		`.replace(/CLI/g,backend)`,
+		// Kubernetes mode judges omp through the same allowlist as the page.
+		`K8S_HEADLESS_BACKENDS[backend]`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("omp onboarding surface missing %q", want)
+		}
+	}
+
+	if strings.Contains(body, "K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,omp:1") {
+		t.Error("omp must stay out of K8S_HEADLESS_BACKENDS — its one-shot pod contract is unverified")
+	}
+}

@@ -1515,11 +1515,13 @@ select.admin-act{min-width:0;max-width:100%%}
 </span>
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
 <label style="font-size:.9rem;color:var(--cc-muted)">Choose your CLI:</label>
+<!-- Keep this curated contributor list cross-checked with config/backends.conf KNOWN_BACKENDS; not every registered backend is ready for this picker. -->
 <select id="cli-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
 <option value="codex" data-install="npm i -g @openai/codex" data-host-install="npm i -g @openai/codex\ncodex login --device-auth   # or export CODEX_API_KEY / OPENAI_API_KEY for API-key mode" data-model-flag="--model" data-default-model="" data-env="# Optional: Codex reasoning effort — the relay passes it as -c model_reasoning_effort.\n# export AGENT_REASONING_EFFORT=high">OpenAI Codex</option>
 <option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
 <option value="pi" data-install="" data-host-install="curl -fsSL https://pi.dev/install.sh | sh" data-model-flag="--model" data-default-model="">Pi</option>
+<option value="omp" data-install="curl -fsSL https://omp.sh/install.sh | sh" data-host-install="curl -fsSL https://omp.sh/install.sh | sh\nomp   # run once, finish provider setup with /login, then quit" data-model-flag="--model" data-default-model="">Oh My Pi</option>
 <option value="goose" data-install="" data-host-install="# Install Goose: https://github.com/block/goose/releases\n# Install Ollama: https://ollama.com/download\nollama pull llama3.2:3b\nexport GOOSE_PROVIDER=ollama GOOSE_MODEL=llama3.2:3b" data-model-flag="" data-default-model="">Goose</option>
 <option value="litellm" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# Your own LiteLLM proxy — exported locally, never sent to the hive\nexport HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000\nexport HIVE_LITELLM_API_KEY=sk-your-litellm-key  # only if your proxy needs one">LiteLLM (Claude Code + your proxy)</option>
 <option value="openrouter" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# OpenRouter — Claude Code routed through OpenRouter (litellm backend)\nexport HIVE_LITELLM_ENDPOINT=https://openrouter.ai/api/v1\nexport HIVE_LITELLM_API_KEY=sk-or-...  # your OpenRouter key\n# Pick a model with the Model field above — any OpenRouter model ID works,\n# e.g. anthropic/claude-sonnet-4 (exported as AGENT_MODEL)">OpenRouter (Claude Code + your key)</option>
@@ -1580,6 +1582,9 @@ select.admin-act{min-width:0;max-width:100%%}
 <div id="agy-confinement-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
 <strong style="color:var(--cc-text)">Antigravity (agy) has no OS-level sandbox of its own.</strong> <strong>Container</strong> mode (the default) is the only mode with any host boundary &mdash; it runs agy inside the contributor container, which now ships the <code>agy</code> binary. agy signs in through an interactive Google OAuth flow with no API-key mode: run <code>agy</code> once inside the container (or on the host first &mdash; <code>just contribute-hive agy</code> stages a signed-in <code>~/.gemini</code> into the container, though whether a staged credential re-authenticates an unattended agy has not been confirmed end-to-end). <strong>Local</strong> mode refuses to launch agy at all unless you explicitly set <code>HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1</code>, which drops the container boundary and leaves agy running directly against your host filesystem &mdash; not recommended.
 </div>
+<div id="omp-confinement-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">Oh My Pi (omp) has no verified local sandbox.</strong> <strong>Container</strong> mode (the default) is the supported boundary and runs the pinned <code>omp</code> binary from the contributor image. <strong>Host</strong> mode launches the CLI directly on your machine and refuses to run unless you intentionally opt out with <code>HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1</code>; use it only if you understand that trade-off.
+</div>
 <div id="multi-hub-note" style="margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
 <strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/hivecommons/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
@@ -1638,7 +1643,7 @@ linux:'curl --proto \'=https\' --tlsv1.2 -sSf https://just.systems/install.sh | 
 windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
 var roleHelp='# Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.\n';
-var containerTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
+var containerTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI';
 var hostTpl='PREREQ\nINSTALL\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
 // Kubernetes (#2549): register locally, then generate + apply a headless
 // contributor workload (Deployment, #2660) into a cluster you already have.
@@ -1701,6 +1706,8 @@ var hostOnlyNote=document.getElementById('hostonly-note');
 if(hostOnlyNote)hostOnlyNote.style.display=isHostOnly(cli)?'block':'none';
 var agyNote=document.getElementById('agy-confinement-note');
 if(agyNote)agyNote.style.display=(cli==='agy')?'block':'none';
+var ompNote=document.getElementById('omp-confinement-note');
+if(ompNote)ompNote.style.display=(cli==='omp')?'block':'none';
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
 var modelLine='';
 if(model){
@@ -1778,6 +1785,7 @@ vllm:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l4 14 3-9 3 9 4-1
 'llm-d':'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="#4d9375" stroke-width="1.5"/><path d="M8 9h4a3 3 0 0 1 0 6H8V9Z" fill="none" stroke="#4d9375" stroke-width="1.5" stroke-linejoin="round"/></svg>',
 bob:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M9 8h3.5a2 2 0 0 1 0 4H9V8ZM9 12h4a2 2 0 0 1 0 4H9v-4Z" fill="none" stroke="#1f70c1" stroke-width="1.3" stroke-linejoin="round"/></svg>',
 watsonx:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M12 7v10M8.5 9.5l7 5M15.5 9.5l-7 5" stroke="#1f70c1" stroke-width="1.4" stroke-linecap="round"/></svg>',
+omp:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="#7c93ff" stroke-width="1.5"/><path d="M8 9h8M10 9v8M14 9v5a2 2 0 0 0 2 2" stroke="#7c93ff" stroke-width="1.6" stroke-linecap="round"/></svg>',
 agy:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5 19 19H5z" fill="none" stroke="#a78bfa" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 20.5v-5" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="10.5" r="1.4" fill="#a78bfa"/></svg>',
 other:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#8b949e" stroke-width="1.5"/><path d="M8 12h.01M12 12h.01M16 12h.01" stroke="#8b949e" stroke-width="2.2" stroke-linecap="round"/></svg>'
 };
@@ -1798,6 +1806,7 @@ vllm:{name:'vLLM',tag:'self-hosted'},
 'llm-d':{name:'llm-d',tag:'self-hosted'},
 bob:{name:'Bob',tag:'IBM'},
 watsonx:{name:'watsonx.ai',tag:'IBM'},
+omp:{name:'Oh My Pi',tag:'omp'},
 agy:{name:'Antigravity',tag:'Google (unconfined)'},
 other:{name:'Other',tag:'host only'}
 };
@@ -1843,7 +1852,7 @@ function defaultPromptFor(v){
     '  3. export HIVE_HUB='+hubURL+'\n'+
     '     For multiple hives, HIVE_HUB can be comma-separated when HIVE_REGISTRATION_TOKEN has matching tokens in the same order.\n'+
     '  4. just contribute-setup '+setupBackend(v)+'\n'+
-    '  5. just contribute-hive\n\n'+
+    '  5. just contribute-hive '+setupBackend(v)+'\n\n'+
     'Explain what each step does before I run it, and stop if anything looks wrong.';
 }
 function syncBranded(){
