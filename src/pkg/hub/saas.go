@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/persona"
 )
 
 var saasUsersDir = "/data/saas/users"
@@ -215,6 +217,11 @@ type SaaSUser struct {
 	// (maxContactCompanyLen); omitempty so existing records round-trip
 	// byte-identical until an admin sets it.
 	Company string `json:"company,omitempty"`
+
+	// Persona is the hub-level, per-user communication profile. It is stored on
+	// the existing SaaS user record (identity-keyed) and deliberately separate
+	// from hive ACMM level, agent mode, or any setting that grants autonomy.
+	Persona *persona.Record `json:"persona,omitempty"`
 
 	// Country is an OPTIONAL ISO 3166-1 alpha-2 code (uppercase, e.g. "GB"),
 	// rendered as a small flag beside the user's avatar. Two sources, in

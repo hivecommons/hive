@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/persona"
 )
 
 type runSnapshot struct {
@@ -89,9 +90,17 @@ func (s *Service) cmdRuns(ctx context.Context, args string) (string, error) {
 			return "❌ Usage: `!runs reject <key> <reason>`", nil
 		}
 		return s.cmdRunsReject(ctx, fields[1], strings.TrimSpace(strings.Join(fields[2:], " ")))
+	case "more":
+		if len(fields) != 2 {
+			return "❌ Usage: `!runs more <key>`", nil
+		}
+		return s.cmdRunsShowDetailed(ctx, fields[1])
 	default:
+		if len(fields) == 2 && strings.EqualFold(fields[1], "more") {
+			return s.cmdRunsShowDetailed(ctx, fields[0])
+		}
 		if len(fields) != 1 {
-			return "❌ Usage: `!runs [key]` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
+			return "❌ Usage: `!runs [key]` | `!runs <key> more` | `!runs approve <key>` | `!runs reject <key> <reason>`", nil
 		}
 		return s.cmdRunsShow(ctx, fields[0])
 	}
@@ -118,6 +127,39 @@ func (s *Service) cmdRunsShow(ctx context.Context, key string) (string, error) {
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to load run `%s`: %s", key, err), nil
 	}
+	author, _ := ctx.Value(commandAuthorContextKey{}).(string)
+	if author != "" {
+		if record, ok, err := s.getPersona(ctx, author); err == nil && ok && record.Normalize().Depth != persona.DepthTechnical {
+			return s.formatRunForPersona(run, record), nil
+		}
+	}
+	return formatRunDetailed(run), nil
+}
+
+func (s *Service) cmdRunsShowDetailed(ctx context.Context, key string) (string, error) {
+	run, err := s.fetchRun(ctx, key)
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to load run `%s`: %s", key, err), nil
+	}
+	return formatRunDetailed(run), nil
+}
+
+func (s *Service) formatRunForPersona(run runSnapshot, record persona.Record) string {
+	record = record.Normalize()
+	switch record.SummaryLength {
+	case persona.SummaryShort:
+		return fmt.Sprintf("**Run `%s`** — %s", run.Key, oneLineRunSummary(run))
+	default:
+		lines := []string{
+			fmt.Sprintf("**Run `%s`** — %s", run.Key, oneLineRunSummary(run)),
+			fmt.Sprintf("Stage: %s, waiting_on=%s, age %s", run.Stage, emptyDefault(run.WaitingOn, "none"), runAge(run)),
+			"Use `!runs " + run.Key + " more` for technical details.",
+		}
+		return strings.Join(lines, "\n")
+	}
+}
+
+func formatRunDetailed(run runSnapshot) string {
 	lines := []string{
 		fmt.Sprintf("**Run `%s`** — %s", run.Key, emptyDefault(run.Title, run.Key)),
 		fmt.Sprintf("Repo: %s", emptyDefault(run.Repo, "unknown")),
@@ -135,7 +177,7 @@ func (s *Service) cmdRunsShow(ctx context.Context, key string) (string, error) {
 	} else {
 		lines = append(lines, append([]string{"Artifacts:"}, artifacts...)...)
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }
 
 func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error) {
@@ -316,8 +358,30 @@ func (s *Service) enqueueRunCheckpoint(run runSnapshot) {
 		Authors: authors,
 	}
 	s.mu.Unlock()
-	s.enqueue(fmt.Sprintf("Run %s stage %s needs a decision: %s. Reply approve or reject <reason>.%s",
-		run.Key, emptyDefault(run.Stage, "unknown"), oneLineRunSummary(run), formatPromptArtifacts(run)))
+	orderedAuthors := make([]string, 0, len(authors))
+	for author := range authors {
+		orderedAuthors = append(orderedAuthors, author)
+	}
+	sort.Strings(orderedAuthors)
+	for _, author := range orderedAuthors {
+		s.enqueue(s.formatRunCheckpointForAuthor(context.Background(), author, run))
+	}
+}
+
+func (s *Service) formatRunCheckpointForAuthor(ctx context.Context, author string, run runSnapshot) string {
+	summary := oneLineRunSummary(run)
+	if record, ok, err := s.getPersona(ctx, author); err == nil && ok {
+		record = record.Normalize()
+		if record.Depth == persona.DepthTechnical || record.SummaryLength == persona.SummaryDetailed {
+			summary = strings.ReplaceAll(formatRunDetailed(run), "\n", " · ")
+		}
+	}
+	prefix := ""
+	if author != "" && len(s.allowedUsers) > 1 {
+		prefix = "For " + author + ": "
+	}
+	return fmt.Sprintf("%sRun %s stage %s needs a decision: %s. Reply approve or reject <reason>.%s",
+		prefix, run.Key, emptyDefault(run.Stage, "unknown"), summary, formatPromptArtifacts(run))
 }
 
 func (s *Service) ownerAuthors() map[string]struct{} {

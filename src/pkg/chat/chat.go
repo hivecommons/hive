@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/persona"
 )
 
 const (
@@ -68,6 +69,11 @@ func SetAgentAliases(agentAliases map[string]string) {
 
 type CommandHandler func(ctx context.Context, args string) (string, error)
 
+type PersonaStore interface {
+	GetPersona(ctx context.Context, author string) (persona.Record, bool, error)
+	PutPersona(ctx context.Context, author string, record persona.Record) error
+}
+
 // ErrTopicUnsupported is returned by backends that cannot update channel topics.
 var ErrTopicUnsupported = errors.New("chat topic updates unsupported")
 
@@ -97,6 +103,7 @@ type Config struct {
 	MessageLimit      int
 	SendInterval      time.Duration
 	HeartbeatInterval time.Duration
+	PersonaStore      PersonaStore
 }
 
 type Service struct {
@@ -114,12 +121,14 @@ type Service struct {
 	heartbeatInterval time.Duration
 	sseReconnectBase  time.Duration
 	sseReconnectMax   time.Duration
+	personaStore      PersonaStore
 
 	msgQueue           chan msgItem
 	lastState          *statusSnapshot
 	lastRuns           map[string]runSnapshot
 	lastTopic          string
 	pendingInterviews  map[pendingInterviewKey]*pendingInterview
+	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
 }
 
@@ -147,6 +156,10 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 	if heartbeatInterval == 0 {
 		heartbeatInterval = defaultHeartbeatInterval
 	}
+	personaStore := cfg.PersonaStore
+	if personaStore == nil {
+		personaStore = newLocalPersonaStore()
+	}
 	return &Service{
 		backend:        backend,
 		dashboardURL:   cfg.DashboardURL,
@@ -162,8 +175,10 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		heartbeatInterval:  heartbeatInterval,
 		sseReconnectBase:   sseReconnectBase,
 		sseReconnectMax:    sseReconnectMax,
+		personaStore:       personaStore,
 		msgQueue:           make(chan msgItem, 100),
 		pendingInterviews:  make(map[pendingInterviewKey]*pendingInterview),
+		pendingPersonas:    make(map[pendingPersonaKey]*pendingPersonaSetup),
 		pendingCheckpoints: make(map[pendingCheckpointKey]*pendingCheckpoint),
 	}
 }

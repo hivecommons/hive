@@ -104,6 +104,21 @@ CLI when prompted. The login modal shows a device code, **Copy**, **Open GitHub
   **Critical Percent**. The UI notes that an exhausted budget suppresses most
   kicks; per-agent exemptions are available on the same tab.
 
+### Set your communication persona
+
+Hive records a per-user communication persona on the hosted hub user record,
+keyed by the same identity used for OAuth. The proposal is intentionally scoped:
+persona data describes how summaries should be phrased, not what agents may do.
+It contains `persona.depth` (`outcomes` or `technical`),
+`persona.summary_length` (`short`, `standard`, or `detailed`), and free-text
+notes. It is stored separately from hive ACMM level and agent mode settings.
+
+In the chat spine, run `!persona setup` to answer the three onboarding
+questions. Use `!persona show` to inspect the current record and
+`!persona set <key> <value>` to edit one field. Run summaries use the author's
+persona for their default depth; `!runs <key> more` always expands to the
+technical view without changing the persona or any autonomy setting.
+
 ## 4. Read the Fleet page
 
 Open <https://hive.hivecommons.dev/fleet>. The page title is **Fleet health** and

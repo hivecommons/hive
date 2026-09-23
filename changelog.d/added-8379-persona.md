@@ -1,0 +1,1 @@
+- Add a hub-level communication persona seam for chat run summary depth, kept separate from ACMM and agent-mode autonomy settings.

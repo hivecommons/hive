@@ -8,6 +8,8 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
+type commandAuthorContextKey struct{}
+
 func (s *Service) registerBuiltinCommands() {
 	s.RegisterCommand("status", func(ctx context.Context, _ string) (string, error) {
 		return s.cmdStatus(ctx)
@@ -34,6 +36,7 @@ func (s *Service) registerBuiltinCommands() {
 		return s.cmdStandbyClear(ctx, args)
 	})
 	s.registerRunsCommand()
+	s.registerPersonaCommand()
 	s.registerInceptionCommand()
 }
 
@@ -56,6 +59,9 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 	content = safeContent
 	if !strings.HasPrefix(content, "!") {
 		if s.handlePendingCheckpointReply(ctx, msg, content) {
+			return
+		}
+		if s.handlePendingPersonaReply(ctx, msg, content) {
 			return
 		}
 		s.handlePendingInterviewReply(ctx, msg, content)
@@ -82,6 +88,7 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		return
 	}
 	ctx = context.WithValue(ctx, commandRoleContextKey{}, role)
+	ctx = context.WithValue(ctx, commandAuthorContextKey{}, msg.AuthorID)
 
 	content = content[1:]
 
