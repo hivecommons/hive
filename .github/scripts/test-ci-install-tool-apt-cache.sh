@@ -87,6 +87,10 @@ fi
 if [ "${HIVE_FAKE_APT_MODE:-fail}" = "fail" ]; then
   exit 124
 fi
+if [ -n "${HIVE_FAKE_REQUIRE_FALLBACK:-}" ] \
+  && grep -RqsE 'deb\.debian\.org|azure\.archive\.ubuntu\.com' "${HIVE_CI_APT_ETC_DIR:?}"; then
+  exit 124
+fi
 
 archives=""
 download_only=0
@@ -211,7 +215,7 @@ scenario_cache_miss_egress_failure() {
 }
 
 scenario_tool_present_noop() {
-  printf '\n=== tool already present skips apt and cache ===\n'
+  printf '\n=== tool already present is preferred and warms the apt cache ===\n'
   local work="${TMP}/tool-present"
   local fake_bin="${work}/bin"
   mkdir -p "$fake_bin"
@@ -225,22 +229,35 @@ SH
   local cache="${work}/cache"
   local output rc
   set +e
-  output=$(HIVE_FAKE_BIN="$fake_bin" HIVE_FAKE_LOG="${work}/commands.log" HIVE_CI_APT_CACHE_DIR="$cache" HIVE_FAKE_APT_MODE=fail PATH="${fake_bin}:${PATH}" bash "$SCRIPT" --require hive-fake-gcc --for '-race tests' --apt 'gcc libc6-dev' --verify 'hive-fake-gcc --version' 2>&1)
+  output=$(HIVE_FAKE_BIN="$fake_bin" HIVE_FAKE_LOG="${work}/commands.log" HIVE_CI_APT_CACHE_DIR="$cache" HIVE_FAKE_APT_MODE=success PATH="${fake_bin}:${PATH}" bash "$SCRIPT" --require hive-fake-gcc --for '-race tests' --apt 'gcc libc6-dev' --verify 'hive-fake-gcc --version' 2>&1)
   rc=$?
   set -e
   printf '%s\n' "$output" | sed 's/^/    | /'
 
   assert_eq "$rc" 0 "installer exits 0 when the tool is already present" "installer exited ${rc}"
-  if [ -s "${work}/commands.log" ]; then
-    bad "package-manager double was called on no-op path"
-    sed 's/^/    | commands: /' "${work}/commands.log"
+  assert_contains "$output" "hive-fake-gcc already present" \
+    "preinstalled tool was used before package-manager work" "missing preinstalled tool version output"
+  assert_contains "$output" "warming apt package cache for future bare runners" \
+    "preinstalled path warms the offline cache" "missing cache-warm message"
+  if grep -q '^apt-get ' "${work}/commands.log"; then
+    pass "apt-get was used only to warm the cache"
   else
-    pass "no apt, dpkg, or cache install work was attempted"
+    bad "apt-get was not used to populate the cache"
   fi
-  if [ ! -e "$cache" ]; then
-    pass "cache directory was not created on no-op path"
+  if grep -q -- '--reinstall' "${work}/commands.log"; then
+    pass "cache warm forces download even when packages are already installed"
   else
-    bad "cache directory was touched on no-op path"
+    bad "cache warm did not force a reinstall download"
+  fi
+  if [ -f "${cache}/gcc_1_fake.deb" ] && [ -f "${cache}/.hive-ci-apt-cache.manifest" ]; then
+    pass "successful warm populated .debs and manifest for actions/cache/save"
+  else
+    bad "cache warm did not populate the saveable cache directory"
+  fi
+  if [ ! -e "${cache}/archives" ]; then
+    pass "apt's root-owned staging directory is removed before actions/cache/save"
+  else
+    bad "apt staging directory was left inside the saveable cache path"
   fi
 }
 
@@ -271,6 +288,11 @@ scenario_corrupt_cache_falls_back() {
     pass "successful download refreshed the cache directory"
   else
     bad "downloaded .deb was not copied into the cache directory"
+  fi
+  if [ ! -e "${cache}/archives" ]; then
+    pass "apt staging directory was removed after refreshing the cache"
+  else
+    bad "apt staging directory was left after refreshing the cache"
   fi
   printf '    | command log:\n'
   sed 's/^/    |   /' "${work}/commands.log"
@@ -364,13 +386,80 @@ scenario_attempt_count_is_truthful() {
   fi
 }
 
+
+scenario_mirror_fallback_recovers() {
+  printf '\n=== azure/debian mirror failure falls back to archive.ubuntu.com ===\n'
+  local work="${TMP}/mirror-fallback"
+  local cache="${work}/cache"
+  local apt_etc="${work}/apt"
+  mkdir -p "$cache" "${apt_etc}/sources.list.d"
+  cat > "${apt_etc}/sources.list.d/ubuntu.sources" <<'EOF'
+Types: deb
+URIs: http://azure.archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates
+Components: main
+EOF
+
+  local output rc
+  set +e
+  output=$(HIVE_CI_APT_CACHE_DIR="$cache" \
+    HIVE_CI_APT_ETC_DIR="$apt_etc" \
+    HIVE_CI_APT_ATTEMPTS=1 \
+    HIVE_FAKE_APT_MODE=success \
+    HIVE_FAKE_REQUIRE_FALLBACK=1 \
+    HIVE_FAKE_APT_INSTALLS=hive-fake-gcc \
+    run_installer "$work" env 2>&1)
+  rc=$?
+  set -e
+  printf '%s\n' "$output" | sed 's/^/    | /'
+
+  assert_eq "$rc" 0 "installer succeeds after rewriting to fallback mirror" "installer exited ${rc}"
+  assert_contains "$output" "falling back from deb.debian.org/azure.archive.ubuntu.com to archive.ubuntu.com" \
+    "mirror fallback was announced" "missing mirror fallback message"
+  if grep -q 'archive.ubuntu.com' "${apt_etc}/sources.list.d/ubuntu.sources"; then
+    pass "apt sources were rewritten to archive.ubuntu.com"
+  else
+    bad "apt sources were not rewritten to archive.ubuntu.com"
+  fi
+}
+
+scenario_soft_fail_marks_tool_unavailable() {
+  printf '\n=== optional cgo toolchain miss skips the non-release shard ===\n'
+  local work="${TMP}/soft-fail"
+  local cache="${work}/cache"
+  mkdir -p "$cache"
+
+  local output rc gh_output="${work}/github-output.txt"
+  set +e
+  output=$(GITHUB_OUTPUT="$gh_output" \
+    HIVE_CI_APT_CACHE_DIR="$cache" \
+    HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL=1 \
+    HIVE_CI_APT_ATTEMPTS=1 \
+    HIVE_CI_APT_DEADLINE_SECONDS=5 \
+    HIVE_FAKE_APT_MODE=fail \
+    run_installer "$work" env 2>&1)
+  rc=$?
+  set -e
+  printf '%s\n' "$output" | sed 's/^/    | /'
+
+  assert_eq "$rc" 0 "optional missing toolchain exits successfully" "installer exited ${rc}, want 0"
+  assert_contains "$output" "Skipping -race tests on this non-release shard" \
+    "soft skip emits a clear annotation" "missing soft-skip annotation"
+  if grep -qx 'toolchain-ready=false' "$gh_output"; then
+    pass "GitHub output marks the toolchain unavailable for downstream test-step skips"
+  else
+    bad "GitHub output did not mark toolchain-ready=false"
+  fi
+}
 printf '=== ci-install-tool apt .deb cache tests ===\n'
 scenario_cache_hit_offline_success
 scenario_cache_miss_egress_failure
 scenario_tool_present_noop
 scenario_corrupt_cache_falls_back
+scenario_mirror_fallback_recovers
+scenario_soft_fail_marks_tool_unavailable
 scenario_timeout_does_not_starve_retries
 scenario_attempt_count_is_truthful
 
-printf '\nChecked 6 scenario(s), %d failure(s).\n' "$failures"
+printf '\nChecked 8 scenario(s), %d failure(s).\n' "$failures"
 [ "$failures" -eq 0 ] || exit 1

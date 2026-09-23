@@ -198,29 +198,36 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
       # skip apt when the tool already exists, install restored .debs offline
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       - name: Test slice of pkg/hub
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -314,27 +321,33 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
       # skip apt when the tool already exists, install restored .debs offline
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       # tmux is what makes HIVE_TEST_REQUIRE_BEHAVIOURAL legitimate below.
       # ubuntu-latest happens to ship it, but "happens to" is not a guarantee —
@@ -344,12 +357,14 @@ jobs:
       # asserting something this lane actually enforces.
       # Same bounded/annotated install path as the cgo steps (#6648).
       - name: Install tmux (precondition for the behavioural gate)
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require tmux --for 'the behavioural gate' \
             --apt tmux --apk tmux --verify 'tmux -V'
 
       - name: Test slice of pkg/agent
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -434,27 +449,33 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
       # skip apt when the tool already exists, install restored .debs offline
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       - name: Partition packages into balanced buckets
         id: partition
@@ -561,33 +582,40 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
       # skip apt when the tool already exists, install restored .debs offline
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       # ./cmd/... is included in the partition deliberately. It used to be
       # ./pkg/... only, so no workflow anywhere ran the cmd tests — four cmd/bd
       # tests were consequently merged already-failing and stayed red on the
       # default branch, undetected. All of ./cmd/... passes under -short -race.
       - name: Test
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         env:
           PKGS: ${{ matrix.pkgs }}
           # The converted skips in the rest packages gate on repo files being
@@ -680,29 +708,36 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
       # skip apt when the tool already exists, install restored .debs offline
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: success() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true'
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       - name: Test pkg/dashboard in shuffled order
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -1208,19 +1243,34 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/apt-cache/cgo-race
-          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v1
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
 
       - name: Prepare cgo toolchain for race tests
+        id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require gcc --for '-race tests' \
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
+      - name: Save cgo toolchain package cache
+        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+
       # -run '^$' compiles every package's test binary without running a test;
       # the plain build covers the non-race objects build-and-test needs.
       - name: Compile tree into the build cache
+        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         run: |
           go build ./... 
           go test -race -count=1 -run '^$' ./pkg/... ./cmd/... ./internal/... > /dev/null

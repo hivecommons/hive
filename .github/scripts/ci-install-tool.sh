@@ -79,7 +79,7 @@ APT_TIMEOUT_SECONDS="${HIVE_CI_APT_TIMEOUT_SECONDS:-10}"
 # fail fast; #6870 shows the failure is now intermittent, so a small number of
 # bounded retries is the repo-side resilience we can add without pretending to
 # fix the runner network.
-APT_ATTEMPTS="${HIVE_CI_APT_ATTEMPTS:-3}"
+APT_ATTEMPTS="${HIVE_CI_APT_ATTEMPTS:-5}"
 APT_BACKOFF_SECONDS="${HIVE_CI_APT_BACKOFF_SECONDS:-5}"
 # END-TO-END ceiling for the NETWORK phase (update + download), not per
 # invocation. Deliberately so: a per-call ceiling of N gives a worst case of 2N
@@ -101,6 +101,7 @@ APT_DEADLINE_SECONDS="${HIVE_CI_APT_DEADLINE_SECONDS:-60}"
 APT_LOCAL_DEADLINE_SECONDS="${HIVE_CI_APT_LOCAL_DEADLINE_SECONDS:-300}"
 APT_CACHE_DIR="${HIVE_CI_APT_CACHE_DIR:-}"
 APT_CACHE_MANIFEST=".hive-ci-apt-cache.manifest"
+APT_ETC_DIR="${HIVE_CI_APT_ETC_DIR:-/etc/apt}"
 APT_ARCHIVES_DIR="${HIVE_CI_APT_ARCHIVES_DIR:-/var/cache/apt/archives}"
 if [ -n "$APT_CACHE_DIR" ]; then
   # Keep downloads in the cache tree when requested, so a successful network
@@ -146,6 +147,25 @@ budget_remaining() {
 # happened rather than what was configured.
 apt_attempts_made=0
 
+write_github_output() {
+  local name="$1" value="$2"
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
+  fi
+}
+
+mark_tool_ready() {
+  write_github_output toolchain-ready true
+}
+
+mark_tool_unavailable() {
+  write_github_output toolchain-ready false
+}
+
+mark_apt_cache_populated() {
+  write_github_output apt-cache-populated true
+}
+
 # Emit the remediation block once, as a single ::error:: annotation (so it lands
 # on the job summary) followed by plain lines for the log.
 fail_with_remediation() {
@@ -174,19 +194,15 @@ fail_with_remediation() {
     echo "  so transient egress can heal but a dead mirror still fails loudly (kubestellar/hive#6648/#6870)."
     echo ""
   } >&2
+  if [ "${HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL:-0}" = "1" ]; then
+    mark_tool_unavailable
+    echo "::notice::Skipping ${purpose} on this non-release shard because ${require} is unavailable after cache restore, apt retries, and mirror fallback." >&2
+    exit 0
+  fi
   exit 1
 }
 
-# ── 1. Already present? Then this step is a no-op. ───────────────────────────
-if command -v "$require" >/dev/null 2>&1; then
-  if [ -n "$verify" ]; then
-    # Best-effort: a version banner is nice to have in the log, never a gate.
-    $verify 2>/dev/null | head -n1 || true
-  fi
-  exit 0
-fi
-
-# ── 2. Install, with the budget bounded. ─────────────────────────────────────
+# ── 1. Install, with the budget bounded. ─────────────────────────────────────
 # `timeout` is not guaranteed on every image; fall back to running bare rather
 # than refusing to install. The per-fetch apt options still apply either way.
 run_bounded() {
@@ -293,14 +309,26 @@ populate_apt_cache() {
     echo "ci-install-tool: could not write apt package cache manifest; continuing without saving cache" >&2
     return 0
   }
+  case "$APT_ARCHIVES_DIR" in
+    "$APT_CACHE_DIR"/*)
+      # The apt archives directory contains root-owned lock/partial entries when
+      # sudo apt populated it. They are not part of the offline cache and make
+      # actions/cache/save's tar step fail, so remove the staging tree after
+      # copying the .debs into the saveable cache root.
+      rm -rf "$APT_ARCHIVES_DIR" 2>/dev/null \
+        || { command -v sudo >/dev/null 2>&1 && sudo rm -rf "$APT_ARCHIVES_DIR"; } \
+        || true
+      ;;
+  esac
   echo "ci-install-tool: saved ${#debs[@]} downloaded .deb file(s) into ${APT_CACHE_DIR}" >&2
+  mark_apt_cache_populated
 }
 
 
 apt_source_hosts() {
-  if [ -d /etc/apt ]; then
+  if [ -d "$APT_ETC_DIR" ]; then
     {
-      grep -RhoE 'https?://[^/ ]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true
+      grep -RhoE 'https?://[^/ ]+' "$APT_ETC_DIR/sources.list" "$APT_ETC_DIR/sources.list.d" 2>/dev/null || true
     } | sed -E 's#https?://##' | sort -u | awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { print "" }'
   fi
 }
@@ -360,12 +388,11 @@ apt_opts=(
   -o "Acquire::https::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Acquire::ftp::Timeout=${APT_TIMEOUT_SECONDS}"
   -o "Dir::Cache::archives=${APT_ARCHIVES_DIR}"
-  # One retry, not apt's default three: a route that is down does not come back
-  # within a single job step, and each extra attempt costs another full timeout.
-  -o "Acquire::Retries=1"
+  # Let apt retry transient mirror fetches inside each bounded attempt (#8502).
+  -o "Acquire::Retries=5"
 )
 
-apt_network_fetch_once() {
+apt_fetch_current_sources_once() {
   local sudo_prefix=("$@")
   mkdir -p "${APT_ARCHIVES_DIR}/partial" 2>/dev/null || true
   # `apt-get update` EXITS 0 when every mirror fails — it downgrades unreachable
@@ -375,9 +402,101 @@ apt_network_fetch_once() {
   # recover when egress returns.
   run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" update -qq \
     || echo "ci-install-tool: apt-get update did not complete cleanly; attempting package download anyway" >&2
+  local reinstall_opts=()
+  if [ "${HIVE_CI_APT_DOWNLOAD_REINSTALL:-0}" = "1" ]; then
+    # The runner already has the tool, so plain `install --download-only` is a
+    # no-op and leaves actions/cache nothing to save. Force a re-download of the
+    # named packages to seed the offline cache for bare self-hosted runners.
+    reinstall_opts=(--reinstall)
+  fi
   # shellcheck disable=SC2086 # apt_pkgs is a deliberate space-separated list
-  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install --download-only -y -qq $apt_pkgs
+  run_bounded "${sudo_prefix[@]}" apt-get "${apt_opts[@]}" install --download-only "${reinstall_opts[@]}" -y -qq $apt_pkgs
 }
+
+APT_MIRROR_FALLBACK_DONE=0
+configure_apt_mirror_fallback() {
+  [ "$APT_MIRROR_FALLBACK_DONE" -eq 0 ] || return 1
+  [ -d "$APT_ETC_DIR" ] || return 1
+
+  local files=()
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(find "$APT_ETC_DIR" -type f \( -name '*.list' -o -name '*.sources' \) -print 2>/dev/null)
+  [ "${#files[@]}" -gt 0 ] || return 1
+
+  local has_fallback_source=1
+  if grep -qE 'deb\.debian\.org|azure\.archive\.ubuntu\.com' "${files[@]}" 2>/dev/null; then
+    has_fallback_source=0
+  fi
+  [ "$has_fallback_source" -eq 0 ] || return 1
+
+  local sudo_prefix=("$@")
+  echo "ci-install-tool: apt mirror fetch failed; falling back from deb.debian.org/azure.archive.ubuntu.com to archive.ubuntu.com" >&2
+  if ! "${sudo_prefix[@]}" sed -i.bak \
+      -e 's#deb\.debian\.org#archive.ubuntu.com#g' \
+      -e 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' \
+      "${files[@]}"; then
+    echo "ci-install-tool: could not rewrite apt sources for mirror fallback" >&2
+    return 1
+  fi
+  local backups=()
+  local file
+  for file in "${files[@]}"; do
+    backups+=("${file}.bak")
+  done
+  "${sudo_prefix[@]}" rm -f "${backups[@]}" 2>/dev/null || true
+  APT_MIRROR_FALLBACK_DONE=1
+}
+
+apt_network_fetch_once() {
+  local sudo_prefix=("$@")
+  local status
+  apt_fetch_current_sources_once "${sudo_prefix[@]}"
+  status=$?
+  [ "$status" -eq 0 ] && return 0
+
+  if configure_apt_mirror_fallback "${sudo_prefix[@]}"; then
+    apt_fetch_current_sources_once "${sudo_prefix[@]}" && return 0
+  fi
+  return "$status"
+}
+
+warm_apt_cache_for_present_tool() {
+  apt_cache_enabled || return 0
+  [ -d "$APT_CACHE_DIR" ] && apt_cache_manifest_matches && [ -n "$(apt_cache_debs | head -n1)" ] && {
+    mark_apt_cache_populated
+    return 0
+  }
+  [ -n "$apt_pkgs" ] && command -v apt-get >/dev/null 2>&1 || return 0
+
+  local sudo_prefix=()
+  if command -v sudo >/dev/null 2>&1; then
+    sudo_prefix=(sudo)
+  fi
+
+  echo "ci-install-tool: ${require} is already present; warming apt package cache for future bare runners" >&2
+  local previous_reinstall_mode="${HIVE_CI_APT_DOWNLOAD_REINSTALL:-}"
+  HIVE_CI_APT_DOWNLOAD_REINSTALL=1
+  if retry_network_phase "apt cache warm" apt_network_fetch_once "${sudo_prefix[@]}"; then
+    HIVE_CI_APT_DOWNLOAD_REINSTALL="$previous_reinstall_mode"
+    populate_apt_cache
+  else
+    HIVE_CI_APT_DOWNLOAD_REINSTALL="$previous_reinstall_mode"
+    echo "::warning::${require} is already present, but the apt package cache could not be warmed; continuing without network-installed cache" >&2
+  fi
+}
+
+# ── 2. Already present? Prefer the runner image toolchain and only warm cache. ──
+if command -v "$require" >/dev/null 2>&1; then
+  if [ -n "$verify" ]; then
+    # Best-effort: a version banner is nice to have in the log, never a gate.
+    $verify 2>/dev/null | head -n1 || true
+  fi
+  warm_apt_cache_for_present_tool
+  mark_tool_ready
+  exit 0
+fi
+
 
 apt_install() {
   local sudo_prefix=("$@")
@@ -422,3 +541,4 @@ fi
 if [ -n "$verify" ]; then
   $verify 2>/dev/null | head -n1 || true
 fi
+mark_tool_ready
