@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/runtrailer"
 )
 
 // AttributionTrailerPrefix opens the visible trailer line. Neutral wording,
@@ -213,26 +214,18 @@ func (m InvocationMeta) AuditDetail(extra ...string) string {
 // plan_match review perspective (#8317) among them -- can find the run and the
 // approved plan the PR claims to implement without a GitHub round trip.
 const (
-	RunTrailerKey  = "Hive-Run:"
-	PlanTrailerKey = "Hive-Plan:"
+	RunTrailerKey  = runtrailer.KeyRun + ":"
+	PlanTrailerKey = runtrailer.KeyPlan + ":"
 )
 
 // ParseRunTrailers extracts the run key and plan ref from a PR body. Each is
-// the trimmed remainder of the first line that starts with its key; a body
-// without the line yields "". The reader is deliberately line-anchored and
-// case-sensitive, matching the writer, so prose that mentions "Hive-Run" is
-// never mistaken for a trailer.
+// the trimmed remainder of the first matching trailer line; a body without the
+// line yields "". The reader is deliberately line-anchored and case-sensitive,
+// matching the writer, so prose that mentions "Hive-Run" is never mistaken for
+// a trailer.
 func ParseRunTrailers(body string) (runKey, planRef string) {
-	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case runKey == "" && strings.HasPrefix(line, RunTrailerKey):
-			runKey = strings.TrimSpace(strings.TrimPrefix(line, RunTrailerKey))
-		case planRef == "" && strings.HasPrefix(line, PlanTrailerKey):
-			planRef = strings.TrimSpace(strings.TrimPrefix(line, PlanTrailerKey))
-		}
-	}
-	return runKey, planRef
+	trailers := runtrailer.Parse(body, runtrailer.FirstWins)
+	return trailers[runtrailer.KeyRun], trailers[runtrailer.KeyPlan]
 }
 
 // AppendTrailer appends the visible trailer to body, blank-line separated.

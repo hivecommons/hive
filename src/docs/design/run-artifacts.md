@@ -74,9 +74,11 @@ Hive-Spec: <spec name>#<clause id>
   requirement.
 
 The implementation stage writes all three trailers on each commit it creates.
-The dashboard trace reader resolves them through the retained timeline and audit
-entries so reviewers can find the plan section, spec clause, approval record,
-and agent rationale without reading chat history.
+The grammar is parsed by the shared `pkg/runtrailer` package so the dashboard
+trace reader and the PR attribution reader accept the same trailer spelling and
+whitespace rules. The dashboard trace reader resolves them through the retained
+timeline and audit entries so reviewers can find the plan section, spec clause,
+approval record, and agent rationale without reading chat history.
 
 These trailers are evidence, not authority. A missing trailer is recorded as an
 `artifact_link_missing` audit finding; it does not fail the run, reject the

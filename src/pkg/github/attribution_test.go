@@ -515,4 +515,7 @@ func TestParseRunTrailers(t *testing.T) {
 	if run, _ := ParseRunTrailers("hive-run: x"); run != "" {
 		t.Fatalf("lowercase key accepted as a trailer: %q", run)
 	}
+	if run, plan := ParseRunTrailers(" Hive-Run : acme/hive#43 \n Hive-Plan : epic-8 "); run != "acme/hive#43" || plan != "epic-8" {
+		t.Fatalf("whitespace-padded trailers parsed as (%q, %q), want (acme/hive#43, epic-8)", run, plan)
+	}
 }

@@ -124,6 +124,14 @@ func TestTrailerAndDetailHelpers(t *testing.T) {
 	}
 }
 
+func TestParseTrailersUsesSharedGrammar(t *testing.T) {
+	msg := "subject\n\n Hive-Run : o/r#1\r\nHive-Plan: first\nHive-Plan: last\nHive-Spec: spec.md#C-1\n"
+	trailers := ParseTrailers(msg)
+	if trailers[TrailerRun] != "o/r#1" || trailers[TrailerPlan] != "last" || trailers[TrailerSpec] != "spec.md#C-1" {
+		t.Fatalf("ParseTrailers = %+v", trailers)
+	}
+}
+
 func TestResolveSelectsNewestApprovalAndMatchingPlanSection(t *testing.T) {
 	dir := initGitRepo(t)
 	sha := commitFixture(t, dir, "matching-plan", `linked

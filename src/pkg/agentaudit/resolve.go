@@ -9,13 +9,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/runtrailer"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 const (
-	TrailerRun  = "Hive-Run"
-	TrailerPlan = "Hive-Plan"
-	TrailerSpec = "Hive-Spec"
+	TrailerRun  = runtrailer.KeyRun
+	TrailerPlan = runtrailer.KeyPlan
+	TrailerSpec = runtrailer.KeySpec
 
 	AuditArtifactLinkMissing = "artifact_link_missing"
 )
@@ -136,19 +137,7 @@ func (g LocalGit) CommitMessage(ctx context.Context, sha string) (string, error)
 }
 
 func ParseTrailers(message string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(message, "\n") {
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		switch key {
-		case TrailerRun, TrailerPlan, TrailerSpec:
-			out[key] = strings.TrimSpace(val)
-		}
-	}
-	return out
+	return runtrailer.Parse(message, runtrailer.LastWins)
 }
 
 func MissingTrailers(message string) []string {
