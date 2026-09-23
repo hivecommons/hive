@@ -36,6 +36,7 @@ import (
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -43,7 +44,6 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
-	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -1440,6 +1440,9 @@ func (b *boot) wireBootClosures() {
 			HookFire: func(ctx context.Context, p hooks.Payload) {
 				hookDispatcher().Fire(ctx, p)
 			},
+			// #8361: which external-execution engines this build links; the
+			// Flue adapter registers itself only under the extwork_flue tag.
+			ExternalExec: extworkStatus{registry: extwork.DefaultRegistry},
 			CELTrigger: func(ctx context.Context, ev celtrigger.NormalizedEvent, reason string) {
 				celTriggerKickAgents(ctx, celEngineFor(b.cfg, b.logger), ev, b.cfg, b.gov, b.agentMgr.IsPaused, b.agentMgr, reason, b.logger)
 			},

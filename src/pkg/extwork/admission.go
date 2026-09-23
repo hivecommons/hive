@@ -60,6 +60,11 @@ type Admission struct {
 	// key: a recreated engine under the same key is a mismatch to refuse, not
 	// a new logical execution to adopt.
 	EngineIncarnation string `json:"engine_incarnation,omitempty"`
+	// RemoteRunID is the native run identity, recorded once the engine
+	// accepted the keyed start. Empty means the durable record knows of no
+	// start; recovery uses that to tell "never dispatched" from "dispatched,
+	// record not yet updated".
+	RemoteRunID string `json:"remote_run_id,omitempty"`
 }
 
 // ErrInvalidAdmission wraps every Validate failure.

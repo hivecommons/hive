@@ -1,183 +1,106 @@
 package dashboard
 
 import (
-	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/extwork"
-	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
-// External-execution binding seams (#8361, #8201 Gate 1).
+// External-execution seams (#8361, #8201 Gate 1).
 //
-// The dashboard owns three things here and nothing more: the durable
-// admission record is the task lease (plus the fields the lease cannot hold,
-// kept beside the receipt under the agent report directory); progress events
-// land on the agent audit trail; and the binding is constructed only when the
-// operator enabled it AND the engine was compiled in. No route here starts an
-// external run; the assignment path decides that separately.
+// pkg/dashboard deliberately imports neither pkg/extwork nor pkg/extwork/flue:
+// the dashboard is at its internal-import ceiling and the adapter must stay
+// out of every build that lacks the extwork_flue tag. What lives here is the
+// extwork-free half of the contract: the relay capability token, the
+// refuse-never-downgrade rule for engine-bound items, the lease as the
+// admission and authority record (LeaseAuthority), the hub accessor, and the
+// ExternalExecution status seam the Features panel reads. cmd/hive wires the
+// concrete extwork pieces to these (extworkwire.go).
 
 const (
-	// extExecEngineFlue is the only engine the pilot admits. The dashboard
-	// spells it as a string on purpose: importing pkg/extwork/flue here would
-	// link the adapter into every build, which the extwork guard forbids.
+	// extExecEngineFlue is the only engine the pilot admits. It must equal
+	// flue.Engine; a test pins the two together.
 	extExecEngineFlue = "flue"
 	// capExtExecFlue is the contributor capability a relay must declare to be
-	// offered Flue-bound work. It must equal flue.Capability; a dashboard test
-	// pins the two together.
+	// offered Flue-bound work. It must equal flue.Capability; a test pins the
+	// two together.
 	capExtExecFlue = "ext-exec/flue"
-	// extworkRecordDirName is the subdirectory of the agent report directory
+	// ExtworkRecordDirName is the subdirectory of the agent report directory
 	// that holds admission records and verified receipts.
-	extworkRecordDirName = "extwork"
+	ExtworkRecordDirName = "extwork"
 )
 
-// extworkRegistry is the engine registry the dashboard consults. Tests swap it
-// for a registry holding a fake engine.
-var extworkRegistry = extwork.DefaultRegistry
-
-var (
-	errExternalBindingOff    = errors.New("external execution binding is off")
-	errExternalHubNotRunning = errors.New("external execution binding needs the contributor hub")
-	errLeaseAdmission        = errors.New("extwork: admission does not match a live lease")
-)
-
-// leaseAdmissionStore backs extwork.AdmissionStore and extwork.ReceiptStore.
-// The task lease is the authority record: Persist refuses an admission that
-// does not name a live lease with the same work key, generation, stage, and
-// tier held by the same identity, and forces that lease to disk before the
-// dispatch may proceed (#8287/#8322 make that write fail loudly). The record
-// file beside the receipt carries only what the lease cannot: contract and
-// input revisions, request digest, engine version, pinned incarnation. Load
-// re-checks the lease, so a record whose lease expired or was revoked grants
-// nothing on recovery.
-type leaseAdmissionStore struct {
-	hub   *ContributeWSHub
-	files *extwork.FileStore
-	now   func() time.Time
+// ExternalExecution is the status seam the dashboard reads about external
+// engines. cmd/hive backs it with the extwork registry; nil means no engine is
+// compiled into this build.
+type ExternalExecution interface {
+	// Linked reports whether the named engine is compiled into this binary.
+	Linked(engine string) bool
 }
 
-func newLeaseAdmissionStore(hub *ContributeWSHub, dir string, now func() time.Time) *leaseAdmissionStore {
-	if now == nil {
-		now = time.Now
+// externalExecLinked is nil-safe: no seam, nothing linked.
+func (s *Server) externalExecLinked(engine string) bool {
+	if s == nil || s.deps == nil || s.deps.ExternalExec == nil {
+		return false
 	}
-	return &leaseAdmissionStore{hub: hub, files: extwork.NewFileStore(dir), now: now}
+	return s.deps.ExternalExec.Linked(engine)
 }
 
-func (s *leaseAdmissionStore) leaseMatchesLocked(adm extwork.Admission) error {
-	l := s.hub.leaseForLocked(adm.Authority.Identity, adm.AssignmentID)
+// ContributeHub returns the contributor WebSocket hub, or nil before the
+// contribute routes are registered.
+func (s *Server) ContributeHub() *ContributeWSHub {
+	if s == nil {
+		return nil
+	}
+	return s.contributeHub
+}
+
+// errLeaseAuthority is the refusal a lease-authority check returns.
+var errLeaseAuthority = fmt.Errorf("no live lease matches the admission")
+
+func (h *ContributeWSHub) leaseAuthorityLocked(identity, taskID, workKey, tier, stage string, gen uint64, now time.Time) error {
+	l := h.leaseForLocked(identity, taskID)
 	if l == nil {
-		return fmt.Errorf("%w: %s holds no lease for %s", errLeaseAdmission, adm.Authority.Identity, adm.AssignmentID)
+		return fmt.Errorf("%w: %s holds no lease for %s", errLeaseAuthority, identity, taskID)
 	}
-	if l.expiresAt.IsZero() || s.now().After(l.expiresAt) {
-		return fmt.Errorf("%w: lease for %s expired", errLeaseAdmission, adm.AssignmentID)
+	if l.expiresAt.IsZero() || now.After(l.expiresAt) {
+		return fmt.Errorf("%w: lease for %s expired", errLeaseAuthority, taskID)
 	}
-	if l.key != adm.WorkKey || l.gen != adm.Generation || l.stage != adm.Stage || l.tier != adm.Authority.Tier {
+	if l.key != workKey || l.gen != gen || l.stage != stage || l.tier != tier {
 		return fmt.Errorf("%w: lease is %s gen %d stage %q tier %q, admission is %s gen %d stage %q tier %q",
-			errLeaseAdmission, l.key, l.gen, l.stage, l.tier, adm.WorkKey, adm.Generation, adm.Stage, adm.Authority.Tier)
+			errLeaseAuthority, l.key, l.gen, l.stage, l.tier, workKey, gen, stage, tier)
 	}
 	return nil
 }
 
-// Persist implements extwork.AdmissionStore.
-func (s *leaseAdmissionStore) Persist(adm extwork.Admission) error {
-	if err := adm.Validate(); err != nil {
+// VerifyLeaseAuthority reports nil only when a live lease held by identity for
+// taskID carries exactly this work key, tier, stage, and generation. It is the
+// extwork.LeaseAuthority Verify half.
+func (h *ContributeWSHub) VerifyLeaseAuthority(identity, taskID, workKey, tier, stage string, gen uint64, now time.Time) error {
+	if h == nil {
+		return fmt.Errorf("%w: no contributor hub", errLeaseAuthority)
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	return h.leaseAuthorityLocked(identity, taskID, workKey, tier, stage, gen, now)
+}
+
+// FlushLeaseAuthority verifies the lease and forces the registry to disk, so a
+// caller may treat the lease as durable-before-dispatch (#8287/#8322). It is
+// the extwork.LeaseAuthority Flush half.
+func (h *ContributeWSHub) FlushLeaseAuthority(identity, taskID, workKey, tier, stage string, gen uint64, now time.Time) error {
+	if h == nil {
+		return fmt.Errorf("%w: no contributor hub", errLeaseAuthority)
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	if err := h.leaseAuthorityLocked(identity, taskID, workKey, tier, stage, gen, now); err != nil {
 		return err
 	}
-	s.hub.leaseMu.Lock()
-	if err := s.leaseMatchesLocked(adm); err != nil {
-		s.hub.leaseMu.Unlock()
-		return err
-	}
-	if err := s.hub.saveLeasesLocked(); err != nil {
-		s.hub.leaseMu.Unlock()
+	if err := h.saveLeasesLocked(); err != nil {
 		return fmt.Errorf("lease not durable: %w", err)
 	}
-	s.hub.leaseMu.Unlock()
-	return s.files.Persist(adm)
-}
-
-// Load implements extwork.AdmissionStore. A record without a matching live
-// lease is reported as absent: no lease, no authority.
-func (s *leaseAdmissionStore) Load(assignmentID string) (extwork.Admission, bool, error) {
-	adm, ok, err := s.files.Load(assignmentID)
-	if err != nil || !ok {
-		return extwork.Admission{}, false, err
-	}
-	s.hub.leaseMu.Lock()
-	err = s.leaseMatchesLocked(adm)
-	s.hub.leaseMu.Unlock()
-	if err != nil {
-		return extwork.Admission{}, false, nil
-	}
-	return adm, true, nil
-}
-
-// SaveReceipt implements extwork.ReceiptStore.
-func (s *leaseAdmissionStore) SaveReceipt(assignmentID string, raw []byte) error {
-	return s.files.SaveReceipt(assignmentID, raw)
-}
-
-// LoadReceipt implements extwork.ReceiptStore.
-func (s *leaseAdmissionStore) LoadReceipt(assignmentID string) ([]byte, bool, error) {
-	return s.files.LoadReceipt(assignmentID)
-}
-
-// auditProgressSink writes extwork progress events to the agent audit trail
-// as system actions keyed by assignment id, which is the lease's task id.
-type auditProgressSink struct {
-	sink agent.AuditSink
-}
-
-// Record implements extwork.ProgressSink.
-func (a auditProgressSink) Record(ev extwork.ProgressEvent) {
-	if a.sink == nil {
-		return
-	}
-	fields := agent.Fields("execution_key", string(ev.ExecutionKey))
-	if ev.State != "" {
-		fields["state"] = string(ev.State)
-	}
-	for k, v := range ev.Fields {
-		fields[k] = v
-	}
-	a.sink.Record("system", ev.Action, ev.AssignmentID, fields)
-}
-
-// extworkRecordDir is where admission records and verified receipts live.
-func extworkRecordDir() string {
-	return filepath.Join(outputschema.AgentReportDir, extworkRecordDirName)
-}
-
-// externalFlueBinding builds the Flue binding for this hub. It fails closed:
-// off by configuration, no contributor hub, or an engine that is not linked
-// into this build each return an error and construct nothing.
-func (s *Server) externalFlueBinding(now func() time.Time) (*extwork.Binding, error) {
-	var cfg *config.Config
-	if s != nil && s.deps != nil {
-		cfg = s.deps.Config
-	}
-	mode := cfg.FlueBindingMode()
-	if mode == config.FlueBindingModeOff {
-		return nil, errExternalBindingOff
-	}
-	if s.contributeHub == nil {
-		return nil, errExternalHubNotRunning
-	}
-	flueCfg := cfg.Runs.External.Flue
-	adapter, err := extworkRegistry.Open(extExecEngineFlue, map[string]string{
-		extwork.SettingEndpoint:        flueCfg.Endpoint,
-		extwork.SettingWorkflowVersion: flueCfg.WorkflowVersion,
-	})
-	if err != nil {
-		return nil, err
-	}
-	store := newLeaseAdmissionStore(s.contributeHub, extworkRecordDir(), now)
-	return extwork.New(adapter, store, store, auditProgressSink{sink: s.AgentAuditSink()}, mode), nil
+	return nil
 }
 
 // extExecEngineFromIssueMap reads the external engine an item asks for. Only

@@ -485,7 +485,7 @@ func TestCovGov_FeaturesExtFlueToggle(t *testing.T) {
 	if !s.deps.Config.Runs.External.Flue.Enabled || s.deps.Config.FlueBindingMode() != config.FlueBindingModeReportOnly {
 		t.Fatalf("config after PUT = %+v", s.deps.Config.Runs.External.Flue)
 	}
-	got := featuresSectionResponse(s.deps.Config)
+	got := s.featuresSectionWithLinked(s.deps.Config)
 	if got["extFlueEnabled"] != true || got["extFlueMode"] != config.FlueBindingModeReportOnly || got["extFlueLinked"] != false || got["extFlueEndpointSet"] != false {
 		t.Fatalf("features response = %v", got)
 	}

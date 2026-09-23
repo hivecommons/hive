@@ -148,7 +148,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(),
-		"features":              featuresSectionResponse(cfg),
+		"features":              s.featuresSectionWithLinked(cfg),
 		"review":                reviewSectionResponse(cfg),
 		"auto_merge":            autoMergeSectionResponse(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),

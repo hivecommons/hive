@@ -360,7 +360,9 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 		t.Fatal("conflict created a second run")
 	}
 
-	// Delete and recreate the engine: a different instance, empty state.
+	// Delete and recreate the engine: a different instance, empty state. The
+	// durable record knows the native run was accepted, so the run is lost
+	// with the old instance: uncertain, nothing adopted, nothing started.
 	p = p.restart("gen-b")
 	b2, sink := newBinding(t, p.adapter(""), store, extwork.ModeReportOnly)
 	rec, err := b2.Recover(ctx, adm, payload)
@@ -369,6 +371,32 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 	}
 	if st := p.stats(); st.Dispatches != 0 {
 		t.Fatalf("recreated engine received %d dispatches", st.Dispatches)
+	}
+	// The other half of the table: the process died after the engine accepted
+	// but before the record learned the run id, and the engine was recreated.
+	// Nothing is outstanding on the live instance, so the admission is
+	// re-pinned to it and started there exactly once.
+	crash := errors.New("simulated process death")
+	lostStore := extwork.NewFileStore(t.TempDir())
+	lost, _ := newBinding(t, p.adapter(""), lostStore, extwork.ModeReportOnly, extwork.WithHooks(extwork.Hooks{AfterStart: func() error { return crash }}))
+	lostAdm, lostPayload := admissionFor(t, "github:hivecommons/hive#502", "task-502", 1, nil)
+	if _, err := lost.Dispatch(ctx, lostAdm, lostPayload); !errors.Is(err, crash) {
+		t.Fatalf("crash not surfaced: %v", err)
+	}
+	if stored, _, _ := lostStore.Load(lostAdm.AssignmentID); stored.RemoteRunID != "" || stored.EngineIncarnation != "gen-b" {
+		t.Fatalf("record after crash = %+v", stored)
+	}
+	p = p.restart("gen-c")
+	after, _ := newBinding(t, p.adapter(""), lostStore, extwork.ModeReportOnly)
+	rec, err = after.Recover(ctx, lostAdm, lostPayload)
+	if err != nil || !rec.Started || rec.Adopted || rec.Uncertain || rec.Run.RemoteIncarnation != "gen-c" {
+		t.Fatalf("recover on recreated engine without recorded run = %+v %v", rec, err)
+	}
+	if st := p.stats(); st.Runs != 1 || st.Dispatches != 1 {
+		t.Fatalf("live engine after re-pin: %+v", st)
+	}
+	if stored, _, _ := lostStore.Load(lostAdm.AssignmentID); stored.EngineIncarnation != "gen-c" || stored.RemoteRunID != rec.Run.RemoteRunID {
+		t.Fatalf("record not re-pinned: %+v", stored)
 	}
 	if !hasAction(sink, extwork.EventRecovered) {
 		t.Fatalf("uncertainty not recorded: %v", sink.Actions())

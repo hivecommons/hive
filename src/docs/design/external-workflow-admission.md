@@ -235,7 +235,7 @@ Every observation in the audit linked from #8201 is accounted for here:
 | Engine-neutral contract | `src/pkg/extwork` | `Adapter` (keyed `Start`, `Observe` with accepted/running/waiting/terminal/unknown, `Cancel` returning requested/acknowledged/stopped as separate facts, `OpenArtifact` by execution key and relative path only), `Admission` and its derived `ExecutionKey`, the accept-or-decline `Host` step, `ProgressEvent`s, `Decide`, receipt fetch with path, size, and digest rules applied before parsing, `Registry`. |
 | Flue adapter | `src/pkg/extwork/flue` | Maps the contract onto Flue's native surface as probed at commit `c5a2a725fe1d93209ed294cca90af97060f6f2e2`: `idempotency_key` dispatch (`deduplicated`, `submission_conflict`), runtime uid as incarnation, abort, artifacts. Talks only to its configured endpoint, honours no proxy environment, carries no credential. Linked into `hive` only with `-tags extwork_flue`. |
 | Deterministic fixture | `src/pkg/extwork/flue/fixture` + `testdata/flue-fixture/` | A second local process that executes the three-stage workflow (`analyze`, `instrument`, `report`) from a pinned source bundle, advances only when ticked, resumes from its own state file, and can be told to ignore abort. No Node, network, model, or GitHub token. `cmd/flue-fixture` wraps it for `examples/flue/`. |
-| Hive seams | `src/pkg/dashboard/extwork_binding.go` | The task lease is the admission and authority record (`leaseAdmissionStore` refuses an admission that does not name a live lease with the same work key, generation, stage, tier, and identity, and forces the lease to disk before dispatch); progress events go to the agent audit trail; `externalFlueBinding` constructs the binding only when `runs.external.flue` is on and the engine is linked. The `ext-exec/flue` relay capability gates offers; an item bound to an engine is refused, never downgraded. |
+| Hive seams | `src/pkg/dashboard/extwork_binding.go`, `src/cmd/hive/extworkwire.go` | The task lease is the admission and authority record: the hub exports `VerifyLeaseAuthority`/`FlushLeaseAuthority` (extwork-free signatures, since the dashboard is at its internal-import ceiling and must not link the adapter), `extwork.LeaseStore` refuses an admission the hub does not vouch for and forces the lease to disk before dispatch; progress events go to the agent audit trail through `extwork.AuditProgressSink`; `cmd/hive` constructs the binding (`newExternalFlueBinding`) only when `runs.external.flue` is on and the engine is linked, and backs the dashboard's `ExternalExecution` status seam with the registry. The `ext-exec/flue` relay capability gates offers; an item bound to an engine is refused, never downgraded. |
 | Config and toggle | `runs.external.flue` in `hive.yaml`; Settings > Features | Default off. Enabled with no mode is shadow. `report-only` is the only mode that dispatches. Endpoint and workflow version are yaml-only. |
 
 ### Identity binding
@@ -245,9 +245,10 @@ contract revision, engine, workflow version, input revision)`. It deliberately
 excludes the request digest, so a changed bundle under an unchanged identity
 reaches the engine under the same key and is rejected there as
 `submission_conflict` (#8201 row 5) instead of quietly becoming a second run.
-The request digest, the contract and input revisions, and the engine
-incarnation pinned at dispatch are the parts the lease cannot hold; they are
-written beside the verified receipt under the agent report directory
+The request digest, the contract and input revisions, the engine incarnation
+pinned at dispatch, and the native run id recorded once the engine accepted
+are the parts the lease cannot hold; they are written beside the verified
+receipt under the agent report directory
 (`extwork/<assignment>.admission.json`), and `Load` re-checks the lease before
 trusting that file. No lease, no authority.
 
@@ -285,13 +286,13 @@ this build, and whether an endpoint is configured.
 
 | Situation | What Hive does | Operator action |
 | --- | --- | --- |
-| Binding off, or engine not linked | Nothing external happens; `externalFlueBinding` fails closed with a named error. | None. A build without `-tags extwork_flue` cannot be switched on by configuration. |
+| Binding off, or engine not linked | Nothing external happens; `newExternalFlueBinding` fails closed with a named error. | None. A build without `-tags extwork_flue` cannot be switched on by configuration. |
 | Shadow mode | Admissions are persisted and `ext_work_shadow_observed` is recorded; `Observe` reads native state; no `Start`, no `Cancel` effects. | Promote to `report-only` only after the shadow soak shows the expected admissions. |
 | Hub restarts before start | `Recover` finds the durable admission, asks the engine by key, gets not-found, and issues one keyed start (idempotent at the engine). | None. |
 | Hub restarts after the engine accepted | `Recover` observes the existing run and adopts it (`deduplicated: true`); no second dispatch. | None. |
 | Hub restarts after the receipt was persisted | `Recover` returns terminal from the receipt store; `Replay` rehydrates the typed receipt. The engine is not called. | None. |
 | Engine unreachable | `Observe` returns `unknown` with `ErrTransport`; `Recover` returns uncertain and starts nothing. | Fix the endpoint. When the same incarnation returns, its state wins. |
-| Engine deleted and recreated | The pinned incarnation no longer matches; `Observe` and `Recover` return `ErrIncarnationMismatch`; nothing is adopted or started. | Retire the assignment (a stage retry mints a new generation and therefore a new execution key) or restore the original engine state. |
+| Engine deleted and recreated | The pinned incarnation no longer matches, so whatever the new instance holds is never adopted. If the durable record names a native run, that run is lost with the old instance: `Recover` returns uncertain and starts nothing. If the record names no run (death after remote accept, before the record was updated), nothing is outstanding on the live instance: the admission is re-pinned to it and started once. | For the uncertain case, retire the assignment (a stage retry mints a new generation and therefore a new execution key) or restore the original engine state. |
 | Cancel ignored by the workload | `Cancel` records requested and acknowledged, `stopped: false`; the run stays visibly running. Late output is rejected when authority is no longer current. | Wait for the engine or retire the lease; never assume stopped. |
 | Receipt missing, truncated, wrong digest, malicious path, oversized | Refused before parsing; `ext_work_receipt_refused` is recorded; nothing is stored. | Inspect the engine. |
 | Engine reports no_change, blocked, failed, unknown | Own verdicts (`no_change`, `blocked`, `rejected`, `uncertain`); never success. | Per verdict. |

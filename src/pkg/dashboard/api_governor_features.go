@@ -323,6 +323,24 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 // planFromLabel is reported as a tri-state: null when the key is unset (falls
 // back to the ACMM-level gate), otherwise the explicit true/false the operator
 // chose, so the dialog can show "default" versus an explicit override.
+// featuresLinkedView adds the build-dependent external-execution flags that
+// only the server's ExternalExec seam knows (#8361).
+func (s *Server) featuresLinkedView() map[string]interface{} {
+	return map[string]interface{}{
+		"extFlueLinked": s.externalExecLinked(extExecEngineFlue),
+	}
+}
+
+// featuresSectionWithLinked is featuresSectionResponse plus the linked view,
+// which is what the governor config GET serves.
+func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interface{} {
+	out := featuresSectionResponse(cfg)
+	for k, v := range s.featuresLinkedView() {
+		out[k] = v
+	}
+	return out
+}
+
 func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	var planFromLabel interface{}
 	if cfg.Planning.PlanFromLabel != nil {
@@ -352,7 +370,6 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"extFlueEnabled":             cfg.Runs.External.Flue.Enabled,
 		"extFlueMode":                cfg.FlueBindingMode(),
 		"extFlueModes":               config.FlueBindingModes(),
-		"extFlueLinked":              extworkRegistry.Linked(extExecEngineFlue),
 		"extFlueEndpointSet":         strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
 		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,

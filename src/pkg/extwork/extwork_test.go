@@ -43,6 +43,9 @@ func testPayload() []byte { return []byte(`{"summary":"bounded bundle"}`) }
 // receiptJSON builds a valid stage_receipt AgentReport bound to adm.
 func receiptJSON(t *testing.T, adm Admission, class outputschema.StageReceiptResultClass, artifacts []outputschema.Artifact, mutate func(*outputschema.StageReceipt)) []byte {
 	t.Helper()
+	if artifacts == nil {
+		artifacts = []outputschema.Artifact{}
+	}
 	parts := make([]string, 0, len(artifacts))
 	for _, a := range artifacts {
 		parts = append(parts, strings.Join([]string{a.Repo, a.Path, a.Description}, "\x00"))
@@ -144,12 +147,12 @@ func (f *fakeAdapter) Observe(_ context.Context, key ExecutionKey, incarnation s
 	if f.observeErr != nil {
 		return Observation{}, f.observeErr
 	}
+	if incarnation != "" && incarnation != f.incarn {
+		return Observation{}, ErrIncarnationMismatch
+	}
 	run, ok := f.runs[key]
 	if !ok {
 		return Observation{}, ErrNotFound
-	}
-	if incarnation != "" && incarnation != f.incarn {
-		return Observation{}, ErrIncarnationMismatch
 	}
 	return Observation{State: f.state, RemoteRunID: run.id, RemoteIncarnation: f.incarn, Stage: "report", Receipt: f.receipt}, nil
 }
@@ -652,17 +655,64 @@ func TestBindingHooksAndRecover(t *testing.T) {
 	if _, err := New(f, store, nil, nil, ModeReportOnly).Recover(ctx, adm, []byte("tampered")); !errors.Is(err, ErrPayloadDigest) {
 		t.Fatalf("recover with tampered payload = %v", err)
 	}
-	// Recreated engine: the pinned incarnation no longer matches; neither
-	// adopt nor start.
+	// Recreated engine, record says a native run was accepted: never adopt
+	// what the new instance holds, never start again; uncertain.
 	recreated := newFake()
 	recStore := NewMemoryStore()
 	if _, err := New(recreated, recStore, nil, nil, ModeReportOnly).Dispatch(ctx, adm, testPayload()); err != nil {
 		t.Fatal(err)
 	}
+	if stored, _, _ := recStore.Load(adm.AssignmentID); stored.RemoteRunID != "run-1" || stored.EngineIncarnation != "inc-1" {
+		t.Fatalf("record after start = %+v", stored)
+	}
 	recreated.incarn = "inc-2"
+	recreated.runs = map[ExecutionKey]fakeRun{}
 	rec, err = New(recreated, recStore, nil, nil, ModeReportOnly).Recover(ctx, adm, testPayload())
 	if !errors.Is(err, ErrUncertain) || !errors.Is(err, ErrIncarnationMismatch) || !rec.Uncertain || rec.Adopted || rec.Started || recreated.starts != 1 {
-		t.Fatalf("recreated engine recover = %+v %v starts=%d", rec, err, recreated.starts)
+		t.Fatalf("recreated engine, recorded run: recover = %+v %v starts=%d", rec, err, recreated.starts)
+	}
+	// Recreated engine, record says no native run was recorded (death after
+	// remote accept, before the record was updated): nothing is outstanding on
+	// the live instance, so re-pin to it and start there.
+	unstarted := newFake()
+	unStore := NewMemoryStore()
+	if _, err := New(unstarted, unStore, nil, nil, ModeReportOnly, WithHooks(Hooks{AfterStart: func() error { return crash }})).Dispatch(ctx, adm, testPayload()); !errors.Is(err, crash) {
+		t.Fatalf("crash not surfaced: %v", err)
+	}
+	if stored, _, _ := unStore.Load(adm.AssignmentID); stored.RemoteRunID != "" {
+		t.Fatalf("record must not know the run yet: %+v", stored)
+	}
+	unstarted.incarn = "inc-2"
+	unstarted.runs = map[ExecutionKey]fakeRun{}
+	rec, err = New(unstarted, unStore, nil, nil, ModeReportOnly).Recover(ctx, adm, testPayload())
+	if err != nil || !rec.Started || rec.Adopted || rec.Uncertain || unstarted.starts != 2 || rec.Run.RemoteIncarnation != "inc-2" {
+		t.Fatalf("recreated engine, no recorded run: recover = %+v %v starts=%d", rec, err, unstarted.starts)
+	}
+	if stored, _, _ := unStore.Load(adm.AssignmentID); stored.EngineIncarnation != "inc-2" || stored.RemoteRunID != "run-1" {
+		t.Fatalf("record not re-pinned to the live engine: %+v", stored)
+	}
+	// Same situation in shadow mode starts nothing.
+	shadowFake := newFake()
+	shadowStore := NewMemoryStore()
+	_ = shadowStore.Persist(func() Admission { a := adm; a.EngineIncarnation = "inc-0"; return a }())
+	if rec, err := New(shadowFake, shadowStore, nil, nil, ModeShadow).Recover(ctx, adm, testPayload()); err != nil || rec.Started || shadowFake.starts != 0 {
+		t.Fatalf("shadow recreated recover = %+v %v starts=%d", rec, err, shadowFake.starts)
+	}
+	// Tampered payload and a pin failure on the live engine both refuse.
+	tampered := newFake()
+	tamperedStore := NewMemoryStore()
+	_ = tamperedStore.Persist(func() Admission { a := adm; a.EngineIncarnation = "inc-0"; return a }())
+	if _, err := New(tampered, tamperedStore, nil, nil, ModeReportOnly).Recover(ctx, adm, []byte("tampered")); !errors.Is(err, ErrPayloadDigest) {
+		t.Fatalf("recreated recover with tampered payload = %v", err)
+	}
+	tampered.pinErr = ErrTransport
+	if _, err := New(tampered, tamperedStore, nil, nil, ModeReportOnly).Recover(ctx, adm, testPayload()); !errors.Is(err, ErrTransport) || tampered.starts != 0 {
+		t.Fatalf("recreated recover with pin failure = %v starts=%d", err, tampered.starts)
+	}
+	tampered.pinErr = nil
+	tamperedStore.FailPersist = ErrStoreUnavailable
+	if _, err := New(tampered, tamperedStore, nil, nil, ModeReportOnly).Recover(ctx, adm, testPayload()); !errors.Is(err, ErrStoreUnavailable) || tampered.starts != 0 {
+		t.Fatalf("recreated recover with re-pin persist failure = %v starts=%d", err, tampered.starts)
 	}
 	// Transport failure: uncertain, nothing started.
 	f.observeErr = ErrTransport

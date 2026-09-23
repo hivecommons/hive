@@ -157,6 +157,10 @@ type Dependencies struct {
 	IssueChurn func(repo string, number int) (ghpkg.IssueChurn, bool)
 	HookFire   func(context.Context, hooks.Payload)
 	CELTrigger func(context.Context, celtrigger.NormalizedEvent, string)
+	// ExternalExec reports which external-execution engines are compiled
+	// into this binary (#8361). cmd/hive backs it with the extwork registry;
+	// nil means none, and the Features panel says so.
+	ExternalExec ExternalExecution
 }
 
 type NousState struct {

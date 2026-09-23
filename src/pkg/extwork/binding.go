@@ -179,7 +179,25 @@ func (b *Binding) start(ctx context.Context, adm Admission, payload []byte) (Dis
 			return DispatchResult{Started: true, Run: run}, err
 		}
 	}
+	if err := b.bindRun(adm, run); err != nil {
+		return DispatchResult{Started: true, Run: run}, err
+	}
 	return DispatchResult{Started: true, Run: run}, nil
+}
+
+// bindRun records the native run identity on the durable admission so a later
+// recovery can tell a dispatched run from one that never left. A failure here
+// is the "after remote accept, before record" window: the run exists, the
+// record does not say so, and Recover resolves it by asking the engine.
+func (b *Binding) bindRun(adm Admission, run StartResult) error {
+	adm.RemoteRunID = run.RemoteRunID
+	if run.RemoteIncarnation != "" {
+		adm.EngineIncarnation = run.RemoteIncarnation
+	}
+	if err := b.store.Persist(adm); err != nil {
+		return fmt.Errorf("record native run after start: %w", err)
+	}
+	return nil
 }
 
 // Observe reads the native state and records a progress event whenever the
@@ -235,8 +253,10 @@ type RecoverResult struct {
 // Recover resolves the ambiguous windows after a process death: before start,
 // after remote acceptance, or after receipt persistence. It refuses to act
 // without a durable admission, adopts an existing native run by execution
-// key, and only issues a keyed (idempotent) start when the engine positively
-// reports no run. A transport failure starts nothing.
+// key and pinned incarnation, and only issues a keyed (idempotent) start when
+// the engine positively reports no run. A transport failure starts nothing.
+// A recreated engine is never adopted: with a recorded native run the
+// operation is uncertain; without one the admission is re-pinned and started.
 func (b *Binding) Recover(ctx context.Context, adm Admission, payload []byte) (RecoverResult, error) {
 	if b.mode == ModeOff {
 		return RecoverResult{}, ErrDisabled
@@ -249,8 +269,10 @@ func (b *Binding) Recover(ctx context.Context, adm Admission, payload []byte) (R
 		return RecoverResult{}, ErrNoDurableAdmission
 	}
 	// The durable record, not the caller, says which engine incarnation was
-	// pinned; a caller cannot widen recovery by omitting it.
+	// pinned and whether a native run was ever recorded; a caller cannot
+	// widen recovery by omitting either.
 	adm.EngineIncarnation = stored.EngineIncarnation
+	adm.RemoteRunID = stored.RemoteRunID
 	if raw, ok, _ := b.receipts.LoadReceipt(adm.AssignmentID); ok && len(raw) > 0 {
 		b.record(EventRecovered, adm, StateTerminal, map[string]any{"window": "after_receipt_persistence"})
 		return RecoverResult{Adopted: true, Observation: Observation{State: StateTerminal, ObservedAt: b.now(), Detail: "settled receipt on record"}}, nil
@@ -258,9 +280,15 @@ func (b *Binding) Recover(ctx context.Context, adm Admission, payload []byte) (R
 	obs, err := b.adapter.Observe(ctx, adm.ExecutionKey(), adm.EngineIncarnation)
 	switch {
 	case err == nil:
+		run := StartResult{RemoteRunID: obs.RemoteRunID, RemoteIncarnation: obs.RemoteIncarnation, Deduplicated: true}
 		b.record(EventRecovered, adm, obs.State, map[string]any{"window": "after_remote_accept", "remote_run_id": obs.RemoteRunID})
 		b.progress(adm, obs)
-		return RecoverResult{Adopted: true, Observation: obs, Run: StartResult{RemoteRunID: obs.RemoteRunID, RemoteIncarnation: obs.RemoteIncarnation, Deduplicated: true}}, nil
+		if adm.RemoteRunID == "" {
+			if err := b.bindRun(adm, run); err != nil {
+				return RecoverResult{Adopted: true, Observation: obs, Run: run}, err
+			}
+		}
+		return RecoverResult{Adopted: true, Observation: obs, Run: run}, nil
 	case errors.Is(err, ErrNotFound):
 		if b.mode == ModeShadow {
 			b.record(EventShadowObserved, adm, StateUnknown, map[string]any{"external_start": false, "window": "before_start"})
@@ -278,12 +306,41 @@ func (b *Binding) Recover(ctx context.Context, adm Admission, payload []byte) (R
 	case errors.Is(err, ErrIncarnationMismatch):
 		// The engine was deleted and recreated (or is a different instance)
 		// since admission: whatever it holds under this key is unrelated
-		// work. Neither adopt it nor start again.
-		b.record(EventRecovered, adm, StateUnknown, map[string]any{"window": "incarnation_mismatch", "error": err.Error()})
-		return RecoverResult{Uncertain: true, Observation: Observation{State: StateUnknown, Detail: err.Error(), ObservedAt: b.now()}}, fmt.Errorf("%w: %v", ErrUncertain, err)
+		// work and is never adopted. If the durable record says a native run
+		// was accepted, that run is lost with the old instance and the
+		// operation stays uncertain. If it says no run was ever recorded,
+		// nothing is outstanding: re-pin to the live instance and start.
+		if adm.RemoteRunID != "" {
+			b.record(EventRecovered, adm, StateUnknown, map[string]any{"window": "incarnation_mismatch", "recorded_run": adm.RemoteRunID, "error": err.Error()})
+			return RecoverResult{Uncertain: true, Observation: Observation{State: StateUnknown, Detail: err.Error(), ObservedAt: b.now()}}, fmt.Errorf("%w: %w", ErrUncertain, err)
+		}
+		if b.mode == ModeShadow {
+			b.record(EventShadowObserved, adm, StateUnknown, map[string]any{"external_start": false, "window": "incarnation_mismatch"})
+			return RecoverResult{Observation: Observation{State: StateUnknown, ObservedAt: b.now()}}, nil
+		}
+		if adm.RequestDigest != RequestDigest(payload) {
+			return RecoverResult{}, ErrPayloadDigest
+		}
+		adm.EngineIncarnation = ""
+		if pinner, ok := b.adapter.(Pinner); ok {
+			incarnation, err := pinner.Incarnation(ctx)
+			if err != nil {
+				return RecoverResult{}, err
+			}
+			adm.EngineIncarnation = incarnation
+		}
+		if err := b.store.Persist(adm); err != nil {
+			return RecoverResult{}, fmt.Errorf("re-pin admission to the live engine: %w", err)
+		}
+		res, err := b.start(ctx, adm, payload)
+		if err != nil {
+			return RecoverResult{}, err
+		}
+		b.record(EventRecovered, adm, StateAccepted, map[string]any{"window": "incarnation_mismatch_not_started", "remote_run_id": res.Run.RemoteRunID})
+		return RecoverResult{Started: true, Run: res.Run, Observation: Observation{State: StateAccepted, RemoteRunID: res.Run.RemoteRunID, RemoteIncarnation: res.Run.RemoteIncarnation, ObservedAt: b.now()}}, nil
 	default:
 		b.record(EventRecovered, adm, StateUnknown, map[string]any{"window": "uncertain", "error": err.Error()})
-		return RecoverResult{Uncertain: true, Observation: Observation{State: StateUnknown, Detail: err.Error(), ObservedAt: b.now()}}, fmt.Errorf("%w: %v", ErrUncertain, err)
+		return RecoverResult{Uncertain: true, Observation: Observation{State: StateUnknown, Detail: err.Error(), ObservedAt: b.now()}}, fmt.Errorf("%w: %w", ErrUncertain, err)
 	}
 }
 

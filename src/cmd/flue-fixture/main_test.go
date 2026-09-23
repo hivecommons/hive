@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,11 +20,30 @@ const (
 	childEnv     = "FLUE_FIXTURE_MAIN_CHILD"
 )
 
+// syncBuffer is a bytes.Buffer safe for a writer goroutine and a reading
+// test; run writes the address line from inside the fixture.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestRunPrintsAddress drives run in-process: the fixture starts, prints its
 // address line, and exits cleanly when the context ends.
 func TestRunPrintsAddress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	var out, errOut bytes.Buffer
+	var out, errOut syncBuffer
 	done := make(chan int, 1)
 	go func() {
 		done <- run([]string{"-workflow", workflowDir, "-state", t.TempDir()}, &out, &errOut, func() (context.Context, context.CancelFunc) { return ctx, cancel })
