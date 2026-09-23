@@ -3128,7 +3128,9 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// later task_progress for this task cannot resurrect ownership and be
 			// re-minted a credential.
 			if completedTask != nil {
-				h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
+				if !h.completeImplementStage(identityOf(s.contributor), completedTask.TaskID, time.Now()) {
+					h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
+				}
 			}
 			verifiedPR := ""
 			var prDetail ghpkg.PRVerification

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 func runsTestServer(t *testing.T) (*Server, *Dependencies) {
 	t.Helper()
+	resetLifecycleStore()
 	s, deps := apiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	return s, deps
@@ -160,6 +162,96 @@ func TestRunProjectionScrubsTitleAndDetailUsesTimeline(t *testing.T) {
 	}
 	if !foundReceipt {
 		t.Fatalf("detail stages did not include timeline receipt: %+v", run.Stages)
+	}
+}
+
+func TestRunImplementTaskCompleteEndsRunAndFiresHook(t *testing.T) {
+	s, deps := runsTestServer(t)
+	capture := &hookCapture{}
+	deps.HookFire = capture.fire
+	now := time.Now().Add(-time.Minute)
+	const (
+		identity = "alice"
+		taskID   = "task-implement"
+		repo     = "myorg/repo1"
+		number   = 8460
+		key      = "myorg/repo1#8460"
+		gen      = uint64(7)
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage(identity, taskID, repo, number, key, "contributor", StageImplement, gen, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	conn := &ContributorConnection{
+		profile:        &ContributorProfile{ContributorID: identity, GitHubUsername: identity},
+		currentTask:    &WSTaskAssign{TaskID: taskID, Kind: "run", Stage: StageImplement, Repo: repo, Number: number, Key: key, Title: "implement gap 7"},
+		currentTaskGen: gen,
+		taskAssignedAt: now,
+	}
+	session := &wsSession{h: s.contributeHub, contributor: conn}
+
+	session.handleTaskComplete(WSMessage{Type: "task_complete", TaskID: taskID, TaskGen: gen, Result: "completed"})
+
+	runs, err := s.activeRuns(true)
+	if err != nil {
+		t.Fatalf("activeRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d, want completed run: %+v", len(runs), runs)
+	}
+	run := runs[0]
+	if run.Key != key || run.State != "completed" || run.Stage != "completed" || run.CompletedAt == "" {
+		t.Fatalf("completed run projection = %+v", run)
+	}
+	if run.WaitingOn != RunWaitingOnNone {
+		t.Fatalf("waiting_on = %q, want none", run.WaitingOn)
+	}
+	if stages, err := s.RunStageAccessor().PendingRunStages(context.Background()); err != nil || len(stages) != 0 {
+		t.Fatalf("pending run stages after completion = %+v, %v", stages, err)
+	}
+	hooks := capture.all()
+	if len(hooks) != 1 {
+		t.Fatalf("hooks len = %d, want 1: %+v", len(hooks), hooks)
+	}
+	if hooks[0].StageFrom != StageImplement || hooks[0].StageTo != "completed" || hooks[0].Gen != gen {
+		t.Fatalf("stage_completed hook = %+v", hooks[0])
+	}
+}
+
+func TestRunImplementTaskFailedDoesNotCompleteRun(t *testing.T) {
+	s, deps := runsTestServer(t)
+	capture := &hookCapture{}
+	deps.HookFire = capture.fire
+	now := time.Now().Add(-time.Minute)
+	const (
+		identity = "alice"
+		taskID   = "task-implement-failed"
+		repo     = "myorg/repo1"
+		number   = 8461
+		key      = "myorg/repo1#8461"
+		gen      = uint64(7)
+	)
+	if err := s.contributeHub.recordLeaseForKeyStage(identity, taskID, repo, number, key, "contributor", StageImplement, gen, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	conn := &ContributorConnection{
+		profile:        &ContributorProfile{ContributorID: identity, GitHubUsername: identity},
+		currentTask:    &WSTaskAssign{TaskID: taskID, Kind: "run", Stage: StageImplement, Repo: repo, Number: number, Key: key, Title: "implement gap 7"},
+		currentTaskGen: gen,
+		taskAssignedAt: now,
+	}
+	session := &wsSession{h: s.contributeHub, contributor: conn}
+
+	session.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: taskID, TaskGen: gen, Reason: "tests failed"})
+
+	runs, err := s.activeRuns(true)
+	if err != nil {
+		t.Fatalf("activeRuns: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("failed implement stage should not complete a run: %+v", runs)
+	}
+	if hooks := capture.all(); len(hooks) != 0 {
+		t.Fatalf("failure fired stage_completed hooks: %+v", hooks)
 	}
 }
 

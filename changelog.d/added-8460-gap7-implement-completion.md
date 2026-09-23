@@ -1,0 +1,1 @@
+- runs: treat task_complete on an implement-stage lease as the terminal run completion, firing stage_completed hooks and surfacing completed_at in the runs API

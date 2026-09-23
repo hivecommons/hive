@@ -77,9 +77,11 @@ type Run struct {
 	Key            string       `json:"key"`
 	Title          string       `json:"title"`
 	Repo           string       `json:"repo"`
+	State          string       `json:"state,omitempty"`
 	Stage          string       `json:"stage"`
 	Gen            uint64       `json:"gen"`
 	StageStartedAt string       `json:"stage_started_at,omitempty"`
+	CompletedAt    string       `json:"completed_at,omitempty"`
 	WaitingOn      RunWaitingOn `json:"waiting_on"`
 	WaitingReason  string       `json:"waiting_reason,omitempty"`
 	WaitingSince   string       `json:"waiting_since,omitempty"`
@@ -274,7 +276,9 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 	plans := s.runPlanSnapshots()
 	holds := runHumanReviewHolds(runReviewDispatchStatePath)
 	runs := make([]Run, 0, len(leases))
+	active := map[string]bool{}
 	for _, lease := range leases {
+		active[lease.key] = true
 		run := runFromLease(lease, plans[lease.key], holds[lease.key])
 		if run.PlanEpicID != "" {
 			run.ReviewWaves = s.planReviewWaves(run.PlanEpicID)
@@ -288,6 +292,15 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 			run.Stages = mergeRunTimelineStages(run.Stages, events)
 		}
 		runs = append(runs, run)
+	}
+	for _, journey := range s.LifecycleTimeline().Journeys(0) {
+		if active[journey.Ref] {
+			continue
+		}
+		run, ok := completedRunFromJourney(journey, includeTimeline, plans[journey.Ref])
+		if ok {
+			runs = append(runs, run)
+		}
 	}
 	sort.Slice(runs, func(i, j int) bool {
 		if runs[i].StageStartedAt != runs[j].StageStartedAt {
@@ -401,7 +414,7 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	started := formatRunTime(lease.stageStarted)
 	run := Run{
 		Key: lease.key, Title: redactTokens(lease.title), Repo: lease.repo,
-		Stage: lease.stage, Gen: lease.gen, StageStartedAt: started,
+		State: "active", Stage: lease.stage, Gen: lease.gen, StageStartedAt: started,
 		WaitingOn: RunWaitingOnAgent, Assignee: lease.identity,
 		ClaimedBy: lease.claimedBy, ClaimExpiresAt: formatRunTime(lease.claimExpiresAt), ClaimPosted: lease.claimPosted,
 		PlanEpicID:    plan.epicID,
@@ -426,6 +439,33 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	return run
 }
 
+func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runPlanSnapshot) (Run, bool) {
+	stage := j.Stages[timeline.KindStageCompleted]
+	if stage == nil || stage.Attrs == nil ||
+		stage.Attrs["stage_from"] != StageImplement || stage.Attrs["stage_to"] != "completed" {
+		return Run{}, false
+	}
+	gen, _ := strconv.ParseUint(stage.Attrs["gen"], 10, 64)
+	repo := ""
+	if ref, ok := worksource.ParseKey(j.Ref); ok {
+		repo = ref.Repo
+	}
+	run := Run{
+		Key: j.Ref, Title: j.Ref, Repo: repo,
+		State: "completed", Stage: "completed", Gen: gen,
+		StageStartedAt: formatRunTime(time.UnixMilli(stage.FirstAt)),
+		CompletedAt:    formatRunTime(time.UnixMilli(stage.LastAt)),
+		WaitingOn:      RunWaitingOnNone,
+		Assignee:       stage.Agent,
+		PlanEpicID:     plan.epicID,
+		Stages:         completedRunStages(gen),
+	}
+	if includeTimeline {
+		run.Stages = mergeRunTimelineStages(run.Stages, synthesizeRunJourneyEvents(j))
+	}
+	return run, true
+}
+
 func leaseRunStages(current string, gen uint64) []RunStage {
 	out := make([]RunStage, 0, len(orderedLeaseStages))
 	seenCurrent := false
@@ -443,6 +483,41 @@ func leaseRunStages(current string, gen uint64) []RunStage {
 		out = append(out, RunStage{Name: name, Status: status, Gen: stageGen})
 	}
 	return out
+}
+
+func completedRunStages(gen uint64) []RunStage {
+	out := make([]RunStage, 0, len(orderedLeaseStages))
+	for _, name := range orderedLeaseStages {
+		stageGen := uint64(0)
+		if name == StageImplement {
+			stageGen = gen
+		}
+		out = append(out, RunStage{Name: name, Status: "completed", Gen: stageGen})
+	}
+	return out
+}
+
+func synthesizeRunJourneyEvents(j timeline.Journey) []timeline.Event {
+	events := make([]timeline.Event, 0, len(j.Stages))
+	for kind, stage := range j.Stages {
+		if stage == nil {
+			continue
+		}
+		events = append(events, timeline.Event{
+			IssueRef: j.Ref,
+			Kind:     kind,
+			Agent:    stage.Agent,
+			At:       stage.LastAt,
+			Attrs:    stage.Attrs,
+		})
+	}
+	sort.Slice(events, func(i, k int) bool {
+		if events[i].At != events[k].At {
+			return events[i].At > events[k].At
+		}
+		return events[i].ID < events[k].ID
+	})
+	return events
 }
 
 func mergeRunTimelineStages(stages []RunStage, events []timeline.Event) []RunStage {

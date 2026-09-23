@@ -353,6 +353,15 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	if _, ok := s3.Journey("r#2"); !ok {
 		t.Fatal("post-restore journey not persisted")
 	}
+	s3.Record(Event{IssueRef: "run#1", Kind: KindStageCompleted, At: base + 30,
+		Attrs: map[string]string{"stage_from": "implement", "stage_to": "completed"}})
+	s4 := NewStoreWithCap(10)
+	if err := s4.EnablePersistence(path, logger); err != nil {
+		t.Fatalf("reload 3: %v", err)
+	}
+	if _, ok := s4.Journey("run#1"); !ok {
+		t.Fatal("stage_completed journey not persisted")
+	}
 }
 
 func TestPersistenceCorruptFileStartsEmptyAndMovesAside(t *testing.T) {

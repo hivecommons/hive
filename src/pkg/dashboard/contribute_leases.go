@@ -399,6 +399,10 @@ func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason
 // back from a hand-off (`t.attrs.reset == "true"`), and the runs API reads
 // the reason back out of the timeline event as stage history.
 func (h *ContributeWSHub) emitLeaseStageTransition(from, to, reason string, reset bool, l taskLease) {
+	h.emitLeaseStageTransitionAt(from, to, reason, reset, l, time.Time{})
+}
+
+func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, reset bool, l taskLease, at time.Time) {
 	if h == nil || h.server == nil {
 		return
 	}
@@ -416,10 +420,15 @@ func (h *ContributeWSHub) emitLeaseStageTransition(from, to, reason string, rese
 	if reset {
 		attrs["reset"] = "true"
 	}
+	eventAt := int64(0)
+	if !at.IsZero() {
+		eventAt = at.UnixMilli()
+	}
 	h.server.LifecycleTimeline().Record(timeline.Event{
 		IssueRef: l.runKey(),
 		Kind:     timeline.KindStageCompleted,
 		Agent:    l.identity,
+		At:       eventAt,
 		Attrs:    attrs,
 	})
 	payload := hooks.Payload{
@@ -450,6 +459,32 @@ func (h *ContributeWSHub) emitLeaseStageTransition(from, to, reason string, rese
 			}, leaseStageTransitionSummary(from, to, reason, reset, l.taskID))
 		}
 	}
+}
+
+func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now time.Time) bool {
+	if h == nil || identity == "" || taskID == "" {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	h.leaseMu.Lock()
+	l := h.leaseForLocked(identity, taskID)
+	if l == nil || l.stage != StageImplement || l.expiresAt.IsZero() || now.After(l.expiresAt) {
+		h.leaseMu.Unlock()
+		return false
+	}
+	completed := *l
+	delete(h.leases, leaseKey(identity, taskID))
+	if err := h.saveLeasesLocked(); err != nil {
+		h.logger.Warn("[contribute-ws] completed implement lease revoked in memory but not persisted",
+			"identity", identity, "task", taskID, "error", err)
+	}
+	h.leaseMu.Unlock()
+
+	h.recordLeaseStageAudit(agent.AuditLeaseStageAdvanced, taskID, StageImplement, "completed", "", completed.gen)
+	h.emitLeaseStageTransitionAt(StageImplement, "completed", "", false, completed, now)
+	return true
 }
 
 // leaseStageTransitionSummary is the one-line CEL trigger description of a
