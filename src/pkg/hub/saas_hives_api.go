@@ -244,6 +244,7 @@ type MyHiveEntry struct {
 	// from the embedded RegistryEntry.Health (the raw spoke-reported blob) to
 	// avoid shadowing it. See health_verdict.go.
 	HealthVerdict *HealthVerdict `json:"healthVerdict,omitempty"`
+	StalledRuns   bool           `json:"stalledRuns,omitempty"`
 
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
@@ -797,6 +798,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			result[i].HealthVerdict = &verdict
+		}
+		if stalled, _ := stalledRunWaitingOnHuman(result[i].Runs, journeyNow); stalled {
+			result[i].StalledRuns = true
 		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series

@@ -4600,6 +4600,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					reg, active := b.dashSrv.ContributorSummary()
 					return spoke.ContributorSummary{Registered: reg, Active: active}
 				}(),
+				Runs:        b.dashSrv.HeartbeatRunsSummary(),
 				Leaderboard: b.leaderboardForHeartbeat(),
 				// Report who has a live dashboard session so the hub can accumulate
 				// per-user "time in hive". Bare usernames only — never session

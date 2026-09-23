@@ -67,6 +67,7 @@ func hubPortFromEnv(getenv func(string) string) int {
 func wireHubHooks(logger *slog.Logger, configPath string) {
 	cfg, err := config.LoadWithDashboardOverlay(configPath)
 	if err == nil {
+		hub.SetFleetRunWaitAmberSeconds(cfg.Fleet.RunWaitAmberSeconds)
 		notifier := notify.New(cfg.Notifications, logger)
 		notifier.SetHiveID(cfg.HiveID)
 		buildHookDispatcher(cfg, hookSinks{Notifier: notifier}, logger)

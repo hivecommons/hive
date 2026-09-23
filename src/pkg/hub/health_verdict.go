@@ -2,7 +2,10 @@ package hub
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -59,6 +62,7 @@ type HealthVerdict struct {
 	// signature is allowed to re-explain. Precondition reds (App, budget,
 	// login) never set it, which is what makes them win by construction.
 	staleOutput bool
+	causeAt     string
 }
 
 // hiveHealthFor computes the verdict for one registry entry. rollup is the
@@ -247,6 +251,22 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 		return v
 	}
 
+	if stalled, since := stalledRunWaitingOnHuman(e.Runs, now); stalled {
+		v.State = HealthStateAmber
+		v.cause = causeRunWaitingOnHuman
+		v.causeAt = since
+		v.Reason = "run waiting on human since " + since
+		return v
+	}
+	advisoryPostFailing := e.ACMMLevel == acmmAdvisoryMax && e.AdvisoryError != "" && !appAwaitingDelivery(e)
+	if completedAt := recentRunStageCompletedAt(e.Runs, now); completedAt != "" && e.ACMMLevel > acmmInceptionMax && !advisoryPostFailing {
+		v.State = HealthStateGreen
+		v.OutputKind = "run-stage"
+		v.LastOutputAt = completedAt
+		v.Reason = "run stage completed " + humanizeAge(now.Sub(mustParseRFC3339(completedAt)))
+		return v
+	}
+
 	switch {
 	case e.ACMMLevel <= acmmInceptionMax:
 		// L1 Inception: no output is produced by design. Preconditions were the
@@ -343,6 +363,56 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 		}
 		return verdict
 	}
+}
+
+const defaultRunWaitAmberSeconds int64 = 3600
+
+var configuredRunWaitAmberSeconds atomic.Int64
+
+func SetFleetRunWaitAmberSeconds(seconds int64) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	configuredRunWaitAmberSeconds.Store(seconds)
+}
+
+func runWaitAmberSeconds() int64 {
+	if configured := configuredRunWaitAmberSeconds.Load(); configured > 0 {
+		return configured
+	}
+	v := strings.TrimSpace(os.Getenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS"))
+	if v == "" {
+		return defaultRunWaitAmberSeconds
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return defaultRunWaitAmberSeconds
+	}
+	return n
+}
+
+func stalledRunWaitingOnHuman(runs *RunsSummary, now time.Time) (bool, string) {
+	if runs == nil || runs.OldestWaitSeconds == nil || *runs.OldestWaitSeconds <= runWaitAmberSeconds() {
+		return false, ""
+	}
+	since := now.Add(-time.Duration(*runs.OldestWaitSeconds) * time.Second).UTC().Format(time.RFC3339)
+	return true, since
+}
+
+func recentRunStageCompletedAt(runs *RunsSummary, now time.Time) string {
+	if runs == nil || runs.LastStageCompletedAt == nil {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, *runs.LastStageCompletedAt)
+	if err != nil || t.IsZero() || now.Sub(t) < 0 || now.Sub(t) > healthRecencyWindow {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func mustParseRFC3339(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
 }
 
 func explainOutputFreshness(e RegistryEntry, v HealthVerdict, queuedWork int, now time.Time) HealthVerdict {

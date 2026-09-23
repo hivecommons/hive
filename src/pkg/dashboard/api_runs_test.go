@@ -60,6 +60,30 @@ func TestRunsListNoRunLeasesAndStatusZeros(t *testing.T) {
 	}
 }
 
+func TestHeartbeatRunsSummaryUsesRunProjectionFields(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	runs := []Run{
+		{Key: "o/r#1", WaitingOn: RunWaitingOnHuman, WaitingSince: now.Add(-2 * time.Hour).Format(time.RFC3339)},
+		{Key: "o/r#2", WaitingOn: RunWaitingOnAgent},
+	}
+	got := heartbeatRunsSummary(runs, func(key string) []timeline.Event {
+		if key != "o/r#1" {
+			return nil
+		}
+		return []timeline.Event{{IssueRef: key, Kind: timeline.KindStageCompleted, At: now.Add(-30 * time.Minute).UnixMilli()}}
+	}, now)
+	if got == nil || got.Active == nil || *got.Active != 2 || got.WaitingOnHuman == nil || *got.WaitingOnHuman != 1 {
+		t.Fatalf("summary counts = %+v", got)
+	}
+	if got.OldestWaitSeconds == nil || *got.OldestWaitSeconds != int64((2*time.Hour)/time.Second) {
+		t.Fatalf("oldest wait = %+v", got.OldestWaitSeconds)
+	}
+	wantCompleted := now.Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	if got.LastStageCompletedAt == nil || *got.LastStageCompletedAt != wantCompleted {
+		t.Fatalf("last stage completed = %+v, want %s", got.LastStageCompletedAt, wantCompleted)
+	}
+}
+
 func TestRunsPlanDraftWaitsOnHuman(t *testing.T) {
 	s, deps := runsTestServer(t)
 	store, err := beads.NewStore(t.TempDir())

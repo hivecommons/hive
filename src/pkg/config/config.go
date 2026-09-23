@@ -48,6 +48,7 @@ type Config struct {
 	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
 	Hub           HubConfig              `yaml:"hub"`
+	Fleet         FleetConfig            `yaml:"fleet,omitempty" json:"fleet,omitempty"`
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
@@ -1849,6 +1850,10 @@ type FleetReportConfig struct {
 	// The zero value is dry-run, which still surfaces the would-file reports on
 	// the dashboard for operator review.
 	FileUpstream bool `yaml:"file_upstream,omitempty" json:"file_upstream,omitempty"`
+}
+
+type FleetConfig struct {
+	RunWaitAmberSeconds int64 `yaml:"run_wait_amber_seconds,omitempty" json:"run_wait_amber_seconds,omitempty"`
 }
 
 func (f FleetReportConfig) DryRun() bool { return !f.FileUpstream }

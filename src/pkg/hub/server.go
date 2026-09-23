@@ -378,6 +378,9 @@ type RegistryEntry struct {
 	RepoActivityCollectedAt      time.Time          `json:"repoActivityCollectedAt,omitempty"`
 	RepoActivityWindowHours      int                `json:"repoActivityWindowHours,omitempty"`
 	RepoActivityCountWindowHours int                `json:"repoActivityCountWindowHours,omitempty"`
+	// Runs is the optional run-state summary reported by v6 spokes. Nil means
+	// old spoke or unavailable projection: unknown, never a substituted zero.
+	Runs *RunsSummary `json:"runs,omitempty"`
 
 	// Quadrant signals reported by the spoke (nil = not reported). These back
 	// the per-hive quadrant score; see quadrant.go for how each is used and
@@ -2015,6 +2018,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RepoActivityCollectedAt:      parseHeartbeatTime(payload.RepoActivityCollectedAt),
 		RepoActivityWindowHours:      clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
 		RepoActivityCountWindowHours: clampInt(payload.RepoActivityCountWindowHours, 0, repoActivityMaxWindowHours),
+		Runs:                         sanitizeRunsSummary(payload.Runs),
 	}
 
 	// Fleet-wide agent backend-auth canary (#6558): computed hub-side from
@@ -4447,6 +4451,7 @@ func clampInt(v, min, max int) int {
 // malicious or buggy spoke can't inflate the public fleet total with an absurd
 // value. Ten million PRs from one hive is already far beyond plausible.
 const maxFleetCount = 10_000_000
+const maxRunWaitSeconds int64 = 365 * 24 * 60 * 60
 
 // maxQuadrantSpend bounds a hive's reported per-window token spend for the same
 // reason maxFleetCount bounds counts, but the stakes differ: quadrant scores are
@@ -4467,6 +4472,34 @@ func clampFleetCount(v *int) *int {
 	}
 	c := clampInt(*v, 0, maxFleetCount)
 	return &c
+}
+
+func sanitizeRunsSummary(in *RunsSummary) *RunsSummary {
+	if in == nil {
+		return nil
+	}
+	out := &RunsSummary{}
+	if in.Active != nil && *in.Active >= 0 {
+		v := clampInt(*in.Active, 0, maxFleetCount)
+		out.Active = &v
+	}
+	if in.WaitingOnHuman != nil && *in.WaitingOnHuman >= 0 {
+		v := clampInt(*in.WaitingOnHuman, 0, maxFleetCount)
+		out.WaitingOnHuman = &v
+	}
+	if in.OldestWaitSeconds != nil && *in.OldestWaitSeconds >= 0 {
+		v := clampInt64(*in.OldestWaitSeconds, 0, maxRunWaitSeconds)
+		out.OldestWaitSeconds = &v
+	}
+	if in.LastStageCompletedAt != nil {
+		if t := sanitizeHeartbeatTime(*in.LastStageCompletedAt); t != "" {
+			out.LastStageCompletedAt = &t
+		}
+	}
+	if out.Active == nil && out.WaitingOnHuman == nil && out.OldestWaitSeconds == nil && out.LastStageCompletedAt == nil {
+		return nil
+	}
+	return out
 }
 
 // clampQuadrantSpend sanitises a reported token spend the same way

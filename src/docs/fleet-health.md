@@ -18,6 +18,9 @@ The verdict answers one question:
 The verdict is computed on the hub at read time from signals the spoke
 already reports in its heartbeat; it costs the spoke no extra work and no
 extra GitHub API calls.
+Run-stage completions reported by a v6 spoke also count as recent output, so
+a hive doing a long design/spec workflow does not go red merely because its
+current production is happening inside a run instead of as a repo write.
 
 This is a different check from
 [dashboard route and health checks](health-checks.md), which covers HTTP
@@ -77,6 +80,10 @@ Three gates soften "no output" into green before anything goes red:
   produced and then correctly stood down — the next move is a person's.
   The chip reads "awaiting human review — N held for approval" and the row
   goes amber instead of red.
+- **Run-stage output.** A `stage_completed` event from the runs projection in
+  the last 12 hours is treated as output with kind `run-stage`. A legacy spoke
+  that omits the optional runs heartbeat field stays unknown for runs and is
+  judged exactly as before.
 
 ## Precedence: the most fundamental cause wins
 
@@ -147,6 +154,10 @@ fault:
   behind stable". One commit behind is a rollout in flight and is ignored,
   as is any hive where the channel signals are absent. See
   [release channels](release-channels.md).
+- **Run waiting on human (green/red → amber).** A run whose oldest
+  human-wait age exceeds `fleet.run_wait_amber_seconds` (default 3600) ambers
+  with "run waiting on human since \<time\>". This cause never turns a hive
+  red by itself; the operator action is to approve or reject the run.
 
 L1 (Inception) hives and non-reporting hives are exempt from all detector
 layering: no output is expected there, so a configuration gap is not a
@@ -172,6 +183,7 @@ agents down, advisory stale, …) deliberately get none rather than a guess.
 | No cadence | "agent(s) NAME enabled but never kicked — set cadences" | amber | Set cadences on the agent card | spoke dashboard agent card |
 | Hold stale | "awaiting human review — N held for approval" | amber | Review the needs-human queue | the repo's PR list (direct link) |
 | Channel lag | "spoke lags its channel — N commits behind stable" | amber | Check auto-upgrade / force rollout | hub fleet version controls |
+| Run waiting on human | "run waiting on human since \<time\>" | amber | A run has waited on a human decision since \<time\>. Approve or reject it from the dashboard Runs section or `!runs`. | spoke dashboard Runs |
 
 ## Detector semantics
 

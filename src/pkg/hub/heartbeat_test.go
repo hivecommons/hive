@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -21,5 +22,43 @@ func TestDashboardHostSupplementalCases(t *testing.T) {
 				t.Fatalf("dashboardHost(%q) = %q, want %q", tt.rawURL, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHeartbeatPayloadRunsRoundTripOptional(t *testing.T) {
+	raw, err := json.Marshal(HeartbeatPayload{HiveID: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) == "" || !json.Valid(raw) {
+		t.Fatalf("invalid json: %s", raw)
+	}
+	var legacy HeartbeatPayload
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Runs != nil {
+		t.Fatalf("legacy runs = %+v, want nil", legacy.Runs)
+	}
+
+	active, waiting := 3, 2
+	oldest := int64(7200)
+	completed := "2026-09-22T10:00:00Z"
+	withRuns := HeartbeatPayload{HiveID: "v6", Runs: &RunsSummary{
+		Active: &active, WaitingOnHuman: &waiting, OldestWaitSeconds: &oldest, LastStageCompletedAt: &completed,
+	}}
+	raw, err = json.Marshal(withRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got HeartbeatPayload
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Runs == nil || got.Runs.Active == nil || *got.Runs.Active != active ||
+		got.Runs.WaitingOnHuman == nil || *got.Runs.WaitingOnHuman != waiting ||
+		got.Runs.OldestWaitSeconds == nil || *got.Runs.OldestWaitSeconds != oldest ||
+		got.Runs.LastStageCompletedAt == nil || *got.Runs.LastStageCompletedAt != completed {
+		t.Fatalf("runs round trip = %+v", got.Runs)
 	}
 }

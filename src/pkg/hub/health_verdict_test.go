@@ -27,10 +27,105 @@ func okRollup() agentFleetRollup {
 
 func okApp() GitHubAppHealth { return GitHubAppHealth{Bucket: ghAppBucketOK} }
 
+func int64Ptr(v int64) *int64 { return &v }
+
 // withActivity attaches a repo-activity summary to an entry and returns it.
 func withActivity(e RegistryEntry, repos ...RepoActivityWire) RegistryEntry {
 	e.RepoActivity = repos
 	return e
+}
+
+func TestHiveHealthFor_RunStageOutputCountsAsOutput(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	completed := now.Add(-30 * time.Minute).Format(time.RFC3339)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+		Runs: &RunsSummary{LastStageCompletedAt: &completed},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 8, now)
+	if v.State != HealthStateGreen || v.OutputKind != "run-stage" || v.LastOutputAt != completed {
+		t.Fatalf("verdict = %+v, want green run-stage output", v)
+	}
+}
+
+func TestHiveHealthFor_RunStageDoesNotMaskAdvisoryPostFailure(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	completed := now.Add(-30 * time.Minute).Format(time.RFC3339)
+	e := RegistryEntry{
+		Online:               true,
+		ACMMLevel:            2,
+		AdvisoryLastPostedAt: now.Add(-30 * time.Minute).Format(time.RFC3339),
+		AdvisoryError:        "403 issues:write denied",
+		Agents: []AgentSummary{{
+			Name: "advisor", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true,
+		}},
+		Runs: &RunsSummary{LastStageCompletedAt: &completed},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 3, now)
+	if v.State != HealthStateRed || v.Reason != "advisory posting failing" {
+		t.Fatalf("verdict = %+v, want advisory failure to outrank run-stage output", v)
+	}
+}
+
+func TestHiveHealthFor_RunSummaryAbsentDoesNotInventZero(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{Online: true, ACMMLevel: 4, Agents: []AgentSummary{{
+		Name: "quality", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+	}}}
+	v := hiveHealthFor(e, okRollup(), okApp(), 0, now)
+	if v.State != HealthStateGreen || v.OutputKind == "run-stage" {
+		t.Fatalf("verdict = %+v, want ordinary idle verdict without fabricated run zero", v)
+	}
+}
+
+func TestHiveHealthFor_StalledRunWaitingOnHumanIsAmberWithHint(t *testing.T) {
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+		Runs: &RunsSummary{OldestWaitSeconds: int64Ptr(7200)},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 2, now)
+	if v.State != HealthStateAmber || v.Remediation == nil {
+		t.Fatalf("verdict = %+v, want amber with remediation", v)
+	}
+	if !strings.Contains(v.Remediation.Action, "since 2026-09-22T10:00:00Z") || !strings.Contains(v.Remediation.Action, "`!runs`") {
+		t.Fatalf("remediation = %+v, want runs human-wait hint", v.Remediation)
+	}
+}
+
+func TestHiveHealthFor_RunWaitThresholdIsStrictlyGreater(t *testing.T) {
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "architect", State: agentStateRunning, Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+		Runs: &RunsSummary{OldestWaitSeconds: int64Ptr(3600)},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 0, now)
+	if v.State == HealthStateAmber || v.cause == causeRunWaitingOnHuman {
+		t.Fatalf("verdict = %+v, threshold boundary must not amber", v)
+	}
+}
+
+func TestRunWaitAmberSecondsUsesConfiguredFleetKey(t *testing.T) {
+	t.Cleanup(func() { SetFleetRunWaitAmberSeconds(0) })
+	t.Setenv("HIVE_FLEET_RUN_WAIT_AMBER_SECONDS", "3600")
+	SetFleetRunWaitAmberSeconds(42)
+	if got := runWaitAmberSeconds(); got != 42 {
+		t.Fatalf("runWaitAmberSeconds = %d, want configured fleet.run_wait_amber_seconds", got)
+	}
 }
 
 func TestHiveHealthFor_GatewayFaultPrecedesInferredAppBroken(t *testing.T) {

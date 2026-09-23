@@ -28,6 +28,7 @@ const (
 	causeNoCadence           = "no-cadence"
 	causeHoldStale           = "hold-stale"
 	causeChannelLag          = "channel-lag"
+	causeRunWaitingOnHuman   = "run-waiting-on-human"
 	// The three families the 2026-09-02 fleet sweep found carrying no hint at
 	// all (#5699). Each verdict already named its condition precisely; none
 	// named a fix, so eleven non-green spokes rendered a WHY chip with nothing
@@ -195,6 +196,16 @@ func attachRemediation(v *HealthVerdict, e RegistryEntry) {
 		v.Remediation = &Remediation{
 			Action:  "Spoke lags its channel — check auto-upgrade / force rollout",
 			Surface: "hub fleet version controls",
+		}
+	case causeRunWaitingOnHuman:
+		since := strings.TrimSpace(v.causeAt)
+		if since == "" {
+			since = "an unknown time"
+		}
+		v.Remediation = &Remediation{
+			Action:  "A run has waited on a human decision since " + since + ". Approve or reject it from the dashboard Runs section or `!runs`.",
+			Surface: "spoke dashboard Runs",
+			Link:    link(""),
 		}
 	case causeAgentsDown:
 		// Three spokes at the sweep, one of them running supervisor-down for

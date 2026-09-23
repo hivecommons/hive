@@ -269,6 +269,7 @@
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
     <label><input type="checkbox" id="showHealthy"> show healthy</label>
     <label><input type="checkbox" id="showUnassigned"> show unassigned</label>
+    <label><input type="checkbox" id="stalledRunsOnly"> stalled runs</label>
     <label>advisory output
       <select id="advisoryFilter">
         <option value="">all</option>
@@ -317,11 +318,12 @@
         <th>Mode</th>
         <th>Version</th>
         <th>Divergence (expects · running · able)</th>
+        <th>Runs</th>
         <th>Output (90d)</th>
       </tr>
     </thead>
     <tbody id="rows">
-      <tr><td colspan="7" class="status-msg" id="statusCell">Loading fleet…</td></tr>
+      <tr><td colspan="8" class="status-msg" id="statusCell">Loading fleet…</td></tr>
     </tbody>
   </table>
 </div>
@@ -489,6 +491,18 @@ function sumRepoActivity(repos, key) {
   return { count: count, newestAt: newest };
 }
 
+function runsHTML(h) {
+  var r = h.runs;
+  if (!r) return '<span class="output">runs: unknown</span>';
+  var active = r.active == null ? "unknown" : r.active;
+  var waiting = r.waiting_on_human == null ? "unknown" : r.waiting_on_human;
+  var label = "runs: " + active + " (" + waiting + " waiting)";
+  var title = label;
+  if (r.oldest_wait_seconds != null) title += " · oldest wait " + Math.round(Number(r.oldest_wait_seconds) / 60) + "m";
+  if (r.last_stage_completed_at) title += " · last stage " + relTime(r.last_stage_completed_at);
+  return '<span class="output" title="' + esc(title) + '">' + esc(label) + '</span>';
+}
+
 // outputHTML shows a hive's output the way its ACMM level is JUDGED, so the
 // cell answers the same question the verdict does:
 //   L1 Inception → "—" (produces nothing by design)
@@ -609,6 +623,7 @@ function diagnosisHTML(h) {
     add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);
   }
   if (h.inactiveAgentsReason) add("inactive agents", esc(h.inactiveAgentsReason), true);
+  add("runs", runsHTML(h), !!h.stalledRuns);
   if (h.agentRosterMismatch && h.agentRosterMismatch.reason) add("agent roster", esc(h.agentRosterMismatch.reason), false);
   if (h.urlUnreachableReason) add("dashboard url", esc(h.urlUnreachableReason), true);
   if (!h.online && h.lastHeartbeat) add("last heartbeat", esc(relTime(h.lastHeartbeat)), true);
@@ -818,6 +833,7 @@ var expanded = {};      // hive id -> true when its agent rows are open
 var problemsOnly = false;
 var showHealthy = false; // when false, healthy hives are hidden to cut noise
 var showUnassigned = false; // pool spokes are hidden until explicitly requested
+var stalledRunsOnly = false;
 var advisoryFilter = "";
 var budgetFilter = "";
 var githubAppFilter = "";
@@ -871,6 +887,7 @@ function renderHives(hives) {
     var h = row.h, health = row.health;
     if (!showUnassigned && isUnassignedHive(h)) return false;
     if (problemsOnly && health !== "problem") return false;
+    if (stalledRunsOnly && !h.stalledRuns) return false;
     if (!problemsOnly && !showHealthy && health === "ok") return false;
     if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return false;
     if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return false;
@@ -899,6 +916,7 @@ function renderHives(hives) {
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
+      '<td>' + runsHTML(h) + '</td>' +
       '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
     tb.appendChild(tr);
     var link = tr.querySelector(".hive-link");
@@ -921,7 +939,7 @@ function renderHives(hives) {
       var drow = document.createElement("tr");
       drow.className = "agent" + (isProblem ? " is-problem" : "");
       drow.style.display = open ? "" : "none";
-      drow.innerHTML = '<td></td><td class="aname" colspan="6">' + diag + '</td>';
+      drow.innerHTML = '<td></td><td class="aname" colspan="7">' + diag + '</td>';
       tb.appendChild(drow);
       subRows.push(drow);
     }
@@ -948,7 +966,7 @@ function renderHives(hives) {
       var empty = document.createElement("tr");
       empty.className = "agent";
       empty.style.display = open ? "" : "none";
-      empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
+      empty.innerHTML = '<td></td><td class="aname" colspan="7"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
     }
@@ -961,7 +979,7 @@ function renderHives(hives) {
       var draw = document.createElement("tr");
       draw.className = "agent";
       draw.style.display = open ? "" : "none";
-      draw.innerHTML = '<td></td><td class="aname" colspan="6">' + drill + '</td>';
+      draw.innerHTML = '<td></td><td class="aname" colspan="7">' + drill + '</td>';
       tb.appendChild(draw);
       subRows.push(draw);
     }
@@ -985,7 +1003,7 @@ function renderHives(hives) {
       ? "No problems — every governor-expected agent is delivering and advisory output is current."
       : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives match the active filters.");
     var trE = document.createElement("tr");
-    trE.innerHTML = '<td colspan="7" class="status-msg">' + esc(msg) + '</td>';
+    trE.innerHTML = '<td colspan="8" class="status-msg">' + esc(msg) + '</td>';
     tb.appendChild(trE);
   }
 }
@@ -997,6 +1015,8 @@ function wireControls() {
   if (sh) sh.addEventListener("change", function () { showHealthy = sh.checked; load(); });
   var su = document.getElementById("showUnassigned");
   if (su) su.addEventListener("change", function () { showUnassigned = su.checked; renderHives(lastHives); });
+  var sr = document.getElementById("stalledRunsOnly");
+  if (sr) sr.addEventListener("change", function () { stalledRunsOnly = sr.checked; renderHives(lastHives); });
   var af = document.getElementById("advisoryFilter");
   if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
   var bf = document.getElementById("budgetFilter");

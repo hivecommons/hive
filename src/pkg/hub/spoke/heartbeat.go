@@ -518,6 +518,13 @@ type ContributorSummary struct {
 	Registered int `json:"registered"`
 }
 
+type RunsSummary struct {
+	Active               *int    `json:"active,omitempty"`
+	WaitingOnHuman       *int    `json:"waiting_on_human,omitempty"`
+	OldestWaitSeconds    *int64  `json:"oldest_wait_seconds,omitempty"`
+	LastStageCompletedAt *string `json:"last_stage_completed_at,omitempty"`
+}
+
 type LeaderboardEntry struct {
 	GitHubUsername string `json:"github_username"`
 	AvatarURL      string `json:"avatar_url"`
@@ -628,6 +635,7 @@ type HeartbeatPayload struct {
 	Governor     GovernorSummary    `json:"governor"`
 	Tokens24h    int64              `json:"tokens_24h"`
 	Contributors ContributorSummary `json:"contributors"`
+	Runs         *RunsSummary       `json:"runs,omitempty"`
 	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
 	// ActiveSessionUsers is the DISTINCT set of GitHub usernames with a live
 	// dashboard session on this hive at heartbeat time (spoke:

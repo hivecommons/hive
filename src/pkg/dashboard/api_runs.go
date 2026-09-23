@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	hubspoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -329,6 +330,63 @@ func runHumanReviewHolds(path string) map[string]runHumanReviewHold {
 		out[worksource.Ref{Repo: hold.Repo, Number: hold.Number}.Key()] = hold
 	}
 	return out
+}
+
+func (s *Server) HeartbeatRunsSummary() *hubspoke.RunsSummary {
+	runs, err := s.activeRuns(false)
+	if err != nil {
+		return nil
+	}
+	return heartbeatRunsSummary(runs, func(key string) []timeline.Event {
+		if s == nil {
+			return nil
+		}
+		return s.LifecycleTimeline().ByIssue(key)
+	}, time.Now())
+}
+
+func heartbeatRunsSummary(runs []Run, eventsFor func(string) []timeline.Event, now time.Time) *hubspoke.RunsSummary {
+	active := len(runs)
+	waiting := 0
+	var oldestWait *int64
+	var lastCompleted string
+	for _, run := range runs {
+		if run.WaitingOn == RunWaitingOnHuman {
+			waiting++
+			if t, err := time.Parse(time.RFC3339, run.WaitingSince); err == nil {
+				secs := int64(now.Sub(t).Seconds())
+				if secs < 0 {
+					secs = 0
+				}
+				if oldestWait == nil || secs > *oldestWait {
+					v := secs
+					oldestWait = &v
+				}
+			}
+		}
+		if eventsFor != nil {
+			for _, ev := range eventsFor(run.Key) {
+				if ev.Kind != timeline.KindStageCompleted || ev.At <= 0 {
+					continue
+				}
+				at := time.UnixMilli(ev.At).UTC().Format(time.RFC3339)
+				if at > lastCompleted {
+					lastCompleted = at
+				}
+			}
+		}
+	}
+	summary := &hubspoke.RunsSummary{
+		Active:         &active,
+		WaitingOnHuman: &waiting,
+	}
+	if oldestWait != nil {
+		summary.OldestWaitSeconds = oldestWait
+	}
+	if lastCompleted != "" {
+		summary.LastStageCompletedAt = &lastCompleted
+	}
+	return summary
 }
 
 func formatRunTime(t time.Time) string {
