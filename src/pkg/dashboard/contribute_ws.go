@@ -251,13 +251,14 @@ func (c *ContributorConnection) send(msg WSMessage) error {
 }
 
 type WSMessage struct {
-	Type          string   `json:"type"`
-	Seq           int      `json:"seq,omitempty"`
-	Nonce         string   `json:"nonce,omitempty"`
-	ContributorID string   `json:"contributor_id,omitempty"`
-	TrustTier     string   `json:"trust_tier,omitempty"`
-	Permissions   []string `json:"permissions,omitempty"`
-	Reason        string   `json:"reason,omitempty"`
+	Type                         string   `json:"type"`
+	Seq                          int      `json:"seq,omitempty"`
+	Nonce                        string   `json:"nonce,omitempty"`
+	ContributorID                string   `json:"contributor_id,omitempty"`
+	TrustTier                    string   `json:"trust_tier,omitempty"`
+	Permissions                  []string `json:"permissions,omitempty"`
+	Reason                       string   `json:"reason,omitempty"`
+	ContributeNeedsDecisionLabel *string  `json:"contribute_needs_decision_label,omitempty"`
 	// FailureKind is the OPTIONAL, client-declared cause of a task_failed
 	// (#2547): "environment" (the client's runtime could not run the work) or
 	// "task" (the work was attempted and failed on its merits). Absent — which
@@ -429,6 +430,10 @@ type WSMessage struct {
 	// Any GitHub label for it is the RELAY's doing, with the task credential;
 	// the hub itself still labels nothing.
 	VerdictBlocked bool `json:"verdict_blocked,omitempty"`
+	// VerdictNeedsDecision marks a no_work_needed verdict as waiting on a
+	// maintainer decision (#8470). A verified PR still wins; otherwise the hub
+	// books the full cooldown and the relay labels the issue when configured.
+	VerdictNeedsDecision bool `json:"verdict_needs_decision,omitempty"`
 	// VerdictReason optionally carries a machine-readable reason for a
 	// no_work_needed verdict ("maintainer_gated", "already_covered", or free
 	// text the relay scraped from the agent's output). Audit-only: it is
@@ -2394,8 +2399,12 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	}
 
 	announcement := (*config.ContributeAnnouncement)(nil)
+	needsDecisionLabel := (config.HubConfig{}).ContributeNeedsDecisionLabelOrDefault()
 	if h.server != nil {
 		announcement = h.server.activeContributeAnnouncement()
+		if h.server.deps != nil && h.server.deps.Config != nil {
+			needsDecisionLabel = h.server.deps.Config.Hub.ContributeNeedsDecisionLabelOrDefault()
+		}
 	}
 	if err := s.contributor.send(WSMessage{
 		Type:          "auth_ok",
@@ -2411,8 +2420,9 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		ServerCapabilities: serverCapabilities(),
 		ConnectionID:       s.connID,
 		// #7932: state the read limit rather than enforcing it silently.
-		MaxMessageBytes: wsMaxMessageSize,
-		Announcement:    announcement,
+		MaxMessageBytes:              wsMaxMessageSize,
+		Announcement:                 announcement,
+		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true
@@ -3177,7 +3187,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// its blocked sibling, #7924) is honoured and everything else —
 			// including the absent field every pre-#3987 relay sends — is
 			// idle, i.e. today's exact semantics.
-			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, verifiedPR)
+			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, msg.VerdictNeedsDecision, verifiedPR)
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied
 				// only for a VERIFIED PR; an unverified or no-PR completion gets
@@ -3232,6 +3242,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// normalized to a closed vocabulary so a client cannot
 				// inject arbitrary text into the hub's structured logs.
 				"completion_signal", normalizeCompletionSignal(msg.CompletionSignal),
+				"needs_decision_label", func() string {
+					if verdict == completionVerdictNeedsDecision {
+						return h.configuredNeedsDecisionLabel()
+					}
+					return ""
+				}(),
 			)
 			// Durable per-run record (task_run_log.go) — the same
 			// normalized fields the slog line above carries, plus the
@@ -3251,8 +3267,14 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				CompletionSignal: normalizeCompletionSignal(msg.CompletionSignal),
 				Verdict:          verdict,
 				VerdictReason:    strings.TrimSpace(msg.VerdictReason),
-				PRURL:            verifiedPR,
-				PRVerified:       verifiedPR != "",
+				NeedsDecisionLabel: func() string {
+					if verdict == completionVerdictNeedsDecision {
+						return h.configuredNeedsDecisionLabel()
+					}
+					return ""
+				}(),
+				PRURL:      verifiedPR,
+				PRVerified: verifiedPR != "",
 			}
 			if completedTask != nil {
 				runRec.Repo = completedTask.Repo

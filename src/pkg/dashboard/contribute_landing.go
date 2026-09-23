@@ -2025,6 +2025,11 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-filter-titles"></div>
 <div class="admin-field" id="admin-filter-authors"></div>
 <div class="admin-field" id="admin-filter-labels"></div>
+<div class="admin-field">
+<label>Maintainer-decision label <span style="color:var(--cc-muted-2)">&mdash; applied when a relay reports <code>no_work_needed — decision:</code>. Empty disables relay labelling.</span></label>
+<input type="text" id="admin-needs-decision-label" placeholder="needs-decision" style="max-width:240px">
+<div class="admin-toggle-sub">Stored as <code>hub.contribute_needs_decision_label</code>; matching labels are skipped by the contribute queue until a human removes them.</div>
+</div>
 
 <div class="admin-field">
 <label>Allowed models <span style="color:var(--cc-muted-2)">— wildcards (*) and /regex/. Empty = allow all.</span></label>
@@ -4165,6 +4170,8 @@ function renderAdminControls(){
   renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
   renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
   renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','labels');
+  var nd=document.getElementById('admin-needs-decision-label');
+  if(nd&&document.activeElement!==nd)nd.value=adminHub.contribute_needs_decision_label||'';
   renderAdminModels();
   renderAdminRepos();
   renderAdminTierLimits();
@@ -4275,6 +4282,7 @@ onEl('ops-admin','click',function(e){
 // blank/NaN coerces to 0 (== unlimited), matching the backend's "<=0 = unlimited".
 onEl('ops-admin','input',function(e){
   var t=e.target;
+  if(t&&t.id==='admin-needs-decision-label'&&adminHub){adminHub.contribute_needs_decision_label=t.value;adminDirty=true;var saveBtn=document.getElementById('admin-save-btn');if(saveBtn)saveBtn.disabled=false;return;}
   if(!t.getAttribute||t.getAttribute('data-tier-field')===null||!adminHub)return;
   var tier=t.getAttribute('data-tier'),field=t.getAttribute('data-tier-field');
   var v=parseInt(t.value,10);if(isNaN(v)||v<0)v=0;
@@ -4306,6 +4314,7 @@ onEl('admin-save-btn','click',function(){
     contribute_allow_labels:[],
     contribute_allow_models:adminHub.contribute_allow_models||[],
     contribute_repo_filters:adminCleanRepoFilters(adminHub.contribute_repo_filters),
+    contribute_needs_decision_label:adminHub.contribute_needs_decision_label||'',
     // Governor Hub mirror sections (#2562 parity): repos-for-contribute (as the
     // disabled_repos exclusion list) + per-tier access & rate limits.
     disabled_repos:adminHub.disabled_repos||[],

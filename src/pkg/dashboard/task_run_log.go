@@ -112,17 +112,18 @@ type TaskRunRecord struct {
 	// AbandonCause is set only when Outcome is "abandoned": "handback" or
 	// "disconnect". Hub-observed; it is what deriveScenario keys on, so the
 	// scenario never has to be parsed back out of Reason's free text.
-	AbandonCause     string  `json:"abandon_cause,omitempty"`
-	CompletionSignal string  `json:"completion_signal,omitempty"`
-	Verdict          string  `json:"verdict,omitempty"`
-	VerdictReason    string  `json:"verdict_reason,omitempty"`
-	FailureKind      string  `json:"failure_kind,omitempty"`
-	Reason           string  `json:"reason,omitempty"`
-	Permanent        bool    `json:"permanent,omitempty"`
-	DurationS        float64 `json:"duration_s,omitempty"`
-	PRURL            string  `json:"pr_url,omitempty"`
-	PRVerified       bool    `json:"pr_verified,omitempty"`
-	Scenario         string  `json:"scenario"`
+	AbandonCause       string  `json:"abandon_cause,omitempty"`
+	CompletionSignal   string  `json:"completion_signal,omitempty"`
+	Verdict            string  `json:"verdict,omitempty"`
+	VerdictReason      string  `json:"verdict_reason,omitempty"`
+	NeedsDecisionLabel string  `json:"needs_decision_label,omitempty"`
+	FailureKind        string  `json:"failure_kind,omitempty"`
+	Reason             string  `json:"reason,omitempty"`
+	Permanent          bool    `json:"permanent,omitempty"`
+	DurationS          float64 `json:"duration_s,omitempty"`
+	PRURL              string  `json:"pr_url,omitempty"`
+	PRVerified         bool    `json:"pr_verified,omitempty"`
+	Scenario           string  `json:"scenario"`
 	// Session mirrors TaskID for now: the correlation key reserved by
 	// github.InvocationMeta.Session, so a PR trailer can one day join back to
 	// this record without a format change.

@@ -13569,3 +13569,86 @@ test('hub announcements use reverse video on TTY when color is enabled', () => {
     teardown(relay);
   }
 });
+
+test('#8470 decision verdict is classified as no_work_needed plus needs-decision marker', () => {
+  const relay = loadRelay({});
+  try {
+    let v = relay.detectNoWorkVerdict(['HIVE_VERDICT: no_work_needed — decision: maintainer must choose the auth default']);
+    assert.strictEqual(v.verdict, 'no_work_needed');
+    assert.strictEqual(v.needsDecision, true);
+    assert.strictEqual(v.reason, 'maintainer must choose the auth default');
+    v = relay.detectNoWorkVerdict(['HIVE_VERDICT: no_work_needed — blocked on unanswered maintainer decision']);
+    assert.strictEqual(v.verdict, 'no_work_needed', 'maintainer decisions are not outside-dependency blocked verdicts');
+    assert.strictEqual(v.needsDecision, true);
+    v = relay.detectNoWorkVerdict(['HIVE_VERDICT: no_work_needed — blocked on upstream release #12']);
+    assert.strictEqual(v.verdict, 'blocked', 'outside dependency wording remains blocked');
+    assert.ok(!v.needsDecision);
+    assert.strictEqual(v.reason, 'upstream release #12');
+  } finally { teardown(relay); }
+});
+
+test('#8470 end to end: decision verdict applies configured label and reports marker without comments', () => {
+  const PANE = `HIVE_VERDICT: no_work_needed — decision: maintainer must choose the rollout policy\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'], contribute_needs_decision_label: '2-discussing' }));
+    dispatchTask(relay, 'ct-8470-decision', 8470);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_needs_decision, true);
+    assert.ok(!completed[0].verdict_blocked);
+    assert.strictEqual(completed[0].verdict_reason, 'maintainer must choose the rollout policy');
+    const edits = relay.__commands.filter(c => /gh issue edit/.test(c));
+    assert.strictEqual(edits.length, 1, JSON.stringify(edits));
+    assert.ok(edits[0].includes("--add-label '2-discussing'"), edits[0]);
+    assert.strictEqual(relay.__commands.filter(c => /gh issue comment/.test(c)).length, 0, 'the relay posts no new comment');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#8470 a verified PR suppresses a decision verdict and label', () => {
+  const PANE = [
+    'Opened https://github.com/foo/bar/pull/8470',
+    'HIVE_VERDICT: no_work_needed — decision: maintainer must choose the rollout policy',
+    IDLE_PANE,
+  ].join('\n');
+  const relay = loadRelay({
+    backend: 'copilot',
+    paneText: PANE,
+    env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' },
+    prMeta: {
+      url: 'https://github.com/foo/bar/pull/8470',
+      author: { login: 'test-contributor' },
+      createdAt: new Date().toISOString(),
+      mergedAt: null,
+      state: 'OPEN',
+    },
+  });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'], contribute_needs_decision_label: '2-discussing' }));
+    dispatchTask(relay, 'ct-8470-pr-wins', 8470);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/8470');
+    assert.ok(!completed[0].verdict_needs_decision);
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create|issue comment)/.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#8470 an empty configured decision label disables relay labelling but keeps the verdict marker', () => {
+  const PANE = `HIVE_VERDICT: no_work_needed — decision: maintainer approval pending\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'], contribute_needs_decision_label: '' }));
+    dispatchTask(relay, 'ct-8470-empty', 8471);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed[0].verdict_needs_decision, true);
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create|issue comment)/.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
+});

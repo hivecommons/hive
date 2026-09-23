@@ -1,0 +1,1 @@
+- Label contributor issues waiting on maintainer decisions with the configured skip label so they leave the queue (#8470)

@@ -697,6 +697,7 @@ dashboard:
 #       deny_titles: ["WIP*"]
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
+#   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #
 # hive_id: my-hive
 # acmm_level: 2

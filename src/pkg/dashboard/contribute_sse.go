@@ -423,7 +423,11 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			// ledger admission pins). The hive AGENT pipeline does not read
 			// this ledger anywhere.
 			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
-				withheld.addReason(cand, withheldReasonNoWorkNeeded)
+				if rec, ok := h.noWorkVerdictRecordKey(itemKey); ok {
+					withheld.add(withheldNoWorkVerdictItem(cand, rec))
+				} else {
+					withheld.addReason(cand, withheldReasonNoWorkNeeded)
+				}
 				return
 			}
 			if h.isTaskInFailureCooldownKey(itemKey) {

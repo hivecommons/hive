@@ -484,11 +484,14 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			// spelling in sync with detectNoWorkVerdict in
 			// bin/contributor-relay.js.
 			"If you determine there is genuinely NOTHING shippable — for example the "+
-			"remaining work is blocked on an unanswered maintainer decision, or merged "+
-			"PRs already cover everything actionable — do NOT open a PR; instead print "+
+			"merged PRs already cover everything actionable — do NOT open a PR; instead print "+
 			"a single line of plain text, no Markdown formatting, in the exact form "+
 			"'HIVE_VERDICT: no_work_needed — <short reason>' "+
-			"and stop. "+
+			"and stop. If the remaining work is waiting on a maintainer-only design, "+
+			"policy, or approval decision, use the structured reason form "+
+			"'HIVE_VERDICT: no_work_needed — decision: <what needs deciding>' "+
+			"so hive applies the configured maintainer-decision label and keeps it out "+
+			"of the queue until a human removes that label. "+
 			// hivecommons/hive#7924: the blocked sentinel. utah#100 reached a
 			// correct "nothing here can change until utah-packages' factory
 			// publishes" and printed no_work_needed for it; the hub booked an
@@ -499,7 +502,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			// admission gate takes over. Keep the spelling in sync with the relay.
 			"If instead nothing in this repository can change until something OUTSIDE "+
 			"it lands — another repository's release or build, a dependency that has "+
-			"not published yet, an external service — print "+
+			"not published yet, an external service; NOT a maintainer decision — print "+
 			"'HIVE_VERDICT: blocked — <what it is waiting on>' "+
 			"instead of no_work_needed and stop: hive then holds the issue for the "+
 			"full cooldown and applies the repository's 'blocked' label, which a human "+
@@ -559,7 +562,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"bots to report before printing the verdict — hive reviews and "+
 			"follows up on open PRs separately, so any wait here only holds the "+
 			"task. "+
-			"If you printed the no_work_needed or blocked line above, that already "+
+			"If you printed the no_work_needed, decision, or blocked line above, that already "+
 			"counts as your completion — do not print both. "+
 			// #7759: the one sanctioned second verdict. A CLI that runs a
 			// passive reviewer (omp's --advisor) posts its notes on the agent's

@@ -80,6 +80,7 @@ var withheldReasonLabels = map[string]string{
 	withheldReasonTracker:                       "Tracker / umbrella issue",
 	withheldReasonCooldown:                      "Completion cooldown",
 	withheldReasonNoWorkNeeded:                  "Previous no_work_needed verdict",
+	completionVerdictNeedsDecision:              "Waiting on a maintainer decision",
 	withheldReasonFailureCooldown:               "Failure cooldown",
 	withheldReasonInFlight:                      "Already in flight",
 	withheldReasonContributorFilter:             "Rejected by a contributor filter",
@@ -112,6 +113,7 @@ func isConvergenceWithheldReason(reason string) bool {
 		withheldReasonTracker,
 		withheldReasonCooldown,
 		withheldReasonNoWorkNeeded,
+		completionVerdictNeedsDecision,
 		withheldReasonFailureCooldown,
 		withheldReasonInFlight,
 		withheldReasonContributorFilter,
@@ -235,6 +237,25 @@ func withheldCandidateFrom(repoFull string, ref worksource.Ref, issue map[string
 	title, _ := issue["title"].(string)
 	url, _ := issue["url"].(string)
 	return withheldCandidate{repoFull: repoFull, ref: ref, title: title, url: url}
+}
+
+func withheldNoWorkVerdictItem(c withheldCandidate, rec noWorkVerdictRecord) AdmissionWithheldItem {
+	item := newWithheldItem(c, withheldReasonNoWorkNeeded)
+	if rec.NeedsDecision {
+		item.Reason = completionVerdictNeedsDecision
+		item.Detail = "Waiting on a maintainer decision"
+		if rec.Reason != "" {
+			item.Detail = fmt.Sprintf("Waiting on a maintainer decision: %s", rec.Reason)
+		}
+		return item
+	}
+	if rec.Blocked {
+		item.Detail = "Previous blocked verdict"
+		if rec.Reason != "" {
+			item.Detail = fmt.Sprintf("Previous blocked verdict: %s", rec.Reason)
+		}
+	}
+	return item
 }
 
 // withheldCooldownItem records a cooldown refusal with the moment it lapses, so
