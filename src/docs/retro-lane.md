@@ -13,6 +13,10 @@ For each eligible bead the lane combines local ledgers:
 - escalation ledger when still available: failed fix-attempt count for the PR.
 
 The compact record tracks bead metadata, issue/PR refs, kicks received, CI failures/fix attempts, drift pauses, and wall-clock time from claim to close.
+It also carries advisory autonomy outcome signals when producers record them:
+plan revisions before approval, PR rework commits after review, rollback
+events, and the affected user/repo/change-class scope. These signals are facts
+for retro analysis only; they do not change ACMM configuration.
 
 ## Deterministic findings
 
@@ -22,8 +26,19 @@ Named threshold defaults are:
 - excessive kicks before completion: `>= 5`;
 - long stall: claim-to-close `> 7 days`;
 - drift pause occurred: any trajectory drift/pause marker.
+- plan accepted first pass: a recorded approval outcome with `0` plan
+  revisions before approval;
+- PR merged with no rework: a merged PR outcome with `0` review-driven rework
+  commits;
+- run rolled back: one or more rollback events.
 
 Each finding is filed as an `advisory` bead attributed to actor `retro`, using the existing advisory-bead digest path. Source beads are marked with `retro_analyzed_at` after analysis to avoid duplicate findings.
+Autonomy signal findings include scope metadata (`autonomy_scope_type`,
+`autonomy_scope_value`, `autonomy_level`, and `autonomy_direction`) so the
+dashboard can show them as ACMM overlay facts with no action button. A lack of
+qualifying signals is terminal and acceptable; no nudge is shown. Automatic
+promotion or demotion, including demotion-on-failure and per-repo scoping, is
+deferred until the per-repo ceiling design settles.
 
 ## Optional LLM analysis
 

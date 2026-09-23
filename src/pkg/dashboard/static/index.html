@@ -1269,6 +1269,7 @@
     .reco-crit .crit-detail { color: var(--muted); font-size: 0.72rem; margin-top: 3px; }
     .reco-advisory-note { margin-top: 12px; font-size: 0.68rem; color: var(--muted); font-style: italic; }
     .reco-calm { color: var(--muted); font-size: 0.85rem; }
+    .reco-fact-heading { margin-top: 12px; color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
 
     .lc-fleet { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
     .lc-fleet-stat { flex: 1 1 100px; min-width: 90px; background: var(--bg); border: 1px solid var(--border);
@@ -11267,6 +11268,23 @@ function burnAreaChart() {
       const tgt = Number.isFinite(Number(rec.TargetLevel)) ? Number(rec.TargetLevel) : null;
       const met = Array.isArray(rec.Met) ? rec.Met : [];
       const unmet = Array.isArray(rec.Unmet) ? rec.Unmet : [];
+      const signals = Array.isArray(rec.AutonomySignals) ? rec.AutonomySignals : [];
+      const signalHtml = signals.length
+        ? `<div class="reco-fact-heading">Retro autonomy signal facts</div><ul class="reco-checklist">` + signals.map((s) => {
+          s = s || {};
+          const dir = s.direction || '';
+          const mark = dir === 'should lose' ? '!' : '✓';
+          const cls = dir === 'should lose' ? 'unmet' : 'met';
+          const scope = [s.scopeType, s.scope].filter(Boolean).join(': ') || 'scope unknown';
+          const level = s.level || 'level pending';
+          const detail = s.detail ? `<div class="crit-detail">${escapeHtml(s.detail)}</div>` : '';
+          return `<li class="reco-crit ${cls}">
+            <span class="mark">${mark}</span>
+            <div class="crit-body"><div class="crit-name">${escapeHtml(scope)} ${escapeHtml(dir || 'signals')} ${escapeHtml(level)}</div>
+            ${detail}<div class="crit-cmp">fact only — no action button; automatic promotion/demotion is deferred.</div></div>
+          </li>`;
+        }).join('') + `</ul>`
+        : `<div class="reco-fact-heading">Retro autonomy signal facts</div><div class="reco-calm">No qualifying autonomy signals right now; that is an acceptable terminal state.</div>`;
 
       // Minimal calm state: no criteria to show and already advising stay
       // (e.g. topped out at L6 or a nil-status hive). Keep it quiet.
@@ -11275,7 +11293,7 @@ function burnAreaChart() {
         const flow = (cur !== null)
           ? `<div class="reco-level-flow">L${cur} <span class="reco-badge stay">stay</span></div>`
           : '';
-        card.innerHTML = `${flow}<div class="reco-calm">${escapeHtml(rec.Rationale || 'No level-up recommendation right now.')}</div>`;
+        card.innerHTML = `${flow}<div class="reco-calm">${escapeHtml(rec.Rationale || 'No level-up recommendation right now.')}</div>${signalHtml}`;
         applySectionCollapse('acmm-reco-section');
         return;
       }
@@ -11314,6 +11332,7 @@ function burnAreaChart() {
         : '';
 
       card.innerHTML = `${flowHtml}${rationaleHtml}${readyHtml}${checklistHtml}
+        ${signalHtml}
         <div class="reco-advisory-note">Advisory only — this does not change the maturity level.</div>`;
       applySectionCollapse('acmm-reco-section');
     }

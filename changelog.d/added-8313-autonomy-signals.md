@@ -1,0 +1,1 @@
+- Retro now records progressive autonomy signal facts for first-pass plans, no-rework merged PRs, and rolled-back runs so the ACMM dashboard can show advisory scope signals without changing levels automatically ([#8313](https://github.com/hivecommons/hive/issues/8313)).

@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/retro"
 )
 
 // TestHandleACMMRecommendationEmpty verifies the endpoint is safe with a
@@ -98,6 +100,54 @@ func TestHandleACMMRecommendationWithSignals(t *testing.T) {
 	}
 	if rec.TargetLevel != 2 {
 		t.Fatalf("TargetLevel = %d, want 2", rec.TargetLevel)
+	}
+}
+
+func TestHandleACMMRecommendationIncludesAutonomySignalFacts(t *testing.T) {
+	s := newTestServer()
+	store, err := beads.NewStore(filepath.Join(t.TempDir(), "retro-beads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.Create("autonomy signal: hivecommons/hive qualifies for L4", beads.TypeAdvisory, beads.PriorityMinor, retro.Actor, "hivecommons/hive#9001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{
+		"retro_pattern":        retro.PatternPlanAcceptedFirstPass,
+		"autonomy_scope_type":  "repo",
+		"autonomy_scope_value": "hivecommons/hive",
+		"autonomy_level":       "L4",
+		"autonomy_direction":   "qualifies",
+		"detail":               "Plan was accepted first pass.",
+		"retro_source_bead":    "run-1",
+		"retro_source_actor":   "alice",
+	} {
+		if err := store.SetMetadata(b.ID, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.deps = &Dependencies{BeadStores: map[string]*beads.Store{retro.Actor: store}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/acmm-recommendation", nil)
+	rr := httptest.NewRecorder()
+	s.handleACMMRecommendation(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var resp struct {
+		AutonomySignals []AutonomySignalFact
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.AutonomySignals) != 1 {
+		t.Fatalf("AutonomySignals = %#v, want one fact", resp.AutonomySignals)
+	}
+	fact := resp.AutonomySignals[0]
+	if fact.Scope != "hivecommons/hive" || fact.Direction != "qualifies" || fact.Level != "L4" {
+		t.Fatalf("fact = %#v", fact)
 	}
 }
 

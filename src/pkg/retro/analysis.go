@@ -87,9 +87,10 @@ func buildAnalysisPrompt(record RetroRecord, findings []Finding) []chatMessage {
 		"Return ONLY one JSON object with keys root_cause_hypothesis, process_improvement, generalizable, generalizable_lesson. " +
 		"Use concise, non-secret, process-level language. Do not invent facts. If the lesson is too specific to this bead, set generalizable=false and generalizable_lesson=\"\"."
 	var b strings.Builder
-	fmt.Fprintf(&b, "RETRO_RECORD\nbead_id: %s\ntitle: %s\ntype: %s\nactor: %s\nissue: %s\npr: %s\npr_state: %s\nkicks_received: %d\nci_failures: %d\nfix_attempts: %d\ndrift_pauses: %d\nclaim_to_close: %s\n\n",
+	fmt.Fprintf(&b, "RETRO_RECORD\nbead_id: %s\ntitle: %s\ntype: %s\nactor: %s\nissue: %s\npr: %s\npr_state: %s\nkicks_received: %d\nci_failures: %d\nfix_attempts: %d\ndrift_pauses: %d\nplan_revisions_before_approval: %d\npr_rework_commits_after_review: %d\nrollback_events: %d\nscope_user: %s\nscope_repo: %s\nscope_change_class: %s\nautonomy_level: %s\nclaim_to_close: %s\n\n",
 		record.BeadID, truncate(record.Title, maxRecordTitleChars), record.Type, record.Actor, record.IssueRef, record.PRRef, record.PRState,
-		record.KicksReceived, record.CIFailureCount, record.FixAttempts, record.DriftPauses, record.ClaimToClose.String())
+		record.KicksReceived, record.CIFailureCount, record.FixAttempts, record.DriftPauses, record.PlanRevisionsBeforeApproval, record.PRReworkCommitsAfterReview,
+		record.RollbackEvents, record.ScopeUser, record.ScopeRepo, record.ScopeChangeClass, record.AutonomyLevel, record.ClaimToClose.String())
 	b.WriteString("DETERMINISTIC_FINDINGS\n")
 	for _, f := range findings {
 		fmt.Fprintf(&b, "- pattern: %s\n  severity: %s\n  detail: %s\n", f.Pattern, f.Severity, truncate(f.Detail, maxFindingDetailChars))

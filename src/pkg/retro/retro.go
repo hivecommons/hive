@@ -19,29 +19,40 @@ import (
 const (
 	Actor = "retro"
 
-	DefaultScanIntervalS        = 60 * 60
-	DefaultMaxFixAttempts       = 3
-	DefaultMaxKicks             = 5
-	DefaultLongStallDays        = 7
-	defaultLongStallHours       = DefaultLongStallDays * 24
-	metadataAnalyzedAt          = "retro_analyzed_at"
-	metadataFindingType         = "finding_type"
-	metadataAdvisoryAgent       = "advisory_agent"
-	metadataSeverity            = "severity"
-	metadataDetail              = "detail"
-	metadataSourceBead          = "retro_source_bead"
-	metadataSourceActor         = "retro_source_actor"
-	metadataSourcePR            = "retro_source_pr"
-	metadataSourceIssue         = "retro_source_issue"
-	metadataPattern             = "retro_pattern"
-	metadataRecordWallClock     = "retro_wall_clock"
-	metadataAnalysisRootCause   = "retro_analysis_root_cause"
-	metadataAnalysisImprovement = "retro_analysis_improvement"
-	metadataLessonSlug          = "retro_lesson_slug"
-	PatternExcessiveFixAttempts = "excessive_fix_attempts"
-	PatternExcessiveKicks       = "excessive_kicks"
-	PatternLongStall            = "long_stall"
-	PatternDriftPause           = "drift_pause"
+	DefaultScanIntervalS         = 60 * 60
+	DefaultMaxFixAttempts        = 3
+	DefaultMaxKicks              = 5
+	DefaultLongStallDays         = 7
+	defaultLongStallHours        = DefaultLongStallDays * 24
+	metadataAnalyzedAt           = "retro_analyzed_at"
+	metadataFindingType          = "finding_type"
+	metadataAdvisoryAgent        = "advisory_agent"
+	metadataSeverity             = "severity"
+	metadataDetail               = "detail"
+	metadataSourceBead           = "retro_source_bead"
+	metadataSourceActor          = "retro_source_actor"
+	metadataSourcePR             = "retro_source_pr"
+	metadataSourceIssue          = "retro_source_issue"
+	metadataPattern              = "retro_pattern"
+	metadataRecordWallClock      = "retro_wall_clock"
+	metadataAutonomyScopeType    = "autonomy_scope_type"
+	metadataAutonomyScopeValue   = "autonomy_scope_value"
+	metadataAutonomyLevel        = "autonomy_level"
+	metadataAutonomyDirection    = "autonomy_direction"
+	metadataAutonomyRun          = "autonomy_run"
+	metadataAutonomyActor        = "autonomy_actor"
+	metadataAutonomyRepo         = "autonomy_repo"
+	metadataAutonomyChangeClass  = "autonomy_change_class"
+	metadataAnalysisRootCause    = "retro_analysis_root_cause"
+	metadataAnalysisImprovement  = "retro_analysis_improvement"
+	metadataLessonSlug           = "retro_lesson_slug"
+	PatternExcessiveFixAttempts  = "excessive_fix_attempts"
+	PatternExcessiveKicks        = "excessive_kicks"
+	PatternLongStall             = "long_stall"
+	PatternDriftPause            = "drift_pause"
+	PatternPlanAcceptedFirstPass = "plan_accepted_first_pass"
+	PatternPRMergedNoRework      = "pr_merged_no_rework"
+	PatternRunRolledBack         = "run_rolled_back"
 )
 
 type Config struct {
@@ -63,22 +74,32 @@ type Thresholds struct {
 }
 
 type RetroRecord struct {
-	BeadID         string
-	Title          string
-	Type           beads.BeadType
-	Status         beads.Status
-	Actor          string
-	ExternalRef    string
-	IssueRef       string
-	PRRef          string
-	PRState        string
-	KicksReceived  int
-	CIFailureCount int
-	FixAttempts    int
-	DriftPauses    int
-	ClaimedAt      time.Time
-	ClosedAt       time.Time
-	ClaimToClose   time.Duration
+	BeadID                      string
+	Title                       string
+	Type                        beads.BeadType
+	Status                      beads.Status
+	Actor                       string
+	ExternalRef                 string
+	IssueRef                    string
+	PRRef                       string
+	PRState                     string
+	KicksReceived               int
+	CIFailureCount              int
+	FixAttempts                 int
+	DriftPauses                 int
+	PlanRevisionsBeforeApproval int
+	PRReworkCommitsAfterReview  int
+	RollbackEvents              int
+	PlanRevisionsObserved       bool
+	PRReworkObserved            bool
+	RollbackEventsObserved      bool
+	ScopeUser                   string
+	ScopeRepo                   string
+	ScopeChangeClass            string
+	AutonomyLevel               string
+	ClaimedAt                   time.Time
+	ClosedAt                    time.Time
+	ClaimToClose                time.Duration
 }
 
 type Finding struct {
@@ -87,6 +108,7 @@ type Finding struct {
 	Detail   string
 	Severity string
 	Files    []string
+	Fields   map[string]string
 }
 
 type AttemptReader interface {
@@ -277,6 +299,9 @@ func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool
 		metadataPattern:         f.Pattern,
 		metadataRecordWallClock: r.ClaimToClose.String(),
 	}
+	for k, v := range f.Fields {
+		meta[k] = v
+	}
 	if len(f.Files) > 0 {
 		meta["file_set"] = strings.Join(normalizeDuplicateFiles(f.Files), ",")
 	}
@@ -396,6 +421,7 @@ func Reconstruct(b *beads.Bead, tl *timeline.Store, attempts AttemptReader) Retr
 	if r.CIFailureCount < r.FixAttempts {
 		r.CIFailureCount = r.FixAttempts
 	}
+	applyAutonomyScopeMetadata(b, &r)
 	if r.ClaimedAt.IsZero() {
 		r.ClaimedAt = b.CreatedAt.Time
 	}
@@ -428,6 +454,39 @@ func Detect(r RetroRecord, t Thresholds) []Finding {
 	if r.DriftPauses > 0 {
 		findings = append(findings, Finding{Pattern: PatternDriftPause, Severity: "medium", Title: fmt.Sprintf("Retro: %s had trajectory drift pause", r.BeadID), Detail: fmt.Sprintf("Trajectory review paused or flagged drift %d time(s) during PR %s.", r.DriftPauses, r.PRRef)})
 	}
+	if r.PlanRevisionsObserved && r.PlanRevisionsBeforeApproval == 0 {
+		scopeType, scopeValue := autonomyScope(r)
+		level := autonomyLevel(r, "next ACMM level")
+		findings = append(findings, Finding{
+			Pattern:  PatternPlanAcceptedFirstPass,
+			Severity: "low",
+			Title:    fmt.Sprintf("autonomy signal: %s qualifies for %s (first-pass plan)", scopeValue, level),
+			Detail:   fmt.Sprintf("Plan for %s was accepted on the first pass with no revisions before approval.", r.BeadID),
+			Fields:   autonomyFields(r, scopeType, scopeValue, level, "qualifies"),
+		})
+	}
+	if r.PRReworkObserved && strings.ToLower(r.PRState) == "merged" && r.PRReworkCommitsAfterReview == 0 {
+		scopeType, scopeValue := autonomyScope(r)
+		level := autonomyLevel(r, "next ACMM level")
+		findings = append(findings, Finding{
+			Pattern:  PatternPRMergedNoRework,
+			Severity: "low",
+			Title:    fmt.Sprintf("autonomy signal: %s qualifies for %s (no-rework PR)", scopeValue, level),
+			Detail:   fmt.Sprintf("PR %s merged without review-driven rework commits.", r.PRRef),
+			Fields:   autonomyFields(r, scopeType, scopeValue, level, "qualifies"),
+		})
+	}
+	if r.RollbackEvents > 0 {
+		scopeType, scopeValue := autonomyScope(r)
+		level := autonomyLevel(r, "current ACMM level")
+		findings = append(findings, Finding{
+			Pattern:  PatternRunRolledBack,
+			Severity: "medium",
+			Title:    fmt.Sprintf("autonomy signal: %s should lose %s (rollback)", scopeValue, level),
+			Detail:   fmt.Sprintf("Run %s recorded %d rollback event(s). Demotion automation is deferred pending per-repo scoping.", r.BeadID, r.RollbackEvents),
+			Fields:   autonomyFields(r, scopeType, scopeValue, level, "should lose"),
+		})
+	}
 	return findings
 }
 
@@ -457,6 +516,25 @@ func applyNumericMetadata(b *beads.Bead, r *RetroRecord) {
 	r.CIFailureCount = maxInt(r.CIFailureCount, metaInt(b, "ci_failure_count"), metaInt(b, "ci_failures"), metaInt(b, "failing_checks"))
 	r.FixAttempts = maxInt(r.FixAttempts, metaInt(b, "fix_attempts"), metaInt(b, "failed_fix_attempts"))
 	r.DriftPauses = maxInt(r.DriftPauses, metaInt(b, "drift_pauses"), metaInt(b, "trajectory_pauses"), metaInt(b, "trajectory_drift_pauses"))
+	if n, ok := firstMetaInt(b, "plan_revisions_before_approval", "plan_revisions", "approval_revisions"); ok {
+		r.PlanRevisionsBeforeApproval = n
+		r.PlanRevisionsObserved = true
+	}
+	if n, ok := firstMetaInt(b, "pr_rework_commits_after_review", "pr_rework_commits", "rework_commits_after_review"); ok {
+		r.PRReworkCommitsAfterReview = n
+		r.PRReworkObserved = true
+	}
+	if n, ok := firstMetaInt(b, "rollback_events", "rollbacks", "rollback_count"); ok {
+		r.RollbackEvents = n
+		r.RollbackEventsObserved = true
+	}
+}
+
+func applyAutonomyScopeMetadata(b *beads.Bead, r *RetroRecord) {
+	r.ScopeUser = firstNonEmpty(r.ScopeUser, metaString(b, "scope_user"), metaString(b, "user"), metaString(b, "owner"))
+	r.ScopeRepo = firstNonEmpty(r.ScopeRepo, metaString(b, "scope_repo"), metaString(b, "repo"), repoPart(r.PRRef), repoPart(r.IssueRef))
+	r.ScopeChangeClass = firstNonEmpty(r.ScopeChangeClass, metaString(b, "scope_change_class"), metaString(b, "change_class"), metaString(b, "risk_tier"), metaString(b, "tier"))
+	r.AutonomyLevel = firstNonEmpty(r.AutonomyLevel, metaString(b, "autonomy_level"), metaString(b, "target_level"), metaString(b, "acmm_level"))
 }
 
 func applyPRMetadata(b *beads.Bead, r *RetroRecord) {
@@ -512,9 +590,68 @@ func applyTimeline(tl *timeline.Store, r *RetroRecord) {
 		if isDriftPauseStage(kind, st) {
 			r.DriftPauses += st.Count
 		}
+		applyAutonomyStageAttrs(st, r)
 		if state := strings.ToLower(firstNonEmpty(stageAttr(st, "pr_state"), stageAttr(st, "state"))); state == "closed" || state == "merged" {
 			r.PRState = state
 		}
+	}
+}
+
+func applyAutonomyStageAttrs(st *timeline.Stage, r *RetroRecord) {
+	if st == nil {
+		return
+	}
+	if n, ok := firstAttrInt(st, "plan_revisions_before_approval", "plan_revisions", "approval_revisions"); ok {
+		r.PlanRevisionsBeforeApproval = n
+		r.PlanRevisionsObserved = true
+	}
+	if n, ok := firstAttrInt(st, "pr_rework_commits_after_review", "pr_rework_commits", "rework_commits_after_review"); ok {
+		r.PRReworkCommitsAfterReview = n
+		r.PRReworkObserved = true
+	}
+	if n, ok := firstAttrInt(st, "rollback_events", "rollbacks", "rollback_count"); ok {
+		r.RollbackEvents = n
+		r.RollbackEventsObserved = true
+	}
+	r.ScopeUser = firstNonEmpty(r.ScopeUser, stageAttr(st, "scope_user"), stageAttr(st, "user"))
+	r.ScopeRepo = firstNonEmpty(r.ScopeRepo, stageAttr(st, "scope_repo"), stageAttr(st, "repo"))
+	r.ScopeChangeClass = firstNonEmpty(r.ScopeChangeClass, stageAttr(st, "scope_change_class"), stageAttr(st, "change_class"), stageAttr(st, "risk_tier"), stageAttr(st, "tier"))
+	r.AutonomyLevel = firstNonEmpty(r.AutonomyLevel, stageAttr(st, "autonomy_level"), stageAttr(st, "target_level"), stageAttr(st, "acmm_level"))
+}
+
+func autonomyScope(r RetroRecord) (string, string) {
+	if r.ScopeUser != "" {
+		return "user", r.ScopeUser
+	}
+	if r.ScopeRepo != "" {
+		return "repo", r.ScopeRepo
+	}
+	if r.ScopeChangeClass != "" {
+		return "change_class", r.ScopeChangeClass
+	}
+	if r.Actor != "" {
+		return "user", r.Actor
+	}
+	return "run", r.BeadID
+}
+
+func autonomyLevel(r RetroRecord, fallback string) string {
+	if r.AutonomyLevel != "" {
+		return r.AutonomyLevel
+	}
+	return fallback
+}
+
+func autonomyFields(r RetroRecord, scopeType, scopeValue, level, direction string) map[string]string {
+	return map[string]string{
+		metadataAutonomyScopeType:   scopeType,
+		metadataAutonomyScopeValue:  scopeValue,
+		metadataAutonomyLevel:       level,
+		metadataAutonomyDirection:   direction,
+		metadataAutonomyRun:         r.BeadID,
+		metadataAutonomyActor:       r.Actor,
+		metadataAutonomyRepo:        r.ScopeRepo,
+		metadataAutonomyChangeClass: r.ScopeChangeClass,
 	}
 }
 
@@ -630,6 +767,36 @@ func metaInt(b *beads.Bead, key string) int {
 	}
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func firstMetaInt(b *beads.Bead, keys ...string) (int, bool) {
+	for _, key := range keys {
+		raw := metaString(b, key)
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+func firstAttrInt(st *timeline.Stage, keys ...string) (int, bool) {
+	for _, key := range keys {
+		raw := stageAttr(st, key)
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 func metaBool(b *beads.Bead, key string) bool {

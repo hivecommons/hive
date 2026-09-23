@@ -2,10 +2,19 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+)
+
+const (
+	retroActor                        = "retro"
+	retroPatternPlanAcceptedFirstPass = "plan_accepted_first_pass"
+	retroPatternPRMergedNoRework      = "pr_merged_no_rework"
+	retroPatternRunRolledBack         = "run_rolled_back"
 )
 
 // qualityAgentName is the config-level name of the quality/coverage agent that
@@ -36,7 +45,67 @@ const agentMetricsCoverageKey = "coverage"
 // renders directly.
 func (s *Server) handleACMMRecommendation(w http.ResponseWriter, r *http.Request) {
 	rec := acmmadvisor.RecommendFromStatus(s.buildACMMStatusInputs())
-	jsonResponse(w, rec)
+	jsonResponse(w, acmmRecommendationResponse{Recommendation: rec, AutonomySignals: s.autonomySignalFacts()})
+}
+
+type acmmRecommendationResponse struct {
+	acmmadvisor.Recommendation
+	AutonomySignals []AutonomySignalFact `json:"AutonomySignals,omitempty"`
+}
+
+type AutonomySignalFact struct {
+	Pattern     string `json:"pattern"`
+	ScopeType   string `json:"scopeType"`
+	Scope       string `json:"scope"`
+	Level       string `json:"level"`
+	Direction   string `json:"direction"`
+	Detail      string `json:"detail,omitempty"`
+	SourceBead  string `json:"sourceBead,omitempty"`
+	SourceActor string `json:"sourceActor,omitempty"`
+}
+
+func (s *Server) autonomySignalFacts() []AutonomySignalFact {
+	if s == nil || s.deps == nil || s.deps.BeadStores == nil {
+		return nil
+	}
+	store := s.deps.BeadStores[retroActor]
+	if store == nil {
+		return nil
+	}
+	var facts []AutonomySignalFact
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b == nil || b.Type != beads.TypeAdvisory || b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+			continue
+		}
+		pattern := b.Meta("retro_pattern")
+		if !isAutonomySignalPattern(pattern) {
+			continue
+		}
+		fact := AutonomySignalFact{
+			Pattern:     pattern,
+			ScopeType:   b.Meta("autonomy_scope_type"),
+			Scope:       b.Meta("autonomy_scope_value"),
+			Level:       b.Meta("autonomy_level"),
+			Direction:   b.Meta("autonomy_direction"),
+			Detail:      b.Meta("detail"),
+			SourceBead:  b.Meta("retro_source_bead"),
+			SourceActor: b.Meta("retro_source_actor"),
+		}
+		if strings.TrimSpace(fact.Scope) == "" {
+			fact.Scope = b.Title
+		}
+		facts = append(facts, fact)
+	}
+	return facts
+}
+
+func isAutonomySignalPattern(pattern string) bool {
+	switch pattern {
+	case retroPatternPlanAcceptedFirstPass, retroPatternPRMergedNoRework, retroPatternRunRolledBack:
+		return true
+	default:
+		return false
+	}
 }
 
 // buildACMMStatusInputs assembles the forge-neutral advisor inputs from the
