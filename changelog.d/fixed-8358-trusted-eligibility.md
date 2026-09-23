@@ -1,0 +1,1 @@
+- Contributor trust docs and dashboards now clarify that trusted status is operator-granted, flag contributors who are eligible after about 20 PR tasks, and tell contributors when they are awaiting that grant ([#8358](https://github.com/hivecommons/hive/issues/8358)).

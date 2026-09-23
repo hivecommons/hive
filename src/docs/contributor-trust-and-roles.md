@@ -15,7 +15,7 @@ Contributor profiles carry a `trust_tier` field. The current tier order is:
 | --- | --- | --- |
 | `newcomer` | default self-registration | Rate-limited entry tier. |
 | `contributor` | auto-promoted after 5 completed tasks with PRs | May claim default delegated roles such as `scanner`, `quality`, and `outreach`. |
-| `trusted` | auto-promoted after 20 completed tasks with PRs, or granted by an operator | May use higher-trust workflows and, with explicit grants, privileged delegated roles. |
+| `trusted` | granted by an operator once a contributor reaches about 20 PR tasks; never automatic | May use higher-trust workflows and, with explicit grants, privileged delegated roles. Operators grant it with the tier dropdown on the contributor card under **Operations → Connected clankers**, which calls `PUT /api/contributors/{id}/trust`. |
 | `merger` | maintainer/owner grant; it is not auto-promoted | May queue **other people's** PRs for Hive's auto-merge-on-green flow. |
 | `advisor` | maintainer/owner grant | Advisory/invite tier; it is not ordered above `merger` for role-claim checks. |
 

@@ -74,6 +74,7 @@ func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) 
 	for i := range profiles {
 		profiles[i].TokenPlain = ""
 		profiles[i].RegistrationToken = ""
+		profiles[i].EligibleForTrusted = contributorEligibleForTrusted(&profiles[i])
 		if ls, ok := liveStates[profiles[i].ContributorID]; ok {
 			profiles[i].Active = ls.Active
 			profiles[i].CurrentTask = ls.CurrentTask
@@ -93,6 +94,7 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 	}
 	p.TokenPlain = ""
 	p.RegistrationToken = ""
+	p.EligibleForTrusted = contributorEligibleForTrusted(p)
 	jsonResponse(w, p)
 }
 

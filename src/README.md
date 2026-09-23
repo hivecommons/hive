@@ -195,8 +195,11 @@ For portable agent overlays and dashboard imports/exports, see [AGENT-DEFINITION
 
 ClankeR lets contributors lend their own AI CLI subscription to a hive through
 `/contribute`. Contributors start as `newcomer`, auto-promote to `contributor`
-after 5 PR-backed completions and `trusted` after 20, and may receive
-maintainer-granted tiers such as `merger`. The merger tier can queue **other
+after 5 PR-backed completions, and may receive maintainer-granted tiers such as
+`trusted` once they reach about 20 PR tasks. Trusted is never automatic:
+operators grant it with the tier dropdown on the contributor card under
+**Operations → Connected clankers**, which calls
+`PUT /api/contributors/{id}/trust`. The merger tier can queue **other
 people's** PRs for Hive's auto-merge-on-green sweep, never its own.
 
 Relays can subscribe to multiple hubs by setting comma-separated `HIVE_HUB` and

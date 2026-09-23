@@ -151,11 +151,12 @@ type ContributorProfile struct {
 	// TasksWithPR counts only completions that reported a pull request.
 	// Auto-promotion reads this rather than TasksCompleted, so write access is
 	// never granted for completions where nothing was shown to have shipped.
-	TasksWithPR       int                   `json:"total_tasks_completed_with_pr"`
-	TasksFailed       int                   `json:"total_tasks_failed"`
-	LastActive        string                `json:"last_active,omitempty"`
-	LastCompletedTask *WSTaskAssign         `json:"last_completed_task,omitempty"`
-	RateLimits        ContributorRateLimits `json:"rate_limits"`
+	TasksWithPR        int                   `json:"total_tasks_completed_with_pr"`
+	EligibleForTrusted bool                  `json:"eligible_for_trusted,omitempty"`
+	TasksFailed        int                   `json:"total_tasks_failed"`
+	LastActive         string                `json:"last_active,omitempty"`
+	LastCompletedTask  *WSTaskAssign         `json:"last_completed_task,omitempty"`
+	RateLimits         ContributorRateLimits `json:"rate_limits"`
 	// LabelInterests is the contributor's OPT-IN list of GitHub issue labels they
 	// want to help with (issue #2637) — e.g. a contributor with an NVIDIA machine
 	// subscribes to "nvidia" so nvidia-labelled work surfaces first for them. It is

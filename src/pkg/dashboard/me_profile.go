@@ -53,7 +53,8 @@ type ContributorProfileResponse struct {
 	AvatarURL      string `json:"avatar_url,omitempty"`
 
 	// ── Level (the trust tier IS the level) ──
-	TrustTier string `json:"trust_tier,omitempty"`
+	TrustTier          string `json:"trust_tier,omitempty"`
+	EligibleForTrusted bool   `json:"eligible_for_trusted,omitempty"`
 
 	// ── Stats (aggregated central counts) ──
 	TasksCompleted int `json:"tasks_completed"`
@@ -331,6 +332,7 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.Found = true
 	resp.AvatarURL = avatarForUsername(p)
 	resp.TrustTier = p.TrustTier
+	resp.EligibleForTrusted = contributorEligibleForTrusted(p)
 	resp.TasksCompleted = p.TasksCompleted
 	resp.TasksWithPR = p.TasksWithPR
 	resp.TasksFailed = p.TasksFailed

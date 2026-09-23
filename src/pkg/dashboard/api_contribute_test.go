@@ -637,6 +637,44 @@ func TestTrustTierTableMatchesConstants(t *testing.T) {
 	}
 }
 
+func TestTrustedEligibilityPredicateAndLog(t *testing.T) {
+	p := &ContributorProfile{
+		GitHubUsername: "alice",
+		TrustTier:      "contributor",
+		TasksWithPR:    contributorTrustedAt,
+	}
+	if !contributorEligibleForTrusted(p) {
+		t.Fatal("contributor at trusted threshold should be eligible")
+	}
+	if !contributorTrustedEligibilityCrossed(p, contributorTrustedAt-1) {
+		t.Fatal("crossing the trusted threshold should be detected")
+	}
+	if contributorTrustedEligibilityCrossed(p, contributorTrustedAt) {
+		t.Fatal("already-at-threshold contributors should not log again")
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	if !logTrustedEligibilityIfCrossed(logger, p, contributorTrustedAt-1) {
+		t.Fatal("expected eligibility crossing log helper to report a log")
+	}
+	if !strings.Contains(buf.String(), "alice eligible for trusted tier (needs operator grant)") {
+		t.Fatalf("eligibility log missing expected message: %s", buf.String())
+	}
+
+	p.TrustTier = "trusted"
+	if contributorEligibleForTrusted(p) {
+		t.Fatal("trusted contributors should not be reported as awaiting trusted grant")
+	}
+	buf.Reset()
+	if logTrustedEligibilityIfCrossed(logger, p, contributorTrustedAt-1) {
+		t.Fatal("trusted contributors should not emit eligibility logs")
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("unexpected log for non-eligible contributor: %s", buf.String())
+	}
+}
+
 func TestContributorNotFound(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
@@ -952,6 +990,15 @@ func TestContributorsList(t *testing.T) {
 
 	registerTestUser(t, s, "list-a")
 	registerTestUser(t, s, "list-b")
+	p, err := loadContributorProfile("list-b")
+	if err != nil || p == nil {
+		t.Fatalf("load list-b: %v", err)
+	}
+	p.TrustTier = "contributor"
+	p.TasksWithPR = contributorTrustedAt
+	if err := saveContributorProfile(p); err != nil {
+		t.Fatalf("save list-b: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/contributors", nil)
 	w := httptest.NewRecorder()
@@ -970,6 +1017,9 @@ func TestContributorsList(t *testing.T) {
 	for _, c := range resp.Contributors {
 		if c.RegistrationToken != "" || c.TokenPlain != "" {
 			t.Errorf("token leaked for %s", c.GitHubUsername)
+		}
+		if c.GitHubUsername == "list-b" && !c.EligibleForTrusted {
+			t.Errorf("eligible contributor response missing eligible_for_trusted")
 		}
 	}
 }

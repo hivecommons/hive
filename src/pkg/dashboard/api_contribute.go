@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -42,6 +43,24 @@ const (
 	// the invite secret has always used.
 	contributorProfileFileMode = 0o600
 )
+
+func contributorEligibleForTrusted(p *ContributorProfile) bool {
+	return p != nil && p.TrustTier == "contributor" && p.TasksWithPR >= contributorTrustedAt
+}
+
+func contributorTrustedEligibilityCrossed(p *ContributorProfile, previousTasksWithPR int) bool {
+	return contributorEligibleForTrusted(p) && previousTasksWithPR < contributorTrustedAt
+}
+
+func logTrustedEligibilityIfCrossed(logger *slog.Logger, p *ContributorProfile, previousTasksWithPR int) bool {
+	if !contributorTrustedEligibilityCrossed(p, previousTasksWithPR) {
+		return false
+	}
+	if logger != nil {
+		logger.Info(fmt.Sprintf("%s eligible for trusted tier (needs operator grant)", p.GitHubUsername))
+	}
+	return true
+}
 
 // inviteTrustTiers are the trust tiers permitted to mint an invite link. Only a
 // trusted, merger, or advisor contributor may invite; a newcomer/contributor/anonymous
@@ -915,8 +934,9 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 	prRecent, prCovered, prKnown := store.userRecentPR(seriesKey, recentWindowBuckets)
 
 	resp := map[string]any{
-		"github_username": profile.GitHubUsername,
-		"trust_tier":      profile.TrustTier,
+		"github_username":      profile.GitHubUsername,
+		"trust_tier":           profile.TrustTier,
+		"eligible_for_trusted": contributorEligibleForTrusted(profile),
 		// Same field names as ContributorProfile so a reader of one payload can
 		// read the other without a translation table.
 		"total_tasks_completed":         profile.TasksCompleted,

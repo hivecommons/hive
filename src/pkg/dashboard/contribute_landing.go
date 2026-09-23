@@ -1004,6 +1004,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-mine-tile.is-pr .cc-mine-val{color:var(--cc-green)}
 .cc-mine-lbl{font-size:.68rem;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted);margin-top:3px}
 .cc-mine-sub{font-size:.68rem;color:var(--cc-muted-2);margin-top:2px}
+.cc-mine-eligible{grid-column:1/-1;font-size:.78rem;color:var(--cc-amber);background:rgba(210,153,34,.10);border:1px solid rgba(210,153,34,.28);border-radius:8px;padding:8px 10px}
 /* When the body carries a message instead of tiles (signed out, no profile yet,
    or a load fault — #6937) the tile grid would squeeze that one sentence into a
    94px column, so the grid steps aside for a plain block. The message itself is
@@ -3191,6 +3192,7 @@ function renderMeCard(mount,p){
   // within the founding cohort — otherwise absent, never faked.
   var founding=(p.founding_position&&p.founding_position>=1&&p.founding_position<=20)
     ?'<div><span class="me-founding">Founding cohort · first twenty</span></div>':'';
+  var trustedEligible=p.eligible_for_trusted?'<div class="rank-sub">eligible for trusted — awaiting maintainer grant</div>':'';
 
   // Livebar: rendered ONLY when a task is genuinely live on the hub.
   var livebar='';
@@ -3228,7 +3230,7 @@ function renderMeCard(mount,p){
   +'<div class="dz-identity-inner">'
   +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" data-hide-on-error="1"></div>'
   +'<div class="dz-namebloc">'+callsign+'<h1 class="dz-heroname">'+esc(p.github_username)+'</h1>'+desig+founding+'</div>'
-  +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div></div>'
+  +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div>'+trustedEligible+'</div>'
   +'</div>'+livebar+'</section>'
   // ZONE B | ZONE C — Deeds of Record | Operator Profile.
   +'<div class="dz-grid">'
@@ -4422,6 +4424,7 @@ function renderClankers(list){
     var sub=[c.cli_backend,c.model].filter(Boolean).map(esc).concat(ccAdvisorLabel(c)?[ccAdvisorLabel(c)]:[]).concat(c.role?[esc(c.role)]:[]).join(' &middot; ');
     // Small tier badge from this clanker's REAL trust_tier (defaults to newcomer).
     var tierPill=tierBadge(c.trust_tier,'tier-inline');
+    var trustedBadge=c.eligible_for_trusted?'<span class="clanker-status reviewing" title="20+ PR tasks; use the tier dropdown to grant trusted">eligible for trusted</span>':'';
     // #2546: when idle with a known reason, show "idle: no matching work" etc.
     var task=c.current_task
       ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
@@ -4497,7 +4500,7 @@ function renderClankers(list){
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
     var rowTitle=c.role_mismatch?(' title="'+esc(c.role_mismatch)+'"'):'';
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"'+rowTitle+'><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
-      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
+      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+trustedBadge+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+knowLine+failLine+capsLine+protoLine+interestsLine+paneBlock+histLink+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
@@ -6324,7 +6327,9 @@ function ccRenderMine(){
   var noPR=Math.max(0,done-prs);
   var tier=document.getElementById('cc-mine-tier');
   if(tier)tier.textContent=d.trust_tier?ccTierLabel(d.trust_tier):'';
+  var trustedEligible=d.eligible_for_trusted?'<div class="cc-mine-eligible">eligible for trusted — awaiting maintainer grant</div>':'';
   body.innerHTML=
+    trustedEligible+
     ccMineTile(recent.val,'Issues worked (24h)',recent.sub)+
     ccMineTile(String(done),'Issues worked (total)')+
     ccMineTile(recentPR.val,'PRs produced (24h)',recentPR.sub,'is-pr')+

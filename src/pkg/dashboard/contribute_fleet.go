@@ -110,17 +110,18 @@ type FleetClanker struct {
 	// AdvisorModel / AdvisorEffort: the second model reviewing this
 	// contributor's work and its effort (hivecommons/hive#7760); omitted for a
 	// single-model backend.
-	AdvisorModel  string        `json:"advisor_model,omitempty"`
-	AdvisorEffort string        `json:"advisor_effort,omitempty"`
-	Role          string        `json:"role,omitempty"`
-	ClientRole    string        `json:"client_role,omitempty"`
-	AssignedRole  string        `json:"assigned_agent_role,omitempty"`
-	RoleMismatch  string        `json:"role_mismatch,omitempty"`
-	TrustTier     string        `json:"trust_tier,omitempty"`
-	ConnectedAt   string        `json:"connected_at,omitempty"`
-	LastActivity  string        `json:"last_activity,omitempty"`
-	Stale         bool          `json:"stale,omitempty"`
-	CurrentTask   *WSTaskAssign `json:"current_task,omitempty"`
+	AdvisorModel       string        `json:"advisor_model,omitempty"`
+	AdvisorEffort      string        `json:"advisor_effort,omitempty"`
+	Role               string        `json:"role,omitempty"`
+	ClientRole         string        `json:"client_role,omitempty"`
+	AssignedRole       string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch       string        `json:"role_mismatch,omitempty"`
+	TrustTier          string        `json:"trust_tier,omitempty"`
+	EligibleForTrusted bool          `json:"eligible_for_trusted,omitempty"`
+	ConnectedAt        string        `json:"connected_at,omitempty"`
+	LastActivity       string        `json:"last_activity,omitempty"`
+	Stale              bool          `json:"stale,omitempty"`
+	CurrentTask        *WSTaskAssign `json:"current_task,omitempty"`
 	// IdleReason is the machine-readable reason this clanker currently has no work
 	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
 	// clanker is actively working (CurrentTask set) or has never been refused. It
@@ -272,6 +273,7 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			fc.ContributorID = c.profile.ContributorID
 			fc.GitHubUsername = c.profile.GitHubUsername
 			fc.TrustTier = c.profile.TrustTier
+			fc.EligibleForTrusted = contributorEligibleForTrusted(c.profile)
 			// #2677: mirror the contributor's own label interests read-only (a copy
 			// so the snapshot never aliases the live profile slice).
 			if len(c.profile.LabelInterests) > 0 {

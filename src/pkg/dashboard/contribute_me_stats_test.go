@@ -84,11 +84,12 @@ func TestContributeMeReportsOwnTotals(t *testing.T) {
 		t.Fatalf("GET /api/contribute/me = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		Username  string `json:"github_username"`
-		Tier      string `json:"trust_tier"`
-		Completed int    `json:"total_tasks_completed"`
-		WithPR    int    `json:"total_tasks_completed_with_pr"`
-		Failed    int    `json:"total_tasks_failed"`
+		Username           string `json:"github_username"`
+		Tier               string `json:"trust_tier"`
+		EligibleForTrusted bool   `json:"eligible_for_trusted"`
+		Completed          int    `json:"total_tasks_completed"`
+		WithPR             int    `json:"total_tasks_completed_with_pr"`
+		Failed             int    `json:"total_tasks_failed"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("response not JSON: %v", err)
@@ -102,6 +103,28 @@ func TestContributeMeReportsOwnTotals(t *testing.T) {
 	}
 	if got.WithPR == got.Completed {
 		t.Fatal("with-PR must stay distinct from completed — that distinction is the point of the feature")
+	}
+	if got.EligibleForTrusted {
+		t.Fatal("below-threshold contributor should not be eligible for trusted")
+	}
+}
+
+func TestContributeMeReportsTrustedEligibility(t *testing.T) {
+	s := meStatsServer(t)
+	seedStatsProfile(t, "eligible", 25, contributorTrustedAt, 0)
+
+	rec := getAs(s, "/api/contribute/me", "eligible")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/contribute/me = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		EligibleForTrusted bool `json:"eligible_for_trusted"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if !got.EligibleForTrusted {
+		t.Fatal("eligible_for_trusted = false, want true")
 	}
 }
 

@@ -14708,12 +14708,16 @@ function burnAreaChart() {
           const tierOptions = Object.keys(TRUST_TIER_COLORS).filter(t => t !== 'revoked').map(t =>
             `<option value="${t}"${t === c.trust_tier ? ' selected' : ''}>${t}</option>`
           ).join('');
+          const trustedEligibleBadge = c.eligible_for_trusted
+            ? '<span title="20+ PR tasks; use the tier dropdown to grant trusted" style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.68rem;color:var(--yellow);border:1px solid color-mix(in srgb, var(--yellow) 45%, transparent);background:color-mix(in srgb, var(--yellow) 10%, transparent);flex-shrink:0">eligible for trusted</span>'
+            : '';
           return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
               ${avatarHtml}
               <span style="font-weight:600">@${esc(c.github_username)}</span>
               <span style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
+              ${trustedEligibleBadge}
             </div>
             ${cliLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${roleLine}</div>` : '')}
             <div style="display:flex;gap:16px;margin-bottom:6px;font-size:0.8rem;color:var(--muted)">

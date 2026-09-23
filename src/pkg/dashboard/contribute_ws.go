@@ -3143,7 +3143,9 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// contents:write / pulls:write for a PR that was never shown to
 			// exist, belongs to another repo, or was authored by someone else.
 			if verifiedPR != "" {
+				tasksWithPRBefore := s.contributor.profile.TasksWithPR
 				s.contributor.profile.TasksWithPR++
+				logTrustedEligibilityIfCrossed(h.logger, s.contributor.profile, tasksWithPRBefore)
 			}
 			s.contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
 			if completedTask != nil {
