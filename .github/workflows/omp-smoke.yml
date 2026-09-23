@@ -1,0 +1,81 @@
+name: OMP smoke
+
+on:
+  schedule:
+    - cron: '27 3,15 * * *'
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: 'Which lane(s) to run'
+        type: choice
+        options: [both, latest, pinned]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omp-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ matrix.lane == 'pinned' && 'ubuntu-latest' || fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: >-
+          ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'both')
+              && fromJSON(format('["{0}"]', inputs.lane))
+              || fromJSON('["latest","pinned"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v7.0.0
+        if: matrix.lane == 'latest'
+        with:
+          go-version-file: src/go.mod
+      - name: OMP smoke (latest)
+        if: matrix.lane == 'latest'
+        working-directory: src
+        run: |
+          mkdir -p ../.hive-smoke-bin
+          go build -tags extwork_omp -o ../.hive-smoke-bin/hive-omp ./cmd/hive
+          go test -tags 'integration extwork_omp' ./test/extwork -run TestOMPSmoke -count=1
+      - name: Require container engine
+        if: matrix.lane == 'pinned'
+        run: |
+          if command -v podman >/dev/null 2>&1; then podman --version; exit 0; fi
+          echo '::error::pinned omp-smoke needs podman to run inside ghcr.io/hivecommons/hive-contributor:latest'
+          exit 1
+      - name: OMP smoke (pinned image)
+        if: matrix.lane == 'pinned'
+        run: |
+          podman pull ghcr.io/hivecommons/hive-contributor:latest
+          podman run --rm --entrypoint /bin/bash -v "$GITHUB_WORKSPACE:/opt/hive-src:ro,Z" ghcr.io/hivecommons/hive-contributor:latest -lc 'cd /opt/hive-src/src && go build -tags extwork_omp ./cmd/hive && go test -tags "integration extwork_omp" ./test/extwork -run TestOMPSmoke -count=1'
+
+  create-issue-on-failure:
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: [smoke]
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId, per_page: 100});
+            const failed = jobs.filter(j => j.name.startsWith('smoke (') && j.conclusion === 'failure').map(j => (j.name.match(/\(([^)]+)\)/) || [,'unknown'])[1]);
+            if (failed.length === 0) return;
+            const existing = await github.rest.issues.listForRepo({owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'omp-smoke', per_page: 20});
+            for (const lane of [...new Set(failed)]) {
+              const prefix = `[OMP smoke: ${lane}]`;
+              const dup = existing.data.find(i => i.title.startsWith(prefix));
+              const body = `Scheduled OMP smoke failed on ${context.sha}.\n\nRun: ${runUrl}\n\nLane: ${lane}\n\nPart of #8466 / #8290. Refs #6899.`;
+              if (dup) await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: dup.number, body});
+              else await github.rest.issues.create({owner: context.repo.owner, repo: context.repo.repo, title: `${prefix} failure on ${context.sha.substring(0, 7)}`, body, labels: ['omp-smoke','ci-failure','kind/bug']});
+            }
