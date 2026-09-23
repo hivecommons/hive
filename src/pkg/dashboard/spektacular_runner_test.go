@@ -558,6 +558,100 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 	}
 }
 
+func TestSpecCheckpointDisabledRecordsAutoActor(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	off := false
+	s.deps.Config.SourcePath = "hive.yaml"
+	s.deps.Config.Runs.Checkpoints.Spec = &off
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	ex := newSpekExec()
+	ex.push(spektacular.KindSpec, spektacular.DocumentFinal)
+	r := spekRunner(hub, ex)
+	if res := r.Tick(context.Background(), now); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("final tick = %+v", res)
+	}
+	found := false
+	for _, e := range s.audit.Recent(10) {
+		found = found || (e.User == runCheckpointAutoActor && strings.Contains(e.Detail, "stage=spec") && strings.Contains(e.Detail, "config_source=hive.yaml"))
+	}
+	if !found {
+		t.Fatalf("auto spec approval audit not recorded: %+v", s.audit.Recent(10))
+	}
+}
+
+func TestRunCheckpointAutoApprovalRecordsAutoActor(t *testing.T) {
+	_, s, store, _ := spekHub(t)
+	off := false
+	level := config.RunImplementCheckpointMinACMM
+	s.deps.Config.ACMMLevel = &level
+	s.deps.Config.SourcePath = "hive.yaml"
+	s.deps.Config.Runs.Checkpoints.Plan = &off
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, "1. [T1] x [agent_suitable]"); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	_, epic := s.findRunEpic(spekRunKey)
+	if epic == nil {
+		t.Fatal("plan import did not create epic")
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved {
+		t.Fatalf("plan_status = %q, want approved", got.Meta(planning.MetaPlanStatus))
+	}
+	foundAudit := false
+	for _, e := range s.audit.Recent(10) {
+		if e.User == runCheckpointAutoActor && e.Action == "plan_approve" && strings.Contains(e.Detail, "stage=plan") && strings.Contains(e.Detail, "config_source=hive.yaml") {
+			foundAudit = true
+		}
+	}
+	if !foundAudit {
+		t.Fatalf("auto plan approval audit not recorded: %+v", s.audit.Recent(10))
+	}
+	foundEvent := false
+	for _, ev := range s.LifecycleTimeline().ByIssue(spekRunKey) {
+		if ev.Agent == runCheckpointAutoActor && ev.Attrs[runCheckpointActorKey] == runCheckpointAutoActor && ev.Attrs[runCheckpointConfigSourceKey] == "hive.yaml" {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("auto plan approval event not recorded: %+v", s.LifecycleTimeline().ByIssue(spekRunKey))
+	}
+}
+
+func TestRunStageAccessorAutoApprovesDisabledImplementCheckpoint(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	off := false
+	level := config.RunImplementCheckpointMinACMM
+	s.deps.Config.ACMMLevel = &level
+	s.deps.Config.SourcePath = "hive.yaml"
+	s.deps.Config.Runs.Checkpoints.Implement = &off
+	now := time.Now()
+	spekLease(t, hub, StageImplement, now)
+	epic, err := store.Create("bound", beads.TypeEpic, beads.PriorityMedium, "architect", spekRunKey)
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaRunKey] = spekRunKey
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusDraft
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	listed := spekListed(t, s)
+	if len(listed) != 1 || listed[0].Stage != StageImplement {
+		t.Fatalf("listed = %+v, want auto-approved implement stage", listed)
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved {
+		t.Fatalf("plan_status = %q, want approved", got.Meta(planning.MetaPlanStatus))
+	}
+	found := false
+	for _, e := range s.audit.Recent(10) {
+		found = found || (e.User == runCheckpointAutoActor && e.Action == "plan_approve" && strings.Contains(e.Detail, "stage=implement"))
+	}
+	if !found {
+		t.Fatalf("auto implement approval audit not recorded: %+v", s.audit.Recent(10))
+	}
+}
+
 func TestCovGov_FeaturesSpektacularRoundTrip(t *testing.T) {
 	s := covApiServer(t)
 	if s.deps.Config.Runs.Spektacular.Enabled {

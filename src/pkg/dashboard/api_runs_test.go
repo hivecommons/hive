@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,85 @@ func TestRunsImplementCheckpointStillBlocksBelowACMML5(t *testing.T) {
 	cfg.Runs.Checkpoints.Implement = &off
 	if !runCheckpointBlocks(cfg, StageImplement) {
 		t.Fatal("implement checkpoint must remain blocking below ACMM L5")
+	}
+}
+
+func TestRunCheckpointPolicyMatrix(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
+	stages := []string{StageSpec, StagePlan, StageImplement}
+	for _, stage := range stages {
+		for _, tc := range []struct {
+			name       string
+			value      *bool
+			acmm       int
+			wantBlocks bool
+		}{
+			{name: "nil", acmm: config.RunImplementCheckpointMinACMM, wantBlocks: true},
+			{name: "true", value: boolPtr(true), acmm: config.RunImplementCheckpointMinACMM, wantBlocks: true},
+			{name: "false", value: boolPtr(false), acmm: config.RunImplementCheckpointMinACMM, wantBlocks: false},
+			{name: "false-low-acmm", value: boolPtr(false), acmm: config.RunImplementCheckpointMinACMM - 1, wantBlocks: stage == StageImplement},
+		} {
+			t.Run(stage+"/"+tc.name, func(t *testing.T) {
+				cfg := &config.Config{ACMMLevel: &tc.acmm, SourcePath: "hive.yaml"}
+				switch stage {
+				case StageSpec:
+					cfg.Runs.Checkpoints.Spec = tc.value
+				case StagePlan:
+					cfg.Runs.Checkpoints.Plan = tc.value
+				case StageImplement:
+					cfg.Runs.Checkpoints.Implement = tc.value
+				}
+				got := runCheckpointPolicyForConfig(cfg, stage)
+				if got.blocks != tc.wantBlocks {
+					t.Fatalf("blocks = %v, want %v (%+v)", got.blocks, tc.wantBlocks, got)
+				}
+				if tc.value != nil && !*tc.value && !got.blocks && got.reason != runCheckpointDisabledReason {
+					t.Fatalf("auto approval reason = %q, want %q", got.reason, runCheckpointDisabledReason)
+				}
+				if stage == StageImplement && tc.value != nil && !*tc.value && tc.acmm < config.RunImplementCheckpointMinACMM && !strings.Contains(got.reason, "ACMM") {
+					t.Fatalf("low ACMM reason = %q, want ACMM explanation", got.reason)
+				}
+			})
+		}
+	}
+}
+
+func TestRunDetailShowsImplementCheckpointUnavailableReason(t *testing.T) {
+	s, deps := runsTestServer(t)
+	off := false
+	low := config.RunImplementCheckpointMinACMM - 1
+	deps.Config.ACMMLevel = &low
+	deps.Config.Runs.Checkpoints.Implement = &off
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	epic, err := store.Create("draft plan", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusDraft
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8312"
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	deps.BeadStores = map[string]*beads.Store{"architect": store}
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8312", "myorg/repo1", 8312, "", "contributor", StageImplement, 9, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	rec := runsGet(s, "/api/runs/myorg%2Frepo1%238312", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET run detail = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	if run.WaitingOn != RunWaitingOnHuman || !strings.Contains(run.WaitingReason, "ACMM") {
+		t.Fatalf("run wait = %+v, want human ACMM reason", run)
 	}
 }
 

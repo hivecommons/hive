@@ -52,6 +52,14 @@ const (
 	runAdmissionTaskPrefix = "run-admit-"
 )
 
+const (
+	runCheckpointAutoActor       = "auto"
+	runCheckpointConfigSourceKey = "config_source"
+	runCheckpointReasonKey       = "checkpoint_reason"
+	runCheckpointActorKey        = "approval_actor"
+	runCheckpointDisabledReason  = "checkpoint_disabled"
+)
+
 // runReceiptsDir is where AdvanceStageLease persists one stage receipt per
 // advanced generation: <dir>/<run key>/<stage>-gen<gen>.json. Tests redirect
 // it the same way taskLeasesFile is redirected.
@@ -312,6 +320,11 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 		At:       now.UnixMilli(),
 		Attrs:    eventAttrs,
 	})
+	if stage == StageSpec {
+		if decision := s.runCheckpointPolicy(StageSpec); !decision.blocks {
+			s.recordRunCheckpointAutoApproval(runKey, "", StageSpec, decision)
+		}
+	}
 	return nil
 }
 
@@ -460,6 +473,14 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if _, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false}); err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
 	}
+	if updated, err := store.Get(epic.ID); err == nil {
+		epic = updated
+	}
+	if decision := s.runCheckpointPolicy(StagePlan); !decision.blocks {
+		if err := s.autoApproveRunCheckpoint(store, epic, runKey, StagePlan, decision); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -467,6 +488,62 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 func (s *Server) runPlanApproved(runKey string) bool {
 	_, epic := s.findRunEpic(runKey)
 	return epic != nil && epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved
+}
+
+func (s *Server) ensureRunPlanApproved(runKey string) bool {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil {
+		return false
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		return true
+	}
+	decision := s.runCheckpointPolicy(StageImplement)
+	if decision.blocks {
+		return false
+	}
+	if err := s.autoApproveRunCheckpoint(store, epic, runKey, StageImplement, decision); err != nil {
+		s.logger.Warn("[runs] auto-approve checkpoint failed", "run", runKey, "stage", StageImplement, "error", err)
+		return false
+	}
+	return true
+}
+
+func (s *Server) autoApproveRunCheckpoint(store *beads.Store, epic *beads.Bead, runKey, stage string, decision runCheckpointPolicy) error {
+	if store == nil || epic == nil {
+		return errors.New("run plan unavailable for checkpoint auto-approval")
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		return nil
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		return fmt.Errorf("auto-approving %s checkpoint for %s: %w", stage, runKey, err)
+	}
+	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, decision)
+	return nil
+}
+
+func (s *Server) recordRunCheckpointAutoApproval(runKey, epicID, stage string, decision runCheckpointPolicy) {
+	if s == nil {
+		return
+	}
+	if decision.source == "" {
+		decision.source = "runtime config"
+	}
+	detail := auditDetail("epic", epicID, "run", runKey, "surface", "plan", "stage", stage, runCheckpointConfigSourceKey, decision.source, runCheckpointReasonKey, decision.reason)
+	s.audit.Log(runCheckpointAutoActor, "plan_approve", detail, planning.ArchitectAgentName)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindStageCompleted,
+		Agent:    runCheckpointAutoActor,
+		At:       time.Now().UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrStage:               stage,
+			runCheckpointActorKey:        runCheckpointAutoActor,
+			runCheckpointConfigSourceKey: decision.source,
+			runCheckpointReasonKey:       decision.reason,
+		},
+	})
 }
 
 // runStageAccessor is the dashboard's worksource.RunStageLeaseAccessor: the
@@ -488,7 +565,7 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 		if time.Now().After(expiresAt) {
 			return
 		}
-		if stage == StageImplement && !s.runPlanApproved(runKey) {
+		if stage == StageImplement && !s.ensureRunPlanApproved(runKey) {
 			return
 		}
 		out = append(out, worksource.RunStage{RunKey: runKey, Stage: stage, Repo: repo, Title: runKey})

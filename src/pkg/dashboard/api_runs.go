@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -159,6 +160,13 @@ type runHumanReviewHold struct {
 	Repo      string    `json:"repo"`
 	Number    int       `json:"number"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type runCheckpointPolicy struct {
+	stage  string
+	blocks bool
+	reason string
+	source string
 }
 
 var runReviewDispatchStatePath = "/data/review-dispatch-state.json"
@@ -466,9 +474,9 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	}
 	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
-		if runCheckpointBlocks(cfg, lease.stage) {
+		if decision := runCheckpointPolicyForConfig(cfg, lease.stage); decision.blocks {
 			run.WaitingOn = RunWaitingOnHuman
-			run.WaitingReason = plan.reason
+			run.WaitingReason = firstRunNonEmpty(plan.reason, decision.reason)
 			run.WaitingSince = formatRunTime(plan.waitingSince)
 		}
 	}
@@ -484,15 +492,38 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	return run
 }
 
+func (s *Server) runCheckpointPolicy(stage string) runCheckpointPolicy {
+	var cfg *config.Config
+	if s != nil && s.deps != nil {
+		cfg = s.deps.Config
+	}
+	return runCheckpointPolicyForConfig(cfg, stage)
+}
+
 func runCheckpointBlocks(cfg *config.Config, stage string) bool {
+	return runCheckpointPolicyForConfig(cfg, stage).blocks
+}
+
+func runCheckpointPolicyForConfig(cfg *config.Config, stage string) runCheckpointPolicy {
+	normalized := strings.TrimSpace(strings.ToLower(stage))
+	policy := runCheckpointPolicy{stage: normalized, blocks: true, reason: "checkpoint_enabled", source: "runtime config"}
 	if cfg == nil {
-		return true
+		policy.reason = "config_unavailable"
+		return policy
 	}
-	if strings.TrimSpace(strings.ToLower(stage)) == StageImplement &&
-		cfg.ACMMLevelOrZero() < config.RunImplementCheckpointMinACMM {
-		return true
+	if strings.TrimSpace(cfg.SourcePath) != "" {
+		policy.source = cfg.SourcePath
 	}
-	return cfg.Runs.CheckpointBlocks(stage)
+	if normalized == StageImplement && cfg.ACMMLevelOrZero() < config.RunImplementCheckpointMinACMM {
+		policy.reason = fmt.Sprintf("implement checkpoint relaxation requires ACMM L%d; current ACMM L%d", config.RunImplementCheckpointMinACMM, cfg.ACMMLevelOrZero())
+		return policy
+	}
+	if cfg.Runs.CheckpointBlocks(normalized) {
+		return policy
+	}
+	policy.blocks = false
+	policy.reason = runCheckpointDisabledReason
+	return policy
 }
 
 func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runPlanSnapshot) (Run, bool) {

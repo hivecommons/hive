@@ -617,6 +617,12 @@ governor:
 #     enabled: false
 #     binary: spektacular
 #     poll_interval_s: 30
+#   checkpoints:
+#     spec: true        # false records finalized spec checkpoints as auto-approved by actor "auto".
+#     plan: true        # false auto-approves imported plans and records config_source in audit/timeline history.
+#     implement: true   # false may auto-approve only at ACMM L5+; lower ACMM levels keep this checkpoint blocking.
+#   wait_timeout_seconds: 3600
+#   wait_severity: decision
 #   max_stage_retries: 2
 #   max_worktrees: 8
 

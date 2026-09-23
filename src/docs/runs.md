@@ -56,3 +56,21 @@ Known #8460 gaps are guarded in the test rather than hidden:
 ```
 
 `source` identifies the provider (`wavefront` or `audit`). `scope` is the total obligation count, `satisfied` is completed work, `remaining` is known outstanding work, and `unknown` is evidence that could not be classified. The block is omitted when no burndown source is wired for the run key.
+
+## Checkpoint policy
+
+`runs.checkpoints.{spec,plan,implement}` controls checkpoint policy at run stage boundaries. Missing keys and explicit `true` keep the owner checkpoint blocking wherever that stage has an approval gate. Explicit `false` relaxes that checkpoint: Hive records the approval actor as `auto`, includes the config source in the audit/timeline payload, and, for plan/implement gates, releases the run exactly as a human approval would.
+
+The implement checkpoint can only be relaxed at ACMM L5 or higher (`RunImplementCheckpointMinACMM`). Below that level Hive treats `runs.checkpoints.implement: false` as blocking and reports the ACMM reason in the run state.
+
+Example:
+
+```yaml
+runs:
+  checkpoints:
+    spec: true
+    plan: false
+    implement: true
+```
+
+With this policy, the plan checkpoint is auto-approved after import; spec and implement still wait for owner approval.
