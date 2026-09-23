@@ -22,6 +22,30 @@ type stubGitHubWriter struct {
 
 	removeOwner, removeRepo, removeLabel string
 	removeNum                            int
+
+	createOwner, createRepo string
+	createReq               *gh.IssueRequest
+	created                 int
+
+	listed []*gh.Issue
+	pages  int
+}
+
+func (s *stubGitHubWriter) Create(ctx context.Context, owner, repo string, issue *gh.IssueRequest) (*gh.Issue, *gh.Response, error) {
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	s.createOwner, s.createRepo, s.createReq = owner, repo, issue
+	s.created++
+	return &gh.Issue{Number: gh.Ptr(77), HTMLURL: gh.Ptr("https://example.test/" + owner + "/" + repo + "/issues/77")}, &gh.Response{}, nil
+}
+
+func (s *stubGitHubWriter) ListByRepo(ctx context.Context, owner, repo string, opts *gh.IssueListByRepoOptions) ([]*gh.Issue, *gh.Response, error) {
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	s.pages++
+	return s.listed, &gh.Response{}, nil
 }
 
 func (s *stubGitHubWriter) CreateComment(ctx context.Context, owner, repo string, number int, comment *gh.IssueComment) (*gh.IssueComment, *gh.Response, error) {
@@ -148,5 +172,59 @@ func TestGitHubWriteErrors(t *testing.T) {
 	}
 	if err := f.SetHold(ctx, "acme/widget", 5, false); err == nil {
 		t.Error("SetHold(false): expected error")
+	}
+}
+
+func TestGitHubCreateIssueAndMarkerLookup(t *testing.T) {
+	w := &stubGitHubWriter{}
+	f := newGitHubForgeWithWriter(w, "acme")
+	ctx := context.Background()
+
+	ref, err := f.CreateIssue(ctx, "widget", "finding: auth", "body <!-- hive-finding: abc -->", []string{"audit"})
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if ref.Number != 77 || ref.URL == "" || w.created != 1 {
+		t.Fatalf("create ref = %+v created=%d", ref, w.created)
+	}
+	if w.createOwner != "acme" || w.createRepo != "widget" || w.createReq.GetTitle() != "finding: auth" || len(w.createReq.GetLabels()) != 1 {
+		t.Fatalf("create request = %s/%s %+v", w.createOwner, w.createRepo, w.createReq)
+	}
+
+	w.listed = []*gh.Issue{
+		{Number: gh.Ptr(1), Body: gh.Ptr("unrelated"), PullRequestLinks: &gh.PullRequestLinks{URL: gh.Ptr("pr")}},
+		{Number: gh.Ptr(2), Body: gh.Ptr("carries <!-- hive-finding: abc --> marker"), HTMLURL: gh.Ptr("u2")},
+	}
+	got, ok, err := f.FindIssueByMarker(ctx, "acme/widget", "<!-- hive-finding: abc -->")
+	if err != nil || !ok || got.Number != 2 || got.URL != "u2" {
+		t.Fatalf("marker lookup = %+v ok=%v err=%v", got, ok, err)
+	}
+	if _, ok, err := f.FindIssueByMarker(ctx, "acme/widget", "<!-- hive-finding: zzz -->"); err != nil || ok {
+		t.Fatalf("absent marker must report ok=false without error, got ok=%v err=%v", ok, err)
+	}
+	if _, _, err := f.FindIssueByMarker(ctx, "acme/widget", ""); err == nil {
+		t.Fatal("empty marker must be refused")
+	}
+}
+
+func TestGitHubIssueSeamErrors(t *testing.T) {
+	sentinel := errors.New("boom issue")
+	f := newGitHubForgeWithWriter(&stubGitHubWriter{err: sentinel}, "acme")
+	ctx := context.Background()
+	if _, err := f.CreateIssue(ctx, "acme/widget", "t", "b", nil); !errors.Is(err, sentinel) {
+		t.Fatalf("create error should wrap sentinel: %v", err)
+	}
+	if _, _, err := f.FindIssueByMarker(ctx, "acme/widget", "m"); !errors.Is(err, sentinel) {
+		t.Fatalf("lookup error should wrap sentinel: %v", err)
+	}
+	bare := &gitHubForge{org: "acme"}
+	if _, err := bare.CreateIssue(ctx, "acme/widget", "t", "b", nil); err == nil {
+		t.Fatal("create without a writer must fail")
+	}
+	if _, _, err := bare.FindIssueByMarker(ctx, "acme/widget", "m"); err == nil {
+		t.Fatal("lookup without a writer must fail")
+	}
+	if NewGitHubIssueSeam(nil, "acme") != nil {
+		t.Fatal("nil client must yield no seam")
 	}
 }

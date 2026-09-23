@@ -175,6 +175,10 @@ func firstMismatch(got, want Fingerprint) (string, bool) {
 		return fmt.Sprintf("inspection bead %q != required %q", got.InspectionBeadID, want.InspectionBeadID), true
 	case got.ReceiptDigest != want.ReceiptDigest:
 		return fmt.Sprintf("receipt digest %q != required %q", got.ReceiptDigest, want.ReceiptDigest), true
+	case got.IssueNumber != want.IssueNumber:
+		return fmt.Sprintf("issue %d != required %d", got.IssueNumber, want.IssueNumber), true
+	case got.FindingHash != want.FindingHash:
+		return fmt.Sprintf("finding hash %q != required %q", got.FindingHash, want.FindingHash), true
 	}
 	return "", false
 }

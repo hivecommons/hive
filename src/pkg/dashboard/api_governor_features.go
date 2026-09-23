@@ -33,6 +33,9 @@ const (
 //     review perspective, hivecommons/hive#8317)
 //   - runs.spektacular  (Config.Runs.Spektacular.Enabled + Binary; the stage
 //     runner of hivecommons/hive#8303, default off)
+//   - publication       (Config.Publication: the audit campaign's authorized
+//     issue publisher, default off, ACMM L3+ effective gate, plus the private
+//     disclosure channel security-sensitive findings route to)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -78,9 +81,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		FormalEnabled *bool `json:"formalEnabled"`
 
-		PlanMatchEnabled   *bool   `json:"planMatchEnabled"`
-		SpektacularEnabled *bool   `json:"spektacularEnabled"`
-		SpektacularBinary  *string `json:"spektacularBinary"`
+		PlanMatchEnabled          *bool   `json:"planMatchEnabled"`
+		SpektacularEnabled        *bool   `json:"spektacularEnabled"`
+		SpektacularBinary         *string `json:"spektacularBinary"`
+		PublicationEnabled        *bool   `json:"publicationEnabled"`
+		PublicationPrivateChannel *string `json:"publicationPrivateChannel"`
+		PublicationOwner          *string `json:"publicationOwner"`
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
@@ -129,6 +135,13 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 				jsonError(w, fmt.Sprintf("invalid rotation tier for %s: %s", agent, tier), http.StatusBadRequest)
 				return
 			}
+		}
+	}
+	if body.PublicationPrivateChannel != nil {
+		probe := config.PublicationConfig{PrivateChannel: strings.TrimSpace(*body.PublicationPrivateChannel)}
+		if err := probe.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 	if body.RotationProviders != nil {
@@ -207,6 +220,15 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.SpektacularBinary != nil {
 		cfg.Runs.Spektacular.Binary = strings.TrimSpace(*body.SpektacularBinary)
 	}
+	if body.PublicationEnabled != nil {
+		cfg.Publication.Enabled = *body.PublicationEnabled
+	}
+	if body.PublicationPrivateChannel != nil {
+		cfg.Publication.PrivateChannel = strings.TrimSpace(*body.PublicationPrivateChannel)
+	}
+	if body.PublicationOwner != nil {
+		cfg.Publication.Owner = strings.TrimSpace(*body.PublicationOwner)
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -269,6 +291,11 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
 		"claimsEnabled":              cfg.Governor.Claims.Enabled,
 		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
+		"publicationEnabled":         cfg.Publication.Enabled,
+		"publicationPrivateChannel":  cfg.Publication.PrivateChannel,
+		"publicationOwner":           cfg.Publication.Owner,
+		"publicationAvailable":       acmmLevel >= config.PublicationMinACMMLevel,
+		"publicationMinACMMLevel":    config.PublicationMinACMMLevel,
 		"acmmLevel":                  acmmLevel,
 		"spektacularEnabled":         cfg.Runs.Spektacular.Enabled,
 		"spektacularBinary":          cfg.Runs.Spektacular.Binary,

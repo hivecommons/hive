@@ -396,3 +396,70 @@ func TestGovernorFeatures_IssueClaimsToggle(t *testing.T) {
 		t.Fatalf("claims payload = %+v, want enabled with 600s", payload.Features)
 	}
 }
+
+// TestCovGov_FeaturesPublicationRoundTripAndGate covers the audit issue
+// publisher toggle (#8353): owner-only, persisted into config, an unroutable
+// private channel rejected before anything is mutated, and the GET payload
+// reporting the ACMM L3 availability gate.
+func TestCovGov_FeaturesPublicationRoundTripAndGate(t *testing.T) {
+	s := covApiServer(t)
+	level := config.PublicationMinACMMLevel
+	s.deps.Config.ACMMLevel = &level
+
+	if rec := putFeatures(s, map[string]any{"publicationEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT publicationEnabled = %d, want 403", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"publicationEnabled": true, "publicationPrivateChannel": "mailto:security@example.com",
+	}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unroutable private channel = %d, want 400", rec.Code)
+	}
+	if s.deps.Config.Publication.Enabled {
+		t.Fatal("a rejected body must not mutate publication.enabled")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"publicationEnabled": true, "publicationPrivateChannel": " repo:acme/security ", "publicationOwner": " maintainer ",
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("publication toggle PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	got := s.deps.Config.Publication
+	if !got.Enabled || got.PrivateChannel != "repo:acme/security" || got.Owner != "maintainer" {
+		t.Fatalf("publication config = %+v", got)
+	}
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor config: %d — %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			PublicationEnabled        bool   `json:"publicationEnabled"`
+			PublicationPrivateChannel string `json:"publicationPrivateChannel"`
+			PublicationOwner          string `json:"publicationOwner"`
+			PublicationAvailable      bool   `json:"publicationAvailable"`
+			PublicationMinACMMLevel   int    `json:"publicationMinACMMLevel"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	f := payload.Features
+	if !f.PublicationEnabled || !f.PublicationAvailable || f.PublicationPrivateChannel != "repo:acme/security" || f.PublicationOwner != "maintainer" {
+		t.Fatalf("publication payload = %+v", f)
+	}
+	if f.PublicationMinACMMLevel != config.PublicationMinACMMLevel {
+		t.Fatalf("publication min level = %d, want %d", f.PublicationMinACMMLevel, config.PublicationMinACMMLevel)
+	}
+
+	low := config.PublicationMinACMMLevel - 1
+	s.deps.Config.ACMMLevel = &low
+	rec = doOwnerGet(s, "/api/config/governor")
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding low-ACMM governor payload: %v", err)
+	}
+	if !payload.Features.PublicationEnabled || payload.Features.PublicationAvailable {
+		t.Fatalf("low-ACMM publication payload = %+v, want persisted enabled but unavailable", payload.Features)
+	}
+}

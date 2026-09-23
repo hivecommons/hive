@@ -200,3 +200,39 @@ func TestIssueClaimsFeatureTooltip(t *testing.T) {
 		t.Fatal("Issue claims toggle must save features.claimsEnabled")
 	}
 }
+
+// TestAuditPublisherFeatureTooltipAndACMMGate pins the audit issue publisher
+// controls (#8353): the toggle saves features.publicationEnabled, the owner
+// and private channel fields save their keys, and the toggle renders off
+// below the ACMM L3 gate.
+func TestAuditPublisherFeatureTooltipAndACMMGate(t *testing.T) {
+	html := indexHTML(t)
+	body := extractJSFunction(t, html, "renderGovFeatures")
+
+	tooltip := controlTooltip(t, body, "Audit issue publisher")
+	for _, want := range []string{
+		"OFF by default",
+		"ACMM L3 and above",
+		"enforce convergence mode",
+		"Hive-Run trailer",
+		"src/docs/audit-campaign.md",
+	} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("audit publisher tooltip missing %q; got:\n%s", want, tooltip)
+		}
+	}
+	channel := controlTooltip(t, body, "Private disclosure channel")
+	for _, want := range []string{"repo:owner/name", "notify", "never filed publicly"} {
+		if !strings.Contains(channel, want) {
+			t.Errorf("private channel tooltip missing %q; got:\n%s", want, channel)
+		}
+	}
+	for _, key := range []string{"publicationEnabled", "publicationOwner", "publicationPrivateChannel"} {
+		if !strings.Contains(body, `"`+key+`"`) {
+			t.Fatalf("Features tab must save features.%s", key)
+		}
+	}
+	if !strings.Contains(body, "f.publicationAvailable === true") || !strings.Contains(body, "publicationAvailable && f.publicationEnabled") {
+		t.Fatal("Audit issue publisher toggle no longer renders the ACMM availability gate")
+	}
+}

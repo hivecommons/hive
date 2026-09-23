@@ -1,6 +1,6 @@
 {
   "components": [
-    {"name":"auth","files":["src/auth.go"],"content":"auth handler fixture","findings":[{"title":"Nil auth token can panic","files":["src/auth.go"]}]},
+    {"name":"auth","files":["src/auth.go"],"content":"auth handler fixture","findings":[{"title":"Nil auth token can panic","files":["src/auth.go"],"labels":["security"]}]},
     {"name":"billing","files":["src/billing.go"],"content":"billing fixture","findings":[]},
     {"name":"config","files":["src/config.go","src/config_test.go"],"content":"config parser fixture","findings":[{"title":"Config parser drops explicit false","files":["src/config.go","src/config_test.go"]}]},
     {"name":"config-duplicate","files":["src/config.go","src/config_test.go"],"content":"duplicate parser fixture","findings":[{"title":"Config parser drops explicit false","files":["src/config_test.go","src/config.go"]}]},

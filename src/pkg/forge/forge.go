@@ -173,6 +173,40 @@ type Forge interface {
 	SetHold(ctx context.Context, repo string, number int, hold bool) error
 }
 
+// IssueRef is the bounded provenance of a created or found issue: enough to
+// link and audit, never the issue content.
+type IssueRef struct {
+	Number int
+	URL    string
+}
+
+// IssueCreator is the OPTIONAL forge-neutral issue-create seam the audit
+// campaign's authorized publisher (#8353) files through. It is kept off the
+// core Forge interface because only the GitHub adapter implements it today;
+// a caller that needs it type-asserts and refuses cleanly when absent.
+type IssueCreator interface {
+	// CreateIssue files a new issue in repo and returns its reference. It
+	// performs no dedupe of its own: the publisher's mutation journal and
+	// marker lookup are the idempotency guards.
+	CreateIssue(ctx context.Context, repo, title, body string, labels []string) (IssueRef, error)
+}
+
+// IssueFinder is the OPTIONAL lookup seam the publisher uses to reconcile an
+// uncertain create and to dedupe against issues already carrying a finding
+// marker, so a crash between intent and acknowledgment never files twice.
+type IssueFinder interface {
+	// FindIssueByMarker returns the open issue in repo whose body contains the
+	// exact marker text, or ok=false when none does. It is bounded to recent
+	// issues; an error means the observation was not authoritative.
+	FindIssueByMarker(ctx context.Context, repo, marker string) (ref IssueRef, ok bool, err error)
+}
+
+// IssueSeam is the pair the publisher is typed against.
+type IssueSeam interface {
+	IssueCreator
+	IssueFinder
+}
+
 // Merger is an OPTIONAL extension interface for the merge primitive. It is kept
 // off the core Forge interface because merge options are not yet forge-neutral.
 // No adapter implements it today; it exists to pin the intended shape.

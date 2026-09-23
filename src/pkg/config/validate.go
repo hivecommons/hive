@@ -34,6 +34,9 @@ func (c *Config) Validate() error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	if err := c.Publication.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
 		return err
 	} else {

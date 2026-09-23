@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,7 +18,9 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
+	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
+	"github.com/hivecommons/hive/pkg/convergence/publish"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/findingidentity"
 	"github.com/hivecommons/hive/pkg/outputschema"
@@ -27,15 +30,38 @@ const (
 	Actor               = "hive-audit-lane"
 	EffectRecordFinding = "hive.record-finding/v1"
 
+	// auditRepo is the repository the pilot fixture inspects and would
+	// publish into.
+	auditRepo = "hivecommons/hive"
+
 	metaKind          = "audit_kind"
 	metaCampaign      = "audit_campaign"
 	metaComponent     = "audit_component"
 	metaFindingState  = "audit_finding_state"
 	metaContentHash   = "audit_content_hash"
+	metaFindingHash   = "audit_finding_hash"
+	metaLabels        = "audit_labels"
 	metaFileSet       = "audit_file_set"
 	metaDuplicateOf   = "duplicate_of"
 	metaReceiptDigest = "receipt_digest"
+	// metaPublication records the publisher's verdict on a finding bead and
+	// the campaign summary on the publication bead.
+	metaPublication = "publication_state"
+
+	// publicationNone is the publication bead value while nothing publishes.
+	publicationNone = "none"
+	// findingTitlePrefix is what finding bead titles start with.
+	findingTitlePrefix = "finding: "
+	// labelSeparator joins finding labels in bead metadata.
+	labelSeparator = ","
 )
+
+// FindingPublisher is the publication gate the campaign hands its validated
+// findings to (#8353). It is satisfied by *publish.Publisher; nil keeps the
+// campaign report-only and the publication bead at "none".
+type FindingPublisher interface {
+	PublishCampaign(ctx context.Context, c publish.Campaign, findings []publish.Finding, grant publish.Grant, ledger *outcome.Ledger) (publish.CampaignResult, error)
+}
 
 type GitHubClient interface{ Count() int }
 
@@ -57,6 +83,7 @@ type Component struct {
 type Finding struct {
 	Title         string   `json:"title"`
 	Files         []string `json:"files"`
+	Labels        []string `json:"labels,omitempty"`
 	SubjectDigest string   `json:"subject_digest,omitempty"`
 	Predicate     string   `json:"predicate,omitempty"`
 	Location      string   `json:"location,omitempty"`
@@ -78,6 +105,15 @@ type Options struct {
 	Soak                     SoakRecorder
 	CrashAfterBeginComponent string
 	AfterRecordFindings      func(component string) error
+	// Publisher, when set, receives every finding of the campaign after
+	// inspection; nil leaves publication at "none".
+	Publisher FindingPublisher
+	// Outcomes is the outcome ledger the publisher books the campaign's
+	// predicted end state on; nil publishes without an outcome record.
+	Outcomes *outcome.Ledger
+	// RunKey and RunURL identify the campaign run on published bodies.
+	RunKey string
+	RunURL string
 }
 
 type Result struct {
@@ -86,6 +122,9 @@ type Result struct {
 	Burndown   Burndown
 	Mode       string
 	Generation uint64
+	// Publication is the publisher's campaign result, nil when no publisher
+	// is wired.
+	Publication *publish.CampaignResult
 }
 
 type FindingResult struct{ Title, State, BeadID, DuplicateOf string }
@@ -128,10 +167,11 @@ func Run(opts Options) (Result, error) {
 	if _, err := ensureBead(opts.Store, "campaign", opts.CampaignKey, opts.CampaignKey, nil); err != nil {
 		return Result{}, err
 	}
-	if _, err := ensureBead(opts.Store, "publication", opts.CampaignKey, opts.CampaignKey, map[string]string{"publication_state": "none"}); err != nil {
+	publication, err := ensureBead(opts.Store, "publication", opts.CampaignKey, opts.CampaignKey, map[string]string{metaPublication: publicationNone})
+	if err != nil {
 		return Result{}, err
 	}
-	claim := mutation.TaskClaim("hivecommons/hive", "hivecommons/hive!"+opts.CampaignKey)
+	claim := mutation.TaskClaim(auditRepo, auditRepo+"!"+opts.CampaignKey)
 	entry, err := opts.Ledger.Acquire(claim, opts.Holder, time.Hour, now)
 	if err != nil {
 		return Result{}, err
@@ -148,10 +188,10 @@ func Run(opts Options) (Result, error) {
 			return Result{}, err
 		}
 		effect := mutation.Effect{
-			OutcomeKey:        "hivecommons/hive@" + opts.CampaignKey,
+			OutcomeKey:        auditRepo + "@" + opts.CampaignKey,
 			DesiredGeneration: int(opts.Generation),
 			Transition:        "audit-inspection",
-			Subject:           "hivecommons/hive!" + opts.CampaignKey + ":" + c.Name,
+			Subject:           auditRepo + "!" + opts.CampaignKey + ":" + c.Name,
 			ClaimKey:          claim.Key(),
 			Kind:              EffectRecordFinding,
 			Inputs:            map[string]string{"campaign": opts.CampaignKey, "component": c.Name, "content_hash": componentHash},
@@ -214,12 +254,23 @@ func Run(opts Options) (Result, error) {
 		_ = opts.Store.SetMetadata(inspection.ID, "inspection_state", "inspected")
 		_ = opts.Store.SetMetadata(inspection.ID, metaReceiptDigest, receipt.OutputDigest)
 		if opts.ProofStore != nil {
-			_, err = opts.ProofStore.Put(proof.Record{Fingerprint: proof.Fingerprint{OutcomeKey: "hivecommons/hive@" + opts.CampaignKey, PredicateID: proof.PredicateInspectionRecorded, DesiredGeneration: int(opts.Generation), Producer: proof.ProducerHiveAuditLane, InspectionBeadID: inspection.ID, ReceiptDigest: receipt.OutputDigest}, Result: proof.ResultSuccess, Provenance: proof.Provenance{Query: "audit-inspection@" + c.Name}, ObservedAt: now})
+			_, err = opts.ProofStore.Put(proof.Record{Fingerprint: proof.Fingerprint{OutcomeKey: auditRepo + "@" + opts.CampaignKey, PredicateID: proof.PredicateInspectionRecorded, DesiredGeneration: int(opts.Generation), Producer: proof.ProducerHiveAuditLane, InspectionBeadID: inspection.ID, ReceiptDigest: receipt.OutputDigest}, Result: proof.ResultSuccess, Provenance: proof.Provenance{Query: "audit-inspection@" + c.Name}, ObservedAt: now})
 			if err != nil {
 				return Result{}, err
 			}
 		}
 		inspected++
+	}
+	if opts.Publisher != nil {
+		pubRes, err := opts.Publisher.PublishCampaign(context.Background(),
+			publish.Campaign{Key: opts.CampaignKey, Repo: auditRepo, RunKey: opts.RunKey, RunURL: opts.RunURL},
+			campaignFindings(opts.Store, opts.CampaignKey),
+			publish.Grant{ClaimKey: claim.Key(), Epoch: entry.Epoch, Holder: opts.Holder}, opts.Outcomes)
+		res.Publication = &pubRes
+		recordPublications(opts.Store, opts.CampaignKey, publication.ID, pubRes)
+		if err != nil {
+			return res, err
+		}
 	}
 	if opts.Soak != nil {
 		opts.Soak.RecordAuditSoak(opts.Mode, opts.Generation)
@@ -287,7 +338,7 @@ func recordFindings(store *beads.Store, campaign string, c Component, componentH
 		} else {
 			seen[key] = ""
 		}
-		b, err := store.Create("finding: "+f.Title, beads.TypeAdvisory, beads.PriorityMedium, Actor, campaign+":"+c.Name)
+		b, err := store.Create(findingTitlePrefix+f.Title, beads.TypeAdvisory, beads.PriorityMedium, Actor, campaign+":"+c.Name)
 		if err != nil {
 			return made, err
 		}
@@ -295,13 +346,17 @@ func recordFindings(store *beads.Store, campaign string, c Component, componentH
 		_ = store.SetMetadata(b.ID, metaCampaign, campaign)
 		_ = store.SetMetadata(b.ID, metaComponent, c.Name)
 		_ = store.SetMetadata(b.ID, metaContentHash, componentHash)
+		_ = store.SetMetadata(b.ID, metaFindingHash, findingHash(componentHash, key))
 		_ = store.SetMetadata(b.ID, metaFindingState, state)
-		_ = store.SetMetadata(b.ID, metaFileSet, strings.Join(normalizeFiles(f.Files), ","))
+		_ = store.SetMetadata(b.ID, metaFileSet, strings.Join(normalizeFiles(f.Files), labelSeparator))
 		if identityKey := findingKey(f); identityKey != "" {
 			_ = store.SetMetadata(b.ID, findingidentity.MetaKey, identityKey)
 			_ = store.SetMetadata(b.ID, findingidentity.MetaSubjectDigest, f.SubjectDigest)
 			_ = store.SetMetadata(b.ID, findingidentity.MetaPredicate, f.Predicate)
 			_ = store.SetMetadata(b.ID, findingidentity.MetaLocation, f.Location)
+		}
+		if len(f.Labels) > 0 {
+			_ = store.SetMetadata(b.ID, metaLabels, strings.Join(f.Labels, labelSeparator))
 		}
 		if state == "duplicate_of" {
 			_ = store.SetMetadata(b.ID, metaDuplicateOf, dupOf)
@@ -312,6 +367,107 @@ func recordFindings(store *beads.Store, campaign string, c Component, componentH
 		made++
 	}
 	return made, nil
+}
+
+// storedFinding reconstructs the scope-level finding from its bead so the
+// same duplicate key (semantic identity when recorded, title+files otherwise)
+// is derived on every read.
+func storedFinding(b *beads.Bead) Finding {
+	return Finding{
+		Title:         strings.TrimPrefix(b.Title, findingTitlePrefix),
+		Files:         splitList(b.Meta(metaFileSet)),
+		Labels:        splitList(b.Meta(metaLabels)),
+		SubjectDigest: b.Meta(findingidentity.MetaSubjectDigest),
+		Predicate:     b.Meta(findingidentity.MetaPredicate),
+		Location:      b.Meta(findingidentity.MetaLocation),
+	}
+}
+
+// findingHash is the finding identity (#8318): the component content hash
+// bound to the normalized title and file set, so two findings recorded from
+// one component never share a publication identity.
+func findingHash(componentHash, duplicateKey string) string {
+	return stableHash(componentHash, duplicateKey)
+}
+
+// campaignFindings projects the campaign's finding beads into the
+// publisher's input, binding each to its component's inspection receipt.
+func campaignFindings(store *beads.Store, campaign string) []publish.Finding {
+	receipts := map[string]string{}
+	var out []publish.Finding
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Meta(metaCampaign) != campaign {
+			continue
+		}
+		if b.Meta(metaKind) == "inspection" {
+			receipts[b.Meta(metaComponent)] = b.Meta(metaReceiptDigest)
+		}
+	}
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Meta(metaKind) != "finding" || b.Meta(metaCampaign) != campaign {
+			continue
+		}
+		stored := storedFinding(b)
+		hash := b.Meta(metaFindingHash)
+		if hash == "" {
+			hash = findingHash(b.Meta(metaContentHash), duplicateKey(stored))
+		}
+		out = append(out, publish.Finding{
+			Campaign:      campaign,
+			Repo:          auditRepo,
+			BeadID:        b.ID,
+			Title:         stored.Title,
+			Evidence:      "Recorded by the audit inspection of component `" + b.Meta(metaComponent) + "`.",
+			Files:         stored.Files,
+			ContentHash:   hash,
+			Predicate:     proof.PredicateInspectionRecorded,
+			Labels:        stored.Labels,
+			ReceiptDigest: receipts[b.Meta(metaComponent)],
+			State:         b.Meta(metaFindingState),
+			DuplicateOf:   b.Meta(metaDuplicateOf),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ContentHash < out[j].ContentHash })
+	return out
+}
+
+// recordPublications writes each finding's publication verdict on its bead
+// and the campaign summary on the publication bead.
+func recordPublications(store *beads.Store, campaign, publicationBeadID string, res publish.CampaignResult) {
+	counts := map[string]int{}
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Meta(metaKind) != "finding" || b.Meta(metaCampaign) != campaign {
+			continue
+		}
+		hash := b.Meta(metaFindingHash)
+		pub, ok := res.Publications[hash]
+		if !ok {
+			continue
+		}
+		_ = store.SetMetadata(b.ID, metaPublication, pub.Record())
+		counts[pub.State]++
+	}
+	states := make([]string, 0, len(counts))
+	for state := range counts {
+		states = append(states, state)
+	}
+	sort.Strings(states)
+	parts := make([]string, 0, len(states))
+	for _, state := range states {
+		parts = append(parts, fmt.Sprintf("%s=%d", state, counts[state]))
+	}
+	summary := strings.Join(parts, " ")
+	if summary == "" {
+		summary = publicationNone
+	}
+	_ = store.SetMetadata(publicationBeadID, metaPublication, summary)
+}
+
+func splitList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Split(raw, labelSeparator)
 }
 
 func componentEffectApplied(store *beads.Store, campaign, component, componentHash string) bool {
@@ -330,14 +486,7 @@ func existingFindingKeys(store *beads.Store, campaign string) map[string]string 
 		if b.Meta(metaKind) != "finding" || b.Meta(metaCampaign) != campaign || b.Meta(metaFindingState) != "validated" {
 			continue
 		}
-		title := strings.TrimPrefix(b.Title, "finding: ")
-		out[duplicateKey(Finding{
-			Title:         title,
-			Files:         strings.Split(b.Meta(metaFileSet), ","),
-			SubjectDigest: b.Meta(findingidentity.MetaSubjectDigest),
-			Predicate:     b.Meta(findingidentity.MetaPredicate),
-			Location:      b.Meta(findingidentity.MetaLocation),
-		})] = b.ID
+		out[duplicateKey(storedFinding(b))] = b.ID
 	}
 	return out
 }

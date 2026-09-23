@@ -22,6 +22,18 @@ import (
 // strings, never silent reinterpretations of journal entries.
 const EffectCreatePR = "github.create-pr/v1"
 
+// EffectCreateIssue is the authorized issue publisher's one trusted
+// publication effect (#8353): file a validated audit finding as an issue. Its
+// logical ID is derived from the campaign and the finding content hash, so a
+// retried publication replays the recorded issue instead of filing a second.
+const EffectCreateIssue = "github.create-issue/v1"
+
+// EffectPrivateDisclosure is the publication effect a security-sensitive
+// finding takes instead of EffectCreateIssue: the finding goes to the
+// configured private channel and never to a public issue. It shares the
+// create-issue identity derivation so a finding can never be both.
+const EffectPrivateDisclosure = "hive.private-disclosure/v1"
+
 // Operation statuses: the reconstructable record distinguishing an external
 // effect that was planned, applied, not applied, or left uncertain.
 const (

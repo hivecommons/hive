@@ -96,6 +96,9 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// Publication is the audit campaign's authorized issue publisher opt-in
+	// (hivecommons/hive#8353). Default off → nothing is ever filed.
+	Publication PublicationConfig `yaml:"publication,omitempty" json:"publication,omitempty"`
 	// Classification mirrors the Go-consumed subset of hive-project.yaml's
 	// `classification:` block (currently review_bots, hivecommons/hive#7360).
 	// Default empty → the review-thread reconciler is off.

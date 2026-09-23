@@ -3487,6 +3487,11 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 			b.logger.Warn("policy watcher failed to start", "error", err)
 		}
 	}
+
+	// The authorized issue publisher (#8353) needs the ACMM level applied
+	// above, the mutation boundary from bootAdvisory, and the dashboard's
+	// audit sink, so it is composed here rather than beside the boundary.
+	b.wireFindingPublisher()
 }
 
 // bootWatchers starts the hive.yaml watcher with its reload handler, wires

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/github"
@@ -28,7 +29,18 @@ type githubWriter interface {
 	CreateComment(ctx context.Context, owner, repo string, number int, comment *gh.IssueComment) (*gh.IssueComment, *gh.Response, error)
 	AddLabelsToIssue(ctx context.Context, owner, repo string, number int, labels []string) ([]*gh.Label, *gh.Response, error)
 	RemoveLabelForIssue(ctx context.Context, owner, repo string, number int, label string) (*gh.Response, error)
+	Create(ctx context.Context, owner, repo string, issue *gh.IssueRequest) (*gh.Issue, *gh.Response, error)
+	ListByRepo(ctx context.Context, owner, repo string, opts *gh.IssueListByRepoOptions) ([]*gh.Issue, *gh.Response, error)
 }
+
+// markerLookupMaxPages bounds FindIssueByMarker to the most recent pages of
+// open issues, matching the bounded dedupe scan pkg/github.CreateIssue uses:
+// publisher-filed issues are recent by construction and an unbounded scan of
+// a busy repo would spend API budget on every reconciliation.
+const markerLookupMaxPages = 3
+
+// markerLookupPerPage is the page size of the bounded marker scan.
+const markerLookupPerPage = 100
 
 // gitHubForge adapts the existing pkg/github client to the Forge interface.
 //
@@ -200,5 +212,74 @@ func (f *gitHubForge) SetHold(ctx context.Context, repo string, number int, hold
 	return f.RemoveLabel(ctx, repo, number, holdLabel)
 }
 
+// NewGitHubIssueSeam exposes the issue-create and marker-lookup seam over an
+// already-authenticated pkg/github client (the App-authenticated client a
+// GitHub hive boots with), so the publisher files as the hive's App identity
+// without a second token. Writes go straight to go-github's Issues service:
+// the publisher's own mutation journal is the idempotency guard, and routing
+// through *github.Client.CreateIssue would journal the same effect twice
+// under two different logical IDs.
+func NewGitHubIssueSeam(client *github.Client, org string) IssueSeam {
+	if client == nil || client.GoGitHub() == nil {
+		return nil
+	}
+	return &gitHubForge{client: client, writer: client.GoGitHub().Issues, org: org}
+}
+
+// CreateIssue files a new issue via go-github Issues.Create.
+func (f *gitHubForge) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (IssueRef, error) {
+	if f.writer == nil {
+		return IssueRef{}, fmt.Errorf("forge: github write path unavailable")
+	}
+	owner, name := splitRepo(repo, f.org)
+	req := &gh.IssueRequest{Title: gh.Ptr(logscrub.ScrubString(title)), Body: gh.Ptr(logscrub.ScrubString(body))}
+	if len(labels) > 0 {
+		req.Labels = &labels
+	}
+	issue, _, err := f.writer.Create(ctx, owner, name, req)
+	if err != nil {
+		return IssueRef{}, fmt.Errorf("forge: create issue in %s/%s: %w", owner, name, err)
+	}
+	return IssueRef{Number: issue.GetNumber(), URL: issue.GetHTMLURL()}, nil
+}
+
+// FindIssueByMarker scans the most recent open issues for one whose body
+// carries the exact marker text.
+func (f *gitHubForge) FindIssueByMarker(ctx context.Context, repo, marker string) (IssueRef, bool, error) {
+	if f.writer == nil {
+		return IssueRef{}, false, fmt.Errorf("forge: github read path unavailable")
+	}
+	if marker == "" {
+		return IssueRef{}, false, fmt.Errorf("forge: a marker lookup requires a marker")
+	}
+	owner, name := splitRepo(repo, f.org)
+	opts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		Sort:        "created",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: markerLookupPerPage},
+	}
+	for page := 1; page <= markerLookupMaxPages; page++ {
+		opts.ListOptions.Page = page
+		issues, resp, err := f.writer.ListByRepo(ctx, owner, name, opts)
+		if err != nil {
+			return IssueRef{}, false, fmt.Errorf("forge: list issues in %s/%s: %w", owner, name, err)
+		}
+		for _, is := range issues {
+			if is.IsPullRequest() {
+				continue
+			}
+			if strings.Contains(is.GetBody(), marker) {
+				return IssueRef{Number: is.GetNumber(), URL: is.GetHTMLURL()}, true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+	}
+	return IssueRef{}, false, nil
+}
+
 // Compile-time assertion that the adapter satisfies the interface.
 var _ Forge = (*gitHubForge)(nil)
+var _ IssueSeam = (*gitHubForge)(nil)

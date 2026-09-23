@@ -24,10 +24,11 @@ const stagedMarker = "deliberately not wired into any hive binary"
 // the list cannot drift away from reality in either direction.
 //
 // On v5, mutation and proof are wired through cmd/hive/mutationwire.go
-// (#6064), so only outcome remains staged here.
+// (#6064) and outcome through cmd/hive/publicationwire.go (#8353, the
+// authorized issue publisher books campaign outcomes on it), so only the
+// audit campaign fixture remains staged here.
 var stagedConvergencePackages = []string{
 	"pkg/convergence/audit",
-	"pkg/convergence/outcome",
 }
 
 // TestStagedConvergencePackagesAreMarkedAndUnwired turns #7281's finding into

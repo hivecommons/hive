@@ -24743,6 +24743,8 @@ function burnAreaChart() {
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
+      const publicationAvailable = f.publicationAvailable === true;
+      const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
@@ -24835,6 +24837,23 @@ function burnAreaChart() {
             <span class="config-toggle-label">Formal verification (quality lane) <span class="config-info">i<span class="config-tooltip">OFF by default; effective only at ACMM L5 and L6; when on, the quality agent may author Spin/Promela models under formal/&lt;subsystem&gt;/, add a path-gated reporting-only CI job, and keep one deduplicated issue per violated property; see src/docs/formal-verification.md.</span></span></span>
           </div>
           ${formalAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Requires ACMM L${formalMinACMMLevel}+</p>`}
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Audit publication <span class="config-info">i<span class="config-tooltip">The audit campaign's authorized issue publisher: files each validated finding as exactly one issue through the mutation journal, and routes security-sensitive findings to a private channel instead. Off by default; see src/docs/audit-campaign.md.</span></span></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${publicationAvailable && f.publicationEnabled ? 'on' : ''} ${publicationAvailable ? '' : 'disabled'}" data-action="${publicationAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="publicationEnabled" data-disabled="${publicationAvailable ? 'false' : 'true'}" title="${publicationAvailable ? '' : 'Requires ACMM L' + publicationMinACMMLevel + '+'}"></div>
+            <span class="config-toggle-label">Audit issue publisher <span class="config-info">i<span class="config-tooltip">OFF by default; effective only at ACMM L3 and above and only in the enforce convergence mode (shadow and off never write). When on, each validated audit finding is filed once as an issue carrying its finding marker, Hive-Run trailer, and run link; a rerun replays the recorded issue instead of filing again. Requires a campaign owner below; see src/docs/audit-campaign.md.</span></span></span>
+          </div>
+          ${publicationAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Requires ACMM L${publicationMinACMMLevel}+</p>`}
+          <div class="config-field" style="margin-top:10px">
+            <label>Campaign owner <span class="config-info">i<span class="config-tooltip">The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.</span></span></label>
+            <input type="text" value="${esc(f.publicationOwner || '')}" placeholder="maintainer login" data-change-action="markDirty" data-arg0="features" data-arg1="publicationOwner" data-arg-types="s,s,w">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Private disclosure channel <span class="config-info">i<span class="config-tooltip">Where security-sensitive findings go instead of a public issue: repo:owner/name files them in that private repository, notify sends only the title and finding hash to the operator notifier. A sensitive finding with no channel is refused and audited, never filed publicly.</span></span></label>
+            <input type="text" value="${esc(f.publicationPrivateChannel || '')}" placeholder="repo:owner/security-intake or notify" data-change-action="markDirty" data-arg0="features" data-arg1="publicationPrivateChannel" data-arg-types="s,s,w">
+          </div>
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">

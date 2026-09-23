@@ -69,7 +69,7 @@ func (f Fingerprint) DeclaredAssumptions() []Assumption {
 	if err := f.Validate(); err != nil {
 		return nil
 	}
-	if f.PredicateID == PredicateInspectionRecorded {
+	if f.PredicateID == PredicateInspectionRecorded || f.PredicateID == PredicateFindingPublished {
 		return nil
 	}
 	out := []Assumption{

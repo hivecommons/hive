@@ -146,6 +146,10 @@ governor:
   ioscan_fail_mode: closed   # "" (open) below L5; closed at L5/L6
 ```
 
+## Which levels may publish audit findings
+
+The audit campaign's issue publisher ([audit-campaign.md](audit-campaign.md#publication)) files validated findings as issues only at **L3 and above**, the first level whose pack grants an agent the measured (issues) mode. At L1 and L2 every agent is advisory, so the publisher refuses with a typed error and an audit entry instead of filing. Security-sensitive findings never become public issues at any level; they go to `publication.private_channel` or are refused. Publication also requires `publication.enabled: true` and the `enforce` convergence mode; `shadow` records `withheld:mode` and writes nothing.
+
 ## Where ACMM gap issues are filed
 
 The dashboard's ACMM evaluation lists each criterion a repo is missing, and
