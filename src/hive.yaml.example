@@ -729,6 +729,10 @@ dashboard:
 knowledge:
   enabled: false                             # Set to true to activate knowledge priming
   engine: llm-wiki
+  # contributor_export_max_facts: 80        # Contributor registration-token downloads of
+                                             # /api/knowledge/export are startup summaries,
+                                             # not full backups. Spokes read the matching
+                                             # HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS env var.
   # contributor_context_token_budget: 12000  # Contributor CLIs with small/ancestor-scanned startup
                                              # contexts (currently pi) should inline only this
                                              # approximate token count and fetch the full export

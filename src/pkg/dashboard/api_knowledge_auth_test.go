@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -59,5 +60,68 @@ func TestKnowledgeExportAcceptsContributorRegistrationToken(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.Body.String(), "# Agent Knowledge") {
 		t.Fatalf("authenticated contributor export body = %q", rec.Body.String())
+	}
+}
+
+func TestKnowledgeExportContributorTokenGetsBoundedSummary(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS", "2")
+	const token = "contributor-summary-token"
+	covSeedContributor(t, &ContributorProfile{
+		GitHubUsername:    "summary-user",
+		ContributorID:     "c-summary",
+		RegistrationToken: sha256Hex(token),
+		TrustTier:         "contributor",
+	})
+	s := serverWithKnowledgeExport(t, "dashboard-secret")
+	vaultDir := t.TempDir()
+	if err := s.deps.Knowledge.ConnectVault(vaultDir, "project"); err != nil {
+		t.Fatalf("ConnectVault: %v", err)
+	}
+	longBody := strings.Repeat("long contributor knowledge body ", 30)
+	if _, err := s.deps.Knowledge.ImportFacts(context.Background(), knowledge.LayerType("project"), strings.Join([]string{
+		"# First fact\n" + longBody,
+		"# Second fact\nshort body",
+		"# Third fact\nthis fact should be omitted from contributor startup",
+	}, "\n\n"), "markdown"); err != nil {
+		t.Fatalf("ImportFacts: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/knowledge/export", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("contributor export = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"bounded startup summary",
+		"First fact",
+		"Second fact",
+		"Hive knowledge export truncated: 1 entries omitted",
+		"hive knowledge",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("contributor summary missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Third fact") {
+		t.Fatalf("contributor summary included an omitted fact:\n%s", body)
+	}
+	if strings.Contains(body, strings.Repeat("long contributor knowledge body ", 20)) {
+		t.Fatalf("contributor summary included an unbounded fact body:\n%s", body)
+	}
+
+	ownerReq := httptest.NewRequest(http.MethodGet, "/api/knowledge/export", nil)
+	markOwnerRequest(ownerReq)
+	ownerRec := httptest.NewRecorder()
+	s.handleKnowledgeExport(ownerRec, ownerReq)
+	ownerBody := ownerRec.Body.String()
+	if !strings.Contains(ownerBody, "Third fact") {
+		t.Fatalf("owner export should remain full; got:\n%s", ownerBody)
+	}
+	if strings.Contains(ownerBody, "bounded startup summary") {
+		t.Fatalf("owner export should not use the contributor summary marker:\n%s", ownerBody)
 	}
 }
