@@ -11,8 +11,8 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -510,7 +510,7 @@ type persistedLease struct {
 // the claim has nothing to attach to. The persist failure policy matches
 // renewLease: the in-memory record keeps the claim and the error is logged,
 // because the claim's source of truth is the forge, not this file.
-func (h *ContributeWSHub) setLeaseClaim(identity, taskID string, claim issueclaim.Claim, posted bool) {
+func (h *ContributeWSHub) setLeaseClaim(identity, taskID string, claim ghpkg.IssueClaimMark, posted bool) {
 	if h == nil || identity == "" || taskID == "" {
 		return
 	}

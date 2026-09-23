@@ -7,7 +7,6 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -75,7 +74,7 @@ type contributorAdmissionCandidate struct {
 	// issueClaim / claimed carry a LIVE issue claim read off the enumerator's
 	// envelope (hivecommons/hive#8380) via claimFromIssueMap. claimed is false
 	// whenever claims are disabled, so the gate below never fires then.
-	issueClaim issueclaim.Claim
+	issueClaim ghpkg.IssueClaimMark
 	claimed    bool
 }
 
@@ -109,7 +108,7 @@ type contributorAdmissionDecision struct {
 	skippedLabel string
 	// issueClaim carries the live claim behind an issue_claim refusal
 	// (#8380): who holds it and until when. Zero for every other reason.
-	issueClaim issueclaim.Claim
+	issueClaim ghpkg.IssueClaimMark
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
 	// which dependency IDs blocked. Zero-valued when admission never reached

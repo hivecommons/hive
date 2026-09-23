@@ -4,8 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agentmode"
-	"github.com/hivecommons/hive/pkg/issueclaim"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Issue claims on the contribute hub (hivecommons/hive#8380).
@@ -19,7 +18,7 @@ import (
 // Writing: when a relay contributor takes a lease, the hub posts the claim
 // comment on the issue through the existing forge seam, but ONLY when the
 // contributor's tier sits at a mode that may write issue comments
-// (agentmode.CanComment). Below that the claim is recorded on the lease alone,
+// (agentmode.CanComment, reached through the pkg/github seam). Below that the claim is recorded on the lease alone,
 // so the runs API still shows it while the forge stays untouched.
 //
 // Everything is gated on governor.claims.enabled; with it off every function
@@ -39,7 +38,7 @@ func (h *ContributeWSHub) claimsEnabled() bool {
 // claimTTL is governor.claims.ttl_s with the default applied.
 func (h *ContributeWSHub) claimTTL() time.Duration {
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
-		return issueclaim.DefaultTTL
+		return ghpkg.IssueClaimDefaultTTL
 	}
 	return h.server.deps.Config.Governor.Claims.EffectiveTTL()
 }
@@ -49,23 +48,23 @@ func (h *ContributeWSHub) claimTTL() time.Duration {
 // for the contribute queue and selectTask, so both surfaces judge liveness
 // identically. With claims disabled it never reports a claim, whatever the
 // map carries, so turning the feature off releases everything at once.
-func (h *ContributeWSHub) claimFromIssueMap(issue map[string]any, now time.Time) (issueclaim.Claim, bool) {
+func (h *ContributeWSHub) claimFromIssueMap(issue map[string]any, now time.Time) (ghpkg.IssueClaimMark, bool) {
 	if !h.claimsEnabled() {
-		return issueclaim.Claim{}, false
+		return ghpkg.IssueClaimMark{}, false
 	}
 	identity, _ := issue["claimed_by"].(string)
 	raw, _ := issue["claim_expires_at"].(string)
 	if identity == "" || raw == "" {
-		return issueclaim.Claim{}, false
+		return ghpkg.IssueClaimMark{}, false
 	}
 	expires, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		return issueclaim.Claim{}, false
+		return ghpkg.IssueClaimMark{}, false
 	}
 	source, _ := issue["claim_source"].(string)
-	claim := issueclaim.Claim{Identity: identity, ExpiresAt: expires, Source: source}
+	claim := ghpkg.IssueClaimMark{Identity: identity, ExpiresAt: expires, Source: source}
 	if !claim.Live(now) {
-		return issueclaim.Claim{}, false
+		return ghpkg.IssueClaimMark{}, false
 	}
 	return claim, true
 }
@@ -103,32 +102,32 @@ func claimIdentityFor(c *ContributorConnection) string {
 // standing — the assignment is never refused over a comment. It returns the
 // recorded claim and whether the comment was posted; the zero claim and false
 // when claims are off or the task is not a GitHub issue.
-func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorConnection, taskID, repoFull string, number int, now time.Time) (issueclaim.Claim, bool) {
+func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorConnection, taskID, repoFull string, number int, now time.Time) (ghpkg.IssueClaimMark, bool) {
 	if !h.claimsEnabled() || c == nil || repoFull == "" || number <= 0 {
-		return issueclaim.Claim{}, false
+		return ghpkg.IssueClaimMark{}, false
 	}
-	claim := issueclaim.Claim{
+	claim := ghpkg.IssueClaimMark{
 		Identity:  claimIdentityFor(c),
 		StartedAt: now,
 		ExpiresAt: now.Add(h.claimTTL()),
-		Source:    issueclaim.SourceLease,
+		Source:    ghpkg.IssueClaimSourceLease,
 	}
 	tier := ""
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	mode, _ := agentmode.ModeForTokenTier(tier)
+	canComment, mode := ghpkg.IssueClaimTierCanComment(tier)
 	posted := false
-	if commenter := h.claimCommenterFor(); commenter != nil && mode.CanComment() {
+	if commenter := h.claimCommenterFor(); commenter != nil && canComment {
 		postCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)
 		defer cancel()
-		body := issueclaim.CommentBody(claim.Identity, claim.StartedAt, claim.ExpiresAt)
+		body := ghpkg.IssueClaimCommentBody(claim.Identity, claim.StartedAt, claim.ExpiresAt)
 		if err := commenter.CreateIssueComment(postCtx, repoFull, number, body); err != nil {
 			h.logger.Warn("[contribute-ws] issue claim comment failed; claim recorded on the lease only",
 				"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number, "error", err)
 		} else {
 			posted = true
-			claim.Source = issueclaim.SourceMarker
+			claim.Source = ghpkg.IssueClaimSourceMarker
 			h.logger.Info("[contribute-ws] issue claim posted",
 				"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number,
 				"claim_expires_at", claim.ExpiresAt.UTC().Format(time.RFC3339))
@@ -136,7 +135,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	} else {
 		h.logger.Info("[contribute-ws] issue claim recorded on the lease only",
 			"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number,
-			"tier", tier, "mode", mode.String(), "can_comment", mode.CanComment())
+			"tier", tier, "mode", mode, "can_comment", canComment)
 	}
 	h.setLeaseClaim(identityOf(c), taskID, claim, posted)
 	return claim, posted

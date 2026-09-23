@@ -253,3 +253,23 @@ func TestIssueClaimsSetting(t *testing.T) {
 	var nilClient *Client
 	nilClient.SetIssueClaims(nil)
 }
+
+// The dashboard seam: tier -> may-comment follows the agentmode ladder
+// (ISSUES_ONLY rung) and unknown tiers fail closed.
+func TestIssueClaimTierCanComment(t *testing.T) {
+	for tier, want := range map[string]bool{
+		"advisor": false, "reviewer": false, "newcomer": true, "contributor": true,
+		"trusted": true, "merger": true, "revoked": false, "": false,
+	} {
+		if got, _ := IssueClaimTierCanComment(tier); got != want {
+			t.Errorf("IssueClaimTierCanComment(%q) = %v, want %v", tier, got, want)
+		}
+	}
+	if _, mode := IssueClaimTierCanComment("contributor"); mode != "ISSUES_AND_PRS" {
+		t.Errorf("mode name = %q, want ISSUES_AND_PRS", mode)
+	}
+	body := IssueClaimCommentBody("x", claimNow, claimNow.Add(IssueClaimDefaultTTL))
+	if claim, ok := issueclaim.ParseMarker(body); !ok || claim.Identity != "x" || claim.Source != IssueClaimSourceMarker {
+		t.Errorf("seam comment body must round-trip: %+v %v", claim, ok)
+	}
+}

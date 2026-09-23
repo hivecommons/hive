@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agentmode"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
@@ -181,4 +182,40 @@ func FilterLiveIssueClaims(result *ActionableResult, now time.Time, logger *slog
 	}
 	result.Issues = IssueResultFromItems(kept)
 	return withheld
+}
+
+// The dashboard-facing seam for issue claims (hivecommons/hive#8380).
+//
+// pkg/dashboard already imports this package for the Issue envelope that
+// carries the claim fields, and its internal-import count is ratcheted
+// (import_count_test.go). So the claim vocabulary it needs — the claim record,
+// the comment body and the "may this tier comment?" predicate — is exposed
+// from here rather than pulling pkg/issueclaim and pkg/agentmode into the
+// dashboard. Both underlying packages are stdlib-only leaves, so importing
+// them here adds no depth to the graph.
+
+// IssueClaimMark is one recognised issue claim (issueclaim.Claim).
+type IssueClaimMark = issueclaim.Claim
+
+const (
+	// IssueClaimDefaultTTL is the claim TTL when none is configured.
+	IssueClaimDefaultTTL = issueclaim.DefaultTTL
+	// IssueClaimSourceMarker / IssueClaimSourceAssignee / IssueClaimSourceLease
+	// name where a claim was read from or recorded.
+	IssueClaimSourceMarker   = issueclaim.SourceMarker
+	IssueClaimSourceAssignee = issueclaim.SourceAssignee
+	IssueClaimSourceLease    = issueclaim.SourceLease
+)
+
+// IssueClaimCommentBody renders the claim comment (marker plus human line).
+func IssueClaimCommentBody(identity string, started, expires time.Time) string {
+	return issueclaim.CommentBody(identity, started, expires)
+}
+
+// IssueClaimTierCanComment reports whether a scoped-token tier maps to an
+// agent mode that may write issue comments, and names that mode for logs.
+// An unknown tier fails closed (ADVISORY, cannot comment).
+func IssueClaimTierCanComment(tier string) (canComment bool, mode string) {
+	m, _ := agentmode.ModeForTokenTier(tier)
+	return m.CanComment(), m.String()
 }
