@@ -1471,6 +1471,36 @@ func (b *boot) wireBootClosures() {
 					Scope:     bd.Scope,
 				}, nil
 			},
+			RunFanout: func(ctx context.Context, runKey string, repos []string) ([]string, error) {
+				w := b.cfg.Governor.WorkSource.Wavefront
+				if !w.Enabled || b.dashSrv == nil {
+					return nil, nil
+				}
+				waveIDs := make([]string, 0, len(repos))
+				for i, repo := range repos {
+					wave := i + 1
+					status := &worksource.SpektacularRunStatus{
+						RunKey: runKey,
+						Waves: []worksource.RunWaveStatus{{
+							Wave: wave,
+							Repositories: []worksource.RunRepositoryStatus{{
+								Repo: repo,
+							}},
+						}},
+					}
+					result, err := (worksource.RunFanoutRunner{
+						Status: status,
+						Leases: b.dashSrv,
+					}).FanOutWave(ctx, runKey, wave)
+					if err != nil {
+						return nil, err
+					}
+					if len(result.Created) > 0 {
+						waveIDs = append(waveIDs, fmt.Sprintf("wave-%d:%s", wave, repo))
+					}
+				}
+				return waveIDs, nil
+			},
 			// #8361/#6899: external-execution linked-engine status plus
 			// lazy dispatch/peer attachment. Adapters register only under
 			// their extwork_* build tags.

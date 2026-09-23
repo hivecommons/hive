@@ -50,6 +50,8 @@ const (
 const (
 	runAdmissionIdentity   = "hive-triage"
 	runAdmissionTaskPrefix = "run-admit-"
+	runFanoutIdentity      = "hive-run-fanout"
+	runFanoutTaskPrefix    = "run-fanout-"
 )
 
 // runReceiptsDir is where AdvanceStageLease persists one stage receipt per
@@ -457,16 +459,91 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if epic.Meta(planning.MetaPlanStatus) != "" {
 		return nil
 	}
-	if _, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false}); err != nil {
+	result, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
+	if err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
 	}
+	if err := s.fanOutImportedRunPlan(context.Background(), store, epic.ID, runKey, result.Children); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Server) fanOutImportedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string, children []*beads.Bead) error {
+	if s == nil || s.deps == nil || s.deps.RunFanout == nil || store == nil || len(children) == 0 {
+		return nil
+	}
+	repos := reposFromPlanChildren(store, children)
+	if len(repos) == 0 {
+		return nil
+	}
+	waveIDs, err := s.deps.RunFanout(ctx, runKey, repos)
+	if err != nil {
+		return fmt.Errorf("fanning out run plan: %w", err)
+	}
+	if len(waveIDs) == 0 {
+		return nil
+	}
+	if err := store.SetMetadata(epicID, planning.MetaRunWaveIDs, strings.Join(waveIDs, ",")); err != nil {
+		return fmt.Errorf("recording run wave ids: %w", err)
+	}
+	return nil
+}
+
+func reposFromPlanChildren(store *beads.Store, children []*beads.Bead) []string {
+	seen := map[string]bool{}
+	var repos []string
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		latest, err := store.Get(child.ID)
+		if err == nil && latest != nil {
+			child = latest
+		}
+		repo := strings.TrimSpace(child.Meta(planning.MetaPlanRepo))
+		key := strings.ToLower(repo)
+		if repo == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		repos = append(repos, repo)
+	}
+	return repos
+}
+
+// CreateImplementationLease is the worksource.RunFanoutLeaseCreator endpoint
+// used by cmd/hive when wavefront fan-out is enabled.
+func (s *Server) CreateImplementationLease(_ context.Context, lease worksource.RunImplementationLease) error {
+	if s == nil || s.contributeHub == nil {
+		return errors.New("run lease registry unavailable")
+	}
+	runKey := strings.TrimSpace(lease.RunKey)
+	repo := strings.TrimSpace(lease.Repo)
+	if runKey == "" || repo == "" || lease.Wave <= 0 {
+		return errors.New("run key, repo, and wave are required")
+	}
+	stage := strings.TrimSpace(lease.Stage)
+	if stage == "" {
+		stage = StageImplement
+	}
+	if stage != StageImplement {
+		return fmt.Errorf("fan-out implementation lease stage %q is not supported", stage)
+	}
+	taskID := runFanoutTaskPrefix + sanitizeReceiptSegment(runKey) + "-wave-" + strconv.Itoa(lease.Wave) + "-" + sanitizeReceiptSegment(repo)
+	key := repo + "!" + runKey + ":" + stage
+	return s.contributeHub.recordLeaseForKeyStage(runFanoutIdentity, taskID, repo, 0, key, "contributor", stage, uint64(lease.Wave), time.Now())
 }
 
 // runPlanApproved reports whether the run's imported plan has been approved.
 func (s *Server) runPlanApproved(runKey string) bool {
 	_, epic := s.findRunEpic(runKey)
 	return epic != nil && epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved
+}
+
+func (s *Server) runPlanHasWaves(runKey string) bool {
+	_, epic := s.findRunEpic(runKey)
+	return epic != nil && strings.TrimSpace(epic.Meta(planning.MetaRunWaveIDs)) != ""
 }
 
 // runStageAccessor is the dashboard's worksource.RunStageLeaseAccessor: the
@@ -484,11 +561,14 @@ func (s *Server) RunStageAccessor() worksource.RunStageLeaseAccessor {
 func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.RunStage, error) {
 	s := a.s
 	out := []worksource.RunStage{}
-	err := s.VisitActiveStageLeases(func(runKey, _, stage, _, _, repo string, _ uint64, expiresAt time.Time) {
+	err := s.VisitActiveStageLeases(func(runKey, _, stage, identity, _, repo string, _ uint64, expiresAt time.Time) {
 		if time.Now().After(expiresAt) {
 			return
 		}
 		if stage == StageImplement && !s.runPlanApproved(runKey) {
+			return
+		}
+		if stage == StageImplement && identity != runFanoutIdentity && s.runPlanHasWaves(runKey) {
 			return
 		}
 		out = append(out, worksource.RunStage{RunKey: runKey, Stage: stage, Repo: repo, Title: runKey})

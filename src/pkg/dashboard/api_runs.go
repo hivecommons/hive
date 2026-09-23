@@ -105,6 +105,7 @@ type Run struct {
 	PlanEpicID      string          `json:"plan_epic_id,omitempty"`
 	Stages          []RunStage      `json:"stages"`
 	ReviewWaves     []RunReviewWave `json:"review_waves,omitempty"`
+	WaveIDs         []string        `json:"wave_ids,omitempty"`
 	Burndown        *RunBurndown    `json:"burndown,omitempty"`
 	TriageVerdict   string          `json:"triage_verdict,omitempty"`
 	TriageRationale string          `json:"triage_rationale,omitempty"`
@@ -143,6 +144,7 @@ type runPlanSnapshot struct {
 	state        string
 	reason       string
 	waitingSince time.Time
+	waveIDs      []string
 }
 
 type runHumanReviewHold struct {
@@ -443,6 +445,7 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 		WaitingOn: RunWaitingOnAgent, Assignee: lease.identity,
 		ClaimedBy: lease.claimedBy, ClaimExpiresAt: formatRunTime(lease.claimExpiresAt), ClaimPosted: lease.claimPosted,
 		PlanEpicID:    plan.epicID,
+		WaveIDs:       append([]string(nil), plan.waveIDs...),
 		Stages:        leaseRunStages(lease.stage, lease.gen),
 		TriageVerdict: lease.triageVerdict, TriageRationale: lease.triageRationale,
 	}
@@ -483,6 +486,7 @@ func completedRunFromJourney(j timeline.Journey, includeTimeline bool, plan runP
 		WaitingOn:      RunWaitingOnNone,
 		Assignee:       stage.Agent,
 		PlanEpicID:     plan.epicID,
+		WaveIDs:        append([]string(nil), plan.waveIDs...),
 		Stages:         completedRunStages(gen),
 	}
 	if includeTimeline {
@@ -610,17 +614,40 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 			if b.Type != beads.TypeEpic || b.Meta(planning.MetaPlanStatus) == "" {
 				continue
 			}
-			repo, number := b.Meta(planning.MetaIssueRepo), b.Meta(planning.MetaIssueNumber)
-			if repo == "" || number == "" {
+			repo, number, runKey := b.Meta(planning.MetaIssueRepo), b.Meta(planning.MetaIssueNumber), b.Meta(planning.MetaRunKey)
+			if repo == "" || (number == "" && runKey == "") {
 				continue
 			}
-			snap := out[repo+"#"+number]
+			key := repo + "#" + number
+			if number == "" {
+				key = repo + "!" + runKey
+			}
+			snap := out[key]
 			snap.epicID = firstRunNonEmpty(snap.epicID, b.ID)
+			snap.waveIDs = splitRunWaveIDs(b.Meta(planning.MetaRunWaveIDs))
 			if reason := b.Meta(planning.MetaRunWaitingReason); reason != "" {
 				snap.reason = reason
 			}
 			snap.waitingSince = b.UpdatedAt.Time
-			out[repo+"#"+number] = snap
+			if number != "" {
+				out[repo+"#"+number] = snap
+			}
+			if runKey != "" && repo != "" {
+				for _, stage := range orderedLeaseStages {
+					out[repo+"!"+runKey+":"+stage] = snap
+				}
+				out[repo+"!"+runKey] = snap
+			}
+		}
+	}
+	return out
+}
+
+func splitRunWaveIDs(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
 		}
 	}
 	return out

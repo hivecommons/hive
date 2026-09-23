@@ -161,6 +161,9 @@ type Dependencies struct {
 	// detail page. It is intentionally absent from the list path; sources may
 	// need to inspect a graph or in-memory campaign state for the requested key.
 	RunBurndown func(context.Context, string) (*RunBurndown, error)
+	// RunFanout optionally fans an approved multi-repo plan out into
+	// implementation waves. Nil is the default/off state.
+	RunFanout func(context.Context, string, []string) ([]string, error)
 	// ExternalExec reports which external-execution engines are compiled
 	// into this binary (#8361). cmd/hive backs it with the extwork registry;
 	// nil means none, and the Features panel says so.

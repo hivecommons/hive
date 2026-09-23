@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,107 @@ func TestSpektacularRunner_LeaseWorksourceHookIntegration(t *testing.T) {
 	}
 	if ex.calls == 0 {
 		t.Fatal("exec never called")
+	}
+}
+
+func TestImportRunPlanFansOutMultiRepoPlanWhenEnabled(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	var gotRunKey string
+	var gotRepos []string
+	s.deps.RunFanout = func(_ context.Context, runKey string, repos []string) ([]string, error) {
+		gotRunKey = runKey
+		gotRepos = append([]string(nil), repos...)
+		var waveIDs []string
+		for i, repo := range repos {
+			wave := i + 1
+			status := &worksource.SpektacularRunStatus{
+				RunKey: runKey,
+				Waves: []worksource.RunWaveStatus{{
+					Wave:         wave,
+					Repositories: []worksource.RunRepositoryStatus{{Repo: repo}},
+				}},
+			}
+			result, err := (worksource.RunFanoutRunner{Status: status, Leases: s}).FanOutWave(context.Background(), runKey, wave)
+			if err != nil {
+				return nil, err
+			}
+			if len(result.Created) > 0 {
+				waveIDs = append(waveIDs, fmt.Sprintf("wave-%d:%s", wave, repo))
+			}
+		}
+		return waveIDs, nil
+	}
+
+	taskList := strings.Join([]string{
+		"1. [T1] API changes [repo:acme/api] [agent_suitable]",
+		"2. [T2] UI changes [repo:acme/ui] [agent_suitable]",
+		"3. [T3] Docs changes [repo:acme/docs] [agent_suitable]",
+	}, "\n")
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	if gotRunKey != spekRunKey || !reflect.DeepEqual(gotRepos, []string{"acme/api", "acme/ui", "acme/docs"}) {
+		t.Fatalf("fanout got run=%q repos=%v", gotRunKey, gotRepos)
+	}
+	hub.leaseMu.Lock()
+	fanoutLeases := 0
+	for _, l := range hub.leases {
+		if l.identity == runFanoutIdentity && l.stage == StageImplement {
+			fanoutLeases++
+		}
+	}
+	hub.leaseMu.Unlock()
+	if fanoutLeases != 3 {
+		t.Fatalf("fanout leases = %d, want 3", fanoutLeases)
+	}
+	_, epic := s.findRunEpic(spekRunKey)
+	if epic == nil {
+		t.Fatal("import did not create epic")
+	}
+	if got := epic.Meta(planning.MetaRunWaveIDs); got != "wave-1:acme/api,wave-2:acme/ui,wave-3:acme/docs" {
+		t.Fatalf("wave ids = %q", got)
+	}
+	if err := hub.recordLeaseForKeyStage(spekIdentity, spekTaskID, spekRepo, 0, spekRepo+"!"+spekRunKey+":"+StageImplement, "contributor", StageImplement, spekGen, time.Now()); err != nil {
+		t.Fatalf("record implement lease: %v", err)
+	}
+	runs, err := s.activeRuns(false)
+	if err != nil {
+		t.Fatalf("activeRuns: %v", err)
+	}
+	var primary *Run
+	for i := range runs {
+		if runs[i].Key == spekRepo+"!"+spekRunKey+":"+StageImplement {
+			primary = &runs[i]
+		}
+	}
+	if primary == nil || !reflect.DeepEqual(primary.WaveIDs, []string{"wave-1:acme/api", "wave-2:acme/ui", "wave-3:acme/docs"}) || primary.PlanEpicID == "" {
+		t.Fatalf("run record = %+v", runs)
+	}
+	children, err := planning.GetPlanTree(store, epic.ID)
+	if err != nil || len(children.Children) != 3 {
+		t.Fatalf("plan tree = %+v err=%v", children, err)
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		t.Fatalf("ApprovePlan: %v", err)
+	}
+	listed := spekListed(t, s)
+	if len(listed) != 3 {
+		t.Fatalf("listed fanout stages = %+v, want 3 repo waves", listed)
+	}
+}
+
+func TestImportRunPlanFanoutDisabledIsNoop(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	taskList := "1. [T1] API changes [repo:acme/api] [agent_suitable]"
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	_, epic := s.findRunEpic(spekRunKey)
+	if epic == nil {
+		t.Fatal("import did not create epic")
+	}
+	if got := epic.Meta(planning.MetaRunWaveIDs); got != "" {
+		t.Fatalf("wave ids = %q, want disabled no-op", got)
 	}
 }
 

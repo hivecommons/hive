@@ -64,6 +64,9 @@ const (
 	// data.name, so the stage runner can find the plan it imported
 	// (hivecommons/hive#8303).
 	MetaRunKey = "run_key"
+	// MetaRunWaveIDs records the implementation wave ids minted from a
+	// multi-repo Spektacular plan.
+	MetaRunWaveIDs = "run_wave_ids"
 )
 
 const (

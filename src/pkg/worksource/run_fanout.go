@@ -73,6 +73,7 @@ type RunFanoutAuditSink interface {
 
 type RunFanoutRunner struct {
 	StatusURL string
+	Status    *SpektacularRunStatus
 	Client    *http.Client
 	Leases    RunFanoutLeaseCreator
 	Overlaps  RunFanoutOverlapIndex
@@ -130,6 +131,9 @@ func (r RunFanoutRunner) FanOutWave(ctx context.Context, runKey string, wave int
 }
 
 func (r RunFanoutRunner) FetchStatus(ctx context.Context) (SpektacularRunStatus, error) {
+	if r.Status != nil {
+		return *r.Status, nil
+	}
 	if strings.TrimSpace(r.StatusURL) == "" {
 		return SpektacularRunStatus{}, fmt.Errorf("worksource/run: status URL is required")
 	}
