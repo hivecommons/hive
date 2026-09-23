@@ -41,6 +41,7 @@ Known #8460 gaps are guarded in the test rather than hidden:
 | gap 7 of #8460 | terminal run state on `/api/runs/{key}` | implement completion ends the run |
 | gap 8 of #8460 | `wave_ids` on `/api/runs/{key}` for a multi-repo plan | approved plans fan out one implementation wave per declared repo |
 | gap 10 of #8460 | `burndown` field on `/api/runs/{key}` | satisfied/remaining/unknown/scope-changed burndown assertions |
+| gap 9 of #8460 | Wavefront receipts update when run-stage tasks finish | completed/unknown transitions and run worktree cleanup |
 
 `GET /api/runs` lists active staged runs from live leases and keeps the shape cheap for polling.
 
@@ -64,6 +65,12 @@ implement stage into one Wavefront implementation wave per repo. The run detail
 exposes the minted wave ids as `wave_ids`. With Wavefront disabled (the
 default), importing the same plan is a no-op for fan-out and `wave_ids` is
 omitted.
+
+For Wavefront-backed implement items, a successful `task_complete` records the
+node receipt through the Wavefront adapter and removes that run-stage worktree.
+If Hive restarts and later finds a restored in-flight Wavefront lease stale, it
+records an `unknown` receipt for the node so the burndown distinguishes "lost
+in flight" from work that still has no evidence.
 
 ## How long-running runs start
 

@@ -167,8 +167,26 @@ func (s *ReceiptStore) Completed(graph, node, revision string) bool {
 	return ok && r.Revision == revision && r.Receipt.ResultClass == outputschema.ReceiptResultCompleted
 }
 
+// Unknown reports whether the node holds an unknown-state receipt recorded
+// under exactly the given revision.
+func (s *ReceiptStore) Unknown(graph, node, revision string) bool {
+	r, ok := s.Get(graph, node)
+	return ok && r.Revision == revision && r.Receipt.ResultClass == outputschema.ReceiptResultUnknown
+}
+
+func (s *ReceiptStore) terminal(graph, node, revision string) bool {
+	r, ok := s.Get(graph, node)
+	return ok && r.Revision == revision &&
+		(r.Receipt.ResultClass == outputschema.ReceiptResultCompleted ||
+			r.Receipt.ResultClass == outputschema.ReceiptResultUnknown)
+}
+
 // buildReceipt renders the #8295 stage receipt for one node completion.
 func buildReceipt(repo string, g Graph, node Node, provenance string, artifacts []outputschema.Artifact, startedAt, endedAt time.Time) Receipt {
+	return buildReceiptWithResult(repo, g, node, provenance, artifacts, startedAt, endedAt, outputschema.ReceiptResultCompleted)
+}
+
+func buildReceiptWithResult(repo string, g Graph, node Node, provenance string, artifacts []outputschema.Artifact, startedAt, endedAt time.Time, result outputschema.StageReceiptResultClass) Receipt {
 	if len(artifacts) == 0 {
 		artifacts = []outputschema.Artifact{{Repo: repo, Path: anchorPathPrefix + g.Name + "/" + node.ID, Description: anchorDescription}}
 	}
@@ -195,7 +213,7 @@ func buildReceipt(repo string, g Graph, node Node, provenance string, artifacts 
 			Engine:           &outputschema.StageReceiptEngine{Name: Engine, Version: EngineVersion},
 			InputRevision:    inputRevisionPrefix + digest,
 			OutputDigest:     effects.StableDigest(parts...),
-			ResultClass:      outputschema.ReceiptResultCompleted,
+			ResultClass:      result,
 			StartedAt:        startedAt.UTC().Format(time.RFC3339Nano),
 			EndedAt:          endedAt.UTC().Format(time.RFC3339Nano),
 			Provenance:       &proof.Provenance{Query: provenance},

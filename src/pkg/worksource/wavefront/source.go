@@ -243,9 +243,11 @@ func (s *Source) Burndown(ctx context.Context, key string) (Burndown, bool, erro
 	for _, n := range g.Nodes {
 		if s.satisfied(g, n) {
 			out.Satisfied++
+		} else if s.receipts.Unknown(g.Name, n.ID, g.Revision) {
+			out.Unknown++
 		}
 	}
-	out.Remaining = out.Scope - out.Satisfied
+	out.Remaining = out.Scope - out.Satisfied - out.Unknown
 	return out, true, nil
 }
 
@@ -256,7 +258,7 @@ func (s *Source) satisfied(g Graph, n Node) bool {
 }
 
 func (s *Source) isReady(g Graph, n Node) bool {
-	if n.Status == StatusBlocked || s.satisfied(g, n) {
+	if n.Status == StatusBlocked || n.Status == StatusDone || s.receipts.terminal(g.Name, n.ID, g.Revision) {
 		return false
 	}
 	for _, dep := range n.DependsOn {
@@ -266,6 +268,32 @@ func (s *Source) isReady(g Graph, n Node) bool {
 		}
 	}
 	return true
+}
+
+// MarkUnknown records that an in-flight node's owner disappeared before Hive
+// could observe a normal completion. Unknown receipts are terminal for this
+// graph revision, but do not satisfy dependents.
+func (s *Source) MarkUnknown(ctx context.Context, externalID, reason string, startedAt time.Time) (Receipt, error) {
+	g, n, err := s.verifyCurrentNode(ctx, externalID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if existing, ok := s.receipts.Get(g.Name, n.ID); ok && existing.Revision == g.Revision {
+		return existing, nil
+	}
+	endedAt := s.now()
+	if startedAt.IsZero() || startedAt.After(endedAt) {
+		startedAt = endedAt
+	}
+	provenance := s.provenance
+	if reason = strings.TrimSpace(reason); reason != "" {
+		provenance += " " + reason
+	}
+	r := buildReceiptWithResult(s.repo, g, n, provenance, nil, startedAt, endedAt, outputschema.ReceiptResultUnknown)
+	if err := s.receipts.Put(r); err != nil {
+		return Receipt{}, err
+	}
+	return r, nil
 }
 
 // ListIssues lists every ready node as a run-stage work item.
@@ -332,6 +360,17 @@ func RevisionFromLabels(labels []string) (string, bool) {
 // mismatch is refused with ErrStaleRevision: the worker's plan is out of date
 // and Hive does not try to map the old node onto the new graph.
 func (s *Source) Verify(ctx context.Context, externalID, revision string) (Graph, Node, error) {
+	g, n, err := s.verifyCurrentNode(ctx, externalID)
+	if err != nil {
+		return Graph{}, Node{}, err
+	}
+	if g.Revision != revision {
+		return Graph{}, Node{}, fmt.Errorf("%w: item at %q, graph at %q", ErrStaleRevision, revision, g.Revision)
+	}
+	return g, n, nil
+}
+
+func (s *Source) verifyCurrentNode(ctx context.Context, externalID string) (Graph, Node, error) {
 	graphName, nodeID, ok := SplitExternalID(externalID)
 	if !ok {
 		return Graph{}, Node{}, fmt.Errorf("%w: malformed external id %q", ErrUnknownNode, externalID)
@@ -342,9 +381,6 @@ func (s *Source) Verify(ctx context.Context, externalID, revision string) (Graph
 	}
 	if g.Name != graphName {
 		return Graph{}, Node{}, fmt.Errorf("%w: graph %q is not %q", ErrUnknownNode, graphName, g.Name)
-	}
-	if g.Revision != revision {
-		return Graph{}, Node{}, fmt.Errorf("%w: item at %q, graph at %q", ErrStaleRevision, revision, g.Revision)
 	}
 	n, ok := g.Node(nodeID)
 	if !ok {

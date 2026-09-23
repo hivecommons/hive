@@ -1517,6 +1517,38 @@ func (b *boot) wireBootClosures() {
 				}
 				return waveIDs, nil
 			},
+			WavefrontComplete: func(ctx context.Context, key, externalID, revision string, startedAt time.Time) error {
+				w := b.cfg.Governor.WorkSource.Wavefront
+				if !w.Enabled {
+					return nil
+				}
+				ref, ok := worksource.ParseKey(key)
+				if !ok || ref.Repo != w.Repo {
+					return nil
+				}
+				src, err := wavefront.New(wavefront.Options{
+					Repo: w.Repo, Path: w.Path, URL: w.URL, ReceiptsDir: w.ReceiptsDir,
+				})
+				if err != nil {
+					return err
+				}
+				_, err = src.Complete(ctx, externalID, revision, nil, startedAt)
+				return err
+			},
+			WavefrontUnknown: func(ctx context.Context, externalID, reason string, startedAt time.Time) error {
+				w := b.cfg.Governor.WorkSource.Wavefront
+				if !w.Enabled {
+					return nil
+				}
+				src, err := wavefront.New(wavefront.Options{
+					Repo: w.Repo, Path: w.Path, URL: w.URL, ReceiptsDir: w.ReceiptsDir,
+				})
+				if err != nil {
+					return err
+				}
+				_, err = src.MarkUnknown(ctx, externalID, reason, startedAt)
+				return err
+			},
 			// #8361/#6899: external-execution linked-engine status plus
 			// lazy dispatch/peer attachment. Adapters register only under
 			// their extwork_* build tags.

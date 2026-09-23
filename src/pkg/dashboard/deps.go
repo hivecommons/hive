@@ -175,6 +175,12 @@ type Dependencies struct {
 	// RunFanout optionally fans an approved multi-repo plan out into
 	// implementation waves. Nil is the default/off state.
 	RunFanout func(context.Context, string, []string) ([]string, error)
+	// WavefrontComplete records a completed Wavefront run-stage item. Nil means
+	// wavefront completion is not wired.
+	WavefrontComplete func(context.Context, string, string, string, time.Time) error
+	// WavefrontUnknown records a stale in-flight Wavefront item whose owner did
+	// not return after a restart/crash. Nil means unknown transitions are off.
+	WavefrontUnknown func(context.Context, string, string, time.Time) error
 	// ExternalExec reports which external-execution engines are compiled
 	// into this binary (#8361). cmd/hive backs it with the extwork registry;
 	// nil means none, and the Features panel says so.

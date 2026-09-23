@@ -3381,6 +3381,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		}
 		hasTask := s.contributor.currentTask != nil && s.contributor.currentTask.TaskID == msg.TaskID
 		completedTask := s.contributor.currentTask
+		completedLabels := append([]string(nil), s.contributor.currentLabels...)
 		// Captured before the clear below so the run log can record the
 		// task's wall-clock duration. Zero when the task was adopted
 		// without a fresh assignment; the record then omits duration.
@@ -3435,6 +3436,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// later task_progress for this task cannot resurrect ownership and be
 			// re-minted a credential.
 			if completedTask != nil {
+				h.completeWavefrontTask(completedTask, completedLabels, taskAssignedAt)
 				if !h.completeImplementStage(identityOf(s.contributor), completedTask.TaskID, time.Now()) {
 					h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
 				}

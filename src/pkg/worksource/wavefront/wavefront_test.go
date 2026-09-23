@@ -142,6 +142,35 @@ func TestBurndownMatchesRunKeyAndReceipts(t *testing.T) {
 	}
 }
 
+func TestMarkUnknownIsTerminalButNotSatisfied(t *testing.T) {
+	src := newFileSource(t)
+	if _, err := src.MarkUnknown(context.Background(), wavefront.ExternalID(fixtureName, "parse-ast"), "lease expired", fixedNow.Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkUnknown: %v", err)
+	}
+	if src.Receipts().Completed(fixtureName, "parse-ast", fixtureRev) {
+		t.Fatal("unknown receipt must not satisfy dependencies")
+	}
+	if !src.Receipts().Unknown(fixtureName, "parse-ast", fixtureRev) {
+		t.Fatal("unknown receipt not recorded")
+	}
+	bd, ok, err := src.Burndown(context.Background(), testRepo+"!"+wavefront.ExternalID(fixtureName, "parse-ast"))
+	if err != nil || !ok {
+		t.Fatalf("Burndown: %+v ok=%v err=%v", bd, ok, err)
+	}
+	if bd.Unknown != 1 || bd.Satisfied != 2 || bd.Remaining != 21 {
+		t.Fatalf("burndown with unknown = %+v", bd)
+	}
+	_, ready, err := src.Ready(context.Background())
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	for _, n := range ready {
+		if n.ID == "parse-ast" {
+			t.Fatalf("unknown node was re-listed: %+v", ready)
+		}
+	}
+}
+
 // TestDiamondCompletionUnblocksDependent walks the diamond parse-ast ->
 // {lower-types, lower-exprs} -> emit-ir: the join node stays withheld until
 // BOTH arms carry a receipt, completed nodes are never re-listed, a retry of a
