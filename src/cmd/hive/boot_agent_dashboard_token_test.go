@@ -46,6 +46,10 @@ func TestBootProjectContextNeverCarriesDashboardToken(t *testing.T) {
 	t.Setenv("HIVE_ADVISORY_ISSUE", "")
 	t.Setenv("HIVE_DASHBOARD_TOKEN", bootDashboardTokenSentinel)
 	cfg := bootAdvisoryConfig(t)
+	// The context copies cfg.Project.PrimaryRepo verbatim; set it explicitly
+	// (as TestBootAdvisoryWithPrefersPrimaryRepo does) so the positive
+	// control below proves the context was built from this config.
+	cfg.Project.PrimaryRepo = "acme/widgets"
 	cfg.Dashboard.AuthToken = bootDashboardTokenSentinel
 	b, _ := newDepsTestBoot(t, cfg)
 	b.ghClient = fakeGitHubClient(t)
