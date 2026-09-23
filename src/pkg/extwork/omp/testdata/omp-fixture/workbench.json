@@ -1,0 +1,14 @@
+{
+  "engine": "omp",
+  "version": "omp-workbench/1.0.0",
+  "input_revision": "7d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60",
+  "stages": [
+    { "name": "review" },
+    {
+      "name": "report",
+      "artifacts": [
+        { "path": "report.md", "description": "Review report written on the workbench", "source": "outputs/report.md" }
+      ]
+    }
+  ]
+}

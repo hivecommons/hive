@@ -87,6 +87,11 @@ const (
 	// offered only to relays that declare it, and only while the operator has
 	// enabled runs.external.flue; a relay that lacks it is refused that item,
 	// never handed it as ordinary local work.
+	//
+	// capExtExecOMP (declared beside it as "ext-exec/omp") is the same opt-in
+	// for the OMP workbench host (#8361 step 9, #6899), gated by
+	// runs.external.omp. The two tokens are independent: declaring one grants
+	// nothing for the other engine.
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -107,6 +112,7 @@ func serverCapabilities() []string {
 		capBlockedVerdict,
 		capRunStage,
 		capExtExecFlue,
+		capExtExecOMP,
 	}
 }
 

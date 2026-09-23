@@ -30,6 +30,14 @@ sandbox). `omp` is now a hub-agent method, but remains T3 on contributor local
 mode because its unattended approval flag is not an OS sandbox. A PR states the
 tier it claims for each path it wires.
 
+The T3 tier also bounds what an already-running OMP workbench may take as an
+external host (#8361 step 9, #6899): it is admissible only in report-only and
+shadow modes, where it holds no repository credential and no dashboard token
+and returns a receipt Hive verifies rather than trusts, and the adapter
+(`pkg/extwork/omp`, `CheckReportOnly`) refuses any write-capable stage in
+code. The escape-hatch env var above concerns launching `omp` locally under
+Hive; it does not widen what an external OMP host may do.
+
 `gemini` is Go-only (`cliBackendExceptions`): it is launched by the hub-side
 manager and has no contributor-relay wiring at all, so the local-path tiers do
 not apply to it. Adding it to the relay would go through this bar as a new

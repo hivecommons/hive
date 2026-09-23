@@ -13,14 +13,18 @@ import (
 
 // External-execution wiring (#8361). pkg/dashboard owns the extwork-free
 // seams (lease authority, hub accessor, ExternalExecution status); this file
-// binds the concrete pkg/extwork pieces to them. The Flue adapter itself is
-// registered only under the extwork_flue build tag (extwork_flue.go), so
-// without the tag the registry is empty and every constructor here fails
-// closed with extwork.ErrEngineNotLinked.
+// binds the concrete pkg/extwork pieces to them. Each adapter is registered
+// only under its build tag (extwork_flue.go, extwork_omp.go), so without the
+// tag the registry lacks that engine and its constructor here fails closed
+// with extwork.ErrEngineNotLinked.
 
-// extExecEngineFlue mirrors dashboard's private engine name; pkg/extwork/flue
-// cannot be imported here without linking the adapter into every build.
-const extExecEngineFlue = "flue"
+// extExecEngineFlue and extExecEngineOMP mirror dashboard's private engine
+// names; the adapter packages cannot be imported here without linking them
+// into every build.
+const (
+	extExecEngineFlue = "flue"
+	extExecEngineOMP  = "omp"
+)
 
 var (
 	errExternalBindingOff    = errors.New("external execution binding is off")
@@ -72,6 +76,34 @@ func newExternalFlueBinding(srv *dashboard.Server, cfg *config.Config, registry 
 	adapter, err := registry.Open(extExecEngineFlue, map[string]string{
 		extwork.SettingEndpoint:        flueCfg.Endpoint,
 		extwork.SettingWorkflowVersion: flueCfg.WorkflowVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	hub := srv.ContributeHub()
+	if hub == nil {
+		return nil, errExternalHubNotRunning
+	}
+	store := extwork.NewLeaseStore(hubLeaseAuthority{hub: hub, now: now}, extworkRecordDir())
+	return extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode), nil
+}
+
+// newExternalOMPBinding builds the OMP workbench host binding for this hub
+// (#8361 step 9). It fails closed exactly like the Flue one: off by
+// configuration, an engine that is not linked into this build, or no
+// contributor hub each return a typed error and construct nothing. The
+// adapter resolves workbench peers from omp.DefaultBroker, which the hub
+// populates from contributor connections that declared ext-exec/omp.
+func newExternalOMPBinding(srv *dashboard.Server, cfg *config.Config, registry *extwork.Registry, now func() time.Time) (*extwork.Binding, error) {
+	mode := cfg.OMPBindingMode()
+	if mode == config.FlueBindingModeOff {
+		return nil, errExternalBindingOff
+	}
+	if now == nil {
+		now = time.Now
+	}
+	adapter, err := registry.Open(extExecEngineOMP, map[string]string{
+		extwork.SettingWorkflowVersion: cfg.Runs.External.OMP.WorkflowVersion,
 	})
 	if err != nil {
 		return nil, err

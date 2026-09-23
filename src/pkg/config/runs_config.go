@@ -38,8 +38,8 @@ type RunsConfig struct {
 	// Spektacular configures the stage runner that polls Spektacular's status
 	// verb and advances the lease on final.
 	Spektacular SpektacularConfig `yaml:"spektacular,omitempty" json:"spektacular,omitempty"`
-	// External holds the external-execution engine bindings; today only the
-	// report-only Flue binding pilot (#8361). Default off.
+	// External holds the external-execution engine bindings: the report-only
+	// Flue binding pilot and the OMP workbench host (#8361). Default off.
 	External ExternalRunsConfig `yaml:"external,omitempty" json:"external,omitempty"`
 }
 

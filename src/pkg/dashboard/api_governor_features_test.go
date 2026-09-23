@@ -496,3 +496,43 @@ func TestCovGov_FeaturesExtFlueToggle(t *testing.T) {
 		t.Fatal("toggle off did not disable the binding")
 	}
 }
+
+// TestCovGov_FeaturesExtOMPToggle covers the #8361 step 9 OMP host toggle: off
+// by default, independent of the Flue toggle, an unknown mode is rejected,
+// the toggle and mode round trip through Config, and the GET payload reports
+// the effective mode, whether the adapter is linked, and whether a workflow
+// version is pinned.
+func TestCovGov_FeaturesExtOMPToggle(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.OMPBindingEnabled() {
+		t.Fatal("host must be off by default")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extOmpMode": "enforce"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad mode: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.Runs.External.OMP.Mode != "" {
+		t.Fatal("a rejected mode must not be applied")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extOmpEnabled": true, "extOmpMode": config.FlueBindingModeReportOnly}); rec.Code != http.StatusOK {
+		t.Fatalf("toggle PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Runs.External.OMP.Enabled || s.deps.Config.OMPBindingMode() != config.FlueBindingModeReportOnly {
+		t.Fatalf("config after PUT = %+v", s.deps.Config.Runs.External.OMP)
+	}
+	if s.deps.Config.FlueBindingEnabled() {
+		t.Fatal("the OMP toggle must not enable the Flue binding")
+	}
+	got := s.featuresSectionWithLinked(s.deps.Config)
+	if got["extOmpEnabled"] != true || got["extOmpMode"] != config.FlueBindingModeReportOnly || got["extOmpLinked"] != false || got["extOmpVersionSet"] != false {
+		t.Fatalf("features response = %v", got)
+	}
+	if got["extFlueEnabled"] != false {
+		t.Fatalf("flue view changed by the omp toggle: %v", got["extFlueEnabled"])
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extOmpEnabled": false}); rec.Code != http.StatusOK {
+		t.Fatalf("toggle off PUT: %d", rec.Code)
+	}
+	if s.deps.Config.OMPBindingEnabled() || featuresSectionResponse(s.deps.Config)["extOmpMode"] != config.FlueBindingModeOff {
+		t.Fatal("toggle off did not disable the host")
+	}
+}

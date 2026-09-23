@@ -102,3 +102,69 @@ func TestExternalFlueBindingFailsClosed(t *testing.T) {
 		t.Fatalf("report-only binding = %v %v", b, err)
 	}
 }
+
+// TestExternalOMPBindingFailsClosed mirrors the Flue test for the second
+// host: off by default, fail-closed without the engine or the hub, and a
+// linked fake engine builds a shadow binding that refuses an admission no
+// lease vouches for. It holds with and without the extwork_omp tag.
+func TestExternalOMPBindingFailsClosed(t *testing.T) {
+	prevDir := outputschema.AgentReportDir
+	outputschema.AgentReportDir = t.TempDir()
+	t.Cleanup(func() { outputschema.AgentReportDir = prevDir })
+	srv := dashboard.NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	clock := func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) }
+
+	failClosed := func(err error) bool {
+		return errors.Is(err, errExternalBindingOff) || errors.Is(err, errExternalHubNotRunning) || errors.Is(err, extwork.ErrEngineNotLinked)
+	}
+	if _, err := newExternalOMPBinding(srv, cfg, extwork.DefaultRegistry, clock); !errors.Is(err, errExternalBindingOff) {
+		t.Fatalf("default config = %v, want off", err)
+	}
+	// The Flue toggle does not switch the OMP host on.
+	cfg.Runs.External.Flue.Enabled = true
+	if _, err := newExternalOMPBinding(srv, cfg, extwork.DefaultRegistry, clock); !errors.Is(err, errExternalBindingOff) {
+		t.Fatalf("flue enabled, omp off = %v, want off", err)
+	}
+	cfg.Runs.External.OMP.Enabled = true
+	if _, err := newExternalOMPBinding(srv, cfg, extwork.DefaultRegistry, clock); !failClosed(err) {
+		t.Fatalf("enabled without hub = %v, want a fail-closed sentinel", err)
+	}
+	if _, err := newExternalOMPBinding(srv, cfg, extwork.NewRegistry(), clock); !errors.Is(err, extwork.ErrEngineNotLinked) {
+		t.Fatalf("empty registry = %v", err)
+	}
+
+	fake := &fakeExtAdapter{}
+	reg := extwork.NewRegistry()
+	reg.Register(extExecEngineOMP, func(settings map[string]string) (extwork.Adapter, error) {
+		if settings[extwork.SettingWorkflowVersion] != "omp-workbench/1.0.0" {
+			t.Errorf("settings = %v", settings)
+		}
+		return fake, nil
+	})
+	cfg.Runs.External.OMP.WorkflowVersion = "omp-workbench/1.0.0"
+	if _, err := newExternalOMPBinding(srv, cfg, reg, clock); !errors.Is(err, errExternalHubNotRunning) {
+		t.Fatalf("linked engine without hub = %v", err)
+	}
+	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: extworkStatus{registry: reg}})
+	if srv.ContributeHub() == nil {
+		t.Skip("RegisterAPI did not create a contributor hub in this configuration")
+	}
+	b, err := newExternalOMPBinding(srv, cfg, reg, nil)
+	if err != nil || b.Mode() != extwork.ModeShadow {
+		t.Fatalf("shadow binding = %v %v", b, err)
+	}
+	adm := extwork.Admission{
+		WorkKey: "hivecommons/hive#6899", AssignmentID: "task-6899", Generation: 1, Stage: "implement",
+		ContractRevision: "c1", Engine: extExecEngineOMP, WorkflowVersion: "omp-workbench/1.0.0",
+		InputRevision: "0123456789abcdef0123456789abcdef01234567", RequestDigest: extwork.RequestDigest([]byte("bundle")),
+		Authority: extwork.AuthorityBinding{Identity: "workbench", Tier: "C4", Capability: "ext-exec/omp", Mode: extwork.ModeShadow},
+	}
+	if _, err := b.Dispatch(context.Background(), adm, []byte("bundle")); !errors.Is(err, extwork.ErrLeaseAuthority) || fake.starts != 0 {
+		t.Fatalf("dispatch without a lease = %v starts=%d", err, fake.starts)
+	}
+	cfg.Runs.External.OMP.Mode = config.FlueBindingModeReportOnly
+	if b, err := newExternalOMPBinding(srv, cfg, reg, clock); err != nil || b.Mode() != extwork.ModeReportOnly {
+		t.Fatalf("report-only binding = %v %v", b, err)
+	}
+}

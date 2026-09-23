@@ -1174,15 +1174,34 @@ there. A relay that is offered staged run work must declare `run-stage` in
 `capabilities.relay_capabilities`; otherwise the hub refuses that staged item
 instead of silently downgrading it to an unstaged task.
 
-External-execution items add a second engine-scoped token: `ext-exec/flue`
-([#8361](https://github.com/hivecommons/hive/issues/8361)). A run-stage item
-that names an external engine (`ext_exec: flue`) is offered only while the
-operator has enabled `runs.external.flue` AND the relay declares
-`ext-exec/flue` in `capabilities.relay_capabilities`. A relay without the
+External-execution items add engine-scoped tokens: `ext-exec/flue` and
+`ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A
+run-stage item that names an external engine (`ext_exec: flue` or
+`ext_exec: omp`) is offered only while the operator has enabled that engine's
+binding (`runs.external.flue`, `runs.external.omp`) AND the relay declares
+that engine's token in `capabilities.relay_capabilities`. A relay without the
 token, or a hub with the binding off, refuses that item; it is never handed
-out as ordinary local work. The token grants nothing by itself: the engine
-still receives only a bounded context bundle, and the hub still decides
-acceptance of its receipt.
+out as ordinary local work, and declaring one token grants nothing for the
+other engine. The token grants nothing by itself: the engine still receives
+only a bounded context bundle, and the hub still decides acceptance of its
+receipt.
+
+**OMP workbench as a contributor host** ([#6899](https://github.com/hivecommons/hive/issues/6899)).
+An already-running OMP workbench does not embed the relay; it registers as a
+contributor peer declaring `ext-exec/omp` and speaks a small set of `ext_*`
+frames on the same channel. It receives `ext_offer` with the assignment
+summary only (`execution_key`, `work_key`, `task_id`, `task_gen`, `stage`,
+`summary`) and must answer `ext_accept` or `ext_decline` before Hive sends
+`ext_start` with the bounded bundle; it reports `ext_progress` (`accepted`,
+`running`, `waiting`, `terminal`, `unknown`, with `stage`) so the hub's audit
+carries its state, acknowledges `ext_cancel` with `acknowledged` and
+`stopped` as separate facts, and finishes with `ext_receipt` carrying a
+`stage-receipt/v1` document. It receives no repository credential and no
+dashboard token; the receipt is evidence Hive verifies, not authority. Because
+`omp` is T3 (unconfined), only report-only stages are ever bound to it: the
+adapter refuses a write-capable stage in code. The frame table and
+conformance rows are in
+[External workflow admission](design/external-workflow-admission.md).
 
 **Compatibility boundary with [#6825](https://github.com/hivecommons/hive/issues/6825).**
 Adding a relay→hub capability list is a change to the assignment boundary that

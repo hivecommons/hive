@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/extwork/flue"
+	"github.com/hivecommons/hive/pkg/extwork/omp"
 )
 
 const (
@@ -37,14 +38,20 @@ func TestCapabilityTokenMatchesAdapter(t *testing.T) {
 	if extExecEngineFlue != flue.Engine {
 		t.Fatalf("dashboard engine %q must equal flue.Engine %q", extExecEngineFlue, flue.Engine)
 	}
-	found := false
-	for _, c := range serverCapabilities() {
-		if c == capExtExecFlue {
-			found = true
-		}
+	if capExtExecOMP != omp.Capability {
+		t.Fatalf("dashboard token %q must equal omp.Capability %q", capExtExecOMP, omp.Capability)
 	}
-	if !found {
-		t.Fatal("hub must advertise the ext-exec/flue token")
+	if extExecEngineOMP != omp.Engine {
+		t.Fatalf("dashboard engine %q must equal omp.Engine %q", extExecEngineOMP, omp.Engine)
+	}
+	advertised := map[string]bool{}
+	for _, c := range serverCapabilities() {
+		advertised[c] = true
+	}
+	for _, want := range []string{capExtExecFlue, capExtExecOMP} {
+		if !advertised[want] {
+			t.Fatalf("hub must advertise the %s token", want)
+		}
 	}
 }
 
@@ -122,6 +129,13 @@ func TestExternalExecSeam(t *testing.T) {
 	if got := s.featuresSectionWithLinked(s.deps.Config)["extFlueLinked"]; got != true {
 		t.Fatalf("linked view = %v", got)
 	}
+	if got := s.featuresSectionWithLinked(s.deps.Config)["extOmpLinked"]; got != false {
+		t.Fatalf("omp linked view = %v, want false when only flue is linked", got)
+	}
+	s.deps.ExternalExec = fakeExternalExec{engines: map[string]bool{extExecEngineOMP: true}}
+	if got := s.featuresSectionWithLinked(s.deps.Config)["extOmpLinked"]; got != true {
+		t.Fatalf("omp linked view = %v", got)
+	}
 	var nilServer *Server
 	if nilServer.externalExecLinked(extExecEngineFlue) || nilServer.ContributeHub() != nil {
 		t.Fatal("nil server must be inert")
@@ -165,5 +179,29 @@ func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 	var nilHub *ContributeWSHub
 	if ok, _ := nilHub.extExecAdmissible(extExecEngineFlue, withCap); ok {
 		t.Fatal("nil hub admitted")
+	}
+
+	// The OMP host is gated by its own toggle and its own token: the Flue
+	// toggle and the Flue token grant nothing for it, and the reverse.
+	ompCap := &ContributorConnection{capabilities: &ContributorCapabilities{RelayCapabilities: []string{capExtExecOMP}}}
+	if ok, reason := h.extExecAdmissible(extExecEngineOMP, ompCap); ok || !strings.Contains(reason, "disabled") {
+		t.Fatalf("omp with only flue enabled = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.OMP.Enabled = true
+	if ok, reason := h.extExecAdmissible(extExecEngineOMP, withCap); ok || !strings.Contains(reason, capExtExecOMP) {
+		t.Fatalf("omp item to a flue-only relay = %v %q", ok, reason)
+	}
+	if ok, reason := h.extExecAdmissible(extExecEngineOMP, ompCap); !ok {
+		t.Fatalf("omp positive control refused: %q", reason)
+	}
+	if ok, reason := h.extExecAdmissible(extExecEngineFlue, ompCap); ok || !strings.Contains(reason, capExtExecFlue) {
+		t.Fatalf("flue item to an omp-only relay = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.Flue.Enabled = false
+	if ok, reason := h.extExecAdmissible(extExecEngineFlue, withCap); ok || !strings.Contains(reason, "disabled") {
+		t.Fatalf("flue off while omp on = %v %q", ok, reason)
+	}
+	if ok, _ := h.extExecAdmissible(extExecEngineOMP, ompCap); !ok {
+		t.Fatal("turning flue off must not turn omp off")
 	}
 }

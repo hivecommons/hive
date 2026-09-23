@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // External-execution seams (#8361, #8201 Gate 1).
 //
-// pkg/dashboard deliberately imports neither pkg/extwork nor pkg/extwork/flue:
-// the dashboard is at its internal-import ceiling and the adapter must stay
-// out of every build that lacks the extwork_flue tag. What lives here is the
+// pkg/dashboard deliberately imports neither pkg/extwork nor an adapter
+// package (pkg/extwork/flue, pkg/extwork/omp): the dashboard is at its
+// internal-import ceiling and each adapter must stay out of every build that
+// lacks its build tag (extwork_flue, extwork_omp). What lives here is the
 // extwork-free half of the contract: the relay capability token, the
 // refuse-never-downgrade rule for engine-bound items, the lease as the
 // admission and authority record (LeaseAuthority), the hub accessor, and the
@@ -18,13 +21,20 @@ import (
 // concrete extwork pieces to these (extworkwire.go).
 
 const (
-	// extExecEngineFlue is the only engine the pilot admits. It must equal
-	// flue.Engine; a test pins the two together.
+	// extExecEngineFlue is the batch-engine pilot. It must equal flue.Engine;
+	// a test pins the two together.
 	extExecEngineFlue = "flue"
 	// capExtExecFlue is the contributor capability a relay must declare to be
 	// offered Flue-bound work. It must equal flue.Capability; a test pins the
 	// two together.
 	capExtExecFlue = "ext-exec/flue"
+	// extExecEngineOMP is the second host: an already-running OMP workbench
+	// (#8361 step 9, #6899). It must equal omp.Engine; a test pins the two.
+	extExecEngineOMP = "omp"
+	// capExtExecOMP is the capability an OMP workbench peer must declare. It
+	// must equal omp.Capability; a test pins the two. A peer without it is
+	// refused OMP-bound items, never handed them as ordinary local work.
+	capExtExecOMP = "ext-exec/omp"
 	// ExtworkRecordDirName is the subdirectory of the agent report directory
 	// that holds admission records and verified receipts.
 	ExtworkRecordDirName = "extwork"
@@ -116,20 +126,39 @@ func extExecEngineFromIssueMap(issue map[string]any) string {
 	return ""
 }
 
+// extExecGate names, per supported engine, the relay capability that admits
+// it and the operator toggle that must be on. Unknown engines are absent and
+// therefore refused.
+func extExecGate(engine string, cfg *config.Config) (capability string, enabled bool, known bool) {
+	switch engine {
+	case extExecEngineFlue:
+		return capExtExecFlue, cfg.FlueBindingEnabled(), true
+	case extExecEngineOMP:
+		return capExtExecOMP, cfg.OMPBindingEnabled(), true
+	default:
+		return "", false, false
+	}
+}
+
 // extExecAdmissible decides whether an item bound to an external engine may be
 // offered to this relay. It is refuse-only, never downgrade: an item that asks
-// for an engine is skipped unless the engine is the piloted one, the operator
-// enabled the binding, and the relay declared the capability. The item is
-// never handed out as ordinary local work.
+// for an engine is skipped unless the engine is a supported one, the operator
+// enabled that engine's binding, and the relay declared that engine's
+// capability. The item is never handed out as ordinary local work.
 func (h *ContributeWSHub) extExecAdmissible(engine string, c *ContributorConnection) (bool, string) {
-	if engine != extExecEngineFlue {
+	var cfg *config.Config
+	if h != nil && h.server != nil && h.server.deps != nil {
+		cfg = h.server.deps.Config
+	}
+	capability, enabled, known := extExecGate(engine, cfg)
+	if !known {
 		return false, "unsupported external engine"
 	}
-	if h == nil || h.server == nil || h.server.deps == nil || !h.server.deps.Config.FlueBindingEnabled() {
+	if cfg == nil || !enabled {
 		return false, "external binding disabled"
 	}
-	if c == nil || c.capabilities == nil || !c.capabilities.DeclaresCapability(capExtExecFlue) {
-		return false, "relay lacks capability " + capExtExecFlue
+	if c == nil || c.capabilities == nil || !c.capabilities.DeclaresCapability(capability) {
+		return false, "relay lacks capability " + capability
 	}
 	return true, ""
 }

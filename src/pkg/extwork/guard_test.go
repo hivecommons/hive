@@ -9,9 +9,11 @@ import (
 const (
 	modulePrefix     = "github.com/hivecommons/hive/"
 	flueAdapterPkg   = modulePrefix + "pkg/extwork/flue"
+	ompAdapterPkg    = modulePrefix + "pkg/extwork/omp"
 	extworkPkg       = modulePrefix + "pkg/extwork"
 	hiveBinary       = "./cmd/hive"
 	flueBuildTag     = "extwork_flue"
+	ompBuildTag      = "extwork_omp"
 	minClosurePkgs   = 50
 	moduleRootFromPk = "../.."
 )
@@ -59,5 +61,31 @@ func TestFlueAdapterNotLinkedUnlessEnabled(t *testing.T) {
 	tagged := goListDeps(t, flueBuildTag)
 	if !tagged[flueAdapterPkg] {
 		t.Fatalf("positive control failed: %s is not linked even with -tags %s, so the negative check above proves nothing", flueAdapterPkg, flueBuildTag)
+	}
+}
+
+// TestOMPAdapterNotLinkedUnlessEnabled is the same guard for the second host
+// (#8361 step 9): the OMP adapter must be absent from the hive binary by
+// default and present only under the extwork_omp build tag. The two tags are
+// independent: the Flue tag must not pull the OMP adapter in, nor the reverse,
+// so enabling one host never silently links the other.
+func TestOMPAdapterNotLinkedUnlessEnabled(t *testing.T) {
+	plain := goListDeps(t, "")
+	if plain[ompAdapterPkg] {
+		t.Fatalf("%s is linked into %s without the %s build tag; the adapter must be opt-in at build time", ompAdapterPkg, hiveBinary, ompBuildTag)
+	}
+	if !plain[extworkPkg] {
+		t.Fatalf("%s is not reachable from %s; the engine-neutral seams must be wired regardless of engine", extworkPkg, hiveBinary)
+	}
+	tagged := goListDeps(t, ompBuildTag)
+	if !tagged[ompAdapterPkg] {
+		t.Fatalf("positive control failed: %s is not linked even with -tags %s, so the negative check above proves nothing", ompAdapterPkg, ompBuildTag)
+	}
+	if tagged[flueAdapterPkg] {
+		t.Fatalf("-tags %s linked %s; the two host tags must be independent", ompBuildTag, flueAdapterPkg)
+	}
+	flueOnly := goListDeps(t, flueBuildTag)
+	if flueOnly[ompAdapterPkg] {
+		t.Fatalf("-tags %s linked %s; the two host tags must be independent", flueBuildTag, ompAdapterPkg)
 	}
 }

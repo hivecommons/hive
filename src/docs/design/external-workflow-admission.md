@@ -1,6 +1,6 @@
 # External workflow admission
 
-Status: **Gate 0 decided ([#8302](https://github.com/hivecommons/hive/issues/8302)); Gate 1 report-only pilot shipped on v5, default off ([#8361](https://github.com/hivecommons/hive/issues/8361)). Publication (Gate 2) remains a separate, undecided gate.**
+Status: **Gate 0 decided ([#8302](https://github.com/hivecommons/hive/issues/8302)); Gate 1 report-only pilot shipped on v5, default off ([#8361](https://github.com/hivecommons/hive/issues/8361)); OMP workbench shipped as the second host behind the same adapter, default off (#8361 step 9, answering [#6899](https://github.com/hivecommons/hive/issues/6899)). Publication (Gate 2) remains a separate, undecided gate.**
 
 The first half of this page is the Gate 0 decision record for
 [#8201](https://github.com/hivecommons/hive/issues/8201). The sections from
@@ -321,15 +321,122 @@ restart-surviving engine; it does not reduce issue count, and that was never
 the measure. For a synchronous local command, the local integration remains
 the right tool.
 
+## OMP as second host (#8361 step 9, #6899)
+
+The [#6899 decision](https://github.com/hivecommons/hive/issues/6899) chose
+option 1: an external host takes a lease over the existing contributor relay,
+advertising a capability, receives a bounded context bundle, and returns a
+stage receipt, with selection, admission ordering, generation fencing, lease
+renewal and release, and output capture staying on the server. The adapter
+interface from Gate 1 is engine-neutral, so the OMP workbench is the second
+host behind it, in `src/pkg/extwork/omp`. Where Flue is a batch engine driven
+over HTTP, OMP is an interactive host driven over relay messages; the two
+additions an interactive host needs are the accept-or-decline step before any
+context is delivered and a mid-stage progress event, both transport-level
+facts recorded on the lease audit, not new store fields.
+
+### Transport: the relay channel, not a new API
+
+The workbench registers as a contributor peer that declares `ext-exec/omp` in
+`capabilities.relay_capabilities`. A peer that opts in without the token is
+refused (`omp.ErrCapabilityMissing`, wrapping `extwork.ErrRefused`) and never
+attached as anything else; the hub's selection path refuses OMP-bound items to
+a relay without the token exactly as it does for Flue (`extExecAdmissible`),
+and the two tokens are independent. On the channel the adapter adds `ext_*`
+frames beside the existing `task_*` ones, reusing the contributor protocol's
+field names where the meaning is the same:
+
+| Frame | Direction | Carries | Purpose |
+| --- | --- | --- | --- |
+| `ext_hello` / `ext_hello_ok` / `ext_refused` | peer to hub, hub to peer | `contributor_id`, `capabilities.relay_capabilities`, `workbench_version`, `incarnation` | Attachment on the standalone loopback listener. On the hub's own contributor WebSocket the `auth_response` frame already carries identity and capabilities, so the hub attaches from those and no hello is exchanged. |
+| `ext_offer` | hub to peer | `execution_key`, `work_key`, `task_id`, `task_gen`, `stage`, `summary` | The assignment SUMMARY. Nothing else leaves Hive before an answer. |
+| `ext_accept` / `ext_decline` | peer to hub | `execution_key`, `reason` | The explicit decision. A lost link or an expired offer window is a decline, never an acceptance. |
+| `ext_start` | hub to peer | `execution_key`, `task_gen`, `stage`, `payload` | The bounded context bundle, sent only for an ACCEPTED key. Hive refuses to send it otherwise (`omp.ErrNotAccepted`); the fixture counts any bundle that arrives before acceptance as a violation. |
+| `ext_started` / `ext_start_refused` | peer to hub | `remote_run_id`, `deduplicated` / `reason` | Keyed admission: the same key and payload again answers `deduplicated: true`; a changed payload under the same key is refused with reason `conflict`. |
+| `ext_progress` | peer to hub | `state` (accepted, running, waiting, terminal, unknown), `stage`, `detail` | The mid-stage progress event. The binding records each state change as `ext_work_progress` on the lease audit so the workbench renders state without polling the receipt. An unrecognised state is recorded as unknown with the raw value in the detail. |
+| `ext_cancel` / `ext_cancel_ack` | hub to peer, peer to hub | `acknowledged`, `stopped`, `detail` | Cancellation facts kept apart: requested is true once the frame left, acknowledged and stopped are exactly what the workbench reported. Nothing infers stopped. |
+| `ext_receipt` | peer to hub | `artifact` {`path`, `digest`, `size`, `body`} | The stage receipt (`stage-receipt/v1`) inline; the run is terminal from here. The binding verifies size and digest before parsing and binds the receipt to the admission. |
+
+The `incarnation` a workbench declares is its session identity. A reconnect
+under a new incarnation is a different instance: whatever it holds under a
+pinned execution key is never adopted (`extwork.ErrIncarnationMismatch`), and
+a run that was in flight on the old session stays uncertain until the lease
+expires or a retry mints a new generation.
+
+### Report-only, and why an unconfined host is admissible
+
+The host receives no repository credential and no dashboard token; the bundle
+carries the admission identities, a summary, the repository name for artifact
+attribution, optional files, and optional hints. The receipt is evidence, not
+authority: Hive verifies its bytes, binds it to the lease and generation
+(`BindReceipt`), and decides acceptance through its own predicate;
+publication stays Hive-side. That is what makes a tier T3 (unconfined) host
+admissible in report-only and advisory modes: there is nothing for it to
+misuse.
+
+Because OMP has no confinement Hive can wire (`backend-support-tiers.md`),
+the adapter asserts the boundary in code rather than in policy text:
+`omp.CheckReportOnly` refuses any admission whose mode is not report-only or
+shadow, and any stage in `omp.WriteCapableStages` (`publish`, `merge`,
+`release`, `deploy`, `push`), at the offer step before any frame is sent and
+again at `Start` so the check cannot be skipped by skipping the offer. The
+three Hive-owned run stages (`spec`, `plan`, `implement`) are report-only
+under this binding: their output is artifacts in a receipt, never a write.
+`TestConformanceWriteCapableStageRefused` proves every listed stage is
+refused with zero frames reaching the workbench while `implement` on the same
+workbench is admitted.
+
+### Shape
+
+| Piece | Where | What it owns |
+| --- | --- | --- |
+| OMP adapter | `src/pkg/extwork/omp` | `Adapter` (implements `extwork.Adapter`; `Host(identity, admission)` yields the `extwork.Host` for the workbench that holds the lease), `Peer` (one attached workbench: link, declared posture, per-key run state fed by the read loop so `Observe` never blocks on the network), `Broker` (peers by contributor identity; `DefaultBroker` is what the registry factory uses), `Listener` (loopback-only WebSocket that reads `ext_hello` and attaches; carries no authentication of its own and exists for tests and examples), `WSLink` over gorilla/websocket, `Message`, `BuildBundle`, `CheckReportOnly`. Linked into `hive` only with `-tags extwork_omp`; the tag is independent of `extwork_flue`. |
+| Workbench fixture | `src/pkg/extwork/omp/fixture` + `testdata/omp-fixture/` | A second local process speaking the protocol as a workbench would: dials the hub, declares its capabilities (`-no-capability` to prove refusal), answers offers by policy (summary marker) or parks them for a control answer (`-interactive`), refuses any bundle for a key it did not accept and counts it, deduplicates by key and payload, advances stages (`review`, `report`) only when ticked, can park a run as waiting, publishes `report.md` in a `stage-receipt/v1` receipt, acknowledges cancel with `stopped` true or, with `-ignore-cancel`, false, and can drop its hub link mid-stage while keeping its control endpoint. No OMP binary, no model, no GitHub token, no network beyond loopback. |
+| Hive seams | `src/pkg/dashboard/extwork_binding.go`, `contribute_protocol.go`, `api_governor_features.go`, `src/cmd/hive/extworkwire.go` | `capExtExecOMP` advertised on `auth_ok` and required of a relay for an OMP-bound item; `extExecAdmissible` gates per engine (toggle plus token, refuse-only); the Features panel exposes `runs.external.omp` beside the Flue toggle with `extOmpLinked` and whether a workflow version is pinned; `newExternalOMPBinding` fails closed the same three ways as the Flue constructor. pkg/dashboard still imports neither pkg/extwork nor an adapter. |
+| Config | `runs.external.omp` in `hive.yaml`; Settings > Features | Default off. Enabled with no mode is shadow (admissions persisted and audited, no frame reaches the workbench). `report-only` is the only mode that dispatches. `workflow_version` is yaml-only and the workbench must declare the same value on hello; a different version is refused, never downgraded. |
+
+### Conformance rows for an interactive host
+
+`src/pkg/extwork/omp/conformance_test.go` runs against the real fixture
+process through the loopback listener.
+
+| Row | Test | What it proves |
+| --- | --- | --- |
+| Accept before context | `TestConformanceAcceptBeforeContext` | With the offer parked, the workbench has seen the summary and nothing else; a `Dispatch` attempt is refused Hive-side with no frame sent; only after the explicit accept does the bundle arrive; `ext_work_offer_accepted` precedes `ext_work_started` on the audit; the admission is pinned to the workbench session. |
+| Decline leaves the lease unassigned and audited | `TestConformanceDeclineLeavesLeaseUnassigned` | A declined offer persists no admission, starts nothing, and is recorded as `ext_work_offer_declined` with the workbench's reason; unrelated ready work on the same workbench runs. |
+| Progress events recorded | `TestConformanceProgressEventsAndReceiptBinding` | accepted, running (with stage), waiting, running, terminal land on the audit in order; a stage change without a state change is visible on `Observe` without a duplicate event. |
+| Receipt bound to lease and generation | same | The receipt names the admission's assignment and generation; another generation or another lease cannot bind it; a tampered digest is refused before parsing; replay reaches no workbench. |
+| Disconnect mid-stage: lease reclaim, not a false stopped state | `TestConformanceDisconnectMidStage` | After the link drops the run is unknown with `ErrTransport`, the audit ends in unknown, cancel cannot claim stopped, recovery is uncertain and sends nothing; a new session under the same identity is an incarnation mismatch that adopts nothing; a fresh generation is offered to the new session normally. Reclaiming the lease is the hub's own expiry. |
+| Write-capable stage refused | `TestConformanceWriteCapableStageRefused` | Every `WriteCapableStages` entry is refused at offer and at dispatch with zero frames to the workbench; `implement` is admitted as the positive control. |
+| Disabled or shadow performs nothing | `TestConformanceShadowAndOffNeverStart` | Off refuses; shadow persists and audits with zero offers, starts, or runs on the workbench's own counters; report-only on the same workbench starts (positive control). |
+| Same key twice, changed payload, replacement adapter | `TestConformanceDedupConflictAndRecover` | One run on the workbench for two dispatches; a changed payload conflicts before any frame; a replacement adapter (hub restart) recovers by the keyed start the workbench answers as its existing run. |
+| Cancel facts | `TestConformanceCancelFacts` | A stopping workbench reports stopped and ends without a receipt; an ignoring one stays running, finishes, and its late success is rejected once authority is gone while the execution fact is kept. |
+| Peer without the capability refused | `TestConformancePeerWithoutCapabilityRefused` and the unit gate tests | A workbench connecting without `ext-exec/omp` is refused at attachment and exits; it is never registered as a peer of any kind. |
+
+The scrubbed child environment carries no `GITHUB_TOKEN` and no dashboard
+token, and the fixture's stats assert both are absent.
+
+### Operational status and recovery for the OMP host
+
+| Situation | What Hive does | Operator action |
+| --- | --- | --- |
+| Host off, or adapter not linked | Nothing external happens; `newExternalOMPBinding` fails closed with a named error. | None. A build without `-tags extwork_omp` cannot be switched on by configuration. |
+| Shadow mode | Admissions persisted, `ext_work_shadow_observed` recorded; no offer reaches the workbench. | Promote to `report-only` once the shadow soak shows the expected admissions. |
+| Workbench declines or does not answer within the offer window | `ext_work_offer_declined` with the reason (or the withdrawn-offer reason); nothing persisted, nothing sent. | None; the item stays available for the next ready peer. |
+| Workbench disconnects mid-stage | Run goes unknown; cancel cannot claim stopped; `Recover` is uncertain and starts nothing. The lease expires on the hub's own schedule. | Wait for the lease to expire or retire the assignment; a stage retry mints a new generation and therefore a new execution key. |
+| Workbench reconnects under a new session | Incarnation mismatch: nothing adopted from the new session; the old run stays uncertain if one was recorded. | As above. |
+| Hub restarts with a run in flight | The replacement adapter holds no keys; `Recover` issues the keyed start and the workbench answers `deduplicated` for its existing run. | None. |
+| Cancel ignored by the workbench | `stopped: false` stays on record; the run stays visibly running; late output is rejected once authority is no longer current. | Wait or retire the lease; never assume stopped. |
+
 ## Deferred items
 
 - Any publication authority, target-repository mutation, broker integration,
   security-finding publication, or generalized outcome aggregation (Gate 2).
-- The OMP workbench as a second host (#6899): the accept-or-decline step
-  (`extwork.Host`, `InteractiveHost`) and the progress events
-  (`extwork.ProgressEvent` on the lease audit) are the seams it needs and are
-  in place; the OMP transport itself is not.
-- Wiring the binding into the assignment path so an admitted run-stage item is
-  dispatched automatically; Gate 1 refuses external items to relays without the
-  capability and constructs the binding, but the hub does not yet call
-  `Dispatch` on assignment.
+- Wiring either binding into the assignment path so an admitted run-stage
+  item is dispatched automatically, and attaching a contributor connection
+  that declared `ext-exec/omp` to `omp.DefaultBroker` from the hub's
+  authenticated WebSocket; Gate 1 refuses external items to relays without
+  the capability and constructs both bindings, but the hub does not yet call
+  `Dispatch` on assignment or hand its live connections to the OMP broker.
+  Until it does, the OMP host is exercised through the loopback listener the
+  conformance suite uses.
