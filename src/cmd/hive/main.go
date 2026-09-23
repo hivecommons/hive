@@ -2446,6 +2446,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.sched.SetAuditFunc(func(action, detail, agent string) {
 		b.dashSrv.AuditLog(agent, action, detail, agent)
 	})
+	b.sched.SetRunTriageDeps(b.dashSrv, b.ghClient)
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
 		store := b.beadStores[agentName]
 		if store == nil {

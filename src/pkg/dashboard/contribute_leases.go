@@ -48,10 +48,13 @@ type taskLease struct {
 	// Linear and Jira items deliberately carry Number == 0 and put their identity
 	// in Key (#4245), so every zero-numbered item in a repo would collide as
 	// "repo#0" (#5120).
-	key   string
-	tier  string
-	stage string
-	gen   uint64
+	key             string
+	title           string
+	tier            string
+	stage           string
+	gen             uint64
+	triageVerdict   string
+	triageRationale string
 	// restored marks a lease loadLeases read from disk at startup rather than one
 	// recordLease minted in this process (#5681). It is deliberately NOT persisted:
 	// it means "issued by the PREVIOUS process, whose holder has not reconnected
@@ -227,16 +230,30 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	}
 	k := leaseKey(identity, taskID)
 	prev := h.leases[k]
+	triageVerdict, triageRationale := "", ""
+	removedAdmissions := map[string]*taskLease{}
+	if stage != "" {
+		for admissionKey, l := range h.leases {
+			if l != nil && l.identity == runAdmissionIdentity && l.key == key && l.stage == stage {
+				triageVerdict, triageRationale = l.triageVerdict, l.triageRationale
+				copyLease := *l
+				removedAdmissions[admissionKey] = &copyLease
+				delete(h.leases, admissionKey)
+			}
+		}
+	}
 	h.leases[k] = &taskLease{
-		identity:  identity,
-		taskID:    taskID,
-		repo:      repo,
-		number:    number,
-		key:       key,
-		tier:      tier,
-		stage:     stage,
-		gen:       gen,
-		expiresAt: now.Add(leaseTTL),
+		identity:        identity,
+		taskID:          taskID,
+		repo:            repo,
+		number:          number,
+		key:             key,
+		tier:            tier,
+		stage:           stage,
+		gen:             gen,
+		triageVerdict:   triageVerdict,
+		triageRationale: triageRationale,
+		expiresAt:       now.Add(leaseTTL),
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
 	if err := h.saveLeasesLocked(); err != nil {
@@ -244,6 +261,9 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 			h.leases[k] = prev
 		} else {
 			delete(h.leases, k)
+		}
+		for admissionKey, l := range removedAdmissions {
+			h.leases[admissionKey] = l
 		}
 		return fmt.Errorf("persisting lease for %s: %w", taskID, err)
 	}
@@ -617,15 +637,18 @@ func (h *ContributeWSHub) leaseStageForDecision(identity, taskID string) string 
 // to RE-ADOPT a task the hub already issued to that identity — and never the
 // ability to obtain a fresh credential without passing selectTask's gates.
 type persistedLease struct {
-	Identity  string    `json:"identity"`
-	TaskID    string    `json:"task_id"`
-	Repo      string    `json:"repo"`
-	Number    int       `json:"number"`
-	Key       string    `json:"key,omitempty"`
-	Tier      string    `json:"tier"`
-	Stage     string    `json:"stage,omitempty"`
-	Gen       uint64    `json:"gen"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Identity        string    `json:"identity"`
+	TaskID          string    `json:"task_id"`
+	Repo            string    `json:"repo"`
+	Number          int       `json:"number"`
+	Key             string    `json:"key,omitempty"`
+	Title           string    `json:"title,omitempty"`
+	Tier            string    `json:"tier"`
+	Stage           string    `json:"stage,omitempty"`
+	Gen             uint64    `json:"gen"`
+	TriageVerdict   string    `json:"triage_verdict,omitempty"`
+	TriageRationale string    `json:"triage_rationale,omitempty"`
+	ExpiresAt       time.Time `json:"expires_at"`
 	// Claim fields (#8380); all omitempty so a registry written with claims
 	// off is byte-for-byte what it was.
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
@@ -698,17 +721,20 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 			continue
 		}
 		rec := persistedLease{
-			Identity:    l.identity,
-			TaskID:      l.taskID,
-			Repo:        l.repo,
-			Number:      l.number,
-			Key:         l.key,
-			Tier:        l.tier,
-			Stage:       l.stage,
-			Gen:         l.gen,
-			ExpiresAt:   l.expiresAt,
-			ClaimedBy:   l.claimedBy,
-			ClaimPosted: l.claimPosted,
+			Identity:        l.identity,
+			TaskID:          l.taskID,
+			Repo:            l.repo,
+			Number:          l.number,
+			Key:             l.key,
+			Title:           l.title,
+			Tier:            l.tier,
+			Stage:           l.stage,
+			Gen:             l.gen,
+			TriageVerdict:   l.triageVerdict,
+			TriageRationale: l.triageRationale,
+			ExpiresAt:       l.expiresAt,
+			ClaimedBy:       l.claimedBy,
+			ClaimPosted:     l.claimPosted,
 		}
 		if !l.claimExpiresAt.IsZero() {
 			exp := l.claimExpiresAt
@@ -839,18 +865,21 @@ func (h *ContributeWSHub) loadLeases() {
 		// one record per identity and loads unchanged; a file written after may
 		// hold several for one identity, each of which must come back.
 		l := &taskLease{
-			identity:    rec.Identity,
-			taskID:      rec.TaskID,
-			repo:        rec.Repo,
-			number:      rec.Number,
-			key:         key,
-			tier:        rec.Tier,
-			stage:       rec.Stage,
-			gen:         rec.Gen,
-			restored:    true,
-			expiresAt:   rec.ExpiresAt,
-			claimedBy:   rec.ClaimedBy,
-			claimPosted: rec.ClaimPosted,
+			identity:        rec.Identity,
+			taskID:          rec.TaskID,
+			repo:            rec.Repo,
+			number:          rec.Number,
+			key:             key,
+			title:           rec.Title,
+			tier:            rec.Tier,
+			stage:           rec.Stage,
+			gen:             rec.Gen,
+			triageVerdict:   rec.TriageVerdict,
+			triageRationale: rec.TriageRationale,
+			restored:        true,
+			expiresAt:       rec.ExpiresAt,
+			claimedBy:       rec.ClaimedBy,
+			claimPosted:     rec.ClaimPosted,
 		}
 		if rec.ClaimExpiresAt != nil {
 			l.claimExpiresAt = *rec.ClaimExpiresAt
@@ -954,6 +983,9 @@ func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) 
 			continue
 		}
 		if l.expiresAt.IsZero() || now.After(l.expiresAt) {
+			continue
+		}
+		if l.identity == runAdmissionIdentity {
 			continue
 		}
 		if l.key != "" {

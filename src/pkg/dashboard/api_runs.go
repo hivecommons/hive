@@ -71,6 +71,8 @@ type runResetResponse struct {
 // system-side lease_stage_reset with the same stage/gen fields).
 const auditActionRunStageReset = "run_stage_reset"
 
+const runResetReasonTriageFix = "triage_fix"
+
 type Run struct {
 	Key            string       `json:"key"`
 	Title          string       `json:"title"`
@@ -86,13 +88,15 @@ type Run struct {
 	// lease (hivecommons/hive#8380). ClaimPosted says whether the claim
 	// comment reached the forge or lives on the lease only. All omitempty:
 	// absent while claims are off.
-	ClaimedBy      string          `json:"claimed_by,omitempty"`
-	ClaimExpiresAt string          `json:"claim_expires_at,omitempty"`
-	ClaimPosted    bool            `json:"claim_posted,omitempty"`
-	LastReceipt    string          `json:"last_receipt,omitempty"`
-	PlanEpicID     string          `json:"plan_epic_id,omitempty"`
-	Stages         []RunStage      `json:"stages"`
-	ReviewWaves    []RunReviewWave `json:"review_waves,omitempty"`
+	ClaimedBy       string          `json:"claimed_by,omitempty"`
+	ClaimExpiresAt  string          `json:"claim_expires_at,omitempty"`
+	ClaimPosted     bool            `json:"claim_posted,omitempty"`
+	LastReceipt     string          `json:"last_receipt,omitempty"`
+	PlanEpicID      string          `json:"plan_epic_id,omitempty"`
+	Stages          []RunStage      `json:"stages"`
+	ReviewWaves     []RunReviewWave `json:"review_waves,omitempty"`
+	TriageVerdict   string          `json:"triage_verdict,omitempty"`
+	TriageRationale string          `json:"triage_rationale,omitempty"`
 }
 
 type RunsSummary struct {
@@ -101,19 +105,21 @@ type RunsSummary struct {
 }
 
 type runLeaseSnapshot struct {
-	identity       string
-	taskID         string
-	repo           string
-	number         int
-	key            string
-	stage          string
-	gen            uint64
-	expiresAt      time.Time
-	title          string
-	stageStarted   time.Time
-	claimedBy      string
-	claimExpiresAt time.Time
-	claimPosted    bool
+	identity        string
+	taskID          string
+	repo            string
+	number          int
+	key             string
+	stage           string
+	gen             uint64
+	expiresAt       time.Time
+	title           string
+	stageStarted    time.Time
+	claimedBy       string
+	claimExpiresAt  time.Time
+	claimPosted     bool
+	triageVerdict   string
+	triageRationale string
 }
 
 type currentTaskRunInfo struct {
@@ -194,7 +200,7 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 	}
 	body.To = strings.TrimSpace(body.To)
 	body.Reason = sanitizeString(body.Reason)
-	if body.To == "" || body.Reason == "" {
+	if body.Reason == "" || (body.Reason != runResetReasonTriageFix && body.To == "") {
 		jsonError(w, "to and reason are required", http.StatusBadRequest)
 		return
 	}
@@ -202,6 +208,32 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 	held, ok := s.contributeHub.runLeaseHolder(key, now)
 	if !ok {
 		jsonError(w, "run not found", http.StatusNotFound)
+		return
+	}
+	if body.Reason == runResetReasonTriageFix {
+		if held.stage != StageSpec {
+			jsonError(w, "triage_fix can only retire a spec-stage run", http.StatusBadRequest)
+			return
+		}
+		s.contributeHub.revokeLease(held.identity, held.taskID)
+		s.LifecycleTimeline().Record(timeline.Event{
+			IssueRef: key,
+			Kind:     timeline.KindStageCompleted,
+			Agent:    held.identity,
+			Attrs: map[string]string{
+				"stage_from": held.stage,
+				"stage_to":   "fix",
+				"gen":        strconv.FormatUint(held.gen, 10),
+				"reason":     body.Reason,
+				"reset":      "true",
+			},
+		})
+		s.auditFromRequest(r, auditActionRunStageReset, auditDetail(
+			"run", key, "stage_from", held.stage, "stage_to", "fix",
+			"reason", body.Reason, "gen", strconv.FormatUint(held.gen, 10)), "")
+		jsonResponse(w, runResetResponse{
+			OK: true, Key: key, StageFrom: held.stage, Stage: "fix", Gen: held.gen, Reason: body.Reason,
+		})
 		return
 	}
 	lease, err := s.contributeHub.resetLeaseStage(held.identity, held.taskID, body.To, body.Reason, now)
@@ -326,6 +358,9 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		info := infos[leaseKey(l.identity, l.taskID)]
 		title := info.title
 		if title == "" {
+			title = l.title
+		}
+		if title == "" {
 			title = key
 		}
 		out = append(out, runLeaseSnapshot{
@@ -333,6 +368,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 			key: key, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
 			title: title, stageStarted: info.startedAt,
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
+			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
 		})
 	}
 	return out, nil
@@ -368,8 +404,9 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 		Stage: lease.stage, Gen: lease.gen, StageStartedAt: started,
 		WaitingOn: RunWaitingOnAgent, Assignee: lease.identity,
 		ClaimedBy: lease.claimedBy, ClaimExpiresAt: formatRunTime(lease.claimExpiresAt), ClaimPosted: lease.claimPosted,
-		PlanEpicID: plan.epicID,
-		Stages:     leaseRunStages(lease.stage, lease.gen),
+		PlanEpicID:    plan.epicID,
+		Stages:        leaseRunStages(lease.stage, lease.gen),
+		TriageVerdict: lease.triageVerdict, TriageRationale: lease.triageRationale,
 	}
 	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {

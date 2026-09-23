@@ -339,6 +339,7 @@ type Issue struct {
 	Repo              string    `json:"repo"`
 	Number            int       `json:"number"`
 	Title             string    `json:"title"`
+	Body              string    `json:"body,omitempty"`
 	Author            string    `json:"author"`
 	AuthorIsHuman     bool      `json:"author_is_human,omitempty"`
 	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
@@ -984,6 +985,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			Repo:              repo,
 			Number:            issue.GetNumber(),
 			Title:             issue.GetTitle(),
+			Body:              issue.GetBody(),
 			Author:            safeGetLogin(issue.GetUser()),
 			AuthorIsHuman:     c.isHumanAuthor(issue.GetUser()),
 			HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
@@ -1471,6 +1473,30 @@ func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, ru
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// IssueCommentsContain reports whether any issue comment body contains needle.
+func (c *Client) IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for {
+		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return false, err
+		}
+		for _, comment := range comments {
+			if strings.Contains(comment.GetBody(), needle) {
+				return true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return false, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // CreateIssueComment posts a comment on an issue or PR. The signature mirrors

@@ -37,6 +37,40 @@ contribute hub's cleanup tick. The dashboard never imports `pkg/spektacular`
 (its internal-import ratchet); `pkg/spektacular.NewHubRunner` takes the
 server through the `LeaseRegistry` interface.
 
+## Triage
+
+The runs triage pass is separate from the Spektacular runner and is also OFF by
+default. When `runs.triage.enabled: true`, the scheduler classifies each
+incoming actionable GitHub issue before a direct-fix kick:
+
+- `run/spec` always admits a `spec` run.
+- `run/fix` always leaves the issue on the normal direct-fix path.
+- Complex issues, or issues carrying `spec_labels` (default `kind/feature`,
+  `Epic`, `architecture discussion`), admit a `spec` run by creating the first
+  stage lease. The lease is keyed as the run-stage work source expects: the
+  repository plus the run key and `:spec` suffix (see
+  [work-sources.md](work-sources.md)).
+- Simple issues, medium issues, or issues carrying `fix_labels` (default
+  `kind/bug`, `good first issue`) stay on the existing direct-fix path.
+- Short bodies (`min_body_chars`, default 80), unchosen option lists, and
+  unsubstituted template placeholders get one marker comment (`hive-triage`)
+  asking the reporter for the missing details and are skipped for that cycle.
+
+The decision is stored on the stage lease as `triage_verdict` and
+`triage_rationale`, surfaced by `GET /api/runs` and run detail, and copied into
+the first stage receipt timeline event. Owner reset with reason `triage_fix`
+retires a spec-stage run so the issue can return to the direct-fix path.
+
+```yaml
+runs:
+  triage:
+    enabled: false             # default
+    spec_labels: [kind/feature, Epic, architecture discussion]
+    fix_labels: [kind/bug, good first issue]
+    min_body_chars: 80
+    clarify_comment: true
+```
+
 ## What the runner does
 
 Every 30 seconds (the contribute hub's cleanup tick) the runner looks at every

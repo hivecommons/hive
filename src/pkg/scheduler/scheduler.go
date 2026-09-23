@@ -26,6 +26,19 @@ import (
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
+type RunAdmitter interface {
+	AdmitTriagedRun(repo string, number int, title, verdict, rationale string, now time.Time) error
+}
+
+type TriageCommenter interface {
+	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
+}
+
+type runTriageFixRetirer interface {
+	RunTriageFixRetired(repo string, number int) bool
+}
+
 type Scheduler struct {
 	cfg                  *config.Config
 	primer               *knowledge.Primer
@@ -39,8 +52,26 @@ type Scheduler struct {
 	classifierThresholds ioscan.Thresholds
 	classifierBudget     int
 	inflight             InflightLookup
+	runAdmitter          RunAdmitter
+	triageCommenter      TriageCommenter
 	lifecycle            timeline.Recorder
 	mu                   sync.RWMutex
+}
+
+// SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the
+// optional runs triage pass. Nil dependencies make the pass classify only and
+// leave issues on the existing direct-fix path.
+func (s *Scheduler) SetRunTriageDeps(admitter RunAdmitter, commenter TriageCommenter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runAdmitter = admitter
+	s.triageCommenter = commenter
+}
+
+func (s *Scheduler) runTriageDeps() (RunAdmitter, TriageCommenter) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runAdmitter, s.triageCommenter
 }
 
 // SetLifecycleRecorder attaches the lifecycle timeline sink. Once set, every
@@ -515,6 +546,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	s.resetClassifierBudget()
 	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
+	classifiedIssues = s.applyRunTriage(classifiedIssues)
 
 	var messages []KickMessage
 	for _, targetKey := range agentsDue {
@@ -706,6 +738,7 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 	if actionable != nil {
 		classified = classify.ClassifyAll(actionable.Issues.Items)
 		s.recordClassified(classified)
+		classified = s.applyRunTriage(classified)
 	}
 	return s.addIndependentReviewSection(agentName, s.BuildAgentMessage(agentName, classified, actionable))
 }
@@ -723,6 +756,77 @@ const (
 	maxIssuesPerKick = config.DefaultMaxIssuesPerKick
 	maxPRsPerKick    = config.DefaultMaxPRsPerKick
 )
+
+const triageCommentMarker = "<!-- hive-triage -->"
+
+func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
+	if s == nil || s.cfg == nil || !s.cfg.Runs.Triage.Enabled || len(issues) == 0 {
+		return issues
+	}
+	admitter, commenter := s.runTriageDeps()
+	out := make([]github.Issue, 0, len(issues))
+	for _, issue := range issues {
+		c := classify.Classification{
+			Tier:  classify.Tier(issue.ComplexityTier),
+			Model: classify.ModelRecommendation(issue.ModelRec),
+			Lane:  classify.Lane(issue.Lane),
+		}
+		decision := classify.Triage(issue, c, s.cfg.Runs.Triage)
+		switch decision.Verdict {
+		case classify.TriageSpec:
+			if retired, ok := admitter.(runTriageFixRetirer); ok && retired.RunTriageFixRetired(issue.Repo, issue.Number) && !issueHasLabel(issue, "run/spec") {
+				out = append(out, issue)
+				continue
+			}
+			if admitter == nil {
+				out = append(out, issue)
+				continue
+			}
+			if err := admitter.AdmitTriagedRun(issue.Repo, issue.Number, issue.Title, string(decision.Verdict), decision.Rationale, time.Now()); err != nil {
+				if s.logger != nil {
+					s.logger.Warn("runs triage admission failed", "repo", issue.Repo, "number", issue.Number, "error", err)
+				}
+				out = append(out, issue)
+			}
+		case classify.TriageClarify:
+			s.postTriageClarifyComment(commenter, issue, decision)
+		default:
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func issueHasLabel(issue github.Issue, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, label := range issue.Labels {
+		if strings.ToLower(strings.TrimSpace(label)) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) postTriageClarifyComment(commenter TriageCommenter, issue github.Issue, decision classify.TriageDecision) {
+	if commenter == nil || !s.cfg.Runs.Triage.ShouldClarifyComment() || issue.Repo == "" || issue.Number <= 0 {
+		return
+	}
+	ctx := context.Background()
+	seen, err := commenter.IssueCommentsContain(ctx, issue.Repo, issue.Number, triageCommentMarker)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("runs triage comment scan failed", "repo", issue.Repo, "number", issue.Number, "error", err)
+		}
+		return
+	}
+	if seen {
+		return
+	}
+	body := fmt.Sprintf("%s\nhive-triage: this issue needs one more detail before Hive can route it. %s Please update the issue body with the missing context, expected behavior, and acceptance criteria.", triageCommentMarker, decision.Rationale)
+	if err := commenter.CreateIssueComment(ctx, issue.Repo, issue.Number, body); err != nil && s.logger != nil {
+		s.logger.Warn("runs triage comment failed", "repo", issue.Repo, "number", issue.Number, "error", err)
+	}
+}
 
 // issueCap is how many issues one kick list may carry (governor.kick_limits
 // .max_issues, default maxIssuesPerKick). Nil-safe for bare test schedulers.

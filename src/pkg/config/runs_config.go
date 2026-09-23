@@ -23,6 +23,9 @@ const (
 	// DefaultSpektacularPollS is how often, in seconds, the runner calls the
 	// status verb for each active stage lease.
 	DefaultSpektacularPollS = 30
+	// DefaultTriageMinBodyChars is the minimum useful issue body size before
+	// the run triage pass asks the reporter for more detail.
+	DefaultTriageMinBodyChars = 80
 )
 
 // RunsConfig tunes long-running runs (spec, plan, implement stages on a lease).
@@ -35,12 +38,30 @@ type RunsConfig struct {
 	// MaxWorktrees caps live per-stage git worktrees. Zero or negative means
 	// DefaultRunsMaxWorktrees.
 	MaxWorktrees int `yaml:"max_worktrees,omitempty" json:"max_worktrees,omitempty"`
+	// Triage configures the optional fix/spec/clarify decision made before
+	// direct-fix dispatch. Default off.
+	Triage TriageConfig `yaml:"triage,omitempty" json:"triage,omitempty"`
 	// Spektacular configures the stage runner that polls Spektacular's status
 	// verb and advances the lease on final.
 	Spektacular SpektacularConfig `yaml:"spektacular,omitempty" json:"spektacular,omitempty"`
 	// External holds the external-execution engine bindings: the report-only
 	// Flue binding pilot and the OMP workbench host (#8361). Default off.
 	External ExternalRunsConfig `yaml:"external,omitempty" json:"external,omitempty"`
+}
+
+// TriageConfig controls the optional incoming-issue run triage pass.
+type TriageConfig struct {
+	// Enabled turns the pass on. Default false.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// SpecLabels force a spec run when present. Empty uses the documented defaults.
+	SpecLabels []string `yaml:"spec_labels,omitempty" json:"spec_labels,omitempty"`
+	// FixLabels force direct-fix dispatch when present. Empty uses the documented defaults.
+	FixLabels []string `yaml:"fix_labels,omitempty" json:"fix_labels,omitempty"`
+	// MinBodyChars asks for clarification when the trimmed body is shorter.
+	// Zero or negative means DefaultTriageMinBodyChars.
+	MinBodyChars int `yaml:"min_body_chars,omitempty" json:"min_body_chars,omitempty"`
+	// ClarifyComment controls posting the one-shot clarification comment. Nil defaults true.
+	ClarifyComment *bool `yaml:"clarify_comment,omitempty" json:"clarify_comment,omitempty"`
 }
 
 // SpektacularConfig is the opt-in for the Spektacular stage runner.
@@ -62,6 +83,31 @@ func (r RunsConfig) MaxStageRetriesOrDefault() int {
 		return DefaultMaxStageRetries
 	}
 	return r.MaxStageRetries
+}
+
+func (t TriageConfig) EffectiveSpecLabels() []string {
+	if len(t.SpecLabels) > 0 {
+		return t.SpecLabels
+	}
+	return []string{"kind/feature", "Epic", "architecture discussion"}
+}
+
+func (t TriageConfig) EffectiveFixLabels() []string {
+	if len(t.FixLabels) > 0 {
+		return t.FixLabels
+	}
+	return []string{"kind/bug", "good first issue"}
+}
+
+func (t TriageConfig) EffectiveMinBodyChars() int {
+	if t.MinBodyChars > 0 {
+		return t.MinBodyChars
+	}
+	return DefaultTriageMinBodyChars
+}
+
+func (t TriageConfig) ShouldClarifyComment() bool {
+	return t.ClarifyComment == nil || *t.ClarifyComment
 }
 
 func (r RunsConfig) EffectiveMaxWorktrees() int {

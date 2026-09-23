@@ -35,14 +35,21 @@ type StageRunner interface {
 // constants in pkg/spektacular (asserted equal by this package's tests) so the
 // two sides agree without an import.
 const (
-	stageAttrRunKey   = "run_key"
-	stageAttrStage    = "stage"
-	stageAttrGen      = "gen"
-	stageAttrReceipt  = "receipt"
-	stageAttrReason   = "reason"
-	stageAttrSeverity = "severity"
-	stageAttrAttempts = "attempts"
-	stageAttrPath     = "path"
+	stageAttrRunKey          = "run_key"
+	stageAttrStage           = "stage"
+	stageAttrGen             = "gen"
+	stageAttrReceipt         = "receipt"
+	stageAttrReason          = "reason"
+	stageAttrSeverity        = "severity"
+	stageAttrAttempts        = "attempts"
+	stageAttrPath            = "path"
+	stageAttrTriageVerdict   = "triage_verdict"
+	stageAttrTriageRationale = "triage_rationale"
+)
+
+const (
+	runAdmissionIdentity   = "hive-triage"
+	runAdmissionTaskPrefix = "run-admit-"
 )
 
 // runReceiptsDir is where AdvanceStageLease persists one stage receipt per
@@ -155,6 +162,84 @@ func leaseWorkKey(l *taskLease) string {
 	return worksource.Ref{Repo: l.repo, Number: l.number}.Key()
 }
 
+// AdmitRun creates the first, unowned spec-stage lease for an issue that the
+// triage pass promoted into a long-running run. It is idempotent for the
+// repo/number run key and refuses admission unless the Spektacular runner is
+// enabled, because that runner is what advances spec and plan stages.
+func (s *Server) AdmitRun(repo string, number int, title string, now time.Time) error {
+	return s.AdmitTriagedRun(repo, number, title, "", "", now)
+}
+
+// AdmitTriagedRun is AdmitRun plus the triage decision recorded on the lease.
+func (s *Server) AdmitTriagedRun(repo string, number int, title, verdict, rationale string, now time.Time) error {
+	if s == nil || s.contributeHub == nil {
+		return errors.New("run lease registry unavailable")
+	}
+	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Runs.Spektacular.Enabled {
+		return errors.New("runs.spektacular.enabled is required to admit run")
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" || number <= 0 {
+		return errors.New("repo and issue number are required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	runKey := worksource.Ref{Repo: repo, Number: number}.Key()
+	leaseKeyForRun := repo + "!" + runKey + ":" + StageSpec
+	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKey)
+	h := s.contributeHub
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	if h.leases == nil {
+		h.leases = make(map[string]*taskLease)
+	}
+	for _, l := range h.leases {
+		if l != nil && l.stage != "" && runKeyOfLease(l.key, l.repo) == runKey && !l.expiresAt.IsZero() && now.Before(l.expiresAt) {
+			return nil
+		}
+	}
+	h.leases[leaseKey(runAdmissionIdentity, taskID)] = &taskLease{
+		identity:        runAdmissionIdentity,
+		taskID:          taskID,
+		repo:            repo,
+		number:          number,
+		key:             leaseKeyForRun,
+		title:           title,
+		tier:            "triage",
+		stage:           StageSpec,
+		gen:             1,
+		triageVerdict:   strings.TrimSpace(verdict),
+		triageRationale: strings.TrimSpace(rationale),
+		expiresAt:       now.Add(leaseTTL),
+	}
+	if err := h.saveLeasesLocked(); err != nil {
+		delete(h.leases, leaseKey(runAdmissionIdentity, taskID))
+		return fmt.Errorf("persisting admitted run lease for %s: %w", taskID, err)
+	}
+	return nil
+}
+
+// RunTriageFixRetired reports whether an owner reset retired this triaged run
+// back to the direct-fix path. The scheduler treats this as a suppression unless
+// the issue now carries an explicit run/spec override.
+func (s *Server) RunTriageFixRetired(repo string, number int) bool {
+	if s == nil || number <= 0 {
+		return false
+	}
+	runKey := worksource.Ref{Repo: strings.TrimSpace(repo), Number: number}.Key()
+	if runKey == "" {
+		return false
+	}
+	issueRef := strings.TrimSpace(repo) + "!" + runKey + ":" + StageSpec
+	for _, ev := range s.LifecycleTimeline().ByIssue(issueRef) {
+		if ev.Attrs != nil && ev.Attrs[stageAttrReason] == runResetReasonTriageFix {
+			return true
+		}
+	}
+	return false
+}
+
 // VisitActiveStageLeases calls visit for every lease that carries a stage,
 // expired or not: the runner decides what expiry means.
 func (s *Server) VisitActiveStageLeases(visit func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time)) error {
@@ -207,9 +292,15 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 	if err != nil {
 		return err
 	}
-	eventAttrs := make(map[string]string, len(attrs)+3)
+	eventAttrs := make(map[string]string, len(attrs)+5)
 	for k, v := range attrs {
 		eventAttrs[k] = v
+	}
+	if l.triageVerdict != "" {
+		eventAttrs[stageAttrTriageVerdict] = l.triageVerdict
+	}
+	if l.triageRationale != "" {
+		eventAttrs[stageAttrTriageRationale] = l.triageRationale
 	}
 	eventAttrs[stageAttrStage] = stage
 	eventAttrs[stageAttrGen] = strconv.FormatUint(gen, 10)

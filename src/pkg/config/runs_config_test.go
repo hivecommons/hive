@@ -37,3 +37,24 @@ func TestRunsConfigOverrides(t *testing.T) {
 		t.Fatal("negative values must fall back to defaults")
 	}
 }
+
+func TestTriageConfigDefaultsAndOverrides(t *testing.T) {
+	var cfg TriageConfig
+	if cfg.Enabled {
+		t.Fatal("triage must be off by default")
+	}
+	if got := cfg.EffectiveMinBodyChars(); got != DefaultTriageMinBodyChars {
+		t.Fatalf("min body = %d, want %d", got, DefaultTriageMinBodyChars)
+	}
+	if !cfg.ShouldClarifyComment() {
+		t.Fatal("clarify comments default on once triage is enabled")
+	}
+	if got := cfg.EffectiveSpecLabels(); len(got) == 0 || got[0] != "kind/feature" {
+		t.Fatalf("default spec labels = %v", got)
+	}
+	noComment := false
+	cfg = TriageConfig{SpecLabels: []string{"design"}, FixLabels: []string{"bug"}, MinBodyChars: 12, ClarifyComment: &noComment}
+	if cfg.EffectiveMinBodyChars() != 12 || cfg.ShouldClarifyComment() || cfg.EffectiveSpecLabels()[0] != "design" || cfg.EffectiveFixLabels()[0] != "bug" {
+		t.Fatalf("overrides not honored: %+v", cfg)
+	}
+}

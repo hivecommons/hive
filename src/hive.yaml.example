@@ -519,6 +519,24 @@ governor:
 # quality:
 #   formal: false
 
+# Long-running runs triage (#8450). OFF by default. When enabled, the
+# scheduler classifies each actionable issue as direct-fix, spec-run, or
+# needs-clarification before dispatch. Spec verdicts require the Spektacular
+# runner too, because that runner advances spec/plan stage leases.
+# runs:
+#   triage:
+#     enabled: false
+#     spec_labels: [kind/feature, Epic, architecture discussion]
+#     fix_labels: [kind/bug, good first issue]
+#     min_body_chars: 80
+#     clarify_comment: true
+#   spektacular:
+#     enabled: false
+#     binary: spektacular
+#     poll_interval_s: 30
+#   max_stage_retries: 2
+#   max_worktrees: 8
+
 # Report-only external-execution binding pilot (#8361; Gate 0 decision in
 # docs/design/external-workflow-admission.md). OFF by default. `enabled: true`
 # with no mode runs in shadow: admissions are persisted on the task lease and
