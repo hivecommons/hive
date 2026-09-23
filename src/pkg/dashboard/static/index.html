@@ -8029,7 +8029,14 @@
 
     function dashboardRunsFromStatus(data) {
       if (!data || !Object.prototype.hasOwnProperty.call(data, 'runs')) return null;
-      return Array.isArray(data.runs) ? data.runs : [];
+      const runs = Array.isArray(data.runs) ? data.runs.slice() : [];
+      // runHistory (#8349) is the bounded finished-run block; each entry
+      // carries an outcome so renderRuns files it under "Run history".
+      // Absent on a spoke that could not project runs: nothing is invented.
+      const history = data.runHistory && Array.isArray(data.runHistory.recent) ? data.runHistory.recent : [];
+      const live = new Set(runs.map(r => r && r.key));
+      history.forEach(run => { if (run && run.key && !live.has(run.key)) runs.push(run); });
+      return runs;
     }
 
     function runDateMs(value) {
@@ -8110,17 +8117,17 @@
         return;
       }
       runs = Array.isArray(runs) ? runs : [];
-      const human = runs.filter(r => r && r.waiting_on === 'human').length;
-      if (badge) badge.textContent = runs.length + ' active' + (human ? ' · ' + human + ' blocked on human' : '');
-      if (sideBadge) { sideBadge.style.display = runs.length ? 'inline-flex' : 'none'; sideBadge.textContent = runs.length; }
+      const isFinishedRun = (run) => run && ((run.outcome && run.outcome !== 'active') || run.status === 'finished' || run.waiting_on === 'none');
+      const activeRuns = runs.filter(run => !isFinishedRun(run));
+      const finishedRuns = runs.filter(isFinishedRun);
+      const human = activeRuns.filter(r => r && r.waiting_on === 'human').length;
+      if (badge) badge.textContent = activeRuns.length + ' active' + (human ? ' · ' + human + ' blocked on human' : '') + (finishedRuns.length ? ' · ' + finishedRuns.length + ' recent' : '');
+      if (sideBadge) { sideBadge.style.display = activeRuns.length ? 'inline-flex' : 'none'; sideBadge.textContent = activeRuns.length; }
       if (!runs.length) {
         setIfChanged(el, '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>');
         return;
       }
       const canApprove = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
-      const isFinishedRun = (run) => run && (run.outcome || run.status === 'finished' || run.waiting_on === 'none');
-      const activeRuns = runs.filter(run => !isFinishedRun(run));
-      const finishedRuns = runs.filter(isFinishedRun);
       const cards = activeRuns.map(run => {
         const key = run.key || '';
         const waiting = run.waiting_on || 'unknown';
@@ -8144,7 +8151,7 @@
         </div>`;
       }).join('');
       const history = finishedRuns.length
-        ? `<details style="grid-column:1/-1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px"><summary style="cursor:pointer">Run history (${finishedRuns.length})</summary><div style="margin-top:8px">${finishedRuns.map(run => `<div style="font-size:0.8rem;padding:4px 0;border-top:1px solid var(--border)"><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(run.key || '')}" style="font-size:0.68rem;padding:2px 6px">detail</button> ${escapeHtml(run.key || run.title || 'run')} <span class="status-badge">${escapeHtml(run.outcome || run.status || 'finished')}</span></div>`).join('')}</div></details>`
+        ? `<details style="grid-column:1/-1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px"><summary style="cursor:pointer">Run history (${finishedRuns.length})</summary><div style="margin-top:8px">${finishedRuns.map(run => `<div style="font-size:0.8rem;padding:4px 0;border-top:1px solid var(--border)"><button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(run.key || '')}" style="font-size:0.68rem;padding:2px 6px">detail</button> ${escapeHtml(run.key || run.title || 'run')} <span class="status-badge">${escapeHtml(run.outcome || run.status || 'finished')}</span>${run.stage ? ` <span class="status-badge" title="Last completed stage (gen ${escapeHtml(String(run.gen || ''))})">${escapeHtml(run.stage)}</span>` : ''}${run.completed_at ? ` <span style="color:var(--muted)" title="${escapeHtml(run.completed_at)}">${escapeHtml(formatRunDurationSince(run.completed_at))} ago</span>` : ''}</div>`).join('')}</div></details>`
         : '';
       setIfChanged(el, (cards || '<div style="color:var(--muted);font-size:0.85rem">No active runs.</div>') + history);
     }
@@ -15031,6 +15038,12 @@ function burnAreaChart() {
       } catch (e) { /* silently retry on next poll */ }
     }
 
+    // leaderboardStagesText renders stages_completed (#8349); the field is
+    // absent only when the entry never carried it, which reads as unknown.
+    function leaderboardStagesText(e) {
+      if (e.stages_completed === null || e.stages_completed === undefined) return '<span style="color:var(--muted)">unknown</span>';
+      return String(e.stages_completed);
+    }
     function renderLeaderboard(entries) {
       const panel = document.getElementById('leaderboard-panel');
       if (!panel) return;
@@ -15054,6 +15067,7 @@ function burnAreaChart() {
           <td style="padding:8px 12px">@${esc(e.github_username)}</td>
           <td style="padding:8px 12px">${trustTierBadge(e.trust_tier)}</td>
           <td style="padding:8px 12px;text-align:right">${e.tasks_completed || 0}</td>
+          <td style="padding:8px 12px;text-align:right" title="Run stage completions credited to this contributor (#8349)">${leaderboardStagesText(e)}</td>
           <td style="padding:8px 12px;text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
         </tr>`;
       }).join('');
@@ -15065,6 +15079,7 @@ function burnAreaChart() {
             <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">User</th>
             <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">Tier</th>
             <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">Completed</th>
+            <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">Stages</th>
             <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">Failed</th>
           </tr></thead>
           <tbody>${rows}</tbody>

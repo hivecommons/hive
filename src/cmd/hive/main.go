@@ -1334,13 +1334,14 @@ func (b *boot) wireBootClosures() {
 		out := make([]spoke.LeaderboardEntry, len(lb))
 		for i, e := range lb {
 			out[i] = spoke.LeaderboardEntry{
-				GitHubUsername: e.GitHubUsername,
-				AvatarURL:      e.AvatarURL,
-				TrustTier:      e.TrustTier,
-				TasksCompleted: e.TasksCompleted,
-				TasksFailed:    e.TasksFailed,
-				Active:         e.Active,
-				CurrentTask:    e.CurrentTask,
+				GitHubUsername:  e.GitHubUsername,
+				AvatarURL:       e.AvatarURL,
+				TrustTier:       e.TrustTier,
+				TasksCompleted:  e.TasksCompleted,
+				TasksFailed:     e.TasksFailed,
+				Active:          e.Active,
+				CurrentTask:     e.CurrentTask,
+				StagesCompleted: e.StagesCompleted,
 			}
 		}
 		return out
@@ -5492,13 +5493,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			out := make([]spoke.LeaderboardEntry, len(lb))
 			for i, e := range lb {
 				out[i] = spoke.LeaderboardEntry{
-					GitHubUsername: e.GitHubUsername,
-					AvatarURL:      e.AvatarURL,
-					TrustTier:      e.TrustTier,
-					TasksCompleted: e.TasksCompleted,
-					TasksFailed:    e.TasksFailed,
-					Active:         e.Active,
-					CurrentTask:    e.CurrentTask,
+					GitHubUsername:  e.GitHubUsername,
+					AvatarURL:       e.AvatarURL,
+					TrustTier:       e.TrustTier,
+					TasksCompleted:  e.TasksCompleted,
+					TasksFailed:     e.TasksFailed,
+					Active:          e.Active,
+					CurrentTask:     e.CurrentTask,
+					StagesCompleted: e.StagesCompleted,
 				}
 			}
 			return &spoke.TaskStatusPayload{

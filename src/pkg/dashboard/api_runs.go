@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	hubspoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -457,4 +458,144 @@ func firstRunNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// SnapshotRunHistoryLimit bounds the recent finished runs carried in the
+// public status/snapshot payload (#8349). The payload is public and cached, so
+// the history is a fixed-size window, never the whole timeline.
+const SnapshotRunHistoryLimit = 20
+
+const (
+	// RunOutcomeActive marks a run that still holds a live stage lease.
+	RunOutcomeActive = "active"
+	// RunOutcomeCompleted marks a run whose last recorded stage completion has
+	// no live lease behind it any more.
+	RunOutcomeCompleted = "completed"
+	// RunOutcomeMerged marks a completed run whose journey reached merge.
+	RunOutcomeMerged = "merged"
+)
+
+// RunHistoryEntry is one bounded, public-safe row of run history: no lease
+// ids, no tokens, and a title that passed both the status token redactor and
+// logscrub (#8349).
+type RunHistoryEntry struct {
+	Key            string       `json:"key"`
+	Title          string       `json:"title"`
+	Repo           string       `json:"repo,omitempty"`
+	Stage          string       `json:"stage"`
+	Gen            uint64       `json:"gen"`
+	WaitingOn      RunWaitingOn `json:"waiting_on"`
+	Outcome        string       `json:"outcome"`
+	StageStartedAt string       `json:"stage_started_at,omitempty"`
+	CompletedAt    string       `json:"completed_at,omitempty"`
+}
+
+// RunHistory is the snapshot's run block: the runs holding a live lease plus
+// the most recent finished ones. A nil RunHistory on the status payload means
+// the spoke could not project runs at all and the consumer must render
+// "runs: unknown", never zero.
+type RunHistory struct {
+	Active []RunHistoryEntry `json:"active"`
+	Recent []RunHistoryEntry `json:"recent"`
+	Limit  int               `json:"limit"`
+}
+
+// scrubRunTitle runs a run title through both the status token redactor and
+// logscrub so no credential-shaped text can reach a public payload.
+func scrubRunTitle(title string) string {
+	return logscrub.ScrubString(redactTokens(title))
+}
+
+// runHistoryFromProjection builds the bounded snapshot run history from the
+// active-run projection and the lifecycle timeline journeys. Finished runs are
+// journeys with a recorded stage completion and no live lease.
+func runHistoryFromProjection(active []Run, journeys []timeline.Journey, limit int) *RunHistory {
+	if limit <= 0 {
+		limit = SnapshotRunHistoryLimit
+	}
+	history := &RunHistory{
+		Active: make([]RunHistoryEntry, 0, len(active)),
+		Recent: []RunHistoryEntry{},
+		Limit:  limit,
+	}
+	liveKeys := make(map[string]bool, len(active))
+	for _, run := range active {
+		liveKeys[run.Key] = true
+		history.Active = append(history.Active, RunHistoryEntry{
+			Key: run.Key, Title: scrubRunTitle(run.Title), Repo: run.Repo,
+			Stage: run.Stage, Gen: run.Gen, WaitingOn: run.WaitingOn,
+			Outcome: RunOutcomeActive, StageStartedAt: run.StageStartedAt,
+		})
+	}
+	for _, j := range journeys {
+		if j.Ref == "" || liveKeys[j.Ref] {
+			continue
+		}
+		st := j.Stages[timeline.KindStageCompleted]
+		if st == nil || st.LastAt <= 0 {
+			continue
+		}
+		entry := RunHistoryEntry{
+			Key:            j.Ref,
+			Title:          j.Ref,
+			Stage:          st.Attrs["stage_to"],
+			WaitingOn:      RunWaitingOnNone,
+			Outcome:        RunOutcomeCompleted,
+			StageStartedAt: formatRunTime(time.UnixMilli(st.FirstAt)),
+			CompletedAt:    formatRunTime(time.UnixMilli(st.LastAt)),
+		}
+		if title := st.Attrs["title"]; title != "" {
+			entry.Title = scrubRunTitle(title)
+		}
+		if raw := st.Attrs["gen"]; raw != "" {
+			entry.Gen, _ = strconv.ParseUint(raw, 10, 64)
+		}
+		if repo, _, ok := strings.Cut(j.Ref, "#"); ok {
+			entry.Repo = repo
+		}
+		if j.Current == timeline.KindMerged {
+			entry.Outcome = RunOutcomeMerged
+		}
+		history.Recent = append(history.Recent, entry)
+	}
+	sort.Slice(history.Recent, func(i, k int) bool {
+		if history.Recent[i].CompletedAt != history.Recent[k].CompletedAt {
+			return history.Recent[i].CompletedAt > history.Recent[k].CompletedAt
+		}
+		return history.Recent[i].Key < history.Recent[k].Key
+	})
+	if len(history.Recent) > limit {
+		history.Recent = history.Recent[:limit]
+	}
+	return history
+}
+
+// StatusRunHistory projects the bounded run history for the status/snapshot
+// payload. It returns nil when the run registry is unavailable so the payload
+// omits the field and consumers render unknown rather than an empty history.
+func (s *Server) StatusRunHistory() *RunHistory {
+	active, err := s.activeRuns(false)
+	if err != nil {
+		return nil
+	}
+	return runHistoryFromProjection(active, s.LifecycleTimeline().Journeys(0), SnapshotRunHistoryLimit)
+}
+
+// stageCompletionsByIdentity counts recorded stage completions per lease
+// identity from the lifecycle timeline. The timeline keeps one aggregate per
+// (issue, kind) with the latest agent, so repeated completions on one issue
+// are credited to the identity that completed the stage most recently.
+func (s *Server) stageCompletionsByIdentity() map[string]int {
+	out := map[string]int{}
+	if s == nil {
+		return out
+	}
+	for _, j := range s.LifecycleTimeline().Journeys(0) {
+		st := j.Stages[timeline.KindStageCompleted]
+		if st == nil || st.Agent == "" || st.Count <= 0 {
+			continue
+		}
+		out[st.Agent] += st.Count
+	}
+	return out
 }

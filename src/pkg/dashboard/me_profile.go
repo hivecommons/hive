@@ -59,6 +59,10 @@ type ContributorProfileResponse struct {
 	TasksCompleted int `json:"tasks_completed"`
 	TasksWithPR    int `json:"tasks_with_pr"`
 	TasksFailed    int `json:"tasks_failed"`
+	// StagesCompleted is the run stage completions credited to this
+	// contributor on this spoke's timeline (#8349). Present whenever the
+	// profile is found; a consumer without it renders unknown.
+	StagesCompleted *int `json:"stages_completed,omitempty"`
 
 	// ── Rank (position within the SAME ordering as the public leaderboard) ──
 	Rank  int `json:"rank,omitempty"`
@@ -333,6 +337,12 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.TasksWithPR = p.TasksWithPR
 	resp.TasksFailed = p.TasksFailed
 	resp.RegisteredAt = p.RegisteredAt
+	stageCounts := s.stageCompletionsByIdentity()
+	stages := stageCounts[p.GitHubUsername]
+	if p.ContributorID != "" && p.ContributorID != p.GitHubUsername {
+		stages += stageCounts[p.ContributorID]
+	}
+	resp.StagesCompleted = &stages
 
 	// Loadout + sponsorship (already-stored public-safe profile data).
 	resp.CLIBackend = p.CLIBackend

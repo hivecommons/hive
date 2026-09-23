@@ -1393,6 +1393,13 @@
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
+    // stageCreditText renders the hub-derived stage credit (#8349). The field
+    // is absent when no hive reported stage completions for the contributor
+    // (older spokes), which must read as unknown rather than a zero.
+    function stageCreditText(e) {
+      if (e.stage_credit === null || e.stage_credit === undefined) return '<span style="color:var(--muted)">unknown</span>';
+      return String(e.stage_credit);
+    }
     function renderLeaderboard(entries) {
       if (!entries.length) { document.getElementById('leaderboard-container').innerHTML = '<div class="loading">No contributors yet</div>'; return; }
       entries.sort(function(a, b) { return (b.tasks_completed || 0) - (a.tasks_completed || 0); });
@@ -1404,13 +1411,14 @@
           '<td style="white-space:nowrap">' + avatar + '<a href="https://github.com/' + esc(e.github_username) + '" target="_blank">' + esc(e.github_username) + '</a></td>' +
           '<td style="font-size:0.8rem;color:var(--muted)">' + esc(e.hive_name || '') + '</td>' +
           '<td style="text-align:center">' + (e.tasks_completed || 0) + '</td>' +
+          '<td style="text-align:center" title="Run stage completions credited across public hives (stage_credit); a hive on a release line that does not report stages shows unknown, never 0">' + stageCreditText(e) + '</td>' +
           '<td style="text-align:center"><span class="acmm-badge acmm-2">' + esc(e.trust_tier || 'newcomer') + '</span></td>' +
           '<td>' + taskText + '</td>' +
           '</tr>';
       }).join('');
       document.getElementById('leaderboard-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th>Contributor</th><th>Hive</th><th style="text-align:center">Completed</th><th style="text-align:center">Tier</th><th>Current Task</th>' +
+        '<th>Contributor</th><th>Hive</th><th style="text-align:center">Completed</th><th style="text-align:center">Stages</th><th style="text-align:center">Tier</th><th>Current Task</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
 

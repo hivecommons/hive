@@ -26,6 +26,10 @@ type LeaderboardEntry struct {
 	CurrentTask   string `json:"current_task,omitempty"`
 	IsAgent       bool   `json:"is_agent,omitempty"`
 	Emoji         string `json:"emoji,omitempty"`
+	// StagesCompleted is the number of run stage completions credited to this
+	// identity from the lifecycle timeline (#8349). A pointer so a consumer can
+	// tell "this spoke reported zero" from "this spoke never reported" (nil).
+	StagesCompleted *int `json:"stages_completed,omitempty"`
 }
 
 // buildLeaderboard loads all contributor profiles, sorts by tasks completed
@@ -102,10 +106,33 @@ func (s *Server) LeaderboardForHub() []LeaderboardEntry {
 	}
 	agentEntries := s.buildAgentLeaderboardEntries()
 	entries = append(agentEntries, entries...)
+	s.applyStageCredit(entries)
 	for i := range entries {
 		entries[i].Rank = i + 1
 	}
 	return entries
+}
+
+// applyStageCredit stamps StagesCompleted on every entry from the timeline's
+// stage completions (#8349). Lease identities are contributor ids, so the
+// count is looked up by contributor id first and by username as a fallback
+// (agents lease under their agent name, which is also their username here).
+// Every entry gets a non-nil value: this spoke knows its own timeline, so
+// zero is a real zero; only a spoke too old to send the field leaves it nil.
+func (s *Server) applyStageCredit(entries []LeaderboardEntry) {
+	counts := s.stageCompletionsByIdentity()
+	idByUsername := map[string]string{}
+	for _, p := range listContributorProfiles() {
+		idByUsername[p.GitHubUsername] = p.ContributorID
+	}
+	for i := range entries {
+		n := counts[entries[i].GitHubUsername]
+		if id, ok := idByUsername[entries[i].GitHubUsername]; ok && id != entries[i].GitHubUsername {
+			n += counts[id]
+		}
+		v := n
+		entries[i].StagesCompleted = &v
+	}
 }
 
 const (

@@ -2986,6 +2986,7 @@ function meDeedsGrid(p){
   var deeds=[
     [String(p.tasks_completed||0),'tasks shipped',''],
     [String(p.tasks_with_pr||0),'PRs landed',''],
+    [(p.stages_completed==null)?'unknown':String(p.stages_completed),'stages completed',''],
     [(p.rank&&p.total)?('#'+p.rank+' <small>/ '+p.total+'</small>'):'—','standing',' dz-deed--standing']
   ];
   if(p.service_years!=null)deeds.push([String(p.service_years)+' <small>yrs</small>','github service','']);

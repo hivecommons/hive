@@ -1,0 +1,1 @@
+- Public snapshots carry a bounded, scrubbed run history (`runHistory`: live runs plus recent finished stages) and the hub leaderboard credits completed run stages (`stages_completed` / `stage_credit`, weighted by `LeaderboardStageCreditWeight`) beside PRs and issues; a spoke that does not report either renders unknown, never zero (#8349)

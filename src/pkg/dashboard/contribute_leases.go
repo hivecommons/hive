@@ -294,6 +294,11 @@ func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) 
 		attrs["issue_ref"] = l.key
 	}
 	attrs["waiting_on"] = "agent"
+	if title := h.leaseTaskTitle(l); title != "" {
+		// Scrubbed at the source so the timeline never retains a raw title
+		// (#8349); the snapshot scrubs again before publishing.
+		attrs["title"] = scrubRunTitle(title)
+	}
 	h.server.LifecycleTimeline().Record(timeline.Event{
 		IssueRef: firstNonEmptyString(l.key, worksource.Ref{Repo: l.repo, Number: l.number}.Key()),
 		Kind:     timeline.KindStageCompleted,
@@ -328,6 +333,12 @@ func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) 
 			}, fmt.Sprintf("stage_completed %s→%s for %s", from, to, l.taskID))
 		}
 	}
+}
+
+// leaseTaskTitle returns the assigned task title for the lease's live
+// connection, or "" when the contributor is not connected.
+func (h *ContributeWSHub) leaseTaskTitle(l taskLease) string {
+	return h.currentTaskInfos()[leaseKey(l.identity, l.taskID)].title
 }
 
 func (h *ContributeWSHub) emitStageStatusComment(payload hooks.Payload, l taskLease) {

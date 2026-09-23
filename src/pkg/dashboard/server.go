@@ -403,7 +403,11 @@ type StatusPayload struct {
 	Beads            FrontendBeads             `json:"beads"`
 	Planning         FrontendPlanning          `json:"planning"`
 	Runs             []RunSummary              `json:"runs"`
-	Health           map[string]any            `json:"health"`
+	// RunHistory is the bounded public run block (#8349): live runs plus the
+	// most recent finished ones, titles scrubbed. Omitted (nil) when the run
+	// registry is unavailable so snapshot consumers render unknown, not zero.
+	RunHistory *RunHistory    `json:"runHistory,omitempty"`
+	Health     map[string]any `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -1966,6 +1970,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.InferenceBackends = s.buildInferenceBackends()
 	if runs, err := s.activeRuns(false); err == nil {
 		status.Runs = runs
+		status.RunHistory = runHistoryFromProjection(runs, s.LifecycleTimeline().Journeys(0), SnapshotRunHistoryLimit)
 	} else if s.logger != nil {
 		s.logger.Warn("run projection unavailable for status payload", "error", err)
 	}

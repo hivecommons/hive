@@ -1783,6 +1783,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		payload.Leaderboard[i].GitHubUsername = sanitizeField(lb.GitHubUsername)
 		payload.Leaderboard[i].HiveName = sanitizeField(lb.HiveName)
+		payload.Leaderboard[i].StagesCompleted = clampFleetCount(lb.StagesCompleted)
+		payload.Leaderboard[i].StageCredit = nil
 	}
 	safeOrg := payload.Org
 	safePrimary := payload.PrimaryRepo
@@ -3406,6 +3408,10 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, lb := range payload.Leaderboard {
 		payload.Leaderboard[i].GitHubUsername = sanitizeField(lb.GitHubUsername)
+		// Same non-negative gate as /api/heartbeat: nil stays unknown, a
+		// negative is garbage and becomes unknown, never zero (#8349).
+		payload.Leaderboard[i].StagesCompleted = clampFleetCount(lb.StagesCompleted)
+		payload.Leaderboard[i].StageCredit = nil
 	}
 
 	hiveName := ""
@@ -4107,6 +4113,38 @@ func (s *HubServer) markStaleHives() []offlineSweepEvent {
 	return offline
 }
 
+// LeaderboardStageCreditWeight is how much leaderboard credit one completed
+// run stage earns (#8349). Stage credit is displayed beside completed tasks;
+// the ranking formula (tasks completed) is unchanged, so the weight only
+// scales the stage_credit column.
+const LeaderboardStageCreditWeight = 1
+
+// addStageCount sums two optional stage counts: nil + nil stays nil (no hive
+// reported), otherwise the known counts are added.
+func addStageCount(a, b *int) *int {
+	if a == nil && b == nil {
+		return nil
+	}
+	sum := 0
+	if a != nil {
+		sum += *a
+	}
+	if b != nil {
+		sum += *b
+	}
+	return &sum
+}
+
+// stageCreditFor converts a merged stage count into displayed credit using
+// LeaderboardStageCreditWeight. nil (unknown) stays nil.
+func stageCreditFor(stages *int) *int {
+	if stages == nil {
+		return nil
+	}
+	credit := clampInt(*stages, 0, maxFleetCount/LeaderboardStageCreditWeight) * LeaderboardStageCreditWeight
+	return &credit
+}
+
 func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 	merged := map[string]*LeaderboardEntry{}
 	for _, h := range s.registry.Hives {
@@ -4120,6 +4158,7 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 			if existing, ok := merged[lb.GitHubUsername]; ok {
 				existing.TasksCompleted += lb.TasksCompleted
 				existing.TasksFailed += lb.TasksFailed
+				existing.StagesCompleted = addStageCount(existing.StagesCompleted, lb.StagesCompleted)
 				if lb.Active {
 					existing.Active = true
 					existing.CurrentTask = lb.CurrentTask
@@ -4127,15 +4166,21 @@ func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
 				}
 			} else {
 				entry := lb
+				entry.StagesCompleted = addStageCount(nil, lb.StagesCompleted)
 				merged[lb.GitHubUsername] = &entry
 			}
 		}
 	}
 	result := make([]LeaderboardEntry, 0, len(merged))
 	for _, v := range merged {
-		if v.TasksCompleted == 0 && v.TasksFailed == 0 && !v.Active {
+		stages := 0
+		if v.StagesCompleted != nil {
+			stages = *v.StagesCompleted
+		}
+		if v.TasksCompleted == 0 && v.TasksFailed == 0 && stages == 0 && !v.Active {
 			continue
 		}
+		v.StageCredit = stageCreditFor(v.StagesCompleted)
 		result = append(result, *v)
 	}
 	return result

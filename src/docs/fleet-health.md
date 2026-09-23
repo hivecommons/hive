@@ -85,6 +85,25 @@ Three gates soften "no output" into green before anything goes red:
   that omits the optional runs heartbeat field stays unknown for runs and is
   judged exactly as before.
 
+## Leaderboard: stage completions count as credit
+
+Run stage completions are credited on the hub leaderboard beside completed
+tasks (PRs and issues). Each spoke reports `stages_completed` per contributor
+in its heartbeat and task-status beats, counted from the `stage_completed`
+events on its lifecycle timeline and attributed to the identity on the run
+lease. The hub sums the counts across public hives and publishes them on
+`GET /api/hub/leaderboard` as `stages_completed` plus a derived
+`stage_credit` (`stages_completed` times `LeaderboardStageCreditWeight`,
+currently 1). The landing page shows the credit in a Stages column.
+
+- A spoke on a release line that does not report the field leaves it absent;
+  the hub keeps it absent and the page renders "unknown", never 0. A negative
+  count from a spoke is dropped to absent the same way.
+- The ranking order is unchanged: rows still sort by completed tasks. Stage
+  credit is display-only.
+- The spoke's own Contribute page shows the same count in the leaderboard tab
+  and on the contributor's dossier ("stages completed").
+
 ## Precedence: the most fundamental cause wins
 
 When output is absent, three preconditions explain why it was *impossible*:

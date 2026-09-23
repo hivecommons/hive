@@ -37,3 +37,17 @@ test('#8307: run state appears in agent, governor, and health surfaces', () => {
   assert.match(INDEX, /RUN_STALL_THRESHOLD_MS = 60 \* 60 \* 1000/);
   assert.match(INDEX, /stalledRunHealthRows/);
 });
+
+test('#8349: run history from the status payload is merged without inventing absent data', () => {
+  assert.match(INDEX, /data\.runHistory && Array\.isArray\(data\.runHistory\.recent\)/);
+  assert.match(INDEX, /run\.outcome && run\.outcome !== 'active'/);
+  assert.match(INDEX, /Run history \(\$\{finishedRuns\.length\}\)/);
+  assert.match(INDEX, /run\.completed_at/);
+});
+
+test('#8349: leaderboard renders stages completed and falls back to unknown, never 0', () => {
+  assert.match(INDEX, /function leaderboardStagesText\(e\)/);
+  assert.match(INDEX, /e\.stages_completed === null \|\| e\.stages_completed === undefined/);
+  assert.match(INDEX, /leaderboardStagesText\(e\)/);
+  assert.match(INDEX, />Stages<\/th>/);
+});

@@ -162,6 +162,14 @@ type LeaderboardEntry struct {
 	Active         bool   `json:"active"`
 	CurrentTask    string `json:"current_task,omitempty"`
 	HiveName       string `json:"hive_name,omitempty"`
+	// StagesCompleted counts run stage completions credited to this
+	// contributor (#8349). Pointer + omitempty: a v5 spoke never sends it and
+	// the hub must keep that as unknown (nil), never as zero.
+	StagesCompleted *int `json:"stages_completed,omitempty"`
+	// StageCredit is hub-derived: StagesCompleted weighted by
+	// LeaderboardStageCreditWeight after cross-hive merge (#8349). nil when no
+	// hive reported stage counts for this contributor (unknown, never zero).
+	StageCredit *int `json:"stage_credit,omitempty"`
 }
 
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
