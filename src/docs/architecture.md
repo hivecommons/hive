@@ -184,10 +184,11 @@ flowchart LR
 
 ## Archetypes for long-running work
 
-Long-running runs use a provisional vocabulary while the stage handoff receipt
-schema and proof contract settle ([#8295](https://github.com/hivecommons/hive/issues/8295)).
-The names describe roles in the existing architecture, not new machinery, and
-remain provisional until the adapter, effect, and proof contract lands.
+Long-running runs use the settled archetype vocabulary recorded in
+[#7620](https://github.com/hivecommons/hive/issues/7620) and implemented through
+the #8290 runs work. The names describe roles in the existing architecture, not
+new machinery: the receipt schema, adapter, effect, and proof contract have
+landed, so these terms are now the design record rather than provisional labels.
 
 **Oracle** is the source-of-truth observer for actionable work. In Hive that is
 the `pkg/worksource` seam: it normalizes GitHub issues, Linear/Jira items, and
