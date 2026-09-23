@@ -28,8 +28,9 @@ func FencingEnabled(mode string) bool { return proof.EnforcementEnabled(mode) }
 type EffectFunc func() (result string, err error)
 
 // Executor binds the durable claim ledger and operation journal around the
-// actual mutation boundary for the selected effect. It adds fencing and
-// idempotency; it never replaces the effect's own guards (CreatePR's
+// actual mutation boundary for the selected effect. In the provisional
+// long-running-run vocabulary, this is the Executor archetype. It adds fencing
+// and idempotency; it never replaces the effect's own guards (CreatePR's
 // open-PR-by-head dedupe and 422 recovery remain mandatory defense-in-depth).
 type Executor struct {
 	Ledger  *Ledger

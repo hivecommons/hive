@@ -209,8 +209,9 @@ func (d Decision) Condition(condType string) (Condition, bool) {
 	return Condition{}, false
 }
 
-// Evaluate turns one Observation into an admission Decision. It is pure: no
-// I/O, no clock, no package state.
+// Evaluate turns one Observation into an admission Decision. In the provisional
+// long-running-run vocabulary, this is the Gate archetype. It is pure: no I/O,
+// no clock, no package state.
 //
 // The rules, in the order they are applied:
 //

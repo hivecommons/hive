@@ -98,6 +98,17 @@ soak-gated promotion workflow. Structural changes were gated by public
   flipped the violated properties to holding across millions of states.
   Goal: changes to modeled protocols update the corresponding model in
   the same PR.
+- **Long-running runs and convergence generality.** The runs vocabulary is now
+  documented in the
+  [reference architecture](src/docs/architecture.md#archetypes-for-long-running-work):
+  Oracle (`pkg/worksource`), Generator, Executor
+  (`pkg/convergence/mutation`), and Gate (`pkg/convergence`), with Proof and
+  Outcome as Gate inputs while the #8295 handoff/proof contract remains
+  provisional. The convergence rollout definition of done is not merely "opens
+  and merges PRs": the mutation, proof, and outcome path must be exercisable
+  end to end by a workload that never opens a pull request, with the report-only
+  audit campaign ([#8300](https://github.com/hivecommons/hive/issues/8300)) as
+  the proving workload.
 - **Channel-based release trains.** The three channels — `edge` (newest
   good build), `candidate` (awaiting soak), `stable` (promoted after
   soak) — exist as moving GHCR tags with enforced divergence: since the

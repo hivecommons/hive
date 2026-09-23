@@ -182,6 +182,45 @@ flowchart LR
 
 ---
 
+## Archetypes for long-running work
+
+Long-running runs use a provisional vocabulary while the stage handoff receipt
+schema and proof contract settle ([#8295](https://github.com/hivecommons/hive/issues/8295)).
+The names describe roles in the existing architecture, not new machinery, and
+remain provisional until the adapter, effect, and proof contract lands.
+
+**Oracle** is the source-of-truth observer for actionable work. In Hive that is
+the `pkg/worksource` seam: it normalizes GitHub issues, Linear/Jira items, and
+run-stage work into source-neutral records with stable keys and current state.
+
+**Generator** is the stage-specific producer of proposed artifacts: a spec,
+plan, implementation wave, audit finding, or other output that can be reviewed.
+The generator is usually an agent or external workflow runner; its Hive-side
+package mapping is `pkg/outputschema`, where stage receipts and artifact records
+describe what the producer emitted. Hive records the stage and generation on the
+run lease rather than giving the generator a separate store.
+
+**Executor** is the mutation boundary that applies one authorized external
+effect. `pkg/convergence/mutation.Executor` binds the durable claim ledger and
+operation journal around that effect so retries and reassignments are fenced or
+recorded according to the resolved convergence mode.
+
+**Gate** is the admission decision. `pkg/convergence.Evaluate` turns an
+authoritative observation into a tri-state decision (`True`, `False`, or
+`Unknown`) before a stage advances or a mutation is allowed. Proof and Outcome
+are Gate inputs rather than peer archetypes: `pkg/convergence/proof` supplies
+bounded receipts for declared predicates, and `pkg/convergence/outcome` is the
+staged ledger that will compare predicted decisions with observed results once
+it is wired.
+
+| Run stage | Oracle | Generator | Gate inputs | Executor |
+| --- | --- | --- | --- | --- |
+| Spec | `pkg/worksource` identifies the run item and current stage. | Spec interview or external workflow emits the spec artifact. | Admission reads stage/generation state; missing or stale evidence is `Unknown`. | None unless the approved spec records an external effect. |
+| Plan | `pkg/worksource` exposes the same run key with `Stage=plan`. | Planner emits a revisioned plan, allowed scope, effects, and assumptions. | Proof receipts and outcome observations bind the plan revision and approved scope. | Mutation executor journals any approved issue/comment/metadata effects. |
+| Implement | `pkg/worksource` exposes `Stage=implement` for the lease generation. | Agent or external runner performs an implementation or report-only campaign. | Gate evaluates proof and outcome evidence before publication or stage completion. | Mutation executor applies authorized effects; a report-only audit campaign may exercise the path without opening a PR. |
+
+---
+
 ## 5. Layered guardrails (defense in depth)
 
 An agent's permissions are enforced at three independent layers, all keyed off

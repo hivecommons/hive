@@ -3,6 +3,9 @@
 // work items from an external planning tool (GitHub Issues, GitHub Projects,
 // Linear, Jira). Steps 03–07 (fix agent, PR, review, merge) are source-agnostic
 // and unchanged.
+//
+// In the provisional long-running-run vocabulary, WorkSource is the Oracle: it
+// observes source-native work and exposes the source-neutral state Hive gates.
 package worksource
 
 import (

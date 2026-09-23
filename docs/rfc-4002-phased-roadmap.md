@@ -11,6 +11,14 @@ phase 3 soak proves safe, the current tmux loop remains the default and the
 re-entrant path is opt-in only. Breaking changes require operator migration
 guidance.
 
+The convergence rollout's definition of done includes non-PR workloads: the
+mutation, proof, and outcome path is not considered wired until it can be
+exercised end to end by a workload that never opens a pull request. The
+provisional archetype vocabulary for that path is recorded in the
+[reference architecture](../src/docs/architecture.md#archetypes-for-long-running-work),
+and the report-only audit campaign ([#8300](https://github.com/hivecommons/hive/issues/8300))
+is the proving workload.
+
 ## Delivered in v5
 
 - State inventory: `src/docs/design/agent-turn-model.md` and

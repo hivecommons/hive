@@ -1,5 +1,7 @@
 // Package proof implements the first exact-subject GitHub proof vertical
 // accepted on kubestellar/hive#4252 (parent epic #3845, issue #4253).
+// In the provisional long-running-run vocabulary, Proof records are inputs to a
+// Gate decision, not a peer archetype.
 //
 // It owns exactly one predicate — github.checks.exact-head-green/v1: "all
 // required (non-meta) check runs for exact head SHA X of PR N in repo R

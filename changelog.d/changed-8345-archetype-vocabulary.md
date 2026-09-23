@@ -1,0 +1,1 @@
+- Documented the provisional long-running-runs archetype vocabulary and clarified that the convergence rollout is done only when a non-PR workload can exercise the mutation, proof, and outcome path end to end ([#8345](https://github.com/hivecommons/hive/issues/8345)).

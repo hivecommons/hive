@@ -1,6 +1,8 @@
 // Package outcome stages the convergence outcome ledger: the durable record of
 // what a convergence decision predicted and what actually happened, plus the
 // observation helpers that close the loop.
+// In the provisional long-running-run vocabulary, Outcome records are inputs to
+// a Gate decision, not a peer archetype.
 //
 // It is deliberately not wired into any hive binary (#7281). Tracked for
 // activation by the convergence rollout work (#4246/#4263); until then nothing
