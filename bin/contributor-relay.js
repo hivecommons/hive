@@ -2099,8 +2099,30 @@ function sanitizeDeclaredValue(raw) {
 }
 
 
+// sanitizeHubText neutralizes hub-supplied text before it reaches this
+// terminal. Frames arrive from every configured hub — including third-party
+// hives (multi-hub, #2846) — so their free-text fields are untrusted input:
+// raw ANSI/OSC escape sequences in a title, reason, or announcement could
+// rewrite the screen, retitle the terminal, or write the clipboard (OSC 52).
+// Strips C0 controls, DEL, and C1 controls (U+0080–U+009F: a bare 0x9b is a
+// one-byte CSI), collapses runs of whitespace, and bounds the length by code
+// point. Line-oriented cousin of sanitizeDeclaredValue, which guards the
+// other direction (local CLI output leaving for the hub).
+const HUB_TEXT_MAX_LEN = 2000;
+function sanitizeHubText(raw) {
+  if (typeof raw !== 'string') return '';
+  const clean = raw
+    .replace(/[\x00-\x1f\x7f\u0080-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const points = Array.from(clean);
+  return points.length > HUB_TEXT_MAX_LEN
+    ? points.slice(0, HUB_TEXT_MAX_LEN).join('').trim()
+    : clean;
+}
+
 function formatHubAnnouncementLine(hub, ann) {
-  const text = ann && typeof ann.text === 'string' ? ann.text.trim() : '';
+  const text = ann && typeof ann.text === 'string' ? sanitizeHubText(ann.text) : '';
   if (!ann || !ann.id || !text) return '';
   const label = hub && (hub.sourceURL || hub.url) ? hubPublicURL(hub.sourceURL || hub.url) : 'hub';
   return `${label}: ${text}`;
@@ -7281,14 +7303,14 @@ function handleMessage(data, hub) {
       break;
 
     case 'auth_ok':
-      console.log(`Authenticated with ${hub.url} as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
+      console.log(`Authenticated with ${hub.url} as ${sanitizeHubText(msg.contributor_id)} (tier: ${sanitizeHubText(msg.trust_tier)})`);
       recordHubSeen(hub);
       // #2567: the hub advertises its protocol version + capability set here. We
       // log them (forward-compatible: unknown/absent fields are simply skipped)
       // so a newer relay can adapt to what the deployed server supports instead
       // of probing. No behaviour is gated on them today.
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
-        console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
+        console.log(`Hub protocol ${sanitizeHubText(msg.protocol_version) || 'unversioned'}; capabilities: ${sanitizeHubText((msg.server_capabilities || []).join(', ')) || 'none'}`);
       }
       // #7932: the one server bound the relay cannot discover by behaving well
       // — exceeding it is answered with a connection close, not a reply. Take
@@ -7366,10 +7388,10 @@ function handleMessage(data, hub) {
       break;
 
     case 'auth_failed':
-      console.error(`Authentication with ${hub.url} failed: ${msg.reason}`);
+      console.error(`Authentication with ${hub.url} failed: ${sanitizeHubText(msg.reason)}`);
       if (msg.accepted_models && msg.accepted_models.length > 0) {
         console.error('\nThis hive accepts the following models:');
-        msg.accepted_models.forEach(m => console.error('  - ' + m));
+        msg.accepted_models.forEach(m => console.error('  - ' + sanitizeHubText(m)));
         console.error('\nSet your model: export AGENT_MODEL=<model>');
       }
       // A bad token for ONE hub must not take down a working connection to
@@ -7485,7 +7507,7 @@ function handleMessage(data, hub) {
       // process, on the very first task after adding multi-hub support.
       Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
       activeHubIndex = hubs.indexOf(hub);
-      console.log(`Task assigned: ${msg.kind} ${msg.repo}#${msg.number} — ${msg.title} (from ${hub.url})`);
+      console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(msg.repo)}#${msg.number} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -7599,10 +7621,10 @@ function handleMessage(data, hub) {
       // Surviving it is the second, independent half of the fix: the review
       // cycle now runs to completion regardless of why a revoke shows up.
       if (isLocalOnlyTask(currentTask)) {
-        console.log(`Ignoring task_revoke for ${msg.task_id} (${msg.reason}) — locally-created ${currentTask.kind} cycle, never leased by the hub; continuing`);
+        console.log(`Ignoring task_revoke for ${sanitizeHubText(msg.task_id)} (${sanitizeHubText(msg.reason)}) — locally-created ${currentTask.kind} cycle, never leased by the hub; continuing`);
         break;
       }
-      console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
+      console.log(`Task revoked: ${sanitizeHubText(msg.task_id)} — ${sanitizeHubText(msg.reason)}`);
       // #7779: if this task's prompt was still queued (assigned while the CLI
       // was relaunching), drop it now. stopAgentForTaskExit() below relaunches
       // the CLI, and its readiness callback would otherwise flush the revoked
@@ -7662,7 +7684,7 @@ function handleMessage(data, hub) {
       // which could just mean network lag), so rotating on it — rather than
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
-      console.log(`No task assigned on ${hub.url} — reason: ${msg.reason || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
       setTimeout(() => {
         if (currentTask) return; // picked up work elsewhere in the meantime
         if (hubs.length > 1 && hub === hubs[activeHubIndex]) {
@@ -7678,7 +7700,7 @@ function handleMessage(data, hub) {
 
     case 'notice':
       if (msg.announcement && printHubAnnouncementOnce(hub, msg.announcement)) break;
-      console.log(msg.message || msg.reason || 'Notice from hub');
+      console.log(sanitizeHubText(msg.message) || sanitizeHubText(msg.reason) || 'Notice from hub');
       break;
 
     case 'ping':
@@ -7690,7 +7712,7 @@ function handleMessage(data, hub) {
       break;
 
     default:
-      console.log('Unknown message type:', msg.type);
+      console.log('Unknown message type:', sanitizeHubText(msg.type));
   }
 }
 
@@ -8178,6 +8200,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     warnOnProtocolDrift,
     formatHubAnnouncementLine,
     printHubAnnouncementOnce,
+    sanitizeHubText,
     describeWsClose,
     wsCloseCorrelation,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).

