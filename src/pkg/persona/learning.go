@@ -240,8 +240,14 @@ func (r Record) stepDown() Suggestion {
 	return Suggestion{}
 }
 
+// formatEvidence renders the non-zero counts behind a suggestion, for example
+// "5 expansions in 7 days" or "3 expansions and 2 re-asks in 7 days". A zero
+// count is omitted rather than rendered as "0 expansions".
 func formatEvidence(primary int, primaryNoun string, secondary int, secondaryNoun string, days int) string {
-	parts := []string{plural(primary, primaryNoun)}
+	var parts []string
+	if primary > 0 {
+		parts = append(parts, plural(primary, primaryNoun))
+	}
 	if secondary > 0 {
 		parts = append(parts, plural(secondary, secondaryNoun))
 	}
