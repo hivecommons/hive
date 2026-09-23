@@ -1,0 +1,315 @@
+name: CLI pin bump
+
+# Keeps the agent CLI pins in src/Dockerfile and src/Dockerfile.contributor
+# current without giving up the pin (#8419).
+#
+# Every CLI hive drives is installed at a fixed version — npm packages through
+# `ARG X_VERSION`, release downloads through `ARG X_VERSION` plus a per-arch
+# SHA-256/SHA-512 the build verifies before install. That is deliberate
+# (#2903) and stays. What was missing is anything that MOVES the pins:
+# dependabot's docker updater follows `FROM` tags only, so the pins sat until
+# a user hit a wall (#8417: Claude Code 2.1.226 refusing claude-opus-5-5 for
+# six weeks).
+#
+# Once a day (and on demand) this workflow, per CLI:
+#   1. resolves the latest release from its source of truth (npm registry,
+#      GitHub releases, the vendor's own manifest) and recomputes every digest
+#      from the downloaded artifact, cross-checked against the vendor-published
+#      digest where one exists — src/scripts/cli-pin-bump.sh;
+#   2. edits both Dockerfiles (and the Go test that pins pi's ARG line);
+#   3. SMOKES the result before anyone sees a PR: builds src/Dockerfile for
+#      linux/amd64 with the new pin and runs `<cli> --version` (plus an
+#      unauthenticated `claude --help` for claude) inside the image;
+#   4. opens (or refreshes) ONE PR PER CLI against the base branch, labelled
+#      `security` (so v4's feature-freeze gate admits it), `dependencies` and
+#      `no-changelog` (the dependabot convention); a major-version change also
+#      gets `needs-human`, so it waits for a person instead of merging on green.
+#
+# The PR itself then runs the normal gates: the docker workflow builds both
+# images for both architectures, and the backend smoke's pinned lane picks the
+# new CLI up on its next run. See src/docs/cli-pins.md.
+#
+# Credentials: `gh pr create` runs with GITHUB_TOKEN under `pull-requests:
+# write`, exactly as v5-topup.yml does (that path opens PRs in this repo
+# today). The checkout uses TOPUP_PUSH_TOKEN when set — the same optional
+# fine-grained PAT v5-topup.yml uses — and GITHUB_TOKEN otherwise; a bump
+# never touches .github/workflows/, so GITHUB_TOKEN can push it (#7959 only
+# bites on workflow files). No new secret is introduced.
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      cli:
+        description: 'Which CLI to check (all = every pinned CLI)'
+        type: choice
+        options: [all, claude, codex, copilot, pi, goose, agy, omp, muse, bob, gh]
+        default: all
+      base:
+        description: 'Branch whose pins to bump and to open the PR against'
+        type: string
+        default: v5
+  # The self-test runs on PRs that touch the bump machinery itself; the bump
+  # jobs never run on pull_request.
+  pull_request:
+    paths:
+      - '.github/workflows/cli-pin-bump.yml'
+      - 'src/scripts/cli-pin-bump.sh'
+      - 'src/scripts/test-cli-pin-bump.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-pin-bump-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'scheduled' }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: ${{ inputs.base || 'v5' }}
+
+jobs:
+  selftest:
+    name: self-test cli-pin-bump.sh
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Syntax and self-test (no network)
+        run: |
+          set -euo pipefail
+          bash -n src/scripts/cli-pin-bump.sh
+          bash -n src/scripts/test-cli-pin-bump.sh
+          bash src/scripts/test-cli-pin-bump.sh
+
+  bump:
+    name: bump ${{ matrix.cli }}
+    needs: selftest
+    if: github.event_name != 'pull_request' && github.repository == 'hivecommons/hive'
+    # ubuntu-latest on purpose: the smoke step needs a docker daemon, which the
+    # self-hosted hive runners do not guarantee (v2-ci.yml's `docker` job makes
+    # the same choice).
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    strategy:
+      fail-fast: false
+      # One job per CLI so one vendor's outage or a failing smoke never blocks
+      # the others, and so each PR carries exactly one bump.
+      matrix:
+        cli: [claude, codex, copilot, pi, goose, agy, omp, muse, bob, gh]
+    env:
+      CLI: ${{ matrix.cli }}
+      HEAD_BRANCH: cli-pin-bump/${{ matrix.cli }}
+    steps:
+      - name: Restrict to the requested CLI
+        id: scope
+        env:
+          WANTED: ${{ inputs.cli || 'all' }}
+        run: |
+          if [ "$WANTED" = "all" ] || [ "$WANTED" = "$CLI" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "skipping $CLI (dispatch asked for $WANTED)"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.scope.outputs.run == 'true'
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+
+      - name: Resolve the latest release and rewrite the pins
+        if: steps.scope.outputs.run == 'true'
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HIVE_PIN_WORKDIR: ${{ runner.temp }}/cli-pin-${{ matrix.cli }}
+        run: |
+          set -euo pipefail
+          bash src/scripts/cli-pin-bump.sh bump "$CLI" "$RUNNER_TEMP/bump.kv"
+          cat "$RUNNER_TEMP/bump.kv"
+          cat "$RUNNER_TEMP/bump.kv" >> "$GITHUB_OUTPUT"
+          # The resolved KEY=VALUE file is what the PR body cites as the
+          # provenance of every digest.
+          cp "$HIVE_PIN_WORKDIR/$CLI.kv" "$RUNNER_TEMP/resolved.kv"
+
+      - name: Nothing to do
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED != 'true'
+        run: echo "$CLI ${{ steps.bump.outputs.OLD }} is current."
+
+      - name: Skip when an open PR already carries this exact bump
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.bump.outputs.NEW }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number,title --jq '.[0].number // empty')"
+          title="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number,title --jq '.[0].title // empty')"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ] && printf '%s' "$title" | grep -qF -- "-> ${NEW}"; then
+            echo "PR #${number} already bumps $CLI to ${NEW}; nothing to rebuild."
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "uptodate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke the bumped pin in a real image build
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The hub image carries every pinned CLI (the contributor image
+          # mirrors the same pins, which the PR's docker workflow builds for
+          # both architectures). One amd64 build here is the pre-PR gate.
+          docker build -f src/Dockerfile -t hive-pin-smoke:"$CLI" .
+          case "$CLI" in
+            gh)  bin=/opt/hive/bin/gh-real ;;   # off-PATH by design (Layer 2b)
+            *)   bin="$CLI" ;;
+          esac
+          name="cli-pin-smoke-${GITHUB_RUN_ID}-${CLI}"
+          cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          {
+            echo "\$ $bin --version"
+            timeout --signal=TERM --kill-after=10s 120s \
+              docker run --rm --name "$name" --network none -e HOME=/tmp \
+                --entrypoint "$bin" hive-pin-smoke:"$CLI" --version
+            if [ "$CLI" = "claude" ]; then
+              # An invocation that needs no credential and exercises the
+              # CLI's own startup path, not just the version banner.
+              echo "\$ claude --help"
+              timeout --signal=TERM --kill-after=10s 120s \
+                docker run --rm --name "$name" --network none -e HOME=/tmp \
+                  --entrypoint claude hive-pin-smoke:"$CLI" --help | head -40
+            fi
+          } | tee "$RUNNER_TEMP/smoke.txt"
+
+      - name: Commit the bump
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
+        env:
+          OLD: ${{ steps.bump.outputs.OLD }}
+          NEW: ${{ steps.bump.outputs.NEW }}
+        run: |
+          set -euo pipefail
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release[bot]@users.noreply.github.com"
+          git checkout -B "$HEAD_BRANCH"
+          git add src/Dockerfile src/Dockerfile.contributor src/pkg/config/dockerfile_contributor_test.go
+          {
+            echo "⬆️ images: bump ${CLI} ${OLD} -> ${NEW}"
+            echo
+            echo "Automated pin bump (#8419). Digests recomputed from the downloaded"
+            echo "release artifacts by src/scripts/cli-pin-bump.sh:"
+            echo
+            sed 's/^/  /' "$RUNNER_TEMP/resolved.kv"
+          } > "$RUNNER_TEMP/commit-msg.txt"
+          git commit -s -F "$RUNNER_TEMP/commit-msg.txt"
+          git push --force-with-lease origin "$HEAD_BRANCH"
+
+      - name: Open or refresh the bump PR
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLD: ${{ steps.bump.outputs.OLD }}
+          NEW: ${{ steps.bump.outputs.NEW }}
+          MAJOR: ${{ steps.bump.outputs.MAJOR }}
+          EXISTING: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          title="⬆️ images: bump ${CLI} ${OLD} -> ${NEW}"
+          {
+            echo "Part of #8419"
+            echo
+            echo "Automated pin bump: **${CLI}** ${OLD} -> ${NEW} in \`src/Dockerfile\` and \`src/Dockerfile.contributor\`."
+            echo
+            if [ "$MAJOR" = "true" ]; then
+              echo "**Major version change** - this PR carries \`needs-human\` and waits for a person (release notes, TUI or output-format changes may affect the seam hive reads)."
+              echo
+            fi
+            echo "### Provenance"
+            echo
+            echo "Every value below was resolved by \`src/scripts/cli-pin-bump.sh\` in run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; digests are computed from the downloaded artifacts and cross-checked against the vendor-published digest where one exists (never copied from a page)."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/resolved.kv"
+            echo '```'
+            echo
+            echo "### Smoke (before this PR was opened)"
+            echo
+            echo "\`src/Dockerfile\` built for linux/amd64 with the new pin; inside the image:"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/smoke.txt"
+            echo '```'
+            echo
+            echo "The docker workflow on this PR builds both images for linux/amd64 and linux/arm64 (every hash-verified layer runs \`sha256sum -c\` / \`sha512sum -c\`), and the backend smoke's pinned lane picks the new CLI up on its next run. See \`src/docs/cli-pins.md\`."
+            echo
+            echo "Opened by .github/workflows/cli-pin-bump.yml."
+          } > "$RUNNER_TEMP/pr-body.md"
+          labels="security,dependencies,no-changelog"
+          [ "$MAJOR" = "true" ] && labels="${labels},needs-human"
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" \
+              --add-label "$labels"
+            echo "refreshed PR #${EXISTING}"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+              --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --label "$labels"
+          fi
+
+      # #7930: a pull_request opened or refreshed by GITHUB_TOKEN carries
+      # github-actions[bot] as its actor, and GitHub either holds every
+      # pull_request run for approval (action_required) or lets it die at
+      # workflow resolution with 0 jobs. Release those runs so the PR shows
+      # test evidence. Same step as v5-topup.yml.
+      - name: Release the bump PR's held workflow runs (#7930)
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          released=0
+          for attempt in 1 2 3 4 5 6; do
+            sleep 20
+            pending="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=${head}&per_page=100" \
+              --jq '.workflow_runs[] | select(.conclusion == "action_required" or (.conclusion == "failure" and .run_attempt == 1)) | "\(.id) \(.conclusion)"')"
+            if [ -z "$pending" ]; then
+              if [ "$attempt" -ge 3 ]; then break; else continue; fi
+            fi
+            while read -r id conclusion; do
+              [ -n "$id" ] || continue
+              if [ "$conclusion" = "action_required" ]; then
+                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/approve" >/dev/null && { echo "approved held run ${id}"; released=$((released+1)); }
+              else
+                jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${id}/jobs" --jq '.total_count')"
+                if [ "$jobs" = "0" ]; then
+                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; released=$((released+1)); }
+                fi
+              fi
+            done <<< "$pending"
+          done
+          echo "released ${released} run(s) for ${head}"
+
+      - name: Upload evidence
+        if: always() && steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-pin-bump-${{ matrix.cli }}
+          path: |
+            ${{ runner.temp }}/bump.kv
+            ${{ runner.temp }}/resolved.kv
+            ${{ runner.temp }}/smoke.txt
+          if-no-files-found: ignore
+          retention-days: 14

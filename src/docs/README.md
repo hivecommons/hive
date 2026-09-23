@@ -82,6 +82,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Local development](../../docs/development.md) — the local workflow for contributing to the Go codebase on `v4`: prerequisites, build, and test loop.
 - [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, moving a relay to another machine, and role requests.
 - [Backend smoke](backend-smoke.md) — the live canary for the contributor CLI integration: who runs it (the project's CI, centrally — not hive operators), the latest/pinned lanes and what a red in each means, how failures become deduplicated issues with evidence attached, the API-key vs subscription-login credential options, and the per-hive run telemetry behind `/api/contribute/run-stats` with its scenario ratchet.
+- [CLI pins and the automated pin bump](cli-pins.md) — where each agent CLI's version and per-arch digest are pinned in the two Dockerfiles, why they are pinned rather than self-updating, and how `cli-pin-bump.yml` resolves the latest release, recomputes the digests, smokes the image, and opens one labelled PR per CLI.
 - [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](credly-badges.md) — planned integration design; currently a placeholder mapping only.
 
