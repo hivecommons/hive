@@ -223,6 +223,26 @@ func DefaultPolicy() Policy {
 	}
 }
 
+// PolicyWith returns DefaultPolicy overridden by any positive durations.
+// Zero values keep the default, so operators only set what they change.
+func PolicyWith(human, agent, contributor, max time.Duration) Policy {
+	p := DefaultPolicy()
+	if human > 0 {
+		p.TTL[KindHuman] = human
+		p.Default = human
+	}
+	if agent > 0 {
+		p.TTL[KindAgent] = agent
+	}
+	if contributor > 0 {
+		p.TTL[KindContributor] = contributor
+	}
+	if max > 0 {
+		p.MaxTTL = max
+	}
+	return p
+}
+
 func (p Policy) ttlFor(k Kind, requested time.Duration) time.Duration {
 	d := requested
 	if d <= 0 {
