@@ -295,6 +295,7 @@ type CreateFactRequest struct {
 	Tags       []string `json:"tags"`
 	Layer      string   `json:"layer"`
 	Confidence float64  `json:"confidence"`
+	SourceRef  string   `json:"source_ref,omitempty"`
 }
 
 // CreateFact ingests a new fact into the specified layer.
@@ -311,7 +312,7 @@ func (k *KnowledgeAPI) CreateFact(ctx context.Context, req CreateFactRequest) er
 		Type:       FactType(req.Type),
 		Confidence: req.Confidence,
 		Tags:       req.Tags,
-		SourcePR:   "manual",
+		SourcePR:   createFactSource(req.SourceRef),
 		SourceDate: time.Now(),
 	}
 
@@ -321,6 +322,14 @@ func (k *KnowledgeAPI) CreateFact(ctx context.Context, req CreateFactRequest) er
 
 	k.logger.Info("fact created", "title", req.Title, "layer", req.Layer, "type", req.Type)
 	return nil
+}
+
+func createFactSource(sourceRef string) string {
+	sourceRef = strings.TrimSpace(sourceRef)
+	if sourceRef == "" {
+		return "manual"
+	}
+	return sourceRef
 }
 
 // UpdateFactRequest is the payload for updating an existing fact.

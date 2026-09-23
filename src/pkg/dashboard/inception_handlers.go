@@ -20,6 +20,7 @@ import (
 )
 
 const maxInceptionBodyBytes = 64 * 1024
+const maxTranscriptKickChars = 12000
 
 func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
@@ -461,6 +462,20 @@ func (s *Server) handleInceptionImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.EqualFold(strings.TrimSpace(r.FormValue("source")), "transcript") {
+		imported, docs, err := s.importTranscriptUpload(data, filenameFromMultipart(r))
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if imported > 0 {
+			s.sendTranscriptKick(docs)
+		}
+		s.logger.Info("inception transcript imported", "files", imported)
+		jsonResponse(w, map[string]interface{}{"ok": true, "imported": imported, "transcripts": docs})
+		return
+	}
+
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		jsonError(w, "invalid zip file", http.StatusBadRequest)
@@ -517,6 +532,54 @@ func (s *Server) handleInceptionImport(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("inception wiki imported", "files", imported)
 	jsonResponse(w, map[string]interface{}{"ok": true, "imported": imported})
+}
+
+func filenameFromMultipart(r *http.Request) string {
+	if r.MultipartForm == nil || len(r.MultipartForm.File["file"]) == 0 {
+		return "transcript.txt"
+	}
+	return r.MultipartForm.File["file"][0].Filename
+}
+
+func (s *Server) importTranscriptUpload(data []byte, filename string) (int, []knowledge.TranscriptDocument, error) {
+	var docs []knowledge.TranscriptDocument
+	if doc, err := s.deps.Inception.ImportTranscript(filename, data); err == nil {
+		return 1, []knowledge.TranscriptDocument{*doc}, nil
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return 0, nil, fmt.Errorf("transcript upload must be a .txt/.md file or zip")
+	}
+	imported := 0
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		cleanName := strings.ReplaceAll(f.Name, "\\", "/")
+		baseName := filepath.Base(cleanName)
+		ext := strings.ToLower(filepath.Ext(baseName))
+		if strings.Contains(baseName, "..") || (ext != ".txt" && ext != ".md") {
+			continue
+		}
+		const maxFileBytes = 1 << 20
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		content, readErr := io.ReadAll(io.LimitReader(rc, maxFileBytes))
+		closeErr := rc.Close()
+		if readErr != nil || closeErr != nil {
+			s.logger.Warn("inception transcript archive entry read failed", "file", baseName, "read_error", readErr, "close_error", closeErr)
+			continue
+		}
+		doc, err := s.deps.Inception.ImportTranscript(baseName, content)
+		if err != nil {
+			continue
+		}
+		docs = append(docs, *doc)
+		imported++
+	}
+	return imported, docs, nil
 }
 
 func (s *Server) kickBrainstorm() {
@@ -647,8 +710,70 @@ func (s *Server) buildStructureKickMessage(state *knowledge.InceptionState) stri
 	sb.WriteString(fmt.Sprintf("bd create --title \"<fact title>\" --type advisory --priority 1 --actor brainstorm --external-ref \"inception/%s\"\n", state.IdeaSlug))
 	sb.WriteString("bd update <bead-id> --set-metadata fact_type=\"<vision|constitution|requirement|constraint|stakeholder|acceptance>\"\n")
 	sb.WriteString("bd update <bead-id> --set-metadata fact_body=\"<detailed fact content>\"\n\n")
+	appendTranscriptFactInstructions(&sb, state)
+	s.appendTranscriptExcerpts(&sb, state)
 	sb.WriteString("Required facts: 1 vision, 1 constitution, 2+ requirements. Start creating beads IMMEDIATELY.")
 	return sb.String()
+}
+
+func (s *Server) sendTranscriptKick(docs []knowledge.TranscriptDocument) {
+	if s.deps.AgentMgr == nil || s.deps.Inception == nil || len(docs) == 0 {
+		return
+	}
+	go func() {
+		state := s.deps.Inception.GetState()
+		if state == nil {
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("INCEPTION TRANSCRIPT IMPORT: idea %q\n", state.IdeaText))
+		appendTranscriptFactInstructions(&sb, state)
+		s.appendTranscriptExcerpts(&sb, state)
+		sb.WriteString("\nRead the uploaded transcript documents from the inception wiki vault and propose candidate requirements and decisions. Do not record final facts.\n")
+		if err := s.deps.AgentMgr.SendKick("brainstorm", sb.String()); err != nil {
+			s.logger.Warn("transcript proposal kick failed", "error", err)
+		}
+	}()
+}
+
+func (s *Server) appendTranscriptExcerpts(sb *strings.Builder, state *knowledge.InceptionState) {
+	if s.deps == nil || s.deps.Inception == nil || state == nil || len(state.Transcripts) == 0 {
+		return
+	}
+	remaining := maxTranscriptKickChars
+	for _, doc := range state.Transcripts {
+		if remaining <= 0 {
+			break
+		}
+		clean := filepath.Clean(doc.Path)
+		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(s.deps.Inception.WikiDir(), clean))
+		if err != nil {
+			continue
+		}
+		text := string(content)
+		if len(text) > remaining {
+			text = text[:remaining] + "\n[truncated]"
+		}
+		fmt.Fprintf(sb, "\nTranscript excerpt %s:\n```text\n%s\n```\n", doc.Path, text)
+		remaining -= len(text)
+	}
+}
+
+func appendTranscriptFactInstructions(sb *strings.Builder, state *knowledge.InceptionState) {
+	if state == nil || len(state.Transcripts) == 0 {
+		return
+	}
+	sb.WriteString("\nTranscript inputs are available in the inception wiki vault:\n")
+	for _, doc := range state.Transcripts {
+		fmt.Fprintf(sb, "- %s (%d lines)\n", doc.Path, doc.Lines)
+	}
+	sb.WriteString("\nFor transcript-derived candidate requirements or decisions, create beads tagged as proposals only:\n")
+	sb.WriteString("bd update <bead-id> --set-metadata proposed=\"true\"\n")
+	sb.WriteString("bd update <bead-id> --set-metadata source_ref=\"transcripts/<file>:<start>-<end>\"\n")
+	sb.WriteString("Do not set confirmed=true unless a human explicitly confirms that individual proposal.\n")
 }
 
 // plukSendKick sends the inception prompt via pluk's send subcommand.

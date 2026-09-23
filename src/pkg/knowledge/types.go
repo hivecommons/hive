@@ -268,6 +268,7 @@ type Source struct {
 	Date    time.Time `json:"date"`
 	DocURL  string    `json:"doc_url,omitempty"`
 	DocSlug string    `json:"doc_slug,omitempty"`
+	Ref     string    `json:"ref,omitempty"`
 }
 
 // PrimedKnowledge is the result of priming — ready to inject into an agent kick.
@@ -370,19 +371,27 @@ type Question struct {
 
 // InceptionState tracks the progress of a Level 1 ideation workflow.
 type InceptionState struct {
-	Phase             InceptionPhase    `json:"phase"`
-	Mode              InceptionMode     `json:"mode"`
-	IdeaText          string            `json:"idea_text"`
-	IdeaSlug          string            `json:"idea_slug"`
-	RepoURL           string            `json:"repo_url,omitempty"`
-	Questions         []Question        `json:"questions"`
-	Answers           map[string]string `json:"answers"`
-	FactSlugs         []string          `json:"fact_slugs"`
-	StartedAt         time.Time         `json:"started_at"`
-	PhaseChangedAt    *time.Time        `json:"phase_changed_at,omitempty"`
-	WikiName          string            `json:"wiki_name,omitempty"`
-	AutoFactCount     int               `json:"auto_fact_count,omitempty"`
-	AutoQuestionCount int               `json:"auto_question_count,omitempty"`
+	Phase             InceptionPhase       `json:"phase"`
+	Mode              InceptionMode        `json:"mode"`
+	IdeaText          string               `json:"idea_text"`
+	IdeaSlug          string               `json:"idea_slug"`
+	RepoURL           string               `json:"repo_url,omitempty"`
+	Questions         []Question           `json:"questions"`
+	Answers           map[string]string    `json:"answers"`
+	FactSlugs         []string             `json:"fact_slugs"`
+	ProposedFacts     []IdeationFact       `json:"proposed_facts,omitempty"`
+	Transcripts       []TranscriptDocument `json:"transcripts,omitempty"`
+	StartedAt         time.Time            `json:"started_at"`
+	PhaseChangedAt    *time.Time           `json:"phase_changed_at,omitempty"`
+	WikiName          string               `json:"wiki_name,omitempty"`
+	AutoFactCount     int                  `json:"auto_fact_count,omitempty"`
+	AutoQuestionCount int                  `json:"auto_question_count,omitempty"`
+}
+
+// TranscriptDocument tracks a scrubbed raw transcript stored in the inception wiki vault.
+type TranscriptDocument struct {
+	Path  string `json:"path"`
+	Lines int    `json:"lines"`
 }
 
 // ScaffoldFile is a single generated file in the scaffold output.

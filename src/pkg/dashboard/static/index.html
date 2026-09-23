@@ -15846,7 +15846,7 @@ function burnAreaChart() {
 
     function _inceptionStateKey(s) {
       if (!s) return 'inactive';
-      return (s.idea_slug || '') + ':' + (s.phase || '');
+      return (s.idea_slug || '') + ':' + (s.phase || '') + ':' + ((s.proposed_facts || []).length);
     }
 
     async function pollInceptionActivity() {
@@ -15922,11 +15922,32 @@ function burnAreaChart() {
           <div id="inception-activity" style="padding:16px;font-size:0.75rem;height:450px;overflow-y:auto;white-space:pre-wrap;resize:vertical;min-height:150px;max-height:calc(100vh - 200px)" data-scroll-action="onInceptionScroll">Brainstorm agent is producing vision, constitution, requirements, and acceptance criteria...</div>
           <button id="inception-follow-btn" class="oc-summary-follow-btn" data-action="inceptionResumeTail" title="Follow new output">⬇</button>
           </div>
+          ${renderInceptionProposedFacts()}
           <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
             <button data-action="stopInception" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:none;color:var(--muted);cursor:pointer;font-size:0.82rem">Stop</button>
             <button data-action="clearInception" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:none;color:var(--red);cursor:pointer;font-size:0.82rem">Clear</button>
           </div>
         </div>`;
+    }
+
+    function renderInceptionProposedFacts() {
+      const facts = _inceptionState && _inceptionState.proposed_facts ? _inceptionState.proposed_facts : [];
+      if (!facts.length) return '';
+      let html = '<div style="margin-top:12px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:12px">';
+      html += '<div style="font-size:0.84rem;font-weight:600;margin-bottom:6px">Transcript proposals need confirmation</div>';
+      html += '<div style="font-size:0.74rem;color:var(--muted);margin-bottom:10px">Confirm only the facts that should enter the inception KB. Rejected proposals are discarded.</div>';
+      facts.forEach((f, i) => {
+        html += '<label style="display:block;border-top:1px solid var(--border);padding:8px 0;font-size:0.78rem">';
+        html += '<input type="checkbox" class="inception-proposed-fact" value="' + i + '" style="margin-right:8px">';
+        html += '<strong>[' + escapeHtml(f.type || '') + '] ' + escapeHtml(f.title || '') + '</strong>';
+        if (f.source_ref) html += '<span style="color:var(--muted);margin-left:6px">' + escapeHtml(f.source_ref) + '</span>';
+        html += '<div style="margin-left:24px;color:var(--muted);white-space:pre-wrap">' + escapeHtml(f.body || '') + '</div>';
+        html += '</label>';
+      });
+      html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">';
+      html += '<button data-action="submitConfirmedInceptionFacts" style="padding:7px 14px;border:none;border-radius:6px;background:var(--blue);color:var(--bg);cursor:pointer;font-size:0.78rem;font-weight:600">Record confirmed facts</button>';
+      html += '</div></div>';
+      return html;
     }
 
     function renderInceptionScaffold() {
@@ -16154,6 +16175,26 @@ function burnAreaChart() {
           alert(msg);
         } else {
           alert('No ideation facts yet. The brainstorm agent is still working.');
+        }
+
+        async function submitConfirmedInceptionFacts() {
+          const facts = _inceptionState && _inceptionState.proposed_facts ? _inceptionState.proposed_facts : [];
+          const picked = Array.from(document.querySelectorAll('.inception-proposed-fact:checked')).map(el => {
+            const f = Object.assign({}, facts[Number(el.value)]);
+            f.confirmed = true;
+            return f;
+          }).filter(Boolean);
+          if (!picked.length) { alert('Select at least one proposal to confirm.'); return; }
+          try {
+            const r = await fetch('/api/inception/facts', {
+              method: 'POST',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ facts: picked })
+            });
+            const data = await r.json();
+            if (data.ok) { _inceptionState.phase = 'scaffold'; _inceptionState.proposed_facts = []; renderInception(); }
+            else alert(data.error || 'Failed to record confirmed facts');
+          } catch (e) { alert('Error: ' + e.message); }
         }
       } catch (e) { alert('Error: ' + e.message); }
     }

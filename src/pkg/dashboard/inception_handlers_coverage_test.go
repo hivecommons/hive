@@ -185,6 +185,40 @@ func TestCovF_InceptionImport(t *testing.T) {
 	}
 }
 
+func TestCovF_InceptionTranscriptImport(t *testing.T) {
+	s, eng, _ := covFInceptionServer(t)
+	if rec := doPost(s, "/api/inception/start", map[string]interface{}{"idea": "transcript fixture"}); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("source", "transcript"); err != nil {
+		t.Fatalf("source field: %v", err)
+	}
+	part, err := mw.CreateFormFile("file", "../fixture.txt")
+	if err != nil {
+		t.Fatalf("form file: %v", err)
+	}
+	_, _ = part.Write([]byte("Authorization: Bearer abcdefghijklmnopqrst\nAgreed: send daily digest\nDiscarded: send hourly digest"))
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/inception/import", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	wrec := httptest.NewRecorder()
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(wrec, req)
+	if wrec.Code != http.StatusOK {
+		t.Fatalf("transcript import: expected 200, got %d body=%s", wrec.Code, wrec.Body.String())
+	}
+	state := eng.GetState()
+	if len(state.Transcripts) != 1 || state.Transcripts[0].Path != "transcripts/fixture.txt" {
+		t.Fatalf("transcripts = %+v", state.Transcripts)
+	}
+}
+
 func TestCovF_InceptionForceResetBranch(t *testing.T) {
 	s, _, _ := covFInceptionServer(t)
 

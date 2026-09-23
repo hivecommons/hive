@@ -17,6 +17,7 @@ type inceptionSnapshot struct {
 	Phase     string              `json:"phase,omitempty"`
 	Questions []inceptionQuestion `json:"questions,omitempty"`
 	Answers   map[string]string   `json:"answers,omitempty"`
+	Proposed  []inceptionFact     `json:"proposed_facts,omitempty"`
 }
 
 type inceptionStateResponse struct {
@@ -30,6 +31,7 @@ type inceptionStateResponse struct {
 		Questions []inceptionQuestion `json:"questions"`
 		Answers   map[string]string   `json:"answers"`
 		FactSlugs []string            `json:"fact_slugs"`
+		Proposed  []inceptionFact     `json:"proposed_facts,omitempty"`
 	} `json:"state"`
 }
 
@@ -38,6 +40,13 @@ type inceptionQuestion struct {
 	Text     string `json:"text"`
 	Default  string `json:"default,omitempty"`
 	Category string `json:"category,omitempty"`
+}
+
+type inceptionFact struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Type      string `json:"type"`
+	SourceRef string `json:"source_ref,omitempty"`
 }
 
 type pendingInterviewKey struct {
@@ -154,6 +163,9 @@ func (s *Service) cmdInceptionState(ctx context.Context) (string, error) {
 	}
 	if len(state.State.FactSlugs) > 0 {
 		lines = append(lines, fmt.Sprintf("Facts recorded: %d", len(state.State.FactSlugs)))
+	}
+	if len(state.State.Proposed) > 0 {
+		lines = append(lines, formatInceptionProposals(state.State.Proposed))
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -339,10 +351,24 @@ func (s *Service) markPendingAnsweredForRole(questionID string) {
 	}
 }
 
+func formatInceptionProposals(facts []inceptionFact) string {
+	lines := []string{"Transcript proposals pending confirmation:"}
+	for i, f := range facts {
+		ref := ""
+		if f.SourceRef != "" {
+			ref = " — " + f.SourceRef
+		}
+		lines = append(lines, fmt.Sprintf("%d. [%s] %s%s", i+1, f.Type, f.Title, ref))
+	}
+	lines = append(lines, "Confirm selected items with `!inception facts` JSON including `confirmed:true`; unconfirmed proposals are discarded on approve.")
+	return strings.Join(lines, "\n")
+}
+
 func formatInceptionQuestions(questions []inceptionQuestion, answers map[string]string) string {
 	if len(questions) == 0 {
 		return "No pending inception questions."
 	}
+
 	lines := []string{"🧭 **Inception clarification questions**"}
 	for i, q := range questions {
 		suffix := ""

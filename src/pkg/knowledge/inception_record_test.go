@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -263,6 +264,105 @@ func TestWriteFactsToVault(t *testing.T) {
 	}
 	if mdCount != 2 {
 		t.Errorf("expected 2 .md files, got %d", mdCount)
+	}
+}
+
+func TestRecordFactsRequiresConfirmationForProposedTranscriptFacts(t *testing.T) {
+	e := newTestEngine(t)
+	if _, err := e.Start("transcript idea"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	e.mu.Lock()
+	e.state.Phase = PhaseStructure
+	e.mu.Unlock()
+
+	err := e.RecordFacts(context.Background(), []IdeationFact{
+		{
+			Title:     "Agreed option",
+			Body:      "The team agreed to ship email alerts.",
+			Type:      FactRequirement,
+			Proposed:  true,
+			SourceRef: "transcripts/meeting.txt:3-5",
+		},
+	})
+	if err == nil {
+		t.Fatal("unconfirmed proposed fact should not be recorded")
+	}
+	state := e.GetState()
+	if state.Phase != PhaseStructure {
+		t.Fatalf("phase = %s, want structure", state.Phase)
+	}
+	if len(state.ProposedFacts) != 1 {
+		t.Fatalf("proposed facts = %d, want 1", len(state.ProposedFacts))
+	}
+	if len(state.FactSlugs) != 1 {
+		t.Fatalf("fact slugs = %d, want only seed fact", len(state.FactSlugs))
+	}
+}
+
+func TestRecordFactsWritesSourceRefForConfirmedTranscriptFact(t *testing.T) {
+	e := newTestEngine(t)
+	if _, err := e.Start("transcript source refs"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	e.mu.Lock()
+	e.state.Phase = PhaseStructure
+	e.mu.Unlock()
+
+	err := e.RecordFacts(context.Background(), []IdeationFact{
+		{
+			Title:     "Confirmed option",
+			Body:      "Use SSO for administrators.",
+			Type:      FactRequirement,
+			Proposed:  true,
+			Confirmed: true,
+			SourceRef: "transcripts/meeting.md:8-10",
+		},
+	})
+	if err != nil {
+		t.Fatalf("RecordFacts: %v", err)
+	}
+	wikiDir := filepath.Join(e.dataDir, inceptionWikiDir)
+	files, err := os.ReadDir(wikiDir)
+	if err != nil {
+		t.Fatalf("read wiki dir: %v", err)
+	}
+	var content []byte
+	for _, entry := range files {
+		if strings.Contains(entry.Name(), "confirmed-option") {
+			content, err = os.ReadFile(filepath.Join(wikiDir, entry.Name()))
+			if err != nil {
+				t.Fatalf("read fact: %v", err)
+			}
+			break
+		}
+	}
+	if !strings.Contains(string(content), "source_ref: transcripts/meeting.md:8-10") {
+		t.Fatalf("fact file missing source_ref citation:\n%s", string(content))
+	}
+	if !strings.Contains(string(content), "> Source: transcripts/meeting.md:8-10") {
+		t.Fatalf("fact file missing source quote citation:\n%s", string(content))
+	}
+}
+
+func TestImportTranscriptScrubsAndStoresRawDocument(t *testing.T) {
+	e := newTestEngine(t)
+	if _, err := e.Start("transcript import"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	doc, err := e.ImportTranscript("../meeting.txt", []byte("Authorization: Bearer abcdefghijklmnopqrst\nAgreed option\nDiscarded option"))
+	if err != nil {
+		t.Fatalf("ImportTranscript: %v", err)
+	}
+	if doc.Path != "transcripts/meeting.txt" || doc.Lines != 3 {
+		t.Fatalf("doc = %+v, want sanitized path with 3 lines", doc)
+	}
+	content, err := os.ReadFile(filepath.Join(e.dataDir, inceptionWikiDir, doc.Path))
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if strings.Contains(string(content), "abcdefghijklmnopqrst") {
+		t.Fatalf("transcript was not scrubbed: %q", string(content))
 	}
 }
 

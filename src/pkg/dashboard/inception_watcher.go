@@ -771,6 +771,7 @@ func (w *InceptionWatcher) buildInceptionKickMessage(state *knowledge.InceptionS
 		sb.WriteString(fmt.Sprintf("bd create --title \"<fact title>\" --type advisory --priority 1 --actor brainstorm --external-ref \"inception/%s\"\n", state.IdeaSlug))
 		sb.WriteString("bd update <bead-id> --set-metadata fact_type=\"<vision|constitution|requirement|constraint|stakeholder|acceptance>\"\n")
 		sb.WriteString("bd update <bead-id> --set-metadata fact_body=\"<detailed fact content>\"\n\n")
+		appendTranscriptFactInstructions(&sb, state)
 		sb.WriteString("Required facts: 1 vision, 1 constitution, 2+ requirements. Start creating beads IMMEDIATELY.")
 		return sb.String()
 	default:
@@ -900,13 +901,31 @@ func (w *InceptionWatcher) checkForFacts(ctx context.Context, inceptionBeads []*
 				tags[i] = strings.TrimSpace(tags[i])
 			}
 		}
+		proposed := strings.EqualFold(strings.TrimSpace(b.Meta("proposed")), "true")
+		confirmed := strings.EqualFold(strings.TrimSpace(b.Meta("confirmed")), "true")
+		sourceRef := strings.TrimSpace(b.Meta("source_ref"))
 
 		facts = append(facts, knowledge.IdeationFact{
-			Title: b.Title,
-			Body:  body,
-			Type:  knowledge.FactType(factType),
-			Tags:  tags,
+			Title:     b.Title,
+			Body:      body,
+			Type:      knowledge.FactType(factType),
+			Tags:      tags,
+			Proposed:  proposed,
+			Confirmed: confirmed,
+			SourceRef: sourceRef,
 		})
+	}
+
+	var proposedFacts []knowledge.IdeationFact
+	for _, f := range facts {
+		if f.Proposed && !f.Confirmed {
+			proposedFacts = append(proposedFacts, f)
+		}
+	}
+	if len(proposedFacts) > 0 {
+		if err := w.inception.AddProposedFacts(proposedFacts); err != nil {
+			w.logger.Warn("inception watcher: failed to store proposed facts", "error", err, "count", len(proposedFacts))
+		}
 	}
 
 	if len(facts) < minFactsForAdvance {

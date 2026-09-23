@@ -1,0 +1,1 @@
+- Import scrubbed text or Markdown transcripts into inception capture as proposed, source-cited facts that require human confirmation before entering the KB.

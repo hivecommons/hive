@@ -11,18 +11,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
-	inceptionStateFile  = "inception/state.json"
-	ideaDefaultConf     = 0.3
-	visionDefaultConf   = 0.6
-	constDefaultConf    = 0.9
-	reqDefaultConf      = 0.6
-	constraintDefaultConf = 0.7
+	inceptionStateFile     = "inception/state.json"
+	ideaDefaultConf        = 0.3
+	visionDefaultConf      = 0.6
+	constDefaultConf       = 0.9
+	reqDefaultConf         = 0.6
+	constraintDefaultConf  = 0.7
 	stakeholderDefaultConf = 0.7
 	acceptanceDefaultConf  = 0.6
-	brownfieldConfBoost = 0.15
+	brownfieldConfBoost    = 0.15
 
 	maxSlugLen = 30
 )
@@ -96,15 +98,17 @@ func (e *InceptionEngine) Start(rawIdea string) (*InceptionState, error) {
 	wikiName := slugify(truncateSlug(rawIdea)) + "-wiki"
 
 	e.state = &InceptionState{
-		Phase:     PhaseCapture,
-		Mode:      InceptionGreenfield,
-		IdeaText:  rawIdea,
-		IdeaSlug:  slug,
-		WikiName:  wikiName,
-		FactSlugs: []string{slug},
-		Questions: []Question{},
-		Answers:   make(map[string]string),
-		StartedAt: time.Now(),
+		Phase:         PhaseCapture,
+		Mode:          InceptionGreenfield,
+		IdeaText:      rawIdea,
+		IdeaSlug:      slug,
+		WikiName:      wikiName,
+		FactSlugs:     []string{slug},
+		Questions:     []Question{},
+		Answers:       make(map[string]string),
+		ProposedFacts: []IdeationFact{},
+		Transcripts:   []TranscriptDocument{},
+		StartedAt:     time.Now(),
 	}
 
 	if err := e.saveState(); err != nil {
@@ -148,16 +152,18 @@ func (e *InceptionEngine) StartBrownfield(repoURL string) (*InceptionState, erro
 	wikiName := slugify(repoBaseName(repoURL)) + "-wiki"
 
 	e.state = &InceptionState{
-		Phase:     PhaseCapture,
-		Mode:      InceptionBrownfield,
-		IdeaText:  "Brownfield scan: " + repoURL,
-		IdeaSlug:  slug,
-		RepoURL:   repoURL,
-		WikiName:  wikiName,
-		FactSlugs: []string{},
-		Questions: []Question{},
-		Answers:   make(map[string]string),
-		StartedAt: time.Now(),
+		Phase:         PhaseCapture,
+		Mode:          InceptionBrownfield,
+		IdeaText:      "Brownfield scan: " + repoURL,
+		IdeaSlug:      slug,
+		RepoURL:       repoURL,
+		WikiName:      wikiName,
+		FactSlugs:     []string{},
+		Questions:     []Question{},
+		Answers:       make(map[string]string),
+		ProposedFacts: []IdeationFact{},
+		Transcripts:   []TranscriptDocument{},
+		StartedAt:     time.Now(),
 	}
 
 	if err := e.saveState(); err != nil {
@@ -286,7 +292,9 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 		return fmt.Errorf("at least one fact is required")
 	}
 
+	accepted := make([]IdeationFact, 0, len(facts))
 	for _, f := range facts {
+		f = scrubIdeationFact(f)
 		if !f.Type.IsIdeation() {
 			return fmt.Errorf("invalid ideation fact type: %q", f.Type)
 		}
@@ -296,6 +304,23 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 		if f.Body == "" {
 			return fmt.Errorf("fact body is required for type %q", f.Type)
 		}
+		if f.Proposed && !f.Confirmed {
+			e.state.ProposedFacts = appendProposedFact(e.state.ProposedFacts, f)
+			continue
+		}
+		if f.Proposed && f.Confirmed {
+			f.Proposed = false
+		}
+		accepted = append(accepted, f)
+	}
+	if len(accepted) == 0 {
+		if err := e.saveState(); err != nil {
+			return fmt.Errorf("persisting proposed facts: %w", err)
+		}
+		return fmt.Errorf("no confirmed facts to record")
+	}
+
+	for _, f := range accepted {
 		conf := defaultConfidence(f.Type)
 		if e.state.Mode == InceptionBrownfield {
 			conf += brownfieldConfBoost
@@ -320,6 +345,7 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 			Tags:       tags,
 			Layer:      string(LayerProject),
 			Confidence: conf,
+			SourceRef:  f.SourceRef,
 		})
 		if err != nil {
 			e.logger.Warn("failed to record ideation fact",
@@ -336,8 +362,9 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 	e.state.Phase = PhaseScaffold
 	now := time.Now()
 	e.state.PhaseChangedAt = &now
+	e.state.ProposedFacts = nil
 
-	e.writeFactsToVault(facts)
+	e.writeFactsToVault(accepted)
 
 	return e.saveState()
 }
@@ -410,8 +437,15 @@ func (e *InceptionEngine) writeFactsToVault(facts []IdeationFact) {
 			}
 			fmt.Fprintf(&content, "tags: [%s]\n", strings.Join(quoted, ", "))
 		}
+		if f.SourceRef != "" {
+			fmt.Fprintf(&content, "source_ref: %s\n", sanitizeFrontmatterValue(f.SourceRef))
+		}
 		content.WriteString("---\n\n")
 		content.WriteString(f.Body)
+		if f.SourceRef != "" {
+			content.WriteString("\n\n")
+			fmt.Fprintf(&content, "> Source: %s\n", f.SourceRef)
+		}
 
 		path := filepath.Join(vaultDir, filename)
 		tmpWiki := path + ".tmp"
@@ -475,10 +509,59 @@ func (e *InceptionEngine) connectExistingVault() {
 
 // IdeationFact is the input for recording a new ideation fact from the guide agent.
 type IdeationFact struct {
-	Title string   `json:"title"`
-	Body  string   `json:"body"`
-	Type  FactType `json:"type"`
-	Tags  []string `json:"tags"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body"`
+	Type      FactType `json:"type"`
+	Tags      []string `json:"tags"`
+	Proposed  bool     `json:"proposed,omitempty"`
+	Confirmed bool     `json:"confirmed,omitempty"`
+	SourceRef string   `json:"source_ref,omitempty"`
+}
+
+// AddProposedFacts records transcript-derived candidate facts for human review
+// without moving the inception state forward or writing KB fact files.
+func (e *InceptionEngine) AddProposedFacts(facts []IdeationFact) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state == nil {
+		return fmt.Errorf("no inception in progress")
+	}
+	for _, f := range facts {
+		f = scrubIdeationFact(f)
+		if f.Title == "" || f.Body == "" || !f.Type.IsIdeation() {
+			continue
+		}
+		f.Proposed = true
+		f.Confirmed = false
+		e.state.ProposedFacts = appendProposedFact(e.state.ProposedFacts, f)
+	}
+	return e.saveState()
+}
+
+func scrubIdeationFact(f IdeationFact) IdeationFact {
+	f.Title = strings.TrimSpace(logscrub.ScrubString(f.Title))
+	f.Body = strings.TrimSpace(logscrub.ScrubString(f.Body))
+	f.SourceRef = strings.TrimSpace(logscrub.ScrubString(f.SourceRef))
+	cleanTags := make([]string, 0, len(f.Tags))
+	for _, tag := range f.Tags {
+		tag = strings.TrimSpace(logscrub.ScrubString(tag))
+		if tag != "" {
+			cleanTags = append(cleanTags, tag)
+		}
+	}
+	f.Tags = cleanTags
+	return f
+}
+
+func appendProposedFact(existing []IdeationFact, fact IdeationFact) []IdeationFact {
+	key := strings.ToLower(fact.Title + "\x00" + fact.SourceRef)
+	for i, current := range existing {
+		if strings.ToLower(current.Title+"\x00"+current.SourceRef) == key {
+			existing[i] = fact
+			return existing
+		}
+	}
+	return append(existing, fact)
 }
 
 // ProduceScaffold generates bootstrap files from the structured facts. For
@@ -717,6 +800,7 @@ func (e *InceptionEngine) AdvanceToComplete() error {
 	e.state.Phase = PhaseComplete
 	now := time.Now()
 	e.state.PhaseChangedAt = &now
+	e.state.ProposedFacts = nil
 	e.logger.Info("inception complete",
 		"mode", e.state.Mode,
 		"facts", len(e.state.FactSlugs),
@@ -739,6 +823,12 @@ func (e *InceptionEngine) GetState() *InceptionState {
 		cp.FactSlugs = append([]string{}, e.state.FactSlugs...)
 	} else {
 		cp.FactSlugs = []string{}
+	}
+	if e.state.ProposedFacts != nil {
+		cp.ProposedFacts = append([]IdeationFact{}, e.state.ProposedFacts...)
+	}
+	if e.state.Transcripts != nil {
+		cp.Transcripts = append([]TranscriptDocument{}, e.state.Transcripts...)
 	}
 	cp.Answers = make(map[string]string, len(e.state.Answers))
 	for k, v := range e.state.Answers {
@@ -879,6 +969,12 @@ func (e *InceptionEngine) loadState() {
 	if state.FactSlugs == nil {
 		state.FactSlugs = []string{}
 	}
+	if state.ProposedFacts == nil {
+		state.ProposedFacts = []IdeationFact{}
+	}
+	if state.Transcripts == nil {
+		state.Transcripts = []TranscriptDocument{}
+	}
 	e.state = &state
 	e.logger.Info("inception state loaded",
 		"phase", state.Phase,
@@ -903,6 +999,87 @@ func (e *InceptionEngine) saveState() error {
 		return fmt.Errorf("writing state: %w", err)
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// ImportTranscript stores a scrubbed meeting transcript or notes export as a
+// raw document in the inception wiki vault. It never records facts; the
+// brainstorm agent may later propose fact beads that still require a human
+// confirmation before RecordFacts accepts them.
+func (e *InceptionEngine) ImportTranscript(filename string, content []byte) (*TranscriptDocument, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.state == nil {
+		return nil, fmt.Errorf("no inception in progress")
+	}
+	name := safeTranscriptFilename(filename)
+	if name == "" {
+		return nil, fmt.Errorf("transcript filename must end in .txt or .md")
+	}
+	scrubbed := logscrub.ScrubString(string(content))
+	vaultDir := filepath.Join(e.dataDir, inceptionWikiDir)
+	transcriptDir := filepath.Join(vaultDir, "transcripts")
+	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating transcript dir: %w", err)
+	}
+	path := filepath.Join(transcriptDir, name)
+	if err := os.WriteFile(path, []byte(scrubbed), 0o644); err != nil {
+		return nil, fmt.Errorf("writing transcript: %w", err)
+	}
+	doc := TranscriptDocument{
+		Path:  filepath.ToSlash(filepath.Join("transcripts", name)),
+		Lines: countLines(scrubbed),
+	}
+	e.state.Transcripts = appendTranscriptDoc(e.state.Transcripts, doc)
+	if err := e.saveState(); err != nil {
+		return nil, err
+	}
+	if e.api != nil {
+		if err := e.api.ConnectVault(vaultDir, "inception-wiki"); err != nil {
+			if strings.Contains(err.Error(), "already connected") {
+				_ = e.api.ReindexVault(vaultDir)
+			} else {
+				e.logger.Warn("failed to connect inception wiki after transcript import", "error", err)
+			}
+		}
+	}
+	return &doc, nil
+}
+
+func safeTranscriptFilename(filename string) string {
+	base := filepath.Base(strings.ReplaceAll(filename, "\\", "/"))
+	base = strings.TrimSpace(base)
+	ext := strings.ToLower(filepath.Ext(base))
+	if ext != ".txt" && ext != ".md" {
+		return ""
+	}
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	stem = slugify(stem)
+	if stem == "" {
+		stem = "transcript"
+	}
+	return stem + ext
+}
+
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	lines := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		lines++
+	}
+	return lines
+}
+
+func appendTranscriptDoc(docs []TranscriptDocument, doc TranscriptDocument) []TranscriptDocument {
+	for i, existing := range docs {
+		if existing.Path == doc.Path {
+			docs[i] = doc
+			return docs
+		}
+	}
+	return append(docs, doc)
 }
 
 // --- fact helpers ---
