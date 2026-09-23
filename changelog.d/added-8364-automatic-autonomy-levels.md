@@ -1,0 +1,1 @@
+- Retro can now automatically promote or demote ACMM levels from repo-scoped autonomy signals when the new default-off autonomy policy is enabled, recording every decision with evidence for the dashboard and audit log ([#8364](https://github.com/hivecommons/hive/issues/8364)).

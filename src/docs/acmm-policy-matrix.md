@@ -241,3 +241,31 @@ It never changes the applied level itself; changing the level is always the
 manual process described above. See the [ACMM advisor](acmm-advisor.md) page
 for the exact thresholds per target level and what the `GET
 /api/acmm-recommendation` endpoint returns.
+
+## Automatic autonomy-signal level changes
+
+The retro lane can also act on recorded autonomy signal findings. This policy is
+additive and **off by default**:
+
+```yaml
+autonomy:
+  auto_promote: false
+  auto_demote: false
+  promote_after: 3
+  demote_on: rollback   # rollback | rework | either
+  max_level: 6
+  cooldown_days: 7
+```
+
+When enabled, three consecutive qualifying repo-scoped retro findings promote
+the repo by one level, never skipping a level and never above `max_level`.
+A rollback finding demotes by one level immediately; demotions are not blocked
+by cooldown. A pinned repo policy (`project.repo_policies[].acmm_pinned: true`)
+is never moved automatically.
+
+Every automatic move writes a repo-keyed `project.repo_policies[]` record with
+the last change, evidence bead IDs, and pin state, and also records an audit
+entry plus a visible decision bead. The hive-wide `acmm_level` remains the
+ceiling. Until the per-repo ACMM RFC (#6111) lands, Hive keeps this repo-keyed
+seam and teaches the live proxy to apply the repo override on matching
+repository requests so enforcement observes the decision without a restart.

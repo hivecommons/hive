@@ -16536,6 +16536,66 @@
         }
       }
     },
+    "/api/acmm-recommendation/repo-pin": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Pin or unpin automatic ACMM movement for a repo",
+        "description": "Owner-only endpoint that toggles the repo policy pin used by automatic autonomy-signal promotion and demotion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "pinned"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "pinned": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pin state updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "pinned": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
     "/api/acmm/evaluation": {
       "get": {
         "tags": [

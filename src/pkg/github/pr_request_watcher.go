@@ -142,6 +142,7 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 // watcher outliving its test races the test's global-seam restores.
 // PROpenedHook is notified when the watcher opens a NEW PR for an agent.
 type PROpenedHook func(agent, repo string, number int, url string)
+type PRRepoPolicyGate func(agent, repo string) error
 
 // SetPROpenedHook installs (or with nil, removes) the PR-opened hook. Safe
 // to call before or after the watcher starts.
@@ -154,6 +155,17 @@ func (c *Client) SetPROpenedHook(fn PROpenedHook) {
 		return
 	}
 	c.prOpenedHook.Store(&fn)
+}
+
+func (c *Client) SetPRRepoPolicyGate(fn PRRepoPolicyGate) {
+	if c == nil {
+		return
+	}
+	if fn == nil {
+		c.prRepoPolicyGate.Store(nil)
+		return
+	}
+	c.prRepoPolicyGate.Store(&fn)
 }
 
 func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent string) bool, nowFn func() time.Time) <-chan struct{} {
@@ -278,6 +290,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if err := c.prAuthz(req.Agent, fileUID); err != nil {
 		c.denyPRRequest(path, req, err.Error(), nowFn)
 		return
+	}
+	if gate := c.prRepoPolicyGate.Load(); gate != nil && *gate != nil {
+		if err := (*gate)(req.Agent, req.Repo); err != nil {
+			c.denyPRRequest(path, req, err.Error(), nowFn)
+			return
+		}
 	}
 
 	// Per-repo pause (#6203). Checked here, immediately after authorization and

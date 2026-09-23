@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestAutonomySignalDetectorsCarryScopeFields(t *testing.T) {
@@ -88,6 +89,33 @@ func TestAutonomySignalAdvisoryGolden(t *testing.T) {
 		if adv.Meta(metadataAutonomyDirection) != "qualifies" || adv.Meta(metadataAutonomyChangeClass) != "scheduler" {
 			t.Fatalf("advisory autonomy metadata = %#v", adv.Metadata)
 		}
+	}
+}
+
+func TestAutonomySignalAdvisoriesKeepSeparateEvidenceRuns(t *testing.T) {
+	source := newStore(t, "autonomy-evidence-source")
+	retroStore := newStore(t, "autonomy-evidence-retro")
+	for i := 0; i < config.DefaultAutonomyPromoteAfter; i++ {
+		b, err := source.Create("smooth run", beads.TypeTask, beads.PriorityMedium, "alice", "hivecommons/hive#8313")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Update(b.ID, func(bd *beads.Bead) {
+			bd.Status = beads.StatusClosed
+			bd.Metadata = map[string]interface{}{
+				"pr_ref":                         "hivecommons/hive#9001",
+				"pr_state":                       "merged",
+				"plan_revisions_before_approval": "0",
+				"scope_repo":                     "hivecommons/hive",
+				"autonomy_level":                 "L4",
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lane := NewLane(map[string]*beads.Store{"alice": source, Actor: retroStore}, retroStore, nil, nil, Config{ScanIntervalS: 1}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if created := lane.Run(context.Background()); created != config.DefaultAutonomyPromoteAfter {
+		t.Fatalf("created = %d, want one autonomy advisory per evidence run", created)
 	}
 }
 

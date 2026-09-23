@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,7 @@ const (
 	retroActor                        = "retro"
 	retroPatternPlanAcceptedFirstPass = "plan_accepted_first_pass"
 	retroPatternPRMergedNoRework      = "pr_merged_no_rework"
+	retroPatternPRReworkedAfterReview = "pr_reworked_after_review"
 	retroPatternRunRolledBack         = "run_rolled_back"
 )
 
@@ -45,12 +47,47 @@ const agentMetricsCoverageKey = "coverage"
 // renders directly.
 func (s *Server) handleACMMRecommendation(w http.ResponseWriter, r *http.Request) {
 	rec := acmmadvisor.RecommendFromStatus(s.buildACMMStatusInputs())
-	jsonResponse(w, acmmRecommendationResponse{Recommendation: rec, AutonomySignals: s.autonomySignalFacts()})
+	jsonResponse(w, acmmRecommendationResponse{Recommendation: rec, AutonomySignals: s.autonomySignalFacts(), AutonomyLevels: s.autonomyLevelFacts()})
+}
+
+func (s *Server) handleACMMRepoPin(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Repo   string `json:"repo"`
+		Pinned bool   `json:"pinned"`
+	}
+	if err := decodeBody(r, &body); err != nil || strings.TrimSpace(body.Repo) == "" {
+		jsonError(w, "repo is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.deps.Config.SetRepoACMMPinnedAndSave(body.Repo, body.Pinned); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "autonomy_acmm_pin", auditDetail("repo", body.Repo, "pinned", fmt.Sprintf("%t", body.Pinned)), "")
+	s.refreshAndPersist()
+	jsonResponse(w, map[string]interface{}{"ok": true, "repo": body.Repo, "pinned": body.Pinned})
 }
 
 type acmmRecommendationResponse struct {
 	acmmadvisor.Recommendation
 	AutonomySignals []AutonomySignalFact `json:"AutonomySignals,omitempty"`
+	AutonomyLevels  []AutonomyLevelFact  `json:"AutonomyLevels,omitempty"`
+}
+
+type AutonomyLevelFact struct {
+	Repo        string   `json:"repo"`
+	Level       int      `json:"level"`
+	Pinned      bool     `json:"pinned"`
+	LastChange  string   `json:"lastChange,omitempty"`
+	Direction   string   `json:"direction,omitempty"`
+	EvidenceIDs []string `json:"evidenceIds,omitempty"`
 }
 
 type AutonomySignalFact struct {
@@ -99,9 +136,35 @@ func (s *Server) autonomySignalFacts() []AutonomySignalFact {
 	return facts
 }
 
+func (s *Server) autonomyLevelFacts() []AutonomyLevelFact {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	cfg := s.deps.Config
+	facts := make([]AutonomyLevelFact, 0, len(cfg.Project.RepoPolicies))
+	for _, rp := range cfg.Project.RepoPolicies {
+		if rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil {
+			continue
+		}
+		f := AutonomyLevelFact{Repo: rp.Repo, Pinned: rp.ACMMPinned}
+		if rp.ACMMLevel != nil {
+			f.Level = *rp.ACMMLevel
+		} else {
+			f.Level = cfg.EffectiveACMMLevelForRepo(rp.Repo)
+		}
+		if rp.ACMMLastAutomatic != nil {
+			f.LastChange = rp.ACMMLastAutomatic.At.UTC().Format("2006-01-02T15:04:05Z07:00")
+			f.Direction = rp.ACMMLastAutomatic.Direction
+			f.EvidenceIDs = append([]string(nil), rp.ACMMLastAutomatic.EvidenceIDs...)
+		}
+		facts = append(facts, f)
+	}
+	return facts
+}
+
 func isAutonomySignalPattern(pattern string) bool {
 	switch pattern {
-	case retroPatternPlanAcceptedFirstPass, retroPatternPRMergedNoRework, retroPatternRunRolledBack:
+	case retroPatternPlanAcceptedFirstPass, retroPatternPRMergedNoRework, retroPatternPRReworkedAfterReview, retroPatternRunRolledBack:
 		return true
 	default:
 		return false

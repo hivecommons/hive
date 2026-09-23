@@ -41,6 +41,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		handler func(http.ResponseWriter, *http.Request)
 	}{
 		{"ACMM create issue", http.MethodPost, "/api/acmm/issues", srv.handleACMMCreateIssue},
+		{"ACMM repo pin", http.MethodPut, "/api/acmm-recommendation/repo-pin", srv.handleACMMRepoPin},
 		{"agent config cadences", http.MethodPut, "/api/config/agent/scanner/cadences", srv.handleAgentConfigCadences},
 		{"agent config channels", http.MethodPut, "/api/config/agent/scanner/channels", srv.handleAgentConfigChannels},
 		{"agent config connections", http.MethodPut, "/api/config/agent/scanner/connections", srv.handleAgentConfigConnections},

@@ -151,6 +151,80 @@ func TestHandleACMMRecommendationIncludesAutonomySignalFacts(t *testing.T) {
 	}
 }
 
+func TestHandleACMMRecommendationShowsPinnedAutonomyLevel(t *testing.T) {
+	s := newTestServer()
+	level := 4
+	last := config.AutonomyLevelChange{
+		At:          time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
+		Direction:   "promote",
+		From:        3,
+		To:          4,
+		Repo:        "hivecommons/hive",
+		EvidenceIDs: []string{"a", "b", "c"},
+	}
+	s.deps = &Dependencies{Config: &config.Config{
+		ACMMLevel: &level,
+		Project: config.ProjectConfig{RepoPolicies: []config.RepoPolicy{{
+			Repo:              "hivecommons/hive",
+			ACMMLevel:         &level,
+			ACMMPinned:        true,
+			ACMMLastAutomatic: &last,
+		}}},
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/acmm-recommendation", nil)
+	rr := httptest.NewRecorder()
+	s.handleACMMRecommendation(rr, req)
+
+	var resp struct {
+		AutonomyLevels []AutonomyLevelFact
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.AutonomyLevels) != 1 {
+		t.Fatalf("AutonomyLevels = %#v, want one", resp.AutonomyLevels)
+	}
+	got := resp.AutonomyLevels[0]
+	if !got.Pinned || got.Level != 4 || got.Direction != "promote" || len(got.EvidenceIDs) != 3 {
+		t.Fatalf("level fact = %#v", got)
+	}
+}
+
+func TestHandleACMMRepoPinPersistsPinnedPolicy(t *testing.T) {
+	s := newTestServer()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(wd, ".dashboard-test", strings.ReplaceAll(t.Name(), "/", "-"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(wd, ".dashboard-test")) })
+	level := 4
+	s.deps = &Dependencies{Config: &config.Config{
+		Project:    config.ProjectConfig{Org: "hivecommons", Repos: []string{"hive"}},
+		Agents:     map[string]config.AgentConfig{"scanner": {}},
+		ACMMLevel:  &level,
+		SourcePath: filepath.Join(dir, "hive.yaml"),
+	}}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/acmm-recommendation/repo-pin", strings.NewReader(`{"repo":"hivecommons/hive","pinned":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+	rr := httptest.NewRecorder()
+	s.handleACMMRepoPin(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if !s.deps.Config.RepoACMMPinned("hivecommons/hive") {
+		t.Fatal("repo policy was not pinned")
+	}
+}
+
 // TestBuildACMMStatusInputs_ReadsLiveSignals unit-tests the signal mapping in
 // isolation, including the coverage extraction and nil-safety.
 func TestBuildACMMStatusInputs_ReadsLiveSignals(t *testing.T) {

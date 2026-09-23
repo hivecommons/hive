@@ -84,6 +84,7 @@ type Config struct {
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
 	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
+	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
 	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
@@ -488,6 +489,61 @@ type RetroConfig struct {
 	LongStallDays       int    `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
 	RecentClosedWindowS int    `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
 	AnalysisModel       string `yaml:"analysis_model,omitempty" json:"analysis_model,omitempty"`
+}
+
+const (
+	DefaultAutonomyPromoteAfter = 3
+	DefaultAutonomyDemoteOn     = "rollback"
+	DefaultAutonomyCooldownDays = 7
+	MaxACMMLevel                = 6
+	MinACMMLevel                = 1
+)
+
+type AutonomyConfig struct {
+	AutoPromote  bool   `yaml:"auto_promote,omitempty" json:"auto_promote,omitempty"`
+	AutoDemote   bool   `yaml:"auto_demote,omitempty" json:"auto_demote,omitempty"`
+	PromoteAfter int    `yaml:"promote_after,omitempty" json:"promote_after,omitempty"`
+	DemoteOn     string `yaml:"demote_on,omitempty" json:"demote_on,omitempty"`
+	MaxLevel     int    `yaml:"max_level,omitempty" json:"max_level,omitempty"`
+	CooldownDays int    `yaml:"cooldown_days,omitempty" json:"cooldown_days,omitempty"`
+}
+
+func (a AutonomyConfig) EffectivePromoteAfter() int {
+	if a.PromoteAfter > 0 {
+		return a.PromoteAfter
+	}
+	return DefaultAutonomyPromoteAfter
+}
+
+func (a AutonomyConfig) EffectiveDemoteOn() string {
+	if strings.TrimSpace(a.DemoteOn) != "" {
+		return strings.ToLower(strings.TrimSpace(a.DemoteOn))
+	}
+	return DefaultAutonomyDemoteOn
+}
+
+func (a AutonomyConfig) EffectiveCooldownDays() int {
+	if a.CooldownDays > 0 {
+		return a.CooldownDays
+	}
+	return DefaultAutonomyCooldownDays
+}
+
+func (a AutonomyConfig) EffectiveMaxLevel(hiveCeiling int) int {
+	maxLevel := a.MaxLevel
+	if maxLevel <= 0 {
+		maxLevel = MaxACMMLevel
+	}
+	if hiveCeiling > 0 && maxLevel > hiveCeiling {
+		maxLevel = hiveCeiling
+	}
+	if maxLevel > MaxACMMLevel {
+		maxLevel = MaxACMMLevel
+	}
+	if maxLevel < MinACMMLevel {
+		maxLevel = MinACMMLevel
+	}
+	return maxLevel
 }
 
 // planFromLabelMinACMM is the lowest ACMM level at which the label trigger fires

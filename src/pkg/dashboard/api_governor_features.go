@@ -91,6 +91,13 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
 
+		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
+		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
+		AutonomyPromoteAfter *int    `json:"autonomyPromoteAfter"`
+		AutonomyDemoteOn     *string `json:"autonomyDemoteOn"`
+		AutonomyMaxLevel     *int    `json:"autonomyMaxLevel"`
+		AutonomyCooldownDays *int    `json:"autonomyCooldownDays"`
+
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
@@ -154,6 +161,26 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 		}
+	}
+	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 1 {
+		jsonError(w, "autonomy promote_after must be at least 1", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyDemoteOn != nil {
+		switch strings.TrimSpace(*body.AutonomyDemoteOn) {
+		case "", "rollback", "rework", "either":
+		default:
+			jsonError(w, "autonomy demote_on must be rollback, rework, or either", http.StatusBadRequest)
+			return
+		}
+	}
+	if body.AutonomyMaxLevel != nil && (*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
+		jsonError(w, "autonomy max_level must be 1-6", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 1 {
+		jsonError(w, "autonomy cooldown_days must be at least 1", http.StatusBadRequest)
+		return
 	}
 
 	// --- apply ---
@@ -229,6 +256,24 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.PublicationOwner != nil {
 		cfg.Publication.Owner = strings.TrimSpace(*body.PublicationOwner)
 	}
+	if body.AutonomyAutoPromote != nil {
+		cfg.Autonomy.AutoPromote = *body.AutonomyAutoPromote
+	}
+	if body.AutonomyAutoDemote != nil {
+		cfg.Autonomy.AutoDemote = *body.AutonomyAutoDemote
+	}
+	if body.AutonomyPromoteAfter != nil {
+		cfg.Autonomy.PromoteAfter = *body.AutonomyPromoteAfter
+	}
+	if body.AutonomyDemoteOn != nil {
+		cfg.Autonomy.DemoteOn = strings.TrimSpace(*body.AutonomyDemoteOn)
+	}
+	if body.AutonomyMaxLevel != nil {
+		cfg.Autonomy.MaxLevel = *body.AutonomyMaxLevel
+	}
+	if body.AutonomyCooldownDays != nil {
+		cfg.Autonomy.CooldownDays = *body.AutonomyCooldownDays
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -301,6 +346,12 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularBinary":          cfg.Runs.Spektacular.Binary,
 		"spektacularPollS":           int(cfg.Runs.Spektacular.PollInterval().Seconds()),
 		"maxStageRetries":            cfg.Runs.MaxStageRetriesOrDefault(),
+		"autonomyAutoPromote":        cfg.Autonomy.AutoPromote,
+		"autonomyAutoDemote":         cfg.Autonomy.AutoDemote,
+		"autonomyPromoteAfter":       cfg.Autonomy.EffectivePromoteAfter(),
+		"autonomyDemoteOn":           cfg.Autonomy.EffectiveDemoteOn(),
+		"autonomyMaxLevel":           cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
+		"autonomyCooldownDays":       cfg.Autonomy.EffectiveCooldownDays(),
 		"rotationEnabled":            rotationCfg.Enabled,
 		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),
 		"rotationHighVolumeCadenceS": rotationCfg.EffectiveHighVolumeCadenceS(),

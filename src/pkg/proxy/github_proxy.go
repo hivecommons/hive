@@ -1219,7 +1219,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			allowed, isMutation := GraphQLAllowedCaps(mode, caps, body)
+			allowed, isMutation := GraphQLAllowedCaps(autonomyGraphQLMode(agentName, body, mode), caps, body)
 			if !allowed {
 				blocked = true
 				if isMutation {
@@ -1235,7 +1235,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// autonomy. Its control-plane calls (App token mint, heartbeat)
 			// must not be gated as if they were agent writes. Repo-filter and
 			// canary-egress checks below still apply.
-		} else if !AllowedByModeCaps(mode, caps, req.Method, req.URL.Path) {
+		} else if !AllowedByModeCaps(autonomyModeForRepo(agentName, ExtractRepo(req.URL.Path), mode), caps, req.Method, req.URL.Path) {
 			blocked = true
 			// An unidentified agent is silently treated as ADVISORY, which turns
 			// a permissions bug into an indistinguishable "policy denial". Say so

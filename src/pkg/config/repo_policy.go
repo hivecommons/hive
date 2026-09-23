@@ -3,13 +3,27 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // RepoPolicy records optional per-repository policy overrides. It is separate
 // from project.repos so existing configs keep their string-list repo shape.
 type RepoPolicy struct {
-	Repo                  string `yaml:"repo" json:"repo"`
-	SelfAuthorizationHold *bool  `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	Repo                  string               `yaml:"repo" json:"repo"`
+	SelfAuthorizationHold *bool                `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
+	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
+	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+}
+
+type AutonomyLevelChange struct {
+	At          time.Time `yaml:"at" json:"at"`
+	Direction   string    `yaml:"direction" json:"direction"`
+	From        int       `yaml:"from" json:"from"`
+	To          int       `yaml:"to" json:"to"`
+	Repo        string    `yaml:"repo" json:"repo"`
+	EvidenceIDs []string  `yaml:"evidence_ids,omitempty" json:"evidence_ids,omitempty"`
+	Reason      string    `yaml:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // RepoPolicyFor returns the policy override entry covering repo, if any.
@@ -29,6 +43,120 @@ func (c *Config) RepoPolicyFor(repo string) (RepoPolicy, bool) {
 		}
 	}
 	return RepoPolicy{}, false
+}
+
+func (c *Config) EffectiveACMMLevelForRepo(repo string) int {
+	hive := c.ACMMLevelOrZero()
+	if hive <= 0 {
+		return hive
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok && rp.ACMMLevel != nil {
+		if *rp.ACMMLevel < hive {
+			return *rp.ACMMLevel
+		}
+		return hive
+	}
+	return hive
+}
+
+func (c *Config) RepoACMMPinned(repo string) bool {
+	rp, ok := c.RepoPolicyFor(repo)
+	return ok && rp.ACMMPinned
+}
+
+func (c *Config) SetRepoACMMPinnedAndSave(repo string, pinned bool) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("no config loaded")
+	}
+	name := strings.TrimSpace(repo)
+	if name == "" {
+		return false, fmt.Errorf("repo is required")
+	}
+	name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+
+	saveMu.Lock()
+	defer saveMu.Unlock()
+
+	key := repoPauseKey(c.Project.Org, name)
+	repoPauseMu.Lock()
+	idx := -1
+	for i, rp := range c.Project.RepoPolicies {
+		if repoPauseKey(c.Project.Org, rp.Repo) == key {
+			idx = i
+			break
+		}
+	}
+	changed := false
+	if idx >= 0 {
+		if c.Project.RepoPolicies[idx].ACMMPinned != pinned {
+			c.Project.RepoPolicies[idx].ACMMPinned = pinned
+			changed = true
+		}
+	} else if pinned {
+		c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, ACMMPinned: true})
+		changed = true
+	}
+	repoPauseMu.Unlock()
+
+	if !changed {
+		return false, nil
+	}
+	return true, c.saveLocked()
+}
+
+func (c *Config) RepoACMMLastAutomatic(repo string) (AutonomyLevelChange, bool) {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || rp.ACMMLastAutomatic == nil {
+		return AutonomyLevelChange{}, false
+	}
+	return *rp.ACMMLastAutomatic, true
+}
+
+func (c *Config) SetRepoACMMAutomaticAndSave(repo string, level int, change AutonomyLevelChange) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("no config loaded")
+	}
+	name := strings.TrimSpace(repo)
+	if name == "" {
+		return false, fmt.Errorf("repo is required")
+	}
+	name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+	if level < MinACMMLevel || level > MaxACMMLevel {
+		return false, fmt.Errorf("acmm level must be 1-6")
+	}
+	change.Repo = name
+
+	saveMu.Lock()
+	defer saveMu.Unlock()
+
+	key := repoPauseKey(c.Project.Org, name)
+	repoPauseMu.Lock()
+	idx := -1
+	for i, rp := range c.Project.RepoPolicies {
+		if repoPauseKey(c.Project.Org, rp.Repo) == key {
+			idx = i
+			break
+		}
+	}
+	changed := false
+	if idx >= 0 {
+		if c.Project.RepoPolicies[idx].ACMMLevel == nil || *c.Project.RepoPolicies[idx].ACMMLevel != level {
+			v := level
+			c.Project.RepoPolicies[idx].ACMMLevel = &v
+			changed = true
+		}
+		c.Project.RepoPolicies[idx].ACMMLastAutomatic = &change
+	} else {
+		v := level
+		c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, ACMMLevel: &v, ACMMLastAutomatic: &change})
+		changed = true
+	}
+	repoPauseMu.Unlock()
+
+	if !changed {
+		return false, nil
+	}
+	return true, c.saveLocked()
 }
 
 // SelfAuthorizationHoldEnabledForRepo resolves the #5117 hold switch for repo:
@@ -74,7 +202,10 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 	changed := false
 	if enabled == nil {
 		if idx >= 0 && c.Project.RepoPolicies[idx].SelfAuthorizationHold != nil {
-			c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+			c.Project.RepoPolicies[idx].SelfAuthorizationHold = nil
+			if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+				c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+			}
 			changed = true
 		}
 	} else {
@@ -95,6 +226,10 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 		return false, nil
 	}
 	return true, c.saveLocked()
+}
+
+func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
+	return rp.SelfAuthorizationHold == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil
 }
 
 // SetSelfAuthorizationHoldForRepos applies a batch of per-repo #5117 override
@@ -123,7 +258,10 @@ func (c *Config) SetSelfAuthorizationHoldForRepos(overrides map[string]*bool) bo
 		}
 		if enabled == nil {
 			if idx >= 0 && c.Project.RepoPolicies[idx].SelfAuthorizationHold != nil {
-				c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+				c.Project.RepoPolicies[idx].SelfAuthorizationHold = nil
+				if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+					c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+				}
 				changed = true
 			}
 			continue

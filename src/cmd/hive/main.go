@@ -2143,6 +2143,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		b.ghClient.SetHiveIdentity(hiveIdentity(b.cfg))
 		b.ghClient.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return b.cfg.SelfAuthorizationHoldEnabledForRepo(repo) })
+		b.ghClient.SetPRRepoPolicyGate(func(agentName, repo string) error {
+			level := b.cfg.EffectiveACMMLevelForRepo(repo)
+			if level <= 0 {
+				level = b.cfg.ACMMLevelOrZero()
+			}
+			if !agent.DefaultAgentMode(agentName, level).CanPush() {
+				return fmt.Errorf("repo %s effective ACMM L%d does not allow %s to open PRs", repo, level, agentName)
+			}
+			return nil
+		})
 		installReviewRelaySettings(b.ghClient, b.cfg, b.logger)
 		// github.app_signed_commits: re-author each agent branch through
 		// createCommitOnBranch before the PR opens, so its commit is
@@ -5347,6 +5357,12 @@ func (b *boot) bootLanes() {
 			"stall_threshold_s", rc.StallThresholdS,
 			"max_replans", rc.MaxReplans)
 	}
+	for _, rp := range b.cfg.Project.RepoPolicies {
+		if rp.ACMMLevel != nil {
+			repo := config.QualifyRepo(b.cfg.Project.Org, rp.Repo)
+			proxy.SetAutonomyRepoLevel(repo, b.cfg.EffectiveACMMLevelForRepo(repo))
+		}
+	}
 	if b.cfg.Retro.Enabled {
 		retroStore := b.beadStores[retro.Actor]
 		escalationStoreOnce.Do(func() {
@@ -5366,6 +5382,17 @@ func (b *boot) bootLanes() {
 		if b.knowledgeAPI != nil {
 			b.retroLane.SetKnowledgeSink(b.knowledgeAPI)
 		}
+		autonomyNotify := func(title, message string, demote bool) {
+			if b.notifier == nil {
+				return
+			}
+			priority := notify.PriorityDefault
+			if demote {
+				priority = notify.PriorityHigh
+			}
+			b.notifier.Send(title, message, priority)
+		}
+		b.retroLane.SetAutonomyPolicy(retro.NewAutonomyPolicyEngine(b.cfg, retroStore, dashboard.NewAutonomyDecisionSink(b.dashSrv, autonomyNotify, proxy.SetAutonomyRepoLevel)))
 		b.logger.Info("retro lane enabled",
 			"scan_interval_s", b.cfg.Retro.ScanIntervalS,
 			"max_fix_attempts", b.cfg.Retro.MaxFixAttempts,

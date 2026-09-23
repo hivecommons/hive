@@ -11291,6 +11291,17 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
+    async function toggleACMMRepoPin(repo, pinned) {
+      try {
+        await fetch('/api/acmm-recommendation/repo-pin', {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ repo, pinned })
+        });
+        fetchACMMReco();
+      } catch (e) { /* transient; next refresh will reconcile */ }
+    }
+
     function renderACMMReco(rec) {
       const section = document.getElementById('acmm-reco-section');
       const card = document.getElementById('acmm-reco-card');
@@ -11302,6 +11313,23 @@ function burnAreaChart() {
       const met = Array.isArray(rec.Met) ? rec.Met : [];
       const unmet = Array.isArray(rec.Unmet) ? rec.Unmet : [];
       const signals = Array.isArray(rec.AutonomySignals) ? rec.AutonomySignals : [];
+      const levels = Array.isArray(rec.AutonomyLevels) ? rec.AutonomyLevels : [];
+      const levelsHtml = levels.length
+        ? `<div class="reco-fact-heading">Automatic autonomy level decisions</div><ul class="reco-checklist">` + levels.map((l) => {
+          l = l || {};
+          const repo = l.repo || 'repo unknown';
+          const level = Number.isFinite(Number(l.level)) ? `L${Number(l.level)}` : 'level unknown';
+          const pinned = !!l.pinned;
+          const evidence = Array.isArray(l.evidenceIds) && l.evidenceIds.length ? `evidence: ${l.evidenceIds.map(escapeHtml).join(', ')}` : 'no automatic evidence yet';
+          const change = l.lastChange ? `last ${escapeHtml(l.direction || 'change')} at ${escapeHtml(l.lastChange)}` : 'no automatic change yet';
+          return `<li class="reco-crit ${pinned ? 'unmet' : 'met'}">
+            <span class="mark">${pinned ? '📌' : '✓'}</span>
+            <div class="crit-body"><div class="crit-name">${escapeHtml(repo)} current automatic level ${escapeHtml(level)}</div>
+            <div class="crit-detail">${change}</div><div class="crit-cmp">${evidence}</div>
+            <button class="reco-action" type="button" data-action="toggleACMMRepoPin" data-repo="${escapeHtml(repo)}" data-pinned="${!pinned}">${pinned ? 'Unpin' : 'Pin'} automatic movement</button></div>
+          </li>`;
+        }).join('') + `</ul>`
+        : '';
       const signalHtml = signals.length
         ? `<div class="reco-fact-heading">Retro autonomy signal facts</div><ul class="reco-checklist">` + signals.map((s) => {
           s = s || {};
@@ -11314,7 +11342,7 @@ function burnAreaChart() {
           return `<li class="reco-crit ${cls}">
             <span class="mark">${mark}</span>
             <div class="crit-body"><div class="crit-name">${escapeHtml(scope)} ${escapeHtml(dir || 'signals')} ${escapeHtml(level)}</div>
-            ${detail}<div class="crit-cmp">fact only — no action button; automatic promotion/demotion is deferred.</div></div>
+            ${detail}<div class="crit-cmp">fact recorded for the default-off automatic promotion/demotion policy.</div></div>
           </li>`;
         }).join('') + `</ul>`
         : `<div class="reco-fact-heading">Retro autonomy signal facts</div><div class="reco-calm">No qualifying autonomy signals right now; that is an acceptable terminal state.</div>`;
@@ -11326,7 +11354,7 @@ function burnAreaChart() {
         const flow = (cur !== null)
           ? `<div class="reco-level-flow">L${cur} <span class="reco-badge stay">stay</span></div>`
           : '';
-        card.innerHTML = `${flow}<div class="reco-calm">${escapeHtml(rec.Rationale || 'No level-up recommendation right now.')}</div>${signalHtml}`;
+        card.innerHTML = `${flow}<div class="reco-calm">${escapeHtml(rec.Rationale || 'No level-up recommendation right now.')}</div>${levelsHtml}${signalHtml}`;
         applySectionCollapse('acmm-reco-section');
         return;
       }
@@ -11365,8 +11393,9 @@ function burnAreaChart() {
         : '';
 
       card.innerHTML = `${flowHtml}${rationaleHtml}${readyHtml}${checklistHtml}
+        ${levelsHtml}
         ${signalHtml}
-        <div class="reco-advisory-note">Advisory only — this does not change the maturity level.</div>`;
+        <div class="reco-advisory-note">Advisor recommendations are still human-approved; the separate autonomy policy only changes levels when explicitly enabled.</div>`;
       applySectionCollapse('acmm-reco-section');
     }
 
@@ -16402,6 +16431,7 @@ function burnAreaChart() {
         case 'toggleRestriction': { if (el.dataset.index !== undefined) { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } else { toggleRestriction(parseInt(el.dataset.arg0, 10), el.checked); } } break;
         case 'removeRestriction': removeRestriction(parseInt(el.dataset.index !== undefined ? el.dataset.index : el.dataset.arg0, 10)); break;
         case 'removeAgent': removeAgent(agent); break;
+        case 'toggleACMMRepoPin': toggleACMMRepoPin(el.dataset.repo || '', el.dataset.pinned === 'true'); break;
         case 'planIssue': planIssue(el); break;
         case 'bobKeySet': case 'bobKeyClear': case 'bobKeyTest': break; // direct listeners attached at render time
         default: hiveDispatchAction('action', e); break;

@@ -53,6 +53,7 @@ const (
 	PatternDriftPause            = "drift_pause"
 	PatternPlanAcceptedFirstPass = "plan_accepted_first_pass"
 	PatternPRMergedNoRework      = "pr_merged_no_rework"
+	PatternPRReworkedAfterReview = "pr_reworked_after_review"
 	PatternRunRolledBack         = "run_rolled_back"
 )
 
@@ -135,6 +136,7 @@ type Lane struct {
 	thresholds    Thresholds
 	lastRun       time.Time
 	recentWindow  time.Duration
+	autonomy      *AutonomyPolicyEngine
 }
 
 func NewLane(stores map[string]*beads.Store, advisoryStore *beads.Store, tl *timeline.Store, attempts AttemptReader, cfg Config, logger *slog.Logger) *Lane {
@@ -168,6 +170,10 @@ func (l *Lane) SetAnalyzer(analyzer *Analyzer) {
 
 func (l *Lane) SetKnowledgeSink(sink KnowledgeSink) {
 	l.knowledge = sink
+}
+
+func (l *Lane) SetAutonomyPolicy(engine *AutonomyPolicyEngine) {
+	l.autonomy = engine
 }
 
 func (l *Lane) Due(now time.Time) bool {
@@ -210,6 +216,9 @@ func (l *Lane) Run(ctx context.Context) int {
 				l.logger.Warn("retro: failed to mark bead analyzed", "store", storeName, "bead", b.ID, "error", err)
 			}
 		}
+	}
+	if l.autonomy != nil {
+		l.autonomy.Evaluate()
 	}
 	return created
 }
@@ -284,7 +293,7 @@ func (l *Lane) ingestLesson(ctx context.Context, r RetroRecord, analysis *Analys
 
 func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool {
 	findingKey := retroFindingKey(f)
-	if l.openDuplicateFinding(f) {
+	if !isAutonomyPolicyPattern(f.Pattern) && l.openDuplicateFinding(f) {
 		return false
 	}
 	b, err := l.advisoryStore.Create(f.Title, beads.TypeAdvisory, severityToPriority(f.Severity), Actor, r.PRRef)
@@ -543,6 +552,17 @@ func Detect(r RetroRecord, t Thresholds) []Finding {
 			Fields:   autonomyFields(r, scopeType, scopeValue, level, "qualifies"),
 		})
 	}
+	if r.PRReworkObserved && r.PRReworkCommitsAfterReview > 0 {
+		scopeType, scopeValue := autonomyScope(r)
+		level := autonomyLevel(r, "current ACMM level")
+		findings = append(findings, Finding{
+			Pattern:  PatternPRReworkedAfterReview,
+			Severity: "medium",
+			Title:    fmt.Sprintf("autonomy signal: %s should lose %s (review rework)", scopeValue, level),
+			Detail:   fmt.Sprintf("PR %s required %d review-driven rework commit(s).", r.PRRef, r.PRReworkCommitsAfterReview),
+			Fields:   autonomyFields(r, scopeType, scopeValue, level, "should lose"),
+		})
+	}
 	if r.RollbackEvents > 0 {
 		scopeType, scopeValue := autonomyScope(r)
 		level := autonomyLevel(r, "current ACMM level")
@@ -550,7 +570,7 @@ func Detect(r RetroRecord, t Thresholds) []Finding {
 			Pattern:  PatternRunRolledBack,
 			Severity: "medium",
 			Title:    fmt.Sprintf("autonomy signal: %s should lose %s (rollback)", scopeValue, level),
-			Detail:   fmt.Sprintf("Run %s recorded %d rollback event(s). Demotion automation is deferred pending per-repo scoping.", r.BeadID, r.RollbackEvents),
+			Detail:   fmt.Sprintf("Run %s recorded %d rollback event(s).", r.BeadID, r.RollbackEvents),
 			Fields:   autonomyFields(r, scopeType, scopeValue, level, "should lose"),
 		})
 	}
