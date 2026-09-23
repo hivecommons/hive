@@ -19,7 +19,7 @@ import (
 //
 // The ledger itself lives in pkg/claims; the dashboard owns the relay seam
 // (auto-claim on lease, exclusion in selectTask, takeover → yank). This file
-// wires the two remaining producers/consumers that only cmd/hive can see:
+// wires the two remaining producers and consumers that only cmd/hive can see:
 //   - the scheduler: withhold claimed issues from kicks, and record an agent
 //     claim for every issue a kick hands one of the hive's own agents; and
 //   - GitHub: post the claim / takeover / release comments and labels so a
