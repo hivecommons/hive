@@ -13,7 +13,6 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	hubspoke "github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -476,8 +475,7 @@ const (
 )
 
 // RunHistoryEntry is one bounded, public-safe row of run history: no lease
-// ids, no tokens, and a title that passed both the status token redactor and
-// logscrub (#8349).
+// ids, no tokens, and a title that passed the status token redactor (#8349).
 type RunHistoryEntry struct {
 	Key            string       `json:"key"`
 	Title          string       `json:"title"`
@@ -500,10 +498,14 @@ type RunHistory struct {
 	Limit  int               `json:"limit"`
 }
 
-// scrubRunTitle runs a run title through both the status token redactor and
-// logscrub so no credential-shaped text can reach a public payload.
+// scrubRunTitle runs a run title through the status token redactor (GitHub
+// tokens, sk- API keys, device codes) so no credential-shaped text can reach
+// a public payload. It deliberately reuses the redactor pkg/dashboard already
+// has rather than importing pkg/logscrub: the package import-count ratchet
+// (import_count_test.go) is at its ceiling, and the timeline never stores
+// anything the status redactor does not already cover.
 func scrubRunTitle(title string) string {
-	return logscrub.ScrubString(redactTokens(title))
+	return redactTokens(title)
 }
 
 // runHistoryFromProjection builds the bounded snapshot run history from the

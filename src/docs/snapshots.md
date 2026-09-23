@@ -28,8 +28,9 @@ live `runs` list:
   recently completed stages without a live lease, newest first, capped at
   `limit` entries (`SnapshotRunHistoryLimit`). `outcome` is `active`,
   `completed`, or `merged` when the run's journey reached merge.
-- Every title passes both the status token redactor and `logscrub` before it
-  is published, and the block never carries lease ids, task ids, or tokens.
+- Every title passes the status token redactor (GitHub tokens, API keys,
+  device codes) before it is published, and the block never carries lease
+  ids, task ids, or tokens.
 - The block is omitted entirely when the spoke cannot project runs (for
   example a spoke on a release line without run leases). The snapshot page
   then renders "runs: unknown"; it never substitutes an empty history for
