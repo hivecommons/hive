@@ -4,6 +4,7 @@ package wavefront_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestLiveCrustifyWavefrontSmoke(t *testing.T) {
 	if _, _, err := src.Verify(ctx, runID, graph.Revision); err != nil {
 		t.Fatalf("verify completed node %s: %v", runID, err)
 	}
-	if _, err := src.Complete(ctx, runID, graph.Revision+"-stale", nil, time.Now().UTC()); err != wavefront.ErrStaleRevision {
+	if _, err := src.Complete(ctx, runID, graph.Revision+"-stale", nil, time.Now().UTC()); !errors.Is(err, wavefront.ErrStaleRevision) {
 		t.Fatalf("stale revision completion = %v, want ErrStaleRevision", err)
 	}
 }

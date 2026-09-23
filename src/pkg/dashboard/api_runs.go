@@ -228,6 +228,14 @@ func (s *Server) handleRunGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if run, ok := s.queuedRunByKey(key); ok {
+		if err := s.populateRunBurndown(r, &run); err != nil {
+			jsonError(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		jsonResponse(w, run)
+		return
+	}
 	jsonError(w, "run not found", http.StatusNotFound)
 }
 
@@ -241,6 +249,43 @@ func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
 	}
 	run.Burndown = burndown
 	return nil
+}
+
+func (s *Server) queuedRunByKey(key string) (Run, bool) {
+	if s == nil || s.contributeHub == nil {
+		return Run{}, false
+	}
+	for _, item := range s.contributeHub.ReadyQueue(readyQueueDefaultLimit) {
+		if item.Key != key || item.SourceType != worksource.SourceTypeRun || item.ExternalID == "" {
+			continue
+		}
+		stage := runStageFromLabels(item.Labels)
+		if stage == "" {
+			stage = StageImplement
+		}
+		return Run{
+			Key:       item.Key,
+			Title:     redactTokens(item.Title),
+			Repo:      item.Repo,
+			State:     "queued",
+			Stage:     stage,
+			WaitingOn: RunWaitingOnAgent,
+			Stages:    leaseRunStages(stage, 0),
+		}, true
+	}
+	return Run{}, false
+}
+
+func runStageFromLabels(labels []string) string {
+	for _, label := range labels {
+		if stage, ok := strings.CutPrefix(strings.TrimSpace(label), "stage/"); ok {
+			switch stage {
+			case StageSpec, StagePlan, StageImplement:
+				return stage
+			}
+		}
+	}
+	return ""
 }
 
 // handleRunAudit serves POST /api/runs/audit: owner-triggered activation of

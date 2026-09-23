@@ -1772,6 +1772,15 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
+	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
+	for _, repoName := range cfg.Project.Repos {
+		full := repoName
+		if !strings.Contains(repoName, "/") {
+			full = cfg.Project.Org + "/" + repoName
+		}
+		repoRows[repoName] = repoName
+		repoRows[full] = repoName
+	}
 
 	issuesByRepo := make(map[string][]any)
 	prsByRepo := make(map[string][]any)
@@ -1780,10 +1789,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
-			issuesByRepo[issue.Repo] = append(issuesByRepo[issue.Repo], issue)
+			key := repoRowKey(repoRows, issue.Repo)
+			issuesByRepo[key] = append(issuesByRepo[key], issue)
 		}
 		for _, pr := range actionable.PRs.Items {
-			prsByRepo[pr.Repo] = append(prsByRepo[pr.Repo], FrontendPR{PullRequest: pr})
+			key := repoRowKey(repoRows, pr.Repo)
+			prsByRepo[key] = append(prsByRepo[key], FrontendPR{PullRequest: pr})
 		}
 		// Held items ride beside the actionable ones so the card can show
 		// what its own counts include (hivecommons/hive#7896). PRs.Held is
@@ -1791,11 +1802,13 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		// only as its HoldItem, and Hold.Items also lists the held PRs, so
 		// only the issue entries are taken from it.
 		for _, pr := range actionable.PRs.Held {
-			heldPrsByRepo[pr.Repo] = append(heldPrsByRepo[pr.Repo], FrontendPR{PullRequest: pr})
+			key := repoRowKey(repoRows, pr.Repo)
+			heldPrsByRepo[key] = append(heldPrsByRepo[key], FrontendPR{PullRequest: pr})
 		}
 		for _, item := range actionable.Hold.Items {
 			if item.Type == "issue" {
-				heldIssuesByRepo[item.Repo] = append(heldIssuesByRepo[item.Repo], item)
+				key := repoRowKey(repoRows, item.Repo)
+				heldIssuesByRepo[key] = append(heldIssuesByRepo[key], item)
 			}
 		}
 	}
@@ -1866,6 +1879,13 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	}
 
 	return repos
+}
+
+func repoRowKey(rows map[string]string, repo string) string {
+	if key, ok := rows[repo]; ok {
+		return key
+	}
+	return repo
 }
 
 func repoMode(govState governor.State, repoName, full string) string {

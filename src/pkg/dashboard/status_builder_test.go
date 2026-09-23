@@ -759,6 +759,28 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 	}
 }
 
+func TestBuildReposGroupsFullRepoWorksourceItemsUnderBareConfigRepo(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "clubanderson", Repos: []string{"hive-runs-e2e"}},
+	}
+	actionable := &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{{
+			Repo:       "clubanderson/hive-runs-e2e",
+			SourceType: "run",
+			ExternalID: "crustify-fixture:parse-ast",
+			Title:      "implement: Port the AST parser to Rust",
+			Labels:     []string{"wavefront"},
+		}}},
+	}
+	repos := buildRepos(cfg, actionable, governor.State{})
+	if len(repos) != 1 {
+		t.Fatalf("len = %d", len(repos))
+	}
+	if len(repos[0].ActionableIssues) != 1 {
+		t.Fatalf("actionable issues = %+v", repos[0].ActionableIssues)
+	}
+}
+
 func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},

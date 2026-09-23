@@ -51,8 +51,11 @@ cheap for polling. Each item reports `key` as `<owner/repo>#<number>`, `repo` as
 
 `GET /api/runs/{key}` returns the same run detail plus timeline-derived stage
 history. `{key}` may be the canonical key (URL-escape `#` as `%23`) or, for
-backward compatibility with early v5 run leases, the lease-shaped key. When the
-run key maps to a wired convergence campaign, the detail response may include:
+backward compatibility with early v5 run leases, the lease-shaped key. It also
+accepts queued Wavefront run-stage keys such as
+`owner/repo!crustify-fixture:parse-ast` so operators can read campaign burndown
+before a contributor claims the node. When the run key maps to a wired
+convergence campaign, the detail response may include:
 
 ```json
 "burndown": {
