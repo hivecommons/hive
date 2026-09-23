@@ -22,6 +22,7 @@ func TestBootProjectContextNeverCarriesDashboardToken(t *testing.T) {
 	t.Setenv("HIVE_ADVISORY_ISSUE", "")
 	t.Setenv("HIVE_DASHBOARD_TOKEN", bootDashboardTokenSentinel)
 	cfg := bootAdvisoryConfig(t)
+	cfg.Project.PrimaryRepo = "acme/widgets"
 	cfg.Dashboard.AuthToken = bootDashboardTokenSentinel
 	b, _ := newDepsTestBoot(t, cfg)
 	b.ghClient = fakeGitHubClient(t)
