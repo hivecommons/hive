@@ -20,6 +20,7 @@ package planning
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/agentparse"
@@ -53,6 +54,12 @@ const (
 	// (`bd update <id> --set-metadata pr_url=<url>`). The plan review renders
 	// it as the task's PR link (hivecommons/hive#8011).
 	MetaPRURL = "pr_url"
+	// MetaPlanRepo records the repository a multi-repo run child belongs to.
+	MetaPlanRepo = "plan_repo"
+	// MetaPlanRepoRole records that repository's role within a run wave.
+	MetaPlanRepoRole = "plan_repo_role"
+	// MetaPlanWave records the 1-based wave number for multi-repo run barriers.
+	MetaPlanWave = "plan_wave"
 )
 
 const (
@@ -244,10 +251,13 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 	// always valid (TypeTask, string metadata, known ids). They are covered
 	// representatively by TestDecomposeFromOutput_CreateChildError (read-only
 	// store dir); the remaining sibling branches are defensive I/O guards.
+	childWaves := map[string]int{}
+	waveChildren := map[int][]string{}
 	for _, task := range tasks {
-		child, err := store.Create(task.Title, beads.TypeTask, priority, actor, "")
+		title, annotations := planTaskAnnotations(task.Title)
+		child, err := store.Create(title, beads.TypeTask, priority, actor, "")
 		if err != nil {
-			return nil, fmt.Errorf("planning: creating child bead for %q: %w", task.Title, err)
+			return nil, fmt.Errorf("planning: creating child bead for %q: %w", title, err)
 		}
 		children = append(children, child)
 		if task.Ref != "" {
@@ -270,6 +280,15 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 				return nil, fmt.Errorf("planning: tagging plan_ref on %s: %w", child.ID, err)
 			}
 		}
+		for key, value := range annotations {
+			if err := store.SetMetadata(child.ID, key, value); err != nil {
+				return nil, fmt.Errorf("planning: tagging %s on %s: %w", key, child.ID, err)
+			}
+		}
+		if wave, ok := planWaveValue(annotations[MetaPlanWave]); ok {
+			childWaves[child.ID] = wave
+			waveChildren[wave] = append(waveChildren[wave], child.ID)
+		}
 	}
 
 	// Second pass: wire dependencies now that every ref is known. Unknown refs
@@ -286,6 +305,9 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 				return nil, fmt.Errorf("planning: linking %s -> %s: %w", children[i].ID, depID, err)
 			}
 		}
+	}
+	if err := addPlanWaveBarriers(store, children, childWaves, waveChildren); err != nil {
+		return nil, err
 	}
 
 	// Set the epic's plan_status. Normally draft (children stay gated until a
@@ -307,6 +329,75 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 	}
 
 	return &Result{Children: children, Tasks: tasks}, nil
+}
+
+func planTaskAnnotations(title string) (string, map[string]string) {
+	annotations := map[string]string{}
+	parts := strings.Fields(title)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		token := strings.TrimSpace(part)
+		if !strings.HasPrefix(token, "[") || !strings.HasSuffix(token, "]") || !strings.Contains(token, ":") {
+			out = append(out, part)
+			continue
+		}
+		body := strings.TrimSuffix(strings.TrimPrefix(token, "["), "]")
+		key, value, ok := strings.Cut(body, ":")
+		if !ok {
+			out = append(out, part)
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "repo", "repository":
+			annotations[MetaPlanRepo] = value
+		case "role":
+			annotations[MetaPlanRepoRole] = value
+		case "wave":
+			if wave, ok := planWaveValue(value); ok {
+				annotations[MetaPlanWave] = strconv.Itoa(wave)
+			}
+		default:
+			out = append(out, part)
+		}
+	}
+	if len(annotations) == 0 {
+		return title, annotations
+	}
+	cleaned := strings.Join(out, " ")
+	return strings.TrimSpace(cleaned), annotations
+}
+
+func planWaveValue(raw string) (int, bool) {
+	wave, err := strconv.Atoi(strings.TrimSpace(raw))
+	return wave, err == nil && wave > 0
+}
+
+func addPlanWaveBarriers(store *beads.Store, children []*beads.Bead, childWaves map[string]int, waveChildren map[int][]string) error {
+	for _, child := range children {
+		wave, ok := childWaves[child.ID]
+		if !ok || wave <= 1 {
+			continue
+		}
+		prevWave := 0
+		for candidate := range waveChildren {
+			if candidate < wave && candidate > prevWave {
+				prevWave = candidate
+			}
+		}
+		if prevWave == 0 {
+			continue
+		}
+		for _, depID := range waveChildren[prevWave] {
+			if depID == child.ID {
+				continue
+			}
+			if err := store.AddDependency(child.ID, depID); err != nil {
+				return fmt.Errorf("planning: linking wave barrier %s -> %s: %w", child.ID, depID, err)
+			}
+		}
+	}
+	return nil
 }
 
 // validateEpic ensures epic is non-nil, of type epic, and (when store is

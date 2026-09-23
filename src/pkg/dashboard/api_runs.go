@@ -33,19 +33,33 @@ type RunStage struct {
 	Receipt string `json:"receipt,omitempty"`
 }
 
+type RunWavePR struct {
+	Repo  string `json:"repo"`
+	Role  string `json:"role,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Title string `json:"title,omitempty"`
+}
+
+type RunReviewWave struct {
+	Wave          int         `json:"wave"`
+	PRs           []RunWavePR `json:"prs"`
+	ApproveAction string      `json:"approve_action,omitempty"`
+}
+
 type Run struct {
-	Key            string       `json:"key"`
-	Title          string       `json:"title"`
-	Repo           string       `json:"repo"`
-	Stage          string       `json:"stage"`
-	Gen            uint64       `json:"gen"`
-	StageStartedAt string       `json:"stage_started_at,omitempty"`
-	WaitingOn      RunWaitingOn `json:"waiting_on"`
-	WaitingSince   string       `json:"waiting_since,omitempty"`
-	Assignee       string       `json:"assignee,omitempty"`
-	LastReceipt    string       `json:"last_receipt,omitempty"`
-	PlanEpicID     string       `json:"plan_epic_id,omitempty"`
-	Stages         []RunStage   `json:"stages"`
+	Key            string          `json:"key"`
+	Title          string          `json:"title"`
+	Repo           string          `json:"repo"`
+	Stage          string          `json:"stage"`
+	Gen            uint64          `json:"gen"`
+	StageStartedAt string          `json:"stage_started_at,omitempty"`
+	WaitingOn      RunWaitingOn    `json:"waiting_on"`
+	WaitingSince   string          `json:"waiting_since,omitempty"`
+	Assignee       string          `json:"assignee,omitempty"`
+	LastReceipt    string          `json:"last_receipt,omitempty"`
+	PlanEpicID     string          `json:"plan_epic_id,omitempty"`
+	Stages         []RunStage      `json:"stages"`
+	ReviewWaves    []RunReviewWave `json:"review_waves,omitempty"`
 }
 
 type RunsSummary struct {
@@ -124,6 +138,9 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 	runs := make([]Run, 0, len(leases))
 	for _, lease := range leases {
 		run := runFromLease(lease, plans[lease.key], holds[lease.key])
+		if run.PlanEpicID != "" {
+			run.ReviewWaves = s.planReviewWaves(run.PlanEpicID)
+		}
 		events := s.LifecycleTimeline().ByIssue(lease.key)
 		run.LastReceipt = latestRunReceipt(events)
 		if run.StageStartedAt == "" {
@@ -141,6 +158,49 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 		return runs[i].Key < runs[j].Key
 	})
 	return runs, nil
+}
+
+func (s *Server) planReviewWaves(epicID string) []RunReviewWave {
+	if s == nil || s.deps == nil || strings.TrimSpace(epicID) == "" {
+		return nil
+	}
+	byWave := map[int][]RunWavePR{}
+	for _, store := range s.deps.BeadStores {
+		if store == nil {
+			continue
+		}
+		tree, err := planning.GetPlanTree(store, epicID)
+		if err != nil || tree == nil {
+			continue
+		}
+		for _, child := range tree.Children {
+			wave, err := strconv.Atoi(strings.TrimSpace(child.Wave))
+			if err != nil || wave <= 0 || child.PRURL == "" {
+				continue
+			}
+			repo := strings.TrimSpace(child.Repo)
+			if repo == "" {
+				repo = strings.TrimSpace(child.Title)
+			}
+			byWave[wave] = append(byWave[wave], RunWavePR{
+				Repo: repo, Role: child.RepoRole, URL: child.PRURL, Title: child.Title,
+			})
+		}
+		break
+	}
+	if len(byWave) == 0 {
+		return nil
+	}
+	waves := make([]int, 0, len(byWave))
+	for wave := range byWave {
+		waves = append(waves, wave)
+	}
+	sort.Ints(waves)
+	out := make([]RunReviewWave, 0, len(waves))
+	for _, wave := range waves {
+		out = append(out, RunReviewWave{Wave: wave, PRs: byWave[wave], ApproveAction: "approve_plan_wave"})
+	}
+	return out
 }
 
 func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, error) {

@@ -202,3 +202,53 @@ func TestRunsHumanReviewHoldWaitsOnHuman(t *testing.T) {
 		t.Fatalf("human hold run = %+v", runs)
 	}
 }
+
+func TestRunDetailGroupsWavePRsUnderSingleReviewAction(t *testing.T) {
+	s, deps := runsTestServer(t)
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	epic, err := store.Create("multi repo run", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusDraft
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8314"
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	res, err := planning.DecomposeFromOutput(store, epic, `1. [T1] API work [repo:myorg/api] [role:service] [wave:1] [agent_suitable]
+2. [T2] UI work [repo:myorg/ui] [role:consumer] [wave:1] [agent_suitable]
+`, planning.Options{})
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	for i, child := range res.Children {
+		pr := "https://github.com/myorg/" + []string{"api", "ui"}[i] + "/pull/10"
+		if err := store.SetMetadata(child.ID, planning.MetaPRURL, pr); err != nil {
+			t.Fatalf("set pr url: %v", err)
+		}
+	}
+	deps.BeadStores = map[string]*beads.Store{"architect": store}
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8314", "myorg/repo1", 8314, "myorg/repo1#8314", "contributor", StageImplement, 13, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	rec := doGet(s, "/api/runs/myorg%2Frepo1%238314")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET run detail = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	if len(run.ReviewWaves) != 1 || run.ReviewWaves[0].Wave != 1 || run.ReviewWaves[0].ApproveAction != "approve_plan_wave" {
+		t.Fatalf("review waves = %+v", run.ReviewWaves)
+	}
+	if len(run.ReviewWaves[0].PRs) != 2 {
+		t.Fatalf("wave PRs = %+v", run.ReviewWaves[0].PRs)
+	}
+}

@@ -48,6 +48,33 @@ func TestRepoOverlap_TwoSpokesOneRepo(t *testing.T) {
 	}
 }
 
+func TestRunFanoutOverlapsFromRegistryUsesHubFixture(t *testing.T) {
+	got := RunFanoutOverlapsFromRegistry([]RegistryEntry{
+		overlapHive("h-hive", "hive", "tunaos", "os", "os", "images", "docs"),
+		overlapHive("h-reef", "reef", "tunaos", "apps", "apps", "docs"),
+		overlapHive("h-clean", "clean", "tunaos", "cli", "cli"),
+	}, []string{"tunaos/docs"})
+	if len(got) != 1 {
+		t.Fatalf("want one fan-out overlap, got %+v", got)
+	}
+	if got[0].Repo != "tunaos/docs" || len(got[0].Hives) != 2 {
+		t.Fatalf("fan-out overlap = %+v", got[0])
+	}
+	if clean := RunFanoutOverlapsFromRegistry([]RegistryEntry{
+		overlapHive("h-hive", "hive", "tunaos", "os", "os"),
+		overlapHive("h-reef", "reef", "tunaos", "apps", "apps"),
+	}, []string{"tunaos/docs"}); clean != nil {
+		t.Fatalf("clean registry overlap = %+v", clean)
+	}
+	gheA := overlapHive("h-ghe-a", "ghe-a", "acme", "api", "ui")
+	gheA.GitHubHost = "github.ibm.com"
+	gheB := overlapHive("h-ghe-b", "ghe-b", "acme", "docs", "ui")
+	gheB.GitHubHost = "github.ibm.com"
+	if got := RunFanoutOverlapsFromRegistry([]RegistryEntry{gheA, gheB}, []string{"acme/ui"}); len(got) != 1 {
+		t.Fatalf("unqualified run repo should match enterprise-host overlap, got %+v", got)
+	}
+}
+
 // A clean fleet returns nil, not an empty slice, so the JSON field is omitted
 // entirely rather than rendering an empty section.
 func TestRepoOverlap_CleanFleetReportsNothing(t *testing.T) {

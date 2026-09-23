@@ -3,6 +3,8 @@ package hub
 import (
 	"sort"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // RepoOverlap is one work item claimed by more than one spoke.
@@ -187,6 +189,46 @@ func computeRepoOverlaps(hives []RegistryEntry) []RepoOverlap {
 		}
 		return strings.ToLower(out[i].Repo) < strings.ToLower(out[j].Repo)
 	})
+	return out
+}
+
+// RunFanoutOverlapsFromRegistry adapts the hub's constellation overlap index to
+// the runs fan-out guard. It returns only overlaps involving repositories the
+// plan is about to lease, so a dirty fleet elsewhere does not block unrelated
+// runs.
+func RunFanoutOverlapsFromRegistry(hives []RegistryEntry, repos []string) []worksource.RunRepoOverlap {
+	requested := map[string]bool{}
+	requestedPath := map[string]bool{}
+	for _, repo := range repos {
+		explicitHost := repoRefHost(repo) != ""
+		host, canonical, ok := canonicalRepoClaim(RegistryEntry{}, repo)
+		if !ok {
+			continue
+		}
+		if explicitHost {
+			requested[repoClaimKey(host, canonical)] = true
+		} else {
+			requestedPath[strings.ToLower(canonical)] = true
+		}
+	}
+	if len(requested) == 0 && len(requestedPath) == 0 {
+		return nil
+	}
+	var out []worksource.RunRepoOverlap
+	for _, overlap := range computeRepoOverlaps(hives) {
+		if !requested[repoClaimKey(overlap.Host, overlap.Repo)] && !requestedPath[strings.ToLower(overlap.Repo)] {
+			continue
+		}
+		hives := make([]string, 0, len(overlap.Hives))
+		for _, claim := range overlap.Hives {
+			label := strings.TrimSpace(claim.Name)
+			if label == "" {
+				label = claim.ID
+			}
+			hives = append(hives, label)
+		}
+		out = append(out, worksource.RunRepoOverlap{Repo: overlap.Repo, Hives: hives})
+	}
 	return out
 }
 

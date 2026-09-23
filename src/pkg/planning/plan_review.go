@@ -37,6 +37,10 @@ type PlanChild struct {
 	// PRURL is the pull request carrying the task's work: MetaPRURL when set,
 	// else the child's ExternalRef when it is a PR URL (hivecommons/hive#8011).
 	PRURL string `json:"prUrl,omitempty"`
+	// Repo/RepoRole/Wave describe a multi-repo run participant, when present.
+	Repo     string `json:"repo,omitempty"`
+	RepoRole string `json:"repoRole,omitempty"`
+	Wave     string `json:"wave,omitempty"`
 }
 
 // childPRURL resolves a child's PR link: an explicit pr_url wins; otherwise a
@@ -135,6 +139,9 @@ func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
 			DependsOn: c.DependsOn,
 			ClaimedBy: c.Meta(MetaClaimedBy),
 			PRURL:     childPRURL(c),
+			Repo:      c.Meta(MetaPlanRepo),
+			RepoRole:  c.Meta(MetaPlanRepoRole),
+			Wave:      c.Meta(MetaPlanWave),
 		})
 	}
 	return tree, nil

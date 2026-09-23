@@ -1,0 +1,1 @@
+- Runs can now fan out implementation waves across multiple repositories, refusing constellation repo-claim overlaps, holding later waves behind final/skipped barriers, and documenting forward-fix as the default for partial failures ([#8314](https://github.com/hivecommons/hive/issues/8314)).

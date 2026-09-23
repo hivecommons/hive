@@ -116,6 +116,27 @@ func TestDecomposeFromOutput_UnmarkedTaskDefaultsAgentSuitable(t *testing.T) {
 	}
 }
 
+func TestDecomposeFromOutput_MultiRepoWaveMetadataAndBarrier(t *testing.T) {
+	store := newStore(t)
+	epic := mustEpic(t, store, "Coordinate across repos")
+	plan := `1. [T1] Implement API [repo:acme/api] [role:service] [wave:1] [agent_suitable]
+2. [T2] Implement UI [repo:acme/ui] [role:consumer] [wave:1] [agent_suitable]
+3. [T3] Wire integration [repo:acme/ui] [role:consumer] [wave:2] [agent_suitable]
+`
+	res, err := DecomposeFromOutput(store, epic, plan, Options{})
+	if err != nil {
+		t.Fatalf("DecomposeFromOutput: %v", err)
+	}
+	if got := res.Children[0].Title; got != "Implement API" {
+		t.Fatalf("annotation tags must not leak into child title: %q", got)
+	}
+	first := mustGet(t, store, res.Children[0].ID)
+	if first.Meta(MetaPlanRepo) != "acme/api" || first.Meta(MetaPlanRepoRole) != "service" || first.Meta(MetaPlanWave) != "1" {
+		t.Fatalf("multi-repo metadata = repo %q role %q wave %q", first.Meta(MetaPlanRepo), first.Meta(MetaPlanRepoRole), first.Meta(MetaPlanWave))
+	}
+	assertDeps(t, store, res.Children[2].ID, []string{res.Children[0].ID, res.Children[1].ID})
+}
+
 func TestDecomposeFromOutput_UnknownDepSkipped(t *testing.T) {
 	store := newStore(t)
 	epic := mustEpic(t, store, "Epic")
