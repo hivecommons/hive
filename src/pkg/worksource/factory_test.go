@@ -1,6 +1,7 @@
 package worksource
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -146,6 +147,25 @@ func TestAppendAdditive_WavefrontNotLinkedIsAnError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("enabling wavefront without a linked builder must fail closed, not silently list nothing")
+	}
+}
+
+func TestAppendAdditive_RunStagesUsesConfiguredAccessor(t *testing.T) {
+	SetRunStageAccessor(&stubRunStageLeases{stages: []RunStage{{
+		RunKey: "run-8460", Stage: RunStageSpec, Repo: "hivecommons/hive", Title: "gap 2",
+	}}})
+	t.Cleanup(func() { SetRunStageAccessor(nil) })
+
+	ws, err := AppendAdditive(staticSource{sourceType: "github"}, config.WorkSourceConfig{RunStages: true})
+	if err != nil {
+		t.Fatalf("AppendAdditive: %v", err)
+	}
+	got, err := ws.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(got) != 1 || got[0].SourceType != SourceTypeRun || got[0].ExternalID != "run-8460:spec" {
+		t.Fatalf("composed run-stage issues = %+v", got)
 	}
 }
 

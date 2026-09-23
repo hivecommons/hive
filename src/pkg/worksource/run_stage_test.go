@@ -118,6 +118,13 @@ func TestRunStageSourceNilAndErrors(t *testing.T) {
 	if got, err := NewRunStageSource(nil).ListIssues(context.Background()); err != nil || len(got) != 0 {
 		t.Fatalf("nil accessor = %+v, %v; want empty nil-error", got, err)
 	}
+	src := NewRunStageSource(nil)
+	src.SetAccessor(&stubRunStageLeases{stages: []RunStage{{
+		RunKey: "run-wired", Stage: RunStageSpec, Repo: "hivecommons/hive",
+	}}})
+	if got, err := src.ListIssues(context.Background()); err != nil || len(got) != 1 || got[0].ExternalID != "run-wired:spec" {
+		t.Fatalf("wired accessor = %+v, %v; want run-wired:spec", got, err)
+	}
 	if _, err := NewRunStageSource(&stubRunStageLeases{pendingErr: errors.New("registry down")}).ListIssues(context.Background()); err == nil {
 		t.Fatalf("pending error should be returned")
 	}

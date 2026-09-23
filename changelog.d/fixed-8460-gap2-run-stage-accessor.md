@@ -1,0 +1,1 @@
+- Run-stage work sources now use the live dashboard lease accessor, so hives with `governor.work_source.run_stages` enabled can offer pending spec/plan/implement run stages to relays instead of silently listing none (gap 2 of #8460, related to #8296).

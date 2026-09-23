@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,45 @@ func workSourceIssuesForCycle(
 		}
 	}
 	return github.IssueResultFromItems(filtered)
+}
+
+func workSourceIssuesForConfiguredCycle(
+	ctx context.Context,
+	cfg *config.Config,
+	ghClient *github.Client,
+	base github.IssueResult,
+	logger *slog.Logger,
+) github.IssueResult {
+	ghToken := cfg.GitHub.Token
+	if ghToken == "" {
+		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	}
+	if workSourcePrimaryIsGitHub(cfg.Governor.WorkSource) {
+		ws, wsErr := worksource.AppendAdditive(emptyWorkSource{sourceType: "github"}, cfg.Governor.WorkSource)
+		extras := workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
+		items := append([]github.Issue{}, base.Items...)
+		items = append(items, extras.Items...)
+		return github.IssueResultFromItems(items)
+	}
+	ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
+	return workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
+}
+
+func workSourceOverlayEnabled(cfg config.WorkSourceConfig) bool {
+	return (cfg.Type != "" && cfg.Type != "github") || cfg.RunStages || cfg.Wavefront.Enabled
+}
+
+func workSourcePrimaryIsGitHub(cfg config.WorkSourceConfig) bool {
+	return cfg.Type == "" || cfg.Type == "github"
+}
+
+type emptyWorkSource struct {
+	sourceType string
+}
+
+func (s emptyWorkSource) SourceType() string { return s.sourceType }
+func (s emptyWorkSource) ListIssues(context.Context) ([]worksource.Issue, error) {
+	return []worksource.Issue{}, nil
 }
 
 // mergeResumeKicks appends crash-restarted agents to the due list ONLY through

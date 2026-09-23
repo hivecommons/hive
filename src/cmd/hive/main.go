@@ -2406,6 +2406,7 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 // persistence enables injected; see bootDashboardDeps.
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
+	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -6048,25 +6049,27 @@ func advisoryIssueMissingError(repo string, cause error) string {
 // is no: an all-repos failure usually means a rate limit or outage, and a
 // zero-count result would idle the agents, so the cycle keeps prior state.
 //
-// On a non-default work source (e.g. Linear) the GitHub call is only there
-// for PR maintenance; the backlog comes from the work-source overlay that
-// runs next. Aborting here meant a Linear-sourced hive whose GitHub App could
-// not list issues (403 "Resource not accessible by integration", an Issues
-// permission a Linear hive should not need) never enumerated its Linear
-// backlog at all and sat at queue 0. Such a hive continues with whatever
-// partial result GitHub returned (nil becomes an empty result; PRs are kept
-// when obtainable) and lets the overlay populate issues.
+// On a non-default work source (e.g. Linear), or a default GitHub source with
+// additive work enabled (run stages / Wavefront), the GitHub issue call is not
+// the only backlog authority. Aborting here meant a Linear-sourced hive whose
+// GitHub App could not list issues (403 "Resource not accessible by
+// integration", an Issues permission a Linear hive should not need) never
+// enumerated its Linear backlog at all and sat at queue 0; the same rule keeps
+// local additive sources reachable during a transient GitHub issue outage. Such
+// a hive continues with whatever partial result GitHub returned (nil becomes
+// an empty result; PRs are kept when obtainable) and lets the overlay populate
+// issues.
 func actionableAfterGitHubEnumerate(cfg *config.Config, actionable *github.ActionableResult, err error, logger *slog.Logger) (*github.ActionableResult, bool) {
 	if err == nil {
 		return actionable, true
 	}
-	wsType := cfg.Governor.WorkSource.Type
-	if wsType == "" || wsType == "github" {
+	if !workSourceOverlayEnabled(cfg.Governor.WorkSource) {
 		logger.Error("failed to enumerate actionable items", "error", err)
 		return nil, false
 	}
 	logger.Warn("GitHub enumeration failed; continuing so the configured work source can still populate issues",
-		"work_source", wsType, "error", err)
+		"work_source", cfg.Governor.WorkSource.Type, "run_stages", cfg.Governor.WorkSource.RunStages,
+		"wavefront", cfg.Governor.WorkSource.Wavefront.Enabled, "error", err)
 	if actionable == nil {
 		actionable = &github.ActionableResult{GeneratedAt: time.Now()}
 	}
@@ -6139,15 +6142,10 @@ func runEvalCycle(
 		return
 	}
 
-	// If a non-default work source is configured, overlay its issues onto
-	// the actionable result. PRs always come from GitHub.
-	if wsType := cfg.Governor.WorkSource.Type; wsType != "" && wsType != "github" {
-		ghToken := cfg.GitHub.Token
-		if ghToken == "" {
-			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
-		}
-		ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
-		actionable.Issues = workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
+	// If a non-default or additive work source is configured, overlay its
+	// issues onto the actionable result. PRs always come from GitHub.
+	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
+		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)

@@ -25,6 +25,18 @@ func (f *fakeWorkSource) ListIssues(context.Context) ([]worksource.Issue, error)
 	return f.issues, f.err
 }
 
+type stubRunStageAccessor struct {
+	stages []worksource.RunStage
+}
+
+func (s *stubRunStageAccessor) PendingRunStages(context.Context) ([]worksource.RunStage, error) {
+	return s.stages, nil
+}
+
+func (s *stubRunStageAccessor) StageHasLiveLease(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 // TestWorkSourceIssuesForCycle guards the non-GitHub overlay (#4187, #4731,
 // #4975): both failure modes fail CLOSED for issues, and the success path
 // applies the GitHub exempt/require-label gates and SLA summary.
@@ -100,6 +112,47 @@ func TestWorkSourceIssuesForCycle(t *testing.T) {
 				t.Fatalf("ListIssues calls = %d, want %d", tc.ws.calls, tc.wantCalls)
 			}
 		})
+	}
+}
+
+func TestWorkSourceOverlayEnabledIncludesAdditiveGitHubSources(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  config.WorkSourceConfig
+		want bool
+	}{
+		{name: "default github without additives", cfg: config.WorkSourceConfig{}, want: false},
+		{name: "explicit github without additives", cfg: config.WorkSourceConfig{Type: "github"}, want: false},
+		{name: "non default primary", cfg: config.WorkSourceConfig{Type: "linear"}, want: true},
+		{name: "run stages additive on default github", cfg: config.WorkSourceConfig{RunStages: true}, want: true},
+		{name: "wavefront additive on explicit github", cfg: config.WorkSourceConfig{Type: "github", Wavefront: config.WavefrontSourceConfig{Enabled: true}}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workSourceOverlayEnabled(tc.cfg); got != tc.want {
+				t.Fatalf("workSourceOverlayEnabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkSourceIssuesForConfiguredCycleAppendsAdditiveWithoutGitHubReenumeration(t *testing.T) {
+	worksource.SetRunStageAccessor(&stubRunStageAccessor{stages: []worksource.RunStage{{
+		RunKey: "run-8460", Stage: worksource.RunStageSpec, Repo: "hivecommons/hive", Title: "gap 2",
+	}}})
+	t.Cleanup(func() { worksource.SetRunStageAccessor(nil) })
+
+	cfg := &config.Config{}
+	cfg.Governor.WorkSource.RunStages = true
+	base := github.IssueResultFromItems([]github.Issue{{
+		Repo: "hivecommons/hive", Number: 42, Title: "github issue",
+	}})
+	got := workSourceIssuesForConfiguredCycle(context.Background(), cfg, nil, base, testLogger())
+	if got.Count != 2 {
+		t.Fatalf("Count = %d, want 2: %+v", got.Count, got.Items)
+	}
+	if got.Items[0].Number != 42 || got.Items[1].ExternalID != "run-8460:spec" {
+		t.Fatalf("items = %+v", got.Items)
 	}
 }
 

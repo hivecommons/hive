@@ -41,7 +41,9 @@ on `spec` and `implement` records its dependency on `plan`.
 The dashboard's `RunStageAccessor` backs this source with the lease registry:
 each stage lease is the run's pending stage, a stage some connection is
 currently working is not offered again, and `implement` is listed only once the
-run's imported plan is approved. The Spektacular stage runner that advances the
+run's imported plan is approved. The hive binary wires that accessor during
+dashboard boot; if the accessor is unavailable, the additive source fails
+closed by listing no run stages. The Spektacular stage runner that advances the
 lease is described in [spektacular.md](spektacular.md).
 
 ## Wavefront migration graph (`wavefront.enabled: true`)

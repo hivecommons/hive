@@ -115,6 +115,9 @@ const AdditiveWavefront = "wavefront"
 var (
 	additiveMu       sync.RWMutex
 	additiveBuilders = map[string]AdditiveBuilder{}
+
+	runStageAccessorMu sync.RWMutex
+	runStageAccessor   RunStageLeaseAccessor
 )
 
 // RegisterAdditive registers the builder for a named additive source. A
@@ -137,6 +140,21 @@ func lookupAdditive(name string) (AdditiveBuilder, bool) {
 	return b, ok
 }
 
+// SetRunStageAccessor injects the live dashboard lease registry used by the
+// additive run-stage work source. A nil accessor is allowed and makes the
+// source list nothing, matching the pre-wiring fail-closed behavior.
+func SetRunStageAccessor(accessor RunStageLeaseAccessor) {
+	runStageAccessorMu.Lock()
+	defer runStageAccessorMu.Unlock()
+	runStageAccessor = accessor
+}
+
+func currentRunStageAccessor() RunStageLeaseAccessor {
+	runStageAccessorMu.RLock()
+	defer runStageAccessorMu.RUnlock()
+	return runStageAccessor
+}
+
 // AppendAdditive wraps primary with every additive source the config enables.
 // With no flag set it returns primary itself, so ListIssues output is
 // byte-identical to a hive that has never heard of run stages or Wavefront.
@@ -147,7 +165,7 @@ func AppendAdditive(primary WorkSource, cfg config.WorkSourceConfig) (WorkSource
 func appendAdditive(primary WorkSource, cfg config.WorkSourceConfig, logger *slog.Logger) (WorkSource, error) {
 	var extras []WorkSource
 	if cfg.RunStages {
-		extras = append(extras, NewRunStageSource(nil))
+		extras = append(extras, NewRunStageSource(currentRunStageAccessor()))
 	}
 	if cfg.Wavefront.Enabled {
 		build, ok := lookupAdditive(AdditiveWavefront)

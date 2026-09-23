@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type RunStageLeaseAccessor interface {
 }
 
 type RunStageSource struct {
+	mu     sync.RWMutex
 	leases RunStageLeaseAccessor
 }
 
@@ -46,13 +48,28 @@ func NewRunStageSource(leases RunStageLeaseAccessor) *RunStageSource {
 	return &RunStageSource{leases: leases}
 }
 
+func (s *RunStageSource) SetAccessor(leases RunStageLeaseAccessor) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leases = leases
+}
+
 func (s *RunStageSource) SourceType() string { return SourceTypeRun }
 
 func (s *RunStageSource) ListIssues(ctx context.Context) ([]Issue, error) {
-	if s == nil || s.leases == nil {
+	if s == nil {
 		return []Issue{}, nil
 	}
-	stages, err := s.leases.PendingRunStages(ctx)
+	s.mu.RLock()
+	leases := s.leases
+	s.mu.RUnlock()
+	if leases == nil {
+		return []Issue{}, nil
+	}
+	stages, err := leases.PendingRunStages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("worksource/run: pending stages: %w", err)
 	}
@@ -64,7 +81,7 @@ func (s *RunStageSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		if stage.RunKey == "" || stage.Stage == "" || stage.Repo == "" {
 			continue
 		}
-		live, err := s.leases.StageHasLiveLease(ctx, stage.RunKey, stage.Stage)
+		live, err := leases.StageHasLiveLease(ctx, stage.RunKey, stage.Stage)
 		if err != nil {
 			return nil, fmt.Errorf("worksource/run: live lease %s:%s: %w", stage.RunKey, stage.Stage, err)
 		}

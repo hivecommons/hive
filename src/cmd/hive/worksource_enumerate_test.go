@@ -42,9 +42,9 @@ func TestActionableAfterGitHubEnumerate_NonGitHubWorkSourceContinues(t *testing.
 	}
 }
 
-// The GitHub-sourced (default) behavior is unchanged: a failed enumeration
-// aborts the cycle so prior state is kept instead of idling agents on an
-// empty queue.
+// The GitHub-sourced (default) behavior is unchanged unless additive work is
+// enabled: a failed enumeration aborts the cycle so prior state is kept instead
+// of idling agents on an empty queue.
 func TestActionableAfterGitHubEnumerate_GitHubWorkSourceAborts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	enumErr := errors.New("all 1 repos failed to enumerate")
@@ -53,6 +53,13 @@ func TestActionableAfterGitHubEnumerate_GitHubWorkSourceAborts(t *testing.T) {
 		cfg.Governor.WorkSource.Type = wsType
 		if _, ok := actionableAfterGitHubEnumerate(cfg, nil, enumErr, logger); ok {
 			t.Fatalf("work_source=%q: expected cycle to abort on GitHub enumeration failure", wsType)
+		}
+	}
+	for _, cfg := range []config.WorkSourceConfig{{RunStages: true}, {Type: "github", Wavefront: config.WavefrontSourceConfig{Enabled: true}}} {
+		full := &config.Config{}
+		full.Governor.WorkSource = cfg
+		if got, ok := actionableAfterGitHubEnumerate(full, nil, enumErr, logger); !ok || got == nil {
+			t.Fatalf("work_source=%+v: additive source should keep the cycle alive, ok=%v got=%v", cfg, ok, got)
 		}
 	}
 	// No error: pass-through.

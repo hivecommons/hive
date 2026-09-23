@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
 	"sync/atomic"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // lastActionablePath is where each enumeration's result is cached on the /data
@@ -67,13 +65,8 @@ func rescanRepos(
 		}
 	}
 
-	if wsType := cfg.Governor.WorkSource.Type; wsType != "" && wsType != "github" {
-		ghToken := cfg.GitHub.Token
-		if ghToken == "" {
-			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
-		}
-		ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
-		actionable.Issues = workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
+	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
+		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)

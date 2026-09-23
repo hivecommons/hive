@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 type bootDashboardFake struct {
@@ -70,6 +72,16 @@ func newTestBeadStore(t *testing.T) *beads.Store {
 	return st
 }
 
+type cmdStaticWorkSource struct {
+	sourceType string
+	issues     []worksource.Issue
+}
+
+func (s cmdStaticWorkSource) SourceType() string { return s.sourceType }
+func (s cmdStaticWorkSource) ListIssues(context.Context) ([]worksource.Issue, error) {
+	return append([]worksource.Issue(nil), s.issues...), nil
+}
+
 func TestBootDashboardWithConstructsAndPersistsOnPVC(t *testing.T) {
 	cfg := bootDashboardConfig()
 	b := newBootDashboardBoot(t, cfg)
@@ -116,6 +128,25 @@ func TestBootDashboardWithAuditHookReachesDashboardLog(t *testing.T) {
 	recent := f.srv.GetAudit().Recent(1)
 	if len(recent) != 1 || recent[0].Action != "ioscan_blocked" || recent[0].Agent != "scanner" || recent[0].User != "scanner" {
 		t.Fatalf("audit ring = %+v", recent)
+	}
+}
+
+func TestBootDashboardWithWiresRunStageWorkSourceAccessor(t *testing.T) {
+	worksource.SetRunStageAccessor(nil)
+	t.Cleanup(func() { worksource.SetRunStageAccessor(nil) })
+
+	cfg := bootDashboardConfig()
+	cfg.Runs.Spektacular.Enabled = true
+	cfg.Governor.WorkSource.RunStages = true
+	b := newBootDashboardBoot(t, cfg)
+	f := newBootDashboardFake()
+	b.bootDashboardWith(f.deps)
+	ws, err := worksource.AppendAdditive(cmdStaticWorkSource{sourceType: "github"}, cfg.Governor.WorkSource)
+	if err != nil {
+		t.Fatalf("AppendAdditive: %v", err)
+	}
+	if issues, err := ws.ListIssues(context.Background()); err == nil || !strings.Contains(err.Error(), "run lease registry unavailable") || len(issues) != 0 {
+		t.Fatalf("wired accessor ListIssues = %+v, %v; want live dashboard accessor error before API registration", issues, err)
 	}
 }
 
