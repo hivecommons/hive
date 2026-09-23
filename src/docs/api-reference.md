@@ -166,7 +166,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `POST` | `/api/unpin/{agent}/{dimension}` | Owner only | Unpin | `pkg/dashboard/api.go:114` |
 | `POST` | `/api/restart/{agent}` | Owner only | Restart | `pkg/dashboard/api.go:118` |
 | `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:131` |
-| `GET` | `/api/governor/pr-models` | Dashboard auth/session | Agent-authored PR distribution by normalized attribution model/backend for `window=7d`, `30d`, or `all` | `pkg/dashboard/api.go:132` |
+| `GET` | `/api/governor/pr-models` | Dashboard auth/session | Agent-authored PR distribution by normalized attribution model/backend for `window=7d`, `30d`, or `all`, including per-model rework stats and the top 10 most-reworked PRs | `pkg/dashboard/api.go:132` |
 | `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:250` |
 | `POST` | `/api/agents` | Owner only | Agent Create | `pkg/dashboard/api.go:251` |
 | `POST` | `/api/agents/import` | Owner only | Agent Import | `pkg/dashboard/api.go:252` |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -27,6 +28,22 @@ type PRCommit struct {
 	// Message is the full commit message, including trailers. Empty only when
 	// GitHub omitted the embedded commit object.
 	Message string
+	// AuthoredAt is the commit author's timestamp, falling back to the committer
+	// timestamp when GitHub omits it.
+	AuthoredAt time.Time
+}
+
+func prCommitTime(rc *gh.RepositoryCommit) time.Time {
+	if rc == nil || rc.GetCommit() == nil {
+		return time.Time{}
+	}
+	if a := rc.GetCommit().GetAuthor(); a != nil && a.GetDate().Time != (time.Time{}) {
+		return a.GetDate().Time
+	}
+	if c := rc.GetCommit().GetCommitter(); c != nil {
+		return c.GetDate().Time
+	}
+	return time.Time{}
 }
 
 // ListPRCommits returns the commits currently on a PR's branch, oldest first
@@ -57,10 +74,11 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 				title = title[:i]
 			}
 			out = append(out, PRCommit{
-				SHA:     rc.GetSHA(),
-				Author:  author,
-				Title:   strings.TrimSpace(title),
-				Message: message,
+				SHA:        rc.GetSHA(),
+				Author:     author,
+				Title:      strings.TrimSpace(title),
+				Message:    message,
+				AuthoredAt: prCommitTime(rc),
 			})
 		}
 		if resp.NextPage == 0 {

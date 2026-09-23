@@ -1,0 +1,1 @@
+- #8487 Governor PRs-by-model now reports rework stats and the most-reworked PRs per window.

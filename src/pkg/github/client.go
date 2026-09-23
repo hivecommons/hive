@@ -452,8 +452,9 @@ type PullRequest struct {
 	// payload as the attribution trailer so the plan_match review perspective
 	// (#8317) can name the run and plan a PR implements without keeping the
 	// body. Empty when the PR carries no run trailer.
-	HiveRun  string `json:"hive_run,omitempty"`
-	HivePlan string `json:"hive_plan,omitempty"`
+	HiveRun  string        `json:"hive_run,omitempty"`
+	HivePlan string        `json:"hive_plan,omitempty"`
+	Rework   PRReworkStats `json:"rework,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
@@ -532,6 +533,18 @@ type PullRequest struct {
 	ReviewState string     `json:"review_state,omitempty"`
 	ReviewCount int        `json:"review_count,omitempty"`
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`
+}
+
+type PRReworkStats struct {
+	ReviewRounds        int       `json:"review_rounds,omitempty"`
+	FixAttempts         int       `json:"fix_attempts,omitempty"`
+	HumanChangeRequests int       `json:"human_change_requests,omitempty"`
+	FollowUpCommits     int       `json:"follow_up_commits,omitempty"`
+	TimeToMergeMinutes  int       `json:"time_to_merge_minutes,omitempty"`
+	FirstReviewAt       time.Time `json:"first_review_at,omitempty"`
+	FirstPass           bool      `json:"first_pass,omitempty"`
+	FixerModels         []string  `json:"fixer_models,omitempty"`
+	FixerBackends       []string  `json:"fixer_backends,omitempty"`
 }
 
 // HasFailingRequiredCheck reports whether this PR has a completed, non-meta
@@ -1185,6 +1198,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, err
 	}
 	attributed = append(attributed, closed...)
+	c.enrichAttributedPRRework(ctx, attributed)
 
 	if unclassified := totalPRs - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified

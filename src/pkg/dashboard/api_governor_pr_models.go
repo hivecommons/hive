@@ -20,10 +20,11 @@ const (
 )
 
 type governorPRModelsResponse struct {
-	Window  string                  `json:"window"`
-	Total   int                     `json:"total"`
-	Buckets []governorPRModelBucket `json:"buckets"`
-	Unknown int                     `json:"unknown"`
+	Window       string                       `json:"window"`
+	Total        int                          `json:"total"`
+	Buckets      []governorPRModelBucket      `json:"buckets"`
+	Unknown      int                          `json:"unknown"`
+	MostReworked []governorPRMostReworkedItem `json:"most_reworked,omitempty"`
 }
 
 type governorPRModelBucket struct {
@@ -33,7 +34,35 @@ type governorPRModelBucket struct {
 	Merged         int                          `json:"merged"`
 	ClosedUnmerged int                          `json:"closed_unmerged"`
 	Open           int                          `json:"open"`
+	Rework         governorPRModelRework        `json:"rework"`
 	Agents         []governorPRModelAgentBucket `json:"agents,omitempty"`
+}
+
+type governorPRModelRework struct {
+	SamplePRs            int     `json:"sample_prs"`
+	FirstPassMerged      int     `json:"first_pass_merged"`
+	FirstPassMergeRate   float64 `json:"first_pass_merge_rate"`
+	AvgReviewRounds      float64 `json:"avg_review_rounds"`
+	WorstReviewRounds    int     `json:"worst_review_rounds"`
+	AvgFixAttempts       float64 `json:"avg_fix_attempts"`
+	WorstFixAttempts     int     `json:"worst_fix_attempts"`
+	AvgFollowUpCommits   float64 `json:"avg_follow_up_commits"`
+	HumanChangeRequests  int     `json:"human_change_requests"`
+	MedianTimeToMergeMin int     `json:"median_time_to_merge_minutes"`
+}
+
+type governorPRMostReworkedItem struct {
+	Repo                string   `json:"repo"`
+	Number              int      `json:"number"`
+	Title               string   `json:"title,omitempty"`
+	Model               string   `json:"model"`
+	Backend             string   `json:"backend"`
+	URL                 string   `json:"url,omitempty"`
+	ReviewRounds        int      `json:"review_rounds"`
+	FixAttempts         int      `json:"fix_attempts"`
+	FollowUpCommits     int      `json:"follow_up_commits"`
+	FixerModels         []string `json:"fixer_models,omitempty"`
+	HumanChangeRequests int      `json:"human_change_requests,omitempty"`
 }
 
 type governorPRModelAgentBucket struct {
@@ -87,6 +116,7 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	type bucketState struct {
 		governorPRModelBucket
 		agents map[string]*governorPRModelAgentBucket
+		rework reworkAccumulator
 	}
 	buckets := map[string]*bucketState{}
 	resp := governorPRModelsResponse{Window: window}
@@ -114,6 +144,24 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		outcome := governorPRModelOutcome(pr)
 		addOutcome(&b.PRs, &b.Merged, &b.ClosedUnmerged, &b.Open, outcome)
+		if outcome == "merged" {
+			b.rework.add(pr.Rework)
+		}
+		if score := pr.Rework.ReviewRounds + pr.Rework.FixAttempts; score > 0 {
+			resp.MostReworked = append(resp.MostReworked, governorPRMostReworkedItem{
+				Repo:                pr.Repo,
+				Number:              pr.Number,
+				Title:               pr.Title,
+				Model:               model,
+				Backend:             backend,
+				URL:                 pr.URL,
+				ReviewRounds:        pr.Rework.ReviewRounds,
+				FixAttempts:         pr.Rework.FixAttempts,
+				FollowUpCommits:     pr.Rework.FollowUpCommits,
+				FixerModels:         append([]string(nil), pr.Rework.FixerModels...),
+				HumanChangeRequests: pr.Rework.HumanChangeRequests,
+			})
+		}
 		agentKey := agent + "\x00" + backend
 		ab := b.agents[agentKey]
 		if ab == nil {
@@ -129,6 +177,7 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 
 	resp.Buckets = make([]governorPRModelBucket, 0, len(buckets))
 	for _, b := range buckets {
+		b.Rework = b.rework.finish()
 		for _, ab := range b.agents {
 			b.Agents = append(b.Agents, *ab)
 		}
@@ -149,7 +198,84 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		return resp.Buckets[i].Backend < resp.Buckets[j].Backend
 	})
+	sort.Slice(resp.MostReworked, func(i, j int) bool {
+		a := resp.MostReworked[i].ReviewRounds + resp.MostReworked[i].FixAttempts
+		b := resp.MostReworked[j].ReviewRounds + resp.MostReworked[j].FixAttempts
+		if a != b {
+			return a > b
+		}
+		if resp.MostReworked[i].FollowUpCommits != resp.MostReworked[j].FollowUpCommits {
+			return resp.MostReworked[i].FollowUpCommits > resp.MostReworked[j].FollowUpCommits
+		}
+		return resp.MostReworked[i].Repo < resp.MostReworked[j].Repo
+	})
+	if len(resp.MostReworked) > 10 {
+		resp.MostReworked = resp.MostReworked[:10]
+	}
 	return resp
+}
+
+type reworkAccumulator struct {
+	sample             int
+	firstPass          int
+	reviewRounds       int
+	worstReviewRounds  int
+	fixAttempts        int
+	worstFixAttempts   int
+	followUpCommits    int
+	humanChanges       int
+	timeToMergeMinutes []int
+}
+
+func (a *reworkAccumulator) add(r ghpkg.PRReworkStats) {
+	a.sample++
+	if r.FirstPass {
+		a.firstPass++
+	}
+	a.reviewRounds += r.ReviewRounds
+	if r.ReviewRounds > a.worstReviewRounds {
+		a.worstReviewRounds = r.ReviewRounds
+	}
+	a.fixAttempts += r.FixAttempts
+	if r.FixAttempts > a.worstFixAttempts {
+		a.worstFixAttempts = r.FixAttempts
+	}
+	a.followUpCommits += r.FollowUpCommits
+	a.humanChanges += r.HumanChangeRequests
+	if r.TimeToMergeMinutes > 0 {
+		a.timeToMergeMinutes = append(a.timeToMergeMinutes, r.TimeToMergeMinutes)
+	}
+}
+
+func (a reworkAccumulator) finish() governorPRModelRework {
+	out := governorPRModelRework{
+		SamplePRs:            a.sample,
+		FirstPassMerged:      a.firstPass,
+		WorstReviewRounds:    a.worstReviewRounds,
+		WorstFixAttempts:     a.worstFixAttempts,
+		HumanChangeRequests:  a.humanChanges,
+		MedianTimeToMergeMin: medianInt(a.timeToMergeMinutes),
+	}
+	if a.sample > 0 {
+		out.FirstPassMergeRate = float64(a.firstPass) / float64(a.sample)
+		out.AvgReviewRounds = float64(a.reviewRounds) / float64(a.sample)
+		out.AvgFixAttempts = float64(a.fixAttempts) / float64(a.sample)
+		out.AvgFollowUpCommits = float64(a.followUpCommits) / float64(a.sample)
+	}
+	return out
+}
+
+func medianInt(values []int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	cp := append([]int(nil), values...)
+	sort.Ints(cp)
+	mid := len(cp) / 2
+	if len(cp)%2 == 1 {
+		return cp[mid]
+	}
+	return (cp[mid-1] + cp[mid]) / 2
 }
 
 func governorPRModelOutcome(pr ghpkg.PullRequest) string {

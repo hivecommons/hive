@@ -73,6 +73,7 @@ func TestHandleMetricsPRsByModelExposition(t *testing.T) {
 	s.deps.Scheduler = metricsSchedulerStub{actionable: &ghpkg.ActionableResult{
 		PRs: ghpkg.PRResult{Attributed: []ghpkg.PullRequest{
 			{HiveAttributed: true, HiveModel: "sonnet", CreatedAt: now, MergedAt: now},
+			{HiveAttributed: true, HiveModel: "sonnet", CreatedAt: now, MergedAt: now, Rework: ghpkg.PRReworkStats{ReviewRounds: 2, FixAttempts: 1}},
 			{HiveAttributed: true, HiveModel: "auto", CreatedAt: now, State: "closed", ClosedAt: now},
 			{HiveAttributed: true, HiveModel: "sonnet", CreatedAt: now, State: "open"},
 		}},
@@ -84,9 +85,11 @@ func TestHandleMetricsPRsByModelExposition(t *testing.T) {
 	s.handleMetrics(rec, req)
 	body := rec.Body.String()
 	for _, want := range []string{
-		`hive_prs_by_model_total{hive_id="test-hive",model="sonnet",outcome="merged"} 1`,
+		`hive_prs_by_model_total{hive_id="test-hive",model="sonnet",outcome="merged"} 2`,
 		`hive_prs_by_model_total{hive_id="test-hive",model="sonnet",outcome="open"} 1`,
 		`hive_prs_by_model_total{hive_id="test-hive",model="unknown",outcome="closed_unmerged"} 1`,
+		`hive_pr_rework_by_model{hive_id="test-hive",model="sonnet",metric="avg_review_rounds"} 1`,
+		`hive_pr_rework_by_model{hive_id="test-hive",model="sonnet",metric="avg_fix_attempts"} 0.5`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics missing %q\n---\n%s", want, body)

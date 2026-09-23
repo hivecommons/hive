@@ -53,6 +53,7 @@ func metricsToken() string {
 //	hive_model_input_tokens_total{hive_id,model}    — per-model input tokens
 //	hive_model_output_tokens_total{hive_id,model}   — per-model output tokens
 //	hive_prs_by_model_total{hive_id,model,outcome}  — attributed PR outcomes
+//	hive_pr_rework_by_model{hive_id,model,metric}   — all-time rework evidence for merged attributed PRs
 //	hive_reviews_by_model_pair_total{hive_id,author_model,review_model,verdict} — review verdicts by author/reviewer model pair
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Mandatory bearer auth (#3399, hardened in #3785): the cost/agent series
@@ -122,6 +123,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	for _, s := range s.prometheusPRModelSeries() {
 		fmt.Fprintf(&b, "hive_prs_by_model_total{hive_id=%q,model=%q,outcome=%q} %d\n", hiveID, s.Model, s.Outcome, s.Count)
 	}
+	writeHeader("hive_pr_rework_by_model",
+		"All-time aggregate rework evidence for merged agent-authored pull requests per model.", "gauge")
+	for _, s := range s.prometheusPRReworkSeries() {
+		fmt.Fprintf(&b, "hive_pr_rework_by_model{hive_id=%q,model=%q,metric=%q} %g\n", hiveID, s.Model, s.Metric, s.Value)
+	}
 	writeHeader("hive_reviews_by_model_pair_total",
 		"All-time cumulative review verdicts by author model, review model, and verdict.", "counter")
 	for _, s := range prometheusReviewModelPairSeries() {
@@ -136,6 +142,12 @@ type prModelPrometheusSeries struct {
 	Model   string
 	Outcome string
 	Count   int
+}
+
+type prModelReworkPrometheusSeries struct {
+	Model  string
+	Metric string
+	Value  float64
 }
 
 func (s *Server) prometheusPRModelSeries() []prModelPrometheusSeries {
@@ -154,6 +166,32 @@ func (s *Server) prometheusPRModelSeries() []prModelPrometheusSeries {
 			return out[i].Model < out[j].Model
 		}
 		return out[i].Outcome < out[j].Outcome
+	})
+	return out
+}
+
+func (s *Server) prometheusPRReworkSeries() []prModelReworkPrometheusSeries {
+	actionable := s.lastActionableForPRModels()
+	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, governorPRModelsWindowAll, time.Now())
+	var out []prModelReworkPrometheusSeries
+	for _, b := range resp.Buckets {
+		r := b.Rework
+		out = append(out,
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "merged_sample_prs", Value: float64(r.SamplePRs)},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "first_pass_merged", Value: float64(r.FirstPassMerged)},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "first_pass_merge_rate", Value: r.FirstPassMergeRate},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "avg_review_rounds", Value: r.AvgReviewRounds},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "avg_fix_attempts", Value: r.AvgFixAttempts},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "avg_follow_up_commits", Value: r.AvgFollowUpCommits},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "human_change_requests", Value: float64(r.HumanChangeRequests)},
+			prModelReworkPrometheusSeries{Model: b.Model, Metric: "median_time_to_merge_minutes", Value: float64(r.MedianTimeToMergeMin)},
+		)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Metric < out[j].Metric
 	})
 	return out
 }

@@ -1234,6 +1234,14 @@
     .gov-pr-model-seg.open { background:var(--blue); }
     .gov-pr-model-seg.closed { background:var(--yellow); }
     .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
+    .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
+    .gov-pr-model-table th:first-child, .gov-pr-model-table td:first-child { text-align:left; }
+    .gov-pr-model-table th { color:var(--muted); font-size:0.64rem; text-transform:uppercase; letter-spacing:0.08em; }
+    .gov-pr-model-reworked { margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
+    .gov-pr-model-reworked-title { color:var(--amber); font-size:0.68rem; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:6px; }
+    .gov-pr-model-reworked ol { margin:0; padding-left:18px; color:var(--muted); font-size:0.74rem; }
+    .gov-pr-model-reworked li { margin:4px 0; }
     .gov-pr-model-legend { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:0.68rem; margin-top:8px; }
     .gov-pr-model-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
     .gov-pr-model-legend .merged::before { background:var(--green); }
@@ -8045,8 +8053,9 @@
               const mergedPct = prs ? (b.merged || 0) / prs * 100 : 0;
               const openPct = prs ? (b.open || 0) / prs * 100 : 0;
               const closedPct = Math.max(0, 100 - mergedPct - openPct);
+              const rw = b.rework || {};
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${(rw.first_pass_merge_rate ? rw.first_pass_merge_rate * 100 : 0).toFixed(0)}% · avg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
               return `<div class="gov-pr-model-row" title="${escapeHtml(tip)}">
                 <div><div class="gov-pr-model-name">${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
@@ -8057,9 +8066,35 @@
                 <div class="gov-pr-model-share">${prs} · ${share.toFixed(1)}%</div>
               </div>`;
             }).join('');
+      const reworkTable = data && total > 0 ? `<table class="gov-pr-model-table" aria-label="PR rework by model">
+        <thead><tr><th>Model</th><th>First-pass</th><th>Review rounds</th><th>Fix attempts</th><th>Follow-up commits</th><th>Median merge</th><th>Sample</th></tr></thead>
+        <tbody>${(data.buckets || []).map(b => {
+          const rw = b.rework || {};
+          return `<tr>
+            <td>${escapeHtml(b.model || 'unknown')}<div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></td>
+            <td>${((rw.first_pass_merge_rate || 0) * 100).toFixed(0)}%</td>
+            <td>${(rw.avg_review_rounds || 0).toFixed(1)} / ${rw.worst_review_rounds || 0}</td>
+            <td>${(rw.avg_fix_attempts || 0).toFixed(1)} / ${rw.worst_fix_attempts || 0}</td>
+            <td>${(rw.avg_follow_up_commits || 0).toFixed(1)}</td>
+            <td>${formatFixTime(rw.median_time_to_merge_minutes || 0)}</td>
+            <td>${rw.sample_prs || 0}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>` : '';
+      const mostReworked = data && (data.most_reworked || []).length ? `<div class="gov-pr-model-reworked">
+        <div class="gov-pr-model-reworked-title">Most reworked PRs</div>
+        <ol>${(data.most_reworked || []).map(pr => {
+          const label = `${pr.repo || ''}#${pr.number || ''}`;
+          const href = pr.url ? ` href="${escapeHtml(pr.url)}" target="_blank" rel="noopener"` : '';
+          const fixers = (pr.fixer_models || []).length ? ` · fixer ${escapeHtml((pr.fixer_models || []).join(', '))}` : '';
+          return `<li><a${href}>${escapeHtml(label)}</a> ${escapeHtml(pr.model || 'unknown')} · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes · ${pr.follow_up_commits || 0} follow-up commits${fixers}</li>`;
+        }).join('')}</ol>
+      </div>` : '';
       return `<div class="gov-pr-models">
         <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">PRs by model</div><div class="gov-pr-model-sub">${total} agent-authored PR${total === 1 ? '' : 's'}</div></div><div class="gov-pr-models-toggle">${buttons}</div></div>
         ${rows}
+        ${reworkTable}
+        ${mostReworked}
         <div class="gov-pr-model-legend"><span class="merged">merged</span><span class="open">open</span><span class="closed">closed-unmerged</span></div>
       </div>`;
     }
