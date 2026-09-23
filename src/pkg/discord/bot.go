@@ -33,6 +33,10 @@ type Config struct {
 	// AllowedUsers is the set of Discord user IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed).
 	AllowedUsers []string
+	// PersonaLearning and AuditSink feed persona learning on the shared chat
+	// spine (hivecommons/hive#8363); both are optional.
+	PersonaLearning chat.PersonaLearningFunc
+	AuditSink       chat.AuditSink
 }
 
 type Bot struct {
@@ -74,9 +78,11 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		},
 	}
 	service := chat.NewService(backend, chat.Config{
-		DashboardURL:   cfg.DashboardURL,
-		DashboardToken: cfg.DashboardToken,
-		AllowedUsers:   cfg.AllowedUsers,
+		DashboardURL:    cfg.DashboardURL,
+		DashboardToken:  cfg.DashboardToken,
+		AllowedUsers:    cfg.AllowedUsers,
+		PersonaLearning: cfg.PersonaLearning,
+		AuditSink:       cfg.AuditSink,
 	}, logger)
 	return &Bot{discordBackend: backend, service: service}
 }

@@ -42,24 +42,28 @@ func TestCovGov_Features(t *testing.T) {
 	// Set every field in one valid PUT.
 	planTrue := true
 	if rec := doPut(s, "/api/config/governor/features", map[string]any{
-		"ioscanEnabled":      true,
-		"tracingEnabled":     true,
-		"tracingEndpoint":    "https://otel-collector:4318",
-		"tracingSampleRatio": 0.5,
-		"otelServiceName":    "hive-ui",
-		"otelInsecure":       true,
-		"otelHeaders":        map[string]string{"authorization": "${OTEL_TOKEN}"},
-		"retroEnabled":       true,
-		"retroAnalysisModel": "claude-sonnet",
-		"mintEnabled":        true,
-		"mintIssuer":         "https://mint.example.com",
-		"planFromLabel":      planTrue,
-		"formalEnabled":      true,
+		"ioscanEnabled":          true,
+		"tracingEnabled":         true,
+		"tracingEndpoint":        "https://otel-collector:4318",
+		"tracingSampleRatio":     0.5,
+		"otelServiceName":        "hive-ui",
+		"otelInsecure":           true,
+		"otelHeaders":            map[string]string{"authorization": "${OTEL_TOKEN}"},
+		"retroEnabled":           true,
+		"retroAnalysisModel":     "claude-sonnet",
+		"mintEnabled":            true,
+		"mintIssuer":             "https://mint.example.com",
+		"planFromLabel":          planTrue,
+		"formalEnabled":          true,
+		"personaLearningEnabled": true,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("features ok: %d", rec.Code)
 	}
 
 	cfg := s.deps.Config
+	if !cfg.Persona.Learning.Enabled {
+		t.Errorf("persona.learning.enabled not persisted from personaLearningEnabled")
+	}
 	if !cfg.Ioscan.IsEnabled() {
 		t.Errorf("ioscan not enabled")
 	}
@@ -366,5 +370,47 @@ func TestGovernorFeaturesRunCheckpointPolicyRoundTripAndValidation(t *testing.T)
 		if rec := doPut(s, "/api/config/governor/features", body); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid run wait body %v status = %d, want 400", body, rec.Code)
 		}
+	}
+}
+
+// TestCovGov_PersonaLearningToggleDefaultOffAndRoundTrips pins the #8363
+// operator toggle: off unless set, owner-gated like every features write,
+// and reported back on GET so the Features panel renders its state.
+func TestCovGov_PersonaLearningToggleDefaultOffAndRoundTrips(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.Persona.Learning.Enabled {
+		t.Fatal("persona learning must default off")
+	}
+	if rec := putFeatures(s, map[string]any{"personaLearningEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT personaLearningEnabled = %d, want 403", rec.Code)
+	}
+	if s.deps.Config.Persona.Learning.Enabled {
+		t.Fatal("forbidden PUT mutated persona.learning.enabled")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"personaLearningEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("persona learning toggle PUT: %d - %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Persona.Learning.Enabled {
+		t.Fatal("persona.learning.enabled was not persisted into config")
+	}
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor config: %d - %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			PersonaLearningEnabled bool `json:"personaLearningEnabled"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	if !payload.Features.PersonaLearningEnabled {
+		t.Fatalf("features payload = %+v, want personaLearningEnabled", payload.Features)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"personaLearningEnabled": false}); rec.Code != http.StatusOK || s.deps.Config.Persona.Learning.Enabled {
+		t.Fatalf("persona learning toggle off: %d, enabled=%v", rec.Code, s.deps.Config.Persona.Learning.Enabled)
 	}
 }

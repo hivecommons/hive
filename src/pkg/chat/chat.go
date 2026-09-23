@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/persona"
@@ -74,6 +75,13 @@ type PersonaStore interface {
 	PutPersona(ctx context.Context, author string, record persona.Record) error
 }
 
+// PersonaLearningFunc returns the live persona learning configuration. It is
+// aliased here so transports can accept it without importing pkg/persona.
+type PersonaLearningFunc = func() persona.LearningConfig
+
+// AuditSink is the audit seam transports pass through to the chat service.
+type AuditSink = agentaudit.AuditSink
+
 // ErrTopicUnsupported is returned by backends that cannot update channel topics.
 var ErrTopicUnsupported = errors.New("chat topic updates unsupported")
 
@@ -104,6 +112,14 @@ type Config struct {
 	SendInterval      time.Duration
 	HeartbeatInterval time.Duration
 	PersonaStore      PersonaStore
+	// PersonaLearning returns the live persona learning configuration
+	// (hivecommons/hive#8363). Nil or a disabled result means no signals are
+	// counted and no suggestions are made. It is a func so a Features panel
+	// toggle takes effect without restarting the chat service.
+	PersonaLearning PersonaLearningFunc
+	// AuditSink receives "persona adjusted" events with their evidence. Nil
+	// means adjustments are applied without an audit row.
+	AuditSink AuditSink
 }
 
 type Service struct {
@@ -122,6 +138,9 @@ type Service struct {
 	sseReconnectBase  time.Duration
 	sseReconnectMax   time.Duration
 	personaStore      PersonaStore
+	personaLearning   func() persona.LearningConfig
+	audit             agentaudit.AuditSink
+	now               func() time.Time
 
 	msgQueue           chan msgItem
 	lastState          *statusSnapshot
@@ -130,6 +149,10 @@ type Service struct {
 	pendingInterviews  map[pendingInterviewKey]*pendingInterview
 	pendingPersonas    map[pendingPersonaKey]*pendingPersonaSetup
 	pendingCheckpoints map[pendingCheckpointKey]*pendingCheckpoint
+	// expandedRuns and shownSummaries are the per-author, per-run marks the
+	// persona signals are derived from; see persona_learning.go.
+	expandedRuns   map[personaRunKey]struct{}
+	shownSummaries map[personaRunKey]struct{}
 }
 
 type msgItem struct {
@@ -176,10 +199,15 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 		sseReconnectBase:   sseReconnectBase,
 		sseReconnectMax:    sseReconnectMax,
 		personaStore:       personaStore,
+		personaLearning:    cfg.PersonaLearning,
+		audit:              cfg.AuditSink,
+		now:                time.Now,
 		msgQueue:           make(chan msgItem, 100),
 		pendingInterviews:  make(map[pendingInterviewKey]*pendingInterview),
 		pendingPersonas:    make(map[pendingPersonaKey]*pendingPersonaSetup),
 		pendingCheckpoints: make(map[pendingCheckpointKey]*pendingCheckpoint),
+		expandedRuns:       make(map[personaRunKey]struct{}),
+		shownSummaries:     make(map[personaRunKey]struct{}),
 	}
 }
 

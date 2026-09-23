@@ -25058,6 +25058,13 @@ function burnAreaChart() {
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.personaLearningEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="personaLearningEnabled"></div>
+            <span class="config-toggle-label">Persona learning (chat summaries) <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the chat spine counts three explicit signals per user (asked for more after a summary, decided without expanding, re-asked for the same summary) and proposes a one-step change to that user's persona depth or summary length once a threshold is passed. Nothing is applied until the user runs !persona accept; !persona reject dismisses, !persona undo reverts and pins. Persona is a presentation preference only and never changes what an agent may do. Threshold and window are yaml-only (persona.learning.threshold, persona.learning.window_days).</span></span></span>
+          </div>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.mintEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="mintEnabled"></div>
             <span class="config-toggle-label">Token Mint (Workload Identity) <span class="config-info">i<span class="config-tooltip">Issues short-lived scoped JWTs that downstream cloud/registry WIF providers can trust via the issuer + JWKS.</span></span></span>
           </div>

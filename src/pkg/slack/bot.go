@@ -40,6 +40,10 @@ type Config struct {
 	DashboardURL   string
 	DashboardToken string
 	AllowedUsers   []string
+	// PersonaLearning and AuditSink feed persona learning on the shared chat
+	// spine (hivecommons/hive#8363); both are optional.
+	PersonaLearning chat.PersonaLearningFunc
+	AuditSink       chat.AuditSink
 }
 
 type Bot struct {
@@ -109,6 +113,8 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		DashboardURL:      cfg.DashboardURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
+		PersonaLearning:   cfg.PersonaLearning,
+		AuditSink:         cfg.AuditSink,
 		MessageLimit:      slackMessageLimit,
 		SendInterval:      slackDefaultSendPacing,
 		HeartbeatInterval: 15 * time.Minute,

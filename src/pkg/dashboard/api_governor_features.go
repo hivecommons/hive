@@ -74,6 +74,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		FormalEnabled *bool `json:"formalEnabled"`
 
+		PersonaLearningEnabled *bool `json:"personaLearningEnabled"`
+
 		CheckpointSpecEnabled      *bool   `json:"checkpointSpecEnabled"`
 		CheckpointPlanEnabled      *bool   `json:"checkpointPlanEnabled"`
 		CheckpointImplementEnabled *bool   `json:"checkpointImplementEnabled"`
@@ -198,6 +200,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.FormalEnabled != nil {
 		cfg.Quality.Formal = *body.FormalEnabled
 	}
+	if body.PersonaLearningEnabled != nil {
+		cfg.Persona.Learning.Enabled = *body.PersonaLearningEnabled
+	}
 	if body.CheckpointSpecEnabled != nil {
 		v := *body.CheckpointSpecEnabled
 		cfg.Runs.Checkpoints.Spec = &v
@@ -275,6 +280,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"formalEnabled":                   cfg.Quality.Formal,
 		"formalAvailable":                 acmmLevel >= config.FormalQualityMinACMMLevel,
 		"formalMinACMMLevel":              config.FormalQualityMinACMMLevel,
+		"personaLearningEnabled":          cfg.Persona.Learning.Enabled,
 		"checkpointSpecEnabled":           cfg.Runs.CheckpointBlocks("spec"),
 		"checkpointPlanEnabled":           cfg.Runs.CheckpointBlocks("plan"),
 		"checkpointImplementEnabled":      cfg.Runs.CheckpointBlocks("implement"),

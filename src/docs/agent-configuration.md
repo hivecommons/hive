@@ -26,7 +26,7 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
-The formal-verification quality-lane opt-in (`quality.formal`) and long-running run checkpoint policy (`runs.checkpoints`, `runs.wait_timeout_seconds`, `runs.wait_severity`) also live in the dashboard under Settings -> Features.
+The formal-verification quality-lane opt-in (`quality.formal`), long-running run checkpoint policy (`runs.checkpoints`, `runs.wait_timeout_seconds`, `runs.wait_severity`), and the persona learning opt-in (`persona.learning.enabled`, see [hosted-hub.md](hosted-hub.md#persona-learning-default-off)) also live in the dashboard under Settings -> Features.
 
 ## Where configuration lives
 

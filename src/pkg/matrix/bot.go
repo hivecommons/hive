@@ -55,6 +55,10 @@ type Config struct {
 	// AllowedUsers is the set of full Matrix IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed) by the chat spine.
 	AllowedUsers []string
+	// PersonaLearning and AuditSink feed persona learning on the shared chat
+	// spine (hivecommons/hive#8363); both are optional.
+	PersonaLearning chat.PersonaLearningFunc
+	AuditSink       chat.AuditSink
 }
 
 type Bot struct {
@@ -145,6 +149,8 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 		DashboardURL:      cfg.DashboardURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
+		PersonaLearning:   cfg.PersonaLearning,
+		AuditSink:         cfg.AuditSink,
 		MessageLimit:      matrixMessageLimit,
 		SendInterval:      matrixDefaultSendPace,
 		HeartbeatInterval: 15 * time.Minute,

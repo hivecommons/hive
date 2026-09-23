@@ -79,6 +79,7 @@ type Config struct {
 	Classifier   ClassifierConfig   `yaml:"classifier,omitempty" json:"classifier,omitempty"`
 	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
+	Persona      PersonaConfig      `yaml:"persona,omitempty" json:"persona,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Runs         RunsConfig         `yaml:"runs,omitempty" json:"runs,omitempty"`

@@ -119,6 +119,51 @@ questions. Use `!persona show` to inspect the current record and
 persona for their default depth; `!runs <key> more` always expands to the
 technical view without changing the persona or any autonomy setting.
 
+#### Persona learning (default off)
+
+Hive can propose persona changes from observed behaviour, so depth converges
+toward what each person actually reads without a settings change. It is off
+unless the operator sets `persona.learning.enabled: true` in the hive config or
+turns on **Persona learning** under Settings -> Features. Learning never
+changes a persona on its own and never touches ACMM, agent mode, or any other
+autonomy setting: the persona record and the autonomy configuration share no
+key, and the adjustment code in `pkg/persona` is stdlib-only, both enforced by
+tests.
+
+Three explicit signals are counted per user on the hub persona record (counts
+only, never transcripts):
+
+- `expanded`: the user asked `!runs <key> more` after seeing a summary.
+- `skipped`: the user approved or rejected a run without expanding it.
+- `re-asked`: the user asked `!runs <key>` again for a summary they had
+  already seen and not expanded.
+
+Adjustment rule: when the same-direction count reaches
+`persona.learning.threshold` (default 5) inside
+`persona.learning.window_days` (default 7), Hive proposes ONE step, never more
+per window: expansions and re-asks move `persona.depth` from `outcomes` to
+`technical`, then `persona.summary_length` up one notch; skips move `depth`
+from `technical` to `outcomes`, then `summary_length` down one notch. A record
+at the top or bottom of the ladder gets no suggestion, so a second week of
+expansions cannot push past `technical`/`detailed`. Counters reset when a
+suggestion is made or the window rolls over.
+
+The user must confirm every change:
+
+- `!persona suggestions` lists pending proposals with their evidence, for
+  example `set depth from outcomes to technical (evidence: 5 expansions in 7
+  days)`.
+- `!persona accept <n>` applies one proposal and writes a `persona_adjusted`
+  audit entry naming the user, the key, the old and new values, and the
+  evidence.
+- `!persona reject` dismisses the pending proposals; nothing changes.
+- `!persona show` lists the last adjustment and its evidence.
+- `!persona undo` reverts the last adjustment and pins the persona;
+  `!persona pin` pins without reverting. A pinned persona collects no signals
+  and receives no suggestions until `!persona unpin`.
+
+Users without a persona record are never counted; run `!persona setup` first.
+
 ## 4. Read the Fleet page
 
 Open <https://hive.hivecommons.dev/fleet>. The page title is **Fleet health** and

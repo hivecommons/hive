@@ -130,6 +130,7 @@ func (s *Service) cmdRunsShow(ctx context.Context, key string) (string, error) {
 	author, _ := ctx.Value(commandAuthorContextKey{}).(string)
 	if author != "" {
 		if record, ok, err := s.getPersona(ctx, author); err == nil && ok && record.Normalize().Depth != persona.DepthTechnical {
+			s.observeSummaryShown(ctx, author, run.Key)
 			return s.formatRunForPersona(run, record), nil
 		}
 	}
@@ -140,6 +141,9 @@ func (s *Service) cmdRunsShowDetailed(ctx context.Context, key string) (string, 
 	run, err := s.fetchRun(ctx, key)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to load run `%s`: %s", key, err), nil
+	}
+	if author, _ := ctx.Value(commandAuthorContextKey{}).(string); author != "" {
+		s.observeSummaryExpanded(ctx, author, run.Key)
 	}
 	return formatRunDetailed(run), nil
 }
@@ -194,6 +198,7 @@ func (s *Service) cmdRunsApprove(ctx context.Context, key string) (string, error
 	if err := s.dashboardPost(ctx, "/api/plan/"+url.PathEscape(run.PlanEpicID)+"/approve", nil); err != nil {
 		return fmt.Sprintf("❌ Failed to approve run `%s`: %s", key, err), nil
 	}
+	s.observeRunDecision(ctx, key)
 	s.clearPendingCheckpoint(key)
 	return fmt.Sprintf("✅ Approved run `%s` plan `%s`.", key, run.PlanEpicID), nil
 }
@@ -215,6 +220,7 @@ func (s *Service) cmdRunsReject(ctx context.Context, key, reason string) (string
 	if err := s.dashboardPost(ctx, "/api/plan/"+url.PathEscape(run.PlanEpicID)+"/reject", nil); err != nil {
 		return fmt.Sprintf("❌ Failed to reject run `%s`: %s", key, err), nil
 	}
+	s.observeRunDecision(ctx, key)
 	s.clearPendingCheckpoint(key)
 	return fmt.Sprintf("✅ Rejected run `%s` plan `%s`: %s", key, run.PlanEpicID, reason), nil
 }

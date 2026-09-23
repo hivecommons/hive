@@ -56,6 +56,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/persona"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -4179,6 +4180,18 @@ func dashboardChatDrain(bot *dashchat.Bot, since uint64) []dashboard.ChatOutboun
 	return out
 }
 
+// personaLearningConfig reads persona.learning from the live config so a
+// Features panel toggle reaches the chat transports without a restart
+// (hivecommons/hive#8363).
+func (b *boot) personaLearningConfig() persona.LearningConfig {
+	learning := b.cfg.Persona.Learning
+	return persona.LearningConfig{
+		Enabled:    learning.Enabled,
+		Threshold:  learning.Threshold,
+		WindowDays: learning.WindowDays,
+	}
+}
+
 // bootLaunchWith is bootLaunch with its goroutines, Discord bot, stagger
 // wait, and agent starts injected; see bootLaunchDeps.
 func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
@@ -4188,9 +4201,11 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	}
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   dashboardChatAllowedUsers(b.cfg),
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
 		if err != nil {
 			b.logger.Warn("dashboard chat failed to start", "error", err)
@@ -4208,11 +4223,13 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 
 	if b.cfg.Notifications.Discord != nil && b.cfg.Notifications.Discord.BotToken != "" && b.cfg.Notifications.Discord.ChannelID != "" {
 		err := deps.startDiscordBot(b.ctx, discord.Config{
-			Token:          b.cfg.Notifications.Discord.BotToken,
-			ChannelID:      b.cfg.Notifications.Discord.ChannelID,
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   b.cfg.Notifications.Discord.AllowedUsers,
+			Token:           b.cfg.Notifications.Discord.BotToken,
+			ChannelID:       b.cfg.Notifications.Discord.ChannelID,
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, agentNameList, b.logger)
 		if err != nil {
 			b.logger.Warn("discord bot failed to start", "error", err)
@@ -4223,12 +4240,14 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 
 	if b.cfg.Notifications.Slack != nil && b.cfg.Notifications.Slack.Enabled {
 		slackBot := slack.NewBot(slack.Config{
-			AppToken:       b.cfg.Notifications.Slack.AppToken,
-			BotToken:       b.cfg.Notifications.Slack.BotToken,
-			ChannelID:      b.cfg.Notifications.Slack.ChannelID,
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   b.cfg.Notifications.Slack.AllowedUsers,
+			AppToken:        b.cfg.Notifications.Slack.AppToken,
+			BotToken:        b.cfg.Notifications.Slack.BotToken,
+			ChannelID:       b.cfg.Notifications.Slack.ChannelID,
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
 		slackBot.SetAgentNames(agentNameList)
 		if err := slackBot.Start(b.ctx); err != nil {
@@ -4240,11 +4259,13 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 
 	if b.cfg.Notifications.Telegram != nil && b.cfg.Notifications.Telegram.Enabled {
 		telegramBot := telegram.NewBot(telegram.Config{
-			BotToken:       b.cfg.Notifications.Telegram.BotToken,
-			ChatID:         b.cfg.Notifications.Telegram.ChatID,
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   b.cfg.Notifications.Telegram.AllowedUsers,
+			BotToken:        b.cfg.Notifications.Telegram.BotToken,
+			ChatID:          b.cfg.Notifications.Telegram.ChatID,
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
 		telegramBot.SetAgentNames(agentNameList)
 		if err := telegramBot.Start(b.ctx); err != nil {
@@ -4256,12 +4277,14 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 
 	if b.cfg.Notifications.Matrix != nil && b.cfg.Notifications.Matrix.Enabled {
 		matrixBot := matrix.NewBot(matrix.Config{
-			HomeserverURL:  b.cfg.Notifications.Matrix.HomeserverURL,
-			AccessToken:    b.cfg.Notifications.Matrix.AccessToken,
-			RoomID:         b.cfg.Notifications.Matrix.RoomID,
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   b.cfg.Notifications.Matrix.AllowedUsers,
+			HomeserverURL:   b.cfg.Notifications.Matrix.HomeserverURL,
+			AccessToken:     b.cfg.Notifications.Matrix.AccessToken,
+			RoomID:          b.cfg.Notifications.Matrix.RoomID,
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
 		matrixBot.SetAgentNames(agentNameList)
 		if err := matrixBot.Start(b.ctx); err != nil {
@@ -4273,15 +4296,17 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 
 	if b.cfg.Notifications.MSTeams != nil && b.cfg.Notifications.MSTeams.Enabled {
 		teamsBot := msteams.NewBot(msteams.Config{
-			TenantID:       b.cfg.Notifications.MSTeams.TenantID,
-			ClientID:       b.cfg.Notifications.MSTeams.ClientID,
-			ClientSecret:   b.cfg.Notifications.MSTeams.ClientSecret,
-			TeamID:         b.cfg.Notifications.MSTeams.TeamID,
-			ChannelID:      b.cfg.Notifications.MSTeams.ChannelID,
-			WebhookURL:     b.cfg.Notifications.MSTeams.WebhookURL,
-			DashboardURL:   fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
-			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
-			AllowedUsers:   b.cfg.Notifications.MSTeams.AllowedUsers,
+			TenantID:        b.cfg.Notifications.MSTeams.TenantID,
+			ClientID:        b.cfg.Notifications.MSTeams.ClientID,
+			ClientSecret:    b.cfg.Notifications.MSTeams.ClientSecret,
+			TeamID:          b.cfg.Notifications.MSTeams.TeamID,
+			ChannelID:       b.cfg.Notifications.MSTeams.ChannelID,
+			WebhookURL:      b.cfg.Notifications.MSTeams.WebhookURL,
+			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			DashboardToken:  os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
+			PersonaLearning: b.personaLearningConfig,
+			AuditSink:       b.dashSrv.AgentAuditSink(),
 		}, b.logger)
 		teamsBot.SetAgentNames(agentNameList)
 		if err := teamsBot.Start(b.ctx); err != nil {

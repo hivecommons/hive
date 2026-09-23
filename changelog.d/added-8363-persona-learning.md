@@ -1,0 +1,1 @@
+- Add persona learning: explicit chat signals (expanded, skipped, re-asked) propose one-step persona depth or summary length changes that the user confirms with `!persona accept`, audited and undoable, default off behind `persona.learning.enabled` and the Features panel; persona and autonomy stay disjoint (#8363)

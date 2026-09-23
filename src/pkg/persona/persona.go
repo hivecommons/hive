@@ -20,12 +20,19 @@ type Record struct {
 	Depth         string `json:"depth,omitempty"`
 	SummaryLength string `json:"summary_length,omitempty"`
 	Notes         string `json:"notes,omitempty"`
+	// Pinned stops persona learning from proposing further changes. It is set
+	// by an undo or `!persona pin` and cleared by `!persona unpin`.
+	Pinned bool `json:"pinned,omitempty"`
+	// Learning carries the signal counters, pending suggestions, and the last
+	// accepted adjustment (hivecommons/hive#8363). Counts only, no transcripts.
+	Learning *Learning `json:"learning,omitempty"`
 }
 
 func (r Record) Normalize() Record {
 	r.Depth = NormalizeDepth(r.Depth)
 	r.SummaryLength = NormalizeSummaryLength(r.SummaryLength)
 	r.Notes = strings.TrimSpace(r.Notes)
+	r.Learning = r.Learning.clone()
 	return r
 }
 
@@ -64,5 +71,6 @@ func (r Record) Set(key, value string) (Record, error) {
 }
 
 func (r Record) Empty() bool {
-	return strings.TrimSpace(r.Depth) == "" && strings.TrimSpace(r.SummaryLength) == "" && strings.TrimSpace(r.Notes) == ""
+	return strings.TrimSpace(r.Depth) == "" && strings.TrimSpace(r.SummaryLength) == "" && strings.TrimSpace(r.Notes) == "" &&
+		!r.Pinned && r.Learning == nil
 }

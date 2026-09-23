@@ -54,7 +54,7 @@ func (s *Service) cmdPersona(ctx context.Context, args string) (string, error) {
 	}
 	fields := strings.Fields(strings.TrimSpace(args))
 	if len(fields) == 0 {
-		return "❌ Usage: `!persona setup` | `show` | `set <depth|summary_length|notes> <value>`", nil
+		return "❌ " + personaUsage, nil
 	}
 	switch strings.ToLower(fields[0]) {
 	case "setup":
@@ -90,10 +90,27 @@ func (s *Service) cmdPersona(ctx context.Context, args string) (string, error) {
 			return fmt.Sprintf("❌ Failed to save persona: %s", err), nil
 		}
 		return "✅ Persona updated.\n" + formatPersona(record), nil
+	case "suggestions":
+		return s.cmdPersonaSuggestions(ctx, author)
+	case "accept":
+		if len(fields) < 2 {
+			return "❌ Usage: `!persona accept <n>`", nil
+		}
+		return s.cmdPersonaAccept(ctx, author, fields[1])
+	case "reject":
+		return s.cmdPersonaReject(ctx, author)
+	case "undo":
+		return s.cmdPersonaUndo(ctx, author)
+	case "pin":
+		return s.cmdPersonaPin(ctx, author, true)
+	case "unpin":
+		return s.cmdPersonaPin(ctx, author, false)
 	default:
-		return "❌ Unknown persona subcommand. Try `!persona setup`.", nil
+		return "❌ Unknown persona subcommand. " + personaUsage, nil
 	}
 }
+
+const personaUsage = "Usage: `!persona setup` | `show` | `set <depth|summary_length|notes> <value>` | `suggestions` | `accept <n>` | `reject` | `undo` | `pin` | `unpin`"
 
 func (s *Service) handlePendingPersonaReply(ctx context.Context, msg Message, content string) bool {
 	if len(s.allowedUsers) == 0 {
@@ -175,6 +192,15 @@ func formatPersona(record persona.Record) string {
 	}
 	if record.Notes != "" {
 		lines = append(lines, "- notes: "+record.Notes)
+	}
+	if record.Pinned {
+		lines = append(lines, "- pinned: yes (learning paused; `!persona unpin` to resume)")
+	}
+	if record.Learning != nil && record.Learning.LastAdjustment != nil {
+		lines = append(lines, "- last adjustment: "+formatAdjustment(*record.Learning.LastAdjustment)+" (`!persona undo` reverts and pins)")
+	}
+	if pending := record.Suggestions(); len(pending) > 0 {
+		lines = append(lines, fmt.Sprintf("- suggestions: %d pending (`!persona suggestions`)", len(pending)))
 	}
 	return strings.Join(lines, "\n")
 }

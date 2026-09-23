@@ -56,6 +56,12 @@ const (
 	// fields.
 	AuditLeaseStageAdvanced = "lease_stage_advanced"
 	AuditLeaseStageRetried  = "lease_stage_retried"
+
+	// AuditPersonaAdjusted records a user accepting, rejecting, or undoing a
+	// persona learning suggestion (hivecommons/hive#8363). The actor is the
+	// user; the detail carries key/from/to and the evidence counts. It never
+	// names an agent because no agent permission is involved.
+	AuditPersonaAdjusted = "persona_adjusted"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.
