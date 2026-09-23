@@ -41,6 +41,9 @@ func (c *Config) Validate() error {
 	if c.TaskMCP.LeaseRateLimitPerMinute < 0 {
 		return fmt.Errorf("task_mcp.lease_rate_limit_per_minute must be >= 0")
 	}
+	if c.TaskMCP.LaunchTokenTTL < 0 {
+		return fmt.Errorf("task_mcp.launch_token_ttl must be >= 0")
+	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}

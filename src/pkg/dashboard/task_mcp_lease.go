@@ -136,6 +136,43 @@ func (s *Server) authenticateTaskMCPLease(r *http.Request) (*http.Request, bool)
 	return r.WithContext(ctx), true
 }
 
+// authenticateTaskMCPLaunch accepts the per-launch token the boot mints for
+// hub-launched agents (#8348). The signature proves the hub issued it; the
+// claims must then name a launch the agent manager still reports as active
+// (same task id, repo and agent identity), so the token dies with the launch
+// - a relaunch changes the generation baked into the task id and the old
+// token stops matching. Unlike remote leases this path does not require
+// task_mcp.remote_enabled: hub launches exist on every hive.
+func (s *Server) authenticateTaskMCPLaunch(r *http.Request) (*http.Request, bool) {
+	if s == nil {
+		return r, false
+	}
+	token := bearerToken(r)
+	if token == "" {
+		return r, false
+	}
+	claims, err := taskmcp.VerifyLeaseToken(s.taskMCPLeaseSecret(), token, time.Now())
+	if err != nil {
+		return r, false
+	}
+	lookup := dashboardTaskMCPProvider{server: s}.activeLaunchLookup()
+	if lookup == nil {
+		return r, false
+	}
+	matched := false
+	for _, launch := range lookup.ActiveLaunches() {
+		if launch.Agent == claims.Identity && launchMatches(launch, claims.TaskID, claims.Repo, claims.Number) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return r, false
+	}
+	ctx := context.WithValue(r.Context(), taskMCPLeaseContextKey{}, taskMCPLeaseContext{Claims: claims, TokenHash: taskmcp.HashLeaseToken(token)})
+	return r.WithContext(ctx), true
+}
+
 func taskMCPLeaseFromRequest(r *http.Request) (taskMCPLeaseContext, bool) {
 	v, ok := r.Context().Value(taskMCPLeaseContextKey{}).(taskMCPLeaseContext)
 	return v, ok
@@ -144,7 +181,7 @@ func taskMCPLeaseFromRequest(r *http.Request) (taskMCPLeaseContext, bool) {
 func bearerToken(r *http.Request) string {
 	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if token == "" {
-		token = strings.TrimSpace(r.URL.Query().Get("token"))
+		token = strings.TrimSpace(r.URL.Query().Get(taskmcp.TokenQueryParam))
 	}
 	return token
 }

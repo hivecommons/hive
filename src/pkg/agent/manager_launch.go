@@ -171,7 +171,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd = backendLaunchCmd(binary, model, backend, isInference, effort)
 	}
 
-	launchCfg := withTaskMCPConnection(agent.Config, m.project.TaskMCPURL, m.launchScopeForAgentLocked(agent, agent.launchGen+1))
+	launchScope := m.launchScopeForAgentLocked(agent, agent.launchGen+1)
+	launchCfg := withTaskMCPConnection(agent.Config, m.project.TaskMCPURL, launchScope, m.taskMCPLaunchToken(launchScope))
 	if mcpFlags := connectionMCPFlags(launchCfg.Connections, backend); mcpFlags != "" {
 		launchCmd += mcpFlags
 	}
@@ -962,12 +963,28 @@ func connectionMCPFlags(conns []config.ConnectionConfig, backend string) string 
 	return flags
 }
 
-func withTaskMCPConnection(cfg config.AgentConfig, uri string, scope taskmcp.LaunchScope) config.AgentConfig {
+// taskMCPLaunchToken asks the boot-owned minter for this launch's scoped
+// credential. Empty when no minter is wired or the scope is incomplete: the
+// launch then carries no token at all, never a wider one (#8348).
+func (m *Manager) taskMCPLaunchToken(scope taskmcp.LaunchScope) string {
+	if m == nil || m.project.TaskMCPLaunchToken == nil {
+		return ""
+	}
+	if strings.TrimSpace(scope.TaskID) == "" || strings.TrimSpace(scope.Repo) == "" {
+		return ""
+	}
+	return strings.TrimSpace(m.project.TaskMCPLaunchToken(scope))
+}
+
+// withTaskMCPConnection injects (or re-scopes) the hive-task MCP connection.
+// token is the per-launch credential from taskMCPLaunchToken; empty at
+// config-registration time, when no launch exists yet to scope it to.
+func withTaskMCPConnection(cfg config.AgentConfig, uri string, scope taskmcp.LaunchScope, token string) config.AgentConfig {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return cfg
 	}
-	scopedURI := taskMCPURIWithScope(uri, scope)
+	scopedURI := taskMCPURIWithScope(uri, scope, token)
 	for _, conn := range cfg.Connections {
 		if conn.Type == "mcp" && conn.Name == "hive-task" {
 			if sameTaskMCPEndpoint(conn.URI, uri) {
@@ -989,12 +1006,15 @@ func withTaskMCPConnection(cfg config.AgentConfig, uri string, scope taskmcp.Lau
 	return cfg
 }
 
-func taskMCPURIWithScope(raw string, scope taskmcp.LaunchScope) string {
+func taskMCPURIWithScope(raw string, scope taskmcp.LaunchScope, token string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return raw
 	}
 	q := u.Query()
+	if token = strings.TrimSpace(token); token != "" {
+		q.Set(taskmcp.TokenQueryParam, token)
+	}
 	if strings.TrimSpace(scope.TaskID) != "" {
 		q.Set("task_id", strings.TrimSpace(scope.TaskID))
 	}
@@ -1018,6 +1038,7 @@ func sameTaskMCPEndpoint(existing, base string) bool {
 		v.Del("task_id")
 		v.Del("repo")
 		v.Del("number")
+		v.Del(taskmcp.TokenQueryParam)
 		return v.Encode()
 	}
 	return e.Scheme == b.Scheme && e.Host == b.Host && e.Path == b.Path && stripScope(e.Query()) == stripScope(b.Query())

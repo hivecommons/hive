@@ -4,7 +4,7 @@ Hive serves the Phase 1 task MCP endpoint on the dashboard mux at `POST /api/con
 
 Phase 1 was for hub-launched agents only. Hive injects the endpoint through agent `connections` as the `hive-task` MCP server so existing `connectionMCPFlags` launch handling can pass it to supported CLIs.
 
-Scope resolution accepts `task_id`, `repo`, and `number` from the `X-Hive-Task-ID` header, tool arguments, then URL query parameters in that order. The per-launch `hive-task` URI carries those query parameters while preserving the existing `token` query parameter. Dashboard lookup first checks active contributor relay connections for backward compatibility, then falls through to the agent manager's active hub-launched agents. The active-launch entry supplies the agent, repo, launch generation, and started-at timestamp; until the manager has a stable issue/bead id for a launch, Hive derives the task id deterministically as `<agent>:<repo>#<number>:<generation>`.
+Scope resolution accepts `task_id`, `repo`, and `number` from the `X-Hive-Task-ID` header, tool arguments, then URL query parameters in that order. The per-launch `hive-task` URI carries those query parameters plus a per-launch `token` (see "Hub-launched scoping" below); it never carries the dashboard auth token. Dashboard lookup first checks active contributor relay connections for backward compatibility, then falls through to the agent manager's active hub-launched agents. The active-launch entry supplies the agent, repo, launch generation, and started-at timestamp; until the manager has a stable issue/bead id for a launch, Hive derives the task id deterministically as `<agent>:<repo>#<number>:<generation>`.
 
 Hub-launched kick prompts include one short pointer when the task MCP URL is configured: call `context_bundle` on `hive-task` first instead of re-reading the issue/PR and CI from scratch. Hives without a task MCP URL keep the old prompt text.
 
@@ -36,6 +36,12 @@ Remote contributor relays can opt in with `task_mcp.remote_enabled: true`. When 
 The relay writes that block as the standard `mcpServers` JSON shape (`hive_task`) in its contributor config directory and as `.mcp.json` in the launched agent working directory. The token is not written to the debug task file. Existing dashboard/contribute authorization still works; the lease bearer is an additional remote credential and is accepted only while the server-side lease record still matches its id, hash, task, repo, contributor identity, and expiry.
 
 All tools resolve scope from the lease when a lease bearer is used. A request for another task, repository, or number returns a typed refusal inside the fixed-schema `data` field instead of serving cross-task content, and the hub logs the lease id, tool, and requested repo. Calls are rate-limited per lease; `task_mcp.lease_rate_limit_per_minute` defaults to `config.DefaultTaskMCPLeaseRateLimitPerMinute`.
+
+## Hub-launched scoping
+
+Hub-launched agents do not receive the dashboard auth token (#8348). The boot hands the agent manager the bare endpoint URL and a minter; at every launch the manager asks the minter for a lease token bound to that launch's scope - the deterministic task id (which embeds the launch generation), the repository, and the agent name as the identity - and appends it as the `token` query parameter of the `hive-task` URI. The token is signed with the same secret the remote-contributor lease tokens use and expires after `task_mcp.launch_token_ttl` (default `config.DefaultTaskMCPLaunchTokenTTL`).
+
+The endpoint accepts a launch token only while the agent manager still reports that exact launch as active, so no separate revocation record is needed: when the launch ends or the agent relaunches under a new generation, the token stops matching and is refused. Scope resolves from the token's claims exactly as for remote leases - a call for another task, repository, or number gets the same typed `outside_lease_scope` refusal, and calls are rate-limited per token. The dashboard token itself is still accepted on the endpoint, but only for the dashboard's own UI calls; it is never placed in an agent's environment, launch flags, or MCP configuration.
 
 ## Phase 3 tools
 

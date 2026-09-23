@@ -26,9 +26,16 @@ type taskMCPSnapshot struct {
 	assignedAt time.Time
 }
 
+// handleContributeMCP authenticates, in order: a remote-contributor lease
+// bearer, a hub-launched agent's per-launch token (#8348), and finally the
+// dashboard token — the last is for the dashboard's own UI calls only; hub
+// launches never receive it.
 func (s *Server) handleContributeMCP(w http.ResponseWriter, r *http.Request) {
 	var leaseOK bool
 	r, leaseOK = s.authenticateTaskMCPLease(r)
+	if !leaseOK {
+		r, leaseOK = s.authenticateTaskMCPLaunch(r)
+	}
 	if !leaseOK && !s.authorizeTaskMCP(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return

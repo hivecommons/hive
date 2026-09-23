@@ -16,6 +16,9 @@ import (
 
 const (
 	EndpointPath = "/api/contribute/mcp"
+	// TokenQueryParam is the query key carrying a bearer when the client
+	// cannot set an Authorization header (CLI --mcp-server URLs).
+	TokenQueryParam = "token"
 
 	ProtocolVersion = "2025-03-26"
 	ServerName      = "hive-task-mcp"

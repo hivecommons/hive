@@ -1948,38 +1948,63 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		// and AgentPrimaryRepo to the ones a given agent serves (#6204) — so a
 		// pause taken or a scope edited mid-run reaches the next agent launch
 		// without rebuilding this context.
-		Repos:            b.cfg.Project.Repos,
-		RepoPaused:       b.cfg.IsRepoPaused,
-		AgentRepos:       b.cfg.ReposForAgent,
-		AgentPrimaryRepo: b.cfg.PrimaryRepoForAgent,
-		PrimaryRepoName:  b.cfg.Project.PrimaryRepo,
-		ACMMLevel:        b.acmmLevel,
-		PRsAllowed:       b.cfg.Project.PRsAllowed(),
-		PolicyDir:        b.policyDirPath,
-		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
-		TaskMCPURL:       b.taskMCPURLForAgents(),
+		Repos:              b.cfg.Project.Repos,
+		RepoPaused:         b.cfg.IsRepoPaused,
+		AgentRepos:         b.cfg.ReposForAgent,
+		AgentPrimaryRepo:   b.cfg.PrimaryRepoForAgent,
+		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
+		ACMMLevel:          b.acmmLevel,
+		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		PolicyDir:          b.policyDirPath,
+		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		TaskMCPURL:         b.taskMCPURLForAgents(),
+		TaskMCPLaunchToken: b.taskMCPLaunchTokenForAgents,
 	}
 	return true
 }
 
+// taskMCPURLForAgents is the bare task MCP endpoint handed to hub-launched
+// agents. It deliberately carries no credential: until #8348 it embedded the
+// dashboard auth token, so every agent (and anything it forwarded the URL to)
+// held dashboard-wide authority. The per-launch credential is minted by
+// taskMCPLaunchTokenForAgents and attached by the agent manager at launch.
 func (b *boot) taskMCPURLForAgents() string {
 	if b == nil || b.cfg == nil || b.dashboardURLForFreshHeartbeat == nil {
 		return ""
 	}
-	base := strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
-	token := ""
-	token = strings.TrimSpace(b.cfg.Dashboard.AuthToken)
-	if token == "" {
-		return base
+	return strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
+}
+
+// taskMCPLaunchTokenForAgents mints the lease-scoped bearer one launch
+// presents to the task MCP endpoint (#8348). It is signed with the same
+// secret the dashboard verifies remote-contributor lease tokens with, bound
+// to the launch's deterministic task id, repo and agent identity, and the
+// dashboard accepts it only while that launch is still active — so ending
+// the launch revokes it without any extra bookkeeping. Empty when the
+// dashboard has no auth token (open spoke) or the scope is incomplete.
+func (b *boot) taskMCPLaunchTokenForAgents(scope taskmcp.LaunchScope) string {
+	if b == nil || b.cfg == nil {
+		return ""
 	}
-	u, err := url.Parse(base)
+	secret := strings.TrimSpace(b.cfg.Dashboard.AuthToken)
+	if secret == "" {
+		return ""
+	}
+	now := time.Now()
+	token, _, err := taskmcp.MintLeaseToken([]byte(secret), taskmcp.LeaseTokenClaims{
+		TaskID:    scope.TaskID,
+		Identity:  scope.Agent,
+		Repo:      scope.Repo,
+		Number:    scope.Number,
+		ExpiresAt: now.Add(b.cfg.TaskMCP.LaunchTokenTTLOrDefault()),
+	}, now)
 	if err != nil {
-		return base
+		if b.logger != nil {
+			b.logger.Warn("[task-mcp] failed to mint launch token", "agent", scope.Agent, "repo", scope.Repo, "error", err)
+		}
+		return ""
 	}
-	q := u.Query()
-	q.Set("token", token)
-	u.RawQuery = q.Encode()
-	return u.String()
+	return token
 }
 
 // bootAgents constructs the agent manager and everything that hangs off it

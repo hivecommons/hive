@@ -435,8 +435,16 @@ type ProjectContext struct {
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
 	// TaskMCPURL is the hub-served, read-only task context endpoint for
-	// hub-launched agents. Empty keeps launches byte-for-byte unchanged.
+	// hub-launched agents. Empty keeps launches byte-for-byte unchanged. It
+	// carries NO credential: the dashboard bearer must never reach an agent
+	// (#8348), so the per-launch token comes from TaskMCPLaunchToken instead.
 	TaskMCPURL string
+	// TaskMCPLaunchToken mints the credential one launch presents to the task
+	// MCP endpoint, bound to that launch's scope (task id, repo, agent,
+	// generation) and revoked when the launch ends. Nil means the URL is
+	// handed over without a token; the hub then refuses the agent's calls
+	// rather than falling back to a wider credential.
+	TaskMCPLaunchToken func(scope taskmcp.LaunchScope) string
 	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
 	// a live predicate rather than a snapshot list because ProjectContext is
 	// built once at boot and a pause is taken mid-run — a repo frozen for a
@@ -772,7 +780,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	}
 
 	for name, cfg := range agents {
-		cfg = withTaskMCPConnection(cfg, project.TaskMCPURL, taskmcp.LaunchScope{})
+		cfg = withTaskMCPConnection(cfg, project.TaskMCPURL, taskmcp.LaunchScope{}, "")
 		if !AgentAvailableAtACMMLevel(name, project.ACMMLevel) {
 			logger.Info("agent below ACMM gate; not instantiating", "agent", name, "level", project.ACMMLevel)
 			continue
@@ -1118,7 +1126,7 @@ func (m *Manager) Stop(name string) error {
 func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{})
+	cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{}, "")
 
 	if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
 		m.logger.Info("agent below ACMM gate; not adding", "agent", name, "level", m.project.ACMMLevel)
@@ -1211,7 +1219,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 	allowedConfigs := make(map[string]config.AgentConfig, len(configs))
 
 	for name, cfg := range configs {
-		cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{})
+		cfg = withTaskMCPConnection(cfg, m.project.TaskMCPURL, taskmcp.LaunchScope{}, "")
 		if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
 			continue
 		}
