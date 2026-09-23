@@ -136,17 +136,30 @@ func (a *Adapter) peer(identity string) (*Peer, error) {
 	return p, nil
 }
 
+// Admit implements extwork.Gate: the binding calls it before any offer is
+// made or any admission persisted, so a write-capable stage, a non
+// report-only mode, or an authority without the capability is refused on
+// Hive's side with no frame reaching the workbench. The same checks are
+// repeated defensively in Host and Start.
+func (a *Adapter) Admit(adm extwork.Admission) error {
+	if err := CheckReportOnly(adm); err != nil {
+		return err
+	}
+	if adm.Authority.Capability != Capability {
+		return ErrCapabilityMissing
+	}
+	return nil
+}
+
 // Host returns the accept-or-decline step for the workbench held by
 // identity. Binding.Offer calls it with the summary; the workbench sees the
-// Offer fields and nothing else until it accepts. A write-capable stage is
-// refused here, before any frame is sent.
+// Offer fields and nothing else until it accepts. The Admit checks are
+// repeated here so a caller that bypasses the binding is still refused
+// before any frame is sent.
 func (a *Adapter) Host(identity string, adm extwork.Admission) extwork.Host {
 	return extwork.HostFunc(func(ctx context.Context, offer extwork.Offer) (extwork.OfferDecision, string, error) {
-		if err := CheckReportOnly(adm); err != nil {
+		if err := a.Admit(adm); err != nil {
 			return extwork.OfferDeclined, err.Error(), err
-		}
-		if adm.Authority.Capability != Capability {
-			return extwork.OfferDeclined, ErrCapabilityMissing.Error(), ErrCapabilityMissing
 		}
 		if adm.Authority.Mode == extwork.ModeShadow {
 			// Shadow observes configured state only: no frame reaches the

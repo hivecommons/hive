@@ -899,3 +899,57 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// gatedAdapter refuses every admission whose stage is "publish" before any
+// offer or persist, the seam an unconfined host uses.
+type gatedAdapter struct {
+	*fakeAdapter
+	offers int
+}
+
+var errGateRefused = errors.New("gate: stage may not be bound to this host")
+
+func (g *gatedAdapter) Admit(adm Admission) error {
+	if adm.Stage == "publish" {
+		return errGateRefused
+	}
+	return nil
+}
+
+func TestBindingGateRefusesBeforeOfferAndPersist(t *testing.T) {
+	ctx := context.Background()
+	g := &gatedAdapter{fakeAdapter: newFake()}
+	store := NewMemoryStore()
+	sink := &MemorySink{}
+	b := New(g, store, nil, sink, ModeReportOnly)
+	adm := testAdmission()
+	adm.Stage = "publish"
+	host := HostFunc(func(context.Context, Offer) (OfferDecision, string, error) {
+		g.offers++
+		return OfferAccepted, "should never be asked", nil
+	})
+	if d, err := b.Offer(ctx, host, adm, "s"); d != OfferDeclined || !errors.Is(err, errGateRefused) || errors.Is(err, ErrDeclined) {
+		t.Fatalf("gated Offer = %s %v (want the gate error itself, not a host decline)", d, err)
+	}
+	if _, err := b.Dispatch(ctx, adm, testPayload()); !errors.Is(err, errGateRefused) {
+		t.Fatalf("gated Dispatch = %v", err)
+	}
+	if g.offers != 0 || g.starts != 0 {
+		t.Fatalf("gate did not run first: offers=%d starts=%d", g.offers, g.starts)
+	}
+	if _, ok, _ := store.Load(adm.AssignmentID); ok {
+		t.Fatal("a gated admission was persisted")
+	}
+	if !contains(sink.Actions(), EventOfferDeclined) {
+		t.Fatalf("gate refusal not audited: %v", sink.Actions())
+	}
+	// Positive control: the default stage passes the gate and is offered
+	// and started.
+	ok := testAdmission()
+	if d, err := b.Offer(ctx, host, ok, "s"); d != OfferAccepted || err != nil || g.offers != 1 {
+		t.Fatalf("positive control Offer = %s %v offers=%d", d, err, g.offers)
+	}
+	if _, err := b.Dispatch(ctx, ok, testPayload()); err != nil || g.starts != 1 {
+		t.Fatalf("positive control Dispatch = %v starts=%d", err, g.starts)
+	}
+}

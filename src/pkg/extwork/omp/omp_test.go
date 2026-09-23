@@ -294,8 +294,14 @@ func TestPeerOfferStartObserveCancelArtifact(t *testing.T) {
 		t.Fatalf("start frame = %+v", startFrame)
 	}
 	obs, err := p.Observe(key)
-	if err != nil || obs.State != extwork.StateAccepted || obs.RemoteRunID != "run-1" {
-		t.Fatalf("Observe after start = %+v %v", obs, err)
+	if err != nil || obs.State != extwork.StateAccepted || obs.RemoteRunID != "run-1" || obs.Stage != adm.Stage {
+		t.Fatalf("Observe after start = %+v %v (stage must be seeded from the offer)", obs, err)
+	}
+	// A progress frame that omits the stage keeps the one on record.
+	link.workbenchSays(omp.Message{Type: omp.MsgProgress, ExecutionKey: string(key), State: "waiting"})
+	waitState(t, p, key, extwork.StateWaiting)
+	if obs, _ := p.Observe(key); obs.Stage != adm.Stage {
+		t.Fatalf("stage lost on a frame without one: %+v", obs)
 	}
 	// Progress: valid, invalid, and a frame for a key never started.
 	link.workbenchSays(omp.Message{Type: omp.MsgProgress, ExecutionKey: string(key), State: "running", Stage: "review"})

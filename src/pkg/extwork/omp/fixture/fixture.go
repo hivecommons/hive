@@ -379,9 +379,25 @@ func (w *Workbench) handleStart(msg omp.Message) {
 	r := &wbRun{key: msg.ExecutionKey, id: fmt.Sprintf("%s%d", runIDPrefix, w.nextRun), gen: msg.TaskGen, digest: digest, payload: p, startedTick: w.stats.Tick}
 	w.runs[msg.ExecutionKey] = r
 	w.stats.Runs++
+	stage := w.stageOfLocked(r)
 	w.mu.Unlock()
 	_ = w.send(omp.Message{Type: omp.MsgStarted, ExecutionKey: msg.ExecutionKey, RemoteRunID: r.id})
-	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: msg.ExecutionKey, RemoteRunID: r.id, State: string(extwork.StateAccepted), Detail: "queued on the workbench"})
+	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: msg.ExecutionKey, RemoteRunID: r.id, State: string(extwork.StateAccepted), Stage: stage, Detail: "queued on the workbench"})
+}
+
+// stageOfLocked names the workbench stage a run is in: the lease stage from
+// the bundle before the first tick, then the workflow stage last entered.
+// Every progress frame carries it so the hub's audit never records an empty
+// stage. Callers hold w.mu.
+func (w *Workbench) stageOfLocked(r *wbRun) string {
+	if r.stageIdx == 0 {
+		return r.payload.Admission.Stage
+	}
+	idx := r.stageIdx - 1
+	if idx >= len(w.wf.Stages) {
+		idx = len(w.wf.Stages) - 1
+	}
+	return w.wf.Stages[idx].Name
 }
 
 func (w *Workbench) handleCancel(msg omp.Message) {
@@ -403,9 +419,10 @@ func (w *Workbench) handleCancel(msg omp.Message) {
 	default:
 		r.terminal = true
 		r.endedTick = w.stats.Tick
+		stage := w.stageOfLocked(r)
 		w.mu.Unlock()
 		_ = w.send(omp.Message{Type: omp.MsgCancelAck, ExecutionKey: msg.ExecutionKey, Acknowledged: true, Stopped: true, Detail: "stopped"})
-		_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: msg.ExecutionKey, RemoteRunID: r.id, State: string(extwork.StateTerminal), Detail: "stopped on request"})
+		_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: msg.ExecutionKey, RemoteRunID: r.id, State: string(extwork.StateTerminal), Stage: stage, Detail: "stopped on request"})
 	}
 }
 
@@ -440,13 +457,14 @@ func (w *Workbench) advance(r *wbRun) {
 	r.endedTick = w.stats.Tick
 	raw, err := w.buildReceiptLocked(r)
 	w.stats.Receipts++
+	stage := w.stageOfLocked(r)
 	w.mu.Unlock()
 	if err != nil {
-		_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(extwork.StateTerminal), Detail: "receipt: " + err.Error()})
+		_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(extwork.StateTerminal), Stage: stage, Detail: "receipt: " + err.Error()})
 		return
 	}
-	_ = w.send(omp.Message{Type: omp.MsgReceipt, ExecutionKey: r.key, RemoteRunID: r.id, Stage: r.payload.Admission.Stage, Artifact: &omp.Artifact{Path: omp.ReceiptArtifact, Digest: digestOf(raw), Size: int64(len(raw)), Body: raw}})
-	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(extwork.StateTerminal)})
+	_ = w.send(omp.Message{Type: omp.MsgReceipt, ExecutionKey: r.key, RemoteRunID: r.id, Stage: stage, Artifact: &omp.Artifact{Path: omp.ReceiptArtifact, Digest: digestOf(raw), Size: int64(len(raw)), Body: raw}})
+	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(extwork.StateTerminal), Stage: stage})
 }
 
 // BuildReceipt renders the stage_receipt AgentReport for a finished run.
@@ -548,12 +566,13 @@ func (w *Workbench) SetWaiting(runID string, waiting bool) bool {
 		return false
 	}
 	r.waiting = waiting
+	stage := w.stageOfLocked(r)
 	w.mu.Unlock()
 	state := extwork.StateRunning
 	if waiting {
 		state = extwork.StateWaiting
 	}
-	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(state), Detail: "waiting toggled by control"})
+	_ = w.send(omp.Message{Type: omp.MsgProgress, ExecutionKey: r.key, RemoteRunID: r.id, State: string(state), Stage: stage, Detail: "waiting toggled by control"})
 	return true
 }
 

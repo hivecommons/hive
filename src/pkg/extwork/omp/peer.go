@@ -240,7 +240,12 @@ func (p *Peer) handle(msg Message) {
 			detail = "workbench reported state " + msg.State
 			state = extwork.StateUnknown
 		}
-		r.state, r.stage, r.detail, r.observedAt = state, msg.Stage, detail, p.now()
+		r.state, r.detail, r.observedAt = state, detail, p.now()
+		if msg.Stage != "" {
+			// A frame that omits the stage keeps the last one reported, or
+			// the stage the offer named; a progress event never loses it.
+			r.stage = msg.Stage
+		}
 		if msg.RemoteRunID != "" {
 			r.remoteRunID = msg.RemoteRunID
 		}
@@ -291,7 +296,9 @@ func (p *Peer) Offer(ctx context.Context, offer extwork.Offer, gen uint64) (extw
 		p.mu.Lock()
 		delete(p.offers, offer.ExecutionKey)
 		if d.accepted {
-			p.runLocked(offer.ExecutionKey).accepted = true
+			r := p.runLocked(offer.ExecutionKey)
+			r.accepted = true
+			r.stage = offer.Stage
 		}
 		p.mu.Unlock()
 		if d.accepted {

@@ -436,8 +436,15 @@ func TestConformanceProgressEventsAndReceiptBinding(t *testing.T) {
 		}
 	}
 	for _, ev := range sink.Events() {
-		if ev.Action == extwork.EventProgress && ev.State == extwork.StateRunning && ev.Fields["stage"] != "review" {
-			t.Fatalf("running event lacks the stage: %+v", ev)
+		if ev.Action != extwork.EventProgress {
+			continue
+		}
+		stage, _ := ev.Fields["stage"].(string)
+		if stage == "" {
+			t.Fatalf("progress event without a stage: %+v", ev)
+		}
+		if (ev.State == extwork.StateRunning || ev.State == extwork.StateWaiting) && stage != "review" && stage != "report" {
+			t.Fatalf("running/waiting event carries stage %q: %+v", stage, ev)
 		}
 	}
 

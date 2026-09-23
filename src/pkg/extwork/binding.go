@@ -84,13 +84,40 @@ func (b *Binding) record(action string, adm Admission, state State, fields map[s
 	b.sink.Record(ProgressEvent{Action: action, ExecutionKey: adm.ExecutionKey(), AssignmentID: adm.AssignmentID, State: state, Fields: fields})
 }
 
+// Gate is implemented by adapters that can refuse an admission on Hive's
+// side before anything is offered or persisted: a confinement rule such as
+// "an unconfined host takes report-only stages only". The binding consults
+// it first in Offer and Dispatch, so a refused admission never produces a
+// frame to the host; the error is returned as-is, not as a host decline.
+type Gate interface {
+	Admit(adm Admission) error
+}
+
+// gate applies the adapter's Gate, if any, and records a refusal as an
+// offer decline so the audit shows why nothing was offered.
+func (b *Binding) gate(adm Admission) error {
+	g, ok := b.adapter.(Gate)
+	if !ok {
+		return nil
+	}
+	if err := g.Admit(adm); err != nil {
+		b.record(EventOfferDeclined, adm, "", map[string]any{"reason": err.Error(), "gate": true})
+		return err
+	}
+	return nil
+}
+
 // Offer presents the assignment summary to the host and records the decision.
-// Nothing beyond the Offer is delivered before the host accepts.
+// Nothing beyond the Offer is delivered before the host accepts, and nothing
+// at all is sent when the adapter's Gate refuses the admission.
 func (b *Binding) Offer(ctx context.Context, host Host, adm Admission, summary string) (OfferDecision, error) {
 	if b.mode == ModeOff {
 		return OfferDeclined, ErrDisabled
 	}
 	if err := adm.Validate(); err != nil {
+		return OfferDeclined, err
+	}
+	if err := b.gate(adm); err != nil {
 		return OfferDeclined, err
 	}
 	if host == nil {
@@ -129,6 +156,9 @@ func (b *Binding) Dispatch(ctx context.Context, adm Admission, payload []byte) (
 	}
 	if adm.RequestDigest != RequestDigest(payload) {
 		return DispatchResult{}, ErrPayloadDigest
+	}
+	if err := b.gate(adm); err != nil {
+		return DispatchResult{}, err
 	}
 	// A durable admission already on record for this assignment is the
 	// authority; a second dispatch may repeat it (same key, same payload) or
