@@ -1431,6 +1431,7 @@ func (b *boot) wireBootClosures() {
 			// case the Approvals panel renders as "not enabled".
 			ApprovalDesk:  b.approvalDesk,
 			ApprovalInbox: b.approvalInbox,
+			IssueClaims:   b.issueClaims,
 			Logger:        b.logger,
 			Ctx:           b.ctx,
 			RefreshFunc:   b.refreshDashboard,
@@ -2185,6 +2186,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// auto-merge sweep is started below, because the sweep is the one producer
 	// wired in this slice. Also handed to the dashboard for the Approvals panel.
 	b.approvalDesk, b.approvalInbox = buildApprovalDesk(b.cfg, b.logger)
+	// Issue claims (hivecommons/hive#8380): who is working what, ranked so a
+	// human or hub agent can take an issue over from a relay contributor.
+	b.issueClaims = buildClaimsLedger(b.cfg, b.logger)
 	// Create the agent-facing request queues REGARDLESS of App state. The
 	// watchers below stay gated (no App, no bot to author as), but the queues
 	// must exist either way or the "requests simply accumulate" behavior above
@@ -3330,7 +3334,10 @@ func (b *boot) bootSupervision() {
 	// In-flight ledger + session PR link (Linear GitHub-parity follow-ups):
 	// the scheduler withholds work a Linear session is already working, and
 	// the pr-request watcher narrates opened PRs into the session.
-	b.sched.SetInflightLookup(b.dashSrv.LinearSessionHolder)
+	// #8380: the worker-claim ledger is a second in-flight source — an issue a
+	// human, contributor or another agent holds is withheld from kicks too.
+	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
+		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
 	if b.ghClient != nil {
 		b.ghClient.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 			b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
@@ -3368,6 +3375,8 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
+	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -6622,6 +6631,9 @@ func runEvalCycle(
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
 				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
+				// #8380: the kicked agent now holds these issues; record the
+				// claims so contributors and other hives back off.
+				recordAgentKickClaims(dashSrv, msg.Agent, msg.IssueRefs, logger)
 
 				// Log token state at time of kick for cost attribution
 				if tokenCollector != nil {

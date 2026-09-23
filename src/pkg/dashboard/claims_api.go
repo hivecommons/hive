@@ -35,6 +35,10 @@ func (s *Server) claimsLedger() *claims.Ledger {
 	return s.deps.IssueClaims
 }
 
+// IssueClaims exposes the worker-claim ledger to cmd/hive seams that only
+// hold the dashboard (the eval cycle's kick delivery hook). Nil when off.
+func (s *Server) IssueClaims() *claims.Ledger { return s.claimsLedger() }
+
 func (h *ContributeWSHub) claimsLedger() *claims.Ledger {
 	if h == nil || h.server == nil {
 		return nil

@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/publish"
@@ -80,6 +81,7 @@ type boot struct {
 	agentMgr                      *agent.Manager
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
+	issueClaims                   *claims.Ledger
 	dashSrv                       *dashboard.Server
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int

@@ -1713,6 +1713,31 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 	return err
 }
 
+// RemoveLabel removes one label from an issue or PR. A label that is not
+// present (404) is not an error — the desired end state already holds.
+func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	if label == "" {
+		return nil
+	}
+	owner, repoName := c.splitRepo(repo)
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindLabelMutation,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"remove_label": label},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, apiErr := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, url.PathEscape(label))
+		if githubStatusError(apiErr, http.StatusNotFound) {
+			apiErr = nil
+		}
+		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
+	})
+	return err
+}
+
 func extractLabels(labels []*gh.Label) []string {
 	var result []string
 	for _, l := range labels {
