@@ -1,0 +1,1 @@
+- The dashboard agent model dropdown now filters provider/static catalogs through the model set accepted by the pinned agent CLIs, so unsupported selections are not offered or saved ([#8418](https://github.com/hivecommons/hive/issues/8418)).

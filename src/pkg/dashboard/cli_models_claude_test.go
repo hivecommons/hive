@@ -169,7 +169,7 @@ func TestDiscoverClaudeModels_LiveSuccess(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	var hdr http.Header
 	ts := claudeModelsTestServer(t, http.StatusOK,
-		`{"data":[{"id":"claude-opus-5","type":"model"},{"id":"claude-sonnet-5","type":"model"},{"id":""}]}`, &hdr)
+		`{"data":[{"id":"claude-opus-5-5","type":"model"},{"id":"claude-opus-5","type":"model"},{"id":"claude-sonnet-5","type":"model"},{"id":""}]}`, &hdr)
 	redirectAnthropicEndpoint(t, ts.URL)
 
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
@@ -177,8 +177,8 @@ func TestDiscoverClaudeModels_LiveSuccess(t *testing.T) {
 	if r.fallback {
 		t.Fatal("successful probe must not be marked fallback")
 	}
-	if !equalStrings(r.models, []string{"claude-opus-5", "claude-sonnet-5"}) {
-		t.Fatalf("got %v, want the two non-empty live ids", r.models)
+	if !equalStrings(r.models, []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5"}) {
+		t.Fatalf("got %v, want the CLI-supported non-empty live ids", r.models)
 	}
 	// OAuth request shape: bearer + version + oauth beta.
 	if got := hdr.Get("Authorization"); got != "Bearer oauth-token" {
@@ -189,6 +189,23 @@ func TestDiscoverClaudeModels_LiveSuccess(t *testing.T) {
 	}
 	if got := hdr.Get("anthropic-beta"); got != anthropicOAuthBeta {
 		t.Fatalf("anthropic-beta = %q", got)
+	}
+}
+
+func TestDiscoverClaudeModels_FiltersProviderOnlyModels(t *testing.T) {
+	writeClaudeCredentials(t, "oauth-token", futureExpiryMs())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	ts := claudeModelsTestServer(t, http.StatusOK,
+		`{"data":[{"id":"claude-opus-5-5"},{"id":"claude-future-9"}]}`, nil)
+	redirectAnthropicEndpoint(t, ts.URL)
+
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.discoverClaudeModels()
+	if r.fallback {
+		t.Fatalf("supported intersection must remain live, got %+v", r)
+	}
+	if !equalStrings(r.models, []string{"claude-opus-5-5"}) {
+		t.Fatalf("got %v, want only the model accepted by the pinned CLI", r.models)
 	}
 }
 

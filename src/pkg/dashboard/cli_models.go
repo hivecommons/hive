@@ -246,6 +246,7 @@ func setCopilotSDKHelperPathForTest(t interface {
 // in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
 // ids AND the bare aliases the CLI accepts are included.
 var claudeStaticModels = []string{
+	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
@@ -268,6 +269,10 @@ var claudeStaticModels = []string{
 // per plan and changes often, so live discovery is strongly preferred; this
 // is only a floor so the dropdown is never empty.
 var copilotStaticModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
 	"gpt-5.4",
 	"gpt-5.2",
 	"gpt-4.1",
@@ -285,6 +290,42 @@ var copilotStaticModels = []string{
 	"gemini-flash-3.5",
 	"o3",
 	"o4-mini",
+}
+
+var copilotPinnedCLIModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.3-codex",
+	"gpt-5.2",
+	"gpt-5-mini",
+	"gpt-4.1",
+	"gpt-4o",
+	"o3",
+	"o4-mini",
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-fable-5",
+	"claude-opus-4.8",
+	"claude-opus-4.7",
+	"claude-opus-4.6",
+	"claude-opus-4.5",
+	"claude-sonnet-4.6",
+	"claude-sonnet-4.5",
+	"claude-haiku-4.5",
+	"gemini-3.6-flash",
+	"gemini-3.5-flash",
+	"gemini-3.1-pro-preview",
+	"gemini-2.5-pro",
+	"gemini-flash-3.5",
+	"grok-4.5",
+	"kimi-k3",
+	"kimi-k2.7-code",
+	"mai-code-1-flash-picker",
+	copilotAutoModel,
 }
 
 // copilotAlwaysIncludeModels are ids that must ALWAYS be offered in the
@@ -351,6 +392,40 @@ var codexStaticModels = []string{
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
 // discovery fails). Keep CURRENT.
 var geminiStaticModels = []string{
+	"gemini-3-pro-preview",
+	"gemini-3-flash-preview",
+	"gemini-2.5-pro",
+	"gemini-2.5-flash",
+}
+
+// claudePinnedCLIModels is the closed model set accepted by the Claude Code
+// version pinned in src/Dockerfile (2.1.280 as of #8417/#8426). The Anthropic
+// account catalog can list models that the installed CLI refuses with "version
+// X or newer is required"; intersecting live and fallback lists with this set
+// keeps the dashboard from offering a value this image cannot launch (#8418).
+var claudePinnedCLIModels = []string{
+	"claude-opus-5-5",
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-fable-5",
+	"claude-opus-4-8",
+	"claude-opus-4-7",
+	"claude-sonnet-4-6",
+	"claude-opus-4-6",
+	"claude-opus-4-5-20251101",
+	"claude-haiku-4-5-20251001",
+	"claude-sonnet-4-5-20250929",
+	"claude-opus-4-1-20250805",
+	"opus",
+	"sonnet",
+	"haiku",
+}
+
+// geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound
+// the Google models API inventory. The API is account/provider-facing; the
+// installed CLI accepts the stable Gemini Code Assist ids below, not every
+// generateContent model the API may return.
+var geminiPinnedCLIModels = []string{
 	"gemini-3-pro-preview",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
@@ -643,8 +718,14 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		r = cliModelResult{models: nil, fallback: true}
 	}
 
+	if len(r.models) > 0 && !(backend == "copilot" && r.authoritative()) {
+		r.models = filterPinnedCLIModels(backend, r.models)
+	}
 	if len(r.models) == 0 {
-		r.models = dedupeModels(cliStaticFallback(backend))
+		if !r.fallback && r.discoveryErr == "" && len(pinnedCLIModelAllowlist(backend)) > 0 {
+			r.discoveryErr = "probe returned no models supported by the pinned CLI"
+		}
+		r.models = filterPinnedCLIModels(backend, dedupeModels(cliStaticFallback(backend)))
 		r.fallback = true
 	} else if r.authoritative() && s.cliModels != nil {
 		// Smooth nondeterministic live results (see cliModelDropAfterMisses):
@@ -759,6 +840,41 @@ func cliStaticFallback(backend string) []string {
 	}
 }
 
+func pinnedCLIModelAllowlist(backend string) []string {
+	switch backend {
+	case "claude":
+		return claudePinnedCLIModels
+	case "copilot":
+		return copilotPinnedCLIModels
+	case "gemini":
+		return geminiPinnedCLIModels
+	default:
+		return nil
+	}
+}
+
+func filterPinnedCLIModels(backend string, models []string) []string {
+	allow := pinnedCLIModelAllowlist(backend)
+	if len(allow) == 0 || len(models) == 0 {
+		return models
+	}
+	allowed := make(map[string]struct{}, len(allow))
+	for _, id := range allow {
+		allowed[id] = struct{}{}
+	}
+	out := make([]string, 0, len(models))
+	for _, id := range models {
+		candidate := id
+		if backend == "copilot" {
+			candidate = agent.CanonicalizeCopilotModel(id)
+		}
+		if _, ok := allowed[candidate]; ok {
+			out = append(out, candidate)
+		}
+	}
+	return dedupeModels(out)
+}
+
 // discoverCopilotModels lists the models available to this hive's Copilot
 // auth. Hardened probe order:
 //
@@ -861,12 +977,20 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 		}
 		return cliModelResult{fallback: true, notice: notice, discoveryErr: discoveryErr}
 	}
-	out := cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
+	out := cliModelResult{models: filterPinnedCLIModels("copilot", canonicalizeCopilotModelIDs(models)), fallback: false}
+	if len(out.models) == 0 {
+		return cliModelResult{fallback: true, notice: notice, discoveryErr: joinDiscoveryErrs(sdkErr, "http probe returned no models supported by the pinned Copilot CLI")}
+	}
+	// Any raw-HTTP success is deliberately not authoritative for the dropdown:
+	// it lists the account's chat-completions inventory, not the installed
+	// Copilot CLI's model catalog. The SDK helper path above is the only clean
+	// Copilot discovery source because it drives the pinned CLI itself (#8418).
+	out.degraded = true
+	out.discoveryErr = "serving the HTTP chat-completions catalog, which is not the CLI's"
 	if sdkErr != "" {
 		// The HTTP probe answered, but it is the chat-completions catalog,
 		// not the CLI's: real ids, wrong inventory. Serve it, say so, and
 		// keep it out of every path that treats a live list as authority.
-		out.degraded = true
 		out.discoveryErr = "copilot SDK helper failed: " + sdkErr + "; serving the HTTP chat-completions catalog, which is not the CLI's"
 	}
 	return out
@@ -1328,6 +1452,10 @@ func (s *Server) discoverGeminiModels() cliModelResult {
 		}
 		return cliModelResult{fallback: true, discoveryErr: "probe returned no models"}
 	}
+	models = filterPinnedCLIModels("gemini", models)
+	if len(models) == 0 {
+		return cliModelResult{fallback: true, discoveryErr: "probe returned no models supported by the pinned Gemini CLI"}
+	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
 }
 
@@ -1443,6 +1571,10 @@ func (s *Server) discoverClaudeModels() cliModelResult {
 			return cliModelResult{fallback: true, discoveryErr: cliModelErrText(err)}
 		}
 		return cliModelResult{fallback: true, discoveryErr: "probe returned no models"}
+	}
+	models = filterPinnedCLIModels("claude", models)
+	if len(models) == 0 {
+		return cliModelResult{fallback: true, discoveryErr: "probe returned no models supported by the pinned Claude Code CLI"}
 	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
 }

@@ -61,7 +61,6 @@ func TestDiscoverGeminiModels_LiveSuccess(t *testing.T) {
 	if r.fallback {
 		t.Fatal("successful discovery probe must not be marked fallback")
 	}
-
 	wantModels := []string{"gemini-2.5-flash", "gemini-2.5-pro"}
 	if !equalStrings(r.models, wantModels) {
 		t.Fatalf("got models %v, want %v (expected prefix stripping, filtering, and deduplication)", r.models, wantModels)
@@ -85,6 +84,29 @@ func TestDiscoverGeminiModels_LiveSuccess(t *testing.T) {
 	}
 	if !equalStrings(res.models, wantModels) {
 		t.Fatalf("queryCLIModels returned %v, want %v", res.models, wantModels)
+	}
+}
+
+func TestDiscoverGeminiModels_FiltersProviderOnlyModels(t *testing.T) {
+	clearGeminiEnv(t)
+	t.Setenv("GEMINI_API_KEY", "test-gemini-secret-key")
+
+	respBody := `{
+		"models": [
+			{"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-future-ultra", "supportedGenerationMethods": ["generateContent"]}
+		]
+	}`
+	ts := geminiModelsTestServer(t, http.StatusOK, respBody, nil)
+	redirectGeminiEndpoint(t, ts.URL)
+
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.discoverGeminiModels()
+	if r.fallback {
+		t.Fatalf("supported intersection must remain live, got %+v", r)
+	}
+	if !equalStrings(r.models, []string{"gemini-2.5-pro"}) {
+		t.Fatalf("got %v, want only the model accepted by the pinned CLI", r.models)
 	}
 }
 

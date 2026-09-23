@@ -64,8 +64,8 @@ func TestDiscoverCopilotModels_SDKFailureWithHTTPSuccessIsDegraded(t *testing.T)
 	if !strings.Contains(r.discoveryErr, "Could not find a @github/copilot platform package") {
 		t.Errorf("discoveryErr must carry the helper's own words, got %q", r.discoveryErr)
 	}
-	if !contains(r.models, "gpt-4o-mini-2024-07-18") {
-		t.Errorf("degraded list must still be served: %v", r.models)
+	if contains(r.models, "gpt-4o-mini-2024-07-18") || !contains(r.models, "gpt-4o") {
+		t.Errorf("degraded list must be served only after pinned-CLI filtering: %v", r.models)
 	}
 
 	// Through the full pipeline: not fed to retention, not usable for
@@ -82,9 +82,10 @@ func TestDiscoverCopilotModels_SDKFailureWithHTTPSuccessIsDegraded(t *testing.T)
 	}
 }
 
-// Helper ABSENT (dev machine, CI) with HTTP success stays a clean live
-// result — that is the normal state outside the image, not a failure.
-func TestDiscoverCopilotModels_AbsentHelperWithHTTPSuccessIsLive(t *testing.T) {
+// Helper ABSENT (dev machine, CI) with HTTP success is still not the installed
+// CLI's catalog. Serve it so the dropdown is useful, but mark it degraded so
+// validation/auto-heal never treat the provider API as CLI truth (#8418).
+func TestDiscoverCopilotModels_AbsentHelperWithHTTPSuccessIsDegraded(t *testing.T) {
 	t.Setenv("COPILOT_GITHUB_TOKEN", "ghu_test")
 	// Wrapped so errors.Is matches the sentinel exactly as execCopilotSDKHelper does.
 	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
@@ -93,8 +94,8 @@ func TestDiscoverCopilotModels_AbsentHelperWithHTTPSuccessIsLive(t *testing.T) {
 	healthyCopilotAPI(t, "gpt-4o")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	r := s.discoverCopilotModels()
-	if !r.authoritative() || r.failed() {
-		t.Fatalf("absent helper + HTTP success must be a clean live result, got %+v", r)
+	if r.fallback || !r.degraded || r.authoritative() || !r.failed() {
+		t.Fatalf("absent helper + HTTP success must be degraded, got %+v", r)
 	}
 }
 
@@ -121,7 +122,7 @@ func TestDiscoverCopilotModels_SDKFailureNoTokenCarriesError(t *testing.T) {
 func TestHandleBackends_CarriesDiscoveryFailure(t *testing.T) {
 	t.Setenv("COPILOT_GITHUB_TOKEN", "ghu_test")
 	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) { return nil, arm64Failure })
-	healthyCopilotAPI(t, "gpt-4o-mini-2024-07-18")
+	healthyCopilotAPI(t, "gpt-4o-mini-2024-07-18", "gpt-4o")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 
 	rec := httptest.NewRecorder()
