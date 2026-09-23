@@ -5327,6 +5327,9 @@ func (c *Config) applyDefaults() {
 	if len(c.Project.Repos) > 0 && c.Project.Org != "" {
 		c.Project.Repos, _ = NormalizeProjectRepos(c.Project.Org, c.Project.Repos)
 	}
+	if len(c.Hub.DisabledRepos) > 0 {
+		c.Hub.DisabledRepos, _ = NormalizeDisabledReposForRepos(c.Project.Org, c.Project.Repos, c.Hub.DisabledRepos)
+	}
 	if c.Dashboard.Port == 0 {
 		c.Dashboard.Port = defaultDashboardPort
 	}

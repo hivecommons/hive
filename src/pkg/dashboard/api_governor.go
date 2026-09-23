@@ -217,7 +217,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
 			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
 			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
-			"disabled_repos":               cfg.Hub.DisabledRepos,
+			"disabled_repos":               s.normalizedHubDisabledRepos(),
+			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
 			"disabled_tiers":               cfg.Hub.DisabledTiers,
 			"tier_limits":                  cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
@@ -255,6 +256,19 @@ func (s *Server) contributeAvailableRepos() []string {
 	s.statusMu.RUnlock()
 	sort.Strings(out)
 	return out
+}
+
+func (s *Server) normalizedHubDisabledRepos() []string {
+	cfg := s.deps.Config
+	return s.normalizeHubDisabledReposForWrite(cfg.Hub.DisabledRepos)
+}
+
+func (s *Server) normalizeHubDisabledReposForWrite(disabled []string) []string {
+	cfg := s.deps.Config
+	repos := s.contributeAvailableRepos()
+	repos = append(repos, cfg.Project.Repos...)
+	normalized, _ := config.NormalizeDisabledReposForRepos(cfg.Project.Org, repos, disabled)
+	return normalized
 }
 
 func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
@@ -982,7 +996,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 	}
 	if body.DisabledRepos != nil {
-		cfg.Hub.DisabledRepos = body.DisabledRepos
+		cfg.Hub.DisabledRepos = s.normalizeHubDisabledReposForWrite(body.DisabledRepos)
 	}
 	if body.DisabledTiers != nil {
 		cfg.Hub.DisabledTiers = body.DisabledTiers

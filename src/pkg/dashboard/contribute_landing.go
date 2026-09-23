@@ -3909,6 +3909,28 @@ function renderAdminModels(){
   }).join(''):'<span class="admin-toggle-sub">all models accepted</span>';
 }
 
+function adminRepoShortName(repoFull){return String(repoFull||'').split('/').pop();}
+function adminRepoWildcardMatch(text,pattern){
+  text=String(text||'').toLowerCase();pattern=String(pattern||'').toLowerCase();
+  if(pattern==='*')return true;
+  if(pattern.indexOf('*')<0)return text.indexOf(pattern)>=0;
+  var parts=pattern.split('*'),idx=0;
+  for(var i=0;i<parts.length;i++){var part=parts[i];if(!part)continue;var found=text.indexOf(part,idx);if(found<0)return false;idx=found+part.length;}
+  if(pattern.charAt(0)!=='*'&&text.indexOf(parts[0])!==0)return false;
+  var last=parts[parts.length-1];
+  if(pattern.charAt(pattern.length-1)!=='*'&&last&&text.slice(-last.length)!==last)return false;
+  return true;
+}
+function adminRepoDisabledEntryMatches(repoFull,entry){
+  var full=String(repoFull||''),short=adminRepoShortName(full);
+  entry=String(entry||'').trim();
+  if(!entry)return false;
+  return adminRepoWildcardMatch(full,entry)||adminRepoWildcardMatch(short,entry);
+}
+function adminRepoMatchingDisabledEntries(repoFull,disabled){
+  return (disabled||[]).filter(function(entry){return adminRepoDisabledEntryMatches(repoFull,entry);});
+}
+
 // ── Repos-for-Contribute enable toggles (Governor Hub mirror) ──────────────────
 // A repo is ENABLED unless it appears in disabled_repos. The toggle edits the
 // disabled_repos list (the field the backend + Governor Hub both use). available_
@@ -3923,7 +3945,7 @@ function renderAdminRepos(){
   var disabled=adminHub.disabled_repos||[];
   if(!repos.length){el.innerHTML='<span class="admin-toggle-sub">No repos known yet — they appear once the hive syncs its backlog.</span>';return;}
   el.innerHTML='<div class="admin-repos">'+repos.map(function(r){
-    var off=disabled.indexOf(r)>=0;
+    var off=adminRepoMatchingDisabledEntries(r,disabled).length>0;
     return '<span class="admin-repo"><span class="admin-switch'+(off?'':' on')+'" data-repo="'+esc(r)+'"></span><span class="admin-repo__name">'+esc(r)+'</span></span>';
   }).join('')+'</div>';
 }
@@ -4099,8 +4121,14 @@ onEl('ops-admin','click',function(e){
   if(t.getAttribute&&t.getAttribute('data-repo')!==null&&t.classList&&t.classList.contains('admin-switch')){
     var repo=t.getAttribute('data-repo');
     var dr=(adminHub.disabled_repos||[]).slice();
-    var ri=dr.indexOf(repo);
-    if(ri>=0)dr.splice(ri,1);else dr.push(repo); // toggling ON removes from disabled
+    var matches=adminRepoMatchingDisabledEntries(repo,dr);
+    if(matches.length){
+      var wild=matches.filter(function(r){return String(r||'').indexOf('*')>=0;});
+      if(wild.length){alert('This repo is disabled by wildcard disabled_repos entry: '+wild.join(', '));renderAdminControls();return;}
+      dr=dr.filter(function(r){return !adminRepoDisabledEntryMatches(repo,r);});
+    }else{
+      dr.push(repo);
+    }
     adminHub.disabled_repos=dr;adminDirty=true;renderAdminControls();return;
   }
   // Tier enable toggle: flip membership in disabled_tiers (enabled == NOT listed).

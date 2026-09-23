@@ -21293,14 +21293,52 @@ function burnAreaChart() {
         </div>`;
     }
 
+    function contribRepoShortName(repoFull) {
+      return String(repoFull || '').split('/').pop();
+    }
+
+    function contribRepoWildcardMatch(text, pattern) {
+      text = String(text || '').toLowerCase();
+      pattern = String(pattern || '').toLowerCase();
+      if (pattern === '*') return true;
+      if (pattern.indexOf('*') < 0) return text.indexOf(pattern) >= 0;
+      var parts = pattern.split('*');
+      var idx = 0;
+      for (var i = 0; i < parts.length; i++) {
+        var part = parts[i];
+        if (!part) continue;
+        var found = text.indexOf(part, idx);
+        if (found < 0) return false;
+        idx = found + part.length;
+      }
+      if (pattern.charAt(0) !== '*' && text.indexOf(parts[0]) !== 0) return false;
+      var last = parts[parts.length - 1];
+      if (pattern.charAt(pattern.length - 1) !== '*' && last && text.slice(-last.length) !== last) return false;
+      return true;
+    }
+
+    function contribRepoDisabledEntryMatches(repoFull, entry) {
+      const full = String(repoFull || '');
+      const short = contribRepoShortName(full);
+      entry = String(entry || '').trim();
+      if (!entry) return false;
+      return contribRepoWildcardMatch(full, entry) || contribRepoWildcardMatch(short, entry);
+    }
+
+    function contribRepoMatchingDisabledEntries(repoFull, disabled) {
+      return (disabled || []).filter(function(entry) { return contribRepoDisabledEntryMatches(repoFull, entry); });
+    }
+
     function renderGovHub(hub) {
       const dashUrl = hub.dashboard_url || window.location.origin || '';
       const snapUrl = hub.snapshot_url || (hub.auto_snapshot && dashUrl ? dashUrl.replace(/\/$/, '') + '/snapshot' : '');
+      const disabledRepos = hub.disabled_repos || [];
       const repos = (_configState.data.repos || []).map(function(r) {
-        const name = r.split('/').pop();
-        const enabled = !(hub.disabled_repos || []).includes(name);
+        const name = contribRepoShortName(r);
+        const enabled = contribRepoMatchingDisabledEntries(r, disabledRepos).length === 0;
         return {name: name, full: r, enabled: enabled};
       });
+      const rawDisabledRepos = hub.disabled_repos_raw || disabledRepos;
       const tiers = ['newcomer', 'contributor', 'trusted', 'merger', 'advisor'];
       const denyLabels = (hub.contribute_deny_labels || []);
       const denyTitles = (hub.contribute_deny_titles || []);
@@ -21457,8 +21495,9 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Repos for Contribute <span class="config-info">i<span class="config-tooltip">Toggle which repos serve work to contributors. New repos default to on.</span></span></label>
           <div style="display:flex;flex-direction:column;gap:4px">${repos.map(function(r) {
-            return '<div class="config-toggle" style="padding:2px 0"><div class="config-toggle-switch ' + (r.enabled ? 'on' : '') + '" data-action="toggleContribRepo" data-arg1="' + esc(r.name) + '" data-arg-types="t,s"></div><span style="font-size:0.78rem">' + esc(r.full) + '</span></div>';
+            return '<div class="config-toggle" style="padding:2px 0"><div class="config-toggle-switch ' + (r.enabled ? 'on' : '') + '" data-action="toggleContribRepo" data-arg1="' + esc(r.full) + '" data-arg-types="t,s"></div><span style="font-size:0.78rem">' + esc(r.full) + '</span></div>';
           }).join('')}</div>
+          <div style="font-size:0.65rem;color:var(--muted);margin-top:6px">Raw disabled_repos: <code>${esc(rawDisabledRepos.length ? rawDisabledRepos.join(', ') : 'none')}</code></div>
         </div>
 
         <div class="config-field">
@@ -21732,17 +21771,25 @@ function burnAreaChart() {
       markDirty('hub', 'tier_limits', _configState.data.hub.tier_limits);
     }
 
-    function toggleContribRepo(el, repoName) {
-      el.classList.toggle('on');
+    function toggleContribRepo(el, repoFull) {
       if (!_configState.data.hub) _configState.data.hub = {};
       var disabled = _configState.data.hub.disabled_repos || [];
-      if (el.classList.contains('on')) {
-        disabled = disabled.filter(function(r) { return r !== repoName; });
+      var isOn = el.classList.contains('on');
+      if (isOn) {
+        if (contribRepoMatchingDisabledEntries(repoFull, disabled).length === 0) disabled.push(repoFull);
       } else {
-        if (disabled.indexOf(repoName) === -1) disabled.push(repoName);
+        var blockers = contribRepoMatchingDisabledEntries(repoFull, disabled);
+        var wildcardBlockers = blockers.filter(function(r) { return String(r || '').indexOf('*') >= 0; });
+        if (wildcardBlockers.length) {
+          alert('This repo is disabled by wildcard disabled_repos entry: ' + wildcardBlockers.join(', '));
+          renderConfigTab('Hub');
+          return;
+        }
+        disabled = disabled.filter(function(r) { return !contribRepoDisabledEntryMatches(repoFull, r); });
       }
       _configState.data.hub.disabled_repos = disabled;
       markDirty('hub', 'disabled_repos', disabled);
+      renderConfigTab('Hub');
     }
 
     function toggleContribTier(el, tier) {

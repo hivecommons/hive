@@ -88,6 +88,96 @@ func NormalizeProjectRepos(org string, repos []string) ([]string, bool) {
 	return out, true
 }
 
+// NormalizeDisabledReposForRepos rewrites legacy bare disabled_repos entries to
+// the canonical owner/name form when they match a configured repository. Full
+// names and wildcard patterns are preserved so broad operator policies continue
+// to work, while known short names stop ambiguously disabling every repo with the
+// same leaf name across served orgs.
+func NormalizeDisabledReposForRepos(org string, repos, disabled []string) ([]string, bool) {
+	if len(disabled) == 0 {
+		return disabled, false
+	}
+	shortToFull, fullToFull, ambiguous := disabledRepoLookup(org, repos)
+	out := make([]string, 0, len(disabled))
+	seen := make(map[string]struct{}, len(disabled))
+	changed := false
+	for _, entry := range disabled {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			changed = true
+			continue
+		}
+		normalized := trimmed
+		if !strings.Contains(trimmed, "*") {
+			key := strings.ToLower(trimmed)
+			if strings.Contains(trimmed, "/") {
+				if full, ok := fullToFull[key]; ok {
+					normalized = full
+				}
+			} else if !ambiguous[key] {
+				if full, ok := shortToFull[key]; ok {
+					normalized = full
+				}
+			}
+		}
+		if normalized != entry {
+			changed = true
+		}
+		if _, ok := seen[normalized]; ok {
+			changed = true
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if !changed {
+		return disabled, false
+	}
+	return out, true
+}
+
+func disabledRepoLookup(org string, repos []string) (map[string]string, map[string]string, map[string]bool) {
+	shortToFull := make(map[string]string, len(repos))
+	fullToFull := make(map[string]string, len(repos))
+	ambiguous := make(map[string]bool)
+	for _, repo := range repos {
+		full, short, ok := disabledRepoFullAndShort(org, repo)
+		if !ok {
+			continue
+		}
+		shortKey := strings.ToLower(short)
+		fullToFull[strings.ToLower(full)] = full
+		if prior, exists := shortToFull[shortKey]; exists && prior != full {
+			ambiguous[shortKey] = true
+			continue
+		}
+		shortToFull[shortKey] = full
+	}
+	return shortToFull, fullToFull, ambiguous
+}
+
+func disabledRepoFullAndShort(org, repo string) (string, string, bool) {
+	repo = strings.TrimSpace(repo)
+	org = strings.TrimSpace(org)
+	if repo == "" || strings.Contains(repo, "*") || looksLikeURL(repo) {
+		return "", "", false
+	}
+	if strings.Contains(repo, "/") {
+		if normalized, stripped := NormalizeRepoForOrg(org, repo); stripped {
+			return org + "/" + normalized, normalized, true
+		}
+		parts := strings.Split(repo, "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return repo, parts[1], true
+		}
+		return "", "", false
+	}
+	if org == "" {
+		return "", "", false
+	}
+	return org + "/" + repo, repo, true
+}
+
 // ValidateProjectRepoTargets is the testable core used by provisioning and
 // config-save paths before they have a full Config object.
 //

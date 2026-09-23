@@ -195,6 +195,7 @@ func TestManagementMirrorsReposAndTierLimits(t *testing.T) {
 	for _, want := range []string{
 		`id="admin-repos"`,
 		"function renderAdminRepos(){",
+		"function adminRepoDisabledEntryMatches(repoFull,entry){",
 		"Repos for Contribute",
 		`id="admin-tiers"`,
 		"function renderAdminTierLimits(){",
@@ -214,6 +215,26 @@ func TestManagementMirrorsReposAndTierLimits(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("save patch missing mirror field: %q", want)
+		}
+	}
+}
+
+func TestGovernorHubReposUseCanonicalDisabledRepoMatching(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading static/index.html: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"function contribRepoDisabledEntryMatches(repoFull, entry)",
+		"text = String(text || '').toLowerCase();",
+		"const enabled = contribRepoMatchingDisabledEntries(r, disabledRepos).length === 0;",
+		`data-action="toggleContribRepo" data-arg1="' + esc(r.full) + '"`,
+		"Raw disabled_repos:",
+		"disabled = disabled.filter(function(r) { return !contribRepoDisabledEntryMatches(repoFull, r); });",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Governor Hub repo canonicalization marker missing: %q", want)
 		}
 	}
 }
@@ -269,5 +290,55 @@ func TestGovernorHubRoundTripsReposAndTiers(t *testing.T) {
 	s.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("read viewer governor PUT: got %d, want 403", rr.Code)
+	}
+}
+
+func TestGovernorHubNormalizesDisabledReposLegacyFormats(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Project.Org = "projectbluefin"
+	deps.Config.Project.Repos = []string{"common", "dakota"}
+	s.statusMu.Lock()
+	s.status = &StatusPayload{Repos: []FrontendRepo{
+		{Name: "projectbluefin/common", Full: "projectbluefin/common"},
+		{Name: "projectbluefin/dakota", Full: "projectbluefin/dakota"},
+	}}
+	s.statusMu.Unlock()
+
+	deps.Config.Hub.DisabledRepos = []string{"common"}
+	rec := doGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor: got %d, want 200", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET governor: %v", err)
+	}
+	hub, ok := got["hub"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET hub = %#v, want object", got["hub"])
+	}
+	disabled, ok := hub["disabled_repos"].([]any)
+	if !ok || len(disabled) != 1 || disabled[0] != "projectbluefin/common" {
+		t.Fatalf("GET disabled_repos = %#v, want [projectbluefin/common]", hub["disabled_repos"])
+	}
+	raw, ok := hub["disabled_repos_raw"].([]any)
+	if !ok || len(raw) != 1 || raw[0] != "common" {
+		t.Fatalf("GET disabled_repos_raw = %#v, want [common]", hub["disabled_repos_raw"])
+	}
+
+	rec = doPut(s, "/api/config/governor/hub", map[string]any{
+		"disabled_repos": []string{"dakota", "ProjectBluefin/Common"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT governor/hub: got %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	want := []string{"projectbluefin/dakota", "projectbluefin/common"}
+	if len(deps.Config.Hub.DisabledRepos) != len(want) {
+		t.Fatalf("persisted disabled_repos = %v, want %v", deps.Config.Hub.DisabledRepos, want)
+	}
+	for i := range want {
+		if deps.Config.Hub.DisabledRepos[i] != want[i] {
+			t.Fatalf("persisted disabled_repos = %v, want %v", deps.Config.Hub.DisabledRepos, want)
+		}
 	}
 }

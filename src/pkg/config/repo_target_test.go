@@ -216,6 +216,71 @@ func TestNormalizeProjectRepos(t *testing.T) {
 	})
 }
 
+func TestNormalizeDisabledReposForRepos(t *testing.T) {
+	tests := []struct {
+		name     string
+		org      string
+		repos    []string
+		disabled []string
+		want     []string
+	}{
+		{
+			name:     "legacy short expands to full owner name",
+			org:      "projectbluefin",
+			repos:    []string{"common", "dakota"},
+			disabled: []string{"common"},
+			want:     []string{"projectbluefin/common"},
+		},
+		{
+			name:     "legacy full name stays canonical",
+			org:      "projectbluefin",
+			repos:    []string{"common", "dakota"},
+			disabled: []string{"projectbluefin/common"},
+			want:     []string{"projectbluefin/common"},
+		},
+		{
+			name:     "case mismatch normalizes to configured spelling",
+			org:      "projectbluefin",
+			repos:    []string{"common", "dakota"},
+			disabled: []string{"ProjectBluefin/Common"},
+			want:     []string{"projectbluefin/common"},
+		},
+		{
+			name:     "available full names can expand short payloads",
+			repos:    []string{"projectbluefin/common", "projectbluefin/dakota"},
+			disabled: []string{"common", "projectbluefin/common"},
+			want:     []string{"projectbluefin/common"},
+		},
+		{
+			name:     "wildcard policy is preserved",
+			org:      "projectbluefin",
+			repos:    []string{"common"},
+			disabled: []string{"projectbluefin/*"},
+			want:     []string{"projectbluefin/*"},
+		},
+		{
+			name:     "unknown short entry is preserved for raw operator visibility",
+			org:      "projectbluefin",
+			repos:    []string{"common"},
+			disabled: []string{"dakota"},
+			want:     []string{"dakota"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := NormalizeDisabledReposForRepos(tt.org, tt.repos, tt.disabled)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // TestApplyDefaultsNormalizesRepos covers the load path: the exact live config
 // shape from the degraded hive must come out of applyDefaults with a bare repos
 // list, and ValidateRepoTargets must then report no issue.
@@ -255,5 +320,17 @@ func TestApplyDefaultsNormalizesRepos(t *testing.T) {
 	}
 	if issue := ValidateRepoTargets(mismatch); issue == nil {
 		t.Fatalf("ValidateRepoTargets = nil, want a repo_target issue for a mismatched org")
+	}
+}
+
+func TestApplyDefaultsNormalizesDisabledRepos(t *testing.T) {
+	cfg := &Config{}
+	cfg.Project.Org = "projectbluefin"
+	cfg.Project.Repos = []string{"common"}
+	cfg.Hub.DisabledRepos = []string{"common"}
+	cfg.applyDefaults()
+
+	if len(cfg.Hub.DisabledRepos) != 1 || cfg.Hub.DisabledRepos[0] != "projectbluefin/common" {
+		t.Fatalf("DisabledRepos = %v, want [projectbluefin/common]", cfg.Hub.DisabledRepos)
 	}
 }
