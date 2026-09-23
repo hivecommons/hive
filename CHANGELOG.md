@@ -11,6 +11,38 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-09-23 (v5.21.0)
+
+### Added
+
+- ✨ Add the opt-in contributor wall for Operations with moderation, retention, model evidence, and live updates (#8456).
+- Label contributor issues waiting on maintainer decisions with the configured skip label so they leave the queue (#8470)
+- runs: completing an inception can admit an explicitly linked GitHub issue as the first spec-stage run when Spektacular runs are enabled
+
+### Fixed
+
+- contribute: restore bounded summary knowledge exports for contributor startup context after hosted relays began receiving the full export (#8500)
+
+## 2026-09-23 (v5.20.0)
+
+### Added
+
+- Add per-repo contribute admission filters layered on top of the hive-wide title, author, and label filters (#8472)
+- Expose optional convergence burndown counts on `GET /api/runs/{key}` detail responses.
+- #8487 Governor PRs-by-model now reports rework stats and the most-reworked PRs per window.
+
+### Changed
+
+- Rewrite the spoke dashboard FAQ around L1-L6, runs, contributors, claims, engines, and cost controls with config-key guards (#8490)
+
+### Fixed
+
+- contribute: budget pi startup knowledge context so large hive exports do not overflow model limits (#8500)
+
+### Security
+
+- The contributor relay now strips ANSI/OSC escape sequences and control characters from every hub-supplied string it prints (announcements, notices, task titles, revoke/auth reasons), so a malicious hub can no longer inject terminal escapes — screen rewriting, title changes, or OSC 52 clipboard writes — into a contributor's terminal (#8497).
+
 ## 2026-09-23 (v5.19.0)
 
 ### Added

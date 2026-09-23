@@ -254,3 +254,28 @@ func TestBlockedVerdict_WireShape(t *testing.T) {
 		t.Fatalf("blocked issue must not be re-offered, got %+v", next)
 	}
 }
+
+func TestNeedsDecisionVerdict_BooksFullCooldownAndLedgerMarker(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	const repo = "myorg/repo1"
+	const reason = "maintainer must choose the default auth policy"
+
+	hub.markTaskCompletedVerdict(repo, 8470, "", completionVerdictNeedsDecision, "ct-decision", reason)
+	key := noPRKey(repo, 8470)
+	if got, want := recordedCooldown(t, hub, key), hub.configuredWithPRCooldown(); got != want {
+		t.Fatalf("needs-decision verdict cooldown = %v, want the full with-PR cooldown %v", got, want)
+	}
+	hub.completedMu.Lock()
+	rec, ok := hub.noWorkVerdicts[key]
+	_, streak := hub.noPRStreaks[key]
+	hub.completedMu.Unlock()
+	if !ok || !rec.NeedsDecision || rec.Blocked {
+		t.Fatalf("ledger row must carry only the needs-decision marker, got ok=%v rec=%+v", ok, rec)
+	}
+	if rec.Reporter != "ct-decision" || rec.Reason != reason {
+		t.Fatalf("audit fields must round-trip on a needs-decision row: %+v", rec)
+	}
+	if streak {
+		t.Fatal("a needs-decision verdict is already at the ceiling; it must not advance the no-PR streak")
+	}
+}

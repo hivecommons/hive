@@ -566,6 +566,46 @@ func TestGovernorHubRoundTripsRepoFilters(t *testing.T) {
 	}
 }
 
+func TestGovernorHubDecisionLabelReplacesImplicitSkipFloor(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.ContributeSkipLabels = (config.HubConfig{}).ContributeSkipLabelPatterns()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/governor/hub",
+		strings.NewReader(`{"contribute_needs_decision_label":"2-discussing"}`))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("governor hub update got %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if got := deps.Config.Hub.ContributeNeedsDecisionLabelOrDefault(); got != "2-discussing" {
+		t.Fatalf("decision label = %q, want 2-discussing", got)
+	}
+	if label, ok := deps.Config.Hub.MatchContributeSkipLabel([]string{"2-discussing"}); !ok || label != "2-discussing" {
+		t.Fatalf("custom decision label not skipped: (%q,%v)", label, ok)
+	}
+	if label, ok := deps.Config.Hub.MatchContributeSkipLabel([]string{"needs-decision"}); ok {
+		t.Fatalf("old implicit decision label still skipped as %q", label)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/governor/hub",
+		strings.NewReader(`{"contribute_needs_decision_label":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	w = httptest.NewRecorder()
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clearing decision label got %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if got := deps.Config.Hub.ContributeNeedsDecisionLabelOrDefault(); got != "" {
+		t.Fatalf("decision label after clear = %q, want empty", got)
+	}
+	if label, ok := deps.Config.Hub.MatchContributeSkipLabel([]string{"2-discussing"}); ok {
+		t.Fatalf("old custom decision label still skipped as %q", label)
+	}
+}
+
 // TestGovernorHubSave_ReadViewerForbidden proves the Management-tab filter-save
 // boundary: a "read" viewer's PUT /api/config/governor/hub is 403'd by the
 // roleEnforcement middleware, independent of the UI hiding. This is the server

@@ -3728,22 +3728,21 @@
       <div id="faq-panel" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:0.85rem;line-height:1.6;max-width:900px">
 
         <p style="color:var(--muted);margin:0 0 18px">Common questions from first-time users. Everything below describes what this hive
-        actually does today — where behaviour is surprising, it is called out rather than smoothed over.</p>
+        actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
+        source doc so this panel stays a map, not a second source of truth.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">What is the Advisory Digest for?</h3>
-        <p style="margin:0 0 8px"><strong>The Advisory Digest is the work ledger.</strong> It is the collection of
-        <strong>beads</strong> your agents open — the running record of what the hive has found and what it would act on,
-        if you let it. Agents create each bead with <code>bd create</code>; the digest rolls up every open bead of type
-        <code>advisory</code>, <code>bug</code>, or <code>feature</code>, grouped by the agent that filed it. Internal agent
-        work items (<code>task</code>, <code>decision</code>) are deliberately excluded so the ledger stays readable.</p>
-        <p style="margin:0 0 16px">You can read the same ledger in two places. Here in the dashboard, and in GitHub: the hive
-        opens a single issue titled <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment on
-        it up to date each cycle. That issue is the whole of the hive's GitHub footprint at Level 2 — reading it in GitHub
-        means the ledger lands where your normal workflow already lives.</p>
+        <h3 style="font-size:1rem;margin:0 0 8px">Getting started (L1–L2)</h3>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">What do the colors mean?</h3>
-        <p style="margin:0 0 8px">The colored bar on the left of each finding, and its dot, encode <strong>severity</strong>, which is
-        derived directly from the priority the agent set on the bead (<code>--priority 0</code> through <code>3</code>):</p>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What are L1 and L2 for?</h4>
+        <p style="margin:0 0 8px"><strong>L1 is inception; L2 is calibration.</strong> At L1, the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel. It asks clarifying questions, records facts, produces a scaffold, and stops when you approve it. At L2, the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+        <p style="margin:0 0 16px">The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement. Point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What is the Advisory Digest for?</h4>
+        <p style="margin:0 0 8px"><strong>The Advisory Digest is the work ledger.</strong> Agents create beads with <code>bd create</code>; the digest rolls up every open <code>advisory</code>, <code>bug</code>, or <code>feature</code> bead, grouped by the agent that filed it. Internal work items such as <code>task</code> and <code>decision</code> are deliberately excluded so the ledger stays readable. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM L2</a>.</p>
+        <p style="margin:0 0 16px">You can read the same ledger here and in GitHub: the hive opens one issue named <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment current. That report is the whole of the normal L2 GitHub footprint.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What do the colors mean?</h4>
+        <p style="margin:0 0 8px">The left bar and dot encode severity, derived directly from the bead priority set by the filing agent:</p>
         <ul style="margin:0 0 8px;padding-left:20px">
           <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
           <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
@@ -3751,243 +3750,87 @@
           <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
           <li>⚪ <strong>info</strong> — anything else; grey bar</li>
         </ul>
-        <p style="margin:0 0 16px;color:var(--muted)">Note the icon and the bar disagree slightly at the bottom end: <em>low</em> shows a blue dot but a
-        grey bar, since only critical/high/medium have dedicated bar colors. Severity is set by the agent that filed the
-        bead, using the priority rubric in that agent's policy — it is a judgement call, not a measurement.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">The low-severity row intentionally has a blue dot but a grey bar: only critical, high, and medium have dedicated bar colors. Severity is a judgement call by the filing agent, not a measurement. Digest behaviour is summarized here and grounded in the L2 advisory mode in <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">How are digest items selected and ordered?</h3>
-        <p style="margin:0 0 16px"><strong>They are not ranked by severity.</strong> This is the single most common misreading of the digest.
-        Findings are grouped by agent (agents sorted alphabetically), and within each agent they appear in the order the
-        beads were created — <strong>oldest first, chronologically</strong>. Severity is a label you can scan for; it has no
-        effect on position. A critical finding filed this morning sits <em>below</em> a low-severity one filed last week.
-        So: read the whole of an agent's group, or scan for 🔴/🟠, but do not assume the top of the list is the most
-        important thing. Selection is simply "every open advisory/bug/feature bead" — there is no cutoff or scoring.
-        Beads closed in the last 48 hours appear separately as recently resolved.</p>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">How are digest items selected and ordered?</h4>
+        <p style="margin:0 0 16px"><strong>They are not ranked by severity.</strong> Findings are grouped by agent (agents sorted alphabetically), and within each agent they appear oldest first. Severity has no effect on position: a critical finding filed this morning sits below a low finding filed last week. Selection is simply every open advisory/bug/feature bead; recently closed beads appear separately as recently resolved. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a>.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">What am I supposed to do with it?</h3>
-        <p style="margin:0 0 8px"><strong>Level 2 is a trust level.</strong> It exists to show you how Hive works, what it
-        would find, and how it might fix it — <em>if you let it</em>. So the job at L2 is not to fix everything in the ledger.
-        It is to decide whether you believe the ledger.</p>
-        <p style="margin:0 0 8px">The intended way to do that: point <strong>your own</strong> agent — <code>claude</code> CLI,
-        <code>bob</code> shell, <code>copilot</code> CLI, running on your own laptop — at the 🐝 Hive Advisory Report issue, and
-        have it read the findings and suss out whether they make sense. You are reviewing the hive's judgement using a tool
-        you already control, on a repo the hive cannot write to. That is the whole point of the level.</p>
-        <p style="margin:0 0 8px">Alongside that:</p>
-        <ol style="margin:0 0 16px;padding-left:20px">
-          <li>Skim for 🔴 and 🟠 first, since ordering will not surface them for you (see below).</li>
-          <li>For anything you agree with and want tracked, open a real GitHub issue yourself — at L2 the agents cannot.</li>
-          <li>A large ledger on a first run is normal. It is the accumulated backlog of a codebase nobody has audited
-              before, not a list of new problems, and not a queue you are expected to burn down.</li>
-        </ol>
+        <h3 style="font-size:1rem;margin:18px 0 8px">Trust ladder (L3–L6)</h3>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">How do I move from L2 to L3?</h3>
-        <p style="margin:0 0 8px"><strong>Change to L3 whenever you like — there is no gate.</strong> No quota, no checklist,
-        no criteria that must go green first. The only criterion is your own judgement: <em>do you trust the advisory findings
-        you have been reading?</em> That is what L2 is for. Once you believe the beads, you are ready.</p>
-        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Advisory (Instructed)</em>) the only thing the hive touches in
-        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Quality-Gated (Measured)</em>) introduces the <strong>quality agent</strong>, and
-        its job is building test cases — making your repo resilient to code changes from <em>any</em> contributor that would
-        destabilise it, break it, or violate patterns you prefer. That is the next step in gaining trust: not more findings,
-        but a safety net. Concretely, the quality agent may open GitHub issues
-        and <strong>hold-gated pull requests</strong> that add test coverage. "Hold-gated" means every PR is opened with a
-        <code>hold</code> label, and the agent is forbidden from merging it or removing that label — so a human merges every
-        change, always. L3 is deliberately scoped to <em>tests only</em>: no production code, no refactors, no features.
-        The point of L3 is to build the test coverage that makes the more automated levels above it safe.</p>
-        <p style="margin:0 0 8px"><strong>Why this is the pivotal level.</strong> Test coverage is the critical safeguard that
-        makes every later level defensible. Agents opening issues and PRs on their own (L4–L5), and eventually auto-merging
-        them (L6), are only safe once there are tests that can catch a bad change. So the ACMM ladder is not a feature ladder
-        you climb for more capability — each level earns the trust that makes the next one safe. L3 is where you build the
-        net that the automation above it falls into.</p>
-        <p style="margin:0 0 8px"><strong>Optional aid, not a gate:</strong> the <strong>ACMM Eval</strong> page scores your repo
-        against per-level criteria and reports a <em>Codebase Readiness</em> level. It is useful for seeing where your test and
-        CI scaffolding currently stands, and <em>Criteria Passed</em> will show you which checks fail. But nothing there blocks
-        or licenses a level change — you can move to L3 with readiness reading L1. Treat it as information, not permission.</p>
-        <p style="margin:0 0 16px"><strong>How to actually change it:</strong> use the ACMM badge in the sidebar, or the
-        <em>Change level ▾</em> button on the ACMM Eval section. Both open the same dialog. It offers two distinct actions,
-        and the difference matters: <strong>Preview</strong> only changes what this dashboard displays and leaves running
-        agents untouched, while <strong>Apply</strong> is the real move — it creates the agents in that level's pack, resumes
-        them, and pauses agents not in the pack. Do not edit <code>hive.yaml</code> by hand to change level; the dialog is
-        the supported path.</p>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">How do I move from L2 to L3?</h4>
+        <p style="margin:0 0 8px"><strong>Change to L3 when you trust the findings — there is no gate.</strong> The ACMM Eval page and recommendation API are read-only advice; they never change the level and they do not license or block the move. The supported path is the dashboard level dialog (or <code>acmm_level</code> through config ownership rules), which applies the level pack and reconciles agents. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">changing ACMM level</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/config-layering.md" target="_blank" rel="noopener noreferrer">config layering</a>.</p>
+        <p style="margin:0 0 16px">At L3, the quality lane builds the safety net: hold-gated test and CI PRs, plus CI health measurement. It is deliberately about making later automation safe, not about handing the hive production-code autonomy.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">What about L4, L5, L6?</h3>
-        <p style="margin:0 0 8px">Each level hands over more of the <em>acting</em>, and each is only safe because of the level
-        below it. The end-to-end journey: <strong>L2 shows you what Hive would find; L3 builds the safety net that makes acting
-        on those findings safe; L4–L6 progressively hand over more of the acting.</strong> Nothing is fully autonomous until L6:</p>
-        <ul style="margin:0 0 16px;padding-left:20px">
-          <li><strong>L1 — Inception (Assisted)</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
-          <li><strong>L2 — Advisory (Instructed)</strong> — the trust level. Advisory beads only; the sole GitHub write is the
-              🐝 Hive Advisory Report issue and its digest comment.</li>
-          <li><strong>L3 — Quality-Gated (Measured)</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
-              safeguard everything above depends on.</li>
-          <li><strong>L4 — Security-Aware (Adaptive)</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
-              issues and PRs remain hold-gated for human review.</li>
-          <li><strong>L5 — Semi-Autonomous (Semi-Automated)</strong> — PRs carry a hold label, reviewed in batches.</li>
-          <li><strong>L6 — Fully Autonomous</strong> — auto-merge once CI is green.</li>
-        </ul>
-        <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
-
-        <h3 style="font-size:0.95rem;margin:0 0 6px">My spend jumped after I raised my ACMM level. How do I manage cost?</h3>
-        <p style="margin:0 0 8px"><strong>First, the honest framing: higher levels increase throughput <em>and</em> spend, and that is the design, not a
-        malfunction.</strong> A hive that merges ~60 PRs in an afternoon burned tokens roughly in proportion to the work it did. If
-        the PRs were good, that spend bought something. The lever you want is usually not "spend less per unit of work" but
-        <strong>"do less work per day"</strong> — and that lever is cadence.</p>
-        <p style="margin:0 0 8px">Seven things you can actually turn, roughly in order of effect:</p>
-        <ol style="margin:0 0 8px;padding-left:20px">
-          <li><strong>Widen your agent cadences — the primary lever.</strong> Cadence is the interval between governor kicks, set
-              per agent <em>per governor mode</em>. The Governor panel shows this as a grid — agents down the side, the four modes
-              (<strong>idle / quiet / busy / surge</strong>) across the top, plus <strong>method</strong> and <strong>model</strong> columns.
-              <strong>Click any row</strong> (or the config gear on that agent's dashboard card) to adjust its cadences. Going from
-              <code>1h</code> to <code>6h</code> is roughly a 6× cut in that agent's kick count, and <code>12h</code> or <code>24h</code> cuts
-              further. Because the value is per mode, the highest-value edit is usually widening <strong>busy</strong> and
-              <strong>surge</strong> — those are the modes a high ACMM level spends most of its time in.
-              <br><span style="color:var(--muted)">Units are <code>m</code> and <code>h</code>. <strong>Write one day as <code>24h</code>, not <code>1D</code>.</strong>
-              A day suffix is <em>not</em> valid in <code>hive.yaml</code> — the governor parses cadences with Go's duration parser, which
-              rejects <code>1d</code>/<code>1D</code> outright, and an unparseable cadence is <em>skipped with a log warning</em>, leaving that
-              agent with no schedule at all rather than a slow one. <code>0</code> disables the agent in that mode.</span></li>
-          <li><strong>Pause agents you are not using.</strong> Each agent card on the Agents page has a <strong>⏸ pause</strong> button
-              — a paused agent is never kicked by the governor until you resume it. You can also set a mode's cadence to
-              <code>0</code> to switch an agent off in just that mode, which is a scalpel where pausing is a hammer.</li>
-          <li><strong>Set a real budget.</strong> <em>Settings → Budget</em> → <strong>Total Tokens</strong> is the cap
-              (<code>0</code> disables budget tracking entirely). The enforcement that actually bites is kick suppression: a soft
-              warning fires at the configured threshold (90% by default), and at 100% the governor <strong>stops kicking agents</strong> until the budget period resets.
-              <strong>Per-Agent Exemptions</strong> lets chosen agents keep running through an exhausted budget.
-              <br><span style="color:var(--muted)">Two caveats before you lean on this. The budget is denominated in
-              <strong>tokens, not dollars</strong>, so it will not line up one-to-one with a provider's billing page. The accounting
-              period and warning threshold come from the <em>Period (days)</em> and <em>Critical Percent</em> settings.
-              The governor panel's <strong>ignore budget</strong> checkbox disables enforcement entirely, so check that it is
-              unticked.</span></li>
-          <li><strong>Move work onto cheaper agents.</strong> Two independent dials on each agent card: the <strong>model</strong>
-              picker (higher tiers such as Opus cost more per token than Sonnet or Haiku) and the <strong>method</strong> picker
-              (the CLI or inference backend). Notably <strong>copilot</strong> and <strong>goose</strong> are treated as free backends and
-              <em>do not count toward the token budget</em> at all. Routine, high-frequency agents are the best candidates to move
-              down; leave the agents whose judgement you actually depend on where they are. Both columns also appear in the Governor
-              panel's grid, with a 📌 pin next to each to lock in a method or model you deliberately chose.</li>
-          <li><strong>Re-check the level itself.</strong> If the spend is not buying PRs you actually merge, the level — not the
-              cadence — is the wrong setting. Dropping from L5 to L4 or L3 is a legitimate cost control, and the ACMM dialog moves
-              in both directions.</li>
-          <li><strong>Move inference off metered APIs entirely.</strong> Two options change the cost model rather than trimming it.
-              <em>Self-hosted models</em> — point agents at <strong>vLLM</strong> or <strong>llm-d</strong> via the <strong>method</strong>
-              picker, and per-token API charges become fixed infrastructure you already run. <em>Donated compute</em> — <strong>ClankeR</strong>,
-              the contributor relay, hands tasks from your hive's backlog to CLI agents running on <em>contributors'</em> machines, on
-              their credentials, which never leave their machine. Contributors start rate-limited and auto-promote as tasks complete.
-              <br><span style="color:var(--muted)">If you move to vLLM or llm-d, revisit the next item: self-hosted models are exactly the
-              case where the supervisor earns its keep.</span></li>
-        </ol>
-        <p style="margin:0 0 8px">And one more that is easy to miss, because it is on by default and you did not choose it:</p>
-        <ol start="7" style="margin:0 0 8px;padding-left:20px">
-          <li><strong>Turn the supervisor off if you are on <code>claude</code>, <code>copilot</code>, <code>bob</code>, or
-              <code>litellm</code>.</strong> The supervisor's core job is watching the other agents' tmux panes for ones
-              <em>stuck at a prompt</em> — waiting on a human instead of running to completion. That failure mode is now
-              predominantly a <strong>self-hosted inference</strong> problem: open-source models served via <strong>vLLM</strong> or
-              <strong>llm-d</strong> need an injected preamble telling them to never ask for permission and never stop, precisely
-              because they otherwise stop and ask. Frontier CLI agents are explicitly unaffected by that preamble, and
-              <code>litellm</code> opts out of it too, on the grounds that it usually fronts frontier models. CLI agents used to
-              stall this way; in practice they no longer do. <strong>If you are running only CLI backends or litellm, the supervisor
-              is mostly watching for a condition that no longer occurs</strong> — and it is not free: the shipped packs kick it every
-              <code>5m</code> in most modes (every <code>1m</code> at L6), which is the tightest cadence of any agent.
-              <br><span style="color:var(--muted)"><strong>Keep it if you run vLLM or llm-d agents</strong> — that is the case it was built
-              for, and it is the direct trade-off against the self-hosted option above: moving inference in-house cuts your token bill
-              but reintroduces the stalling behaviour the supervisor exists to catch. It is also doing secondary work — spotting idle,
-              crashed, and rate-limited agents — so on a mixed fleet, widening its cadence is the safer move than switching it off
-              outright.</span></li>
-        </ol>
-        <p style="margin:0 0 8px;color:var(--muted)"><strong>Why it is on in the first place, and how to turn it off.</strong> The supervisor ships <em>enabled</em> in every
-        default pack from L2 to L6 (on <code>copilot</code>), so you will find it running even though you never asked for it. That
-        default dates from when CLI agents genuinely did stall; it has outlived the problem. Turning it off is therefore a
-        deliberate act.</p>
-        <p style="margin:0 0 16px;color:var(--muted)">Note that the supervisor's agent card has <strong>no ⏸ pause button</strong> — it is suppressed for this one agent, so the
-        usual route does not work and it can look undisableable. It is not. Use the <strong>Governor panel's cadence grid</strong>: click
-        the supervisor row to open its <em>Cadences</em> tab and set the modes you want silenced to <code>pause</code> (or
-        <code>0</code>). This is a supported, first-class value — the shipped L3 and L4 packs already use
-        <code>supervisor: pause</code> for idle mode — and the governor applies it to the supervisor with no special-casing. The
-        equivalent edit in <code>hive.yaml</code> is the same key under each mode's <code>cadences:</code> block.</p>
-        <p style="margin:0 0 16px;color:var(--muted)">Finally, some perspective: model pricing has been falling steadily, and cheap models keep getting more capable. Other
-        hives are already running successfully on low-cost models, so today's bill for a given amount of work is not a fixed
-        property of the system.</p>
-
-        <h3 style="font-size:0.95rem;margin:0 0 6px">How does cadence impact cost? My scanner seems to run non-stop.</h3>
-        <p style="margin:0 0 8px"><strong>Cadence is the wait <em>between</em> runs, not a limit on how long a run lasts.</strong> This is the
-        single most common misunderstanding about cost, so it is worth stating plainly. An agent session does not go on forever:
-        the agent works until it runs out of work, then stops. Cadence is how long Hive waits after that before kicking it again.</p>
-        <p style="margin:0 0 8px">Which means a busy agent can look like it is running continuously, and effectively be running continuously —
-        without anything being wrong. If your scanner faces a large queue (say, issues that <em>other</em> agents have been opening),
-        each session has plenty to chew on, so it runs long, finishes, and gets kicked again shortly after. Shortening cadence does
-        not make an agent work harder; <strong>widening cadence spreads the same work over more wall-clock time</strong>, which is exactly
-        what lowers the burn rate.</p>
-        <p style="margin:0 0 8px">There is a second, less obvious effect worth knowing. The governor picks its mode from the
-        <strong>count of actionable open issues</strong> — cross a threshold and it escalates idle → quiet → busy → surge, and every agent
-        switches to that mode's (shorter) cadence column. So a growing backlog raises spend on its own, without you changing any
-        setting. <strong>Working the backlog down lowers the mode, and the mode drives the pace.</strong> The thresholds themselves are
-        editable under <em>Settings → Thresholds</em>.</p>
-        <p style="margin:0 0 16px">Two cadence values in the grid are not durations. <strong>paused</strong> means the governor never kicks
-        that agent until you resume it. <strong>on demand</strong> means the agent is only ever kicked manually — it has no automatic
-        schedule at all.</p>
-
-        <h3 style="font-size:0.95rem;margin:0 0 6px">Is the first day supposed to cost this much?</h3>
-        <p style="margin:0 0 8px"><strong>Yes, and it is the least representative day you will have. Budget for a day-one spike, then expect
-        it to fall.</strong> Pointing a hive at an existing repo for the first time is the single most expensive thing you will ask it to
-        do, because a mature codebase carries years of accumulated technical debt that nobody has triaged — and the scanner finds
-        essentially all of it at once.</p>
-        <p style="margin:0 0 8px">That produces enough queued work to keep agents busy continuously, which is exactly what
-        "running non-stop" looks like. It is not a runaway loop; it is a real backlog being worked. One early adopter saw ~60 PRs in
-        an afternoon — small, targeted ones — at roughly five minutes of agent work apiece, which is about five hours of genuine
-        output. The bill tracked the work.</p>
-        <p style="margin:0 0 8px"><strong>Two things compound on day one</strong>, and both unwind on their own:</p>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What do L3, L4, L5, and L6 allow?</h4>
         <ul style="margin:0 0 8px;padding-left:20px">
-          <li>The backlog is at its deepest, so agents rarely run out of work and stop early — sessions run long.</li>
-          <li>A deep backlog of actionable issues pushes the governor into <strong>busy</strong> or <strong>surge</strong>, which is the
-              mode column with the <em>shortest</em> cadences. So the pace goes up at precisely the moment there is most to do.</li>
+          <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; CI-maintainer watches build health.</li>
+          <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs.</li>
+          <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer agent joins and works the queue every 30 minutes.</li>
+          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge on green CI; reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
         </ul>
-        <p style="margin:0 0 8px">As the backlog drains, both effects reverse: agents finish their queue and sit idle until the next
-        kick, and the governor settles back toward quiet or idle with its longer intervals. <strong>Steady-state cost is materially lower
-        than onboarding cost</strong>, so extrapolating your first day into a monthly figure will overestimate — usually by a lot.</p>
-        <p style="margin:0 0 16px;color:var(--muted)">If you would rather not absorb the spike all at once, the levers above still apply on day one — start at a lower ACMM
-        level, widen cadences before the first run, or set a <em>Total Tokens</em> budget so the spike is capped. Draining the initial
-        backlog is a one-time cost, and paying it more slowly is a legitimate choice.</p>
+        <p style="margin:0 0 16px">Promotion adds agents and capability; demotion narrows them again. Hive also removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-queue-triage.md" target="_blank" rel="noopener noreferrer">review queue triage</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">Where did the money actually go?</h3>
-        <p style="margin:0 0 8px">The <strong>💵 Cost</strong> section is the place to look. It reports an <strong>estimated</strong> total —
-        token counts multiplied by a dated list-price table — with a timeframe selector offering <strong>hourly</strong>,
-        <strong>daily</strong>, <strong>weekly</strong>, <strong>monthly</strong>, and <strong>custom</strong> ranges, so you can line a
-        spike up against what the fleet was doing at the time. Each agent card also shows a <strong>spend</strong> figure attributed to
-        that agent over whichever timeframe the Cost section is set to, which is how you find the one agent responsible for a jump.</p>
-        <p style="margin:0 0 8px;color:var(--muted)">Treat it as an estimate, not a bill. It is derived from token counts and list prices, so a subscription plan, a
-        discounted rate, or self-hosted inference will all diverge from it — and models without an exact price entry fall back to a
-        coarse tier estimate (shown with a <code>~</code>). It is the right tool for <em>attribution</em> — which agent, which model, which
-        day — rather than for reconciling against an invoice. The per-agent figure is also derived from a cumulative counter, so it
-        can read blank for a range that spans a restart.</p>
-        <p style="margin:0 0 8px">To see <em>what</em> an agent was asked to do, open that agent's <strong>Prior Prompts</strong> tab —
-        each kick is recorded with its timestamp and the fully expanded prompt text, with a <em>Window</em> selector offering
-        <strong>Last hour</strong>, <strong>Last day</strong>, and <strong>Last week</strong>. The <strong>📋 Audit Log</strong> is the
-        other half: it records that a kick, start, or restart happened and what triggered it.</p>
-        <p style="margin:0 0 16px;color:var(--muted)"><strong>What you cannot currently see is time.</strong> Nothing records how long a past session ran, so there is no
-        way to confirm "it ran flat out for four hours" from the UI — and no per-run cost figure either, since spend is bucketed by
-        time rather than attributed to individual kicks. The nearest proxy is <em>Last Kick</em> on an agent card, which is when the
-        governor last kicked it, not how long it worked. Agent output is a live 500-line tmux buffer that is lost on restart, so it
-        cannot be used to reconstruct older activity.</p>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">Does Hive auto-promote or auto-demote me?</h4>
+        <p style="margin:0 0 16px">The shipped advisor is advisory-only: it can say a hive appears ready for the next level, but a human applies the change. The separate autonomy controls are opt-in and default off; when documenting or enabling them, use the schema keys under <code>autonomy.auto_promote</code> and <code>autonomy.auto_demote</code>. Read the level-change rules in <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">ACMM level changes</a>.</p>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
-        <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
-        repo's README, getting-started, architecture and contributing docs and report the gaps — at L1–L2 as beads and an
-        issue, at L3+ as doc PRs. It is explicitly barred from writing code, filing triage issues, or reviewing PRs, and it
-        has no special knowledge of Hive's own workflow or ACMM levels. Questions about how to <em>operate</em> your hive
-        belong here, not to an agent.</p>
+        <h3 style="font-size:1rem;margin:18px 0 8px">Runs and inception</h3>
 
-        <h3 style="font-size:0.95rem;margin:0 0 6px">A first week, end to end</h3>
-        <ol style="margin:0;padding-left:20px">
-          <li><strong>Start at L1–L2.</strong> Let the agents run a full cycle against your repos and populate the ledger.</li>
-          <li><strong>Read the ledger</strong> on the Advisory page, or on the 🐝 Hive Advisory Report issue in your default
-              repo. Expect it to be long. Scan for 🔴/🟠 rather than reading top-down.</li>
-          <li><strong>Audit it with your own agent.</strong> Point <code>claude</code>, <code>bob</code>, or
-              <code>copilot</code> on your laptop at that issue and ask whether the findings hold up. This is the core L2
-              activity — you are calibrating whether the hive's judgement matches yours.</li>
-          <li><strong>Act on a handful.</strong> File real issues for the findings you agree with; ignore the rest.</li>
-          <li><strong>Advance to L3 when you trust the findings</strong> — that judgement is the only prerequisite. Use the
-              ACMM dialog and choose <em>Apply</em> (not Preview). Optionally glance at ACMM Eval first for context on where
-              your test and CI scaffolding stands.</li>
-          <li><strong>Review the first hold-gated PRs.</strong> They will be test-coverage PRs from the quality agent.
-              Merging them is a manual step, by design — and the coverage they add is what makes L4+ safe to turn on.</li>
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What is a run?</h4>
+        <p style="margin:0 0 8px">A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene. Run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
+        <p style="margin:0 0 16px">Long-running pieces are default-off. Spektacular does nothing unless <code>runs.spektacular.enabled</code> is true. Incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; stage retry budget is <code>runs.max_stage_retries</code>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">How does Spektacular fit with L1?</h4>
+        <p style="margin:0 0 16px">Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spektacular is the optional runner for staged spec/plan artifacts once you are using long-running runs. Both keep authority in Hive: Spektacular status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular</a>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What are external engines like Flue and OMP allowed to do?</h4>
+        <p style="margin:0 0 16px">External engines are report-only admission surfaces, not extra credentials. They receive bounded context and return receipts that Hive verifies; they do not receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings: <code>runs.external.flue.enabled</code> and <code>runs.external.omp.enabled</code>. Dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
+
+        <h3 style="font-size:1rem;margin:18px 0 8px">Contributors and relays</h3>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What is ClankeR?</h4>
+        <p style="margin:0 0 8px">ClankeR lets contributors lend their own local AI CLI subscription to a hive. They run <code>just contribute-hive</code>; the relay connects to <code>/api/contribute/ws</code>, accepts one task at a time, works locally, and reports PR metadata back. The contributor's credentials stay on their machine; Hive mints short-lived task-scoped GitHub tokens for accepted tasks. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">ClankeR contributor relay</a>.</p>
+        <p style="margin:0 0 16px">Trust is tiered. Newcomers start rate-limited; contributors auto-promote after completed PR tasks; trusted, merger, and advisor tiers are maintainer/operator grants. Delegated roles are bounded by tier, explicit grants, and the hive allow-list at <code>hub.contribute_delegatable_roles</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-trust-and-roles.md" target="_blank" rel="noopener noreferrer">contributor trust and roles</a>.</p>
+
+        <h3 style="font-size:1rem;margin:18px 0 8px">Issue claims and GitHub footprint</h3>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">Why did an agent comment or label my issue as claimed?</h4>
+        <p style="margin:0 0 8px">Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply a visible <code>hive/claimed-by-&lt;agent&gt;</code> label and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+        <p style="margin:0 0 16px">Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">How much GitHub footprint should I expect?</h4>
+        <p style="margin:0 0 16px">At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge on green CI for eligible App-authored PRs. Visible PR attribution is on by default and can be hidden with <code>governor.attribution_trailer</code>, but the audit entry is always written. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">Two GitHub-adjacent Features toggles are intentionally default-off. Audit finding publication requires <code>publication.enabled</code> and still refuses sensitive findings unless <code>publication.private_channel</code> is configured. Plan-match reviews require <code>review.plan_match.enabled</code>; without it, reviewer runs do not spend cycles scoring PRs against run trailers. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-campaign.md" target="_blank" rel="noopener noreferrer">audit campaign</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#which-levels-may-publish-audit-findings" target="_blank" rel="noopener noreferrer">publication level rules</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/planning-intelligence.md" target="_blank" rel="noopener noreferrer">planning intelligence</a>.</p>
+
+        <h3 style="font-size:1rem;margin:18px 0 8px">Cost, cadence and models</h3>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">My spend jumped after I raised my ACMM level. How do I manage cost?</h4>
+        <p style="margin:0 0 8px"><strong>Higher levels increase throughput and spend by design.</strong> The strongest lever is cadence: the Governor grid sets each agent's interval per mode (idle, quiet, busy, surge). Widening busy/surge from <code>1h</code> to <code>6h</code> roughly cuts that agent's kick count sixfold; <code>0</code> disables that agent in that mode. Cadences use Go durations, so write one day as <code>24h</code>, not <code>1d</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences and the governor</a>.</p>
+        <p style="margin:0 0 8px">Budgets are token budgets, not dollar budgets. <code>governor.budget.total_tokens</code> set to 0 disables budget tracking; otherwise the governor warns near <code>governor.budget.critical_pct</code> and suppresses kicks at 100% until the <code>governor.budget.period_days</code> window resets. The mode thresholds that decide idle/quiet/busy/surge scale by repo count unless you pin them; see <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a>.</p>
+        <p style="margin:0 0 16px">Move routine agents to cheaper backends or models when the work allows it. The agent card and Governor grid expose backend, model, and effort; model rotation is opt-in under <code>governor.rotation.enabled</code>. The quota publisher for contributor relays can run even when rotation is off, so rotation being disabled does not by itself disable contributor quota readings. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">How does cadence impact cost? My scanner seems to run non-stop.</h4>
+        <p style="margin:0 0 16px"><strong>Cadence is the wait between runs, not a maximum run length.</strong> A busy agent facing a deep queue can run, finish, and be kicked again soon after. Shortening cadence does not make it work harder; widening cadence spreads the same queue over more wall-clock time. A growing backlog can also push the governor from idle to quiet to busy to surge, selecting shorter cadence columns without any per-agent setting changing. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences</a>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">Is the first day supposed to cost this much?</h4>
+        <p style="margin:0 0 16px">Yes. A first run against a mature repo is a backlog drain: old technical debt appears all at once, agents have enough queued work to stay busy, and the governor may choose busy/surge. Steady-state cost should fall as the queue drains. If you need to slow the spike, start lower, widen cadences before the first run, pause nonessential agents, or set a real token budget. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">Where did the money actually go?</h4>
+        <p style="margin:0 0 16px">Use the 💵 Cost section for estimated spend by timeframe, then drill into agent cards and Prior Prompts to see what each kick was asked to do. Treat cost as attribution, not an invoice: token counts and list prices can diverge from subscriptions, discounts, and self-hosted inference. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/telemetry.md" target="_blank" rel="noopener noreferrer">telemetry</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
+
+        <h3 style="font-size:1rem;margin:18px 0 8px">Where to get help</h3>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my Hive questions?</h4>
+        <p style="margin:0 0 8px">Because the guide agent documents your project, not Hive itself. It audits your README, getting-started, architecture, and contributing docs; it does not operate the hive or explain ACMM policy. For Hive operations, use these docs and the dashboard. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+
+        <h4 style="font-size:0.95rem;margin:0 0 6px">What should my first week look like?</h4>
+        <ol style="margin:0 0 16px;padding-left:20px">
+          <li>Start at L1 for inception or L2 for advisory calibration.</li>
+          <li>Let the ledger populate, then scan for 🔴/🟠 without assuming list order means priority.</li>
+          <li>Audit a few findings with a local agent you control.</li>
+          <li>Advance to L3 when you trust the findings and want Hive to build the test/CI safety net.</li>
+          <li>Review hold-gated PRs before considering L4–L6.</li>
         </ol>
+        <p style="margin:0">For operator setup and community-facing contributor flows, start with <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hosted-hub.md" target="_blank" rel="noopener noreferrer">hosted hub</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/getting-started.md" target="_blank" rel="noopener noreferrer">getting started</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/troubleshooting.md" target="_blank" rel="noopener noreferrer">troubleshooting</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
 
       </div>
     </div>
@@ -21767,6 +21610,11 @@ function burnAreaChart() {
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.contribute_suspended ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_suspended" style="${hub.contribute_suspended ? 'background:var(--red)' : ''}"></div>
           <span class="config-toggle-label" style="${hub.contribute_suspended ? 'color:var(--red);font-weight:600' : ''}">Suspend Contributions <span class="config-info">i<span class="config-tooltip">Temporarily stop assigning tasks to contributors. Connected contributors stay online but idle.</span></span></span>
+        </div>
+
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.contribute_wall_enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_wall_enabled"></div>
+          <span class="config-toggle-label">Contributor Wall <span class="config-info">i<span class="config-tooltip">Opt in to the public /contribute Operations wall. Off by default; posts are stored on the hub data volume and pruned by retention.</span></span></span>
         </div>
 
         <div class="config-toggle">

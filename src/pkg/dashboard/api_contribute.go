@@ -181,6 +181,12 @@ func (s *Server) registerContributeRoutes() {
 	// duration percentiles per backend. Public like the other /api/contribute*
 	// reads (aggregate counts only; no usernames, no reasons, no tokens).
 	s.mux.HandleFunc("GET /api/contribute/run-stats", s.handleContributeRunStats)
+	s.mux.HandleFunc("GET /api/contribute/run-stats/models", s.handleContributeRunStatsByModel)
+	s.mux.HandleFunc("GET /api/contribute/wall", s.handleContributeWall)
+	s.mux.HandleFunc("POST /api/contribute/wall", s.handleContributeWall)
+	s.mux.HandleFunc("DELETE /api/contribute/wall/{id}", s.handleContributeWallDelete)
+	s.mux.HandleFunc("POST /api/contribute/wall/{id}/hide", s.handleContributeWallHide)
+	s.mux.HandleFunc("POST /api/contribute/wall/{id}/flag", s.handleContributeWallFlag)
 	// Read-only TRIAGE ladder (#2612 part b): the contribute issues grouped into a
 	// Warp-style lifecycle (Triaging → Ready → Implementing → Reviewing → Closed),
 	// DERIVED LIVE from the ready queue + fleet snapshot + the PR→issue link (part
@@ -222,6 +228,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/contribute/dossier", s.handleContributeDossier)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
+	s.mux.HandleFunc("POST /api/contributors/{id}/wall-mute", s.handleContributorWallMute)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/agent-role", s.handleContributorAgentRole)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/agent-role-grants", s.handleContributorAgentRoleGrants)

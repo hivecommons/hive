@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func covK2Hub(t *testing.T) (*ContributeWSHub, *Server) {
@@ -133,6 +134,72 @@ func TestConditionalCooldownByPRURL(t *testing.T) {
 	if hub.isTaskInCooldown("org/nopr", 2) {
 		t.Fatalf("no-PR task should be released after only %dh, not locked for %dh",
 			completedNoPRCooldownHours, completedTaskCooldownHours)
+	}
+}
+
+func TestSelectTaskDispatchesExternalOnlyInReportOnlyMode(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		mode         string
+		wantDispatch bool
+		wantType     string
+		wantReason   string
+	}{
+		{name: "shadow", mode: config.FlueBindingModeShadow, wantType: "task_unavailable", wantReason: taskUnavailableCapabilityMismatch},
+		{name: "report-only", mode: config.FlueBindingModeReportOnly, wantDispatch: true, wantType: "task_assign_external"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			fake := &fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true}}
+			s.deps.ExternalExec = fake
+			s.deps.Config.Runs.External.Flue.Enabled = true
+			s.deps.Config.Runs.External.Flue.Mode = tc.mode
+			s.deps.Config.Runs.External.Flue.WorkflowVersion = "flue-fixture/1.0.0"
+			conn := &ContributorConnection{
+				profile:      &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "contributor"},
+				lastPong:     time.Now(),
+				capabilities: &ContributorCapabilities{RelayCapabilities: []string{capRunStage, capExtExecFlue}},
+			}
+			s.statusMu.Lock()
+			s.status = &StatusPayload{Repos: []FrontendRepo{{
+				Name: "repo1",
+				Full: "myorg/repo1",
+				ActionableIssues: []any{map[string]any{
+					"number":          float64(61),
+					"title":           "External stage",
+					"url":             "https://github.com/myorg/repo1/issues/61",
+					"author":          "someone",
+					"stage":           StageImplement,
+					"external_engine": extExecEngineFlue,
+				}},
+			}}}
+			s.statusMu.Unlock()
+
+			msg := hub.selectTask(conn)
+			if msg == nil {
+				t.Fatal("selectTask returned nil")
+			}
+			if msg.Type != tc.wantType {
+				t.Fatalf("message type = %q, want %q (%+v)", msg.Type, tc.wantType, msg)
+			}
+			if tc.wantReason != "" && msg.Reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", msg.Reason, tc.wantReason)
+			}
+			if msg.Type == "task_assign_external" {
+				hub.dispatchExternalAssignment(conn, *msg)
+			}
+			if got := len(fake.dispatches); (got == 1) != tc.wantDispatch {
+				t.Fatalf("dispatch count = %d, wantDispatch=%v", got, tc.wantDispatch)
+			}
+			if tc.wantDispatch {
+				task := fake.dispatches[0]
+				if task.Engine != extExecEngineFlue || task.Mode != config.FlueBindingModeReportOnly ||
+					task.Capability != capExtExecFlue || task.WorkflowVersion != "flue-fixture/1.0.0" ||
+					task.WorkKey != "myorg/repo1#61" || task.TaskGen == 0 || task.InputRevision == "" {
+					t.Fatalf("dispatch task = %+v", task)
+				}
+			}
+		})
 	}
 }
 

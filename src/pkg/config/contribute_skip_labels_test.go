@@ -16,7 +16,7 @@ func TestContributeSkipLabelsDefaultSet(t *testing.T) {
 
 func TestContributeSkipLabelsCustomSetAndBlockedFloor(t *testing.T) {
 	h := HubConfig{ContributeSkipLabels: []string{"discussion", "wayfinder:*"}}
-	want := []string{"discussion", "wayfinder:*", "blocked"}
+	want := []string{"discussion", "wayfinder:*", "blocked", "needs-decision"}
 	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -28,7 +28,7 @@ func TestContributeSkipLabelsEnvOverride(t *testing.T) {
 	c.Hub.ContributeSkipLabels = []string{"discussion"}
 	c.applyBootstrapEnv()
 	c.applyDefaults()
-	want := []string{"question", "wayfinder:*", "blocked"}
+	want := []string{"question", "wayfinder:*", "blocked", "needs-decision"}
 	if got := c.Hub.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -44,5 +44,23 @@ func TestContributeSkipLabelMatchCaseInsensitiveAndGlob(t *testing.T) {
 	}
 	if label, ok := h.MatchContributeSkipLabel([]string{"bug"}); ok || label != "" {
 		t.Fatalf("non-match = (%q,%v), want empty,false", label, ok)
+	}
+}
+
+func TestContributeNeedsDecisionLabelCustomizesSkipFloor(t *testing.T) {
+	label := "2-discussing"
+	h := HubConfig{ContributeSkipLabels: []string{"blocked"}, ContributeNeedsDecisionLabel: &label}
+	want := []string{"blocked", "2-discussing"}
+	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
+	}
+}
+
+func TestContributeNeedsDecisionLabelEmptyDisablesAdditionalSkip(t *testing.T) {
+	empty := ""
+	h := HubConfig{ContributeSkipLabels: []string{"discussion"}, ContributeNeedsDecisionLabel: &empty}
+	want := []string{"discussion", "blocked"}
+	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
 }

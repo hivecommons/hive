@@ -98,15 +98,21 @@ func TestDeduplicateBlocksReturnsInputWhenUnchanged(t *testing.T) {
 	}
 }
 
+// dedupFullBufferBudget bounds a full-buffer dedupe. The bound is generous
+// because CI runs with -race on shared runners: ~0.4s is typical, but
+// contended shards have been observed at 2.1s (#8483, #8485, #8492 reruns).
+// The old quadratic implementation took 3.7s unraced on an idle M2 Pro and
+// tens of seconds under -race, so an 8s ceiling still catches a regression on
+// the -race shards without flaking on a slow runner.
+const dedupFullBufferBudget = 8 * time.Second
+
 // A full-size agent buffer must dedupe in well under the status rebuild
-// budget. The bound is generous because CI runs with -race on shared
-// runners (~0.4s observed); the old implementation took 3.7s unraced on an
-// idle M2 Pro and tens of seconds under -race.
+// budget.
 func TestDeduplicateBlocksFullBufferIsFast(t *testing.T) {
 	lines := nearRepeatPane(outputBufferCapacity)
 	start := time.Now()
 	DeduplicateBlocks(lines)
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > dedupFullBufferBudget {
 		t.Fatalf("DeduplicateBlocks on %d lines took %s", len(lines), d)
 	}
 }

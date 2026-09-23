@@ -4527,6 +4527,13 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// ContributeWallEnabled opts a hive into the public contributor wall on
+	// /contribute. Default false so no deployment gets a public posting surface
+	// without an operator decision.
+	ContributeWallEnabled bool `yaml:"contribute_wall_enabled,omitempty"`
+	// ContributeWallRetentionDays bounds persisted contributor-wall posts on the
+	// hub data volume. 0/unset resolves to the dashboard's 90-day default.
+	ContributeWallRetentionDays int `yaml:"contribute_wall_retention_days,omitempty"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;
@@ -4544,6 +4551,11 @@ type HubConfig struct {
 	ContributeLabelsMode  string   `yaml:"contribute_labels_mode,omitempty"`
 	ContributeAllowLabels []string `yaml:"contribute_allow_labels"`
 	ContributeDenyLabels  []string `yaml:"contribute_deny_labels"`
+	// ContributeNeedsDecisionLabel is applied by contributor relays when an agent
+	// concludes an issue is waiting on a maintainer decision. Nil means the default
+	// needs-decision label; an explicit empty string disables relay labelling and
+	// does not add a decision label to the skip set.
+	ContributeNeedsDecisionLabel *string `yaml:"contribute_needs_decision_label,omitempty"`
 	// ContributeSkipLabels is the hive-wide "not contributor work" label set.
 	// Matching is case-insensitive and uses path.Match-style glob patterns (not
 	// substring matching), so "discussion" matches that label and
@@ -4798,7 +4810,7 @@ func parseContributeSkipLabels(v string) []string {
 	return out
 }
 
-func normalizeContributeSkipLabels(labels []string) []string {
+func normalizeContributeSkipLabels(labels []string, needsDecisionLabel string) []string {
 	if len(labels) == 0 {
 		labels = DefaultContributeSkipLabels()
 	}
@@ -4819,17 +4831,31 @@ func normalizeContributeSkipLabels(labels []string) []string {
 		add(label)
 	}
 	add(blockedWorkflowSkipLabel)
+	add(needsDecisionLabel)
 	return out
 }
 
-const blockedWorkflowSkipLabel = "blocked"
+const (
+	blockedWorkflowSkipLabel  = "blocked"
+	defaultNeedsDecisionLabel = "needs-decision"
+)
+
+// ContributeNeedsDecisionLabelOrDefault resolves the label relays should apply
+// to issues that are waiting on a maintainer decision. An explicit empty string
+// disables label application; unset config uses the default label.
+func (h HubConfig) ContributeNeedsDecisionLabelOrDefault() string {
+	if h.ContributeNeedsDecisionLabel == nil {
+		return defaultNeedsDecisionLabel
+	}
+	return strings.TrimSpace(*h.ContributeNeedsDecisionLabel)
+}
 
 // ContributeSkipLabelPatterns resolves the effective hive-wide "not contributor
 // work" label patterns. It applies the default and the historical blocked-label
 // floor defensively so tests and direct HubConfig literals behave like loaded
 // config.
 func (h HubConfig) ContributeSkipLabelPatterns() []string {
-	return normalizeContributeSkipLabels(h.ContributeSkipLabels)
+	return normalizeContributeSkipLabels(h.ContributeSkipLabels, h.ContributeNeedsDecisionLabelOrDefault())
 }
 
 // MatchContributeSkipLabel returns the issue label that matches the configured
@@ -5839,6 +5865,11 @@ func (c *Config) applyDefaults() {
 		} else if c.Hub.ContributeCooldownHours > contributeCooldownMaxHours {
 			c.Hub.ContributeCooldownHours = contributeCooldownMaxHours
 		}
+	}
+	if c.Hub.ContributeWallRetentionDays < 0 {
+		c.Hub.ContributeWallRetentionDays = 0
+	} else if c.Hub.ContributeWallRetentionDays > 3650 {
+		c.Hub.ContributeWallRetentionDays = 3650
 	}
 
 	// Standby (RFC #7629 S2): default the per-lane floor to T1, clamp the

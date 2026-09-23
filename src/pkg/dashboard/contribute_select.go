@@ -102,7 +102,8 @@ const (
 	// the message names the streak and the pause expiry. Not an enforced-policy
 	// refusal like tier_disabled: it lifts on its own and is reset by any
 	// completion or genuinely-attempted (slow) failure.
-	taskUnavailableFailureStreak = "contributor_failure_streak"
+	taskUnavailableFailureStreak          = "contributor_failure_streak"
+	taskUnavailableExternalDispatchFailed = "external_dispatch_failed"
 )
 
 // rateWindowCounts returns how many task assignments the given identity has been
@@ -211,6 +212,7 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 	c.currentLabels = nil
 	c.pendingToken = ""
 	c.credentialDelivered = false
+	c.pendingExternalTask = nil
 	c.tokenMintedAt = time.Time{}
 	c.lastLeaseRenew = time.Time{}
 	c.taskAssignedAt = time.Time{}
@@ -692,7 +694,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// cooldown are already excluded above, so this only deprioritises an issue
 		// whose short cooldown just elapsed but which still has failure history —
 		// a backstop that keeps the queue moving even if the ledger is imperfect.
-		recentFailures int
+		recentFailures     int
+		extEngine          string
+		extMode            string
+		extCapability      string
+		extWorkflowVersion string
 	}
 	var candidates []candidate
 	capabilityMismatchSeen := false
@@ -759,13 +765,24 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// #8361: an item bound to an external engine is refused, never
 			// downgraded to local work, unless the binding is enabled and the
 			// relay declared the engine capability.
-			if engine := extExecEngineFromIssueMap(issue); engine != "" {
-				if ok, reason := h.extExecAdmissible(engine, c); !ok {
+			extEngine := extExecEngineFromIssueMap(issue)
+			extMode := ""
+			extCapability := ""
+			extWorkflowVersion := ""
+			if extEngine != "" {
+				if ok, reason := h.extExecAdmissible(extEngine, c); !ok {
 					capabilityMismatchSeen = true
 					h.logger.Info("[contribute-ws] skip: external execution item refused",
-						"repo", repo.Full, "number", number, "engine", engine, "reason", reason)
+						"repo", repo.Full, "number", number, "engine", extEngine, "reason", reason)
 					return
 				}
+				var cfg *config.Config
+				if h.server != nil && h.server.deps != nil {
+					cfg = h.server.deps.Config
+				}
+				extMode = extExecMode(extEngine, cfg)
+				extCapability, _, _ = extExecGate(extEngine, cfg)
+				extWorkflowVersion = extExecWorkflowVersion(extEngine, cfg)
 			}
 			requirements := TaskRequirementsFromLabels(labels)
 			if !ContributorCanRunTask(declaredCaps, declaredBackend, requirements) {
@@ -945,7 +962,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				requirements:  requirements,
 				// #2435: carry any lingering failure history so the ordering below
 				// can deprioritise a recently-failed issue within its bucket.
-				recentFailures: h.recentFailureCountKey(itemKey),
+				recentFailures:     h.recentFailureCountKey(itemKey),
+				extEngine:          extEngine,
+				extMode:            extMode,
+				extCapability:      extCapability,
+				extWorkflowVersion: extWorkflowVersion,
 			})
 		})
 	}
@@ -1118,6 +1139,68 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// touches the shared selection state, so the fleet-wide lock is released
 	// BEFORE the GitHub round-trips (#7775).
 	unlock()
+
+	if chosen.extEngine != "" {
+		prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, false, h.writingGuideSection())
+		if chosen.stage != "" {
+			prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
+		}
+		task := ExternalExecutionTask{
+			Engine:           chosen.extEngine,
+			Mode:             chosen.extMode,
+			Capability:       chosen.extCapability,
+			WorkflowVersion:  chosen.extWorkflowVersion,
+			ContractRevision: externalWorkflowContractRevision,
+			Identity:         identityOf(c),
+			Tier:             c.profile.TrustTier,
+			TaskID:           taskID,
+			TaskGen:          gen,
+			WorkKey:          chosen.ref.Key(),
+			Repo:             chosen.repoFull,
+			Number:           chosen.number,
+			Stage:            chosen.stage,
+			Title:            chosen.title,
+			Summary:          prompt,
+			SourceType:       chosen.ref.SourceType,
+			ExternalID:       chosen.ref.ExternalID,
+			URL:              chosen.url,
+		}
+		task.InputRevision = externalInputRevision(task)
+		c.mu.Lock()
+		if c.currentTask == nil || c.currentTask.TaskID != taskID {
+			c.mu.Unlock()
+			h.logger.Info("[contribute-ws] external claim released before dispatch; not sending assignment ack",
+				"username", ownUsername, "task", taskID)
+			return nil
+		}
+		c.currentPrompt = prompt
+		c.pendingToken = ""
+		c.credentialDelivered = false
+		c.tokenMintedAt = time.Time{}
+		pending := task
+		c.pendingExternalTask = &pending
+		c.mu.Unlock()
+		h.recordAgentClaim(context.Background(), c, taskID, chosen.repoFull, chosen.number, time.Now())
+		return &WSMessage{
+			Type:           "task_assign_external",
+			Seq:            h.nextSeq(),
+			TaskID:         taskID,
+			TaskGen:        gen,
+			Stage:          chosen.stage,
+			Kind:           "issue",
+			Repo:           chosen.repoFull,
+			Number:         chosen.number,
+			Title:          chosen.title,
+			URL:            chosen.url,
+			TaskKey:        chosen.ref.Key(),
+			SourceType:     chosen.ref.SourceType,
+			ExternalID:     chosen.ref.ExternalID,
+			ExternalEngine: chosen.extEngine,
+			Prompt:         prompt,
+			Labels:         chosen.labels,
+			ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
+		}
+	}
 
 	// Mint through the shared path so task_assign and the heartbeat token-refresh
 	// advertise tokens minted the same way (#2393 item 2). tokenMintedAt below

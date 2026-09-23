@@ -152,6 +152,7 @@ func titleCaseWords(s string) string {
 }
 
 func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
+	contributorExport := s.contributorKnowledgeExport(r)
 	if !s.allowKnowledgeExport(w, r) {
 		return
 	}
@@ -194,10 +195,20 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	sb.WriteString("# Agent Knowledge\n\n")
 	sb.WriteString("This file is auto-generated from the hive knowledge base.\n")
 	sb.WriteString("It refreshes periodically — do not edit manually.\n\n")
+	if contributorExport {
+		sb.WriteString("This contributor export is a bounded startup summary. Fetch specific entries on demand with `hive knowledge` or the Hive MCP knowledge tool instead of relying on all knowledge being in initial context.\n\n")
+	}
 
 	order := []string{"constitution", "constraint", "requirement", "decision",
 		"pattern", "gotcha", "regression", "coverage_rule", "test_scaffold",
 		"integration", "idea", "vision", "stakeholder", "general"}
+
+	maxFacts := 0
+	if contributorExport {
+		maxFacts = contributorKnowledgeExportMaxFacts()
+	}
+	writtenFacts := 0
+	omittedFacts := 0
 
 	for _, t := range order {
 		ff, ok := grouped[t]
@@ -216,14 +227,26 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		}
 		sb.WriteString("## " + label + "\n\n")
 		for _, f := range ff {
+			if maxFacts > 0 && writtenFacts >= maxFacts {
+				omittedFacts++
+				continue
+			}
+			writtenFacts++
 			sb.WriteString("### " + f.Title + "\n\n")
 			if f.Body != "" {
-				sb.WriteString(f.Body + "\n\n")
+				body := f.Body
+				if contributorExport {
+					body = contributorKnowledgeSummary(body)
+				}
+				sb.WriteString(body + "\n\n")
 			}
 			if len(f.Tags) > 0 {
 				sb.WriteString("Tags: " + strings.Join(f.Tags, ", ") + "\n\n")
 			}
 		}
+	}
+	if omittedFacts > 0 {
+		sb.WriteString(fmt.Sprintf("[Hive knowledge export truncated: %d entries omitted from the contributor startup summary. Fetch targeted knowledge on demand with `hive knowledge` or the Hive MCP knowledge tool.]\n\n", omittedFacts))
 	}
 
 	body := sb.String()
@@ -234,6 +257,35 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(body))
 	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sum))
 	_, _ = w.Write([]byte(body))
+}
+
+const (
+	defaultContributorKnowledgeExportMaxFacts = 80
+	contributorKnowledgeSummaryRunes          = 240
+)
+
+func contributorKnowledgeExportMaxFacts() int {
+	raw := strings.TrimSpace(os.Getenv("HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS"))
+	if raw == "" {
+		return defaultContributorKnowledgeExportMaxFacts
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultContributorKnowledgeExportMaxFacts
+	}
+	return n
+}
+
+func contributorKnowledgeSummary(body string) string {
+	runes := []rune(strings.TrimSpace(body))
+	if len(runes) <= contributorKnowledgeSummaryRunes {
+		return string(runes)
+	}
+	return string(runes[:contributorKnowledgeSummaryRunes]) + "…"
+}
+
+func (s *Server) contributorKnowledgeExport(r *http.Request) bool {
+	return s.contributorProfileFromAuthorization(r) != nil
 }
 
 func (s *Server) allowKnowledgeExport(w http.ResponseWriter, r *http.Request) bool {

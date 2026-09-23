@@ -2003,6 +2003,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected clankers stay online but idle.</div></div>
 </div>
 <div class="admin-toggle">
+<div class="admin-switch" id="admin-wall-switch" data-key="contribute_wall_enabled"></div>
+<div><div class="admin-toggle-label">Contributor wall</div><div class="admin-toggle-sub">Opt in to the public Operations wall. Off by default; posts are retained for the configured window.</div></div>
+</div>
+<div class="admin-toggle">
 <div class="admin-switch" id="admin-skip-switch" data-key="contribute_skip_assigned_to_others"></div>
 <div><div class="admin-toggle-label">Skip issues assigned to others</div><div class="admin-toggle-sub">Never serve an issue already assigned to a different GitHub user.</div></div>
 </div>
@@ -2025,6 +2029,11 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-filter-titles"></div>
 <div class="admin-field" id="admin-filter-authors"></div>
 <div class="admin-field" id="admin-filter-labels"></div>
+<div class="admin-field">
+<label>Maintainer-decision label <span style="color:var(--cc-muted-2)">&mdash; applied when a relay reports <code>no_work_needed — decision:</code>. Empty disables relay labelling.</span></label>
+<input type="text" id="admin-needs-decision-label" placeholder="needs-decision" style="max-width:240px">
+<div class="admin-toggle-sub">Stored as <code>hub.contribute_needs_decision_label</code>; matching labels are skipped by the contribute queue until a human removes them.</div>
+</div>
 
 <div class="admin-field">
 <label>Allowed models <span style="color:var(--cc-muted-2)">— wildcards (*) and /regex/. Empty = allow all.</span></label>
@@ -2045,6 +2054,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 
 <button type="button" class="admin-save" id="admin-save-btn" disabled>Save filters</button>
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
+<hr class="admin-hr">
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Wall moderation</h3>
+<div id="admin-wall-flags"><div class="ops-empty">Enable the wall to review flagged posts and mutes.</div></div>
 </div>
 </div>
 </div>
@@ -2143,6 +2155,15 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      hydrated by ccMetricsPoll once metrics and identity have both loaded. --><span class="spark spark-inline" id="spark-mine" title="Your completions per hour, last 7 days"></span></div>
 <div class="cc-mine" id="cc-mine-body"><div class="ops-empty">Loading your stats&hellip;</div></div>
 <p class="ops-note" id="cc-mine-note" style="padding:0 20px 14px;margin:0"></p>
+</div>
+<div class="ops-card" id="cc-wall-card" style="display:none;margin-bottom:20px">
+<div class="ops-card-head"><h3>Contributor wall</h3><span class="ops-card-count" id="cc-wall-count"></span></div>
+<form class="runs-lookup" id="cc-wall-form" autocomplete="off" style="display:none;padding:12px 20px;border-bottom:1px solid var(--cc-border)">
+<input type="text" id="cc-wall-text" maxlength="500" placeholder="Share a model/setup note (plain text, 500 chars)" aria-label="Wall post">
+<input type="text" id="cc-wall-model" placeholder="model tag (optional)" aria-label="Model tag" style="max-width:180px">
+<button type="submit" class="admin-act">Post</button>
+</form>
+<div class="runs-list" id="cc-wall-list"><div class="ops-empty">Loading wall&hellip;</div></div>
 </div>
 <!-- Fleet work (#6945): this panel was titled "My work" while rendering the work
      of EVERY connected clanker to every visitor, anonymous ones included — the
@@ -2364,6 +2385,10 @@ It clears automatically when the period elapses. An operator can shorten or disa
      server-side there and by ME_IS_OWNER here. -->
 <div id="profile-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="me-card-mount"></div>
+<div class="ops-card" id="dossier-wall-card" style="display:none;margin-top:20px">
+<div class="ops-card-head"><h3>Recent wall posts</h3><span class="ops-card-count" id="dossier-wall-count"></span></div>
+<div class="runs-list" id="dossier-wall-list"><div class="ops-empty">Loading posts&hellip;</div></div>
+</div>
 </div>
 </div>
 <!-- "File an issue on this page" (#2594). A subtle footer present on EVERY tab.
@@ -2605,6 +2630,7 @@ function activateTab(t,push){
     // nowhere else on this tab. Guarded on its own like every sibling above: an
     // identity lookup that throws must not leave the fleet panels on "Loading…".
     try{ccResolveViewer();}catch(e){console.error('ccResolveViewer failed',e);}
+    try{ccLoadWall();ccInitWallForm();}catch(e){console.error('ccLoadWall failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   // The standings and the standing strip are independent: a throw in one must
@@ -2616,6 +2642,7 @@ function activateTab(t,push){
   // Profile hydrates the full dossier on first open, on its own tab.
   if(dp==='tab-profile'&&!profileStarted){profileStarted=true;
     try{loadMeCard();}catch(e){console.error('loadMeCard failed',e);}
+    try{ccLoadDossierWall();}catch(e){console.error('ccLoadDossierWall failed',e);}
   }
   // Reflect the visible tab in the URL. pushState only — never a reload. Skipped
   // when push===false (popstate replay) so we don't stack duplicate history entries.
@@ -4147,6 +4174,7 @@ function renderAdminControls(){
   // Immediate toggles.
   document.getElementById('admin-suspend-switch').classList.toggle('on',!!adminHub.contribute_suspended);
   document.getElementById('admin-suspend-switch').classList.toggle('danger',!!adminHub.contribute_suspended);
+  document.getElementById('admin-wall-switch').classList.toggle('on',!!adminHub.contribute_wall_enabled);
   document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
   document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
   // Task cooldown: the GET resolves contribute_cooldown_enabled to a concrete
@@ -4166,9 +4194,12 @@ function renderAdminControls(){
   renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
   renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
   renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','labels');
+  var nd=document.getElementById('admin-needs-decision-label');
+  if(nd&&document.activeElement!==nd)nd.value=adminHub.contribute_needs_decision_label||'';
   renderAdminModels();
   renderAdminRepos();
   renderAdminTierLimits();
+  ccLoadWallFlags();
   var save=document.getElementById('admin-save-btn');
   if(save)save.disabled=!adminDirty;
 }
@@ -4276,6 +4307,7 @@ onEl('ops-admin','click',function(e){
 // blank/NaN coerces to 0 (== unlimited), matching the backend's "<=0 = unlimited".
 onEl('ops-admin','input',function(e){
   var t=e.target;
+  if(t&&t.id==='admin-needs-decision-label'&&adminHub){adminHub.contribute_needs_decision_label=t.value;adminDirty=true;var saveBtn=document.getElementById('admin-save-btn');if(saveBtn)saveBtn.disabled=false;return;}
   if(!t.getAttribute||t.getAttribute('data-tier-field')===null||!adminHub)return;
   var tier=t.getAttribute('data-tier'),field=t.getAttribute('data-tier-field');
   var v=parseInt(t.value,10);if(isNaN(v)||v<0)v=0;
@@ -4307,6 +4339,7 @@ onEl('admin-save-btn','click',function(){
     contribute_allow_labels:[],
     contribute_allow_models:adminHub.contribute_allow_models||[],
     contribute_repo_filters:adminCleanRepoFilters(adminHub.contribute_repo_filters),
+    contribute_needs_decision_label:adminHub.contribute_needs_decision_label||'',
     // Governor Hub mirror sections (#2562 parity): repos-for-contribute (as the
     // disabled_repos exclusion list) + per-tier access & rate limits.
     disabled_repos:adminHub.disabled_repos||[],
@@ -4405,6 +4438,7 @@ async function initAdmin(){
   var badge=document.getElementById('admin-role-badge');if(badge)badge.textContent=role;
   document.getElementById('ops-admin').classList.add('enabled');
   bindImmediateToggle('admin-suspend-switch');
+  bindImmediateToggle('admin-wall-switch');
   bindImmediateToggle('admin-skip-switch');
   bindImmediateToggle('admin-reject-switch');
   bindImmediateToggle('admin-cooldown-switch');
@@ -5133,6 +5167,65 @@ var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
 var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
 var ccHeldCount=0;         // issues manually PARKED by the operator (fleet payload, on-hold tally)
+var ccWallPosts=[];
+var ccWallEnabled=false;
+function ccWallPostHTML(p){
+  var tags=p.tags||{};
+  var evidence='';
+  if(p.model_evidence){
+    evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · '+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</div>';
+  }
+  var controls='';
+  if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
+  else if(ccMeUsername)controls+='<button type="button" class="admin-act" data-wall-flag="'+esc(p.id)+'">flag</button>';
+  if(adminEnabled)controls+='<button type="button" class="admin-act" data-wall-hide="'+esc(p.id)+'">hide</button>';
+  var hidden=p.hidden?'<span class="pill pill-blocked">hidden</span> ':'';
+  var tagLine=(tags.model||tags.backend||tags.repo)?'<div class="ops-note">'+(tags.model?('model '+esc(tags.model)+' '):'')+(tags.backend?('backend '+esc(tags.backend)+' '):'')+(tags.repo?('repo '+esc(tags.repo)):'')+'</div>':'';
+  var head='<b>'+esc(p.author||'unknown')+'</b> '+tierBadge(p.author_trust_tier,'tier-lb')+' <span class="ops-note">'+(p.author_verified_prs||0)+' verified PRs</span>';
+  return '<div class="cc-wall-post" style="padding:12px 20px;border-bottom:1px solid var(--cc-border)">'+
+    '<div>'+hidden+head+'</div><div style="white-space:pre-wrap;margin-top:6px">'+esc(p.text||'')+'</div>'+tagLine+evidence+
+    '<div style="display:flex;gap:6px;margin-top:8px">'+controls+'</div>'+
+    ((p.replies||[]).length?'<div style="margin-left:18px;margin-top:8px;border-left:2px solid var(--cc-border)">'+(p.replies||[]).map(ccWallPostHTML).join('')+'</div>':'')+
+    '</div>';
+}
+function ccRenderWall(){
+  var card=document.getElementById('cc-wall-card'), list=document.getElementById('cc-wall-list'), cnt=document.getElementById('cc-wall-count'), form=document.getElementById('cc-wall-form');
+  if(card)card.style.display=ccWallEnabled?'':'none';
+  if(form)form.style.display=(ccWallEnabled&&ccMeUsername)?'flex':'none';
+  if(cnt)cnt.textContent=ccWallPosts.length+' posts';
+  if(list)list.innerHTML=ccWallPosts.length?ccWallPosts.map(ccWallPostHTML).join(''):'<div class="ops-empty">No wall posts yet.</div>';
+}
+function ccLoadWall(){
+  fetch('/api/contribute/wall').then(function(r){return r.json();}).then(function(d){
+    ccWallEnabled=!!(d&&d.enabled); ccWallPosts=(d&&d.posts)||[]; ccRenderWall(); if(adminEnabled)ccLoadWallFlags();
+  }).catch(function(){});
+}
+function ccInitWallForm(){
+  var f=document.getElementById('cc-wall-form'); if(!f||f.getAttribute('data-bound'))return; f.setAttribute('data-bound','1');
+  f.addEventListener('submit',function(e){e.preventDefault();var t=document.getElementById('cc-wall-text'), m=document.getElementById('cc-wall-model');var text=(t&&t.value)||'';var model=(m&&m.value)||'';fetch('/api/contribute/wall',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,tags:{model:model}})}).then(function(r){return r.ok?r.json():null;}).then(function(p){if(p){if(t)t.value='';ccWallPosts=[p].concat(ccWallPosts);ccRenderWall();}}).catch(function(){});});
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('[data-wall-del],[data-wall-hide],[data-wall-flag]'); if(!b)return;
+  var id=b.getAttribute('data-wall-del')||b.getAttribute('data-wall-hide')||b.getAttribute('data-wall-flag');
+  var path='/api/contribute/wall/'+encodeURIComponent(id)+(b.hasAttribute('data-wall-hide')?'/hide':(b.hasAttribute('data-wall-flag')?'/flag':''));
+  fetch(path,{method:b.hasAttribute('data-wall-del')?'DELETE':'POST'}).then(function(){ccLoadWall();ccLoadDossierWall();if(adminEnabled)ccLoadWallFlags();}).catch(function(){});
+});
+function ccLoadWallFlags(){
+  var el=document.getElementById('admin-wall-flags'); if(!el||!adminEnabled)return;
+  fetch('/api/contribute/wall?flagged=1').then(function(r){return r.ok?r.json():null;}).then(function(d){
+    if(!d||!d.enabled){el.innerHTML='<div class="ops-empty">Contributor wall is disabled.</div>';return;}
+    var posts=d.posts||[], mutes=d.mutes||[];
+    el.innerHTML=(posts.length?posts.map(ccWallPostHTML).join(''):'<div class="ops-empty">No flagged posts.</div>')+
+      (mutes.length?'<div class="ops-note">Muted: '+mutes.map(function(m){return esc(m.username);}).join(', ')+'</div>':'');
+  }).catch(function(){});
+}
+function ccLoadDossierWall(){
+  var card=document.getElementById('dossier-wall-card'), list=document.getElementById('dossier-wall-list'), cnt=document.getElementById('dossier-wall-count'); if(!card||!list)return;
+  var who=ME_VIEW_USERNAME||ccMeUsername; if(!who){card.style.display='none';return;}
+  fetch('/api/contribute/wall?author='+encodeURIComponent(who)).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.enabled){card.style.display='none';return;} var posts=d.posts||[]; card.style.display=''; if(cnt)cnt.textContent=posts.length+' posts'; list.innerHTML=posts.length?posts.map(ccWallPostHTML).join(''):'<div class="ops-empty">No wall posts yet.</div>';
+  }).catch(function(){});
+}
 
 // ── Label-affinity (#2637): the viewer's own label interests ───────────────────
 // ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
@@ -6181,6 +6274,16 @@ function ccHydrate(payload){
     if(added){ccRebuildLogFromActivity();if(currentFilter==='done')renderWork(lastWork);}
   }
 }
+function ccOnWallEvent(ev){
+  if(!ev||!ev.wall_post)return;
+  var p=ev.wall_post;
+  if(ev.type==='wall_hidden'){
+    ccWallPosts=ccWallPosts.filter(function(x){return x.id!==p.id;});
+  }else if(ev.type==='wall_post'){
+    ccWallPosts=[p].concat(ccWallPosts.filter(function(x){return x.id!==p.id;}));
+  }
+  ccRenderWall();
+}
 function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
   fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
     if(!d)return;
@@ -6221,6 +6324,7 @@ function ccStart(){
       if(ev.type==='hello')ccHydrate(ev);
       else if(ev.type==='activity'&&ev.activity)ccOnActivity(ev.activity);
       else if(ev.type==='announcement')ccSetAnnouncement(ev.announcement||null);
+      else if((ev.type==='wall_post'||ev.type==='wall_hidden')&&ev.wall_post)ccOnWallEvent(ev);
       else if(ev.type==='gap')ccOnGap(ev);
     };
     ccEs.onerror=function(){

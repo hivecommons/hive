@@ -1,1 +1,0 @@
-- The contributor relay now strips ANSI/OSC escape sequences and control characters from every hub-supplied string it prints (announcements, notices, task titles, revoke/auth reasons), so a malicious hub can no longer inject terminal escapes — screen rewriting, title changes, or OSC 52 clipboard writes — into a contributor's terminal (#8497).

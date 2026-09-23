@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -246,9 +248,36 @@ func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var target inceptionRunTarget
+	admitRun := s.deps.Config != nil && s.deps.Config.Runs.Spektacular.Enabled
+	if admitRun {
+		var err error
+		target, err = s.inceptionRunAdmissionTarget(r)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if err := s.deps.Inception.AdvanceToComplete(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if admitRun {
+		if target.ok {
+			if err := s.AdmitRun(target.repo, target.issueNumber, target.title, time.Now()); err != nil {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.logger.Info("inception complete admitted run",
+				"repo", target.repo,
+				"issue", target.issueNumber,
+			)
+			s.auditFromRequest(r, "inception_run_admitted",
+				auditDetail("repo", target.repo, "issue", strconv.Itoa(target.issueNumber)), "")
+		} else {
+			s.logger.Info("inception complete did not admit run: no issue target supplied")
+		}
 	}
 
 	// Re-pause brainstorm so the governor doesn't kick it with generic
@@ -259,6 +288,96 @@ func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) 
 
 	s.auditFromRequest(r, "inception_approve", "", "")
 	jsonResponse(w, map[string]interface{}{"ok": true})
+}
+
+type inceptionRunTarget struct {
+	repo        string
+	issueNumber int
+	title       string
+	ok          bool
+}
+
+func (s *Server) inceptionRunAdmissionTarget(r *http.Request) (inceptionRunTarget, error) {
+	var req struct {
+		Repo        string `json:"repo"`
+		TargetRepo  string `json:"target_repo"`
+		IssueNumber int    `json:"issue_number"`
+		IssueURL    string `json:"issue_url"`
+		Title       string `json:"title"`
+	}
+	if r.Body != nil {
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxInceptionBodyBytes))
+		if err != nil {
+			return inceptionRunTarget{}, fmt.Errorf("reading approve body: %w", err)
+		}
+		if strings.TrimSpace(string(body)) != "" {
+			if err := json.Unmarshal(body, &req); err != nil {
+				return inceptionRunTarget{}, fmt.Errorf("invalid approve body: %w", err)
+			}
+		}
+	}
+
+	repo := strings.TrimSpace(req.TargetRepo)
+	if repo == "" {
+		repo = strings.TrimSpace(req.Repo)
+	}
+	issueNumber := req.IssueNumber
+	if strings.TrimSpace(req.IssueURL) != "" {
+		issueRepo, issue, err := parseGitHubIssueURL(req.IssueURL, s.deps.Config.GitHub.HostLabel())
+		if err != nil {
+			return inceptionRunTarget{}, err
+		}
+		if repo != "" {
+			qualified := config.QualifyRepo(s.deps.Config.Project.Org, repo)
+			if !strings.EqualFold(qualified, issueRepo) {
+				return inceptionRunTarget{}, fmt.Errorf("repo does not match issue_url repo")
+			}
+		}
+		if issueNumber != 0 && issueNumber != issue {
+			return inceptionRunTarget{}, fmt.Errorf("issue_number does not match issue_url")
+		}
+		repo = issueRepo
+		issueNumber = issue
+	}
+
+	state := s.deps.Inception.GetState()
+	if s.deps.Config != nil {
+		repo = config.QualifyRepo(s.deps.Config.Project.Org, repo)
+	}
+	if strings.TrimSpace(repo) == "" {
+		return inceptionRunTarget{}, nil
+	}
+	if issueNumber <= 0 {
+		return inceptionRunTarget{}, nil
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" && state != nil {
+		title = strings.TrimSpace(state.IdeaText)
+	}
+	if title == "" {
+		title = fmt.Sprintf("%s#%d", repo, issueNumber)
+	}
+	return inceptionRunTarget{repo: repo, issueNumber: issueNumber, title: title, ok: true}, nil
+}
+
+func parseGitHubIssueURL(raw, wantHost string) (string, int, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", 0, fmt.Errorf("issue_url must be an absolute GitHub issue URL")
+	}
+	if !strings.EqualFold(u.Hostname(), wantHost) {
+		return "", 0, fmt.Errorf("issue_url host must be %s", wantHost)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 || parts[2] != "issues" {
+		return "", 0, fmt.Errorf("issue_url must point to /owner/repo/issues/<number>")
+	}
+	n, err := strconv.Atoi(parts[3])
+	if err != nil || n <= 0 {
+		return "", 0, fmt.Errorf("issue_url must include a positive issue number")
+	}
+	return parts[0] + "/" + parts[1], n, nil
 }
 
 func (s *Server) clearInceptionBeads(store *beads.Store) {

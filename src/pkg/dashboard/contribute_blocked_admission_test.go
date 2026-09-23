@@ -142,3 +142,28 @@ func TestConvergenceKickProjectionSkipsConfiguredLabels(t *testing.T) {
 		t.Fatalf("skip-label kick finding = %+v, want label_skipped for #1", withheld)
 	}
 }
+
+func TestNeedsDecisionLabelNeverAppearsInContributorQueue(t *testing.T) {
+	hub, server := covK2Hub(t)
+	server.deps.Config.Hub.ContributeLabelsMode = config.FilterModeAllow
+	server.deps.Config.Hub.ContributeDenyLabels = []string{"3-clanker-queue"}
+
+	decision := intgIssue(1, "awaiting maintainer decision", "bob", nil)
+	decision["labels"] = []any{"3-clanker-queue", "needs-decision"}
+	ready := intgIssue(2, "independent work", "bob", nil)
+	ready["labels"] = []any{"3-clanker-queue"}
+	setStatusIssues(server, decision, ready)
+
+	queue := hub.ReadyQueue(readyQueueDefaultLimit)
+	if len(queue) != 1 || queue[0].Number != 2 {
+		t.Fatalf("needs-decision issue must stay out of ReadyQueue, got %+v", queue)
+	}
+
+	task := hub.selectTask(&ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	})
+	if task == nil || task.Type != "task_assign" || task.Number != 2 {
+		t.Fatalf("needs-decision issue must stay out of selectTask, got %+v", task)
+	}
+}

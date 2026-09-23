@@ -69,6 +69,10 @@ const (
 	// no_work_needed a hub without this capability already books, so nothing
 	// on the wire depends on the hub advertising it.
 	capBlockedVerdict = "blocked_verdict"
+	// capNeedsDecisionVerdict: the hub reads the OPTIONAL verdict_needs_decision
+	// marker on a no_work_needed task_complete and books the issue for the full
+	// cooldown while relays apply the configured maintainer-decision label.
+	capNeedsDecisionVerdict = "needs_decision_verdict"
 	// capTokenRefreshFailed: when a mid-task re-mint FAILS, the hub tells the
 	// relay so with a token_refresh_failed message instead of only logging it
 	// hub-side (#5447). Without it the relay's first evidence that its
@@ -122,6 +126,7 @@ func serverCapabilities() []string {
 		capQuotaPreflight,
 		capBlockedVerdict,
 		capStandbyV1,
+		capNeedsDecisionVerdict,
 		capRunStage,
 		capExtExecFlue,
 		capExtExecOMP,

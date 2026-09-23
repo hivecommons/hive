@@ -229,30 +229,32 @@ func TestNoWorkVerdict_ClearedByShippedCompletion(t *testing.T) {
 // "shipped" whose PR failed verification — normalizes to idle.
 func TestNormalizeCompletionVerdict(t *testing.T) {
 	cases := []struct {
-		reported   string
-		blocked    bool
-		verifiedPR string
-		want       string
+		reported      string
+		blocked       bool
+		needsDecision bool
+		verifiedPR    string
+		want          string
 	}{
-		{"", false, "", completionVerdictIdle},
-		{"no_work_needed", false, "", completionVerdictNoWorkNeeded},
-		{"  No_Work_Needed  ", false, "", completionVerdictNoWorkNeeded},
-		{"shipped", false, "", completionVerdictIdle},                                        // claimed shipped, nothing verified
-		{"garbage", false, "", completionVerdictIdle},                                        // unknown value
-		{"no_work_needed", false, "https://github.com/o/r/pull/1", completionVerdictShipped}, // verified PR wins
-		{"", false, "https://github.com/o/r/pull/1", completionVerdictShipped},
+		{"", false, false, "", completionVerdictIdle},
+		{"no_work_needed", false, false, "", completionVerdictNoWorkNeeded},
+		{"no_work_needed", false, true, "", completionVerdictNeedsDecision},
+		{"  No_Work_Needed  ", false, false, "", completionVerdictNoWorkNeeded},
+		{"shipped", false, false, "", completionVerdictIdle},                                        // claimed shipped, nothing verified
+		{"garbage", false, false, "", completionVerdictIdle},                                        // unknown value
+		{"no_work_needed", false, false, "https://github.com/o/r/pull/1", completionVerdictShipped}, // verified PR wins
+		{"", false, false, "https://github.com/o/r/pull/1", completionVerdictShipped},
 		// #7924: blocked, in both spellings; the marker means nothing on any
 		// other verdict, and a verified PR still wins.
-		{"blocked", false, "", completionVerdictBlocked},
-		{" Blocked ", false, "", completionVerdictBlocked},
-		{"no_work_needed", true, "", completionVerdictBlocked},
-		{"", true, "", completionVerdictIdle},
-		{"garbage", true, "", completionVerdictIdle},
-		{"blocked", true, "https://github.com/o/r/pull/1", completionVerdictShipped},
+		{"blocked", false, false, "", completionVerdictBlocked},
+		{" Blocked ", false, false, "", completionVerdictBlocked},
+		{"no_work_needed", true, false, "", completionVerdictBlocked},
+		{"", true, false, "", completionVerdictIdle},
+		{"garbage", true, false, "", completionVerdictIdle},
+		{"blocked", true, false, "https://github.com/o/r/pull/1", completionVerdictShipped},
 	}
 	for _, c := range cases {
-		if got := normalizeCompletionVerdict(c.reported, c.blocked, c.verifiedPR); got != c.want {
-			t.Errorf("normalizeCompletionVerdict(%q, %v, %q) = %q, want %q", c.reported, c.blocked, c.verifiedPR, got, c.want)
+		if got := normalizeCompletionVerdict(c.reported, c.blocked, c.needsDecision, c.verifiedPR); got != c.want {
+			t.Errorf("normalizeCompletionVerdict(%q, %v, %v, %q) = %q, want %q", c.reported, c.blocked, c.needsDecision, c.verifiedPR, got, c.want)
 		}
 	}
 }

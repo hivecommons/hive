@@ -3,6 +3,7 @@ package dashboard
 import (
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -51,6 +52,13 @@ func (h *ContributeWSHub) cooldownEnabled() bool {
 		return true
 	}
 	return h.server.deps.Config.Hub.IsContributeCooldownEnabled()
+}
+
+func (h *ContributeWSHub) configuredNeedsDecisionLabel() string {
+	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return h.server.deps.Config.Hub.ContributeNeedsDecisionLabelOrDefault()
+	}
+	return (config.HubConfig{}).ContributeNeedsDecisionLabelOrDefault()
 }
 
 // configuredWithPRCooldown returns the operator-configured WITH-PR completion

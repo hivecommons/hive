@@ -50,14 +50,16 @@ func TestExternalFlueBindingFailsClosed(t *testing.T) {
 		t.Fatalf("default config = %v, want off", err)
 	}
 	cfg.Runs.External.Flue.Enabled = true
+	cfg.Runs.External.Flue.Endpoint = "http://127.0.0.1:1"
+	cfg.Runs.External.Flue.WorkflowVersion = "flue-fixture/1.0.0"
 	if _, err := newExternalFlueBinding(srv, cfg, extwork.DefaultRegistry, clock); !failClosed(err) {
 		t.Fatalf("enabled without hub = %v, want a fail-closed sentinel", err)
 	}
 	if _, err := newExternalFlueBinding(srv, cfg, extwork.NewRegistry(), clock); !errors.Is(err, extwork.ErrEngineNotLinked) {
 		t.Fatalf("empty registry = %v", err)
 	}
-	status := extworkStatus{registry: extwork.DefaultRegistry}
-	if status.Linked("nope") || (extworkStatus{}).Linked(extExecEngineFlue) {
+	status := &extworkStatus{registry: extwork.DefaultRegistry}
+	if status.Linked("nope") || (&extworkStatus{}).Linked(extExecEngineFlue) {
 		t.Fatal("status reported an unlinked engine")
 	}
 
@@ -71,14 +73,13 @@ func TestExternalFlueBindingFailsClosed(t *testing.T) {
 		}
 		return fake, nil
 	})
-	cfg.Runs.External.Flue.Endpoint = "http://127.0.0.1:1"
 	if _, err := newExternalFlueBinding(srv, cfg, reg, clock); !errors.Is(err, errExternalHubNotRunning) {
 		t.Fatalf("linked engine without hub = %v", err)
 	}
-	if !(extworkStatus{registry: reg}).Linked(extExecEngineFlue) {
+	if !(&extworkStatus{registry: reg}).Linked(extExecEngineFlue) {
 		t.Fatal("status must report the linked fake engine")
 	}
-	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: extworkStatus{registry: reg}})
+	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: &extworkStatus{registry: reg, srv: srv, cfg: cfg, now: clock}})
 	if srv.ContributeHub() == nil {
 		t.Skip("RegisterAPI did not create a contributor hub in this configuration")
 	}
@@ -127,6 +128,7 @@ func TestExternalOMPBindingFailsClosed(t *testing.T) {
 		t.Fatalf("flue enabled, omp off = %v, want off", err)
 	}
 	cfg.Runs.External.OMP.Enabled = true
+	cfg.Runs.External.OMP.WorkflowVersion = "omp-workbench/1.0.0"
 	if _, err := newExternalOMPBinding(srv, cfg, extwork.DefaultRegistry, clock); !failClosed(err) {
 		t.Fatalf("enabled without hub = %v, want a fail-closed sentinel", err)
 	}
@@ -142,11 +144,10 @@ func TestExternalOMPBindingFailsClosed(t *testing.T) {
 		}
 		return fake, nil
 	})
-	cfg.Runs.External.OMP.WorkflowVersion = "omp-workbench/1.0.0"
 	if _, err := newExternalOMPBinding(srv, cfg, reg, clock); !errors.Is(err, errExternalHubNotRunning) {
 		t.Fatalf("linked engine without hub = %v", err)
 	}
-	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: extworkStatus{registry: reg}})
+	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: &extworkStatus{registry: reg, srv: srv, cfg: cfg, now: clock}})
 	if srv.ContributeHub() == nil {
 		t.Skip("RegisterAPI did not create a contributor hub in this configuration")
 	}

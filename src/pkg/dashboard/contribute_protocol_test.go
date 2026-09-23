@@ -62,10 +62,13 @@ func TestWS_AuthOKCarriesVersionAndCapabilities(t *testing.T) {
 	if len(authOK.ServerCapabilities) == 0 {
 		t.Fatal("auth_ok must advertise server_capabilities")
 	}
+	if authOK.ContributeNeedsDecisionLabel == nil || *authOK.ContributeNeedsDecisionLabel != "needs-decision" {
+		t.Fatalf("auth_ok decision label = %v, want needs-decision", authOK.ContributeNeedsDecisionLabel)
+	}
 	// The advertised set must include the well-known capability tokens.
 	want := map[string]bool{
 		capTokenRefresh: false, capTaskUnavailableReasons: false,
-		capPromptPreview: false, capCapabilityDeclare: false,
+		capPromptPreview: false, capCapabilityDeclare: false, capNeedsDecisionVerdict: false,
 	}
 	for _, c := range authOK.ServerCapabilities {
 		if _, ok := want[c]; ok {

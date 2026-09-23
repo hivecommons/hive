@@ -56,3 +56,36 @@ Known #8460 gaps are guarded in the test rather than hidden:
 ```
 
 `source` identifies the provider (`wavefront` or `audit`). `scope` is the total obligation count, `satisfied` is completed work, `remaining` is known outstanding work, and `unknown` is evidence that could not be classified. The block is omitted when no burndown source is wired for the run key.
+
+## How long-running runs start
+
+Long-running runs are the Hive workflow behind `spec` -> `plan` -> `implement`
+work. The workflow is default-off: with `runs.spektacular.enabled` unset or
+`false`, Hive does not create the first stage lease from inception and does not
+start the Spektacular poll loop.
+
+## How a run starts
+
+A run starts when Hive admits a real GitHub issue into the stage lease registry.
+Admission creates one unowned `spec` lease keyed as
+`<owner/repo>!<owner/repo>#<issue>:spec`; the run-stage work source then offers
+that lease to agents when `governor.work_source.run_stages` is enabled. Repeated
+admission of the same repo/issue is idempotent and leaves one run active.
+
+Today there are two admission paths:
+
+- **Run triage**: when `runs.triage.enabled` and `runs.spektacular.enabled` are
+  both true, incoming actionable issues classified as `spec` call `AdmitRun`
+  before the ordinary direct-fix dispatch path.
+- **Inception approval**: when an inception moves to `complete` and
+  `runs.spektacular.enabled` is true, `POST /api/inception/approve` may include
+  `issue_url` or `repo` plus `issue_number`. Hive uses that explicit issue as
+  the run key and calls `AdmitRun`.
+
+Inception does not currently create or link a GitHub issue by itself. If an
+approve request does not name an issue, Hive logs that no target was supplied
+and does not fabricate a run.
+
+See [spektacular.md](spektacular.md) for runner configuration and stage
+advancement, and [work-sources.md](work-sources.md) for how pending run stages
+are listed as work items.
