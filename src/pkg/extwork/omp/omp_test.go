@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
 	"github.com/hivecommons/hive/pkg/extwork/omp/fixture"
@@ -232,16 +233,10 @@ func TestBrokerAttachReplaceDetach(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("closed peer not gone")
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, ok := b.Peer("wb"); !ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("serve exit did not detach the peer")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		_, ok := b.Peer("wb")
+		return !ok
+	}, "serve exit did not detach the peer")
 }
 
 func TestPeerOfferStartObserveCancelArtifact(t *testing.T) {
@@ -333,10 +328,13 @@ func TestPeerOfferStartObserveCancelArtifact(t *testing.T) {
 	if obs.Receipt == nil || obs.Receipt.Path != omp.ReceiptArtifact || obs.Stage != "report" {
 		t.Fatalf("terminal observation = %+v", obs)
 	}
-	// A progress frame after terminal changes nothing.
+	// A progress frame after terminal changes nothing. Frames are handled
+	// in order, so once the marker frame that follows it is visible the
+	// ignored one has been processed.
 	link.workbenchSays(omp.Message{Type: omp.MsgProgress, ExecutionKey: string(key), State: "running"})
 	link.workbenchSays(omp.Message{Type: omp.MsgAccept, ExecutionKey: "unrequested"}) // parks a decision nobody waits for
-	time.Sleep(shortTimeout)
+	link.workbenchSays(omp.Message{Type: omp.MsgProgress, ExecutionKey: "marker", RemoteRunID: "m", State: "running"})
+	waitState(t, p, "marker", extwork.StateRunning)
 	if obs, _ := p.Observe(key); obs.State != extwork.StateTerminal {
 		t.Fatalf("terminal run moved: %+v", obs)
 	}
@@ -395,15 +393,10 @@ func TestPeerOfferStartObserveCancelArtifact(t *testing.T) {
 
 func waitState(t *testing.T, p *omp.Peer, key extwork.ExecutionKey, want extwork.State) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if obs, _ := p.Observe(key); obs.State == want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	obs, err := p.Observe(key)
-	t.Fatalf("state %s not reached: %+v %v", want, obs, err)
+	testutil.Eventually(t, 2*time.Second, func() bool {
+		obs, _ := p.Observe(key)
+		return obs.State == want
+	}, "state %s not reached for %s", want, key)
 }
 
 func TestPeerWaitsAreBounded(t *testing.T) {

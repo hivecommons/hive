@@ -39,7 +39,6 @@ type startReply struct {
 	remoteRunID  string
 	deduplicated bool
 	refused      string
-	err          error
 }
 
 type cancelReply struct {

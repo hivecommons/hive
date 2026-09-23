@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
 	"github.com/hivecommons/hive/pkg/extwork/omp/fixture"
@@ -27,7 +28,6 @@ import (
 const (
 	fixtureStartTimeout = 10 * time.Second
 	settleTimeout       = 5 * time.Second
-	pollInterval        = 10 * time.Millisecond
 	stageCount          = 2
 	testAckTimeout      = 5 * time.Second
 )
@@ -64,14 +64,10 @@ func (h *hub) adapter(t *testing.T, version string) *omp.Adapter {
 // holds) a peer for identity.
 func (h *hub) waitPeer(t *testing.T, identity string, want bool) {
 	t.Helper()
-	deadline := time.Now().Add(settleTimeout)
-	for time.Now().Before(deadline) {
-		if _, ok := h.broker.Peer(identity); ok == want {
-			return
-		}
-		time.Sleep(pollInterval)
-	}
-	t.Fatalf("peer %s attached=%v not reached", identity, want)
+	testutil.Eventually(t, settleTimeout, func() bool {
+		_, ok := h.broker.Peer(identity)
+		return ok == want
+	}, "peer %s attached=%v not reached", identity, want)
 }
 
 type wbOpts struct {
@@ -205,17 +201,10 @@ func (p *wbProc) pending() []string {
 
 func (p *wbProc) waitStats(cond func(fixture.Stats) bool) fixture.Stats {
 	p.t.Helper()
-	deadline := time.Now().Add(settleTimeout)
-	var st fixture.Stats
-	for time.Now().Before(deadline) {
-		st = p.stats()
-		if cond(st) {
-			return st
-		}
-		time.Sleep(pollInterval)
-	}
-	p.t.Fatalf("workbench stats never satisfied the condition: %+v", st)
-	return st
+	return testutil.EventuallyValue(p.t, settleTimeout, func() (fixture.Stats, bool) {
+		st := p.stats()
+		return st, cond(st)
+	}, "workbench stats never satisfied the condition")
 }
 
 func newBinding(t *testing.T, a extwork.Adapter, store extwork.AdmissionStore, mode string, opts ...extwork.Option) (*extwork.Binding, *extwork.MemorySink) {
@@ -231,18 +220,10 @@ func newBinding(t *testing.T, a extwork.Adapter, store extwork.AdmissionStore, m
 // progress events on every state change along the way.
 func waitObserve(t *testing.T, b *extwork.Binding, adm extwork.Admission, want extwork.State) extwork.Observation {
 	t.Helper()
-	deadline := time.Now().Add(settleTimeout)
-	var obs extwork.Observation
-	var err error
-	for time.Now().Before(deadline) {
-		obs, err = b.Observe(context.Background(), adm, "")
-		if err == nil && obs.State == want {
-			return obs
-		}
-		time.Sleep(pollInterval)
-	}
-	t.Fatalf("state %s not reached: %+v %v", want, obs, err)
-	return obs
+	return testutil.EventuallyValue(t, settleTimeout, func() (extwork.Observation, bool) {
+		obs, err := b.Observe(context.Background(), adm, "")
+		return obs, err == nil && obs.State == want
+	}, "state %s not reached", want)
 }
 
 // runToTerminal ticks the workbench through every stage and returns the
@@ -432,12 +413,11 @@ func TestConformanceProgressEventsAndReceiptBinding(t *testing.T) {
 	wb.tick()
 	// running(review) -> running(report) is not a state change, so the
 	// audit stays quiet; the stage is still visible on Observe.
-	deadline := time.Now().Add(settleTimeout)
-	for obs.Stage != "report" && time.Now().Before(deadline) {
-		obs, _ = b.Observe(ctx, pinned, "")
-		time.Sleep(pollInterval)
-	}
-	if obs.Stage != "report" || obs.State != extwork.StateRunning {
+	obs = testutil.EventuallyValue(t, settleTimeout, func() (extwork.Observation, bool) {
+		o, _ := b.Observe(ctx, pinned, "")
+		return o, o.Stage == "report"
+	}, "second stage not observed")
+	if obs.State != extwork.StateRunning {
 		t.Fatalf("second stage = %+v", obs)
 	}
 	wb.tick()
@@ -638,7 +618,8 @@ func TestConformanceShadowAndOffNeverStart(t *testing.T) {
 	if rec, err := shadow.Recover(ctx, adm, payload); err != nil || rec.Started || rec.Adopted {
 		t.Fatalf("shadow Recover = %+v %v", rec, err)
 	}
-	time.Sleep(pollInterval * 10)
+	// Shadow sends no frame at all, so the workbench counters are read
+	// synchronously; the positive control below proves they can move.
 	if st := wb.stats(); st.Offers != 0 || st.Starts != 0 || st.Runs != 0 || st.Cancels != 0 {
 		t.Fatalf("shadow/off mode touched the workbench: %+v", st)
 	}

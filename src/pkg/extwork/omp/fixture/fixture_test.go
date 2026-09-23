@@ -15,15 +15,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 const (
-	workflowDir  = "../testdata/omp-fixture"
-	settle       = 5 * time.Second
-	pollInterval = 5 * time.Millisecond
+	workflowDir = "../testdata/omp-fixture"
+	settle      = 5 * time.Second
+	// negativeWait bounds a check that something does NOT happen.
+	negativeWait = 50 * time.Millisecond
 )
 
 func hub(t *testing.T) (*omp.Broker, *omp.Listener) {
@@ -39,15 +41,9 @@ func hub(t *testing.T) (*omp.Broker, *omp.Listener) {
 
 func peerFor(t *testing.T, b *omp.Broker, identity string) *omp.Peer {
 	t.Helper()
-	deadline := time.Now().Add(settle)
-	for time.Now().Before(deadline) {
-		if p, ok := b.Peer(identity); ok {
-			return p
-		}
-		time.Sleep(pollInterval)
-	}
-	t.Fatalf("peer %s never attached", identity)
-	return nil
+	return testutil.EventuallyValue(t, settle, func() (*omp.Peer, bool) {
+		return b.Peer(identity)
+	}, "peer %s never attached", identity)
 }
 
 func bundle(t *testing.T, workKey, hint string) []byte {
@@ -66,17 +62,19 @@ func bundle(t *testing.T, workKey, hint string) []byte {
 
 func waitState(t *testing.T, p *omp.Peer, key extwork.ExecutionKey, want extwork.State) extwork.Observation {
 	t.Helper()
-	deadline := time.Now().Add(settle)
-	var obs extwork.Observation
-	for time.Now().Before(deadline) {
-		obs, _ = p.Observe(key)
-		if obs.State == want {
-			return obs
-		}
-		time.Sleep(pollInterval)
-	}
-	t.Fatalf("state %s not reached: %+v", want, obs)
-	return obs
+	return testutil.EventuallyValue(t, settle, func() (extwork.Observation, bool) {
+		obs, _ := p.Observe(key)
+		return obs, obs.State == want
+	}, "state %s not reached for %s", want, key)
+}
+
+// waitPending blocks until the workbench has parked at least one offer.
+func waitPending(t *testing.T, w *Workbench) []string {
+	t.Helper()
+	return testutil.EventuallyValue(t, settle, func() ([]string, bool) {
+		keys := w.Pending()
+		return keys, len(keys) > 0
+	}, "no offer was parked")
 }
 
 func TestLoadWorkflowErrors(t *testing.T) {
@@ -340,11 +338,7 @@ func TestInteractiveAndUnsolicitedStart(t *testing.T) {
 		d, _, _ := p.Offer(ctx, extwork.Offer{ExecutionKey: key, Summary: "park me"}, 1)
 		done <- d
 	}()
-	deadline := time.Now().Add(settle)
-	for len(w.Pending()) == 0 && time.Now().Before(deadline) {
-		time.Sleep(pollInterval)
-	}
-	if keys := w.Pending(); len(keys) != 1 || keys[0] != string(key) {
+	if keys := waitPending(t, w); len(keys) != 1 || keys[0] != string(key) {
 		t.Fatalf("pending = %v", keys)
 	}
 	if w.Answer("other", true, "") {
@@ -417,10 +411,7 @@ func TestControlSurface(t *testing.T) {
 	}
 	key := extwork.ExecutionKey("via-control")
 	go func() { _, _, _ = p.Offer(context.Background(), extwork.Offer{ExecutionKey: key, Summary: "s"}, 1) }()
-	deadline := time.Now().Add(settle)
-	for len(w.Pending()) == 0 && time.Now().Before(deadline) {
-		time.Sleep(pollInterval)
-	}
+	waitPending(t, w)
 	if code, _ := post("/control/answer/" + string(key) + "?decision=accept"); code != http.StatusOK {
 		t.Fatalf("answer = %d", code)
 	}
@@ -502,10 +493,7 @@ func TestRun(t *testing.T) {
 	go func() {
 		done <- Run(ctx, []string{"-hub", l.URL(), "-identity", "runner", "-workflow", workflowDir, "-incarnation", "r1", "-interactive", "-ignore-cancel", "-decline-marker", "[no]"}, &out, &errOut)
 	}()
-	deadline := time.Now().Add(settle)
-	for !strings.Contains(out.String(), AddrLinePrefix) && time.Now().Before(deadline) {
-		time.Sleep(pollInterval)
-	}
+	testutil.Eventually(t, settle, func() bool { return strings.Contains(out.String(), AddrLinePrefix) }, "Run never printed its address")
 	if !strings.Contains(out.String(), AddrLinePrefix+"http://127.0.0.1:") {
 		t.Fatalf("no address line in %q", out.String())
 	}
@@ -533,7 +521,7 @@ func TestRun(t *testing.T) {
 	select {
 	case <-done2:
 		t.Fatal("Run returned before its context ended")
-	case <-time.After(10 * pollInterval):
+	case <-time.After(negativeWait):
 	}
 	cancel2()
 	select {
