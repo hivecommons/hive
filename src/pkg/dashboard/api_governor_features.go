@@ -264,7 +264,7 @@ func validRotationTier(tier string) bool {
 
 func governorFeatureBackendIDs() map[string]struct{} {
 	return map[string]struct{}{
-		"claude": {}, "copilot": {}, bobBackendID: {}, "gemini": {}, "goose": {}, agyBackendID: {},
+		"claude": {}, "copilot": {}, bobBackendID: {}, "gemini": {}, "goose": {}, agyBackendID: {}, ompBackendID: {},
 		"vllm": {}, "llm-d": {}, "litellm": {},
 	}
 }

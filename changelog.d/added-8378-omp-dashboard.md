@@ -1,0 +1,1 @@
+- Add Oh My Pi (`omp`) as a dashboard agent method with pinned hub-image install, model discovery, and per-model reasoning effort.

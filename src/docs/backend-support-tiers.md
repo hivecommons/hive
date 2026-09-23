@@ -26,7 +26,9 @@ fall into three classes that are enforced in code. This document names them.
 
 Tier assignment is per launch path. `goose` is T1 on the pod path (it has a
 one-shot `goose run` and an env-key credential) and T3 on the local path (no
-sandbox). A PR states the tier it claims for each path it wires.
+sandbox). `omp` is now a hub-agent method, but remains T3 on contributor local
+mode because its unattended approval flag is not an OS sandbox. A PR states the
+tier it claims for each path it wires.
 
 `gemini` is Go-only (`cliBackendExceptions`): it is launched by the hub-side
 manager and has no contributor-relay wiring at all, so the local-path tiers do

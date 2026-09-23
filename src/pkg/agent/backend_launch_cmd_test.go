@@ -154,3 +154,21 @@ func TestPaneShowsEmptyInputPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestBackendLaunchCmd_OMPPassesModelEffortAndApproval(t *testing.T) {
+	t.Setenv("HIVE_OMP_APPROVAL_MODE", "")
+	got := backendLaunchCmd("omp", "openai-codex/gpt-5.6-terra", "omp", false, "xhigh")
+	want := "omp --approval-mode yolo --model openai-codex/gpt-5.6-terra --thinking xhigh"
+	if got != want {
+		t.Fatalf("omp launch = %q, want %q", got, want)
+	}
+}
+
+func TestBackendLaunchCmd_OMPApprovalModeIsConfigurable(t *testing.T) {
+	t.Setenv("HIVE_OMP_APPROVAL_MODE", "auto-approve")
+	got := backendLaunchCmd("omp", "anthropic/claude-opus-5", "omp", false, "")
+	want := "omp --approval-mode auto-approve --model anthropic/claude-opus-5"
+	if got != want {
+		t.Fatalf("omp launch with custom approval = %q, want %q", got, want)
+	}
+}

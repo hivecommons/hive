@@ -19,6 +19,7 @@ var interactiveAuthBackends = map[string]bool{
 	"copilot": true,
 	"codex":   true,
 	"gemini":  true,
+	"omp":     true,
 }
 
 // BackendRequiresInteractiveAuth reports whether a backend authenticates via an

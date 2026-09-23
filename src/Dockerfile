@@ -329,6 +329,30 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     rm -f /tmp/agy.tar.gz /tmp/antigravity && \
     agy --version
 
+# --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
+# Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
+# Downloads are optional like Goose/agy, but checksum mismatches are fatal.
+ARG OMP_VERSION=18.2.6
+ARG OMP_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
+ARG OMP_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
+       arm64|aarch64) OMP_ASSET=omp-linux-arm64; OMP_SHA256="$OMP_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for omp: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 600 \
+       "https://github.com/can1357/oh-my-pi/releases/download/v${OMP_VERSION}/${OMP_ASSET}" \
+       -o /tmp/omp; then \
+       echo "${OMP_SHA256}  /tmp/omp" | sha256sum -c - \
+       && install -m 0755 /tmp/omp /usr/local/bin/omp \
+       && rm -f /tmp/omp \
+       && omp --version; \
+     else \
+       echo "WARN: omp download failed — skipping (backend: omp will be unavailable)"; \
+     fi
+
 # --- Layer 8.3: Muse Code CLI (backend: muse) ---
 # Meta distributes a self-contained executable, not an npm package. The public
 # installer (`https://dev.meta.ai/install.sh`) drops a *launcher* that resolves

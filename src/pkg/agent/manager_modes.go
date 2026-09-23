@@ -344,6 +344,8 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 //     one Claude Code accepts (claudeEffortFlag drops anything else), so the
 //     answer is the configured value when valid and "" otherwise — never a
 //     value the CLI was not actually given (hivecommons/hive#8377).
+//   - omp is launched with `--thinking` only when an effort is configured;
+//     unset means omp's per-model default, so report the configured value.
 //   - every other backend takes its effort from its own config, which the
 //     hive does not resolve here, so the honest answer is "".
 func ResolveReasoningEffort(backend, model, configured string) string {
@@ -353,7 +355,7 @@ func ResolveReasoningEffort(backend, model, configured string) string {
 			return agyLaunchEffort(configured)
 		}
 		return ""
-	case codexBackend:
+	case codexBackend, "omp":
 		return configured
 	case config.ClaudeBackend:
 		if config.ValidEffort(config.ClaudeBackend, configured) {

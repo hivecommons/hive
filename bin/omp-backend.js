@@ -92,10 +92,13 @@ function parseOmpProvider(raw) {
 // configModelRoleProviders reads the providers named under `modelRoles:` in
 // omp's config.yml (e.g. `default: openai-codex/gpt-5.6:max`). A deliberately
 // small YAML subset: one top-level `modelRoles:` mapping whose scalar values
-// are model spellings. Anything else in the file is ignored.
-function configModelRoleProviders(configFile) {
+// are model spellings. Anything else in the file is ignored. When AGENT_MODEL
+// supplies the primary provider, config.yml's default role is not the primary
+// for that run; keep non-default roles such as advisor, not the stale default.
+function configModelRoleProviders(configFile, opts = {}) {
   let text;
   try { text = fs.readFileSync(configFile, 'utf8'); } catch (_) { return []; }
+  const includeDefault = opts.includeDefault !== false;
   const providers = new Set();
   let inRoles = false;
   for (const rawLine of text.split('\n')) {
@@ -104,9 +107,10 @@ function configModelRoleProviders(configFile) {
     if (/^modelRoles:\s*$/.test(line)) { inRoles = true; continue; }
     if (inRoles) {
       if (!/^\s/.test(line)) { inRoles = false; continue; }
-      const m = /^\s+[A-Za-z0-9_-]+:\s*(.+?)\s*$/.exec(line);
+      const m = /^\s+([A-Za-z0-9_-]+):\s*(.+?)\s*$/.exec(line);
       if (!m) continue;
-      const provider = parseOmpProvider(m[1].replace(/^["']|["']$/g, ''));
+      if (!includeDefault && m[1] === 'default') continue;
+      const provider = parseOmpProvider(m[2].replace(/^["']|["']$/g, ''));
       if (provider) providers.add(provider);
     }
   }
@@ -303,17 +307,21 @@ function physicalResidueCount(dbFile, blobs) {
 // ── Selection ────────────────────────────────────────────────────────────────
 
 // ompProviderSelection decides which providers' credentials a run needs.
-//   source 'model'  — AGENT_MODEL named a provider; that one only (pi's rule).
-//   source 'config' — no provider in AGENT_MODEL; the providers config.yml's
-//                     modelRoles name, which is what omp runs by default.
-//   source 'none'   — nothing selects a provider; nothing is narrowed.
+//   source 'model+config' — AGENT_MODEL named a provider and config.yml also
+//                           names providers (advisor, etc.); keep the union.
+//   source 'model'        — AGENT_MODEL named the only provider.
+//   source 'config'       — no provider in AGENT_MODEL; keep modelRoles.
+//   source 'none'         — nothing selects a provider; nothing is narrowed.
 function ompProviderSelection(model, configFile) {
   const fromModel = parseOmpProvider(model);
-  if (fromModel) return { source: 'model', providers: [fromModel], fuzzyModel: false };
-  const fromConfig = configModelRoleProviders(configFile);
+  const fromConfig = configModelRoleProviders(configFile, { includeDefault: !fromModel });
   const fuzzyModel = typeof model === 'string' && model.trim() !== '';
-  if (fromConfig.length) return { source: 'config', providers: fromConfig, fuzzyModel };
-  return { source: 'none', providers: [], fuzzyModel };
+  const extraConfig = fromModel ? fromConfig.filter((p) => p !== fromModel) : fromConfig;
+  const providers = Array.from(new Set([...(fromModel ? [fromModel] : []), ...extraConfig])).sort();
+  if (fromModel && extraConfig.length) return { source: 'model+config', providers, primaryProvider: fromModel, fuzzyModel: false };
+  if (fromModel) return { source: 'model', providers, primaryProvider: fromModel, fuzzyModel: false };
+  if (fromConfig.length) return { source: 'config', providers: fromConfig, primaryProvider: '', fuzzyModel };
+  return { source: 'none', providers: [], primaryProvider: '', fuzzyModel };
 }
 
 // ── Describe (contribute-setup / contribute-check) ───────────────────────────
@@ -375,6 +383,8 @@ function describeOmpHost(ompDir, model) {
     report.warnings.push('no provider credential is stored on this host; the container would start at omp\'s setup wizard.');
   } else if (report.selection.source !== 'none' && report.keptProviders.length === 0) {
     report.warnings.push(`no stored credential matches the selected provider(s) ${report.selection.providers.join(', ')}; stored: ${report.storedProviders.join(', ')}. Sign in to that provider on this host, or pick a signed-in one with AGENT_MODEL=provider/model.`);
+  } else if (report.selection.primaryProvider && !report.keptProviders.includes(report.selection.primaryProvider)) {
+    report.warnings.push(`no stored credential matches the primary provider ${report.selection.primaryProvider}; stored: ${report.storedProviders.join(', ')}. Sign in to that provider on this host, or pick a signed-in one with AGENT_MODEL=provider/model.`);
   }
   if (report.selection.fuzzyModel) {
     report.warnings.push(`AGENT_MODEL=${JSON.stringify(String(model))} does not name a provider (spell it provider/model to select one); credentials follow config.yml's modelRoles instead.`);
@@ -391,6 +401,7 @@ function describeLines(report) {
   if (report.storedProviders.length) {
     lines.push(`  signed-in providers: ${report.storedProviders.join(', ')}`);
     const how = report.selection.source === 'model' ? 'AGENT_MODEL'
+      : report.selection.source === 'model+config' ? 'AGENT_MODEL + config.yml modelRoles'
       : report.selection.source === 'config' ? 'config.yml modelRoles' : 'no selection, all kept';
     lines.push(`  container mode stages: ${report.keptProviders.length ? report.keptProviders.join(', ') : '(none)'} (selected by ${how})`);
   }

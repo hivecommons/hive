@@ -806,6 +806,8 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd = fmt.Sprintf("%s --model %s", binary, model)
 		}
 		return cmd + codexEffortFlag(effort)
+	case "omp":
+		return ompLaunchCmd(binary, model, effort)
 	default:
 		cmd := binary
 		if model != "" {
@@ -911,10 +913,29 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		}
 		launchCmd += codexEffortFlag(effort)
+	case "omp":
+		launchCmd = ompLaunchCmd(binary, model, effort)
 	default:
 		launchCmd = binary
 	}
 	return launchCmd
+}
+
+const ompDefaultApprovalMode = "yolo"
+
+func ompLaunchCmd(binary, model, effort string) string {
+	approval := strings.TrimSpace(os.Getenv("HIVE_OMP_APPROVAL_MODE"))
+	if approval == "" {
+		approval = ompDefaultApprovalMode
+	}
+	cmd := fmt.Sprintf("%s --approval-mode %s", binary, approval)
+	if model != "" {
+		cmd += fmt.Sprintf(" --model %s", model)
+	}
+	if effort != "" {
+		cmd += fmt.Sprintf(" --thinking %s", effort)
+	}
+	return cmd
 }
 
 // codexEffortFlag renders the codex reasoning-effort config-key argument for

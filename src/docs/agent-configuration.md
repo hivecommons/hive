@@ -81,16 +81,16 @@ agents:
 
 ```yaml
     backend: copilot             # the method: claude | copilot | goose | codex | pi |
-                                 #   bob | aider, or an inference backend:
+                                 #   bob | aider | omp, or an inference backend:
                                  #   vllm | llm-d | litellm | watsonx | named gateway
     model: claude-sonnet-4-6     # model id for that method
     reasoning_effort: high       # reasoning effort, for methods that have one:
                                  #   codex (minimal|low|medium|high|xhigh, passed
                                  #   as -c model_reasoning_effort), agy
-                                 #   (low|medium|high, passed as --effort) and
-                                 #   claude (low|medium|high|xhigh|max, passed
-                                 #   as --effort). Omit for the method's own
-                                 #   default.
+                                 #   (low|medium|high, passed as --effort), claude
+                                 #   (low|medium|high|xhigh|max, passed as --effort),
+                                 #   and omp (per selected model; passed as --thinking).
+                                 #   Omit for the method's own default.
     cli_pinned: true             # pin the CLI so nothing auto-switches it
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
                                  # explicit launch command (optional — hive builds
@@ -104,7 +104,12 @@ agents:
 
 The dashboard API can update this field through [`POST /api/effort/{agent}/{effort}`](api-reference.md#agents-and-controls).
 
-The dashboard shows a reasoning-effort dropdown next to the model picker for every method that has an effort control (`codex`, `agy`, and, since [#8377](https://github.com/hivecommons/hive/issues/8377), `claude`). The value is validated at set time against the method's own set, so a `codex`-only level such as `minimal` is refused for a `claude` agent rather than stored and dropped at launch. Picking `default` clears the stored value, which for `claude` means no `--effort` flag at all and Claude Code's own default effort. The dropdown persists through the same path as the model picker (`hive.yaml` plus the per-agent overlay under `agents_dir`), which is the durable path on a hosted spoke: a hand edit of the agent's file is reverted by the next sync, the dashboard write is not. Each dropdown change is recorded in the audit trail as `set_reasoning_effort` with the new value, like the other per-agent setting changes. The effort the agent was actually launched with is what the run rows and the `- hive:` PR trailer report, so a `claude` agent at `xhigh` shows `effort=xhigh` there and an agent with no stored effort shows none.
+The dashboard shows a reasoning-effort dropdown next to the model picker for every method that has an effort control (`codex`, `agy`, `claude`, and `omp`). The value is validated at set time against the method's own set, so a `codex`-only level such as `minimal` is refused for a `claude` agent rather than stored and dropped at launch. For `omp`, the dropdown is per selected model: Hive reads `omp models --json` and uses that model's `thinking` levels, hiding the control for models that report no thinking support. Picking `default` clears the stored value; for `claude` and `omp` that means no effort flag at all and the CLI's own default. The dropdown persists through the same path as the model picker (`hive.yaml` plus the per-agent overlay under `agents_dir`), which is the durable path on a hosted spoke: a hand edit of the agent's file is reverted by the next sync, the dashboard write is not. Each dropdown change is recorded in the audit trail as `set_reasoning_effort` with the new value, like the other per-agent setting changes. The effort the agent was actually launched with is what the run rows and the `- hive:` PR trailer report, so a `claude` agent at `xhigh` shows `effort=xhigh` there and an agent with no stored effort shows none.
+
+#### Oh My Pi (`omp`) hub agents
+
+`backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` and uses each model's `thinking` list for the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.
+
 
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
 

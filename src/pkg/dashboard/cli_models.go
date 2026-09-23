@@ -366,8 +366,9 @@ var gooseProviderStaticModels = map[string][]string{
 
 // cliModelResult is a cached, best-effort model list for one CLI backend.
 type cliModelResult struct {
-	models   []string
-	fallback bool // true when the list is the static fallback, not live discovery
+	models           []string
+	reasoningEfforts map[string][]string
+	fallback         bool // true when the list is the static fallback, not live discovery
 	// degraded is true when the list came from a LIVE probe that is NOT the
 	// catalog the CLI actually uses (#7384): the installed Copilot SDK helper
 	// failed and discovery fell through to the raw-HTTP chat-completions
@@ -626,6 +627,8 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		r = s.discoverCodexModels()
 	case agyBackendID:
 		r = s.discoverAgyModels()
+	case ompBackendID:
+		r = s.discoverOmpModels()
 	case bobBackendID:
 		// bob picks its own model and exposes no catalog, so there is nothing
 		// to discover. The single auto sentinel is authoritative (not a
@@ -741,6 +744,8 @@ func cliStaticFallback(backend string) []string {
 		return codexStaticModels
 	case agyBackendID:
 		return agyStaticModels
+	case ompBackendID:
+		return ompStaticModels
 	case bobBackendID:
 		return bobStaticModels
 	case "goose":

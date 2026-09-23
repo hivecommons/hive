@@ -1775,8 +1775,8 @@ test('omp container staging without a provider in AGENT_MODEL follows config.yml
     // and says which providers ARE signed in, so the wizard is explained
     // before the container starts rather than discovered inside it.
     report = ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'stage-c', '.omp'), 'openai/gpt-5');
-    assert.deepStrictEqual(providersIn(path.join(tmpDir, 'stage-c', '.omp', 'agent', 'agent.db')), []);
-    assert.ok(report.warnings.some((w) => /no stored credential matches the selected provider\(s\) openai; stored: anthropic, google-antigravity, openai-codex/.test(w)), JSON.stringify(report.warnings));
+    assert.deepStrictEqual(providersIn(path.join(tmpDir, 'stage-c', '.omp', 'agent', 'agent.db')), ['anthropic']);
+    assert.ok(report.warnings.some((w) => /no stored credential matches the primary provider openai; stored: anthropic, google-antigravity, openai-codex/.test(w)), JSON.stringify(report.warnings));
     // No config.yml and no provider in AGENT_MODEL: nothing selects, nothing
     // is narrowed, and the report names the selection source honestly.
     const bareOmp = path.join(tmpDir, 'bare-omp');
@@ -1802,10 +1802,10 @@ test('omp container staging narrows the store through the sqlite3 CLI when node:
     makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
     const stage = path.join(tmpDir, 'stage', '.omp');
     const report = ompBackend.stageOmp(hostOmp, stage, 'google-antigravity/gemini-3.6-pro');
-    assert.deepStrictEqual(report.keptProviders, ['google-antigravity']);
+    assert.deepStrictEqual(report.keptProviders, ['anthropic', 'google-antigravity']);
     assert.deepStrictEqual(report.storedProviders, ['anthropic', 'google-antigravity', 'openai-codex']);
     // Read back through node:sqlite: the CLI path must leave the same store.
-    assert.deepStrictEqual(providersIn(path.join(stage, 'agent', 'agent.db')), ['google-antigravity']);
+    assert.deepStrictEqual(providersIn(path.join(stage, 'agent', 'agent.db')), ['anthropic', 'google-antigravity']);
   } finally {
     if (prior === undefined) delete process.env.HIVE_OMP_BACKEND_SQLITE; else process.env.HIVE_OMP_BACKEND_SQLITE = prior;
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1950,10 +1950,9 @@ test('omp container staging refuses a sign-in omp has disabled, and the prefligh
     assert.throws(() => ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5'), /disabled on this host: anthropic .*invalid_grant.*\/login/);
     assert.ok(!fs.existsSync(path.join(stage, 'agent', 'agent.db')), 'a refused launch must not leave a copy of the store behind');
 
-    // A different, healthy provider is unaffected by anthropic's disabled row.
-    const ok = ompBackend.stageOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna');
-    assert.deepStrictEqual(ok.keptProviders, ['openai-codex']);
-    assert.deepStrictEqual(ok.disabledProviders, []);
+    // A primary on a different provider still refuses if config.yml asks the
+    // same run to use the disabled provider as an advisor.
+    assert.throws(() => ompBackend.stageOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna'), /disabled on this host: anthropic .*invalid_grant.*\/login/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -1972,7 +1971,7 @@ test('omp preflight describes what container mode will stage, and names a missin
     const lines = ompBackend.describeLines(ompBackend.describeOmpHost(hostOmp, 'openai-codex/gpt-5.6-luna:max'));
     const text = lines.join('\n');
     assert.match(text, /signed-in providers: anthropic, google-antigravity, openai-codex/);
-    assert.match(text, /container mode stages: openai-codex \(selected by AGENT_MODEL\)/);
+    assert.match(text, /container mode stages: anthropic, openai-codex \(selected by AGENT_MODEL \+ config\.yml modelRoles\)/);
     // Credential VALUES never appear in the preflight output.
     assert.ok(!/access-token|refresh-token/.test(text), text);
   } finally {
@@ -2028,6 +2027,7 @@ test('#7922: the sync-back works through the sqlite3 CLI, with the credential fe
     // The disabled row is visible through the CLI reader too, so the launch
     // refusal does not depend on node:sqlite.
     assert.throws(() => ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'refused', '.omp'), 'anthropic/claude-sonnet-5'), /disabled on this host: anthropic .*invalid_grant/);
+    fs.writeFileSync(path.join(agentDir, 'config.yml'), 'modelRoles:\n  default: openai-codex/gpt-5.6-luna\n');
     const stage = path.join(tmpDir, 'stage', '.omp');
     ompBackend.stageOmp(hostOmp, stage, 'openai-codex/gpt-5.6-luna');
     // A token with the one character that matters to a SQL literal.

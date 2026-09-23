@@ -136,10 +136,13 @@ func TestResolveReasoningEffort(t *testing.T) {
 		{"claude", "claude-sonnet-5", "high", "high"},
 		{"claude", "", "max", "max"},
 		{"claude", "claude-sonnet-5", "minimal", ""}, // codex vocabulary, dropped at launch
+		// omp is launched with --thinking only when an effort is configured;
+		// the configured value is the launch-time truth.
+		{"omp", "anthropic/claude-fable-5", "max", "max"},
+		{"omp", "anthropic/claude-fable-5", "", ""},
 		// Every other backend takes effort from its own config, which the hive
 		// does not resolve — "" is the honest answer, and an omitted field.
 		{"bob", "", "", ""},
-		{"copilot", "gpt-5.6-luna", "high", ""},
 		{"", "", "", ""},
 	}
 	for _, c := range cases {

@@ -2331,11 +2331,16 @@ func (s *Server) handleEffortSet(w http.ResponseWriter, r *http.Request) {
 	// including a runtime backend override — for the same reason
 	// handleModelSet validates the model: silently accepting an unusable
 	// value and falling back at launch makes the choice appear to "revert".
-	backend := agentCfg.Backend
-	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && proc.BackendOverride != "" {
-		backend = proc.BackendOverride
+	backend, model := agentCfg.Backend, agentCfg.Model
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil {
+		if proc.BackendOverride != "" {
+			backend = proc.BackendOverride
+		}
+		if proc.ModelOverride != "" {
+			model = proc.ModelOverride
+		}
 	}
-	if err := config.ValidateReasoningEffort(backend, effort); err != nil {
+	if err := s.validateAgentReasoningEffort(backend, model, effort); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -4576,6 +4581,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			prevBackend = proc.BackendOverride
 		}
 	}
+	effectiveBackend, effectiveModel := prevBackend, prevModel
 	modelChanged, backendChanged, effortChanged := false, false, false
 
 	// Operator edits claim ownership so the pack apply that runs on every
@@ -4592,20 +4598,23 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
+		effectiveBackend = agentCfg.Backend
 		backendChanged = backend != prevBackend
 	}
 	if body.Model != "" {
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
+		effectiveModel = agentCfg.Model
 		modelChanged = agentCfg.Model != prevModel
 	}
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
 		// Same set-time rejection rationale as ValidateBackend above: an
 		// unsupported effort persisted happily would surface hours later as
-		// a broken launch command. Validated against the backend the agent
-		// will actually launch with, including one set in this same request.
-		if err := config.ValidateReasoningEffort(agentCfg.Backend, effort); err != nil {
+		// a broken launch command. Validated against the backend/model the
+		// agent will actually launch with, including values set in this
+		// same request. omp is per-model, not backend-wide.
+		if err := s.validateAgentReasoningEffort(effectiveBackend, effectiveModel, effort); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -5808,6 +5817,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	geminiCLI := s.queryCLIModels("gemini")
 	gooseCLI := s.queryCLIModels("goose")
 	agyCLI := s.queryCLIModels(agyBackendID)
+	ompCLI := s.queryCLIModels(ompBackendID)
 	// bob has no discovery source and no usable --model flag: it selects its
 	// own model. Served explicitly so the client never falls through to the
 	// copilot catalog and offers models bob cannot honor (see bobStaticModels).
@@ -5826,6 +5836,9 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 			// wrong inventory — the client labels it and auto-heal must sit
 			// it out exactly as it sits out a fallback.
 			"degraded": r.degraded,
+		}
+		if len(r.reasoningEfforts) > 0 {
+			entry["reasoning_efforts"] = r.reasoningEfforts
 		}
 		if r.notice != nil {
 			entry["notice"] = r.notice
@@ -5853,6 +5866,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		cliBackendEntry("gemini", "Gemini", geminiCLI),
 		cliBackendEntry("goose", "Goose", gooseCLI),
 		cliBackendEntry(agyBackendID, "Google Antigravity (agy)", agyCLI),
+		cliBackendEntry(ompBackendID, "Oh My Pi (omp)", ompCLI),
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
 		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 		{"id": "litellm", "name": "LiteLLM (proxy)", "models": litellmModels, "inference": true},

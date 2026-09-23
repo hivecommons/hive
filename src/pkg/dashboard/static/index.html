@@ -9377,7 +9377,7 @@
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
     // Model Gateway is configured — the user picks it, then funds/configures it.
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     let CONFIG_BACKEND_OPTIONS = [];
@@ -9509,12 +9509,23 @@
       { value: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 (Thinking)' },
       { value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
     ];
+    // Oh My Pi is a multi-provider CLI; selectors keep their provider prefix.
+    // Keep in sync with ompStaticModels in pkg/dashboard/cli_models_omp.go.
+    const OMP_CLI_MODELS = [
+      { value: 'openai-codex/gpt-5.6-terra', label: 'openai-codex/gpt-5.6-terra' },
+      { value: 'openai-codex/gpt-5.6-sol', label: 'openai-codex/gpt-5.6-sol' },
+      { value: 'openai-codex/gpt-5.6-luna', label: 'openai-codex/gpt-5.6-luna' },
+      { value: 'anthropic/claude-opus-5', label: 'anthropic/claude-opus-5' },
+      { value: 'anthropic/claude-fable-5', label: 'anthropic/claude-fable-5' },
+      { value: 'anthropic/claude-sonnet-5', label: 'anthropic/claude-sonnet-5' },
+      { value: 'google-antigravity/gemini-3.7-flash', label: 'google-antigravity/gemini-3.7-flash' },
+    ];
     const KNOWN_MODELS = COPILOT_CLI_MODELS;
     // CLI_BACKENDS gates which /api/config/backends entries populate
     // BACKEND_MODELS. Every CLI with a server-served inventory must appear
     // here; otherwise its entry is dropped and modelsForBackend falls back to
     // the pre-discovery catalog (or, for an omitted unknown CLI, Copilot's).
-    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'goose', 'codex'];
+    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'agy', 'omp', 'goose', 'codex'];
     // BACKEND_MODELS holds the live-discovered model list for every backend
     // (inference AND cli), keyed by backend id. INFERENCE_MODELS is kept as
     // an alias to the same object for backward compatibility with existing
@@ -9531,6 +9542,7 @@
       bob: BOB_CLI_MODELS,
       gemini: COPILOT_CLI_MODELS,
       agy: AGY_CLI_MODELS,
+      omp: OMP_CLI_MODELS,
       goose: COPILOT_CLI_MODELS,
       codex: CODEX_CLI_MODELS,
     };
@@ -9539,6 +9551,7 @@
       // so they carry the same ⚡ marker as vllm/llm-d/litellm.
       if (isInferenceBackendName(b)) return b + ' ⚡';
       if (b === 'agy') return 'Google Antigravity (agy)';
+      if (b === 'omp') return 'Oh My Pi (omp)';
       return b;
     }
     // Auto-select sentinels: values meaning "let the CLI pick its own model"
@@ -9569,13 +9582,29 @@
       agy: ['low', 'medium', 'high'],
       claude: ['low', 'medium', 'high', 'xhigh', 'max'],
     };
+    const MODEL_REASONING_EFFORTS = {};
+
+    function reasoningEffortsForAgent(a) {
+      if (!a) return [];
+      if (a.cli === 'omp') {
+        const perModel = MODEL_REASONING_EFFORTS.omp || {};
+        const model = a.model || '';
+        if (perModel[model]) return perModel[model];
+        const tail = model.split('/').pop();
+        for (const [id, levels] of Object.entries(perModel)) {
+          if (id === model || id.split('/').pop() === tail) return levels || [];
+        }
+        return [];
+      }
+      return BACKEND_REASONING_EFFORTS[a.cli] || [];
+    }
     // effortSelectHtml renders the reasoning-effort dropdown beside the model
     // dropdown, only for backends that have an effort control. "default"
     // clears the stored effort back to the backend's own default (the server
     // treats the path value "default" as clear — a path segment cannot be
     // empty).
     function effortSelectHtml(a) {
-      const efforts = BACKEND_REASONING_EFFORTS[a.cli] || [];
+      const efforts = reasoningEffortsForAgent(a);
       if (!efforts.length) return '';
       const cur = a.reasoningEffort || '';
       return `<select class="btn backend-select" data-change-action="switchEffort" data-agent="${esc(a.name)}" title="Set this agent's reasoning effort (restarts the session). 'default' uses the backend's own default effort.">
@@ -9789,7 +9818,8 @@
             label: b.degraded ? 'model discovery degraded' : 'model discovery failed',
             detail: `⚠ model discovery ${b.degraded ? 'degraded' : 'failed'} — ${b.degraded ? 'this list is live but is not the catalog the CLI uses' : 'showing the static fallback list'}. ${b.discovery.error}`,
           } : null));
-          const models = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
+          if (b.reasoning_efforts) MODEL_REASONING_EFFORTS[b.id] = b.reasoning_efforts;
+          const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
           BACKEND_MODELS[b.id] = models;
           // A degraded list is not authority either: absence from it proves
