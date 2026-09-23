@@ -93,9 +93,9 @@ not a unit test:
 | Slack | One command round-trip and one notification delivery over Socket Mode from a pull-only cluster. | ⬜ |
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |
-| Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ |
-| Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ |
-| Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ⬜ |
+| Dashboard chat | Conformance passes; one live round trip of `!status` from the panel is linked. | ⬜ Pending live exercise; code landed in [#8326](https://github.com/hivecommons/hive/pull/8326) and conformance is tracked by the row above. |
+| Inception via chat | One live greenfield run reaches `complete` entirely through the chat spine. | ⬜ Pending live exercise; code landed in [#8333](https://github.com/hivecommons/hive/pull/8333) / [#8393](https://github.com/hivecommons/hive/pull/8393). Exercise with `just runs-e2e` against a live hive once #8466 lands. |
+| Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ⬜ Pending live exercise; code landed in [#8351](https://github.com/hivecommons/hive/pull/8351) / [#8365](https://github.com/hivecommons/hive/pull/8365). Exercise with `just runs-e2e` against a live hive once #8466 lands. |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
 
