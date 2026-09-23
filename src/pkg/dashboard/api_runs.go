@@ -50,11 +50,6 @@ type Run struct {
 
 type RunSummary = Run
 
-type RunsSummary struct {
-	Active         int `json:"active"`
-	WaitingOnHuman int `json:"waiting_on_human"`
-}
-
 type runLeaseSnapshot struct {
 	identity     string
 	taskID       string
@@ -334,16 +329,6 @@ func runHumanReviewHolds(path string) map[string]runHumanReviewHold {
 		out[worksource.Ref{Repo: hold.Repo, Number: hold.Number}.Key()] = hold
 	}
 	return out
-}
-
-func summarizeRuns(runs []Run) RunsSummary {
-	summary := RunsSummary{Active: len(runs)}
-	for _, run := range runs {
-		if run.WaitingOn == RunWaitingOnHuman {
-			summary.WaitingOnHuman++
-		}
-	}
-	return summary
 }
 
 func formatRunTime(t time.Time) string {
