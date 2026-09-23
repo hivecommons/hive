@@ -19415,6 +19415,10 @@
                             },
                             "receipt": {
                               "type": "string"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "description": "Owner's reason on a history entry that came from a stage reset (POST /api/runs/{key}/reset)."
                             }
                           }
                         }
@@ -19538,6 +19542,10 @@
                           },
                           "receipt": {
                             "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "Owner's reason on a history entry that came from a stage reset (POST /api/runs/{key}/reset)."
                           }
                         }
                       }
@@ -19552,6 +19560,125 @@
           },
           "503": {
             "description": "Run lease registry unavailable or unreadable."
+          }
+        }
+      }
+    },
+    "/api/runs/{key}/reset": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Reset a run to an earlier stage",
+        "description": "Owner-only. Moves the run's lease back to a strictly earlier stage (for example implement to plan after a rejected plan), mints a new generation so the relay holding the previous generation can no longer resume, persists before answering, and records the reason on the agent audit sink, the lifecycle timeline, and the stage_completed hook payload (attrs.reset = \"true\"). The same stage and any later stage are refused.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "to",
+                  "reason"
+                ],
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "enum": [
+                      "spec",
+                      "plan",
+                      "implement"
+                    ],
+                    "description": "Target stage; must be earlier than the run's current stage."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the run is stepping back. Recorded with the transition and shown in the run's stage history."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run reset.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "key",
+                    "stage_from",
+                    "stage",
+                    "gen",
+                    "reason"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "stage_from": {
+                      "type": "string",
+                      "enum": [
+                        "spec",
+                        "plan",
+                        "implement"
+                      ]
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "spec",
+                        "plan",
+                        "implement"
+                      ]
+                    },
+                    "gen": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "New generation; strictly greater than the one before the reset."
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Target is the same or a later stage, an unknown stage, or the reason is missing."
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "No live staged lease holds the key."
+          },
+          "409": {
+            "description": "The run's lease expired."
+          },
+          "500": {
+            "description": "Lease registry could not be written; the run is unchanged."
+          },
+          "503": {
+            "description": "Run lease registry unavailable."
           }
         }
       }
