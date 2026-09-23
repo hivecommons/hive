@@ -55,7 +55,7 @@ capture → clarify → structure → scaffold → complete
 | `clarify` | Questions are posted to the dashboard (`POST /api/inception/questions` records them and advances the phase). You answer them. | Operator answers |
 | `structure` | Your answers are submitted (`POST /api/inception/answer`); the agent is re-kicked with the idea + answers and must create fact beads — 1 vision, 1 constitution, 2+ requirements, plus constraints/stakeholders/acceptance criteria as needed. You record them (`POST /api/inception/facts`), which writes each fact to the inception wiki vault and advances to `scaffold`. | Agent produces facts; operator records them |
 | `scaffold` | `GET /api/inception/scaffold` (or `/download`) generates the project scaffold from the recorded facts — README, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CI workflows, `.gitignore`, and language-specific stubs inferred from the constitution fact (falling back to language cues in the idea text). | Operator reviews the generated files |
-| `complete` | `POST /api/inception/approve` marks the run finished and re-pauses the `brainstorm` agent so the governor doesn't kick it again with generic ideation prompts. | Operator approves |
+| `complete` | `POST /api/inception/approve` marks the run finished and re-pauses the `brainstorm` agent so the governor doesn't kick it again with generic ideation prompts. If `runs.spektacular.enabled` is on and the approve request identifies a real GitHub issue, Hive also admits that issue as the first `spec` stage of a long-running run. | Operator approves |
 
 Notes on the state machine, verified from `pkg/knowledge/inception.go`:
 
@@ -96,7 +96,11 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
    it as a zip (`GET /api/inception/download`).
 7. Approve (`POST /api/inception/approve`) to mark the run complete. This
    also re-pauses `brainstorm` so the L2+ governor doesn't restart it with
-   unrelated ideation prompts.
+   unrelated ideation prompts. When long-running runs are enabled, include
+   either `issue_url` or `repo`/`issue_number` in the approve body to admit
+   the linked issue as the first `spec` stage. Inception does not create or
+   guess an issue number on its own; if the approve request does not name one,
+   completion remains a no-op for run admission.
 8. If anything goes wrong, `POST /api/inception/reset` clears the in-memory
    state and state file (but intentionally leaves prior wiki facts visible
    in the KB until a *new* inception writes fresh ones).
@@ -129,7 +133,7 @@ anything else.
 | `POST` | `/api/inception/answer` | Yes | Submit answers to clarification questions; advances `clarify` → `structure` (accepted in both phases). |
 | `POST` | `/api/inception/facts` | Yes | Record structured KB facts produced by the agent; advances `structure` → `scaffold`. |
 | `GET` | `/api/inception/scaffold` | No | Generate and return the scaffold file set (does not change phase). |
-| `POST` | `/api/inception/approve` | Yes | Advance `scaffold` → `complete`; re-pauses the `brainstorm` agent. |
+| `POST` | `/api/inception/approve` | Yes | Advance `scaffold` → `complete`; re-pauses the `brainstorm` agent. Optional body fields `issue_url` or `repo`/`issue_number` admit the issue as a `spec` run when `runs.spektacular.enabled` is true. |
 | `POST` | `/api/inception/reset` | Yes | Clear inception state and the persisted state file; re-pauses `brainstorm`. |
 | `GET` | `/api/inception/ideation-facts` | No | List recorded ideation facts (falls back to the inception engine's own fact gathering if the knowledge API has none). |
 | `GET` | `/api/inception/download` | No | Download the scaffold as a zip, named from the idea slug. |
