@@ -12037,6 +12037,92 @@
         }
       }
     },
+    "/api/contribute/effective-models": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Most effective model aggregates",
+        "description": "Public-safe aggregate ranking for the /contribute Operations page. Combines the Governor PR rework aggregates with the contributor task-run log for 7d, 30d, or all windows. Rows are keyed by model + CLI/backend, ranked by first-pass merge rate with a minimum merged-PR sample threshold, and never include contributor usernames, tokens, pane output, or per-contributor breakdowns.",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "all"
+              ],
+              "default": "7d"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "contributor",
+                "hive"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "min_merged_prs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 5
+            },
+            "description": "Sample-size threshold for the ranked list. The server default is HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS, or 5 when unset."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective model aggregate rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "string"
+                    },
+                    "filter": {
+                      "type": "string"
+                    },
+                    "min_merged_prs": {
+                      "type": "integer"
+                    },
+                    "ranked": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ContributeEffectiveModel"
+                      }
+                    },
+                    "insufficient": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ContributeEffectiveModel"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/contribute/me": {
       "get": {
         "tags": [
@@ -20274,6 +20360,63 @@
           },
           "score": {
             "type": "integer"
+          }
+        }
+      },
+      "ContributeEffectiveModel": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "backend": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "prs": {
+            "type": "integer"
+          },
+          "merged_prs": {
+            "type": "integer"
+          },
+          "first_pass_merge_rate": {
+            "type": "number"
+          },
+          "avg_review_rounds": {
+            "type": "number"
+          },
+          "avg_fix_attempts": {
+            "type": "number"
+          },
+          "runs": {
+            "type": "integer"
+          },
+          "verified_pr_runs": {
+            "type": "integer"
+          },
+          "verified_pr_run_rate": {
+            "type": "number"
+          },
+          "failed_runs": {
+            "type": "integer"
+          },
+          "failure_rate": {
+            "type": "number"
+          },
+          "nothing_to_ship_runs": {
+            "type": "integer"
+          },
+          "nothing_to_ship_rate": {
+            "type": "number"
+          },
+          "most_reworked": {
+            "type": "array",
+            "description": "Top reworked PR links for this model/backend from the same Governor aggregate; each item includes public PR metadata and rework counts.",
+            "items": {
+              "type": "object"
+            }
           }
         }
       }

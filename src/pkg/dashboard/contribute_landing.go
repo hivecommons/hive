@@ -514,6 +514,19 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .policy-key{color:var(--cc-muted)}
 .policy-val{color:var(--cc-text);text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
 .ops-empty{padding:32px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
+.effective-controls{display:flex;gap:6px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
+.effective-chip{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.72rem;padding:4px 10px;border-radius:999px;cursor:pointer;font-family:inherit}
+.effective-chip.active{background:#1f6feb;border-color:var(--cc-accent-fg);color:#fff}
+.effective-table{width:100%%;border-collapse:collapse;font-size:.76rem}
+.effective-table th,.effective-table td{padding:8px 10px;border-bottom:1px solid var(--cc-border-2);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
+.effective-table th:first-child,.effective-table td:first-child{text-align:left}
+.effective-table th{color:var(--cc-muted);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;background:var(--cc-bg)}
+.effective-model{color:var(--cc-text);font-weight:600;overflow-wrap:anywhere}
+.effective-sub{color:var(--cc-muted);font-size:.68rem;margin-top:2px}
+.effective-muted{color:var(--cc-muted)}
+.effective-link{color:var(--cc-accent);text-decoration:none}
+.effective-link:hover{text-decoration:underline}
+.effective-section-title{padding:12px 20px 6px;color:var(--cc-muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
 .lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--cc-border-2);font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
@@ -2165,6 +2178,25 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 </form>
 <div class="runs-list" id="cc-wall-list"><div class="ops-empty">Loading wall&hellip;</div></div>
 </div>
+<!-- Most effective models (#8488): public-safe aggregate ranking built from the
+     Governor PR rework data (#8487) plus the contributor task-run log. It shows
+     only model/CLI aggregates — no contributor names or tokens — and splits
+     small samples into "Not enough data yet" so a one-lucky-PR model does not
+     lead the ranked list. -->
+<div class="ops-card" id="effective-models-card" style="margin-bottom:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Most effective models</h3><span class="ops-card-count" id="effective-models-count"></span></div>
+<div class="effective-controls" role="group" aria-label="Effective model filters">
+  <button type="button" class="effective-chip active" data-eff-window="7d">7d</button>
+  <button type="button" class="effective-chip" data-eff-window="30d">30d</button>
+  <button type="button" class="effective-chip" data-eff-window="all">All</button>
+  <span class="ops-filters__sep" aria-hidden="true"></span>
+  <button type="button" class="effective-chip active" data-eff-filter="all">All work</button>
+  <button type="button" class="effective-chip" data-eff-filter="contributor">Contributor relays</button>
+  <button type="button" class="effective-chip" data-eff-filter="hive">Hive agents</button>
+</div>
+<div id="effective-models-ranked"><div class="ops-empty">Loading effective models&hellip;</div></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">Ranked by first-pass merge rate, then merged PR count. Rows below the sample threshold are listed under <b>Not enough data yet</b>; every number is an aggregate for model + CLI.</p>
+</div>
 <!-- Fleet work (#6945): this panel was titled "My work" while rendering the work
      of EVERY connected clanker to every visitor, anonymous ones included — the
      data comes from the public /api/contribute/fleet snapshot and renderWork
@@ -2631,6 +2663,7 @@ function activateTab(t,push){
     // identity lookup that throws must not leave the fleet panels on "Loading…".
     try{ccResolveViewer();}catch(e){console.error('ccResolveViewer failed',e);}
     try{ccLoadWall();ccInitWallForm();}catch(e){console.error('ccLoadWall failed',e);}
+    try{loadEffectiveModels();}catch(e){console.error('loadEffectiveModels failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   // The standings and the standing strip are independent: a throw in one must
@@ -2733,6 +2766,52 @@ function loadLeaderboard(){
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
   });
 }
+var effectiveModelsWindow='7d';
+var effectiveModelsFilter='all';
+function effectivePct(v){return ((Number(v)||0)*100).toFixed(0)+'%%';}
+function effectiveFixed(v){return (Number(v)||0).toFixed(1);}
+function loadEffectiveModels(){
+  var mount=document.getElementById('effective-models-ranked');if(!mount)return;
+  mount.innerHTML='<div class="ops-empty">Loading effective models&hellip;</div>';
+  var url='/api/contribute/effective-models?window='+encodeURIComponent(effectiveModelsWindow)+'&filter='+encodeURIComponent(effectiveModelsFilter);
+  fetch(url).then(function(r){return r.json();}).then(function(d){renderEffectiveModels(d||{});}).catch(function(){
+    mount.innerHTML='<div class="ops-empty">Could not load effective models.</div>';
+  });
+}
+function renderEffectiveModels(data){
+  var mount=document.getElementById('effective-models-ranked');if(!mount)return;
+  var ranked=data.ranked||[], insufficient=data.insufficient||[];
+  var count=document.getElementById('effective-models-count');
+  if(count)count.textContent=ranked.length+' ranked · min '+(data.min_merged_prs||5)+' merged PRs';
+  function rows(list, empty){
+    if(!list.length)return '<div class="ops-empty">'+empty+'</div>';
+    return '<table class="effective-table"><thead><tr><th>Model / CLI</th><th>Merged PRs</th><th>First-pass</th><th>Review rounds</th><th>Fix attempts</th><th>Runs</th><th>PR run rate</th><th>Failure</th><th>Nothing to ship</th><th>Worst PRs</th></tr></thead><tbody>'+
+      list.map(function(x){
+        var worst=(x.most_reworked||[]).slice(0,3).map(function(pr){
+          var label=(pr.repo||'')+'#'+(pr.number||'');
+          return pr.url?'<a class="effective-link" href="'+esc(pr.url)+'" target="_blank" rel="noopener">'+esc(label)+'</a>':esc(label);
+        }).join('<br>');
+        return '<tr><td><div class="effective-model">'+esc(x.model||'unknown')+'</div><div class="effective-sub">'+esc(x.backend||'unknown')+' · '+esc(x.runtime||'unknown')+'</div></td>'+
+          '<td>'+Number(x.merged_prs||0)+'<div class="effective-sub">'+Number(x.prs||0)+' PRs</div></td>'+
+          '<td>'+effectivePct(x.first_pass_merge_rate)+'</td>'+
+          '<td>'+effectiveFixed(x.avg_review_rounds)+'</td>'+
+          '<td>'+effectiveFixed(x.avg_fix_attempts)+'</td>'+
+          '<td>'+Number(x.runs||0)+'</td>'+
+          '<td>'+effectivePct(x.verified_pr_run_rate)+'<div class="effective-sub">'+Number(x.verified_pr_runs||0)+' PR runs</div></td>'+
+          '<td>'+effectivePct(x.failure_rate)+'</td>'+
+          '<td>'+effectivePct(x.nothing_to_ship_rate)+'</td>'+
+          '<td class="effective-muted">'+(worst||'—')+'</td></tr>';
+      }).join('')+'</tbody></table>';
+  }
+  mount.innerHTML='<div class="effective-section-title">Ranked</div>'+rows(ranked,'No models meet the sample threshold yet.')+
+    '<div class="effective-section-title">Not enough data yet</div>'+rows(insufficient,'Every model in this view meets the sample threshold.');
+}
+document.addEventListener('click',function(e){
+  var win=e.target&&e.target.closest&&e.target.closest('[data-eff-window]');
+  if(win){effectiveModelsWindow=win.getAttribute('data-eff-window')||'7d';document.querySelectorAll('[data-eff-window]').forEach(function(b){b.classList.toggle('active',b===win);});loadEffectiveModels();return;}
+  var filter=e.target&&e.target.closest&&e.target.closest('[data-eff-filter]');
+  if(filter){effectiveModelsFilter=filter.getAttribute('data-eff-filter')||'all';document.querySelectorAll('[data-eff-filter]').forEach(function(b){b.classList.toggle('active',b===filter);});loadEffectiveModels();}
+});
 // tierBadge renders a small tier medallion / rank badge from a REAL trust tier.
 // The five known tiers each get a muted metal-ish accent class; an unknown/blank
 // tier is treated as newcomer (neutral). extraCls lets callers request the compact

@@ -165,6 +165,10 @@ func (s *Server) registerContributeRoutes() {
 	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
 	// no side effects. See contribute_metrics.go.
 	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
+	// Read-only effective-model ranking for the Operations page. Public-safe:
+	// aggregate model/CLI counts only, no contributor usernames, tokens, reasons,
+	// or per-contributor rows.
+	s.mux.HandleFunc("GET /api/contribute/effective-models", s.handleContributeEffectiveModels)
 	// Read-only SELF stats (#6543): the signed-in contributor's own issues-worked
 	// (24h + all-time), PRs produced, and failures. Self-service like interests /
 	// dossier above — the identity is resolved SERVER-SIDE and there is no

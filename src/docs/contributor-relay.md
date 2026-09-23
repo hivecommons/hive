@@ -560,6 +560,8 @@ After a contributor completes an issue, the hub keeps that issue out of the queu
 
 ### Queue hold and priority
 
+The **Operations** tab also includes a public-safe **Most effective models** panel. It reads the same aggregate PR rework data as the Governor PRs-by-model view plus the contributor task-run log, then ranks model + CLI pairs for `7d`, `30d`, or `all` by visible measures: merged PRs, first-pass merge rate, average review rounds, average fix attempts, verified-PR run rate, failure rate, and completed-without-PR (“nothing to ship”) rate. Rows below `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` merged PRs (default `5`) are shown under “Not enough data yet” instead of being ranked, and the response is aggregate-only: no contributor usernames, pane output, tokens, or per-contributor breakdowns.
+
 The **Operations** tab lets an operator reorder and park individual issues in the ready-work queue. Both controls persist on the hub configuration alongside the filters above, but they are edited only through two authenticated endpoints (owner or read-write role; a read-only or anonymous caller gets `403`):
 
 | Endpoint | Config key | Behavior |
