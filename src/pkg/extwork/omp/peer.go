@@ -112,6 +112,22 @@ func (p *Peer) Version() string { return p.version }
 // Gone is closed once the link is lost.
 func (p *Peer) Gone() <-chan struct{} { return p.gone }
 
+// Err is the read-loop error that ended the link, or nil while it is up.
+func (p *Peer) Err() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
+}
+
+// goneErr wraps ErrPeerGone with the read-loop error so an observation
+// after disconnect says why the state is unknown. Callers hold p.mu.
+func (p *Peer) goneErrLocked() error {
+	if p.err == nil {
+		return ErrPeerGone
+	}
+	return fmt.Errorf("%w: %v", ErrPeerGone, p.err)
+}
+
 // Alive reports whether the link is still up.
 func (p *Peer) Alive() bool {
 	select {
@@ -363,7 +379,7 @@ func (p *Peer) Observe(key extwork.ExecutionKey) (extwork.Observation, error) {
 	obs := extwork.Observation{State: r.state, RemoteRunID: r.remoteRunID, RemoteIncarnation: p.incarnation, Stage: r.stage, Detail: r.detail, Receipt: r.receipt, ObservedAt: r.observedAt}
 	if obs.State != extwork.StateTerminal && !p.Alive() {
 		obs.State, obs.Detail = extwork.StateUnknown, detailDisconnected
-		return obs, ErrPeerGone
+		return obs, p.goneErrLocked()
 	}
 	return obs, nil
 }

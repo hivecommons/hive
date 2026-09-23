@@ -198,7 +198,7 @@ func TestCapabilitiesAndPeerGate(t *testing.T) {
 		t.Fatal("a refused peer was registered")
 	}
 	p, err := omp.NewPeer("wb", "inc", workflowVersion, fullCaps(), link, nil)
-	if err != nil || p.Identity() != "wb" || p.Incarnation() != "inc" || p.Version() != workflowVersion || !p.Alive() {
+	if err != nil || p.Identity() != "wb" || p.Incarnation() != "inc" || p.Version() != workflowVersion || !p.Alive() || p.Err() != nil {
 		t.Fatalf("NewPeer = %+v %v", p, err)
 	}
 }
@@ -373,8 +373,14 @@ func TestPeerOfferStartObserveCancelArtifact(t *testing.T) {
 	if obs, err := p.Observe(key); err != nil || obs.State != extwork.StateTerminal {
 		t.Fatalf("terminal after gone = %+v %v", obs, err)
 	}
-	if obs, err := p.Observe(live.ExecutionKey()); !errors.Is(err, omp.ErrPeerGone) || !errors.Is(err, extwork.ErrTransport) || obs.State != extwork.StateUnknown {
+	obs, err = p.Observe(live.ExecutionKey())
+	if !errors.Is(err, omp.ErrPeerGone) || !errors.Is(err, extwork.ErrTransport) || obs.State != extwork.StateUnknown {
 		t.Fatalf("live after gone = %+v %v", obs, err)
+	}
+	// The read-loop error that ended the link is the reason the state is
+	// unknown, and Observe carries it.
+	if loopErr := p.Err(); !errors.Is(loopErr, omp.ErrLinkClosed) || !strings.Contains(err.Error(), loopErr.Error()) {
+		t.Fatalf("read-loop error %v not surfaced by Observe: %v", loopErr, err)
 	}
 	if _, err := p.Start(ctx, live.ExecutionKey(), 1, live.Stage, livePayload); !errors.Is(err, omp.ErrPeerGone) {
 		t.Fatalf("start after gone = %v", err)
