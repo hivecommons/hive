@@ -20944,6 +20944,115 @@
           }
         }
       }
+    },
+    "/api/contribute/operators/message": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "List the caller's pending operator messages",
+        "description": "Returns unacknowledged one-to-one operator messages for the signed-in contributor resolved server-side. Anonymous callers get 401 and signed-in users without a contributor profile get 403; there is no request parameter that can select another contributor.",
+        "responses": {
+          "200": {
+            "description": "Pending messages for the caller"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "No contributor profile exists for the caller"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Send one operator message to a contributor",
+        "description": "Owner/read-write operator endpoint. Stores a sanitized plain-text note of at most 1000 characters on the recipient contributor profile and pushes it to matching live relay sockets only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contributor",
+                  "text"
+                ],
+                "properties": {
+                  "contributor": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message stored and delivery attempted"
+          },
+          "400": {
+            "description": "Invalid JSON or message text"
+          },
+          "403": {
+            "description": "Read-only viewer"
+          },
+          "404": {
+            "description": "Contributor not found"
+          },
+          "429": {
+            "description": "Sender rate limited"
+          }
+        }
+      }
+    },
+    "/api/contribute/operators/message/ack": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Acknowledge a contributor operator message",
+        "description": "Marks one of the signed-in contributor's own operator messages acknowledged and optionally records a short sanitized reply for operators.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "reply": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message acknowledged"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "No contributor profile exists for the caller"
+          },
+          "404": {
+            "description": "Message not found"
+          }
+        }
+      }
     }
   },
   "components": {

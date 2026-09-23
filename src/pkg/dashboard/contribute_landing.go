@@ -878,6 +878,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-act{background:var(--cc-border-2);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
 .admin-act:hover{border-color:var(--cc-muted)}
 .admin-act.danger:hover{border-color:var(--cc-red);color:var(--cc-red)}
+.op-msg-banner{border:1px solid var(--cc-amber);background:rgba(210,153,34,.10);border-radius:12px;padding:12px 14px;margin:0 0 16px;color:var(--cc-text-2);display:grid;gap:8px}
+.op-msg-banner b{color:var(--cc-text)}
+.op-msg-banner pre{white-space:pre-wrap;margin:0;font:inherit;color:var(--cc-text)}
+.op-msg-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.op-msg-reply{flex:1;min-width:220px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-text);padding:7px 9px;font-family:inherit}
+.op-msg-state{font-size:.7rem;color:var(--cc-muted);margin-left:4px}
+.op-msg-form{display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%%}
+.op-msg-form textarea{flex:1;min-width:220px;min-height:44px;resize:vertical;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-text);padding:7px 9px;font-family:inherit;font-size:.78rem}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
 .agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
@@ -2097,6 +2105,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
 <div class="ops">
 <h1>Operations</h1>
+<div id="operator-message-banner-ops"></div>
 <p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
@@ -2253,6 +2262,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <input type="text" id="runs-user" name="username" placeholder="GitHub login, e.g. from the log rail" aria-label="Contributor GitHub login" spellcheck="false">
 <button type="submit" class="admin-act" id="runs-go">Look up</button>
 </form>
+<div id="runs-message-actions"></div>
 <div class="runs-list" id="runs-list"><div class="ops-empty">Enter a contributor&rsquo;s login to see their recent runs: outcome, duration, the failure reason, and &mdash; for owners &mdash; what was on the agent&rsquo;s terminal when it stopped.</div></div>
 </div>
 <!-- Hub decisions (#7330, item 4 of #7317). The other half of the conversation:
@@ -2432,6 +2442,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      public route /contribute/dossier/{username}; owner-only controls are gated
      server-side there and by ME_IS_OWNER here. -->
 <div id="profile-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
+<div id="operator-message-banner-profile"></div>
 <div id="me-card-mount"></div>
 <div class="ops-card" id="dossier-wall-card" style="display:none;margin-top:20px">
 <div class="ops-card-head"><h3>Recent wall posts</h3><span class="ops-card-count" id="dossier-wall-count"></span></div>
@@ -2547,7 +2558,7 @@ var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','merger','advisor'];
 // in scope here. It is republished on window there; mirror it into this closure
 // as part of the same init-order discipline. renderMeCard's masthead reads it,
 // and a bare cross-IIFE reference threw ReferenceError on every dossier render.
-var ccProjectName=(typeof window!=='undefined'&&window.ccProjectName)||'Hive';
+var ccProjectName=(typeof window!=='undefined'&&window.ccProjectName)||"Hive";
 // ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
 // 168h = one week) so the period input shows the effective default when unset.
 // ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
@@ -2713,6 +2724,7 @@ function activateTab(t,push){
     try{loadMeStanding();}catch(e){console.error('loadMeStanding failed',e);}
   }
   // Profile hydrates the full dossier on first open, on its own tab.
+  if(dp==='tab-ops'||dp==='tab-profile'){try{ccLoadOperatorMessages();}catch(e){}}
   if(dp==='tab-profile'&&!profileStarted){profileStarted=true;
     try{loadMeCard();}catch(e){console.error('loadMeCard failed',e);}
     try{ccLoadDossierWall();}catch(e){console.error('ccLoadDossierWall failed',e);}
@@ -4516,6 +4528,7 @@ onEl('clanker-list','click',function(e){
     updateContributorAgentRoleGrants(b.getAttribute('data-cid'),b.getAttribute('data-agent-role'),null);
     return;
   }
+  if(role==='message'){ccToggleMessageForm(b.getAttribute('data-cid'),b.getAttribute('data-user')||'this contributor',b);return;}
   if(role!=='revoke'&&role!=='remove'&&role!=='requeue')return;
   var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
   if(role==='requeue'){
@@ -4842,7 +4855,8 @@ function renderClankers(list){
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
         '<label class="clanker-act-as">Acting as '+clankerActingAsControl(c,cid)+'</label>'+
         requeueBtn+
-        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
+        ccOperatorMessageStatus(c)+
+        '<button type="button" class="admin-act" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="message">Message</button>'+        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
         clankerAgentRoleGrantControl(c,cid)+
         '</div>';
@@ -5157,6 +5171,7 @@ function ccLookupRuns(user){
   user=(user||'').trim().replace(/^@/,'');
   var input=document.getElementById('runs-user');
   if(input&&input.value!==user)input.value=user;
+  ccRenderRunsMessageAction(user);
   // One lookup fills both cards (#7330): the relay's side and the hub's side of
   // the same session. Hoisted declaration, so order in the file does not matter.
   ccLookupDecisions(user);
@@ -5170,6 +5185,37 @@ function ccLookupRuns(user){
     .catch(function(err){if(el)el.innerHTML='<div class="ops-empty">Could not load runs for '+esc(user)+' ('+esc(err.message)+').</div>';});
 }
 onEl('runs-lookup','submit',function(e){e.preventDefault();var i=document.getElementById('runs-user');ccLookupRuns(i?i.value:'');});
+function ccRenderRunsMessageAction(user){
+  var el=document.getElementById('runs-message-actions');if(!el)return;
+  user=(user||'').trim().replace(/^@/,'');
+  if(!adminEnabled||!user){el.innerHTML='';return;}
+  el.innerHTML='<div class="admin-actions"><button type="button" class="admin-act" data-user="'+esc(user)+'" data-role="message-runs">Message '+esc(user)+'</button></div><div id="runs-message-form"></div>';
+}
+onEl('runs-message-actions','click',function(e){var b=e.target;if(!adminEnabled||!b||b.getAttribute('data-role')!=='message-runs')return;ccToggleMessageForm(b.getAttribute('data-user'),b.getAttribute('data-user'),b);});
+
+function ccOperatorMessageStatus(c){
+  var msgs=(c&&c.operator_messages)||[]; if(!msgs.length)return '';
+  var pending=0,acked=0,delivered=0;
+  msgs.forEach(function(m){if(m.acknowledged_at)acked++;else pending++; if(m.delivered_at)delivered++;});
+  var txt=(pending?pending+' pending':'acked')+(delivered?' · delivered':'');
+  return '<span class="op-msg-state" title="Operator messages">'+esc(txt)+'</span>';
+}
+function ccToggleMessageForm(cid,user,btn){
+  var host=(btn&&btn.getAttribute('data-role')==='message-runs')?document.getElementById('runs-message-form'):(btn&&btn.parentNode);
+  if(!host)return;
+  var old=host.querySelector('.op-msg-form'); if(old){old.remove();return;}
+  var target=cid||user;
+  var form=document.createElement('div'); form.className='op-msg-form';
+  form.innerHTML='<textarea maxlength="1000" placeholder="Short note for '+esc(user)+'"></textarea><button type="button" class="admin-act">Send</button>';
+  form.querySelector('button').addEventListener('click',function(){
+    var text=form.querySelector('textarea').value;
+    fetch('/api/contribute/operators/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contributor:target,text:text})})
+      .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+      .then(function(x){if(x.ok){toast('Message sent to '+user,true);form.remove();opsPoll();ccLoadOperatorMessages();}else{toast((x.d&&x.d.error)||'Message failed',false);}})
+      .catch(function(){toast('Message failed',false);});
+  });
+  host.appendChild(form);
+}
 
 // ── Hub decisions (#7330, item 4 of #7317) ────────────────────────────────
 // The other half of the run history: what the HUB did, not what the relay
@@ -5272,6 +5318,29 @@ async function opsPoll(){
   var tab=document.getElementById('tab-ops');
   if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);
 }
+
+// ── Operator messages addressed to the signed-in contributor ────────────────
+function ccRenderOperatorMessages(messages){
+  var mounts=[document.getElementById('operator-message-banner-ops'),document.getElementById('operator-message-banner-profile')];
+  messages=(messages||[]).filter(function(m){return m&&!m.acknowledged_at;});
+  var html='';
+  if(messages.length){
+    html=messages.map(function(m){return '<div class="op-msg-banner"><b>Message from the hive operator</b><pre>'+esc(m.text||'')+'</pre><div class="op-msg-actions"><input class="op-msg-reply" data-id="'+esc(m.id)+'" placeholder="Optional short reply"><button type="button" class="admin-act" data-role="ack-operator-message" data-id="'+esc(m.id)+'">Acknowledge</button></div></div>';}).join('');
+  }
+  mounts.forEach(function(el){if(el)el.innerHTML=html;});
+}
+function ccLoadOperatorMessages(){
+  fetch('/api/contribute/operators/message').then(function(r){if(r.status===401||r.status===403)return {messages:[]}; if(!r.ok)throw new Error('HTTP '+r.status); return r.json();})
+    .then(function(d){ccRenderOperatorMessages(d&&d.messages);}).catch(function(){});
+}
+function ccAckOperatorMessage(id,reply){
+  fetch('/api/contribute/operators/message/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,reply:reply||''})})
+    .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+    .then(function(x){if(x.ok){toast('Message acknowledged',true);ccLoadOperatorMessages();opsPoll();}else{toast((x.d&&x.d.error)||'Acknowledge failed',false);}})
+    .catch(function(){toast('Acknowledge failed',false);});
+}
+document.addEventListener('click',function(e){var b=e.target;if(!b||b.getAttribute('data-role')!=='ack-operator-message')return;var id=b.getAttribute('data-id')||'';var wrap=b.closest('.op-msg-banner');var inp=wrap&&wrap.querySelector('.op-msg-reply');ccAckOperatorMessage(id,inp?inp.value:'');});
+try{ccLoadOperatorMessages();}catch(e){}
 
 // ══ Operations command center: live SSE stream driving the ready-work queue, the
 //    task-assign travel animation, the dev-log narration, achievements, and army

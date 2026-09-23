@@ -124,6 +124,16 @@ func getContributorsDir() string {
 	return defaultContributorsDir
 }
 
+type ContributorOperatorMessage struct {
+	ID             string `json:"id"`
+	Text           string `json:"text"`
+	Sender         string `json:"sender,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	DeliveredAt    string `json:"delivered_at,omitempty"`
+	AcknowledgedAt string `json:"acknowledged_at,omitempty"`
+	Reply          string `json:"reply,omitempty"`
+}
+
 type ContributorProfile struct {
 	GitHubUsername    string `json:"github_username"`
 	ContributorID     string `json:"contributor_id"`
@@ -195,11 +205,12 @@ type ContributorProfile struct {
 	// Collaborators is the append-only record of people this contributor has
 	// worked alongside — see collaborators.go. Written symmetrically to both
 	// parties; never decays, never removed.
-	Collaborators []CollaboratorRecord `json:"collaborators,omitempty"`
-	Active        bool                 `json:"active,omitempty"`
-	CurrentTask   *WSTaskAssign        `json:"current_task,omitempty"`
-	ActiveTasks   []WSTaskAssign       `json:"active_tasks,omitempty"`
-	Sessions      int                  `json:"sessions,omitempty"`
+	Collaborators    []CollaboratorRecord         `json:"collaborators,omitempty"`
+	OperatorMessages []ContributorOperatorMessage `json:"operator_messages,omitempty"`
+	Active           bool                         `json:"active,omitempty"`
+	CurrentTask      *WSTaskAssign                `json:"current_task,omitempty"`
+	ActiveTasks      []WSTaskAssign               `json:"active_tasks,omitempty"`
+	Sessions         int                          `json:"sessions,omitempty"`
 	// Version is the profile's optimistic-concurrency token (hivecommons/hive H2,
 	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
 	// profile at version N may only persist its edit if the on-disk version is still

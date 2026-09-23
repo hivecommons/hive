@@ -176,6 +176,9 @@ func (s *Server) registerContributeRoutes() {
 	// username parameter, so this endpoint can only ever answer for its caller
 	// (an anonymous caller gets 401, not someone else's numbers). GET only.
 	s.mux.HandleFunc("GET /api/contribute/me", s.handleContributeMe)
+	s.mux.HandleFunc("GET /api/contribute/operators/message", s.handleContributeOperatorMessage)
+	s.mux.HandleFunc("POST /api/contribute/operators/message", s.handleContributeOperatorMessage)
+	s.mux.HandleFunc("POST /api/contribute/operators/message/ack", s.handleContributeOperatorMessageAck)
 	// Read-only per-backend RUN SCENARIOS: aggregates over the durable task-run
 	// log (task_run_log.go) — scenario counts, sentinel-compliance share, and
 	// duration percentiles per backend. Public like the other /api/contribute*
@@ -821,9 +824,15 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	// gets it, so the same rule applies whether the contributor is still
 	// connected or long gone.
 	paneVisible := s.paneTailViewer(r)
-	if !paneVisible {
+	operatorMessageVisible := r.Header.Get("X-Hive-Role") == config.RoleOwner || r.Header.Get("X-Hive-Role") == config.RoleReadWrite
+	if !paneVisible || !operatorMessageVisible {
 		for i := range snap.Clankers {
-			snap.Clankers[i].PaneTail = nil
+			if !paneVisible {
+				snap.Clankers[i].PaneTail = nil
+			}
+			if !operatorMessageVisible {
+				snap.Clankers[i].OperatorMessages = nil
+			}
 		}
 	}
 	jsonResponse(w, map[string]any{

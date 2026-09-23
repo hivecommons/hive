@@ -1,0 +1,1 @@
+- Operators can now send a short one-to-one message to a contributor from Operations; it appears in that contributor's relay terminal and signed-in `/contribute` pages until acknowledged ([#8461](https://github.com/hivecommons/hive/issues/8461)).

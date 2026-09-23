@@ -166,7 +166,8 @@ type FleetClanker struct {
 	// AgentRoleGrants is the operator-managed grant list for privileged spoke
 	// agent roles. It is shown to owner/read-write viewers in the fleet row; the
 	// server-side mutation endpoint remains the enforcement boundary.
-	AgentRoleGrants []string `json:"agent_role_grants,omitempty"`
+	AgentRoleGrants  []string                     `json:"agent_role_grants,omitempty"`
+	OperatorMessages []ContributorOperatorMessage `json:"operator_messages,omitempty"`
 	// Protocol compares the contributor-protocol version this client DECLARED
 	// against the one this hub speaks (#2547 peer-compatibility criterion,
 	// building on the versions #2567 put on the wire). Always set — an
@@ -281,6 +282,9 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			}
 			if len(c.profile.AgentRoleGrants) > 0 {
 				fc.AgentRoleGrants = append([]string(nil), c.profile.AgentRoleGrants...)
+			}
+			if len(c.profile.OperatorMessages) > 0 {
+				fc.OperatorMessages = append([]ContributorOperatorMessage(nil), c.profile.OperatorMessages...)
 			}
 		}
 		var task *WSTaskAssign

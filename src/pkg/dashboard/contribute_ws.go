@@ -444,15 +444,16 @@ func wsMessageFromExternal(msg ExternalExecutionMessage) WSMessage {
 }
 
 type WSMessage struct {
-	Type                         string   `json:"type"`
-	Seq                          int      `json:"seq,omitempty"`
-	Nonce                        string   `json:"nonce,omitempty"`
-	ContributorID                string   `json:"contributor_id,omitempty"`
-	TrustTier                    string   `json:"trust_tier,omitempty"`
-	Permissions                  []string `json:"permissions,omitempty"`
-	Reason                       string   `json:"reason,omitempty"`
-	State                        string   `json:"state,omitempty"`
-	ContributeNeedsDecisionLabel *string  `json:"contribute_needs_decision_label,omitempty"`
+	Type                         string                      `json:"type"`
+	Seq                          int                         `json:"seq,omitempty"`
+	Nonce                        string                      `json:"nonce,omitempty"`
+	ContributorID                string                      `json:"contributor_id,omitempty"`
+	TrustTier                    string                      `json:"trust_tier,omitempty"`
+	Permissions                  []string                    `json:"permissions,omitempty"`
+	Reason                       string                      `json:"reason,omitempty"`
+	State                        string                      `json:"state,omitempty"`
+	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
+	OperatorMessage              *ContributorOperatorMessage `json:"operator_message,omitempty"`
 	// FailureKind is the OPTIONAL, client-declared cause of a task_failed
 	// (#2547): "environment" (the client's runtime could not run the work) or
 	// "task" (the work was attempted and failed on its merits). Absent — which
@@ -2743,6 +2744,8 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 			s.contributor.startExternalPeer(context.Background(), h, strings.TrimSpace(msg.Incarnation), strings.TrimSpace(msg.WorkbenchVersion))
 		}
 	}
+
+	s.deliverPendingOperatorMessages()
 
 	h.logger.Info("[contribute-ws] authenticated",
 		"id", s.connID,

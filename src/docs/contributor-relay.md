@@ -678,6 +678,10 @@ deliberate gate, not an oversight.
 
 The generated Secret contains the registration token and `GH_TOKEN` as Kubernetes Secret data. Treat it as sensitive cluster-readable material and prefer a pinned image tag/digest for repeatable operation.
 
+## Operations messages
+
+Owners and read-write operators can use the Operations page's **Message** action on a contributor card (or after a run-history lookup) to send a short note to exactly that contributor ([#8461](https://github.com/hivecommons/hive/issues/8461)). The hub stores the note on the recipient's contributor profile until the contributor acknowledges it, shows it as a banner on their signed-in `/contribute` Operations/Profile pages, and pushes it to every live relay connection for that same contributor identity. The relay prints the note as "Message from the hive operator" (reverse video on a TTY unless `NO_COLOR` is set) and strips terminal control characters before output; the text is never passed to the agent CLI as input. Acknowledgement, and an optional short reply, are recorded back on the profile so operators can see whether the message was delivered and read.
+
 ## How the hub picks work for contributors
 
 Two admission behaviors are worth knowing when your relay seems idle:

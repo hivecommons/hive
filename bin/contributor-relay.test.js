@@ -13696,3 +13696,50 @@ test('#8470 an empty configured decision label disables relay labelling but keep
     assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create|issue comment)/.test(c)).length, 0);
   } finally { console.log = log; teardown(relay); }
 });
+
+test('operator messages print once and strip terminal control characters', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const oldNoColor = process.env.NO_COLOR;
+  const oldTTY = process.stdout.isTTY;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  process.env.NO_COLOR = '1';
+  try {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    assert.strictEqual(relay.printOperatorMessageOnce(hub, { id: 'm1', text: 'hello\x1b[2J <b>literal</b>' }), true);
+    assert.strictEqual(relay.printOperatorMessageOnce(hub, { id: 'm1', text: 'hello again' }), false);
+    assert.strictEqual(logged.length, 1);
+    assert.ok(logged[0].includes('Message from the hive operator'));
+    assert.ok(logged[0].includes('<b>literal</b>'));
+    assert.ok(!logged[0].includes('\x1b'));
+  } finally {
+    console.log = oldLog;
+    if (oldNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = oldNoColor;
+    Object.defineProperty(process.stdout, 'isTTY', { value: oldTTY, configurable: true });
+    teardown(relay);
+  }
+});
+
+test('operator messages use reverse video on TTY when color is enabled', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const oldNoColor = process.env.NO_COLOR;
+  const oldTTY = process.stdout.isTTY;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  delete process.env.NO_COLOR;
+  try {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    relay.printOperatorMessageOnce(hub, { id: 'm2', text: 'highlight' });
+    assert.ok(logged[0].startsWith('\x1b[7m'));
+    assert.ok(logged[0].endsWith('\x1b[0m'));
+  } finally {
+    console.log = oldLog;
+    if (oldNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = oldNoColor;
+    Object.defineProperty(process.stdout, 'isTTY', { value: oldTTY, configurable: true });
+    teardown(relay);
+  }
+});
