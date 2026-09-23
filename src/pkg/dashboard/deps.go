@@ -13,6 +13,10 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/config"
+	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
+	"github.com/hivecommons/hive/pkg/convergence/outcome"
+	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -71,6 +75,13 @@ type Dependencies struct {
 	// Only the producer knows a store is missing, so only the producer can say so.
 	BeadStoreLoadFailures int
 	Logger                *slog.Logger
+	AuditLedger           *mutation.Ledger
+	AuditJournal          *mutation.Journal
+	AuditProofs           *proof.Store
+	AuditPublisher        convergenceaudit.FindingPublisher
+	AuditPublisherFunc    func() convergenceaudit.FindingPublisher
+	AuditOutcomes         *outcome.Ledger
+	AuditOutcomesFunc     func() *outcome.Ledger
 	Ctx                   context.Context
 	RefreshFunc           func()
 	PersistFunc           func()

@@ -1,6 +1,6 @@
-# Report-only audit campaign pilot
+# Audit campaign
 
-The audit campaign pilot proves the runs three-gate model on a workload that never opens a pull request. It inspects a pinned in-repo scope, validates findings, deduplicates them, records receipts, and leaves publication off.
+The audit campaign proves the runs three-gate model on a workload that never opens a pull request. It inspects a configured scope, validates findings, deduplicates them, records receipts, and only publishes when the operator has enabled publication.
 
 ## Fixture
 
@@ -12,6 +12,24 @@ cd src && go test ./pkg/convergence ./pkg/convergence/proof ./pkg/retro -count=1
 
 The test clears `HIVE_GITHUB_TOKEN` and uses a fake GitHub client that must remain at zero calls. The pilot refuses to run if `HIVE_GITHUB_TOKEN` is present.
 
+## Activation
+
+Owners activate a campaign through the dashboard API:
+
+```sh
+curl -X POST "$HIVE_URL/api/runs/audit" \
+  -H "Authorization: Bearer $HIVE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "campaign_key": "audit-campaign",
+    "scope_dir": "/data/convergence/audit/scope",
+    "store": "audit",
+    "generation": 1
+  }'
+```
+
+`scope_dir` points at a directory containing `components.json` in the same shape as the fixture. If omitted, it defaults to `/data/convergence/audit/scope`. `store` selects the bead store that receives the campaign, inspection, finding, and publication beads; when omitted the server tries `audit`, `auditor`, `scanner`, `supervisor`, then the first configured store. The response reports the burndown, receipt count, finding count, and whether publication was skipped.
+
 ## State model
 
 Campaign state is stored as ordinary beads:
@@ -19,7 +37,7 @@ Campaign state is stored as ordinary beads:
 - one `campaign` bead for the pinned scope;
 - one `inspection` bead per component, with state `pending`, `inspected`, or `Unknown` when the mutation journal cannot prove whether a crash-window effect completed;
 - one `finding` bead per candidate finding, with state `validated`, `rejected`, or `duplicate_of`;
-- publication remains `none` for this slice.
+- publication starts as `none` and records the publisher summary only when publication is enabled.
 
 No new store, CRD, DSL, or GitHub credential path is introduced.
 
@@ -39,7 +57,7 @@ Publication is the third gate. Verification and permission to publish are differ
 
 ### Turning it on
 
-Publication is off by default. It files only when every one of these holds:
+Publication is off by default. The activation endpoint still runs inspection when publication is disabled, but skips the publisher and returns `publication_skipped: true` with `publication_reason: "publication.disabled"`. It files only when every one of these holds:
 
 ```yaml
 publication:

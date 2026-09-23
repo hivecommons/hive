@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
+	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
+	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -79,7 +82,11 @@ type runResetResponse struct {
 // system-side lease_stage_reset with the same stage/gen fields).
 const auditActionRunStageReset = "run_stage_reset"
 
+const auditActionRunAuditCampaign = "run_audit_campaign"
+
 const runResetReasonTriageFix = "triage_fix"
+
+const defaultAuditScopeDir = "/data/convergence/audit/scope"
 
 type Run struct {
 	Key            string       `json:"key"`
@@ -108,6 +115,36 @@ type Run struct {
 	Burndown        *RunBurndown    `json:"burndown,omitempty"`
 	TriageVerdict   string          `json:"triage_verdict,omitempty"`
 	TriageRationale string          `json:"triage_rationale,omitempty"`
+}
+
+type runAuditRequest struct {
+	CampaignKey string `json:"campaign_key"`
+	ScopeDir    string `json:"scope_dir"`
+	Store       string `json:"store"`
+	Generation  uint64 `json:"generation"`
+	RunKey      string `json:"run_key"`
+	RunURL      string `json:"run_url"`
+}
+
+type runAuditResponse struct {
+	OK                 bool                      `json:"ok"`
+	CampaignKey        string                    `json:"campaign_key"`
+	ScopeDir           string                    `json:"scope_dir"`
+	Store              string                    `json:"store"`
+	Mode               string                    `json:"mode"`
+	Generation         uint64                    `json:"generation"`
+	Findings           int                       `json:"findings"`
+	Receipts           int                       `json:"receipts"`
+	Burndown           convergenceaudit.Burndown `json:"burndown"`
+	PublicationEnabled bool                      `json:"publication_enabled"`
+	PublicationSkipped bool                      `json:"publication_skipped"`
+	PublicationReason  string                    `json:"publication_reason,omitempty"`
+	Publication        *auditPublicationSummary  `json:"publication,omitempty"`
+}
+
+type auditPublicationSummary struct {
+	Accepted     bool           `json:"accepted"`
+	Publications map[string]int `json:"publications"`
 }
 
 type RunsSummary struct {
@@ -196,6 +233,151 @@ func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
 	}
 	run.Burndown = burndown
 	return nil
+}
+
+// handleRunAudit serves POST /api/runs/audit: owner-triggered activation of
+// the convergence audit campaign over an explicit or default scope directory.
+func (s *Server) handleRunAudit(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil {
+		jsonError(w, "dashboard dependencies unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body runAuditRequest
+	if r.Body != nil {
+		if err := decodeBody(r, &body); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+	body.CampaignKey = strings.TrimSpace(body.CampaignKey)
+	if body.CampaignKey == "" {
+		body.CampaignKey = "audit-campaign"
+	}
+	body.ScopeDir = strings.TrimSpace(body.ScopeDir)
+	if body.ScopeDir == "" {
+		body.ScopeDir = defaultAuditScopeDir
+	}
+	storeName, store := s.auditCampaignStore(strings.TrimSpace(body.Store))
+	if store == nil {
+		jsonError(w, "audit bead store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.deps.AuditLedger == nil || s.deps.AuditJournal == nil {
+		jsonError(w, "audit mutation ledger unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	mode := config.ConvergenceModeShadow
+	publicationEnabled := false
+	if s.deps.Config != nil {
+		mode = s.deps.Config.ConvergenceMode()
+		publicationEnabled = s.deps.Config.Publication.Enabled
+	}
+	publisher := s.auditPublisher()
+	publicationSkipped := false
+	publicationReason := ""
+	if !publicationEnabled {
+		publisher = nil
+		publicationSkipped = true
+		publicationReason = "publication.disabled"
+	} else if publisher == nil {
+		publicationSkipped = true
+		publicationReason = "publisher.unavailable"
+	}
+	res, err := convergenceaudit.Run(convergenceaudit.Options{
+		CampaignKey: body.CampaignKey,
+		ScopeDir:    body.ScopeDir,
+		Store:       store,
+		Ledger:      s.deps.AuditLedger,
+		Journal:     s.deps.AuditJournal,
+		ProofStore:  s.deps.AuditProofs,
+		Mode:        mode,
+		Generation:  body.Generation,
+		Holder:      "dashboard",
+		Publisher:   publisher,
+		Outcomes:    s.auditOutcomes(),
+		RunKey:      strings.TrimSpace(body.RunKey),
+		RunURL:      strings.TrimSpace(body.RunURL),
+	})
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, auditActionRunAuditCampaign, auditDetail(
+		"campaign", body.CampaignKey, "scope_dir", body.ScopeDir,
+		"store", storeName, "mode", res.Mode,
+		"generation", strconv.FormatUint(res.Generation, 10)), "")
+	jsonResponse(w, runAuditResponse{
+		OK:                 true,
+		CampaignKey:        body.CampaignKey,
+		ScopeDir:           body.ScopeDir,
+		Store:              storeName,
+		Mode:               res.Mode,
+		Generation:         res.Generation,
+		Findings:           len(res.Findings),
+		Receipts:           len(res.Receipts),
+		Burndown:           res.Burndown,
+		PublicationEnabled: publicationEnabled,
+		PublicationSkipped: publicationSkipped,
+		PublicationReason:  publicationReason,
+		Publication:        summarizeAuditPublication(res),
+	})
+}
+
+func (s *Server) auditPublisher() convergenceaudit.FindingPublisher {
+	if s.deps == nil {
+		return nil
+	}
+	if s.deps.AuditPublisherFunc != nil {
+		return s.deps.AuditPublisherFunc()
+	}
+	return s.deps.AuditPublisher
+}
+
+func (s *Server) auditOutcomes() *outcome.Ledger {
+	if s.deps == nil {
+		return nil
+	}
+	if s.deps.AuditOutcomesFunc != nil {
+		return s.deps.AuditOutcomesFunc()
+	}
+	return s.deps.AuditOutcomes
+}
+
+func (s *Server) auditCampaignStore(requested string) (string, *beads.Store) {
+	if s.deps == nil || len(s.deps.BeadStores) == 0 {
+		return "", nil
+	}
+	if requested != "" {
+		return requested, s.deps.BeadStores[requested]
+	}
+	for _, name := range []string{"audit", "auditor", "scanner", "supervisor"} {
+		if store := s.deps.BeadStores[name]; store != nil {
+			return name, store
+		}
+	}
+	names := make([]string, 0, len(s.deps.BeadStores))
+	for name := range s.deps.BeadStores {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", nil
+	}
+	return names[0], s.deps.BeadStores[names[0]]
+}
+
+func summarizeAuditPublication(res convergenceaudit.Result) *auditPublicationSummary {
+	if res.Publication == nil {
+		return nil
+	}
+	counts := make(map[string]int)
+	for _, pub := range res.Publication.Publications {
+		counts[pub.State]++
+	}
+	return &auditPublicationSummary{Accepted: res.Publication.Accepted, Publications: counts}
 }
 
 // handleRunReset serves POST /api/runs/{key}/reset (#8350): move a run's lease

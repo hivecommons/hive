@@ -19586,6 +19586,112 @@
         }
       }
     },
+    "/api/runs/audit": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Activate an audit campaign",
+        "description": "Owner-only activation of the convergence audit campaign over a configured scope directory. Inspection runs even when publication.enabled is false; disabled publication skips the publisher and is reported in the response.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "campaign_key": {
+                    "type": "string",
+                    "default": "audit-campaign"
+                  },
+                  "scope_dir": {
+                    "type": "string",
+                    "default": "/data/convergence/audit/scope"
+                  },
+                  "store": {
+                    "type": "string",
+                    "description": "Bead store name; defaults through audit, auditor, scanner, supervisor, then the first configured store."
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "format": "int64",
+                    "default": 1
+                  },
+                  "run_key": {
+                    "type": "string"
+                  },
+                  "run_url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audit campaign completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "campaign_key": {
+                      "type": "string"
+                    },
+                    "scope_dir": {
+                      "type": "string"
+                    },
+                    "store": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "findings": {
+                      "type": "integer"
+                    },
+                    "receipts": {
+                      "type": "integer"
+                    },
+                    "burndown": {
+                      "type": "object"
+                    },
+                    "publication_enabled": {
+                      "type": "boolean"
+                    },
+                    "publication_skipped": {
+                      "type": "boolean"
+                    },
+                    "publication_reason": {
+                      "type": "string"
+                    },
+                    "publication": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, scope, or campaign execution error."
+          },
+          "403": {
+            "description": "Owner access required."
+          },
+          "503": {
+            "description": "Audit dependencies or bead store unavailable."
+          }
+        }
+      }
+    },
     "/api/runs/{key}/trace": {
       "get": {
         "tags": [
