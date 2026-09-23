@@ -1,0 +1,1 @@
+- Pin with tests that hub-launched agents never receive the dashboard token in their environment, launch MCP flags, or project context; the v5 line has no task-MCP URL, so the reported leak does not reproduce there (#8348)
