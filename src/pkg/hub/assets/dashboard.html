@@ -597,6 +597,14 @@
       <div id="public-hives-container"></div>
     </div>
 
+    <div id="persona-profile-section" style="display:none;margin-top:48px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:1.3rem;color:var(--accent);margin:0">Persona profile</h2>
+        <span id="persona-profile-summary" style="font-size:0.8rem;color:var(--muted)"></span>
+      </div>
+      <div id="persona-profile-container"></div>
+    </div>
+
     <div id="admin-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
@@ -9526,6 +9534,7 @@
          waits for that height before it commits (see its frame loop). Calling
          it any earlier clamps the offset to a short page and lands at the top. */
       restoreHiveScroll();
+      await loadPersonaProfile();
       await loadAdminUsers();
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
@@ -9541,6 +9550,7 @@
        unclaimed row's "claim pending · Nm" advances between the 30s polls. */
     startAssignCounterTicker();
     setInterval(loadAdminUsers, POLL_INTERVAL_MS);
+    setInterval(loadPersonaProfile, POLL_INTERVAL_MS);
     setInterval(loadClusterHealth, CLUSTER_HEALTH_POLL_MS);
     setInterval(loadScaleSettings, CLUSTER_HEALTH_POLL_MS);
     setInterval(loadReach, REACH_POLL_MS);
@@ -9564,6 +9574,75 @@
        spokes' presence reports. live minus engaged = idle open tabs. */
     var _liveEngagedUsers = new Set();
     var _userSortKey = 'created_at', _userSortAsc = false;
+
+    function personaSuggestionText(s) {
+      if (!s) return '';
+      return esc(s.key || 'setting') + ': ' + esc(s.from || 'unset') + ' → ' + esc(s.to || 'unset') +
+        (s.evidence ? ' <span style="color:var(--muted)">(' + esc(s.evidence) + ')</span>' : '');
+    }
+
+    function personaHistoryText(h) {
+      if (!h) return '';
+      var when = h.at ? ' · ' + esc(fmtUserTS(h.at)) : '';
+      return esc(h.outcome || 'recorded') + ' ' + esc(h.key || 'setting') + ': ' +
+        esc(h.from || 'unset') + ' → ' + esc(h.to || 'unset') +
+        (h.evidence ? ' <span style="color:var(--muted)">(' + esc(h.evidence) + when + ')</span>' : when);
+    }
+
+    function renderPersonaProfile(data) {
+      var section = document.getElementById('persona-profile-section');
+      var container = document.getElementById('persona-profile-container');
+      var summary = document.getElementById('persona-profile-summary');
+      if (!section || !container) return;
+      var profiles = (data && data.profiles) || [];
+      if (!profiles.length) {
+        section.style.display = 'none';
+        container.innerHTML = '';
+        return;
+      }
+      section.style.display = '';
+      if (summary) summary.textContent = profiles.length + ' profile' + (profiles.length === 1 ? '' : 's') + ' with learned state';
+      container.innerHTML =
+        '<table class="hive-table"><thead><tr>' +
+        '<th style="text-align:left">Persona</th><th>Current traits / weights</th><th>Pending suggestions</th><th>Accepted / declined history</th><th>Last updated</th>' +
+        '</tr></thead><tbody>' + profiles.map(function(p) {
+          var traits = p.traits || {};
+          var signals = p.signals || {};
+          var signalBits = [];
+          if (signals.expanded) signalBits.push(signals.expanded + ' expanded');
+          if (signals.skipped) signalBits.push(signals.skipped + ' skipped');
+          if (signals.re_asked) signalBits.push(signals.re_asked + ' re-asked');
+          var traitLines = [
+            'depth: ' + esc(traits.depth || 'outcomes'),
+            'summary: ' + esc(traits.summary_length || 'standard')
+          ];
+          if (traits.notes) traitLines.push('notes: ' + esc(traits.notes));
+          traitLines.push('pinned: ' + (traits.pinned ? 'yes' : 'no'));
+          traitLines.push('weights: read-only counters' + (signalBits.length ? ' · ' + esc(signalBits.join(', ')) : ' · none'));
+          var suggestions = (p.suggestions || []).map(personaSuggestionText);
+          var history = (p.history || []).map(personaHistoryText);
+          return '<tr>' +
+            '<td style="text-align:left"><strong>' + esc(p.display_name || p.identity || 'persona') + '</strong><div style="color:var(--muted);font-size:0.72rem">' + esc(p.identity || '') + '</div></td>' +
+            '<td style="text-align:left;font-size:0.76rem">' + traitLines.join('<br>') + '</td>' +
+            '<td style="text-align:left;font-size:0.76rem">' + (suggestions.length ? suggestions.join('<br>') : '<span style="color:var(--muted)">No pending suggestions</span>') + '</td>' +
+            '<td style="text-align:left;font-size:0.76rem">' + (history.length ? history.join('<br>') : '<span style="color:var(--muted)">No accepted or declined suggestions yet</span>') + '</td>' +
+            '<td style="white-space:nowrap">' + esc(fmtUserTS(p.last_updated || '')) + '</td>' +
+            '</tr>';
+        }).join('') + '</tbody></table>';
+    }
+
+    async function loadPersonaProfile() {
+      try {
+        var resp = await fetch('/api/persona/profile');
+        if (resp.status === 403 || resp.status === 404) {
+          var section = document.getElementById('persona-profile-section');
+          if (section) section.style.display = 'none';
+          return;
+        }
+        if (!resp.ok) return;
+        renderPersonaProfile(await resp.json());
+      } catch(e) {}
+    }
 
     /* --- Collapsible "Hub Admin — Users" section ---
        The roster runs to ~90 records, so an expanded users table pushes the

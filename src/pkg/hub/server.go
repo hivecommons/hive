@@ -1033,6 +1033,10 @@ type HubServer struct {
 	// read like liveHiveUsers. Old spokes never report engaged users, so this
 	// map simply stays empty for them — optional data, never an error.
 	engagedHiveUsers map[string]time.Time
+	// personaLearningEnabled mirrors the spoke feature flag for the hub-only
+	// read-only profile surface. It is default-off and can also be enabled in
+	// hosted deployments with HIVE_PERSONA_LEARNING_ENABLED.
+	personaLearningEnabled bool
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to

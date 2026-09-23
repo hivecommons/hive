@@ -113,11 +113,24 @@ type Adjustment struct {
 	AppliedAt time.Time `json:"applied_at"`
 }
 
+// HistoryEntry records an accepted or declined suggestion for read-only
+// operator/user profile views. It stores only the proposed field movement and
+// evidence counts, never transcripts.
+type HistoryEntry struct {
+	Outcome  string    `json:"outcome"`
+	Key      string    `json:"key"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Evidence string    `json:"evidence"`
+	At       time.Time `json:"at"`
+}
+
 // Learning is the learning state carried on a persona record.
 type Learning struct {
-	Signals        Signals      `json:"signals"`
-	Suggestions    []Suggestion `json:"suggestions,omitempty"`
-	LastAdjustment *Adjustment  `json:"last_adjustment,omitempty"`
+	Signals        Signals        `json:"signals"`
+	Suggestions    []Suggestion   `json:"suggestions,omitempty"`
+	LastAdjustment *Adjustment    `json:"last_adjustment,omitempty"`
+	History        []HistoryEntry `json:"history,omitempty"`
 }
 
 func (l *Learning) clone() *Learning {
@@ -127,6 +140,9 @@ func (l *Learning) clone() *Learning {
 	out := &Learning{Signals: l.Signals}
 	if len(l.Suggestions) > 0 {
 		out.Suggestions = append([]Suggestion(nil), l.Suggestions...)
+	}
+	if len(l.History) > 0 {
+		out.History = append([]HistoryEntry(nil), l.History...)
 	}
 	if l.LastAdjustment != nil {
 		adj := *l.LastAdjustment
@@ -278,6 +294,11 @@ func (r Record) AcceptSuggestion(n int, now time.Time) (Record, Adjustment, erro
 	state.Suggestions = nil
 	state.Signals = Signals{WindowStart: now}
 	state.LastAdjustment = &adj
+	state.History = append(state.History, HistoryEntry{
+		Outcome: "accepted",
+		Key:     adj.Key, From: adj.From, To: adj.To,
+		Evidence: adj.Evidence, At: now,
+	})
 	updated.Learning = state
 	return updated, adj, nil
 }
@@ -289,6 +310,13 @@ func (r Record) RejectSuggestions(now time.Time) Record {
 		return r
 	}
 	state := r.learning()
+	for _, pending := range state.Suggestions {
+		state.History = append(state.History, HistoryEntry{
+			Outcome: "declined",
+			Key:     pending.Key, From: pending.From, To: pending.To,
+			Evidence: pending.Evidence, At: now,
+		})
+	}
 	state.Suggestions = nil
 	state.Signals = Signals{WindowStart: now}
 	r.Learning = state

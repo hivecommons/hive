@@ -162,6 +162,17 @@ The user must confirm every change:
   `!persona pin` pins without reverting. A pinned persona collects no signals
   and receives no suggestions until `!persona unpin`.
 
+Hub operators can also inspect the read-only **Persona profile** section on the
+hub dashboard when persona learning is enabled. The section is hidden while
+`persona.learning.enabled` is off (and the hub mirror flag is off) or for
+non-operators. It lists each stored persona's current traits, signal counters
+as weights, pending suggestions with evidence counts, accepted/declined
+history, and the user-record last-updated time. This reconciles the original
+#8363 "automatic adjustment" request with the safer shipped design: Hive learns
+from behaviour, but adjustment is deliberately a confirmed suggestion because a
+silent persona mutation would be hard to notice, hard to attribute, and too
+easy to confuse with an autonomy change.
+
 Users without a persona record are never counted; run `!persona setup` first.
 
 ## 4. Read the Fleet page

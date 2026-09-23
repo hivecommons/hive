@@ -470,6 +470,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/scale-settings", s.requireAdmin(s.handleGetScaleSettings))
 	s.mux.HandleFunc("POST /api/saas/admin/scale-settings", s.requireAdmin(s.handleSetScaleSettings))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
+	s.mux.HandleFunc("GET /api/persona/profile", s.requireAdmin(s.handlePersonaProfile))
 	// Aggregate geographic rollup of the user base (counts only, no usernames).
 	// Admin-gated like the rest of the CRM/Users surface: country is personal
 	// data, so even the aggregate stays behind requireAdmin. Takes no query
