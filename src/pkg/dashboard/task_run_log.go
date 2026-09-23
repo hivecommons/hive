@@ -402,10 +402,16 @@ func (s *Server) handleContributeRunStats(w http.ResponseWriter, r *http.Request
 		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
 		return
 	}
+	modelStats, err := readTaskRunModelStats(path, time.Duration(days)*24*time.Hour)
+	if err != nil {
+		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
+		return
+	}
 	jsonResponse(w, map[string]any{
 		"window_days": days,
 		"total":       total,
 		"backends":    stats,
+		"models":      wallStatsList(modelStats),
 	})
 }
 

@@ -19961,6 +19961,178 @@
           }
         }
       }
+    },
+    "/api/contribute/run-stats/models": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Contributor run stats by model",
+        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/contribute/wall": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Contributor wall posts",
+        "description": "Lists visible contributor wall posts when the hive-wide wall switch is enabled.",
+        "responses": {
+          "200": {
+            "description": "Wall posts"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Create contributor wall post",
+        "description": "Creates a short plain-text wall post or one-level reply for a signed-in active contributor. Returns 401 anonymous, 403 disabled/revoked/muted, and 429 on rate limit.",
+        "responses": {
+          "200": {
+            "description": "Created post"
+          },
+          "401": {
+            "description": "Sign-in required"
+          },
+          "403": {
+            "description": "Disabled or forbidden"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/api/contribute/wall/{id}": {
+      "delete": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Delete contributor wall post",
+        "description": "Lets the author delete their own wall post.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Only the author may delete"
+          },
+          "404": {
+            "description": "Post not found"
+          }
+        }
+      }
+    },
+    "/api/contribute/wall/{id}/hide": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Hide contributor wall post",
+        "description": "Owner/read-write moderation action hiding a post from public readers while keeping it visible to the author.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hidden"
+          },
+          "403": {
+            "description": "Write role required"
+          },
+          "404": {
+            "description": "Post not found"
+          }
+        }
+      }
+    },
+    "/api/contribute/wall/{id}/flag": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Flag contributor wall post",
+        "description": "Flags a post for Management review by a signed-in active contributor.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Flagged"
+          },
+          "401": {
+            "description": "Sign-in required"
+          },
+          "403": {
+            "description": "Contributor profile required"
+          },
+          "404": {
+            "description": "Post not found"
+          }
+        }
+      }
+    },
+    "/api/contributors/{id}/wall-mute": {
+      "post": {
+        "tags": [
+          "Contributors"
+        ],
+        "summary": "Mute contributor wall author",
+        "description": "Owner-only moderation action muting or unmuting a contributor from posting on the wall.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mute updated"
+          },
+          "403": {
+            "description": "Owner required"
+          },
+          "404": {
+            "description": "Contributor not found"
+          }
+        }
+      }
     }
   },
   "components": {

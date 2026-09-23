@@ -198,6 +198,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"auto_upgrade_mode":                  cfg.Hub.AutoUpgradeMode,
 			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":               cfg.Hub.ContributeSuspended,
+			"contribute_wall_enabled":            cfg.Hub.ContributeWallEnabled,
+			"contribute_wall_retention_days":     cfg.Hub.ContributeWallRetentionDays,
 			"contribute_titles_mode":             cfg.Hub.ContributeTitlesMode,
 			"contribute_authors_mode":            cfg.Hub.ContributeAuthorsMode,
 			"contribute_labels_mode":             cfg.Hub.ContributeLabelsMode,
@@ -883,6 +885,8 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		SnapshotFrameAncestors         []string                               `json:"snapshot_frame_ancestors"`
 		AutoUpgrade                    *bool                                  `json:"auto_upgrade"`
 		ContributeSuspended            *bool                                  `json:"contribute_suspended"`
+		ContributeWallEnabled          *bool                                  `json:"contribute_wall_enabled"`
+		ContributeWallRetentionDays    *int                                   `json:"contribute_wall_retention_days"`
 		ContributeTitlesMode           *string                                `json:"contribute_titles_mode"`
 		ContributeAuthorsMode          *string                                `json:"contribute_authors_mode"`
 		ContributeLabelsMode           *string                                `json:"contribute_labels_mode"`
@@ -948,6 +952,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeSuspended != nil {
 		cfg.Hub.ContributeSuspended = *body.ContributeSuspended
+	}
+	if body.ContributeWallEnabled != nil {
+		cfg.Hub.ContributeWallEnabled = *body.ContributeWallEnabled
+	}
+	if body.ContributeWallRetentionDays != nil {
+		cfg.Hub.ContributeWallRetentionDays = *body.ContributeWallRetentionDays
 	}
 	if body.ContributeTitlesMode != nil {
 		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode

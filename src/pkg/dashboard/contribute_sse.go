@@ -49,10 +49,11 @@ const readyQueueMaxPageSize = 1000
 // initial hydration payload (queue + replay) from subsequent single activity
 // events so the client can render each without guessing.
 type sseEvent struct {
-	Type     string           `json:"type"`               // "activity" | "hello" | "gap"
-	Activity *ActivityEntry   `json:"activity,omitempty"` // set when Type=="activity"
-	Replay   []ActivityEntry  `json:"replay,omitempty"`   // set when Type=="hello"
-	Queue    []ReadyQueueItem `json:"queue,omitempty"`    // set when Type=="hello"
+	Type     string              `json:"type"`               // "activity" | "hello" | "gap"
+	Activity *ActivityEntry      `json:"activity,omitempty"` // set when Type=="activity"
+	WallPost *ContributeWallPost `json:"wall_post,omitempty"`
+	Replay   []ActivityEntry     `json:"replay,omitempty"` // set when Type=="hello"
+	Queue    []ReadyQueueItem    `json:"queue,omitempty"`  // set when Type=="hello"
 	// Seq is the stream position (#6218). It is a monotonic counter over every
 	// event broadcast, assigned once at fan-out so all subscribers see the SAME
 	// number for the same event. On "activity" it is that event's position; on

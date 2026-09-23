@@ -4211,6 +4211,13 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// ContributeWallEnabled opts a hive into the public contributor wall on
+	// /contribute. Default false so no deployment gets a public posting surface
+	// without an operator decision.
+	ContributeWallEnabled bool `yaml:"contribute_wall_enabled,omitempty"`
+	// ContributeWallRetentionDays bounds persisted contributor-wall posts on the
+	// hub data volume. 0/unset resolves to the dashboard's 90-day default.
+	ContributeWallRetentionDays int `yaml:"contribute_wall_retention_days,omitempty"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;
@@ -5447,6 +5454,11 @@ func (c *Config) applyDefaults() {
 		} else if c.Hub.ContributeCooldownHours > contributeCooldownMaxHours {
 			c.Hub.ContributeCooldownHours = contributeCooldownMaxHours
 		}
+	}
+	if c.Hub.ContributeWallRetentionDays < 0 {
+		c.Hub.ContributeWallRetentionDays = 0
+	} else if c.Hub.ContributeWallRetentionDays > 3650 {
+		c.Hub.ContributeWallRetentionDays = 3650
 	}
 
 	// One-time migration of the old dual label lists into the single list+mode.
