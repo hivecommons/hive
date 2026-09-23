@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	wsHeartbeatInterval = 30 * time.Second
-	wsHeartbeatTimeout  = 90 * time.Second
+	wsHeartbeatInterval            = 30 * time.Second
+	wsHeartbeatTimeout             = 90 * time.Second
+	contributorProfileSaveAttempts = 3
 	// wsTaskTimeout is the hub-owned LEASE TTL on task ownership (hivecommons/hive
 	// #2568). A task's lease is renewed on assignment and on every task_progress
 	// report; if a connection holds a task but the lease has not been renewed within
@@ -1763,6 +1764,37 @@ func (h *ContributeWSHub) SetContributorAgentRoleGrants(contributorID string, gr
 	}
 }
 
+func (h *ContributeWSHub) SetContributorTrustTier(contributorID, tier string) {
+	if h == nil || contributorID == "" {
+		return
+	}
+	version := 0
+	if p := findContributor(contributorID); p != nil {
+		version = p.Version
+	}
+	h.mu.RLock()
+	var targets []*ContributorConnection
+	for _, c := range h.connections {
+		c.mu.Lock()
+		matches := c.profile != nil && (c.profile.ContributorID == contributorID || strings.EqualFold(c.profile.GitHubUsername, contributorID))
+		c.mu.Unlock()
+		if matches {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		c.mu.Lock()
+		if c.profile != nil {
+			c.profile.TrustTier = tier
+			if version != 0 {
+				c.profile.Version = version
+			}
+		}
+		c.mu.Unlock()
+	}
+}
+
 const maxWSConnections = 50
 
 func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
@@ -2468,6 +2500,96 @@ func saveContributorKnowledgeState(username string, loaded bool, errText string)
 	return nil, errProfileConflict
 }
 
+func cloneContributorProfileForSave(p *ContributorProfile) *ContributorProfile {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	if p.KnowledgeLoaded != nil {
+		v := *p.KnowledgeLoaded
+		cp.KnowledgeLoaded = &v
+	}
+	if p.LastCompletedTask != nil {
+		v := *p.LastCompletedTask
+		cp.LastCompletedTask = &v
+	}
+	if p.CurrentTask != nil {
+		v := *p.CurrentTask
+		cp.CurrentTask = &v
+	}
+	cp.LabelInterests = append([]string(nil), p.LabelInterests...)
+	cp.AgentRoleGrants = append([]string(nil), p.AgentRoleGrants...)
+	cp.Specializations = append([]string(nil), p.Specializations...)
+	cp.Collaborators = append([]CollaboratorRecord(nil), p.Collaborators...)
+	cp.ActiveTasks = append([]WSTaskAssign(nil), p.ActiveTasks...)
+	return &cp
+}
+
+func refreshConnectionContributorProfile(dst, saved *ContributorProfile) {
+	if dst == nil || saved == nil {
+		return
+	}
+	dst.TrustTier = saved.TrustTier
+	dst.TasksCompleted = saved.TasksCompleted
+	dst.TasksWithPR = saved.TasksWithPR
+	dst.TasksFailed = saved.TasksFailed
+	dst.LastActive = saved.LastActive
+	if saved.LastCompletedTask != nil {
+		taskCopy := *saved.LastCompletedTask
+		dst.LastCompletedTask = &taskCopy
+	} else {
+		dst.LastCompletedTask = nil
+	}
+	dst.Version = saved.Version
+}
+
+func saveConnectionContributorProfile(c *ContributorConnection, update func(*ContributorProfile) bool) (string, bool, error) {
+	if c == nil {
+		return "", false, nil
+	}
+	var username string
+	var lastErr error
+	for attempt := 0; attempt < contributorProfileSaveAttempts; attempt++ {
+		var profile *ContributorProfile
+		var promoted bool
+		if attempt == 0 {
+			c.mu.Lock()
+			if c.profile == nil {
+				c.mu.Unlock()
+				return "", false, nil
+			}
+			promoted = update(c.profile)
+			profile = cloneContributorProfileForSave(c.profile)
+			username = profile.GitHubUsername
+			c.mu.Unlock()
+		} else {
+			if username == "" {
+				return "", false, lastErr
+			}
+			var err error
+			profile, err = loadContributorProfile(username)
+			if err != nil {
+				return username, false, err
+			}
+			promoted = update(profile)
+		}
+		if err := saveContributorProfile(profile); err != nil {
+			if errors.Is(err, errProfileConflict) {
+				lastErr = err
+				continue
+			}
+			return username, false, err
+		}
+		c.mu.Lock()
+		if c.profile != nil && strings.EqualFold(c.profile.GitHubUsername, username) {
+			refreshConnectionContributorProfile(c.profile, profile)
+		}
+		c.mu.Unlock()
+		return username, promoted, nil
+	}
+	return username, false, lastErr
+}
+
 // handleReady is the dispatch phase: a contributor with no task asks for work
 // and receives a selected task (or a no-work notice). stop=true closes the socket.
 func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
@@ -3127,7 +3249,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// #6450: a genuine completion proves the runtime works — clear
 			// the contributor's fast-failure streak.
 			h.resetContributorFailureStreak(identityOf(s.contributor))
-			s.contributor.mu.Lock()
+			completedAt := time.Now().UTC().Format(time.RFC3339)
 			// #7862: a completion with nothing behind it — no PR, no
 			// no_work_needed, from a relay that said how it decided (chrome
 			// inference or a bare `HIVE_VERDICT: complete`) — earns no
@@ -3135,46 +3257,51 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// still clears the failure streak: the runtime worked, the model
 			// just declared victory. The same predicate picks the short,
 			// non-escalating issue cooldown in markTaskCompletedVerdictKeySignal.
-			if !isEvidenceLessCompletion(verifiedPR, verdict, msg.CompletionSignal) {
-				s.contributor.profile.TasksCompleted++
-			}
-			// Trust credit is gated on the VERIFIED PR, not the reported one:
-			// counting the raw self-reported field would hand out
-			// contents:write / pulls:write for a PR that was never shown to
-			// exist, belongs to another repo, or was authored by someone else.
-			if verifiedPR != "" {
-				tasksWithPRBefore := s.contributor.profile.TasksWithPR
-				s.contributor.profile.TasksWithPR++
-				logTrustedEligibilityIfCrossed(h.logger, s.contributor.profile, tasksWithPRBefore)
-			}
-			s.contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
-			if completedTask != nil {
-				s.contributor.profile.LastCompletedTask = completedTask
-			}
-			// Promote on completions that produced a VERIFIED pull request.
-			// Completion is self-reported, so counting bare task_complete
-			// messages — or unverified PR URLs — would hand out contents:write
-			// and pulls:write for work that was never shown to exist.
-			promoted := false
-			if s.contributor.profile.TrustTier == "newcomer" && s.contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
-				s.contributor.profile.TrustTier = "contributor"
-				promoted = true
-				h.logger.Info("[contribute-ws] auto-promoted", "username", s.contributor.profile.GitHubUsername)
-			}
-			promotedUser := s.contributor.profile.GitHubUsername
 			promotedCLI := s.contributor.cliBackend
 			promotedModel := s.contributor.model
 			promotedEffort := s.contributor.reasoningEffort
-			s.contributor.mu.Unlock()
+			countCompletion := !isEvidenceLessCompletion(verifiedPR, verdict, msg.CompletionSignal)
+			promotedUser, promoted, saveErr := saveConnectionContributorProfile(s.contributor, func(p *ContributorProfile) bool {
+				if countCompletion {
+					p.TasksCompleted++
+				}
+				// Trust credit is gated on the VERIFIED PR, not the reported one:
+				// counting the raw self-reported field would hand out
+				// contents:write / pulls:write for a PR that was never shown to
+				// exist, belongs to another repo, or was authored by someone else.
+				if verifiedPR != "" {
+					tasksWithPRBefore := p.TasksWithPR
+					p.TasksWithPR++
+					logTrustedEligibilityIfCrossed(h.logger, p, tasksWithPRBefore)
+				}
+				p.LastActive = completedAt
+				if completedTask != nil {
+					taskCopy := *completedTask
+					p.LastCompletedTask = &taskCopy
+				}
+				// Promote on completions that produced a VERIFIED pull request.
+				// Completion is self-reported, so counting bare task_complete
+				// messages — or unverified PR URLs — would hand out contents:write
+				// and pulls:write for work that was never shown to exist.
+				if p.TrustTier == "newcomer" && p.TasksWithPR >= contributorAutoPromoteAt {
+					p.TrustTier = "contributor"
+					return true
+				}
+				return false
+			})
+			if saveErr != nil {
+				h.logger.Warn("[contribute-ws] failed to persist task_complete profile update",
+					"username", promotedUser, "error", saveErr)
+			}
 			// #2390-era command center: narrate the promotion as its own
 			// activity event so the Operations dev-log and achievement pops
 			// (contribute_sse.go broadcast) surface "promoted to contributor".
 			// Read-only signalling — it changes no control behaviour and is
 			// emitted only on the real newcomer -> contributor transition.
 			if promoted {
+				h.logger.Info("[contribute-ws] auto-promoted", "username", promotedUser)
 				h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
 			}
-			_ = saveContributorProfile(s.contributor.profile)
 		} else {
 			// N9: this is now literally true. It previously logged "ignored"
 			// after the handler had already cleared currentTask and the
@@ -3344,10 +3471,16 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if !taskAssignedAt.IsZero() {
 				h.recordContributorFastFailure(identityOf(s.contributor), time.Since(taskAssignedAt), msg.Reason)
 			}
-			s.contributor.mu.Lock()
-			s.contributor.profile.TasksFailed++
-			s.contributor.mu.Unlock()
-			_ = saveContributorProfile(s.contributor.profile)
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			username, _, saveErr := saveConnectionContributorProfile(s.contributor, func(p *ContributorProfile) bool {
+				p.TasksFailed++
+				p.LastActive = failedAt
+				return false
+			})
+			if saveErr != nil {
+				h.logger.Warn("[contribute-ws] failed to persist task_failed profile update",
+					"username", username, "error", saveErr)
+			}
 		} else {
 			h.recordDecision(s.contributor.profile.GitHubUsername, decisionUnassignedIgnored,
 				msg.TaskID, "", 0,

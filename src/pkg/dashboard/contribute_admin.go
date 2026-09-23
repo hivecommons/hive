@@ -132,8 +132,11 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 	// H2: if this change revokes access, fence any live WebSocket sessions the
 	// contributor holds so an in-flight connection cannot keep working (or keep
 	// saving a stale "contributor" profile) after the revoke.
-	if req.Tier == "revoked" && s.contributeHub != nil {
-		s.contributeHub.DisconnectContributor(p.ContributorID, "contribution access revoked")
+	if s.contributeHub != nil {
+		s.contributeHub.SetContributorTrustTier(p.ContributorID, req.Tier)
+		if req.Tier == "revoked" {
+			s.contributeHub.DisconnectContributor(p.ContributorID, "contribution access revoked")
+		}
 	}
 	s.logger.Info("contributor tier changed", "username", p.GitHubUsername, "tier", req.Tier)
 	jsonResponse(w, map[string]any{"ok": true, "trust_tier": req.Tier})
