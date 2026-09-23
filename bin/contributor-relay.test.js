@@ -13456,7 +13456,7 @@ test('#7924 a label the repository does not define is created once and the add r
   } finally { console.log = log; console.error = err; teardown(relay); }
 });
 
-test('#7924 a plain no_work_needed carries no blocked marker and gets no label — the pre-#7924 wire shape is unchanged', () => {
+test('#7924/#8477 a plain already-done no_work_needed carries no blocked marker and gets the already-done label', () => {
   const PANE = `HIVE_VERDICT: no_work_needed — already fixed on main by #12\n${IDLE_PANE}`;
   const relay = loadRelay({ backend: 'copilot', paneText: PANE });
   const log = console.log; console.log = () => {};
@@ -13468,8 +13468,28 @@ test('#7924 a plain no_work_needed carries no blocked marker and gets no label �
     assert.strictEqual(completed.length, 1);
     assert.strictEqual(completed[0].verdict, 'no_work_needed');
     assert.ok(!('verdict_blocked' in completed[0]), `no marker on a plain no_work_needed: ${JSON.stringify(completed[0])}`);
-    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0);
+    assert.strictEqual(completed[0].verdict_reason_kind, 'already_done');
+    assert.strictEqual(relay.__commands.filter(c => /gh issue edit/.test(c)).length, 1);
+    assert.ok(relay.__commands.some(c => c.includes('--add-label') && c.includes('hive/already-done')), JSON.stringify(relay.__commands));
   } finally { console.log = log; teardown(relay); }
+});
+
+test('#8477 already-done no_work_needed carries structured reason kind and evidence', () => {
+  const relay = loadRelay({});
+  try {
+    let fields = relay.verdictWireFields({ verdict: 'no_work_needed', reason: 'merged PR #1297 already resolves this issue' });
+    assert.strictEqual(fields.verdict, 'no_work_needed');
+    assert.strictEqual(fields.verdict_reason_kind, 'already_done');
+    assert.deepStrictEqual(fields.evidence, { pr: 1297 });
+
+    fields = relay.verdictWireFields({ verdict: 'no_work_needed', reason: 'already fixed by commit e6d3de3' });
+    assert.strictEqual(fields.verdict_reason_kind, 'already_done');
+    assert.deepStrictEqual(fields.evidence, { commit: 'e6d3de3' });
+
+    fields = relay.verdictWireFields({ verdict: 'no_work_needed', reason: 'waiting on maintainer decision for #1297' });
+    assert.ok(!('verdict_reason_kind' in fields), JSON.stringify(fields));
+    assert.ok(!('evidence' in fields), JSON.stringify(fields));
+  } finally { teardown(relay); }
 });
 
 test('#7924 the label is for GitHub issue tasks only', () => {

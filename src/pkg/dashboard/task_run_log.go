@@ -91,16 +91,19 @@ const (
 // normalizeCompletionVerdict) — client free text never lands here except the
 // bounded failure reason, which the fleet view already displays as-is.
 type TaskRunRecord struct {
-	TS       string `json:"ts"`
-	TaskID   string `json:"task_id"`
-	TaskGen  uint64 `json:"task_gen,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Number   int    `json:"number,omitempty"`
-	Username string `json:"username"`
-	Backend  string `json:"backend"`
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Effort   string `json:"effort,omitempty"`
+	TS      string `json:"ts"`
+	TaskID  string `json:"task_id"`
+	TaskGen uint64 `json:"task_gen,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Number  int    `json:"number,omitempty"`
+	// RepeatOfferCount is the number of earlier logged runs for the same issue.
+	// Zero means this log has not seen the issue offered before.
+	RepeatOfferCount int    `json:"repeat_offer_count,omitempty"`
+	Username         string `json:"username"`
+	Backend          string `json:"backend"`
+	Provider         string `json:"provider,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Effort           string `json:"effort,omitempty"`
 	// AdvisorModel / AdvisorEffort: the second model that reviewed the work
 	// and its effort (hivecommons/hive#7760), when the relay reported one.
 	AdvisorModel  string `json:"advisor_model,omitempty"`
@@ -117,6 +120,8 @@ type TaskRunRecord struct {
 	Verdict            string  `json:"verdict,omitempty"`
 	VerdictReason      string  `json:"verdict_reason,omitempty"`
 	NeedsDecisionLabel string  `json:"needs_decision_label,omitempty"`
+	VerdictReasonKind  string  `json:"verdict_reason_kind,omitempty"`
+	VerdictDisposition string  `json:"verdict_disposition,omitempty"`
 	FailureKind        string  `json:"failure_kind,omitempty"`
 	Reason             string  `json:"reason,omitempty"`
 	Permanent          bool    `json:"permanent,omitempty"`
@@ -471,6 +476,32 @@ func readTaskRunsForUser(path, username string, window time.Duration, limit int)
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func countPriorTaskRunsForIssue(path, repo string, number int) int {
+	if strings.TrimSpace(repo) == "" || number <= 0 {
+		return 0
+	}
+	taskRunMu.Lock()
+	data, err := os.ReadFile(path)
+	taskRunMu.Unlock()
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec TaskRunRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec.Number == number && strings.EqualFold(rec.Repo, repo) {
+			count++
+		}
+	}
+	return count
 }
 
 // handleContributeRuns serves GET /api/contribute/runs?username=<u>&days=N&limit=N:

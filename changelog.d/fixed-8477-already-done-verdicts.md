@@ -1,0 +1,1 @@
+- Comment and label contribute issues when agents verify they were already resolved, with a longer already-done hold to prevent repeat offers (#8477)

@@ -434,6 +434,14 @@ type WSMessage struct {
 	// maintainer decision (#8470). A verified PR still wins; otherwise the hub
 	// books the full cooldown and the relay labels the issue when configured.
 	VerdictNeedsDecision bool `json:"verdict_needs_decision,omitempty"`
+	// VerdictReasonKind is an optional structured classifier for VerdictReason.
+	// "already_done" means the agent found the issue already resolved by landed
+	// evidence and the Evidence field should name the PR or commit to verify.
+	VerdictReasonKind string `json:"verdict_reason_kind,omitempty"`
+	// Evidence carries structured already_done evidence. It is optional and
+	// additive; older relays can still put "merged PR #123" in VerdictReason and
+	// the hub will fall back to conservative parsing.
+	Evidence *VerdictEvidence `json:"evidence,omitempty"`
 	// VerdictReason optionally carries a machine-readable reason for a
 	// no_work_needed verdict ("maintainer_gated", "already_covered", or free
 	// text the relay scraped from the agent's output). Audit-only: it is
@@ -465,6 +473,11 @@ type WSMessage struct {
 	// contributor will be rejected outright, so the hub should prefer a
 	// different contributor. See kubestellar/hive#2203.
 	Permanent bool `json:"permanent,omitempty"`
+}
+
+type VerdictEvidence struct {
+	PR     int    `json:"pr,omitempty"`
+	Commit string `json:"commit,omitempty"`
 }
 
 type WSTaskAssign struct {
@@ -753,6 +766,9 @@ type ContributeWSHub struct {
 	// settleVerifier is the #7871 API-check seam; nil means "use
 	// deps.GHClient.VerifySettlingRef". Tests substitute a fixture.
 	settleVerifier ghpkg.SettleVerifier
+	// alreadyDoneMarker is the #8477 mutation seam; nil means use GHClient's
+	// comment + label and optional CloseIssue path. Tests substitute a fake path.
+	alreadyDoneMarker func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -3211,9 +3227,9 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// repo — not what settled it, and recording that as a
 				// settlement would be the wrong fact in the claim ledger.
 				if verdict == completionVerdictNoWorkNeeded {
-					go h.settleIssueFromVerdict(completedTask.Repo, completedTask.Number,
-						strings.TrimSpace(msg.VerdictReason), taskAssignedAt,
-						s.contributor.profile.GitHubUsername)
+					go h.settleIssueFromVerdictWithEvidence(completedTask.Repo, completedTask.Number,
+						strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence,
+						taskAssignedAt, s.contributor.profile.GitHubUsername)
 				}
 			}
 			completedDesc := msg.TaskID
@@ -3253,20 +3269,21 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// normalized fields the slog line above carries, plus the
 			// duration nothing recorded before. DECLARE only.
 			runRec := TaskRunRecord{
-				TaskID:           msg.TaskID,
-				TaskGen:          msg.TaskGen,
-				Username:         s.contributor.profile.GitHubUsername,
-				Backend:          s.contributor.cliBackend,
-				Provider:         provider,
-				Model:            s.contributor.model,
-				Effort:           s.contributor.reasoningEffort,
-				AdvisorModel:     s.contributor.advisorModel,
-				AdvisorEffort:    s.contributor.advisorEffort,
-				Role:             s.contributor.role,
-				Outcome:          "completed",
-				CompletionSignal: normalizeCompletionSignal(msg.CompletionSignal),
-				Verdict:          verdict,
-				VerdictReason:    strings.TrimSpace(msg.VerdictReason),
+				TaskID:            msg.TaskID,
+				TaskGen:           msg.TaskGen,
+				Username:          s.contributor.profile.GitHubUsername,
+				Backend:           s.contributor.cliBackend,
+				Provider:          provider,
+				Model:             s.contributor.model,
+				Effort:            s.contributor.reasoningEffort,
+				AdvisorModel:      s.contributor.advisorModel,
+				AdvisorEffort:     s.contributor.advisorEffort,
+				Role:              s.contributor.role,
+				Outcome:           "completed",
+				CompletionSignal:  normalizeCompletionSignal(msg.CompletionSignal),
+				Verdict:           verdict,
+				VerdictReason:     strings.TrimSpace(msg.VerdictReason),
+				VerdictReasonKind: strings.TrimSpace(msg.VerdictReasonKind),
 				NeedsDecisionLabel: func() string {
 					if verdict == completionVerdictNeedsDecision {
 						return h.configuredNeedsDecisionLabel()
@@ -3276,9 +3293,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				PRURL:      verifiedPR,
 				PRVerified: verifiedPR != "",
 			}
+			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone {
+				runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
+			}
 			if completedTask != nil {
 				runRec.Repo = completedTask.Repo
 				runRec.Number = completedTask.Number
+				runRec.RepeatOfferCount = countPriorTaskRunsForIssue(h.taskRunLogPath(), completedTask.Repo, completedTask.Number)
 			}
 			if !taskAssignedAt.IsZero() {
 				runRec.DurationS = time.Since(taskAssignedAt).Seconds()

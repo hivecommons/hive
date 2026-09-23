@@ -12,7 +12,8 @@ import (
 var ErrReporterConfirmationRequired = errors.New("reporter confirmation required before closing human-filed bug issue")
 
 type IssueCloseOptions struct {
-	OverrideReason string
+	OverrideReason          string
+	SuppressOverrideComment bool
 }
 
 func ReporterConfirmationCloseGateReason(issue *gh.Issue) string {
@@ -61,9 +62,11 @@ func (c *Client) CloseIssue(ctx context.Context, repo string, number int, opts I
 		return fmt.Errorf("%w: %s", ErrReporterConfirmationRequired, reason)
 	}
 	if reason != "" {
-		body := fmt.Sprintf("Reporter-confirmation close override used for this human-filed bug-family issue.\n\nReason: %s", overrideReason)
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-			return fmt.Errorf("posting reporter-confirmation override on %s/%s#%d: %w", owner, repoName, number, err)
+		if !opts.SuppressOverrideComment {
+			body := fmt.Sprintf("Reporter-confirmation close override used for this human-filed bug-family issue.\n\nReason: %s", overrideReason)
+			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+				return fmt.Errorf("posting reporter-confirmation override on %s/%s#%d: %w", owner, repoName, number, err)
+			}
 		}
 		c.warn("issue close override used",
 			"repo", owner+"/"+repoName,

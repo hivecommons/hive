@@ -3249,6 +3249,7 @@ function runHeadlessTask(task) {
       // applied BEFORE stopAgentForTaskExit drops it below.
       if (noWork && noWork.verdict === HIVE_VERDICT_BLOCKED) markIssueBlocked(task, noWork.reason);
       if (noWork && noWork.needsDecision) markIssueNeedsDecision(task, noWork.reason);
+      if (isAlreadyDoneNoWork(noWork)) markIssueAlreadyDone(task, noWork.reason);
       // #5353: the one-shot child has already exited (this callback is its
       // exit), so there is no process to stop — but the task-scoped token it
       // was given stays valid for the rest of wsTokenTTL. Drop it with the
@@ -4525,6 +4526,11 @@ const HIVE_VERDICT_TOKENS = [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_V
 const NO_WORK_BLOCKED_REASON_RE = /^blocked\s*(?:(?:[:—–-])|(?:(?:on|by)\b))\s*/i;
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
+const ALREADY_DONE_REASON_KIND = 'already_done';
+const ALREADY_DONE_MERGED_PR_RE = /\bmerged\s+(?:pull\s+request|PR)\s*#(\d+)\b/i;
+const ALREADY_DONE_TEXT_RE = /\b(?:already\s+(?:resolved|fixed|implemented|merged|done)|no[-\s]?op)\b/i;
+const COMMIT_SHA_RE = /\b[0-9a-f]{7,40}\b/i;
+const ALREADY_DONE_WORKFLOW_LABEL = process.env.HIVE_ALREADY_DONE_LABEL || 'hive/already-done';
 
 // isNoWorkVerdict says whether a verdict object is one of the "nothing to
 // ship" family — no_work_needed or blocked — which the hub books the same way
@@ -4544,12 +4550,33 @@ function isNoWorkVerdict(v) {
 // src/pkg/dashboard/contribute_ledgers.go).
 function verdictWireFields(noWork) {
   if (!isNoWorkVerdict(noWork)) return {};
+  const alreadyDone = alreadyDoneVerdictFields(noWork.reason);
   return {
     verdict: HIVE_VERDICT_NO_WORK,
     verdict_reason: noWork.reason,
+    ...alreadyDone,
     verdict_blocked: noWork.verdict === HIVE_VERDICT_BLOCKED ? true : undefined,
     verdict_needs_decision: noWork.needsDecision ? true : undefined,
   };
+}
+
+function alreadyDoneVerdictFields(reason) {
+  reason = String(reason || '');
+  if (!ALREADY_DONE_MERGED_PR_RE.test(reason) && !ALREADY_DONE_TEXT_RE.test(reason)) return {};
+  const evidence = {};
+  const pr = ALREADY_DONE_MERGED_PR_RE.exec(reason);
+  if (pr) evidence.pr = Number(pr[1]);
+  const sha = COMMIT_SHA_RE.exec(reason);
+  if (sha && /[a-f]/i.test(sha[0])) evidence.commit = sha[0];
+  return {
+    verdict_reason_kind: ALREADY_DONE_REASON_KIND,
+    evidence: Object.keys(evidence).length ? evidence : undefined,
+  };
+}
+
+function isAlreadyDoneNoWork(noWork) {
+  if (!isNoWorkVerdict(noWork)) return false;
+  return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
 }
 
 // hiveVerdictLineRe builds the one regex that recognises a sentinel line, for
@@ -6132,6 +6159,39 @@ function markIssueNeedsDecision(task, reason) {
   markIssueLabel(task, reason, label, 'Waiting on a maintainer decision; not contributor work until a human clears the label', 'needs_decision');
 }
 
+function markIssueAlreadyDone(task, reason) {
+  if (!task || task.kind !== 'issue' || !task.repo || !(task.number > 0) || task.external_id) return;
+  const hub = task._hub || hubs[activeHubIndex];
+  if (!hubGrantsIssuesWrite(hub)) {
+    console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number}, but the task credential does not carry issues:write — leaving the '${ALREADY_DONE_WORKFLOW_LABEL}' label to the hub or a human; the hub's already-done hold suppresses re-offer (#8477)`);
+    return;
+  }
+  let token = null;
+  try { token = fs.readFileSync(GH_TOKEN_CACHE, 'utf8').trim() || null; } catch (_) {}
+  const env = token ? { ...process.env, GH_TOKEN: token } : process.env;
+  const issueURL = `https://github.com/${task.repo}/issues/${task.number}`;
+  const addLabel = () => execSync(
+    `gh issue edit ${shellQuote(issueURL)} --add-label ${shellQuote(ALREADY_DONE_WORKFLOW_LABEL)} 2>&1`,
+    { encoding: 'utf8', timeout: 20000, env });
+  const describe = e => ((e && (e.stdout || e.message)) || 'unknown error').toString().trim();
+  try {
+    addLabel();
+  } catch (first) {
+    try {
+      execSync(
+        `gh label create ${shellQuote(ALREADY_DONE_WORKFLOW_LABEL)} --repo ${shellQuote(task.repo)} ` +
+        `--description ${shellQuote('Hive contributor found this issue already resolved; remove if work remains')} ` +
+        '--color 8250df 2>&1',
+        { encoding: 'utf8', timeout: 20000, env });
+      addLabel();
+    } catch (second) {
+      console.error(`Could not apply the '${ALREADY_DONE_WORKFLOW_LABEL}' label to ${task.repo}#${task.number}: ${describe(first)}; after creating the label: ${describe(second)} — the hub's already-done hold still suppresses re-offer (#8477)`);
+      return;
+    }
+  }
+  console.log(`Applied the '${ALREADY_DONE_WORKFLOW_LABEL}' label to ${task.repo}#${task.number} (#8477): ${reason || '(no reason given)'} — a human removes it if work remains`);
+}
+
 function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
   if (!currentTask) return;
   // #7879: the PR comment must go out BEFORE stopAgentForTaskExit drops the
@@ -6141,6 +6201,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // credential, which is about to be dropped.
   if (noWork && noWork.verdict === HIVE_VERDICT_BLOCKED) markIssueBlocked(currentTask, noWork.reason);
   if (noWork && noWork.needsDecision) markIssueNeedsDecision(currentTask, noWork.reason);
+  if (isAlreadyDoneNoWork(noWork)) markIssueAlreadyDone(currentTask, noWork.reason);
   // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
   // chrome, and it is wrong often enough to have produced thirteen separate
   // issues. When it is wrong, the agent is still mid-turn — and reporting
@@ -8097,9 +8158,14 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     HIVE_VERDICT_TOKENS,
     BLOCKED_WORKFLOW_LABEL,
     DEFAULT_NEEDS_DECISION_LABEL,
+    ALREADY_DONE_WORKFLOW_LABEL,
     isNoWorkVerdict,
+    isAlreadyDoneNoWork,
+    verdictWireFields,
+    alreadyDoneVerdictFields,
     markIssueBlocked,
     markIssueNeedsDecision,
+    markIssueAlreadyDone,
     detectHiveVerdict,
     detectHiveVerdicts,
     detectCompletionVerdict,

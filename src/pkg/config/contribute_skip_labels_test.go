@@ -8,7 +8,7 @@ import (
 func TestContributeSkipLabelsDefaultSet(t *testing.T) {
 	c := &Config{}
 	c.applyDefaults()
-	want := []string{"blocked", "tracking", "epic", "discussion", "question", "needs-decision", "needs-triage"}
+	want := []string{"blocked", "hive/already-done", "tracking", "epic", "discussion", "question", "needs-decision", "needs-triage"}
 	if got := c.Hub.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -16,7 +16,7 @@ func TestContributeSkipLabelsDefaultSet(t *testing.T) {
 
 func TestContributeSkipLabelsCustomSetAndBlockedFloor(t *testing.T) {
 	h := HubConfig{ContributeSkipLabels: []string{"discussion", "wayfinder:*"}}
-	want := []string{"discussion", "wayfinder:*", "blocked", "needs-decision"}
+	want := []string{"discussion", "wayfinder:*", "hive/already-done", "blocked", "needs-decision"}
 	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -28,7 +28,7 @@ func TestContributeSkipLabelsEnvOverride(t *testing.T) {
 	c.Hub.ContributeSkipLabels = []string{"discussion"}
 	c.applyBootstrapEnv()
 	c.applyDefaults()
-	want := []string{"question", "wayfinder:*", "blocked", "needs-decision"}
+	want := []string{"question", "wayfinder:*", "hive/already-done", "blocked", "needs-decision"}
 	if got := c.Hub.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -50,7 +50,7 @@ func TestContributeSkipLabelMatchCaseInsensitiveAndGlob(t *testing.T) {
 func TestContributeNeedsDecisionLabelCustomizesSkipFloor(t *testing.T) {
 	label := "2-discussing"
 	h := HubConfig{ContributeSkipLabels: []string{"blocked"}, ContributeNeedsDecisionLabel: &label}
-	want := []string{"blocked", "2-discussing"}
+	want := []string{"blocked", "hive/already-done", "2-discussing"}
 	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}
@@ -59,7 +59,7 @@ func TestContributeNeedsDecisionLabelCustomizesSkipFloor(t *testing.T) {
 func TestContributeNeedsDecisionLabelEmptyDisablesAdditionalSkip(t *testing.T) {
 	empty := ""
 	h := HubConfig{ContributeSkipLabels: []string{"discussion"}, ContributeNeedsDecisionLabel: &empty}
-	want := []string{"discussion", "blocked"}
+	want := []string{"discussion", "hive/already-done", "blocked"}
 	if got := h.ContributeSkipLabelPatterns(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ContributeSkipLabelPatterns() = %v, want %v", got, want)
 	}

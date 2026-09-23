@@ -208,6 +208,13 @@ func (c *Client) verifySettlingPR(ctx context.Context, owner, name, taskRepo str
 	if !prBaseRepoMatches(base, taskRepo) {
 		return SettleVerification{Reason: fmt.Sprintf("PR base repo %q is not task repo %q", base, taskRepo)}, nil
 	}
+	if baseRef := strings.TrimSpace(pr.GetBase().GetRef()); baseRef != "" {
+		if branch, err := c.DefaultBranch(ctx, owner, name); err != nil {
+			return SettleVerification{Reason: "default branch lookup failed"}, err
+		} else if !strings.EqualFold(baseRef, branch) {
+			return SettleVerification{Reason: fmt.Sprintf("PR base branch %q is not default branch %q", baseRef, branch)}, nil
+		}
+	}
 	claim := IssueClaim{
 		Repo:       taskRepo,
 		Issue:      taskIssue,

@@ -4280,6 +4280,24 @@ type HubConfig struct {
 	// left as its own const and is not tuned here (the operator specifically asked
 	// for the week-long period to be adjustable).
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
+	// ContributeCloseAlreadyDone lets the hub close an issue when a contributor's
+	// no_work_needed verdict is explicitly "already done" and the cited PR/commit
+	// verifies as landed on the repo's default branch. Nil defaults OFF: the safe
+	// default is comment + label, so maintainers can close after reviewing.
+	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
+	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
+	// resolved. It is also in the default contribute skip label set, so labelled
+	// issues stay out of the offer queue until a maintainer removes it.
+	ContributeAlreadyDoneLabel string `yaml:"contribute_already_done_label,omitempty"`
+	// ContributeAlreadyDoneHoldDays is the longer offer suppression for
+	// an "already done" verdict while the label/comment path is pending or if
+	// cited evidence cannot be verified. It is
+	// deliberately separate from ContributeCooldownHours so operators can shorten
+	// ordinary task cooldowns without re-offering likely-settled issues daily.
+	ContributeAlreadyDoneHoldDays int `yaml:"contribute_already_done_hold_days,omitempty"`
+	// Deprecated: use contribute_already_done_hold_days. Kept so existing
+	// experimental configs from the partial #8477 branch continue to load.
+	ContributeAlreadyDoneUnverifiedHoldDays int `yaml:"contribute_already_done_unverified_hold_days,omitempty"`
 	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
 	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
 	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
@@ -4365,8 +4383,12 @@ const (
 	// operator-supplied period to a sane range (one hour .. one year) so a stray
 	// value cannot park an issue effectively forever or disable the cooldown by
 	// rounding to zero.
-	contributeCooldownMinHours = 1
-	contributeCooldownMaxHours = 8760
+	contributeCooldownMinHours        = 1
+	contributeCooldownMaxHours        = 8760
+	contributeAlreadyDoneLabelDefault = "hive/already-done"
+	contributeAlreadyDoneDefaultDays  = 30
+	contributeAlreadyDoneMinDays      = 1
+	contributeAlreadyDoneMaxDays      = 365
 )
 
 // IsContributeCooldownEnabled resolves the effective on/off state of the
@@ -4374,6 +4396,21 @@ const (
 // ENABLED for backward compatibility; an explicit false disables it.
 func (h HubConfig) IsContributeCooldownEnabled() bool {
 	return h.ContributeCooldownEnabled == nil || *h.ContributeCooldownEnabled
+}
+
+// IsContributeCloseAlreadyDone resolves the verified already-done auto-close
+// toggle. Unset defaults to false; the default action is comment + label.
+func (h HubConfig) IsContributeCloseAlreadyDone() bool {
+	return h.ContributeCloseAlreadyDone != nil && *h.ContributeCloseAlreadyDone
+}
+
+// ContributeAlreadyDoneLabelOrDefault resolves the label that marks issues a
+// contributor found already resolved.
+func (h HubConfig) ContributeAlreadyDoneLabelOrDefault() string {
+	if label := strings.TrimSpace(h.ContributeAlreadyDoneLabel); label != "" {
+		return label
+	}
+	return contributeAlreadyDoneLabelDefault
 }
 
 // IsContributeRequireExplicitAccept resolves the effective acceptance mode for
@@ -4390,6 +4427,7 @@ const ContributeSkipLabelsEnvVar = "HIVE_CONTRIBUTE_SKIP_LABELS"
 
 var defaultContributeSkipLabels = []string{
 	"blocked",
+	contributeAlreadyDoneLabelDefault,
 	"tracking",
 	"epic",
 	"discussion",
@@ -4459,11 +4497,16 @@ func (h HubConfig) ContributeNeedsDecisionLabelOrDefault() string {
 }
 
 // ContributeSkipLabelPatterns resolves the effective hive-wide "not contributor
-// work" label patterns. It applies the default and the historical blocked-label
-// floor defensively so tests and direct HubConfig literals behave like loaded
-// config.
+// work" label patterns. It applies the default plus the historical
+// blocked-label and already-done-label floors defensively so tests and direct
+// HubConfig literals behave like loaded config.
 func (h HubConfig) ContributeSkipLabelPatterns() []string {
-	return normalizeContributeSkipLabels(h.ContributeSkipLabels, h.ContributeNeedsDecisionLabelOrDefault())
+	labels := h.ContributeSkipLabels
+	if len(labels) == 0 {
+		labels = DefaultContributeSkipLabels()
+	}
+	labels = append(append([]string{}, labels...), h.ContributeAlreadyDoneLabelOrDefault())
+	return normalizeContributeSkipLabels(labels, h.ContributeNeedsDecisionLabelOrDefault())
 }
 
 // MatchContributeSkipLabel returns the issue label that matches the configured
@@ -4534,6 +4577,25 @@ func (h HubConfig) ContributeCooldownHoursOrDefault() int {
 		return contributeCooldownMaxHours
 	}
 	return h.ContributeCooldownHours
+}
+
+// ContributeAlreadyDoneHoldDaysOrDefault resolves the longer hold for
+// already-done verdicts.
+func (h HubConfig) ContributeAlreadyDoneHoldDaysOrDefault() int {
+	days := h.ContributeAlreadyDoneHoldDays
+	if days <= 0 {
+		days = h.ContributeAlreadyDoneUnverifiedHoldDays
+	}
+	if days <= 0 {
+		return contributeAlreadyDoneDefaultDays
+	}
+	if days < contributeAlreadyDoneMinDays {
+		return contributeAlreadyDoneMinDays
+	}
+	if days > contributeAlreadyDoneMaxDays {
+		return contributeAlreadyDoneMaxDays
+	}
+	return days
 }
 
 type TierRate struct {
@@ -5478,6 +5540,23 @@ func (c *Config) applyDefaults() {
 		c.Hub.ContributeWallRetentionDays = 0
 	} else if c.Hub.ContributeWallRetentionDays > 3650 {
 		c.Hub.ContributeWallRetentionDays = 3650
+	}
+	if c.Hub.ContributeAlreadyDoneLabel != "" {
+		c.Hub.ContributeAlreadyDoneLabel = strings.TrimSpace(c.Hub.ContributeAlreadyDoneLabel)
+	}
+	if c.Hub.ContributeAlreadyDoneHoldDays != 0 {
+		if c.Hub.ContributeAlreadyDoneHoldDays < contributeAlreadyDoneMinDays {
+			c.Hub.ContributeAlreadyDoneHoldDays = contributeAlreadyDoneMinDays
+		} else if c.Hub.ContributeAlreadyDoneHoldDays > contributeAlreadyDoneMaxDays {
+			c.Hub.ContributeAlreadyDoneHoldDays = contributeAlreadyDoneMaxDays
+		}
+	}
+	if c.Hub.ContributeAlreadyDoneUnverifiedHoldDays != 0 {
+		if c.Hub.ContributeAlreadyDoneUnverifiedHoldDays < contributeAlreadyDoneMinDays {
+			c.Hub.ContributeAlreadyDoneUnverifiedHoldDays = contributeAlreadyDoneMinDays
+		} else if c.Hub.ContributeAlreadyDoneUnverifiedHoldDays > contributeAlreadyDoneMaxDays {
+			c.Hub.ContributeAlreadyDoneUnverifiedHoldDays = contributeAlreadyDoneMaxDays
+		}
 	}
 
 	// One-time migration of the old dual label lists into the single list+mode.

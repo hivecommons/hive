@@ -1,12 +1,14 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -225,12 +227,16 @@ func (h *ContributeWSHub) noWorkVerdictsPath() string {
 // the reason names an external dependency the issue is waiting on, not a
 // settlement — an operator reading the ledger sees which it is.
 type noWorkVerdictRecord struct {
-	RecordedAt    time.Time `json:"recorded_at"`
-	SuppressHours float64   `json:"suppress_hours,omitempty"`
-	Reporter      string    `json:"reporter,omitempty"`
-	Reason        string    `json:"reason,omitempty"`
-	Blocked       bool      `json:"blocked,omitempty"`
-	NeedsDecision bool      `json:"needs_decision,omitempty"`
+	RecordedAt            time.Time `json:"recorded_at"`
+	SuppressHours         float64   `json:"suppress_hours,omitempty"`
+	Reporter              string    `json:"reporter,omitempty"`
+	Reason                string    `json:"reason,omitempty"`
+	NeedsDecision         bool      `json:"needs_decision,omitempty"`
+	ReasonKind            string    `json:"reason_kind,omitempty"`
+	EvidencePR            int       `json:"evidence_pr,omitempty"`
+	EvidenceCommit        string    `json:"evidence_commit,omitempty"`
+	AlreadyDoneUnverified bool      `json:"already_done_unverified,omitempty"`
+	Blocked               bool      `json:"blocked,omitempty"`
 }
 
 // suppressWindow is how long, from RecordedAt, this verdict withholds the
@@ -240,6 +246,14 @@ func (r noWorkVerdictRecord) suppressWindow() time.Duration {
 		return time.Duration(r.SuppressHours * float64(time.Hour))
 	}
 	return completedTaskCooldownHours * time.Hour
+}
+
+func (h *ContributeWSHub) configuredAlreadyDoneUnverifiedHold() time.Duration {
+	days := 30
+	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		days = h.server.deps.Config.Hub.ContributeAlreadyDoneHoldDaysOrDefault()
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 func (h *ContributeWSHub) loadNoWorkVerdicts() {
@@ -717,6 +731,44 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 // of the ladder. reporter/reason are audit-only and stored with the verdict.
 func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prURL, verdict, reporter, reason string) {
 	h.markTaskCompletedVerdictKey(worksource.Ref{Repo: repo, Number: number}.Key(), prURL, verdict, reporter, reason)
+}
+
+func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, reporter, reason string, evidence *VerdictEvidence) {
+	if h == nil || repo == "" || number <= 0 {
+		return
+	}
+	if len(reason) > noWorkReasonMaxLen {
+		reason = reason[:noWorkReasonMaxLen]
+	}
+	claim := ghpkg.IssueClaim{Repo: repo, Issue: number, Source: ghpkg.ClaimSourceVerdict, SourceReporter: reporter}
+	if evidence != nil {
+		claim.PRNumber = evidence.PR
+		if evidence.PR > 0 {
+			claim.PRRepo = repo
+		}
+	}
+	if err := h.markAlreadyDoneIssue(context.Background(), repo, number, claim, reporter, false); err != nil && h.logger != nil && err != ghpkg.ErrNoGitHubClient {
+		h.logger.Warn("[contribute-ws] already-done verdict label failed",
+			"repo", repo, "number", number, "error", err.Error())
+	}
+	hold := h.configuredAlreadyDoneUnverifiedHold()
+	rec := noWorkVerdictRecord{
+		RecordedAt:            time.Now(),
+		SuppressHours:         hold.Hours(),
+		Reporter:              reporter,
+		Reason:                reason,
+		ReasonKind:            verdictReasonKindAlreadyDone,
+		AlreadyDoneUnverified: true,
+	}
+	if evidence != nil {
+		rec.EvidencePR = evidence.PR
+		rec.EvidenceCommit = strings.TrimSpace(evidence.Commit)
+	}
+	key := worksource.Ref{Repo: repo, Number: number}.Key()
+	h.completedMu.Lock()
+	h.noWorkVerdicts[key] = rec
+	h.completedMu.Unlock()
+	h.saveNoWorkVerdicts()
 }
 
 // markTaskCompletedVerdictKey books completion against the canonical identity

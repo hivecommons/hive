@@ -487,6 +487,9 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"merged PRs already cover everything actionable — do NOT open a PR; instead print "+
 			"a single line of plain text, no Markdown formatting, in the exact form "+
 			"'HIVE_VERDICT: no_work_needed — <short reason>' "+
+			"(for already-done issues, include verifiable evidence such as "+
+			"'merged PR #123 already resolves this' or 'already fixed by commit <sha>' "+
+			"only after checking the PR is merged or the commit is on the default branch) "+
 			"and stop. If the remaining work is waiting on a maintainer-only design, "+
 			"policy, or approval decision, use the structured reason form "+
 			"'HIVE_VERDICT: no_work_needed — decision: <what needs deciding>' "+

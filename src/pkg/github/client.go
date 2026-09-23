@@ -1631,6 +1631,36 @@ func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) erro
 	return err
 }
 
+// EnsureIssueLabel creates an issue label if it does not already exist.
+func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, description string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	owner, repoName := c.splitRepo(repo)
+	if _, _, err := c.client.Issues.GetLabel(ctx, owner, repoName, name); err == nil {
+		return nil
+	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {
+		return err
+	}
+	color = strings.TrimSpace(color)
+	if color == "" {
+		color = "8250df"
+	}
+	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repoName, &gh.Label{
+		Name:        gh.Ptr(name),
+		Color:       gh.Ptr(color),
+		Description: gh.Ptr(strings.TrimSpace(description)),
+	})
+	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+		return nil
+	}
+	return err
+}
+
 // AddLabels adds labels to an issue or PR (no-op for an empty list), mirroring
 // forge.Forge.AddLabels for the same swap-in reason as CreateIssueComment.
 func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {

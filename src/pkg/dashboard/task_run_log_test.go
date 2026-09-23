@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -333,6 +334,23 @@ func TestReadTaskRunsForUser(t *testing.T) {
 	// A missing file is an empty list, not an error — same contract as stats.
 	if r, err := readTaskRunsForUser(path+".missing", "alice", 0, 100); err != nil || len(r) != 0 {
 		t.Errorf("missing file must read empty: %+v %v", r, err)
+	}
+}
+
+func TestCountPriorTaskRunsForIssue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "task_runs.jsonl")
+	lines := []string{
+		`{"repo":"o/r","number":7,"task_id":"a"}`,
+		`{"repo":"O/R","number":7,"task_id":"b"}`,
+		`{"repo":"o/r","number":8,"task_id":"c"}`,
+		`{"torn json"`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := countPriorTaskRunsForIssue(path, "o/r", 7); got != 2 {
+		t.Fatalf("countPriorTaskRunsForIssue = %d, want 2", got)
 	}
 }
 
