@@ -376,20 +376,22 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 	out = *l
 	h.leaseMu.Unlock()
 
-	h.recordLeaseStageAudit(auditAction, taskID, from, to, reason, out.gen)
+	h.recordLeaseStageAudit(auditAction, taskID, from, to, reason, out)
 	h.emitLeaseStageTransition(from, to, reason, mode == leaseStageReset, out)
 	return out, nil
 }
 
 // recordLeaseStageAudit books a stage move on the agent audit sink. reason is
 // only set for a reset; agent.Fields drops empty strings, so advance and retry
-// entries keep their original shape.
-func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason string, gen uint64) {
+// entries omit reason while still carrying the canonical run key.
+func (h *ContributeWSHub) recordLeaseStageAudit(action, taskID, from, to, reason string, lease taskLease) {
 	if h == nil || h.server == nil {
 		return
 	}
+	leaseKey := leaseWorkKey(&lease)
+	runKey := h.server.canonicalRunKey(lease.repo, lease.number, runKeyOfLease(leaseKey, lease.repo), leaseKey)
 	h.server.AgentAuditSink().Record("system", action, taskID,
-		agent.Fields("stage_from", from, "stage_to", to, "reason", reason, "gen", gen))
+		agent.Fields("run", runKey, "lease_key", leaseKey, "stage_from", from, "stage_to", to, "reason", reason, "gen", lease.gen))
 }
 
 // emitLeaseStageTransition records a persisted stage move on the lifecycle
@@ -482,7 +484,7 @@ func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now ti
 	}
 	h.leaseMu.Unlock()
 
-	h.recordLeaseStageAudit(agent.AuditLeaseStageAdvanced, taskID, StageImplement, "completed", "", completed.gen)
+	h.recordLeaseStageAudit(agent.AuditLeaseStageAdvanced, taskID, StageImplement, "completed", "", completed)
 	h.emitLeaseStageTransitionAt(StageImplement, "completed", "", false, completed, now)
 	if err := removeRunStageWorktree(completed.identity, leaseWorkKey(&completed), completed.stage, completed.gen); err != nil {
 		h.logger.Warn("[contribute-ws] completed run-stage worktree cleanup failed",

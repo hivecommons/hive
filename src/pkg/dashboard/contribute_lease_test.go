@@ -234,6 +234,8 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	}
 	entries := srvAuditEntries(t, hub)
 	if len(entries) == 0 || entries[0].Action != agentaudit.AuditLeaseStageAdvanced ||
+		!strings.Contains(entries[0].Detail, "run=myorg/repo1#8297") ||
+		!strings.Contains(entries[0].Detail, "lease_key=myorg/repo1#8297") ||
 		!strings.Contains(entries[0].Detail, "stage_from=spec") ||
 		!strings.Contains(entries[0].Detail, "stage_to=plan") ||
 		!strings.Contains(entries[0].Detail, "gen=") {
@@ -265,6 +267,27 @@ func TestLeaseStageAdvance_RetryAndOrdering(t *testing.T) {
 	}
 	if retry.gen <= advanced.gen {
 		t.Fatalf("retry gen = %d, want greater than prior advanced gen %d", retry.gen, advanced.gen)
+	}
+}
+
+func TestLeaseStageAuditUsesCanonicalRunKeyForRunStageLease(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	const leaseKey = "repo1!repo1#8539:spec"
+	if err := hub.recordLeaseForKeyStage("hive-triage", "task-8539", "repo1", 8539,
+		leaseKey, "triage", StageSpec, 1, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+
+	if _, err := hub.advanceLeaseStage("hive-triage", "task-8539", StagePlan, now.Add(time.Minute)); err != nil {
+		t.Fatalf("advance spec -> plan: %v", err)
+	}
+
+	entries := srvAuditEntries(t, hub)
+	if len(entries) == 0 || entries[0].Action != agentaudit.AuditLeaseStageAdvanced ||
+		!strings.Contains(entries[0].Detail, "run=myorg/repo1#8539") ||
+		!strings.Contains(entries[0].Detail, "lease_key="+leaseKey) {
+		t.Fatalf("stage advance audit entry missing canonical run key: %+v", entries)
 	}
 }
 
