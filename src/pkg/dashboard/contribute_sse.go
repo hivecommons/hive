@@ -472,8 +472,8 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				// the refusal can name WHICH filter matched (#6902). The
 				// short-circuit order and the outcome are identical to the
 				// single expression this replaces.
-				if which := rejectingContributorFilter(hub, title, author, labels); which != "" {
-					withheld.add(withheldFilterItem(cand, which))
+				if decision := rejectingContributorFilter(hub, repo.Full, title, author, labels); !decision.Admitted() {
+					withheld.add(withheldFilterItem(cand, decision))
 					return
 				}
 				// Own-work is meaningless for an anonymous queue view, so pass an

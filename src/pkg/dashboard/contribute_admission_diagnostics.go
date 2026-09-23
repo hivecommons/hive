@@ -83,6 +83,11 @@ type AdmissionWithheldItem struct {
 	// "author" or "label"), because "a filter" is not actionable when three are
 	// configured.
 	Filter string `json:"filter,omitempty"`
+	// FilterScope says whether the hive-wide filter or a repo-specific override
+	// rejected the candidate. FilterMode/FilterMatch expose the effective rule.
+	FilterScope string `json:"filter_scope,omitempty"`
+	FilterMode  string `json:"filter_mode,omitempty"`
+	FilterMatch string `json:"filter_match,omitempty"`
 	// SkippedLabel is the issue label that matched the contribute skip-label set
 	// for workflow_blocked / label_skipped refusals.
 	SkippedLabel string `json:"skipped_label,omitempty"`

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 func TestFilterPasses(t *testing.T) {
 	list := []string{"epic:*", "*dashboard*"}
@@ -112,5 +116,77 @@ func TestDefaultFilterModes(t *testing.T) {
 		c.Hub.ContributeLabelsMode != FilterModeDeny {
 		t.Errorf("modes should default to deny: titles=%q authors=%q labels=%q",
 			c.Hub.ContributeTitlesMode, c.Hub.ContributeAuthorsMode, c.Hub.ContributeLabelsMode)
+	}
+}
+
+func TestContributeRepoFiltersLayerOnHiveFilters(t *testing.T) {
+	hub := HubConfig{
+		ContributeLabelsMode: FilterModeDeny,
+		ContributeDenyLabels: []string{"hold"},
+		ContributeRepoFilters: map[string]ContributeRepoFilter{
+			"org/a": {LabelsMode: FilterModeDeny, DenyLabels: []string{"2-discussing"}},
+			"org/c": {LabelsMode: FilterModeAllow, DenyLabels: []string{"3-clanker-queue"}},
+		},
+	}
+	cases := []struct {
+		name       string
+		repo       string
+		labels     []string
+		wantPass   bool
+		wantScope  string
+		wantFilter string
+	}{
+		{"hive deny blocks every repo", "org/a", []string{"hold", "3-clanker-queue"}, false, "hive", "label"},
+		{"repo deny blocks matching repo", "org/a", []string{"2-discussing"}, false, "repo", "label"},
+		{"repo deny does not affect siblings", "org/b", []string{"2-discussing"}, true, "", ""},
+		{"repo allow admits matching label", "org/c", []string{"3-clanker-queue"}, true, "", ""},
+		{"repo allow narrows matching repo", "org/c", []string{"bug"}, false, "repo", "label"},
+		{"repo allow does not affect siblings", "org/b", []string{"bug"}, true, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hub.EvaluateContributeFilters(tc.repo, "fix", "human", tc.labels)
+			if got.Admitted() != tc.wantPass {
+				t.Fatalf("admitted = %v, want %v (decision %+v)", got.Admitted(), tc.wantPass, got)
+			}
+			if got.Scope != tc.wantScope || got.Filter != tc.wantFilter {
+				t.Fatalf("scope/filter = %q/%q, want %q/%q", got.Scope, got.Filter, tc.wantScope, tc.wantFilter)
+			}
+		})
+	}
+}
+
+func TestContributeRepoFiltersYAMLRoundTripAndNormalize(t *testing.T) {
+	var cfg Config
+	raw := []byte(`
+hub:
+  contribute_repo_filters:
+    org/docs:
+      labels_mode: allow
+      deny_labels: [good-first-issue]
+      titles_mode: bogus
+      deny_titles: [WIP]
+`)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	cfg.applyDefaults()
+	filter, ok := cfg.Hub.ContributeRepoFilterFor("ORG/DOCS")
+	if !ok {
+		t.Fatal("repo filter not found after round trip")
+	}
+	if filter.LabelsMode != FilterModeAllow || filter.TitlesMode != FilterModeDeny {
+		t.Fatalf("normalized modes = labels %q titles %q", filter.LabelsMode, filter.TitlesMode)
+	}
+	out, err := yaml.Marshal(&cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	var reloaded Config
+	if err := yaml.Unmarshal(out, &reloaded); err != nil {
+		t.Fatalf("yaml.Unmarshal(reloaded): %v", err)
+	}
+	if _, ok := reloaded.Hub.ContributeRepoFilterFor("org/docs"); !ok {
+		t.Fatalf("reloaded config missing contribute_repo_filters: %s", string(out))
 	}
 }

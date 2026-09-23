@@ -841,11 +841,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
    the Governor Hub sections). Subtle, matching the rest of the admin controls. */
 .admin-repos{display:flex;flex-wrap:wrap;gap:8px}
-.admin-repo{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--cc-border);border-radius:8px;background:var(--cc-bg)}
+.admin-repo{display:inline-flex;align-items:flex-start;gap:8px;padding:6px 10px;border:1px solid var(--cc-border);border-radius:8px;background:var(--cc-bg);flex-wrap:wrap}
 .admin-repo .admin-switch{width:32px;height:18px}
 .admin-repo .admin-switch::after{width:14px;height:14px}
 .admin-repo .admin-switch.on::after{left:16px}
 .admin-repo__name{font-size:.76rem;color:var(--cc-text-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.admin-repo-filter{flex-basis:100%%;font-size:.76rem;color:var(--cc-text-2)}
+.admin-repo-filter summary{cursor:pointer}
+.admin-repo-filter-field{margin-top:8px}
 .admin-tier{display:grid;grid-template-columns:1fr repeat(3,64px);align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cc-border-2)}
 .admin-tier:last-child{border-bottom:none}
 .admin-tier__head{display:flex;align-items:center;gap:8px;min-width:0}
@@ -4015,6 +4018,32 @@ function adminRepoDisabledEntryMatches(repoFull,entry){
 function adminRepoMatchingDisabledEntries(repoFull,disabled){
   return (disabled||[]).filter(function(entry){return adminRepoDisabledEntryMatches(repoFull,entry);});
 }
+function adminRepoFilters(){if(!adminHub.contribute_repo_filters)adminHub.contribute_repo_filters={};return adminHub.contribute_repo_filters;}
+function adminRepoFilter(repo){var filters=adminRepoFilters();if(!filters[repo])filters[repo]={};return filters[repo];}
+function adminRepoFilterExisting(repo){return (adminHub.contribute_repo_filters&&adminHub.contribute_repo_filters[repo])||{};}
+function adminRepoFilterListKey(kind){return 'deny_'+kind;}
+function adminRepoHasFilter(f){return !!(f&&(((f.deny_titles||[]).length)||((f.deny_authors||[]).length)||((f.deny_labels||[]).length)));}
+function adminCleanRepoFilters(filters){
+  var out={};
+  Object.keys(filters||{}).forEach(function(repo){var f=filters[repo]||{};if(adminRepoHasFilter(f))out[repo]=f;});
+  return out;
+}
+function renderAdminRepoFilter(repo){
+  var f=adminRepoFilterExisting(repo);
+  function block(label,noun,modeKey,kind){
+    var mode=(f[modeKey]==='allow')?'allow':'deny',listKey=adminRepoFilterListKey(kind),list=f[listKey]||[];
+    var chips=list.map(function(v){return '<span class="admin-chip">'+esc(v)+'<span class="x" data-repo-filter-list="'+listKey+'" data-repo="'+esc(repo)+'" data-val="'+esc(v)+'">&times;</span></span>';}).join('');
+    return '<div class="admin-field admin-repo-filter-field"><label>'+esc(label)+' filter</label>'+
+      '<div class="admin-modeseg" data-repo="'+esc(repo)+'" data-repo-mode-key="'+modeKey+'">'+
+      '<button type="button" data-mode="deny"'+(mode==='deny'?' class="on"':'')+'>Deny</button>'+
+      '<button type="button" data-mode="allow"'+(mode==='allow'?' class="on"':'')+'>Allow</button></div>'+
+      '<div class="admin-chips">'+(chips||'<span class="admin-toggle-sub">none</span>')+'</div>'+
+      '<div class="admin-addrow"><input type="text" data-repo-filter-add="'+listKey+'" data-repo="'+esc(repo)+'" placeholder="add '+esc(noun)+'&hellip;"><button type="button" data-repo-filter-add-btn="'+listKey+'" data-repo="'+esc(repo)+'">Add</button></div></div>';
+  }
+  return '<details class="admin-repo-filter"'+(adminRepoHasFilter(f)?' open':'')+'><summary>Filters '+(adminRepoHasFilter(f)?'<span class="pill pill-warn">override</span>':'<span class="admin-toggle-sub">inherit hive-wide</span>')+'</summary>'+
+    '<p class="admin-toggle-sub">Applied after hive-wide filters; allow mode narrows only this repo and deny mode extends the hive-wide deny lists.</p>'+
+    block('Titles','title','titles_mode','titles')+block('Authors','author','authors_mode','authors')+block('Labels','label','labels_mode','labels')+'</details>';
+}
 
 // ── Repos-for-Contribute enable toggles (Governor Hub mirror) ──────────────────
 // A repo is ENABLED unless it appears in disabled_repos. The toggle edits the
@@ -4031,7 +4060,7 @@ function renderAdminRepos(){
   if(!repos.length){el.innerHTML='<span class="admin-toggle-sub">No repos known yet — they appear once the hive syncs its backlog.</span>';return;}
   el.innerHTML='<div class="admin-repos">'+repos.map(function(r){
     var off=adminRepoMatchingDisabledEntries(r,disabled).length>0;
-    return '<span class="admin-repo"><span class="admin-switch'+(off?'':' on')+'" data-repo="'+esc(r)+'"></span><span class="admin-repo__name">'+esc(r)+'</span></span>';
+    return '<div class="admin-repo"><span class="admin-switch'+(off?'':' on')+'" data-repo="'+esc(r)+'"></span><span class="admin-repo__name">'+esc(r)+'</span>'+renderAdminRepoFilter(r)+'</div>';
   }).join('')+'</div>';
 }
 // ── Tier access & rate limits (Governor Hub mirror) ────────────────────────────
@@ -4190,11 +4219,27 @@ function bindCooldownHoursInput(){
 onEl('ops-admin','click',function(e){
   var t=e.target;
   var seg=t.closest?t.closest('.admin-modeseg button'):null;
-  if(seg){var mk=seg.parentNode.getAttribute('data-mode-key');adminHub[mk]=seg.getAttribute('data-mode');adminDirty=true;renderAdminControls();return;}
+  if(seg){
+    var parent=seg.parentNode,mk=parent.getAttribute('data-mode-key'),repoMode=parent.getAttribute('data-repo-mode-key');
+    if(repoMode){adminRepoFilter(parent.getAttribute('data-repo'))[repoMode]=seg.getAttribute('data-mode');}
+    else{adminHub[mk]=seg.getAttribute('data-mode');}
+    adminDirty=true;renderAdminControls();return;
+  }
+  if(t.classList&&t.classList.contains('x')&&t.getAttribute('data-repo-filter-list')){
+    var repo=t.getAttribute('data-repo'),rlk=t.getAttribute('data-repo-filter-list'),rval=t.getAttribute('data-val'),rf=adminRepoFilter(repo);
+    rf[rlk]=(rf[rlk]||[]).filter(function(v){return v!==rval;});
+    adminDirty=true;renderAdminControls();return;
+  }
   if(t.classList&&t.classList.contains('x')&&t.getAttribute('data-list')){
     var lk=t.getAttribute('data-list'),val=t.getAttribute('data-val');
     adminHub[lk]=(adminHub[lk]||[]).filter(function(v){return v!==val;});
     adminDirty=true;renderAdminControls();return;
+  }
+  if(t.getAttribute&&t.getAttribute('data-repo-filter-add-btn')){
+    var repo2=t.getAttribute('data-repo'),rlk2=t.getAttribute('data-repo-filter-add-btn');
+    var rinp=document.querySelector('[data-repo-filter-add="'+rlk2+'"][data-repo="'+repo2+'"]');
+    if(rinp&&rinp.value.trim()){var rf2=adminRepoFilter(repo2);rf2[rlk2]=(rf2[rlk2]||[]).concat([rinp.value.trim()]);rinp.value='';adminDirty=true;renderAdminControls();}
+    return;
   }
   if(t.getAttribute&&t.getAttribute('data-add-list-btn')){
     var lk2=t.getAttribute('data-add-list-btn');
@@ -4260,13 +4305,14 @@ onEl('admin-save-btn','click',function(){
     contribute_deny_labels:adminHub.contribute_deny_labels||[],
     contribute_allow_labels:[],
     contribute_allow_models:adminHub.contribute_allow_models||[],
+    contribute_repo_filters:adminCleanRepoFilters(adminHub.contribute_repo_filters),
     // Governor Hub mirror sections (#2562 parity): repos-for-contribute (as the
     // disabled_repos exclusion list) + per-tier access & rate limits.
     disabled_repos:adminHub.disabled_repos||[],
     disabled_tiers:adminHub.disabled_tiers||[],
     tier_limits:adminHub.tier_limits||{}
   };
-  adminSaveHub(patch,'Admission &amp; hub settings saved').then(function(ok){if(ok){adminDirty=false;renderAdminControls();}});
+  adminSaveHub(patch,'Admission &amp; hub settings saved').then(function(ok){if(ok){adminHub.contribute_repo_filters=patch.contribute_repo_filters;adminDirty=false;renderAdminControls();}});
 });
 
 // Per-contributor actions (delegated on the clanker list). Each calls an EXISTING
@@ -4853,6 +4899,16 @@ function renderPolicy(p){
   // never loads adminHub) still sees the correct paused/active status.
   renderQueueSuspendControl(adminHub?!!adminHub.contribute_suspended:!!p.suspended);
   function list(a){return (a&&a.length)?a.map(esc).join(', '):'&mdash;';}
+  function repoFilterList(filters){
+    var keys=Object.keys(filters||{}).sort();
+    if(!keys.length)return '&mdash;';
+    return keys.map(function(repo){
+      var f=filters[repo]||{};
+      return '<div><strong>'+esc(repo)+'</strong>: titles '+esc(f.titles_mode||'deny')+' '+list(f.deny_titles)+
+        '; authors '+esc(f.authors_mode||'deny')+' '+list(f.deny_authors)+
+        '; labels '+esc(f.labels_mode||'deny')+' '+list(f.deny_labels)+'</div>';
+    }).join('');
+  }
   var rows=[
     ['Contribute queue',p.suspended?'<span class="pill pill-blocked">suspended</span>':'<span class="pill pill-passed">active</span>'],
     ['Title filter',esc(p.titles_mode||'deny')+': '+list(p.deny_titles)],
@@ -4864,6 +4920,7 @@ function renderPolicy(p){
     ['Label filter',esc(p.labels_mode||'deny')+': '+list(p.deny_labels)],
     ['Model allowlist',(p.reject_unknown_models?'strict &middot; ':'')+list(p.allow_models)],
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
+    ['Repo filter overrides',repoFilterList(p.repo_filters)],
     ['Disabled tiers',list(p.disabled_tiers)],
     ['Disabled repos',list(p.disabled_repos)],
     ['Assignable agent roles',list(p.agent_role_assignable_roles)],

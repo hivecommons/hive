@@ -69,6 +69,9 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 		`contribute_deny_authors`,
 		`contribute_deny_labels`,
 		`contribute_allow_models`,
+		`data-repo-filter-add`,
+		`contribute_repo_filters`,
+		`Applied after hive-wide filters`,
 		// Filters persist through the SAME endpoint the Governor dialog uses, and
 		// read the same source the Governor dialog reads.
 		`/api/config/governor/hub`,
@@ -523,6 +526,43 @@ func TestGovernorHubAcceptsSkipAssigned(t *testing.T) {
 	}
 	if got, ok := cfg.Hub["contribute_skip_assigned_to_others"]; !ok || got != true {
 		t.Errorf("config hub missing/false contribute_skip_assigned_to_others: %v (ok=%v)", got, ok)
+	}
+}
+
+func TestGovernorHubRoundTripsRepoFilters(t *testing.T) {
+	s, deps := apiServer(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/governor/hub",
+		strings.NewReader(`{"contribute_repo_filters":{"org/a":{"labels_mode":"allow","deny_labels":["3-clanker-queue"],"titles_mode":"bogus","deny_titles":["WIP"]}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("governor hub update got %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	filter, ok := deps.Config.Hub.ContributeRepoFilterFor("org/a")
+	if !ok {
+		t.Fatal("repo filter was not persisted")
+	}
+	if filter.LabelsMode != config.FilterModeAllow || filter.TitlesMode != config.FilterModeDeny {
+		t.Fatalf("normalized filter modes = labels %q titles %q", filter.LabelsMode, filter.TitlesMode)
+	}
+
+	rec := doGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/config/governor got %d", rec.Code)
+	}
+	var cfg struct {
+		Hub struct {
+			ContributeRepoFilters map[string]config.ContributeRepoFilter `json:"contribute_repo_filters"`
+		} `json:"hub"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("config json: %v", err)
+	}
+	if got := cfg.Hub.ContributeRepoFilters["org/a"].DenyLabels; len(got) != 1 || got[0] != "3-clanker-queue" {
+		t.Fatalf("round-tripped repo labels = %v", got)
 	}
 }
 

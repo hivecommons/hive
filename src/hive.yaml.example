@@ -687,6 +687,16 @@ dashboard:
 #   is_public: false
 #   auto_snapshot: true
 #   auto_upgrade: true
+#   contribute_labels_mode: deny
+#   contribute_deny_labels: [hold, wontfix]
+#   contribute_repo_filters:
+#     owner/repo:
+#       labels_mode: allow
+#       deny_labels: [good-first-issue]
+#       titles_mode: deny
+#       deny_titles: ["WIP*"]
+#       authors_mode: deny
+#       deny_authors: [dependabot[bot]]
 #
 # hive_id: my-hive
 # acmm_level: 2

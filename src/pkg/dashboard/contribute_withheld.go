@@ -252,11 +252,25 @@ func withheldCooldownItem(c withheldCandidate, reason string, until time.Time) A
 // withheldFilterItem records which contributor filter rejected the candidate,
 // because "rejected by a filter" with three configured is not an answer an
 // operator can act on.
-func withheldFilterItem(c withheldCandidate, which string) AdmissionWithheldItem {
+func withheldFilterItem(c withheldCandidate, decision config.ContributeFilterDecision) AdmissionWithheldItem {
 	item := newWithheldItem(c, withheldReasonContributorFilter)
-	item.Filter = which
-	item.Detail = fmt.Sprintf("Rejected by the contributor %s filter", which)
+	item.Filter = decision.Filter
+	item.FilterScope = decision.Scope
+	item.FilterMode = decision.Mode
+	item.FilterMatch = decision.Match
+	if decision.Scope == "repo" {
+		item.Detail = fmt.Sprintf("Repo filter %s %q %s for %s", decision.Filter, decision.Match, filterModeVerb(decision.Mode), decision.Repo)
+		return item
+	}
+	item.Detail = fmt.Sprintf("Rejected by the contributor %s filter", decision.Filter)
 	return item
+}
+
+func filterModeVerb(mode string) string {
+	if config.NormalizeFilterMode(mode) == config.FilterModeAllow {
+		return "required"
+	}
+	return "denied"
 }
 
 // withheldAssignedItem records the skip-assigned refusal and names the logins
@@ -356,15 +370,6 @@ func mergedClaimStaleDetail(claim ghpkg.IssueClaim, now time.Time) string {
 // rejects this candidate, or "" when all three pass. Short-circuit order and
 // outcome are identical to the single boolean expression it replaces — the only
 // thing it adds is the name of the filter that said no.
-func rejectingContributorFilter(hub config.HubConfig, title, author string, labels []string) string {
-	if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) {
-		return "title"
-	}
-	if !config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) {
-		return "author"
-	}
-	if !config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
-		return "label"
-	}
-	return ""
+func rejectingContributorFilter(hub config.HubConfig, repo, title, author string, labels []string) config.ContributeFilterDecision {
+	return hub.EvaluateContributeFilters(repo, title, author, labels)
 }

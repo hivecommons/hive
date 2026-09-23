@@ -208,6 +208,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_deny_authors":            cfg.Hub.ContributeDenyAuthors,
 			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
 			"contribute_reject_unknown_models":   cfg.Hub.ContributeRejectUnknownModels,
+			"contribute_repo_filters":            cfg.Hub.ContributeRepoFilters,
 			"contribute_skip_assigned_to_others": cfg.Hub.ContributeSkipAssignedToOthers,
 			// Cooldown toggle + period. contribute_cooldown_enabled is the RESOLVED
 			// on/off (nil pointer -> true) so both UI surfaces render a concrete
@@ -873,33 +874,34 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Enabled                        *bool                          `json:"enabled"`
-		URL                            string                         `json:"url"`
-		DashboardURL                   string                         `json:"dashboard_url"`
-		SnapshotURL                    string                         `json:"snapshot_url"`
-		IsPublic                       *bool                          `json:"is_public"`
-		AutoSnapshot                   *bool                          `json:"auto_snapshot"`
-		SnapshotFrameAncestors         []string                       `json:"snapshot_frame_ancestors"`
-		AutoUpgrade                    *bool                          `json:"auto_upgrade"`
-		ContributeSuspended            *bool                          `json:"contribute_suspended"`
-		ContributeTitlesMode           *string                        `json:"contribute_titles_mode"`
-		ContributeAuthorsMode          *string                        `json:"contribute_authors_mode"`
-		ContributeLabelsMode           *string                        `json:"contribute_labels_mode"`
-		ContributeAllowLabels          []string                       `json:"contribute_allow_labels"`
-		ContributeDenyLabels           []string                       `json:"contribute_deny_labels"`
-		ContributeSkipLabels           []string                       `json:"contribute_skip_labels"`
-		ContributeDenyTitles           []string                       `json:"contribute_deny_titles"`
-		ContributeDenyAuthors          []string                       `json:"contribute_deny_authors"`
-		ContributeAllowModels          []string                       `json:"contribute_allow_models"`
-		ContributeRejectUnknownModels  *bool                          `json:"contribute_reject_unknown_models"`
-		ContributeSkipAssignedToOthers *bool                          `json:"contribute_skip_assigned_to_others"`
-		ContributeCooldownEnabled      *bool                          `json:"contribute_cooldown_enabled"`
-		ContributeCooldownHours        *int                           `json:"contribute_cooldown_hours"`
-		ContributeDelegatableRoles     []string                       `json:"contribute_delegatable_roles"`
-		ContributeAnnouncement         *config.ContributeAnnouncement `json:"contribute_announcement"`
-		DisabledRepos                  []string                       `json:"disabled_repos"`
-		DisabledTiers                  []string                       `json:"disabled_tiers"`
-		TierLimits                     map[string]config.TierRate     `json:"tier_limits"`
+		Enabled                        *bool                                  `json:"enabled"`
+		URL                            string                                 `json:"url"`
+		DashboardURL                   string                                 `json:"dashboard_url"`
+		SnapshotURL                    string                                 `json:"snapshot_url"`
+		IsPublic                       *bool                                  `json:"is_public"`
+		AutoSnapshot                   *bool                                  `json:"auto_snapshot"`
+		SnapshotFrameAncestors         []string                               `json:"snapshot_frame_ancestors"`
+		AutoUpgrade                    *bool                                  `json:"auto_upgrade"`
+		ContributeSuspended            *bool                                  `json:"contribute_suspended"`
+		ContributeTitlesMode           *string                                `json:"contribute_titles_mode"`
+		ContributeAuthorsMode          *string                                `json:"contribute_authors_mode"`
+		ContributeLabelsMode           *string                                `json:"contribute_labels_mode"`
+		ContributeAllowLabels          []string                               `json:"contribute_allow_labels"`
+		ContributeDenyLabels           []string                               `json:"contribute_deny_labels"`
+		ContributeSkipLabels           []string                               `json:"contribute_skip_labels"`
+		ContributeDenyTitles           []string                               `json:"contribute_deny_titles"`
+		ContributeDenyAuthors          []string                               `json:"contribute_deny_authors"`
+		ContributeAllowModels          []string                               `json:"contribute_allow_models"`
+		ContributeRejectUnknownModels  *bool                                  `json:"contribute_reject_unknown_models"`
+		ContributeRepoFilters          map[string]config.ContributeRepoFilter `json:"contribute_repo_filters"`
+		ContributeSkipAssignedToOthers *bool                                  `json:"contribute_skip_assigned_to_others"`
+		ContributeCooldownEnabled      *bool                                  `json:"contribute_cooldown_enabled"`
+		ContributeCooldownHours        *int                                   `json:"contribute_cooldown_hours"`
+		ContributeDelegatableRoles     []string                               `json:"contribute_delegatable_roles"`
+		ContributeAnnouncement         *config.ContributeAnnouncement         `json:"contribute_announcement"`
+		DisabledRepos                  []string                               `json:"disabled_repos"`
+		DisabledTiers                  []string                               `json:"disabled_tiers"`
+		TierLimits                     map[string]config.TierRate             `json:"tier_limits"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -977,6 +979,10 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.ContributeRejectUnknownModels != nil {
 		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
 	}
+	if body.ContributeRepoFilters != nil {
+		cfg.Hub.ContributeRepoFilters = body.ContributeRepoFilters
+		cfg.Hub.NormalizeContributeRepoFilters()
+	}
 	if body.ContributeSkipAssignedToOthers != nil {
 		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
 	}
@@ -1022,6 +1028,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeTitlesMode = config.NormalizeFilterMode(cfg.Hub.ContributeTitlesMode)
 	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
+	cfg.Hub.NormalizeContributeRepoFilters()
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	if announcementTouched {

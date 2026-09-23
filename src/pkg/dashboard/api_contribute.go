@@ -692,23 +692,24 @@ func (s *Server) handleContributeActivity(w http.ResponseWriter, r *http.Request
 // It is surfaced to the Management & Operations tab so an operator can read what
 // is configured; it adds no controls and changes nothing.
 type ContributeAdmissionPolicy struct {
-	Suspended            bool     `json:"suspended"`
-	TitlesMode           string   `json:"titles_mode,omitempty"`
-	AuthorsMode          string   `json:"authors_mode,omitempty"`
-	LabelsMode           string   `json:"labels_mode,omitempty"`
-	DenyTitles           []string `json:"deny_titles,omitempty"`
-	DenyAuthors          []string `json:"deny_authors,omitempty"`
-	DenyLabels           []string `json:"deny_labels,omitempty"`
-	AllowLabels          []string `json:"allow_labels,omitempty"`
-	AllowModels          []string `json:"allow_models,omitempty"`
-	RejectUnknownModels  bool     `json:"reject_unknown_models"`
-	SkipAssignedToOthers bool     `json:"skip_assigned_to_others"`
-	DisabledTiers        []string `json:"disabled_tiers,omitempty"`
-	DisabledRepos        []string `json:"disabled_repos,omitempty"`
-	AgentRoleGrantable   []string `json:"agent_role_grantable_roles,omitempty"`
-	AgentRoleAssignable  []string `json:"agent_role_assignable_roles,omitempty"`
-	AutoPromoteAt        int      `json:"auto_promote_at"`
-	TrustedAt            int      `json:"trusted_at"`
+	Suspended            bool                                   `json:"suspended"`
+	TitlesMode           string                                 `json:"titles_mode,omitempty"`
+	AuthorsMode          string                                 `json:"authors_mode,omitempty"`
+	LabelsMode           string                                 `json:"labels_mode,omitempty"`
+	DenyTitles           []string                               `json:"deny_titles,omitempty"`
+	DenyAuthors          []string                               `json:"deny_authors,omitempty"`
+	DenyLabels           []string                               `json:"deny_labels,omitempty"`
+	AllowLabels          []string                               `json:"allow_labels,omitempty"`
+	AllowModels          []string                               `json:"allow_models,omitempty"`
+	RepoFilters          map[string]config.ContributeRepoFilter `json:"repo_filters,omitempty"`
+	RejectUnknownModels  bool                                   `json:"reject_unknown_models"`
+	SkipAssignedToOthers bool                                   `json:"skip_assigned_to_others"`
+	DisabledTiers        []string                               `json:"disabled_tiers,omitempty"`
+	DisabledRepos        []string                               `json:"disabled_repos,omitempty"`
+	AgentRoleGrantable   []string                               `json:"agent_role_grantable_roles,omitempty"`
+	AgentRoleAssignable  []string                               `json:"agent_role_assignable_roles,omitempty"`
+	AutoPromoteAt        int                                    `json:"auto_promote_at"`
+	TrustedAt            int                                    `json:"trusted_at"`
 }
 
 // buildContributeAdmissionPolicy reads the configured contributor admission
@@ -732,6 +733,7 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 	p.DenyLabels = h.ContributeDenyLabels
 	p.AllowLabels = h.ContributeAllowLabels
 	p.AllowModels = h.ContributeAllowModels
+	p.RepoFilters = h.ContributeRepoFilters
 	p.RejectUnknownModels = h.ContributeRejectUnknownModels
 	p.SkipAssignedToOthers = h.ContributeSkipAssignedToOthers
 	p.DisabledTiers = h.DisabledTiers

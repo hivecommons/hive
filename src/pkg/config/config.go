@@ -4239,6 +4239,9 @@ type HubConfig struct {
 	ContributeDenyAuthors         []string `yaml:"contribute_deny_authors"`
 	ContributeAllowModels         []string `yaml:"contribute_allow_models"`
 	ContributeRejectUnknownModels bool     `yaml:"contribute_reject_unknown_models"`
+	// ContributeRepoFilters are optional, full owner/name keyed admission
+	// filters layered on top of the hive-wide title/author/label filters.
+	ContributeRepoFilters map[string]ContributeRepoFilter `yaml:"contribute_repo_filters,omitempty" json:"contribute_repo_filters,omitempty"`
 	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
 	// skip any issue that is already assigned to someone OTHER than the
 	// contributor requesting work. An issue assigned to the contributor
@@ -5433,6 +5436,7 @@ func (c *Config) applyDefaults() {
 	c.Hub.ContributeTitlesMode = NormalizeFilterMode(c.Hub.ContributeTitlesMode)
 	c.Hub.ContributeAuthorsMode = NormalizeFilterMode(c.Hub.ContributeAuthorsMode)
 	c.Hub.ContributeLabelsMode = NormalizeFilterMode(c.Hub.ContributeLabelsMode)
+	c.Hub.NormalizeContributeRepoFilters()
 
 	// Contribute completion-cooldown period: leave 0 (== "use default") alone, but
 	// clamp any explicitly-set value to [min,max] so a stray input cannot park an

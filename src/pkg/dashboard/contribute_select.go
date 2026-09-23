@@ -902,14 +902,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				return
 			}
 
-			// Apply the title / author / label contribute filters. Each is a
-			// single list plus a mode (allow = only matching pass; deny = matching
-			// skipped). Labels were previously not enforced at all.
+			// Apply the title / author / label contribute filters: hive-wide
+			// first, then any full-repo override.
 			if h.server.deps != nil && h.server.deps.Config != nil {
 				hub := h.server.deps.Config.Hub
-				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
-					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
-					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
+				if !hub.EvaluateContributeFilters(repo.Full, title, author, labels).Admitted() {
 					return
 				}
 				// #2357: optionally skip issues already assigned to someone else.

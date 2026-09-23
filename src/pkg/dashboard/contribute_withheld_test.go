@@ -550,6 +550,9 @@ func TestRejectingContributorFilter(t *testing.T) {
 		ContributeDenyTitles:  []string{"WIP"},
 		ContributeDenyAuthors: []string{"botty"},
 		ContributeDenyLabels:  []string{"wontfix"},
+		ContributeRepoFilters: map[string]config.ContributeRepoFilter{
+			"org/repo": {LabelsMode: config.FilterModeDeny, DenyLabels: []string{"2-discussing"}},
+		},
 	}
 	cases := []struct {
 		name   string
@@ -562,11 +565,118 @@ func TestRejectingContributorFilter(t *testing.T) {
 		{name: "title", title: "WIP thing", author: "human", want: "title"},
 		{name: "author", title: "fix thing", author: "botty", want: "author"},
 		{name: "label", title: "fix thing", author: "human", labels: []string{"wontfix"}, want: "label"},
+		{name: "repo label", title: "fix thing", author: "human", labels: []string{"2-discussing"}, want: "label"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rejectingContributorFilter(hub, tc.title, tc.author, tc.labels); got != tc.want {
-				t.Fatalf("rejectingContributorFilter = %q, want %q", got, tc.want)
+			if got := rejectingContributorFilter(hub, "org/repo", tc.title, tc.author, tc.labels); got.Filter != tc.want {
+				t.Fatalf("rejectingContributorFilter filter = %q, want %q", got.Filter, tc.want)
+			}
+		})
+	}
+}
+
+func TestWithheldRepoFilterItemNamesRepoOverride(t *testing.T) {
+	cand := withheldCandidate{repoFull: "org/repo", title: "fix"}
+	item := withheldFilterItem(cand, config.ContributeFilterDecision{
+		Scope:  "repo",
+		Repo:   "org/repo",
+		Filter: "label",
+		Mode:   config.FilterModeDeny,
+		Match:  "2-discussing",
+	})
+	if item.FilterScope != "repo" || item.FilterMatch != "2-discussing" {
+		t.Fatalf("filter evidence not exposed: %+v", item)
+	}
+	if !strings.Contains(item.Detail, "Repo filter label \"2-discussing\" denied for org/repo") {
+		t.Fatalf("detail = %q", item.Detail)
+	}
+}
+
+func TestRepoContributeFiltersAgreeBetweenSelectionAndWithheld(t *testing.T) {
+	hub := config.HubConfig{
+		ContributeSkipLabels: []string{"blocked"},
+		ContributeLabelsMode: config.FilterModeDeny,
+		ContributeDenyLabels: []string{"hold"},
+		ContributeRepoFilters: map[string]config.ContributeRepoFilter{
+			"org/a": {LabelsMode: config.FilterModeDeny, DenyLabels: []string{"2-discussing"}},
+			"org/c": {LabelsMode: config.FilterModeAllow, DenyLabels: []string{"3-clanker-queue"}},
+		},
+	}
+	cases := []struct {
+		name       string
+		repo       string
+		labels     []string
+		wantAdmit  bool
+		wantScope  string
+		wantMatch  string
+		wantDetail string
+	}{
+		{
+			name:       "repo deny narrows only that repo",
+			repo:       "org/a",
+			labels:     []string{"2-discussing"},
+			wantScope:  "repo",
+			wantMatch:  "2-discussing",
+			wantDetail: "Repo filter label \"2-discussing\" denied for org/a",
+		},
+		{
+			name:      "sibling repo not narrowed by deny override",
+			repo:      "org/b",
+			labels:    []string{"2-discussing"},
+			wantAdmit: true,
+		},
+		{
+			name:       "hive deny still wins over repo allow",
+			repo:       "org/c",
+			labels:     []string{"hold", "3-clanker-queue"},
+			wantScope:  "hive",
+			wantMatch:  "hold",
+			wantDetail: "Rejected by the contributor label filter",
+		},
+		{
+			name:       "repo allow narrows matching repo",
+			repo:       "org/c",
+			labels:     []string{"bug"},
+			wantScope:  "repo",
+			wantMatch:  "3-clanker-queue",
+			wantDetail: "Repo filter label \"3-clanker-queue\" required for org/c",
+		},
+		{
+			name:      "repo allow admits matching repo label",
+			repo:      "org/c",
+			labels:    []string{"3-clanker-queue"},
+			wantAdmit: true,
+		},
+		{
+			name:      "repo allow does not affect siblings",
+			repo:      "org/b",
+			labels:    []string{"bug"},
+			wantAdmit: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			selectionDecision := hub.EvaluateContributeFilters(tc.repo, "fix", "human", tc.labels)
+			withheldDecision := rejectingContributorFilter(hub, tc.repo, "fix", "human", tc.labels)
+			if selectionDecision != withheldDecision {
+				t.Fatalf("selection decision %+v disagrees with withheld decision %+v", selectionDecision, withheldDecision)
+			}
+			if selectionDecision.Admitted() != tc.wantAdmit {
+				t.Fatalf("admitted = %v, want %v (decision %+v)", selectionDecision.Admitted(), tc.wantAdmit, selectionDecision)
+			}
+			if tc.wantAdmit {
+				return
+			}
+			if selectionDecision.Scope != tc.wantScope || selectionDecision.Match != tc.wantMatch {
+				t.Fatalf("scope/match = %q/%q, want %q/%q", selectionDecision.Scope, selectionDecision.Match, tc.wantScope, tc.wantMatch)
+			}
+			item := withheldFilterItem(withheldCandidate{repoFull: tc.repo, title: "fix"}, withheldDecision)
+			if item.FilterScope != tc.wantScope || item.FilterMatch != tc.wantMatch {
+				t.Fatalf("withheld item = %+v, want scope %q match %q", item, tc.wantScope, tc.wantMatch)
+			}
+			if item.Detail != tc.wantDetail {
+				t.Fatalf("detail = %q, want %q", item.Detail, tc.wantDetail)
 			}
 		})
 	}

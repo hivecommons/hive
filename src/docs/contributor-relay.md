@@ -518,6 +518,7 @@ Only issues that pass **all** of these filters are offered to contributors:
 | Control | Config key | Behavior |
 |---|---|---|
 | **Repos for Contribute** | `disabled_repos` | Per-repo toggle. A monitored repo serves work unless it is listed in `disabled_repos`; newly added repos default to **on**. |
+| **Repo Filters** | `contribute_repo_filters` | Optional full `owner/repo` overrides edited from each Repos-for-Contribute row. Each override has the same title, author, and label lists plus `deny`/`allow` modes. Hive-wide skip labels and hive-wide filters run first, so a repo can never re-admit work they denied; repo deny mode extends the hive-wide deny list and repo allow mode narrows only that repo. |
 | **Label filter** | `contribute_labels_mode` + `contribute_deny_labels` | Set `contribute_labels_mode` to `deny` (default) so listed labels exclude an issue (e.g. `hold`, `wontfix`, `duplicate`), or to `allow` so an issue must carry one of the listed labels to queue (e.g. `good-first-issue`, `help-wanted`). |
 | **Contribute skip labels** | `contribute_skip_labels` / `HIVE_CONTRIBUTE_SKIP_LABELS` | Hive-wide “not contributor work” labels that are never offered even before normal filters run. Default: `blocked,tracking,epic,discussion,question,needs-decision,needs-triage`; `blocked` is always added as a floor. Comma-separated entries are case-insensitive and use `path.Match`-style `*` globs, so projectbluefin can set `wayfinder:map,wayfinder:grilling,wayfinder:research` (or `wayfinder:*`) to keep decision briefs out of the relay. |
 | **Title filter** | `contribute_titles_mode` + `contribute_deny_titles` | Title patterns. With `contribute_titles_mode` set to `deny` (default) a matching title excludes the issue; set it to `allow` so only issues whose title matches one of the patterns queue. Supports `*`-wildcards (`*dashboard*`, `epic:*`) and slash-delimited regex (`/renovate/`, always case-insensitive). |
@@ -527,6 +528,21 @@ Only issues that pass **all** of these filters are offered to contributors:
 The legacy `contribute_allow_labels` field is retained only for one-time migration into `contribute_deny_labels` + `contribute_labels_mode`; configure the label filter through those two keys.
 
 The list keys keep their `deny_*` names in every mode for backward compatibility with existing on-disk config; the `*_mode` key decides whether the list is a denylist or an allowlist. An empty list in `allow` mode is treated as "filter off" rather than "nothing passes", so a half-configured filter never silently empties the queue.
+
+Per-repo filter entries are keyed by full repo name:
+
+```yaml
+hub:
+  contribute_repo_filters:
+    projectbluefin/common:
+      labels_mode: deny
+      deny_labels: ["2-discussing"]
+    projectbluefin/docs:
+      labels_mode: allow
+      deny_labels: ["good-first-issue"]
+```
+
+The Operations policy panel and withheld-work diagnostics show the effective repo filter when it is what kept an issue out of the queue.
 
 ### Cooldown
 
