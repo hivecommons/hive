@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -412,7 +413,7 @@ func TestWatchdogLastProduction(t *testing.T) {
 	}
 
 	// A newer conversation-file mtime wins.
-	projDir := filepath.Join(home, ".claude", "projects")
+	projDir := filepath.Join(home, ".claude", "projects", claudeProjectDirName(filepath.Join(m.workDir, "a1")))
 	if err := os.MkdirAll(projDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -434,6 +435,126 @@ func TestWatchdogLastProduction(t *testing.T) {
 	got, ok = fleet.LastProduction("b1")
 	if !ok || !got.Equal(paneTime) {
 		t.Fatalf("bob LastProduction = %v ok=%v, want %v", got, ok, paneTime)
+	}
+}
+
+func TestWatchdogLastProductionClaudeUsesAgentProjectOnly(t *testing.T) {
+	root := t.TempDir()
+	oldSharedHome := sharedAgentHome
+	sharedAgentHome = filepath.Join(root, "home")
+	t.Cleanup(func() { sharedAgentHome = oldSharedHome })
+
+	m, _ := newWatchdogTestManager(t, map[string]string{"alpha": "claude", "beta": "claude"})
+	m.workDir = filepath.Join(root, "agents")
+	fleet := WatchdogFleet{M: m}
+
+	for name, uid := range map[string]int{"alpha": 2001, "beta": 2002} {
+		m.agents[name].UID = uid
+		home := interactiveHomePath(name)
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(sharedAgentHome, ".claude"), filepath.Join(home, ".claude")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	alphaTime := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	betaTime := alphaTime.Add(2 * time.Hour)
+	writeClaudeProjectEvidence(t, sharedAgentHome, m.workDir, "alpha", alphaTime)
+	writeClaudeProjectEvidence(t, sharedAgentHome, m.workDir, "beta", betaTime)
+
+	got, ok := fleet.LastProduction("alpha")
+	if !ok || !got.Equal(alphaTime) {
+		t.Fatalf("alpha LastProduction = %v ok=%v, want its own project mtime %v", got, ok, alphaTime)
+	}
+	got, ok = fleet.LastProduction("beta")
+	if !ok || !got.Equal(betaTime) {
+		t.Fatalf("beta LastProduction = %v ok=%v, want its own project mtime %v", got, ok, betaTime)
+	}
+}
+
+func TestWatchdogLastProductionClaudeProjectNameExact(t *testing.T) {
+	root := t.TempDir()
+	oldSharedHome := sharedAgentHome
+	sharedAgentHome = filepath.Join(root, "home")
+	t.Cleanup(func() { sharedAgentHome = oldSharedHome })
+
+	m, _ := newWatchdogTestManager(t, map[string]string{"sec": "claude", "sec-check": "claude"})
+	m.workDir = filepath.Join(root, "agents")
+	fleet := WatchdogFleet{M: m}
+
+	for name, uid := range map[string]int{"sec": 2001, "sec-check": 2002} {
+		m.agents[name].UID = uid
+		home := interactiveHomePath(name)
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(sharedAgentHome, ".claude"), filepath.Join(home, ".claude")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	secTime := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	secCheckTime := secTime.Add(3 * time.Hour)
+	writeClaudeProjectEvidence(t, sharedAgentHome, m.workDir, "sec", secTime)
+	writeClaudeProjectEvidence(t, sharedAgentHome, m.workDir, "sec-check", secCheckTime)
+
+	got, ok := fleet.LastProduction("sec")
+	if !ok || !got.Equal(secTime) {
+		t.Fatalf("sec LastProduction = %v ok=%v, want exact project mtime %v", got, ok, secTime)
+	}
+}
+
+func TestWatchdogLastProductionCodexUsesPerAgentCodexHome(t *testing.T) {
+	root := t.TempDir()
+	overrideCodexHomePrefix(t, filepath.Join(root, ".codex-"))
+	t.Setenv("HOME", filepath.Join(root, "shared-home"))
+	m, _ := newWatchdogTestManager(t, map[string]string{"alpha": "codex", "beta": "codex"})
+	fleet := WatchdogFleet{M: m}
+
+	alphaTime := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
+	betaTime := alphaTime.Add(90 * time.Minute)
+	writeCodexSessionEvidence(t, "alpha", alphaTime)
+	writeCodexSessionEvidence(t, "beta", betaTime)
+
+	got, ok := fleet.LastProduction("alpha")
+	if !ok || !got.Equal(alphaTime) {
+		t.Fatalf("alpha codex LastProduction = %v ok=%v, want own CODEX_HOME mtime %v", got, ok, alphaTime)
+	}
+	got, ok = fleet.LastProduction("beta")
+	if !ok || !got.Equal(betaTime) {
+		t.Fatalf("beta codex LastProduction = %v ok=%v, want own CODEX_HOME mtime %v", got, ok, betaTime)
+	}
+}
+
+func writeClaudeProjectEvidence(t *testing.T, home, workDir, agentName string, mtime time.Time) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "projects", claudeProjectDirName(filepath.Join(workDir, agentName)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCodexSessionEvidence(t *testing.T, agentName string, mtime time.Time) {
+	t.Helper()
+	dir := filepath.Join(codexHomePath(agentName), "sessions", "2026", "09", "23")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -466,6 +587,30 @@ func TestNewestMtimeBounds(t *testing.T) {
 	got, ok := newestMtime(root)
 	if !ok || !got.Equal(want) {
 		t.Fatalf("newestMtime = %v ok=%v, want shallow file %v (depth bound must hold)", got, ok, want)
+	}
+
+	capped := t.TempDir()
+	stale := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	for i := 0; i < productionScanMaxEntries+50; i++ {
+		path := filepath.Join(capped, fmt.Sprintf("a-%03d.jsonl", i))
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recent := time.Now().Add(-30 * time.Second).Truncate(time.Second)
+	recentPath := filepath.Join(capped, "z-recent.jsonl")
+	if err := os.WriteFile(recentPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(recentPath, recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = newestMtime(capped)
+	if !ok || !got.Equal(recent) {
+		t.Fatalf("newestMtime with capped files = %v ok=%v, want newest-by-age %v", got, ok, recent)
 	}
 }
 

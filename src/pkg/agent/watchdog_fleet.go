@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -209,30 +209,20 @@ func (f WatchdogFleet) SetConditions(name string, conds []watchdog.Condition) {
 	agent.paneMu.Unlock()
 }
 
-// productionEvidenceDirs names the per-backend state/conversation directories
-// (relative to the agent's HOME) whose file mtimes are production evidence.
-// v1 evidence sources are state-file mtimes plus pane activity; issue/PR
-// mutation evidence is a documented follow-up (see RFC #4665).
-var productionEvidenceDirs = map[string][]string{
-	"claude":  {".claude/projects", ".claude"},
-	"codex":   {".codex/sessions", ".codex"},
-	"agy":     {".antigravity-cli", ".gemini"},
-	"gemini":  {".gemini/tmp", ".gemini"},
-	"copilot": {".copilot"},
-}
-
 const (
 	// productionScanMaxEntries bounds the evidence walk so a pathological
-	// state dir can never stall a watchdog sweep.
+	// state dir can never stall a watchdog sweep. It applies to files after
+	// narrowing to the agent's own evidence root; directories do not consume it.
 	productionScanMaxEntries = 512
 	// productionScanMaxDepth bounds the walk depth for the same reason.
 	productionScanMaxDepth = 3
+	// codexProductionScanMaxDepth reaches sessions/YYYY/MM/DD/<file>.
+	codexProductionScanMaxDepth = 4
 )
 
 // LastProduction returns the newest production evidence for the agent: the
 // most recent of (a) state/conversation file mtimes under the agent's own
-// HOME (owner-aware — stat needs no read permission, so #4668's 0600 files
-// still date correctly) and (b) the last observed pane change. ok=false means
+// evidence root and (b) the last observed pane change. ok=false means
 // no evidence source exists for this backend — reported honestly as unknown
 // by the reconciler, never as healthy.
 func (f WatchdogFleet) LastProduction(name string) (time.Time, bool) {
@@ -250,8 +240,8 @@ func (f WatchdogFleet) LastProduction(name string) (time.Time, bool) {
 
 	backend := effectiveBackend(agent)
 	home := AgentHome(name, agent.UID, backend)
-	for _, rel := range productionEvidenceDirs[backend] {
-		if t, ok := newestMtime(filepath.Join(home, rel)); ok {
+	for _, root := range f.productionEvidenceRoots(name, agent, backend, home) {
+		if t, ok := newestMtimeBounded(root.path, root.maxDepth); ok {
 			found = true
 			if t.After(newest) {
 				newest = t
@@ -261,36 +251,132 @@ func (f WatchdogFleet) LastProduction(name string) (time.Time, bool) {
 	return newest, found
 }
 
+type productionEvidenceRoot struct {
+	path     string
+	maxDepth int
+}
+
+// productionEvidenceRoots returns per-agent evidence roots only. It
+// deliberately avoids bare bridged dot-directories such as ~/.claude and
+// ~/.copilot, because those are fleet-shared in the per-UID layout and their
+// symlink mtimes are not production by the agent being checked.
+func (f WatchdogFleet) productionEvidenceRoots(name string, agent *AgentProcess, backend, home string) []productionEvidenceRoot {
+	switch backend {
+	case "claude":
+		return []productionEvidenceRoot{{
+			path:     filepath.Join(home, ".claude", "projects", claudeProjectDirName(filepath.Join(f.M.workDir, name))),
+			maxDepth: productionScanMaxDepth,
+		}}
+	case "codex":
+		return []productionEvidenceRoot{{
+			path:     filepath.Join(codexHomePath(name), "sessions"),
+			maxDepth: codexProductionScanMaxDepth,
+		}}
+	case "agy":
+		return []productionEvidenceRoot{{path: filepath.Join(home, ".antigravity-cli"), maxDepth: productionScanMaxDepth}}
+	case "gemini":
+		return []productionEvidenceRoot{{path: filepath.Join(home, ".gemini", "tmp"), maxDepth: productionScanMaxDepth}}
+	case "copilot":
+		if xdgHome, ok := perAgentXDGHome(name, agent.UID, backend); ok {
+			return []productionEvidenceRoot{
+				{path: filepath.Join(agentXDGStateHome(xdgHome), "github-copilot"), maxDepth: productionScanMaxDepth},
+				{path: filepath.Join(agentXDGStateHome(xdgHome), "copilot"), maxDepth: productionScanMaxDepth},
+				{path: filepath.Join(agentXDGDataHome(xdgHome), "github-copilot"), maxDepth: productionScanMaxDepth},
+				{path: filepath.Join(agentXDGDataHome(xdgHome), "copilot"), maxDepth: productionScanMaxDepth},
+			}
+		}
+	}
+	return nil
+}
+
+func claudeProjectDirName(workDir string) string {
+	clean := filepath.Clean(workDir)
+	if clean == "." {
+		return ""
+	}
+	return strings.ReplaceAll(filepath.ToSlash(clean), "/", "-")
+}
+
 // newestMtime returns the newest file mtime under root, bounded by
 // productionScanMaxEntries/productionScanMaxDepth.
 func newestMtime(root string) (time.Time, bool) {
+	return newestMtimeBounded(root, productionScanMaxDepth)
+}
+
+func newestMtimeBounded(root string, maxDepth int) (time.Time, bool) {
 	var newest time.Time
-	entries := 0
-	rootDepth := strings.Count(root, string(os.PathSeparator))
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	filesSeen := 0
+
+	var scan func(string, int)
+	scan = func(dir string, depth int) {
+		if filesSeen >= productionScanMaxEntries {
+			return
+		}
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			// Unreadable entries are skipped, not fatal: evidence gathering
 			// is best-effort and partial evidence is still evidence.
-			return nil
+			return
 		}
-		entries++
-		if entries > productionScanMaxEntries {
-			return filepath.SkipAll
+
+		type child struct {
+			name  string
+			path  string
+			mtime time.Time
 		}
-		if d.IsDir() {
-			if strings.Count(path, string(os.PathSeparator))-rootDepth >= productionScanMaxDepth {
-				return filepath.SkipDir
+		files := make([]child, 0, len(entries))
+		dirs := make([]child, 0, len(entries))
+		for _, entry := range entries {
+			path := filepath.Join(dir, entry.Name())
+			info, err := entry.Info()
+			if err != nil {
+				continue
 			}
-			return nil
+			c := child{name: entry.Name(), path: path, mtime: info.ModTime()}
+			if entry.IsDir() {
+				dirs = append(dirs, c)
+				continue
+			}
+			files = append(files, c)
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
+
+		sort.Slice(files, func(i, j int) bool {
+			if files[i].mtime.Equal(files[j].mtime) {
+				return files[i].name < files[j].name
+			}
+			return files[i].mtime.After(files[j].mtime)
+		})
+		for _, file := range files {
+			if filesSeen >= productionScanMaxEntries {
+				return
+			}
+			filesSeen++
+			if file.mtime.After(newest) {
+				newest = file.mtime
+			}
 		}
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
+
+		if depth >= maxDepth || filesSeen >= productionScanMaxEntries {
+			return
 		}
-		return nil
-	})
+		sort.Slice(dirs, func(i, j int) bool {
+			if dirs[i].mtime.Equal(dirs[j].mtime) {
+				return dirs[i].name > dirs[j].name
+			}
+			return dirs[i].mtime.After(dirs[j].mtime)
+		})
+		for _, dir := range dirs {
+			scan(dir.path, depth+1)
+			if filesSeen >= productionScanMaxEntries {
+				return
+			}
+		}
+	}
+
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return time.Time{}, false
+	}
+	scan(root, 0)
 	return newest, !newest.IsZero()
 }

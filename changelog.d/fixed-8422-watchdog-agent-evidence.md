@@ -1,0 +1,1 @@
+- Fixed watchdog production evidence so Claude/Codex/Copilot session-file scans use per-agent evidence roots instead of bridged fleet-shared dot-directories, with newest-by-age capped scans and regression coverage for isolated agent homes (#8422)
