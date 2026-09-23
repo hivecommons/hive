@@ -10,6 +10,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/dupsweep"
+	"github.com/hivecommons/hive/pkg/findingidentity"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -147,7 +148,12 @@ func (c *Client) SweepDuplicatePRs(ctx context.Context, opts DuplicateSweepOptio
 		all = append(all, prs...)
 	}
 
-	clusters := dupsweep.Find(all, dupsweep.Options{BotAuthors: opts.BotAuthors})
+	clusters := dupsweep.Find(all, dupsweep.Options{
+		BotAuthors: opts.BotAuthors,
+		FindingKey: func(pr dupsweep.PR) string {
+			return pr.FindingKey
+		},
+	})
 	for _, cluster := range clusters {
 		event := DuplicateSweepEvent{
 			Repo:       cluster.Repo,
@@ -220,14 +226,15 @@ func (c *Client) fingerprintOpenPRs(ctx context.Context, repo string, maxPRs int
 				continue
 			}
 			out = append(out, dupsweep.PR{
-				Repo:      repo,
-				Number:    pr.GetNumber(),
-				Title:     pr.GetTitle(),
-				Author:    safeGetLogin(pr.GetUser()),
-				URL:       pr.GetHTMLURL(),
-				CreatedAt: pr.GetCreatedAt().Time,
-				Files:     fp.files,
-				DiffHash:  fp.diffHash,
+				Repo:       repo,
+				Number:     pr.GetNumber(),
+				Title:      pr.GetTitle(),
+				Author:     safeGetLogin(pr.GetUser()),
+				URL:        pr.GetHTMLURL(),
+				CreatedAt:  pr.GetCreatedAt().Time,
+				Files:      fp.files,
+				DiffHash:   fp.diffHash,
+				FindingKey: findingKeyFromText(pr.GetBody()),
 			})
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -236,6 +243,28 @@ func (c *Client) fingerprintOpenPRs(ctx context.Context, repo string, maxPRs int
 		opts.Page = resp.NextPage
 	}
 	return out, skipped, nil
+}
+
+func findingKeyFromText(text string) string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "-*• \t")
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		key = strings.NewReplacer(" ", "_", "-", "_").Replace(key)
+		switch key {
+		case findingidentity.MetaKey, "finding_identity", "finding_identity_key",
+			findingidentity.MetaSubjectDigest, "finding_subject_digest", "audit_subject_digest",
+			findingidentity.MetaPredicate, "finding_predicate", "audit_predicate",
+			findingidentity.MetaLocation, "finding_location", "normalized_location", "path", "file":
+			fields[key] = strings.TrimSpace(value)
+		}
+	}
+	return findingidentity.KeyFromFields(fields)
 }
 
 // prChangedFiles resolves a PR's changed-file set and diff hash, cached by

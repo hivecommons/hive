@@ -66,8 +66,8 @@ func TestUnknownDiffHashNeverGradesIdentical(t *testing.T) {
 		{Repo: "o/r", Number: 1, Author: "a", CreatedAt: at(1), Files: []string{"f.go"}, DiffHash: ""},
 		{Repo: "o/r", Number: 2, Author: "b", CreatedAt: at(2), Files: []string{"f.go"}, DiffHash: ""},
 	}
-	if c := Find(prs, Options{})[0]; c.Confidence != ConfidenceSameFiles {
-		t.Errorf("confidence = %q, want %q for unknown hashes", c.Confidence, ConfidenceSameFiles)
+	if c := Find(prs, Options{})[0]; c.Confidence != ConfidenceUnknown {
+		t.Errorf("confidence = %q, want %q for unknown hashes", c.Confidence, ConfidenceUnknown)
 	}
 }
 

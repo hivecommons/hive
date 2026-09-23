@@ -61,7 +61,12 @@ func Render(c Cluster, target PR) string {
 		renderOrdinary(&b, c, target)
 	}
 
-	b.WriteString("\n**Evidence — identical changed-file set")
+	b.WriteString("\n**Evidence — ")
+	if c.Confidence == ConfidenceFindingIdentity {
+		b.WriteString("matching finding identity")
+	} else {
+		b.WriteString("identical changed-file set")
+	}
 	if c.Confidence == ConfidenceIdenticalDiff {
 		b.WriteString(", identical diff")
 	}
@@ -120,8 +125,12 @@ func disclaimer(c Cluster) string {
 	b.WriteString("**This is a suggestion, not a verdict.** Hive will not close, label, approve or merge anything here — a human decides.\n\n")
 	b.WriteString("It was produced by comparing changed-file sets across open PRs, which is a *candidate generator*: PRs that share a file are not necessarily the same work. ")
 	switch c.Confidence {
+	case ConfidenceFindingIdentity:
+		b.WriteString("In this case the PRs carry the same deterministic finding identity (subject digest, predicate, normalized location), so line-number or wording drift did not split the finding. Confirm before closing anything.\n")
 	case ConfidenceIdenticalDiff:
 		b.WriteString("In this case the patches are byte-identical, which is the strongest corroboration available without reading intent — but confirm before closing anything.\n")
+	case ConfidenceUnknown:
+		b.WriteString("Here the sweep could not corroborate the match beyond the candidate signal, so it remains Unknown. Treat it only as a queue for human review.\n")
 	default:
 		b.WriteString("Here the patches DIFFER, so this is the weaker tier: dependency-bump PRs that edit one shared manifest, and unrelated fixes to one busy file, both land in it. Read the diffs before acting.\n")
 	}

@@ -22,3 +22,23 @@ without `document_status: final` and enters the normal stale/human handling path
 The run remains open with `waiting_on=human`; repositories that already merged
 are not reverted. The run detail groups all PRs for a wave under one header and
 offers one approve action for the plan wave rather than per-PR approvals.
+
+## Finding identity
+
+Audit findings use a deterministic offline identity:
+
+```text
+(subject digest, predicate, normalized location)
+```
+
+The subject digest is the immutable content or artifact digest under inspection.
+The predicate is the versioned claim being made about that subject. The location
+normalizer keeps the path or logical scope but drops volatile line and column
+coordinates, so two workers that cite the same file at different line numbers
+for the same subject and predicate report one finding. Different predicates
+never dedupe, even when they share a subject and title.
+
+This identity is used only as a candidate/reporting key. Missing or malformed
+identity fields fall back to the existing title/file heuristics, and uncertain
+matches remain `Unknown` for human review; no LLM or external embedding service
+participates in the identity path.

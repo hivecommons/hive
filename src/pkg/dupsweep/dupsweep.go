@@ -40,6 +40,11 @@ import (
 type Confidence string
 
 const (
+	// ConfidenceFindingIdentity means every PR in the cluster carries the same
+	// deterministic finding identity: subject digest, predicate, and normalized
+	// location. This is stronger than title/file similarity and remains purely
+	// offline.
+	ConfidenceFindingIdentity Confidence = "finding-identity"
 	// ConfidenceIdenticalDiff means every PR in the cluster touches the same
 	// files AND produces a byte-identical patch. This is the strongest signal
 	// available without reading intent, and it is the one that separates a
@@ -50,6 +55,10 @@ const (
 	// differ. Informative, and the tier with all the known false positives in
 	// it, so the rendered text says so explicitly.
 	ConfidenceSameFiles Confidence = "same-files"
+	// ConfidenceUnknown means the sweep found a candidate but lacks enough
+	// corroborating evidence to grade it. It is still surfaced for a human and
+	// never licenses an automated merge/close.
+	ConfidenceUnknown Confidence = "unknown"
 )
 
 // PR is the minimum a clustering pass needs. Note what is absent: body,
@@ -69,6 +78,10 @@ type PR struct {
 	// downgrades the cluster to ConfidenceSameFiles rather than silently
 	// claiming a match — an absent signal must never read as a positive one.
 	DiffHash string
+	// FindingKey is an optional deterministic identity for a finding record
+	// associated with the PR. It is populated by callers that can extract the
+	// subject/predicate/location record without reading prose semantically.
+	FindingKey string
 }
 
 // Cluster is one group of PRs that change the same files, with the survivor
@@ -76,7 +89,10 @@ type PR struct {
 type Cluster struct {
 	Repo string
 	// Files is the shared, normalized changed-file set.
-	Files      []string
+	Files []string
+	// FindingKey is set when this cluster was formed by the finding identity
+	// pass instead of by exact file-set identity.
+	FindingKey string
 	Confidence Confidence
 	// BotSeries marks a cluster whose members are all the same bot account
 	// regenerating the same artifact. Those are superseded BY CONSTRUCTION —
@@ -97,6 +113,9 @@ type Cluster struct {
 // new one, and so a cluster whose membership changes still updates rather
 // than duplicates.
 func (c Cluster) Key() string {
+	if c.FindingKey != "" {
+		return c.Repo + "@finding:" + fingerprint([]string{c.FindingKey})
+	}
 	return c.Repo + "@" + fingerprint(c.Files)
 }
 
@@ -136,6 +155,10 @@ type Options struct {
 	// addition to the "[bot]" suffix GitHub App accounts carry. Matched
 	// case-insensitively.
 	BotAuthors []string
+	// FindingKey returns a deterministic finding identity for a PR-like item.
+	// Empty means the item does not carry a finding record and should only
+	// participate in the legacy file-set pass.
+	FindingKey func(PR) string
 }
 
 const (
@@ -155,6 +178,13 @@ const (
 	// queue cannot produce unbounded suggestions.
 	DefaultMaxClusters = 20
 )
+
+type clusterBucket struct {
+	repo       string
+	files      []string
+	findingKey string
+	members    []PR
+}
 
 // Find groups PRs whose normalized changed-file sets are identical, within a
 // repo. Cross-repo clustering is deliberately not attempted: two repos sharing
@@ -179,13 +209,10 @@ func Find(prs []PR, opts Options) []Cluster {
 		maxClusters = DefaultMaxClusters
 	}
 
-	type bucket struct {
-		repo    string
-		files   []string
-		members []PR
-	}
 	order := make([]string, 0, len(prs))
-	buckets := make(map[string]*bucket, len(prs))
+	buckets := make(map[string]*clusterBucket, len(prs))
+	identityOrder := make([]string, 0, len(prs))
+	identityBuckets := make(map[string]*clusterBucket, len(prs))
 
 	for _, pr := range prs {
 		if pr.Draft || pr.Repo == "" || pr.Number <= 0 {
@@ -198,40 +225,54 @@ func Find(prs []PR, opts Options) []Cluster {
 		key := pr.Repo + "@" + fingerprint(files)
 		b, ok := buckets[key]
 		if !ok {
-			b = &bucket{repo: pr.Repo, files: files}
+			b = &clusterBucket{repo: pr.Repo, files: files}
 			buckets[key] = b
 			order = append(order, key)
 		}
 		copyPR := pr
 		copyPR.Files = files
 		b.members = append(b.members, copyPR)
+
+		if opts.FindingKey != nil {
+			findingKey := strings.TrimSpace(opts.FindingKey(copyPR))
+			if findingKey != "" {
+				idKey := pr.Repo + "@finding:" + findingKey
+				ib, ok := identityBuckets[idKey]
+				if !ok {
+					ib = &clusterBucket{repo: pr.Repo, findingKey: findingKey}
+					identityBuckets[idKey] = ib
+					identityOrder = append(identityOrder, idKey)
+				}
+				ib.files = normalizeFiles(append(ib.files, files...))
+				ib.members = append(ib.members, copyPR)
+			}
+		}
 	}
 
-	clusters := make([]Cluster, 0, len(order))
+	clusters := make([]Cluster, 0, len(order)+len(identityOrder))
+	clusterByMembers := map[string]int{}
 	for _, key := range order {
 		b := buckets[key]
 		if len(b.members) < 2 {
 			continue
 		}
-		members := append([]PR(nil), b.members...)
-		sort.Slice(members, func(i, j int) bool { return members[i].Number < members[j].Number })
-
-		botSeries := isBotSeries(members, opts.BotAuthors)
-		survivor := pickSurvivor(members, botSeries)
-		superseded := make([]PR, 0, len(members)-1)
-		for _, m := range members {
-			if m.Number != survivor.Number {
-				superseded = append(superseded, m)
-			}
+		c := buildCluster(b, opts.BotAuthors, false)
+		clusterByMembers[memberKey(c.Members())] = len(clusters)
+		clusters = append(clusters, c)
+	}
+	for _, key := range identityOrder {
+		b := identityBuckets[key]
+		if len(b.members) < 2 {
+			continue
 		}
-		clusters = append(clusters, Cluster{
-			Repo:       b.repo,
-			Files:      b.files,
-			Confidence: gradeConfidence(members),
-			BotSeries:  botSeries,
-			Survivor:   survivor,
-			Superseded: superseded,
-		})
+		c := buildCluster(b, opts.BotAuthors, true)
+		mkey := memberKey(c.Members())
+		if i, ok := clusterByMembers[mkey]; ok {
+			clusters[i] = c
+			continue
+		}
+		clusterByMembers[mkey] = len(clusters)
+		clusters = append(clusters, c)
 	}
 
 	sort.SliceStable(clusters, func(i, j int) bool {
@@ -244,6 +285,38 @@ func Find(prs []PR, opts Options) []Cluster {
 		clusters = clusters[:maxClusters]
 	}
 	return clusters
+}
+
+func buildCluster(b *clusterBucket, botAuthors []string, identity bool) Cluster {
+	members := append([]PR(nil), b.members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].Number < members[j].Number })
+
+	botSeries := isBotSeries(members, botAuthors)
+	survivor := pickSurvivor(members, botSeries)
+	superseded := make([]PR, 0, len(members)-1)
+	for _, m := range members {
+		if m.Number != survivor.Number {
+			superseded = append(superseded, m)
+		}
+	}
+	return Cluster{
+		Repo:       b.repo,
+		Files:      b.files,
+		FindingKey: b.findingKey,
+		Confidence: gradeConfidence(members, identity),
+		BotSeries:  botSeries,
+		Survivor:   survivor,
+		Superseded: superseded,
+	}
+}
+
+func memberKey(members []PR) string {
+	nums := make([]string, 0, len(members))
+	for _, m := range members {
+		nums = append(nums, fmt.Sprintf("%s#%d", m.Repo, m.Number))
+	}
+	sort.Strings(nums)
+	return strings.Join(nums, ",")
 }
 
 // pickSurvivor chooses which PR the suggestion proposes keeping.
@@ -322,10 +395,18 @@ func looksLikeBot(author string, extra []string) bool {
 // reports the SAME non-empty diff hash. An unknown hash on any member
 // downgrades the whole cluster: "we could not check" must never render as "we
 // checked and they match".
-func gradeConfidence(members []PR) Confidence {
+func gradeConfidence(members []PR, identity bool) Confidence {
+	if identity {
+		return ConfidenceFindingIdentity
+	}
 	first := members[0].DiffHash
 	if first == "" {
-		return ConfidenceSameFiles
+		for _, m := range members[1:] {
+			if m.DiffHash != "" {
+				return ConfidenceSameFiles
+			}
+		}
+		return ConfidenceUnknown
 	}
 	for _, m := range members[1:] {
 		if m.DiffHash == "" || m.DiffHash != first {

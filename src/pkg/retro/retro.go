@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/findingidentity"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/timeline"
 )
@@ -103,12 +104,15 @@ type RetroRecord struct {
 }
 
 type Finding struct {
-	Pattern  string
-	Title    string
-	Detail   string
-	Severity string
-	Files    []string
-	Fields   map[string]string
+	Pattern       string
+	Title         string
+	Detail        string
+	Severity      string
+	Files         []string
+	SubjectDigest string
+	Predicate     string
+	Location      string
+	Fields        map[string]string
 }
 
 type AttemptReader interface {
@@ -279,7 +283,8 @@ func (l *Lane) ingestLesson(ctx context.Context, r RetroRecord, analysis *Analys
 }
 
 func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool {
-	if l.openDuplicate(f.Title, f.Files) {
+	findingKey := retroFindingKey(f)
+	if l.openDuplicateFinding(f) {
 		return false
 	}
 	b, err := l.advisoryStore.Create(f.Title, beads.TypeAdvisory, severityToPriority(f.Severity), Actor, r.PRRef)
@@ -301,6 +306,18 @@ func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool
 	}
 	for k, v := range f.Fields {
 		meta[k] = v
+	}
+	if findingKey != "" {
+		meta[findingidentity.MetaKey] = findingKey
+	}
+	if f.SubjectDigest != "" {
+		meta[findingidentity.MetaSubjectDigest] = f.SubjectDigest
+	}
+	if f.Predicate != "" {
+		meta[findingidentity.MetaPredicate] = f.Predicate
+	}
+	if f.Location != "" {
+		meta[findingidentity.MetaLocation] = f.Location
 	}
 	if len(f.Files) > 0 {
 		meta["file_set"] = strings.Join(normalizeDuplicateFiles(f.Files), ",")
@@ -337,14 +354,32 @@ func advisoryNotes(f Finding, analysis *Analysis) string {
 }
 
 func (l *Lane) openDuplicate(title string, files ...[]string) bool {
+	return l.openDuplicateWithKey(title, "", files...)
+}
+
+func (l *Lane) openDuplicateFinding(f Finding) bool {
+	return l.openDuplicateWithKey(f.Title, retroFindingKey(f), f.Files)
+}
+
+func (l *Lane) openDuplicateWithKey(title, findingKey string, files ...[]string) bool {
 	wantFiles := []string(nil)
 	if len(files) > 0 {
 		wantFiles = normalizeDuplicateFiles(files[0])
 	}
 	wantTitle := normalizeDuplicateTitle(title)
+	findingKey = strings.TrimSpace(findingKey)
 	for _, b := range l.advisoryStore.List(beads.ListFilter{}) {
 		if b.Type != beads.TypeAdvisory || b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
 			continue
+		}
+		if findingKey != "" {
+			existingKey := existingFindingKey(b)
+			if existingKey == findingKey {
+				return true
+			}
+			if existingKey != "" {
+				continue
+			}
 		}
 		if len(wantFiles) == 0 {
 			if b.Title == title {
@@ -357,6 +392,38 @@ func (l *Lane) openDuplicate(title string, files ...[]string) bool {
 		}
 	}
 	return false
+}
+
+func retroFindingKey(f Finding) string {
+	if key := findingidentity.KeyFromFields(f.Fields); key != "" {
+		return key
+	}
+	return findingidentity.Key(findingidentity.Record{
+		SubjectDigest: f.SubjectDigest,
+		Predicate:     f.Predicate,
+		Location:      f.Location,
+	})
+}
+
+func existingFindingKey(b *beads.Bead) string {
+	if b == nil {
+		return ""
+	}
+	if key := strings.TrimSpace(metaString(b, findingidentity.MetaKey)); key != "" {
+		return key
+	}
+	return findingidentity.KeyFromFields(map[string]string{
+		findingidentity.MetaSubjectDigest: metaString(b, findingidentity.MetaSubjectDigest),
+		findingidentity.MetaPredicate:     metaString(b, findingidentity.MetaPredicate),
+		findingidentity.MetaLocation:      metaString(b, findingidentity.MetaLocation),
+		"audit_subject_digest":            metaString(b, "audit_subject_digest"),
+		"audit_predicate":                 metaString(b, "audit_predicate"),
+		"audit_content_hash":              metaString(b, "audit_content_hash"),
+		"content_hash":                    metaString(b, "content_hash"),
+		"path":                            metaString(b, "path"),
+		"file":                            metaString(b, "file"),
+		"normalized_location":             metaString(b, "normalized_location"),
+	})
 }
 
 func normalizeDuplicateTitle(title string) string {

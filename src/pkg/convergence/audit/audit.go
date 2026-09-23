@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/findingidentity"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -54,8 +55,12 @@ type Component struct {
 }
 
 type Finding struct {
-	Title string   `json:"title"`
-	Files []string `json:"files"`
+	Title         string   `json:"title"`
+	Files         []string `json:"files"`
+	SubjectDigest string   `json:"subject_digest,omitempty"`
+	Predicate     string   `json:"predicate,omitempty"`
+	Location      string   `json:"location,omitempty"`
+	EvidenceRefs  []string `json:"evidence_refs,omitempty"`
 }
 
 type Options struct {
@@ -274,7 +279,7 @@ func ensureBead(store *beads.Store, kind, campaign, name string, extra map[strin
 func recordFindings(store *beads.Store, campaign string, c Component, componentHash string, seen map[string]string, res *Result) (int, error) {
 	made := 0
 	for _, f := range c.Findings {
-		key := duplicateKey(f.Title, f.Files)
+		key := duplicateKey(f)
 		state := "validated"
 		dupOf := ""
 		if first, ok := seen[key]; ok {
@@ -292,6 +297,12 @@ func recordFindings(store *beads.Store, campaign string, c Component, componentH
 		_ = store.SetMetadata(b.ID, metaContentHash, componentHash)
 		_ = store.SetMetadata(b.ID, metaFindingState, state)
 		_ = store.SetMetadata(b.ID, metaFileSet, strings.Join(normalizeFiles(f.Files), ","))
+		if identityKey := findingKey(f); identityKey != "" {
+			_ = store.SetMetadata(b.ID, findingidentity.MetaKey, identityKey)
+			_ = store.SetMetadata(b.ID, findingidentity.MetaSubjectDigest, f.SubjectDigest)
+			_ = store.SetMetadata(b.ID, findingidentity.MetaPredicate, f.Predicate)
+			_ = store.SetMetadata(b.ID, findingidentity.MetaLocation, f.Location)
+		}
 		if state == "duplicate_of" {
 			_ = store.SetMetadata(b.ID, metaDuplicateOf, dupOf)
 		} else {
@@ -320,7 +331,13 @@ func existingFindingKeys(store *beads.Store, campaign string) map[string]string 
 			continue
 		}
 		title := strings.TrimPrefix(b.Title, "finding: ")
-		out[duplicateKey(title, strings.Split(b.Meta(metaFileSet), ","))] = b.ID
+		out[duplicateKey(Finding{
+			Title:         title,
+			Files:         strings.Split(b.Meta(metaFileSet), ","),
+			SubjectDigest: b.Meta(findingidentity.MetaSubjectDigest),
+			Predicate:     b.Meta(findingidentity.MetaPredicate),
+			Location:      b.Meta(findingidentity.MetaLocation),
+		})] = b.ID
 	}
 	return out
 }
@@ -337,8 +354,18 @@ func stableHash(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func duplicateKey(title string, files []string) string {
-	return normalizeTitle(title) + "|" + strings.Join(normalizeFiles(files), "\x00")
+func duplicateKey(f Finding) string {
+	if key := findingKey(f); key != "" {
+		return key
+	}
+	return normalizeTitle(f.Title) + "|" + strings.Join(normalizeFiles(f.Files), "\x00")
+}
+func findingKey(f Finding) string {
+	return findingidentity.Key(findingidentity.Record{
+		SubjectDigest: f.SubjectDigest,
+		Predicate:     f.Predicate,
+		Location:      f.Location,
+	})
 }
 func normalizeTitle(title string) string {
 	return strings.Join(strings.Fields(strings.ToLower(title)), " ")
