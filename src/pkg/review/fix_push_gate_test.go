@@ -55,8 +55,13 @@ func TestHumanPRFixWithheldWhenFixHumanPRsOff(t *testing.T) {
 	if w.Author != "clubanderson" {
 		t.Fatalf("withheld entry must carry the PR author for the audit trail, got %q", w.Author)
 	}
-	if w.Setting != WithheldFixSetting || w.Setting != "review.fix_human_prs" {
+	if w.Setting != WithheldFixSetting {
 		t.Fatalf("withheld entry must cite the setting that permits the push, got %q", w.Setting)
+	}
+	// Pin the literal: the audit trail and the docs name this key, so the
+	// constant cannot drift away from it unnoticed.
+	if WithheldFixSetting != "review.fix_human_prs" {
+		t.Fatalf("WithheldFixSetting = %q, want review.fix_human_prs", WithheldFixSetting)
 	}
 	if w.Withheld.IsZero() {
 		t.Fatal("withheld entry has no timestamp")
