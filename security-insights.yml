@@ -45,12 +45,21 @@ project:
     - name: dibs
       url: https://github.com/hivecommons/dibs
       comment: Contributor attribution layer for AI-agent-era contributions. Standalone service.
+    - name: spektacular
+      url: https://github.com/hivecommons/spektacular
+      comment: |
+        Spec-driven development for AI coding agents: a markdown spec becomes
+        a reviewed plan and an agent-driven implementation (Claude Code, Bob,
+        Codex). Standalone binary. Early development.
     - name: homebrew-hive
       url: https://github.com/hivecommons/homebrew-hive
       comment: Homebrew tap for the Hive contribute app. Packaging only.
     - name: docs
       url: https://github.com/hivecommons/docs
       comment: Source for docs.hivecommons.dev. Project docs are synced from their repositories at build time.
+    - name: spektacular-website
+      url: https://github.com/hivecommons/spektacular-website
+      comment: Source for spektacular.dev.
     - name: infra
       url: https://github.com/hivecommons/infra
       comment: Shared CI workflows, Prow configuration and organization automation.

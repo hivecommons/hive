@@ -7,8 +7,9 @@ current status, so that users and downstream reviewers can see what the project
 produces beyond this repository (OpenSSF Baseline OSPS-QA-04).
 
 Status values: **Active** (released, maintained, in the release train),
-**Supporting** (maintained, no independent release cadence), **Placeholder**
-(exists for infrastructure reasons only).
+**Supporting** (maintained, no independent release cadence), **Early
+development** (newly added, pre-release), **Placeholder** (exists for
+infrastructure reasons only).
 
 | Repository | Intent | Status | Compiled into a Hive release? |
 | --- | --- | --- | --- |
@@ -18,8 +19,10 @@ Status values: **Active** (released, maintained, in the release train),
 | [promptargs](https://github.com/hivecommons/promptargs) | Template expansion and variable substitution for AI prompts across Claude Code, Copilot, Goose, Bob and others. | Active | No, standalone tool |
 | [rationguard](https://github.com/hivecommons/rationguard) | Detects and rebuts rationalization patterns in AI agent output. Standalone tool for reviewing agent transcripts. | Active | No, standalone tool |
 | [dibs](https://github.com/hivecommons/dibs) | Contributor attribution layer for AI-agent-era contributions: your idea, your credit, their code. | Active | No, standalone service |
+| [spektacular](https://github.com/hivecommons/spektacular) | Spec-driven development for AI coding agents: a markdown spec becomes a reviewed plan and an agent-driven implementation (Claude Code, Bob, Codex). | Early development | No, standalone binary |
 | [homebrew-hive](https://github.com/hivecommons/homebrew-hive) | Homebrew tap for one-command install of the Hive contribute app. | Supporting | No, packaging only |
 | [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, hotshot, pluk, rationguard and promptargs docs are single-sourced from their repositories at build time. | Supporting | No |
+| [spektacular-website](https://github.com/hivecommons/spektacular-website) | Source for [spektacular.dev](https://spektacular.dev). | Early development | No |
 | [infra](https://github.com/hivecommons/infra) | Shared CI workflows, Prow configuration and org automation. | Supporting | No |
 | [.github](https://github.com/hivecommons/.github) | Organization profile and community health files (code of conduct, security policy, issue templates). | Supporting | No |
 | [hive-redirect](https://github.com/hivecommons/hive-redirect) | GitHub Pages redirect from `hive.hivecommons.dev` to the hosted hub. | Placeholder | No |
