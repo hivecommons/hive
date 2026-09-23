@@ -1,0 +1,1 @@
+- tests: give `TestStart_ServesEndpoints` 60s of readiness headroom so saturated shuffle runners no longer fail unrelated PRs with "server did not start within 15s" (#8542)

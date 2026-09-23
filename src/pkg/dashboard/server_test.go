@@ -708,7 +708,12 @@ func freePort(t *testing.T) int {
 
 func TestStart_ServesEndpoints(t *testing.T) {
 	const (
-		startReadinessTimeout = 15 * time.Second
+		// Pure headroom, not an expectation: the poll loop exits the moment
+		// /api/health answers (<1s in isolation), but Start() precompresses the
+		// ~1.3MB embedded SPA index before binding, and on a saturated shuffle
+		// runner 15s starved (#5775, recurrence #8542). A healthy run never
+		// pays this ceiling.
+		startReadinessTimeout = 60 * time.Second
 		startReadinessPoll    = 25 * time.Millisecond
 	)
 
