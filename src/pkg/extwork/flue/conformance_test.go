@@ -28,6 +28,7 @@ import (
 
 const (
 	fixtureStartTimeout = 10 * time.Second
+	readyPollInterval   = 20 * time.Millisecond
 	stageCount          = 3
 )
 
@@ -48,6 +49,11 @@ type fixtureOpts struct {
 	incarnation string
 	ignoreAbort bool
 	proxy       string
+	// listen pins the host:port. A restart reuses the previous address, because
+	// the adapter is configured with a fixed endpoint and must never follow a
+	// moving one; a recreated engine is recognised by its incarnation, not by
+	// where it listens.
+	listen string
 }
 
 func startFixture(t *testing.T, o fixtureOpts) *fixtureProc {
@@ -64,6 +70,9 @@ func startFixture(t *testing.T, o fixtureOpts) *fixtureProc {
 	}
 	if o.proxy != "" {
 		args = append(args, "-egress-proxy", o.proxy)
+	}
+	if o.listen != "" {
+		args = append(args, "-listen", o.listen)
 	}
 	cmd := exec.Command(os.Args[0], args...)
 	// A scrubbed environment: no GITHUB_TOKEN, no dashboard token, no proxy
@@ -99,7 +108,27 @@ func startFixture(t *testing.T, o fixtureOpts) *fixtureProc {
 		t.Fatal("fixture process did not print its address")
 	}
 	t.Cleanup(p.kill)
+	p.waitReady()
 	return p
+}
+
+// waitReady blocks until the fixture answers its info endpoint, so a test
+// never observes a process that has printed its address but is not yet
+// accepting connections (relevant after a restart on a reused port).
+func (p *fixtureProc) waitReady() {
+	p.t.Helper()
+	deadline := time.Now().Add(fixtureStartTimeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(p.addr + "/")
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(readyPollInterval)
+	}
+	p.t.Fatalf("fixture at %s did not become ready", p.addr)
 }
 
 // kill simulates the engine going away (an outage or a hard restart).
@@ -116,7 +145,7 @@ func (p *fixtureProc) kill() {
 // resumes; a different one is a recreated instance.
 func (p *fixtureProc) restart(incarnation string) *fixtureProc {
 	p.kill()
-	return startFixture(p.t, fixtureOpts{stateDir: p.stateDir, incarnation: incarnation, ignoreAbort: p.ignoreAbort, proxy: p.proxy})
+	return startFixture(p.t, fixtureOpts{stateDir: p.stateDir, incarnation: incarnation, ignoreAbort: p.ignoreAbort, proxy: p.proxy, listen: strings.TrimPrefix(p.addr, "http://")})
 }
 
 func (p *fixtureProc) control(method, path string) []byte {
@@ -372,6 +401,7 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 	// durable record knows the native run was accepted, so the run is lost
 	// with the old instance: uncertain, nothing adopted, nothing started.
 	p = p.restart("gen-b")
+	addr := p.addr
 	b2, sink := newBinding(t, p.adapter(""), store, extwork.ModeReportOnly)
 	rec, err := b2.Recover(ctx, adm, payload)
 	if !errors.Is(err, extwork.ErrUncertain) || !errors.Is(err, extwork.ErrIncarnationMismatch) || rec.Adopted || rec.Started {
@@ -395,6 +425,9 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 		t.Fatalf("record after crash = %+v", stored)
 	}
 	p = p.restart("gen-c")
+	if p.addr != addr {
+		t.Fatalf("recreated engine moved from %s to %s; the adapter's endpoint is fixed configuration", addr, p.addr)
+	}
 	after, _ := newBinding(t, p.adapter(""), lostStore, extwork.ModeReportOnly)
 	rec, err = after.Recover(ctx, lostAdm, lostPayload)
 	if err != nil || !rec.Started || rec.Adopted || rec.Uncertain || rec.Run.RemoteIncarnation != "gen-c" {
@@ -413,6 +446,8 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 	if err != nil || !ok || pinned.EngineIncarnation != "gen-a" {
 		t.Fatalf("pinned admission = %+v %v %v", pinned, ok, err)
 	}
+	// b2 still talks to the configured endpoint, now served by gen-c: the
+	// pinned gen-a incarnation mismatches, so nothing is adopted.
 	if _, err := b2.Observe(ctx, pinned, ""); !errors.Is(err, extwork.ErrIncarnationMismatch) {
 		t.Fatalf("observe on recreated engine = %v", err)
 	}
@@ -555,7 +590,7 @@ func TestConformanceOutageAndWaiting(t *testing.T) {
 	}
 	// Same incarnation resumes from its own state: the run is still there and
 	// the local unknown is replaced by the authoritative running state.
-	p = startFixture(t, fixtureOpts{stateDir: p.stateDir, incarnation: "durable"})
+	p = p.restart("durable")
 	b2, _ := newBinding(t, p.adapter(""), store, extwork.ModeReportOnly)
 	rec, err = b2.Recover(ctx, adm, payload)
 	if err != nil || !rec.Adopted || rec.Run.RemoteRunID != res.Run.RemoteRunID || rec.Observation.State != extwork.StateRunning {
