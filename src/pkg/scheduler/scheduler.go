@@ -2388,6 +2388,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"SLA_VIOLATIONS":        lit(fmt.Sprintf("%d", actionable.Issues.SLAViolations)),
 		"ISSUE_LIST":            lit(issueList),
 		"PR_LIST":               lit(prList),
+		"REVIEW_PERSPECTIVES":   lit(s.reviewPerspectivesSection()),
 		"AUTHORIZED_REPOS":      lit(s.buildReposSectionFor(agentName)),
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
@@ -2578,6 +2579,26 @@ func reviewedAnnotation(verdicts review.Artifact, links map[string]github.Review
 		return fmt.Sprintf(" [hive-reviewed: %s@%s]", state, short)
 	}
 	return ""
+}
+
+// reviewPerspectivesSection renders ${REVIEW_PERSPECTIVES}: this hive's
+// configured review perspectives with what each one looks for, as a bullet
+// list. The cadence reviewer's template requires one verdict object per
+// perspective named here; without the list in the kick the agent could only
+// guess at the set (and guessed one — a single `correctness` object on a
+// clean PR, which the confidence score then capped as "1 of 5 perspectives
+// reported"). Falls back to the built-in set when the configured one does not
+// validate, the same fallback the relay applies.
+func (s *Scheduler) reviewPerspectivesSection() string {
+	set, err := review.NewPerspectiveSet(s.cfg.Review.Perspectives, s.cfg.Review.PerspectivePrompts)
+	if err != nil {
+		set = review.PerspectiveSet{}
+	}
+	var b strings.Builder
+	for _, p := range set.List() {
+		fmt.Fprintf(&b, "- `%s` — %s\n", p, set.Focus(p))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // loadReviewLinks reads the relay's posted-review ledger for ${PR_LIST}

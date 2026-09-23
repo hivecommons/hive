@@ -90,17 +90,29 @@ posted, nothing is recorded, and the result file tells you which key was wrong.
 Fix the JSON and resubmit. Do not invent a shorter shape — `{"repo","pr",
 "verdict","summary"}` is the one that has been tried, and it is rejected.
 
-One object per perspective you judged, or a JSON array of such objects:
+**A JSON array with one object per perspective below — every perspective,
+every time.** You review the whole change once, from every perspective this
+hive configured, and the array is how each of those judgements is recorded. A
+perspective that found nothing is still an object: `"verdict":"approve"`,
+`"findings":[]`, a one-line summary saying what you checked. A perspective
+missing from the array reads downstream as *never reviewed*: the confidence
+score is capped at "needs attention" (`1 of 5 perspectives reported`) on a PR
+you found clean, and the PR stays eligible to come back to you.
+
+This hive's perspectives, and what each one looks for:
+
+${REVIEW_PERSPECTIVES}
+
+Each object:
 
 ```json
 {"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","author_model":"<author model from PR_LIST when present>","review_model":"<the model you are running when known>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41}],"prs_opened":[],"beads_filed":[]}
 ```
 
 - `lane` is always `"review-swarm"`; `kind` is always `"review"`.
-- `perspective` is one of this hive's configured perspectives — by default
-  `correctness`, `security`, `intent-alignment`, `style`, `docs-currency`. A
-  whole-PR judgement is `correctness`; a duplicate or scope finding is
-  `intent-alignment`.
+- `perspective` is one of the names listed above, spelled exactly. A
+  duplicate or scope finding belongs under `intent-alignment`; a defect in
+  behaviour under `correctness`. One object per name, no name twice.
 - `repo` is `owner/name` and `number` is the PR you reviewed — the same ones you
   pass to `hive-review`. A verdict naming a different PR is discarded.
 - `author_model` and `review_model` are optional for old kicks, but when PR_LIST
@@ -110,8 +122,8 @@ One object per perspective you judged, or a JSON array of such objects:
   and `summary`; `file` and `line` are optional. Empty arrays are `[]`, never
   omitted.
 
-If you have nothing worth saying, you still have a verdict. Record it without
-posting anything:
+If you have nothing worth saying, you still have a verdict — the same full
+array, every perspective `approve`. Record it without posting anything:
 
 ```
 hive-review <number> --repo <owner>/<repo> --record-verdict \

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -83,5 +84,25 @@ func TestFormatPRList_CarriesReviewedAnnotation(t *testing.T) {
 		if strings.Contains(line, "#554") && strings.Contains(line, "hive-reviewed") {
 			t.Fatalf("unreviewed PR must not be annotated: %q", line)
 		}
+	}
+}
+
+func TestReviewPerspectivesSection(t *testing.T) {
+	s := &Scheduler{cfg: &config.Config{}}
+	got := s.reviewPerspectivesSection()
+	for _, want := range []string{"- `correctness` — ", "- `security` — ", "- `intent-alignment` — ", "- `style` — ", "- `docs-currency` — "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("default section missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "\n") != 4 {
+		t.Errorf("want 5 lines for the built-in set, got:\n%s", got)
+	}
+
+	s.cfg.Review.Perspectives = []string{"security", "api-compat"}
+	s.cfg.Review.PerspectivePrompts = map[string]string{"api-compat": "wire and CLI compatibility with the previous minor"}
+	got = s.reviewPerspectivesSection()
+	if strings.Contains(got, "`correctness`") || !strings.Contains(got, "- `api-compat` — wire and CLI compatibility with the previous minor") {
+		t.Errorf("configured set not rendered:\n%s", got)
 	}
 }

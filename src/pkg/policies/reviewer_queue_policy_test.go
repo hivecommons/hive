@@ -111,6 +111,9 @@ func TestReviewerQueuePolicy_SchemaAndSkipRule(t *testing.T) {
 		`"prs_opened":[]`,
 		`"beads_filed":[]`,
 		"[hive-reviewed:",
+		"${REVIEW_PERSPECTIVES}",
+		"one object per perspective below",
+		"every perspective,\nevery time",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("reviewer-queue.md must contain %q", want)
@@ -118,5 +121,10 @@ func TestReviewerQueuePolicy_SchemaAndSkipRule(t *testing.T) {
 	}
 	if strings.Contains(body, "Your kick names the exact schema") {
 		t.Error("reviewer-queue.md still defers the schema to a kick that never carried it")
+	}
+	// "A whole-PR judgement is `correctness`" is what produced single-object
+	// verdicts on clean PRs; the template must not offer that shortcut.
+	if strings.Contains(body, "whole-PR judgement is") {
+		t.Error("reviewer-queue.md still invites a single-perspective verdict for the whole PR")
 	}
 }
