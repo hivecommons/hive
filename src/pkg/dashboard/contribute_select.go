@@ -519,6 +519,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	for key := range h.leasedIssueKeys(identityOf(c), time.Now()) {
 		activeIssues[key] = true
 	}
+	// #8380: an item some OTHER holder has a live worker claim on — a human
+	// session, a hub agent, another contributor, or an external author — is
+	// not offerable either. The claim is what lets a person say "mine" before
+	// any PR exists; the relay must honour it exactly like a lease.
+	for key := range h.claimedIssueKeys(identityOf(c)) {
+		activeIssues[key] = true
+	}
 
 	// #2436 finding 3 / #2566: enforce tier_limits per identity. The config ships
 	// populated MaxConcurrent/MaxPerHour/MaxPerDay defaults, so an operator
@@ -1136,6 +1143,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// rollbackAssignment (#7775). Uses the same identity key as the concurrency
 	// gate.
 	h.recordAssignment(identityOf(c), assignedAt)
+
+	// #8380: mirror the lease into the worker-claim ledger so humans, hub
+	// agents and other hives can see this contributor holds the item. Issues
+	// only — synthetic pr-review and external items key a claim on nothing.
+	if chosen.number > 0 {
+		h.claimIssueForContributor(c, chosen.repoFull, chosen.number)
+	}
 
 	// The claim is committed and visible to every other selection; nothing below
 	// touches the shared selection state, so the fleet-wide lock is released

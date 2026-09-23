@@ -43,6 +43,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.deps = deps
 	s.loadSidebarFromDisk()
 	s.registerContributeRoutes()
+	// Issue claims (hivecommons/hive#8380). Routes register unconditionally;
+	// handlers answer "not enabled" when deps.IssueClaims is nil.
+	s.registerClaimsRoutes()
 	// Approval desk (RFC #4000). Routes register unconditionally; the handlers
 	// report "not enabled" when deps.ApprovalInbox is nil, so a disabled desk is
 	// an honest 200 the panel can render rather than a 404 that looks broken.

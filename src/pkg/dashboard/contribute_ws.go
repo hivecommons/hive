@@ -1824,13 +1824,83 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 	if len(targets) == 0 {
 		return 0, nil
 	}
+	return h.yankAndReassign(targets, reason, "yanked by operator", "reassigned by yank")
+}
 
+// PreemptContributorIssue is the claim-takeover YANK (hivecommons/hive#8380): a
+// higher-ranked claimant (a human session or a hub-kicked agent) took over an
+// issue a relay contributor was working, so ONLY the connection holding THAT
+// issue is released and immediately handed different work — the contributor's
+// other sessions are untouched. holderID is the session-scoped identity the
+// claim was recorded under (identityOf). Returns the same pair as
+// RequeueContributorTask.
+func (h *ContributeWSHub) PreemptContributorIssue(holderID, repo string, number int, reason string) (released int, assigned *WSMessage) {
+	if holderID == "" || number <= 0 {
+		return 0, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "preempted: claim taken over"
+	}
+	var targets []releaseTarget
+	h.mu.RLock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		match := identityOf(c) == holderID && c.currentTask != nil &&
+			c.currentTask.Number == number && sameRepoSpelling(c.currentTask.Repo, repo)
+		if match {
+			released := *c.currentTask
+			c.currentTask = nil
+			c.currentPrompt = ""
+			c.currentLabels = nil
+			c.tokenMintedAt = time.Time{}
+			c.pendingToken = ""
+			c.credentialDelivered = false
+			c.currentTaskGen = h.nextTaskGen()
+			c.lastLeaseRenew = time.Time{}
+			targets = append(targets, releaseTarget{conn: c, task: released})
+		}
+		c.mu.Unlock()
+	}
+	h.mu.RUnlock()
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	return h.yankAndReassign(targets, reason, "preempted by claim takeover", "reassigned after preemption")
+}
+
+// sameRepoSpelling compares owner/repo forms case-insensitively and tolerates a
+// bare repo name on either side (the relay task carries repoFull, ledger
+// callers may pass either spelling).
+func sameRepoSpelling(a, b string) bool {
+	a, b = strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))
+	if a == b {
+		return true
+	}
+	tail := func(s string) string {
+		if i := strings.LastIndex(s, "/"); i >= 0 {
+			return s[i+1:]
+		}
+		return s
+	}
+	return tail(a) == tail(b) && (!strings.Contains(a, "/") || !strings.Contains(b, "/"))
+}
+
+// yankAndReassign is the shared tail of RequeueContributorTask and
+// PreemptContributorIssue: book the failure cooldown + push task_revoke for
+// every released session, self-exclude the released issue from that same
+// clanker, and hand it its next admissible item.
+func (h *ContributeWSHub) yankAndReassign(targets []releaseTarget, reason, revokeDetail, activity string) (released int, assigned *WSMessage) {
 	// Book the short cooldown + push task_revoke for every released session (the original
 	// requeue behaviour). The self-exclusion + reassignment below is the yank addition:
 	// the clanker is immediately handed different work rather than left idle.
-	released = h.bookAndRevokeReleased(targets, reason, "yanked by operator")
+	released = h.bookAndRevokeReleased(targets, reason, revokeDetail)
 
 	for _, tgt := range targets {
+		contributorID := ""
+		if tgt.conn.profile != nil {
+			contributorID = tgt.conn.profile.ContributorID
+		}
 		// Briefly self-exclude the just-yanked issue from THIS clanker so its immediate
 		// reassignment picks genuinely different work. Scoped to (contributor, issue) —
 		// other contributors are unaffected. Synthetic pr-review tasks (Number == 0) do
@@ -1879,8 +1949,8 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 			yankKey = worksource.Ref{Repo: msg.Repo, Number: msg.Number}.Key()
 		}
 		taskDesc := assignDesc(msg.Kind, yankKey, msg.Title, msg.TaskID)
-		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, taskDesc)
-		h.logger.Info("[contribute-ws] clanker reassigned after yank",
+		h.addActivity(username, activity, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, taskDesc)
+		h.logger.Info("[contribute-ws] clanker "+activity,
 			"username", username, "task", msg.TaskID, "repo", msg.Repo, "number", msg.Number)
 		if !h.requireExplicitAccept() {
 			h.deliverTaskCredential(tgt.conn, "yank_reassign")

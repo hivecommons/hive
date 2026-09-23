@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
@@ -166,6 +167,13 @@ type Dependencies struct {
 	// repo is tried in the same spellings as IssueClaimed; a nil func means
 	// "no churn data" and disables the guard.
 	IssueChurn func(repo string, number int) (ghpkg.IssueChurn, bool)
+	// IssueClaims is the worker-claim ledger (hivecommons/hive#8380): who is
+	// actively working an issue right now — a human session, a hub-kicked
+	// agent, a relay contributor, or an external author — ranked so a higher
+	// kind takes the issue over and the displaced holder is told to stop.
+	// Distinct from IssueClaimed (open-PR claims, rebuilt each scan). Nil
+	// disables recording, enforcement and the /api/claims routes.
+	IssueClaims *claims.Ledger
 	HookFire   func(context.Context, hooks.Payload)
 	CELTrigger func(context.Context, celtrigger.NormalizedEvent, string)
 	// RunBurndown optionally projects cheap convergence progress for one run

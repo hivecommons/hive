@@ -416,20 +416,46 @@ func (l *Ledger) Release(repo string, issue int, by string, byKind Kind, reason 
 	return c, true, err
 }
 
+// ForceRelease drops a claim regardless of who holds it — the operator
+// override behind DELETE /api/claims with owner credentials.
+func (l *Ledger) ForceRelease(repo string, issue int, reason string) (Claim, bool) {
+	if l == nil {
+		return Claim{}, false
+	}
+	l.mu.Lock()
+	key := Key(strings.TrimSpace(repo), issue)
+	c, ok := l.claims[key]
+	if ok {
+		delete(l.claims, key)
+		_ = l.saveLocked()
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	if ok && hooks.OnReleased != nil {
+		hooks.OnReleased(c, reason)
+	}
+	return c, ok
+}
+
 // ReleaseByHolderID drops every claim whose HolderID matches — used when a
 // relay lease is revoked or expires so the claim goes with it. Returns the
-// released claims.
-func (l *Ledger) ReleaseByHolderID(holderID, reason string) []Claim {
+// released claims. A non-empty onlyKey restricts the release to that one
+// issue (the lease being revoked), leaving the holder's other claims alone.
+func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) []Claim {
 	if l == nil || holderID == "" {
 		return nil
 	}
 	l.mu.Lock()
 	var out []Claim
 	for k, c := range l.claims {
-		if c.HolderID == holderID {
-			out = append(out, c)
-			delete(l.claims, k)
+		if c.HolderID != holderID {
+			continue
 		}
+		if len(onlyKey) > 0 && onlyKey[0] != "" && onlyKey[0] != k {
+			continue
+		}
+		out = append(out, c)
+		delete(l.claims, k)
 	}
 	if len(out) > 0 {
 		_ = l.saveLocked()

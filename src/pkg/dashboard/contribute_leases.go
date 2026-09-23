@@ -605,14 +605,20 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 	}
 	h.leaseMu.Lock()
 	revoked := false
+	// #8380: remember which items went so their worker claims go with them.
+	var releasedKeys []string
 	if taskID != "" {
-		if _, ok := h.leases[leaseKey(identity, taskID)]; ok {
+		if l, ok := h.leases[leaseKey(identity, taskID)]; ok {
+			if l != nil {
+				releasedKeys = append(releasedKeys, leaseClaimKey(l))
+			}
 			delete(h.leases, leaseKey(identity, taskID))
 			revoked = true
 		}
 	} else {
 		for k, l := range h.leases {
 			if l != nil && l.identity == identity {
+				releasedKeys = append(releasedKeys, leaseClaimKey(l))
 				delete(h.leases, k)
 				revoked = true
 			}
@@ -632,6 +638,18 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 		}
 	}
 	h.leaseMu.Unlock()
+	for _, key := range releasedKeys {
+		h.releaseClaimForLease(identity, key, "lease revoked")
+	}
+}
+
+// leaseClaimKey is the ledger key for the item a lease holds: the canonical
+// worksource key when recorded (#5681), else the legacy repo#number spelling.
+func leaseClaimKey(l *taskLease) string {
+	if l.key != "" {
+		return l.key
+	}
+	return fmt.Sprintf("%s#%d", l.repo, l.number)
 }
 
 // lookupLease returns the active, unexpired server-issued lease for an identity that
