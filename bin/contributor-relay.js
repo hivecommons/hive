@@ -1265,6 +1265,7 @@ function makeHub(url, token) {
     // this hub, so a reconnect loop does not repeat the same advisory line.
     protocolDriftReported: false,
     serverCapabilities: [],
+    announcementSeen: new Set(),
     // #7732: true from the moment a `ready` is actually transmitted to this hub
     // until the hub answers it (task_assign or task_unavailable), or the
     // conversation it belonged to ends (socket close, re-auth). While it is
@@ -2095,6 +2096,28 @@ function sanitizeDeclaredValue(raw) {
   return points.length > CLI_VERSION_MAX_LEN
     ? points.slice(0, CLI_VERSION_MAX_LEN).join('').trim()
     : clean;
+}
+
+
+function formatHubAnnouncementLine(hub, ann) {
+  const text = ann && typeof ann.text === 'string' ? ann.text.trim() : '';
+  if (!ann || !ann.id || !text) return '';
+  const label = hub && (hub.sourceURL || hub.url) ? hubPublicURL(hub.sourceURL || hub.url) : 'hub';
+  return `${label}: ${text}`;
+}
+
+function printHubAnnouncementOnce(hub, ann) {
+  if (!hub || !ann || !ann.id) return false;
+  if (!hub.announcementSeen) hub.announcementSeen = new Set();
+  if (hub.announcementSeen.has(ann.id)) return false;
+  const line = formatHubAnnouncementLine(hub, ann);
+  if (!line) return false;
+  hub.announcementSeen.add(ann.id);
+  const decorated = process.stdout && process.stdout.isTTY && !process.env.NO_COLOR
+    ? `[7m${line}[0m`
+    : line;
+  console.log(decorated);
+  return true;
 }
 
 // parseProtocolVersion mirrors the hub's parser (contribute_protocol_compat.go):
@@ -7287,6 +7310,7 @@ function handleMessage(data, hub) {
       // itself on a version mismatch would strand its own contributor for a
       // difference that is, by the additive-versioning rule, usually harmless.
       warnOnProtocolDrift(hub, msg.protocol_version);
+      printHubAnnouncementOnce(hub, msg.announcement);
       hub.authenticated = true;
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
@@ -7653,6 +7677,7 @@ function handleMessage(data, hub) {
       break;
 
     case 'notice':
+      if (msg.announcement && printHubAnnouncementOnce(hub, msg.announcement)) break;
       console.log(msg.message || msg.reason || 'Notice from hub');
       break;
 
@@ -8151,6 +8176,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     parseProtocolVersion,
     classifyPeerProtocol,
     warnOnProtocolDrift,
+    formatHubAnnouncementLine,
+    printHubAnnouncementOnce,
     describeWsClose,
     wsCloseCorrelation,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).

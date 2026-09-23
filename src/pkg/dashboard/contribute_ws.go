@@ -381,14 +381,15 @@ type WSMessage struct {
 	// lets a relay trim an oversized audit tail to fit instead of losing a whole
 	// task_complete — and lets a hub that raises the ceiling carry its relays up
 	// with it. Additive; a relay that ignores it keeps whatever default it ships.
-	MaxMessageBytes int      `json:"max_message_bytes,omitempty"`
-	Role            string   `json:"role,omitempty"`
-	ContribLabels   []string `json:"contributor_labels,omitempty"`
-	Status          string   `json:"status,omitempty"`
-	Result          string   `json:"result,omitempty"`
-	Summary         string   `json:"summary,omitempty"`
-	TmuxOutput      []string `json:"tmux_output,omitempty"`
-	AcceptedModels  []string `json:"accepted_models,omitempty"`
+	MaxMessageBytes int                            `json:"max_message_bytes,omitempty"`
+	Announcement    *config.ContributeAnnouncement `json:"announcement,omitempty"`
+	Role            string                         `json:"role,omitempty"`
+	ContribLabels   []string                       `json:"contributor_labels,omitempty"`
+	Status          string                         `json:"status,omitempty"`
+	Result          string                         `json:"result,omitempty"`
+	Summary         string                         `json:"summary,omitempty"`
+	TmuxOutput      []string                       `json:"tmux_output,omitempty"`
+	AcceptedModels  []string                       `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -2392,6 +2393,10 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		perms = []string{"metadata:read"}
 	}
 
+	announcement := (*config.ContributeAnnouncement)(nil)
+	if h.server != nil {
+		announcement = h.server.activeContributeAnnouncement()
+	}
 	if err := s.contributor.send(WSMessage{
 		Type:          "auth_ok",
 		Seq:           h.nextSeq(),
@@ -2407,6 +2412,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		ConnectionID:       s.connID,
 		// #7932: state the read limit rather than enforcing it silently.
 		MaxMessageBytes: wsMaxMessageSize,
+		Announcement:    announcement,
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true

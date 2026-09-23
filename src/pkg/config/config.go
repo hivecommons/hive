@@ -4187,6 +4187,18 @@ type DiscordConfig struct {
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
+// ContributeAnnouncement is the operator-set message surfaced to contributors on
+// /contribute, the SSE stream, and connected relays. Text is plain, server-
+// sanitised display text; Level is "info" or "warning"; ExpiresAt is optional
+// RFC3339. ID is minted by the dashboard whenever Text changes so per-viewer
+// dismissals reset for a new announcement.
+type ContributeAnnouncement struct {
+	ID        string `yaml:"id,omitempty" json:"id,omitempty"`
+	Text      string `yaml:"text,omitempty" json:"text,omitempty"`
+	Level     string `yaml:"level,omitempty" json:"level,omitempty"`
+	ExpiresAt string `yaml:"expires_at,omitempty" json:"expires_at,omitempty"`
+}
+
 type HubConfig struct {
 	Enabled             bool   `yaml:"enabled"`
 	URL                 string `yaml:"url"`
@@ -4316,11 +4328,12 @@ type HubConfig struct {
 	// Empty means the safe default set: scanner, quality, outreach. Privileged roles
 	// (ci-maintainer, sec-check, architect) must be explicitly listed here AND
 	// granted on the contributor profile; supervisor is never delegatable.
-	ContributeDelegatableRoles []string            `yaml:"contribute_delegatable_roles,omitempty"`
-	DisabledRepos              []string            `yaml:"disabled_repos"`
-	DisabledTiers              []string            `yaml:"disabled_tiers"`
-	TierLimits                 map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin        int                 `yaml:"snapshot_interval_min"`
+	ContributeDelegatableRoles []string               `yaml:"contribute_delegatable_roles,omitempty"`
+	ContributeAnnouncement     ContributeAnnouncement `yaml:"contribute_announcement,omitempty" json:"contribute_announcement,omitempty"`
+	DisabledRepos              []string               `yaml:"disabled_repos"`
+	DisabledTiers              []string               `yaml:"disabled_tiers"`
+	TierLimits                 map[string]TierRate    `yaml:"tier_limits"`
+	SnapshotIntervalMin        int                    `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the

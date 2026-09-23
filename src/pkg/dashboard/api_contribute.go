@@ -139,6 +139,8 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/contribute/invite", s.handleContributeInvite)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
+	s.mux.HandleFunc("PUT /api/contribute/announcement", s.handleContributeAnnouncement)
+	s.mux.HandleFunc("POST /api/contribute/announcement/dismiss", s.handleContributeAnnouncementDismiss)
 	s.mux.HandleFunc("GET /api/contribute/activity", s.handleContributeActivity)
 	s.mux.HandleFunc("GET /api/contribute/fleet", s.handleContributeFleet)
 	// Read-only live event stream for the Operations command center. Under the
@@ -581,6 +583,7 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"surface":         s.contributeSurface(),
 		"api_version":     contributorProtocolVersion,
 		"served_sha":      versionShort,
+		"announcement":    s.activeContributeAnnouncement(),
 	})
 }
 
@@ -942,6 +945,7 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 		"total_tasks_completed":         profile.TasksCompleted,
 		"total_tasks_completed_with_pr": profile.TasksWithPR,
 		"total_tasks_failed":            profile.TasksFailed,
+		"announcement_dismissed_id":     profile.DismissedContributeAnnouncementID,
 		// tasks_completed_24h is the trailing 24 hourly buckets of this
 		// contributor's own completion series. window_hours_covered says how much
 		// history actually backed that sum, so a page can say "6h of history" on a

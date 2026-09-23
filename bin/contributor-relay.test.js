@@ -13485,3 +13485,50 @@ test('#7924 the label is for GitHub issue tasks only', () => {
     assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
   } finally { teardown(relay); }
 });
+
+test('hub announcements print once per id and respect plain NO_COLOR output', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const oldNoColor = process.env.NO_COLOR;
+  const oldTTY = process.stdout.isTTY;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  process.env.NO_COLOR = '1';
+  try {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    assert.strictEqual(relay.printHubAnnouncementOnce(hub, { id: 'a1', text: 'maintenance soon', level: 'warning' }), true);
+    assert.strictEqual(relay.printHubAnnouncementOnce(hub, { id: 'a1', text: 'maintenance soon', level: 'warning' }), false);
+    assert.strictEqual(relay.printHubAnnouncementOnce(hub, { id: 'a2', text: 'new text', level: 'info' }), true);
+    assert.strictEqual(logged.length, 2);
+    assert.ok(logged[0].includes('maintenance soon'));
+    assert.ok(!logged[0].includes('\x1b[7m'));
+  } finally {
+    console.log = oldLog;
+    if (oldNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = oldNoColor;
+    Object.defineProperty(process.stdout, 'isTTY', { value: oldTTY, configurable: true });
+    teardown(relay);
+  }
+});
+
+test('hub announcements use reverse video on TTY when color is enabled', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const oldNoColor = process.env.NO_COLOR;
+  const oldTTY = process.stdout.isTTY;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  delete process.env.NO_COLOR;
+  try {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    relay.printHubAnnouncementOnce(hub, { id: 'tty-1', text: 'highlight me', level: 'info' });
+    assert.ok(logged[0].startsWith('\x1b[7m'));
+    assert.ok(logged[0].endsWith('\x1b[0m'));
+  } finally {
+    console.log = oldLog;
+    if (oldNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = oldNoColor;
+    Object.defineProperty(process.stdout, 'isTTY', { value: oldTTY, configurable: true });
+    teardown(relay);
+  }
+});

@@ -1275,6 +1275,15 @@ select.admin-act{min-width:0;max-width:100%%}
 .prompt-block p.pb-sub{margin:0 0 10px;color:var(--cc-muted);font-size:.76rem;line-height:1.4}
 .prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:var(--cc-bg-deep);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
 .prompt-block textarea:focus{outline:none;border-color:var(--cc-accent)}
+.announcement-banner{display:none;margin:0 0 16px;border:1px solid var(--cc-border);border-left:4px solid #58a6ff;border-radius:10px;background:var(--cc-surface);color:var(--cc-text);padding:12px 42px 12px 14px;position:relative;line-height:1.45;font-size:.9rem}
+.announcement-banner.warning{border-left-color:var(--cc-amber);background:rgba(210,153,34,.12)}
+.announcement-banner .ann-level{font-weight:700;text-transform:uppercase;font-size:.68rem;letter-spacing:.08em;color:var(--cc-muted);margin-right:8px}
+.announcement-banner button{position:absolute;right:10px;top:8px;background:transparent;border:0;color:var(--cc-muted);font-size:1.2rem;cursor:pointer}
+.announcement-reverse{display:none;margin:12px 0 10px;padding:10px 12px;background:var(--cc-text);color:var(--cc-bg);border-radius:6px;font-weight:700;line-height:1.4}
+.announcement-reverse.warning{background:var(--cc-amber);color:#0d1117}
+.announcement-admin textarea{min-height:72px}
+.announcement-admin .ann-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.announcement-admin select,.announcement-admin input{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:7px 9px;font-family:inherit}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
@@ -1589,6 +1598,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/hivecommons/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
 <p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
+<div id="onboarding-announcement" class="announcement-reverse" role="status"></div>
 <div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
 <button id="copy-btn" style="position:absolute;top:8px;right:8px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.75rem">Copy</button>
 <pre id="copy-cmds" style="color:var(--cc-text);font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
@@ -1975,6 +1985,14 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-body">
 <p class="ops-note" style="margin-top:0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
 
+<div class="admin-field announcement-admin">
+<label>Contributor announcement <span style="color:var(--cc-muted-2)">&mdash; shown on Operations, Onboarding, profile, and relays. Empty text clears.</span></label>
+<textarea id="admin-announcement-text" maxlength="500" placeholder="e.g. Hive upgrade at 18:00 UTC; relays may reconnect automatically."></textarea>
+<div class="ann-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="admin-save" id="admin-announcement-save">Save announcement</button></div>
+<div class="admin-toggle-sub">Stored as <code>hub.contribute_announcement</code>. The server rotates the announcement id when the text changes.</div>
+</div>
+<hr class="admin-hr">
+
 <div class="admin-toggle">
 <div class="admin-switch" id="admin-suspend-switch" data-key="contribute_suspended"></div>
 <div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected clankers stay online but idle.</div></div>
@@ -2035,6 +2053,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops">
 <h1>Operations</h1>
 <p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
+<div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 
 <!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
      dedicated full-height DEV-LOG RAIL (chat/notifications-panel style). The rail is
@@ -2338,6 +2357,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      subtle sign-in prompt rather than an error. The SAME renderer serves the
      public route /contribute/dossier/{username}; owner-only controls are gated
      server-side there and by ME_IS_OWNER here. -->
+<div id="profile-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="me-card-mount"></div>
 </div>
 </div>
@@ -2463,6 +2483,49 @@ var ccActivitySeen={};   // dedupe set keyed by ccActivityKey(); shared by poll 
 // rest of this inline block and un-initializes everything below it (the exact crash
 // this file is fixing). Returns silently if the id is absent.
 function onEl(id,ev,fn,opts){var el=document.getElementById(id);if(el)el.addEventListener(ev,fn,opts);}
+
+var ccAnnouncement=null;
+var ccAnnouncementDismissedID='';
+var CC_ANN_LS_KEY='hive.contribute.announcement.dismissed_id';
+var ccAnnouncementExpiryTimer=null;
+function ccAnnouncementDismissedLocal(){try{return localStorage.getItem(CC_ANN_LS_KEY)||'';}catch(e){return '';}}
+function ccSetAnnouncement(ann){
+  ccAnnouncement=(ann&&ann.id&&ann.text)?ann:null;
+  if(ccAnnouncementExpiryTimer){clearTimeout(ccAnnouncementExpiryTimer);ccAnnouncementExpiryTimer=null;}
+  if(ccAnnouncement&&ccAnnouncement.expires_at){
+    var ms=(new Date(ccAnnouncement.expires_at).getTime())-Date.now();
+    if(ms<=0)ccAnnouncement=null;
+    else ccAnnouncementExpiryTimer=setTimeout(function(){ccSetAnnouncement(null);},Math.min(ms,2147483647));
+  }
+  ccRenderAnnouncement();
+}
+function ccAnnouncementHidden(){var id=ccAnnouncement&&ccAnnouncement.id;if(!id)return true;return ccAnnouncementDismissedLocal()===id||ccAnnouncementDismissedID===id;}
+function ccPaintAnnouncement(el,dismissible){
+  if(!el)return;
+  var ann=ccAnnouncement;
+  if(!ann||!ann.text||(dismissible&&ccAnnouncementHidden())){el.style.display='none';return;}
+  el.classList.toggle('warning',ann.level==='warning');
+  if(el.classList.contains('announcement-reverse')){el.textContent=ann.text;}
+  else{var lvl=el.querySelector('.ann-level'),txt=el.querySelector('.ann-text');if(lvl)lvl.textContent=ann.level==='warning'?'Warning':'Info';if(txt)txt.textContent=ann.text;}
+  el.style.display='';
+}
+function ccRenderAnnouncement(){
+  ccPaintAnnouncement(document.getElementById('onboarding-announcement'),false);
+  ccPaintAnnouncement(document.getElementById('ops-announcement'),true);
+  ccPaintAnnouncement(document.getElementById('profile-announcement'),true);
+  if(adminHub&&adminHub.contribute_announcement){adminHub.contribute_announcement=ccAnnouncement||{};}
+}
+function ccDismissAnnouncement(){
+  if(!ccAnnouncement||!ccAnnouncement.id)return;
+  var id=ccAnnouncement.id;
+  try{localStorage.setItem(CC_ANN_LS_KEY,id);}catch(e){}
+  ccAnnouncementDismissedID=id;ccRenderAnnouncement();
+  fetch('/api/contribute/announcement/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).catch(function(){});
+}
+function ccLoadAnnouncement(){
+  fetch('/api/contribute/status').then(function(r){return r.json();}).then(function(d){if(d)ccSetAnnouncement(d.announcement||null);}).catch(function(){});
+  fetch('/api/contribute/me').then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&d.announcement_dismissed_id){ccAnnouncementDismissedID=d.announcement_dismissed_id;ccRenderAnnouncement();}}).catch(function(){});
+}
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
@@ -2582,6 +2645,7 @@ function ccUpdateReportLink(dp){
 }
 // Click never needs to be told to push (default push===true).
 tabs.forEach(function(t){t.addEventListener('click',function(){activateTab(t);});});
+document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('[data-action="dismiss-announcement"]');if(b){e.preventDefault();ccDismissAnnouncement();}});
 // Onboarding CTA opens the Leaderboard tab in place (no navigate-away).
 var gotoLb=document.getElementById('goto-leaderboard-tab');
 if(gotoLb)gotoLb.addEventListener('click',function(){activateTab(document.getElementById('ptab-leaderboard'));});
@@ -2607,6 +2671,7 @@ function tabFromLocation(){
   // Build the tab-aware "file an issue" link on load even when we DON'T activate
   // (bare /contribute = onboarding, no activateTab call). Guarded.
   try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
+  try{ccLoadAnnouncement();}catch(e){}
 })();
 // Back/Forward: re-derive the tab from the (now-updated) location and activate it
 // WITHOUT pushing — popstate already moved history, a push here would loop. When
@@ -3858,6 +3923,24 @@ function ccRenderCooldownCount(){
 
 // Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
 // dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
+function adminDateTimeLocalToRFC3339(v){if(!v)return '';var d=new Date(v);return isNaN(d.getTime())?'':d.toISOString();}
+function adminRFC3339ToDateTimeLocal(v){if(!v)return '';var d=new Date(v);if(isNaN(d.getTime()))return '';var pad=function(n){return String(n).padStart(2,'0');};return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());}
+function renderAdminAnnouncement(){
+  var ann=(adminHub&&adminHub.contribute_announcement)||{};
+  var txt=document.getElementById('admin-announcement-text');if(txt)txt.value=ann.text||'';
+  var lvl=document.getElementById('admin-announcement-level');if(lvl)lvl.value=(ann.level==='warning')?'warning':'info';
+  var exp=document.getElementById('admin-announcement-expires');if(exp)exp.value=adminRFC3339ToDateTimeLocal(ann.expires_at||'');
+}
+async function adminSaveAnnouncement(){
+  var txt=document.getElementById('admin-announcement-text'),lvl=document.getElementById('admin-announcement-level'),exp=document.getElementById('admin-announcement-expires');
+  var ann={text:(txt&&txt.value)||'',level:(lvl&&lvl.value)||'info',expires_at:adminDateTimeLocalToRFC3339((exp&&exp.value)||'')};
+  var ok=false;
+  try{var res=await fetch('/api/contribute/announcement',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(ann)});
+    if(!res.ok){var msg='Save failed ('+res.status+')';try{var d=await res.json();if(d&&d.error)msg=d.error;}catch(e){}toast(msg,false);return;}
+    ok=true;toast(ann.text?'Announcement saved':'Announcement cleared',true);
+  }catch(e){toast('Save failed: '+(e&&e.message||'network error'),false);return;}
+  if(ok){adminHub.contribute_announcement=ann;ccLoadAnnouncement();}
+}
 async function adminSaveHub(patch,okMsg){
   try{
     var res=await fetch('/api/config/governor/hub',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
@@ -4286,6 +4369,8 @@ async function initAdmin(){
   }catch(e){adminHub={};}
   syncGrantableAgentRoles(null);
   renderAdminControls();
+  renderAdminAnnouncement();
+  var annBtn=document.getElementById('admin-announcement-save');if(annBtn&&!annBtn._wired){annBtn._wired=true;annBtn.addEventListener('click',adminSaveAnnouncement);}
   // Resume-all (#queue-hold): wire the header button once, now that we know the viewer
   // is owner/read-write. Visibility is still driven by ccRenderResumeAll (count-gated).
   var resumeAllBtn=document.getElementById('queue-resume-all-btn');
@@ -6003,6 +6088,7 @@ function ccOnGap(ev){
 
 // ── SSE lifecycle with graceful fallback ───────────────────────────────────────
 function ccHydrate(payload){
+  ccSetAnnouncement(payload.announcement||null);
   if(payload.queue){ccQueue=payload.queue.slice();ccRenderQueue();}
   if(payload.replay&&payload.replay.length){
     // Route the SSE replay through the SHARED store so it dedupes against the poll
@@ -6051,6 +6137,7 @@ function ccStart(){
       try{var ev=JSON.parse(m.data);}catch(err){return;}
       if(ev.type==='hello')ccHydrate(ev);
       else if(ev.type==='activity'&&ev.activity)ccOnActivity(ev.activity);
+      else if(ev.type==='announcement')ccSetAnnouncement(ev.announcement||null);
       else if(ev.type==='gap')ccOnGap(ev);
     };
     ccEs.onerror=function(){

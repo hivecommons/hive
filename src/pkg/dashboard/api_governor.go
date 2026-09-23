@@ -217,6 +217,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
 			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
 			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"contribute_announcement":      s.activeContributeAnnouncement(),
 			"disabled_repos":               s.normalizedHubDisabledRepos(),
 			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
 			"disabled_tiers":               cfg.Hub.DisabledTiers,
@@ -872,32 +873,33 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Enabled                        *bool                      `json:"enabled"`
-		URL                            string                     `json:"url"`
-		DashboardURL                   string                     `json:"dashboard_url"`
-		SnapshotURL                    string                     `json:"snapshot_url"`
-		IsPublic                       *bool                      `json:"is_public"`
-		AutoSnapshot                   *bool                      `json:"auto_snapshot"`
-		SnapshotFrameAncestors         []string                   `json:"snapshot_frame_ancestors"`
-		AutoUpgrade                    *bool                      `json:"auto_upgrade"`
-		ContributeSuspended            *bool                      `json:"contribute_suspended"`
-		ContributeTitlesMode           *string                    `json:"contribute_titles_mode"`
-		ContributeAuthorsMode          *string                    `json:"contribute_authors_mode"`
-		ContributeLabelsMode           *string                    `json:"contribute_labels_mode"`
-		ContributeAllowLabels          []string                   `json:"contribute_allow_labels"`
-		ContributeDenyLabels           []string                   `json:"contribute_deny_labels"`
-		ContributeSkipLabels           []string                   `json:"contribute_skip_labels"`
-		ContributeDenyTitles           []string                   `json:"contribute_deny_titles"`
-		ContributeDenyAuthors          []string                   `json:"contribute_deny_authors"`
-		ContributeAllowModels          []string                   `json:"contribute_allow_models"`
-		ContributeRejectUnknownModels  *bool                      `json:"contribute_reject_unknown_models"`
-		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
-		ContributeCooldownEnabled      *bool                      `json:"contribute_cooldown_enabled"`
-		ContributeCooldownHours        *int                       `json:"contribute_cooldown_hours"`
-		ContributeDelegatableRoles     []string                   `json:"contribute_delegatable_roles"`
-		DisabledRepos                  []string                   `json:"disabled_repos"`
-		DisabledTiers                  []string                   `json:"disabled_tiers"`
-		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
+		Enabled                        *bool                          `json:"enabled"`
+		URL                            string                         `json:"url"`
+		DashboardURL                   string                         `json:"dashboard_url"`
+		SnapshotURL                    string                         `json:"snapshot_url"`
+		IsPublic                       *bool                          `json:"is_public"`
+		AutoSnapshot                   *bool                          `json:"auto_snapshot"`
+		SnapshotFrameAncestors         []string                       `json:"snapshot_frame_ancestors"`
+		AutoUpgrade                    *bool                          `json:"auto_upgrade"`
+		ContributeSuspended            *bool                          `json:"contribute_suspended"`
+		ContributeTitlesMode           *string                        `json:"contribute_titles_mode"`
+		ContributeAuthorsMode          *string                        `json:"contribute_authors_mode"`
+		ContributeLabelsMode           *string                        `json:"contribute_labels_mode"`
+		ContributeAllowLabels          []string                       `json:"contribute_allow_labels"`
+		ContributeDenyLabels           []string                       `json:"contribute_deny_labels"`
+		ContributeSkipLabels           []string                       `json:"contribute_skip_labels"`
+		ContributeDenyTitles           []string                       `json:"contribute_deny_titles"`
+		ContributeDenyAuthors          []string                       `json:"contribute_deny_authors"`
+		ContributeAllowModels          []string                       `json:"contribute_allow_models"`
+		ContributeRejectUnknownModels  *bool                          `json:"contribute_reject_unknown_models"`
+		ContributeSkipAssignedToOthers *bool                          `json:"contribute_skip_assigned_to_others"`
+		ContributeCooldownEnabled      *bool                          `json:"contribute_cooldown_enabled"`
+		ContributeCooldownHours        *int                           `json:"contribute_cooldown_hours"`
+		ContributeDelegatableRoles     []string                       `json:"contribute_delegatable_roles"`
+		ContributeAnnouncement         *config.ContributeAnnouncement `json:"contribute_announcement"`
+		DisabledRepos                  []string                       `json:"disabled_repos"`
+		DisabledTiers                  []string                       `json:"disabled_tiers"`
+		TierLimits                     map[string]config.TierRate     `json:"tier_limits"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -995,6 +997,16 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.ContributeDelegatableRoles != nil {
 		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 	}
+	oldAnnouncement := s.activeContributeAnnouncement()
+	announcementTouched := body.ContributeAnnouncement != nil
+	if body.ContributeAnnouncement != nil {
+		ann, err := sanitizeContributeAnnouncement(*body.ContributeAnnouncement, cfg.Hub.ContributeAnnouncement, time.Now())
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Hub.ContributeAnnouncement = ann
+	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = s.normalizeHubDisabledReposForWrite(body.DisabledRepos)
 	}
@@ -1012,6 +1024,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
+	if announcementTouched {
+		newAnnouncement := s.activeContributeAnnouncement()
+		if !sameContributeAnnouncement(oldAnnouncement, newAnnouncement) {
+			s.publishContributeAnnouncementChange(newAnnouncement)
+		}
+	}
 	okResponse(w, map[string]string{"status": "updated"})
 }
 

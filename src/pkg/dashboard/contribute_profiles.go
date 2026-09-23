@@ -167,6 +167,10 @@ type ContributorProfile struct {
 	// Stored here (the existing per-contributor profile store) rather than in a new
 	// subsystem; empty/omitted for contributors who set none.
 	LabelInterests []string `json:"label_interests,omitempty"`
+	// DismissedContributeAnnouncementID records the latest operator announcement
+	// this contributor dismissed, so Operations hides it across browsers until the
+	// server rotates the announcement id on text change.
+	DismissedContributeAnnouncementID string `json:"dismissed_contribute_announcement_id,omitempty"`
 	// AgentRoleGrants is the operator-managed per-contributor allow-list for
 	// claiming spoke agent roles that require explicit grant (for example
 	// ci-maintainer). It never changes the contributor's trust tier or credentials.

@@ -125,7 +125,9 @@ EOL announcement is a separate, later artifact
       banner removed.
 - [ ] UPGRADE.md §"v4 → v5" status line updated in the doc sweep (it may
       still read "v5 not yet released").
-- [ ] Posted to: #6016 (comment), hub dashboard notice, `«operator
-      announcement channel(s): Discord/Slack, mailing list if any»`.
+- [ ] Posted to:
+  - [ ] #6016 (comment)
+  - [x] hub dashboard notice — now possible via `hub.contribute_announcement`
+  - [ ] `«operator announcement channel(s): Discord/Slack, mailing list if any»`
 - [ ] Notice link recorded on #7721's Phase 0 announcement row (marked as
       posted **post-hoc**, per the deviation record) and on #8062.

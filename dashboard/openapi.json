@@ -11726,6 +11726,97 @@
         }
       }
     },
+    "/api/contribute/announcement": {
+      "put": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Set or clear the operator contribute announcement",
+        "description": "Owner/read-write operator endpoint for hub.contribute_announcement. Text is server-sanitised plain text capped at 500 characters; empty text clears. The server normalizes level to info/warning, validates optional RFC3339 expires_at, rotates id whenever text changes, persists through the config overlay, and pushes updates to SSE subscribers and connected relays.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning"
+                    ]
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Announcement saved or cleared"
+          },
+          "400": {
+            "description": "Invalid JSON or expires_at"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Read-only viewer"
+          }
+        }
+      }
+    },
+    "/api/contribute/announcement/dismiss": {
+      "post": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Persist the caller's dismissed announcement id",
+        "description": "Signed-in contributor endpoint used by the Operations/Profile banner after localStorage dismissal. Stores the dismissed announcement id on the caller's contributor profile so the same announcement stays dismissed across browsers until the server rotates the id.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Dismissal stored"
+          },
+          "400": {
+            "description": "Invalid JSON or id"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "No contributor profile exists yet for the caller"
+          }
+        }
+      }
+    },
     "/api/contribute/interests": {
       "get": {
         "tags": [

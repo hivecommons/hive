@@ -75,8 +75,9 @@ type sseEvent struct {
 	// in shadow mode (default off → both absent, payload unchanged). They come
 	// from the SAME sweep that produced Queue, so the two cannot disagree.
 	// Existing SSE clients ignore additive fields.
-	Withheld          []AdmissionWithheldItem `json:"withheld,omitempty"`
-	AdmissionCoverage *AdmissionCoverage      `json:"admission_coverage,omitempty"`
+	Withheld          []AdmissionWithheldItem        `json:"withheld,omitempty"`
+	AdmissionCoverage *AdmissionCoverage             `json:"admission_coverage,omitempty"`
+	Announcement      *config.ContributeAnnouncement `json:"announcement,omitempty"`
 }
 
 // ReadyQueueItem is one admissible/ready issue in the "queue waiting to be picked
@@ -664,7 +665,8 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 		// frame it receives should be Seq+1; anything higher means events were
 		// lost between hydration and delivery, which a client can see without
 		// waiting for a "gap" frame.
-		Seq: sub.startSeq,
+		Seq:          sub.startSeq,
+		Announcement: s.activeContributeAnnouncement(),
 	}
 	if scope.collects() {
 		hello.Withheld = snap.withheld
