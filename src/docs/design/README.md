@@ -20,6 +20,8 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [External workflow admission Gate 0 decision](external-workflow-admission.md) — **design only (v5).** Records the #8201 Gate 0 selection for #8302: option 2, one bounded report-only Flue generation workflow admitted through the existing contributor protocol, the v5 release line, the source-to-guarantee matrix, native Flue receipt probe, conformance split, and deferred publication boundary.
+
 - [Escalation surfaces: email and push](escalation-surfaces.md) — **partly
   shipped (v6).** Track 6 of the v6 epic (#7563): a severity-routed
   `pkg/escalate` fan-out feeding SMTP mail (immediate escalations + daily
