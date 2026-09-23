@@ -157,6 +157,10 @@ type Dependencies struct {
 	IssueChurn func(repo string, number int) (ghpkg.IssueChurn, bool)
 	HookFire   func(context.Context, hooks.Payload)
 	CELTrigger func(context.Context, celtrigger.NormalizedEvent, string)
+	// RunBurndown optionally projects cheap convergence progress for one run
+	// detail page. It is intentionally absent from the list path; sources may
+	// need to inspect a graph or in-memory campaign state for the requested key.
+	RunBurndown func(context.Context, string) (*RunBurndown, error)
 	// ExternalExec reports which external-execution engines are compiled
 	// into this binary (#8361). cmd/hive backs it with the extwork registry;
 	// nil means none, and the Features panel says so.

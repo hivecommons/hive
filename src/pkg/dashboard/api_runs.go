@@ -50,6 +50,14 @@ type RunReviewWave struct {
 	ApproveAction string      `json:"approve_action,omitempty"`
 }
 
+type RunBurndown struct {
+	Source    string `json:"source"`
+	Satisfied int    `json:"satisfied"`
+	Remaining int    `json:"remaining"`
+	Unknown   int    `json:"unknown"`
+	Scope     int    `json:"scope"`
+}
+
 // runResetRequest is the body of POST /api/runs/{key}/reset (#8350).
 type runResetRequest struct {
 	To     string `json:"to"`
@@ -97,6 +105,7 @@ type Run struct {
 	PlanEpicID      string          `json:"plan_epic_id,omitempty"`
 	Stages          []RunStage      `json:"stages"`
 	ReviewWaves     []RunReviewWave `json:"review_waves,omitempty"`
+	Burndown        *RunBurndown    `json:"burndown,omitempty"`
 	TriageVerdict   string          `json:"triage_verdict,omitempty"`
 	TriageRationale string          `json:"triage_rationale,omitempty"`
 }
@@ -166,11 +175,27 @@ func (s *Server) handleRunGet(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, run := range runs {
 		if run.Key == key {
+			if err := s.populateRunBurndown(r, &run); err != nil {
+				jsonError(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 			jsonResponse(w, run)
 			return
 		}
 	}
 	jsonError(w, "run not found", http.StatusNotFound)
+}
+
+func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
+	if s == nil || s.deps == nil || s.deps.RunBurndown == nil || run == nil {
+		return nil
+	}
+	burndown, err := s.deps.RunBurndown(r.Context(), run.Key)
+	if err != nil {
+		return err
+	}
+	run.Burndown = burndown
+	return nil
 }
 
 // handleRunReset serves POST /api/runs/{key}/reset (#8350): move a run's lease

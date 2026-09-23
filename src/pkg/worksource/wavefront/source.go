@@ -90,6 +90,13 @@ type Source struct {
 	now        func() time.Time
 }
 
+type Burndown struct {
+	Scope     int
+	Satisfied int
+	Remaining int
+	Unknown   int
+}
+
 // New constructs a Source. It performs no network or GitHub call; the graph is
 // read lazily on each ListIssues.
 func New(opts Options) (*Source, error) {
@@ -206,6 +213,40 @@ func (s *Source) Ready(ctx context.Context) (Graph, []Node, error) {
 		}
 	}
 	return g, ready, nil
+}
+
+// Burndown returns graph-level progress for the run key that names one node in
+// this source, or ok=false when the key belongs to another source/graph.
+func (s *Source) Burndown(ctx context.Context, key string) (Burndown, bool, error) {
+	if s == nil {
+		return Burndown{}, false, nil
+	}
+	ref, ok := worksource.ParseKey(key)
+	if !ok || ref.Repo != s.repo {
+		return Burndown{}, false, nil
+	}
+	graphName, nodeID, ok := SplitExternalID(ref.ExternalID)
+	if !ok {
+		return Burndown{}, false, nil
+	}
+	g, err := s.Graph(ctx)
+	if err != nil {
+		return Burndown{}, false, err
+	}
+	if g.Name != graphName {
+		return Burndown{}, false, nil
+	}
+	if _, ok := g.Node(nodeID); !ok {
+		return Burndown{}, false, nil
+	}
+	out := Burndown{Scope: len(g.Nodes)}
+	for _, n := range g.Nodes {
+		if s.satisfied(g, n) {
+			out.Satisfied++
+		}
+	}
+	out.Remaining = out.Scope - out.Satisfied
+	return out, true, nil
 }
 
 // satisfied reports whether a node counts as complete for its dependents:

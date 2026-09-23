@@ -40,3 +40,19 @@ Known #8460 gaps are guarded in the test rather than hidden:
 | gap 3 of #8460 | `plan_epic_id` plus successful plan approval and plan-stage advance | final plan import and `plan -> implement` advancement |
 | gap 7 of #8460 | terminal run state on `/api/runs/{key}` | implement completion ends the run |
 | gap 10 of #8460 | `burndown` field on `/api/runs/{key}` | satisfied/remaining/unknown/scope-changed burndown assertions |
+
+`GET /api/runs` lists active staged runs from live leases and keeps the shape cheap for polling.
+
+`GET /api/runs/{key}` returns the same run detail plus timeline-derived stage history. When the run key maps to a wired convergence campaign, the detail response may include:
+
+```json
+"burndown": {
+  "source": "wavefront",
+  "satisfied": 3,
+  "remaining": 21,
+  "unknown": 0,
+  "scope": 24
+}
+```
+
+`source` identifies the provider (`wavefront` or `audit`). `scope` is the total obligation count, `satisfied` is completed work, `remaining` is known outstanding work, and `unknown` is evidence that could not be classified. The block is omitted when no burndown source is wired for the run key.

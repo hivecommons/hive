@@ -116,6 +116,32 @@ func TestFixtureListsReadyAndWithholdsBlocked(t *testing.T) {
 	}
 }
 
+func TestBurndownMatchesRunKeyAndReceipts(t *testing.T) {
+	src := newFileSource(t)
+	key := testRepo + "!" + wavefront.ExternalID(fixtureName, "parse-ast")
+	bd, ok, err := src.Burndown(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Burndown: %v", err)
+	}
+	if !ok {
+		t.Fatal("Burndown did not match fixture key")
+	}
+	if bd.Scope != 24 || bd.Satisfied != 2 || bd.Remaining != 22 || bd.Unknown != 0 {
+		t.Fatalf("initial burndown = %+v", bd)
+	}
+	mustComplete(t, src, "parse-ast")
+	bd, ok, err = src.Burndown(context.Background(), key)
+	if err != nil || !ok {
+		t.Fatalf("Burndown after receipt = %+v, %v, %v", bd, ok, err)
+	}
+	if bd.Satisfied != 3 || bd.Remaining != 21 {
+		t.Fatalf("receipt burndown = %+v", bd)
+	}
+	if _, ok, err := src.Burndown(context.Background(), testRepo+"!other:parse-ast"); err != nil || ok {
+		t.Fatalf("non-matching graph ok=%v err=%v", ok, err)
+	}
+}
+
 // TestDiamondCompletionUnblocksDependent walks the diamond parse-ast ->
 // {lower-types, lower-exprs} -> emit-ir: the join node stays withheld until
 // BOTH arms carry a receipt, completed nodes are never re-listed, a retry of a

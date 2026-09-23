@@ -255,6 +255,66 @@ func TestRunImplementTaskFailedDoesNotCompleteRun(t *testing.T) {
 	}
 }
 
+func TestRunDetailIncludesBurndownWhenSourceMatches(t *testing.T) {
+	s, deps := runsTestServer(t)
+	key := "myorg/repo1!audit-campaign"
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-audit", "myorg/repo1", 0, key, "contributor", StageImplement, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	deps.RunBurndown = func(_ context.Context, got string) (*RunBurndown, error) {
+		if got != key {
+			t.Fatalf("burndown key = %q, want %q", got, key)
+		}
+		return &RunBurndown{Source: "audit", Satisfied: 7, Remaining: 2, Unknown: 1, Scope: 10}, nil
+	}
+
+	rec := doGet(s, "/api/runs/myorg%2Frepo1%21audit-campaign")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET run detail = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	if run.Burndown == nil || run.Burndown.Source != "audit" || run.Burndown.Satisfied != 7 ||
+		run.Burndown.Remaining != 2 || run.Burndown.Unknown != 1 || run.Burndown.Scope != 10 {
+		t.Fatalf("burndown = %+v", run.Burndown)
+	}
+}
+
+func TestRunBurndownOmittedWithoutSourceAndFromList(t *testing.T) {
+	s, deps := runsTestServer(t)
+	key := "myorg/repo1#8299"
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8299", "myorg/repo1", 8299, key, "contributor", StageImplement, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	called := false
+	deps.RunBurndown = func(context.Context, string) (*RunBurndown, error) {
+		called = true
+		return nil, nil
+	}
+
+	listRec := doGet(s, "/api/runs")
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("GET runs = %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	if called {
+		t.Fatal("list handler called burndown source")
+	}
+
+	detailRec := doGet(s, "/api/runs/myorg%2Frepo1%238299")
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("GET run detail = %d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if _, ok := raw["burndown"]; ok {
+		t.Fatalf("burndown should be omitted: %s", detailRec.Body.String())
+	}
+}
+
 func TestRunsRegistryUnavailableErrors(t *testing.T) {
 	s := NewServer(0, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	s.deps = testDeps(t)

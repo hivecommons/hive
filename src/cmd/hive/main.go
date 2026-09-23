@@ -72,7 +72,7 @@ import (
 	"github.com/hivecommons/hive/pkg/watchdog"
 	"github.com/hivecommons/hive/pkg/watsonx"
 	"github.com/hivecommons/hive/pkg/worksource"
-	_ "github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
+	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"go.opentelemetry.io/otel/attribute"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -1440,6 +1440,36 @@ func (b *boot) wireBootClosures() {
 			},
 			HookFire: func(ctx context.Context, p hooks.Payload) {
 				hookDispatcher().Fire(ctx, p)
+			},
+			RunBurndown: func(ctx context.Context, key string) (*dashboard.RunBurndown, error) {
+				w := b.cfg.Governor.WorkSource.Wavefront
+				if !w.Enabled {
+					return nil, nil
+				}
+				ref, ok := worksource.ParseKey(key)
+				if !ok || ref.Repo != w.Repo {
+					return nil, nil
+				}
+				if _, _, ok := wavefront.SplitExternalID(ref.ExternalID); !ok {
+					return nil, nil
+				}
+				src, err := wavefront.New(wavefront.Options{
+					Repo: w.Repo, Path: w.Path, URL: w.URL, ReceiptsDir: w.ReceiptsDir,
+				})
+				if err != nil {
+					return nil, err
+				}
+				bd, ok, err := src.Burndown(ctx, key)
+				if err != nil || !ok {
+					return nil, err
+				}
+				return &dashboard.RunBurndown{
+					Source:    "wavefront",
+					Satisfied: bd.Satisfied,
+					Remaining: bd.Remaining,
+					Unknown:   bd.Unknown,
+					Scope:     bd.Scope,
+				}, nil
 			},
 			// #8361: which external-execution engines this build links; the
 			// Flue adapter registers itself only under the extwork_flue tag.
