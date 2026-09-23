@@ -325,7 +325,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 	}
 	l.mu.Lock()
 	now := l.now()
-	l.expireLocked(now)
+	expired := l.expireLocked(now)
 	key := Key(req.Repo, req.Issue)
 	ttl := l.policy.ttlFor(req.Kind, req.TTL)
 	next := Claim{
@@ -358,12 +358,13 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		res = Result{Outcome: OutcomeRefused, Claim: prev, Previous: &p}
 	}
 	var saveErr error
-	if res.Outcome.Changed() {
+	if res.Outcome.Changed() || len(expired) > 0 {
 		saveErr = l.saveLocked()
 	}
 	hooks := l.hooks
 	l.mu.Unlock()
 
+	fireExpired(hooks, expired)
 	switch res.Outcome {
 	case OutcomeClaimed, OutcomeRenewed:
 		if hooks.OnClaimed != nil {
@@ -395,21 +396,29 @@ func (l *Ledger) Release(repo string, issue int, by string, byKind Kind, reason 
 		return Claim{}, false, nil
 	}
 	l.mu.Lock()
-	l.expireLocked(l.now())
+	expired := l.expireLocked(l.now())
 	key := Key(strings.TrimSpace(repo), issue)
 	c, ok := l.claims[key]
 	if !ok {
+		if len(expired) > 0 {
+			_ = l.saveLocked()
+		}
+		hooks := l.hooks
 		l.mu.Unlock()
+		fireExpired(hooks, expired)
 		return Claim{}, false, nil
 	}
 	if !(c.Holder == by || (byKind.Valid() && byKind.Outranks(c.Kind))) {
+		hooks := l.hooks
 		l.mu.Unlock()
+		fireExpired(hooks, expired)
 		return c, false, fmt.Errorf("claims: %s is held by %s (%s)", key, c.Holder, c.Kind)
 	}
 	delete(l.claims, key)
 	err := l.saveLocked()
 	hooks := l.hooks
 	l.mu.Unlock()
+	fireExpired(hooks, expired)
 	if hooks.OnReleased != nil {
 		hooks.OnReleased(c, reason)
 	}
@@ -552,6 +561,17 @@ func (l *Ledger) Expire() int {
 		}
 	}
 	return len(dropped)
+}
+
+// fireExpired reports lazily-expired claims through OnReleased so the label
+// and comment mirror is cleaned up whichever path noticed the lapse.
+func fireExpired(hooks Hooks, expired []Claim) {
+	if hooks.OnReleased == nil {
+		return
+	}
+	for _, c := range expired {
+		hooks.OnReleased(c, "expired")
+	}
 }
 
 func (l *Ledger) expireLocked(now time.Time) []Claim {

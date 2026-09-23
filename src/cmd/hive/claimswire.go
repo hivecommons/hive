@@ -114,9 +114,13 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					run("remove claimed label", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.LabelClaimed)
 					})
-					run("remove preempted label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.PreemptedLabel(c.Holder))
-					})
+					// The preempted label names the holder this claim DISPLACED,
+					// not the holder being released.
+					if c.TakenFrom != "" {
+						run("remove preempted label", c, func(ctx context.Context, gh *github.Client) error {
+							return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.PreemptedLabel(c.TakenFrom))
+						})
+					}
 				}
 				// Releases are frequent (every relay task completion) and the
 				// closing PR already tells the story; only narrate a release
@@ -180,7 +184,11 @@ func composeInflight(lookups ...scheduler.InflightLookup) scheduler.InflightLook
 // (contributor / external) is taken over and told to stop; a human's claim
 // is left alone — the scheduler already withheld it, so a ref reaching here
 // under a human claim is the rare race, logged and not escalated.
-func recordAgentKickClaims(dashSrv *dashboard.Server, agentName string, issueRefs []string, logger *slog.Logger) {
+//
+// Kick refs carry github.Issue.Repo, which is the bare project.repos entry on
+// a default config; the relay keys claims on owner/repo, so the repo is
+// qualified with org here or the two sides would never see each other.
+func recordAgentKickClaims(dashSrv *dashboard.Server, org, agentName string, issueRefs []string, logger *slog.Logger) {
 	ledger := dashSrv.IssueClaims()
 	if ledger == nil || agentName == "" {
 		return
@@ -190,8 +198,12 @@ func recordAgentKickClaims(dashSrv *dashboard.Server, agentName string, issueRef
 		if !ok || !ref.IsGitHubIssue() {
 			continue
 		}
+		repo := ref.Repo
+		if org != "" && !strings.Contains(repo, "/") {
+			repo = org + "/" + repo
+		}
 		res, err := ledger.Claim(claims.Request{
-			Repo: ref.Repo, Issue: ref.Number,
+			Repo: repo, Issue: ref.Number,
 			Holder: agentName, HolderID: agentName, Kind: claims.KindAgent,
 		})
 		if err != nil && logger != nil {

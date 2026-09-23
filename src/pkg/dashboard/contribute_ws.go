@@ -4148,6 +4148,12 @@ func (h *ContributeWSHub) cleanupLoop() {
 			// ended.
 			h.pruneExpiredLeases(time.Now())
 
+			// #8380: lapse worker claims on the same cadence so their GitHub
+			// labels come off and the issue returns to the offer pool.
+			if n := h.claimsLedger().Expire(); n > 0 {
+				h.logger.Info("[claims] expired claims released", "count", n)
+			}
+
 			// Deregister under the lock; CLOSE outside it.
 			//
 			// closeWithReason writes a Close frame with a deadline, so it can block for

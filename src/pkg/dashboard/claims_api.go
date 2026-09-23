@@ -81,6 +81,14 @@ func (s *Server) preemptDisplacedHolder(now, previous claims.Claim) {
 	}
 	reason := fmt.Sprintf("preempted: %s claimed by %s (%s)", previous.Key(), now.Holder, now.Kind)
 	released, assigned := s.contributeHub.PreemptContributorIssue(previous.HolderID, previous.Repo, previous.Issue, reason)
+	if released == 0 {
+		// No live socket to yank (#4260 resumable-lease case): revoke the lease
+		// itself so a reconnecting relay cannot resume the item it lost.
+		if s.contributeHub.revokeLeaseForKey(previous.HolderID, previous.Key()) {
+			s.logger.Info("[claims] revoked lease of a disconnected contributor after claim takeover",
+				"issue", previous.Key(), "holder_id", previous.HolderID)
+		}
+	}
 	next := ""
 	if assigned != nil && assigned.Type == "task_assign" {
 		next = assigned.TaskKey
@@ -124,6 +132,24 @@ func (h *ContributeWSHub) claimIssueForContributor(c *ContributorConnection, rep
 		// expiry sorts the relay out.
 		h.logger.Warn("[claims] contributor assigned an item another holder claims",
 			"repo", repoFull, "number", number, "holder", holder, "held_by", res.Claim.Holder, "held_kind", res.Claim.Kind)
+	}
+}
+
+// renewClaimForLease extends the contributor claim alongside a lease renewal.
+// Same holder → OutcomeRenewed; if someone else has since claimed the item the
+// ledger keeps their claim (the relay will be preempted or refused on its own).
+func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) {
+	l := h.claimsLedger()
+	if l == nil || identity == "" || number <= 0 {
+		return
+	}
+	c, ok := l.LookupKey(claims.Key(repo, number))
+	if !ok || c.HolderID != identity {
+		return
+	}
+	if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
+		Kind: c.Kind, Session: c.Session}); err != nil {
+		h.logger.Warn("[claims] contributor claim not renewed", "issue", c.Key(), "holder", c.Holder, "error", err)
 	}
 }
 

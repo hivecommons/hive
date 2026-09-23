@@ -74,10 +74,10 @@ func TestRecordAgentKickClaims(t *testing.T) {
 	srv.RegisterAPI(&dashboard.Dependencies{Config: &config.Config{}, IssueClaims: l})
 	t.Cleanup(srv.CloseContributeHub)
 
-	recordAgentKickClaims(srv, "quality", []string{"myorg/repo#1", "myorg/repo#2", "myorg/repo#3", "myorg/repo#0", "garbage"}, logger)
+	recordAgentKickClaims(srv, "myorg", "quality", []string{"repo#1", "myorg/repo#2", "myorg/repo#3", "myorg/repo#0", "garbage"}, logger)
 
 	if c, ok := l.Lookup("myorg/repo", 1); !ok || c.Kind != claims.KindAgent || c.Holder != "quality" {
-		t.Fatalf("free issue not claimed by agent: %+v", c)
+		t.Fatalf("bare-repo ref not claimed under org-qualified key: %+v", c)
 	}
 	if c, _ := l.Lookup("myorg/repo", 2); c.Holder != "quality" || c.TakenFrom != "relay" {
 		t.Fatalf("contributor claim not taken over by agent: %+v", c)
@@ -86,5 +86,5 @@ func TestRecordAgentKickClaims(t *testing.T) {
 		t.Fatalf("human claim was overridden by agent: %+v", c)
 	}
 	// A nil ledger is a no-op, not a panic.
-	recordAgentKickClaims(dashboard.NewServer(0, logger), "quality", []string{"o/r#1"}, logger)
+	recordAgentKickClaims(dashboard.NewServer(0, logger), "o", "quality", []string{"o/r#1"}, logger)
 }

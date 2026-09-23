@@ -187,3 +187,56 @@ func TestClaims_APIRoutes(t *testing.T) {
 		t.Fatalf("disabled claim code=%d want 404", code)
 	}
 }
+
+// A relay whose socket is down has no connection to yank, but its lease would
+// otherwise let it RESUME the item it lost on reconnect (#4260 resumability).
+// Takeover must revoke that lease too.
+func TestClaims_TakeoverRevokesDisconnectedRelayLease(t *testing.T) {
+	hub, _, l := claimsHub(t)
+	const identity = "c-worker#a"
+	if err := hub.recordLease(identity, "t-1", "myorg/repo1", 1, "contributor", 3, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: 1, Holder: "worker", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if hub.lookupLease(identity, "t-1", "myorg/repo1", 1, 3, time.Now()) == nil {
+		t.Fatal("precondition: lease not recorded")
+	}
+
+	res, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: 1, Holder: "alice", Kind: claims.KindHuman})
+	if err != nil || res.Outcome != claims.OutcomeTakenOver {
+		t.Fatalf("takeover outcome=%s err=%v", res.Outcome, err)
+	}
+	if hub.lookupLease(identity, "t-1", "myorg/repo1", 1, 3, time.Now()) != nil {
+		t.Fatal("disconnected relay's lease survived the takeover — it could resume #1")
+	}
+	if now, _ := l.Lookup("myorg/repo1", 1); now.Holder != "alice" {
+		t.Fatalf("ledger holder=%s want alice", now.Holder)
+	}
+}
+
+// The contributor claim is renewed together with the lease so a long task does
+// not silently lose its claim after the 30m claim TTL.
+func TestClaims_RenewLeaseRenewsClaim(t *testing.T) {
+	hub, _, l := claimsHub(t)
+	const identity = "c-worker#a"
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	now := base
+	l.SetNow(func() time.Time { return now })
+	if err := hub.recordLease(identity, "t-1", "myorg/repo1", 1, "contributor", 3, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: 1, Holder: "worker", HolderID: identity, Kind: claims.KindContributor, Session: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := l.Lookup("myorg/repo1", 1)
+	now = now.Add(10 * time.Minute)
+	if err := hub.renewLease(identity, "t-1", now); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := l.Lookup("myorg/repo1", 1)
+	if !ok || !after.ExpiresAt.After(first.ExpiresAt) || after.HolderID != identity {
+		t.Fatalf("claim not renewed with lease: before=%v after=%+v", first.ExpiresAt, after)
+	}
+}

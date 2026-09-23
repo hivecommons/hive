@@ -294,3 +294,36 @@ func TestComments(t *testing.T) {
 		t.Fatal("PreemptedLabel")
 	}
 }
+
+func TestLazyExpiryFiresOnReleased(t *testing.T) {
+	var released []string
+	l, now := newTestLedger(t, Hooks{OnReleased: func(c Claim, reason string) { released = append(released, c.Holder+":"+reason) }})
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "quality", Kind: KindAgent}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 2, Holder: "relay", Kind: KindContributor}); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(DefaultAgentTTL + time.Minute) // agent lapsed; contributor lapsed too (30m < 2h)
+
+	// A Claim on an unrelated issue notices the lapses and reports them.
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 3, Holder: "alice", Kind: KindHuman}); err != nil {
+		t.Fatal(err)
+	}
+	if len(released) != 2 || !strings.HasSuffix(released[0], ":expired") || !strings.HasSuffix(released[1], ":expired") {
+		t.Fatalf("OnReleased after lazy expiry = %v", released)
+	}
+	if _, ok := l.Lookup("o/r", 1); ok {
+		t.Fatal("expired claim still visible")
+	}
+
+	// Release of a missing key still reports whatever lapsed meanwhile.
+	released = nil
+	*now = now.Add(DefaultHumanTTL + time.Minute)
+	if _, ok, err := l.Release("o/r", 99, "nobody", KindHuman, "x"); ok || err != nil {
+		t.Fatalf("release missing: ok=%v err=%v", ok, err)
+	}
+	if len(released) != 1 || released[0] != "alice:expired" {
+		t.Fatalf("OnReleased on Release path = %v", released)
+	}
+}

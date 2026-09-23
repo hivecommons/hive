@@ -6633,7 +6633,7 @@ func runEvalCycle(
 				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
 				// #8380: the kicked agent now holds these issues; record the
 				// claims so contributors and other hives back off.
-				recordAgentKickClaims(dashSrv, msg.Agent, msg.IssueRefs, logger)
+				recordAgentKickClaims(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
 
 				// Log token state at time of kick for cost attribution
 				if tokenCollector != nil {
