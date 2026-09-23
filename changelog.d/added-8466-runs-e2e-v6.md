@@ -1,0 +1,1 @@
+- Added the v6 live runs acceptance target for chat approval, Runs-card status projection, checkpoint gate policy, and live proving-workload runbook commands for #8466.

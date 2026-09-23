@@ -43,6 +43,11 @@ default:
 runs-e2e:
     cd src && go test -tags integration ./test -run Runs
 
+# Run the v6 live run-surface acceptance test (#8466 layer 2 v6). Requires the
+# same HIVE_URL/HIVE_TOKEN and HIVE_RUNS_E2E_* target variables as runs-e2e.
+runs-e2e-v6:
+    cd src && go test -tags integration ./test -run RunsE2EV6
+
 [private]
 check-version skip="false":
     #!/usr/bin/env bash

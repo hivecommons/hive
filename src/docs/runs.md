@@ -75,6 +75,71 @@ runs:
 
 With this policy, the plan checkpoint is auto-approved after import; spec and implement still wait for owner approval.
 
+## v6 run-surface acceptance
+
+The v6 live acceptance variant lives in `src/test/runs_e2e_v6_test.go` and uses
+the same `HIVE_URL`, `HIVE_TOKEN`, `HIVE_RUNS_E2E_KEY` or
+`HIVE_RUNS_E2E_REPO`/`HIVE_RUNS_E2E_ISSUE` variables as the v5 run test. It
+adds the operator-surface assertions from #8466: `!runs approve <key>` through
+dashboard chat advances the same plan lease, `/api/status` exposes the run for
+the Runs card within one SSE tick, and `runs.checkpoints.plan` changes whether
+the plan stage projects as blocked on a human.
+
+```sh
+HIVE_URL=http://<host>:<port> \
+HIVE_TOKEN=<owner-token> \
+HIVE_RUNS_E2E_REPO=<owner/repo> \
+HIVE_RUNS_E2E_ISSUE=<number> \
+go test -tags integration ./test -run RunsE2EV6
+```
+
+From the repository root:
+
+```sh
+just runs-e2e-v6
+```
+
+## Live proving workload runbooks
+
+The following #8466 acceptance boxes require a live hub and must not be faked in
+unit tests or CI fixtures. Leave their checklist rows unticked until an operator
+runs these commands against a provisioned hub and records the evidence.
+
+### Audit campaign over a pinned scope
+
+```sh
+HIVE_URL=http://<hub>:<port> \
+HIVE_TOKEN=<owner-token> \
+HIVE_AUDIT_SCOPE=<owner/repo>@<pinned-ref> \
+hivectl runs audit-campaign --scope "$HIVE_AUDIT_SCOPE" --mode report-only --no-github-credentials --with-duplicate-pair --withhold-publication
+
+curl -fsS -H "Authorization: Bearer $HIVE_TOKEN" \
+  "$HIVE_URL/api/runs/<audit-run-key>" | jq '.burndown, .artifacts, .audit'
+```
+
+Expected evidence: validated findings, one intentional duplicate pair, no stage
+process environment carrying GitHub credentials, publication withheld, and a
+burndown with satisfied/remaining/unknown/scope-changed where unknown values are
+never replaced by fabricated numbers.
+
+### Wavefront migration campaign burndown
+
+```sh
+HIVE_URL=http://<hub>:<port> \
+HIVE_TOKEN=<owner-token> \
+CRUSTIFY_WAVEFRONT_GRAPH_URL=<pinned-graph-url> \
+CRUSTIFY_WAVEFRONT_REPO=<owner/repo> \
+hivectl runs wavefront-campaign --repo "$CRUSTIFY_WAVEFRONT_REPO" --graph-url "$CRUSTIFY_WAVEFRONT_GRAPH_URL" --worktrees --crash-reconcile=unknown
+
+curl -fsS -H "Authorization: Bearer $HIVE_TOKEN" \
+  "$HIVE_URL/api/runs/<wavefront-run-key>" | jq '.burndown, .stages'
+```
+
+Expected evidence: ready nodes advance by dependency wave, a dependent node only
+becomes ready after its upstream receipt lands, a graph revision change refuses
+stale work, crash reconciliation reports Unknown rather than duplicating a node,
+and burndown is read across waves.
+
 ## How long-running runs start
 
 Long-running runs are the Hive workflow behind `spec` -> `plan` -> `implement`
