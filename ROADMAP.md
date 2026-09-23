@@ -290,7 +290,18 @@ discipline):
   status-comment/receipt surfaces are in v6. The #8201 Gate 0 option is
   decided (contributor protocol plus a durable external-execution binding,
   one bounded workflow, report-only, no publication credentials; record in
-  [#8302](https://github.com/hivecommons/hive/issues/8302)); the first
+  [#8302](https://github.com/hivecommons/hive/issues/8302)), and **Gate 1
+  shipped on v5 on 2026-09-23**
+  ([#8361](https://github.com/hivecommons/hive/issues/8361), merged via
+  [#8404](https://github.com/hivecommons/hive/pull/8404)): the
+  engine-neutral external-execution contract in `pkg/extwork` plus a Flue
+  adapter proving #8201 against a foreign durable-workflow engine — keyed
+  admission with the task lease as the authority record, five-state
+  observation with Unknown real, digest-verified receipt fetch, and
+  crash-window recovery by pinned incarnation. The pilot stays report-only
+  with no publication credentials, defaults off behind
+  `runs.external.flue`, and the adapter links into the binary only under
+  the `extwork_flue` build tag; the first
   proving workload is a report-only audit campaign. Remaining constituents
   (#8301–#8319, #8345–#8364) are ticked off on #8290 as they merge; no
   store, CRD, DSL or GitHub credentials are added to the pilot and every
