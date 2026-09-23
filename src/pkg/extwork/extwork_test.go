@@ -595,6 +595,22 @@ func TestBindingDispatchAndShadow(t *testing.T) {
 	if _, err := b.Dispatch(ctx, changed, []byte("different")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed payload = %v", err)
 	}
+	if stored, _, _ := store.Load(adm.AssignmentID); stored.RequestDigest != adm.RequestDigest || stored.RemoteRunID != "run-1" {
+		t.Fatalf("a conflicting dispatch touched the durable admission: %+v", stored)
+	}
+	// The engine's own conflict is still mapped when the record is absent.
+	if _, err := New(f, NewMemoryStore(), nil, nil, ModeReportOnly).Dispatch(ctx, changed, []byte("different")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("engine conflict = %v", err)
+	}
+	// A new generation is a new execution identity and may replace the record.
+	next := adm
+	next.Generation++
+	if res, err := b.Dispatch(ctx, next, testPayload()); err != nil || !res.Started {
+		t.Fatalf("next generation = %+v %v", res, err)
+	}
+	if _, err := New(f, &failingLoadStore{}, nil, nil, ModeReportOnly).Dispatch(ctx, adm, testPayload()); err == nil || !strings.Contains(err.Error(), "load admission") {
+		t.Fatalf("load failure on dispatch = %v", err)
+	}
 	f.startErr = ErrRefused
 	if _, err := b.Dispatch(ctx, adm, testPayload()); !errors.Is(err, ErrRefused) {
 		t.Fatalf("refused = %v", err)

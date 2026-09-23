@@ -356,6 +356,14 @@ func TestConformanceConflictAndRecreatedEngine(t *testing.T) {
 	if _, err := b.Dispatch(ctx, changed, changedPayload); !errors.Is(err, extwork.ErrConflict) {
 		t.Fatalf("changed payload = %v", err)
 	}
+	if stored, _, _ := store.Load(adm.AssignmentID); stored.RequestDigest != adm.RequestDigest || stored.RemoteRunID == "" {
+		t.Fatalf("a conflicting dispatch touched the durable admission: %+v", stored)
+	}
+	// The engine refuses natively too: same idempotency key, different
+	// payload is submission_conflict at admission.
+	if _, err := p.adapter("").Start(ctx, extwork.StartRequest{Admission: changed, Payload: changedPayload}); !errors.Is(err, extwork.ErrConflict) {
+		t.Fatalf("native conflict = %v", err)
+	}
 	if p.stats().Runs != 1 {
 		t.Fatal("conflict created a second run")
 	}
@@ -600,16 +608,24 @@ func TestConformanceArtifactAndVerifierRefusals(t *testing.T) {
 			t.Errorf("%s: a refused receipt was stored", name)
 		}
 	}
-	// Row 11: the same bytes cannot authorise another subject.
+	// Row 11: another subject has another execution key, so the engine holds
+	// nothing for it and the fetch is refused; and even the honest bytes,
+	// once fetched, cannot be bound to that other subject.
 	other := pinned
 	other.InputRevision = strings.Repeat("a", 40)
-	if _, err := b.FetchReceipt(ctx, other, "", ref); !errors.Is(err, extwork.ErrReceiptUnbound) {
-		t.Fatalf("other subject = %v", err)
+	if _, err := b.FetchReceipt(ctx, other, "", ref); !errors.Is(err, extwork.ErrReceiptRefused) {
+		t.Fatalf("other subject fetch = %v", err)
+	}
+	if _, ok, _ := b.Replay(other); ok {
+		t.Fatal("a refused fetch for another subject was stored")
 	}
 	// Positive control: the honest reference verifies.
 	receipt, err := b.FetchReceipt(ctx, pinned, "", ref)
 	if err != nil {
 		t.Fatalf("honest receipt refused: %v", err)
+	}
+	if err := extwork.BindReceipt(other, receipt); !errors.Is(err, extwork.ErrReceiptUnbound) {
+		t.Fatalf("honest receipt bound to another subject: %v", err)
 	}
 	// Row 12: the verifier rejects; the execution fact is retained.
 	reject := func(extwork.Admission, *outputschema.StageReceipt) error { return errors.New("patch does not apply") }

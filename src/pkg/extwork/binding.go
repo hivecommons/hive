@@ -130,6 +130,24 @@ func (b *Binding) Dispatch(ctx context.Context, adm Admission, payload []byte) (
 	if adm.RequestDigest != RequestDigest(payload) {
 		return DispatchResult{}, ErrPayloadDigest
 	}
+	// A durable admission already on record for this assignment is the
+	// authority; a second dispatch may repeat it (same key, same payload) or
+	// replace it with a NEW execution identity (a new generation moves the
+	// key), but the same key with a different payload is a conflict here,
+	// before the engine is asked and before the record is touched.
+	existing, ok, err := b.store.Load(adm.AssignmentID)
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("load admission: %w", err)
+	}
+	if ok && existing.ExecutionKey() == adm.ExecutionKey() {
+		if existing.RequestDigest != adm.RequestDigest {
+			return DispatchResult{}, fmt.Errorf("%w: assignment %s is already admitted under this key with a different payload", ErrConflict, adm.AssignmentID)
+		}
+		if adm.EngineIncarnation == "" {
+			adm.EngineIncarnation = existing.EngineIncarnation
+		}
+		adm.RemoteRunID = existing.RemoteRunID
+	}
 	if pinner, ok := b.adapter.(Pinner); ok && adm.EngineIncarnation == "" {
 		incarnation, err := pinner.Incarnation(ctx)
 		if err != nil {
