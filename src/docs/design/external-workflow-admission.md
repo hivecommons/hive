@@ -1,6 +1,13 @@
-# External workflow admission Gate 0 decision record
+# External workflow admission
 
-Status: **Design only — Gate 0 decision for [#8201](https://github.com/hivecommons/hive/issues/8201), recorded by [#8302](https://github.com/hivecommons/hive/issues/8302).**
+Status: **Gate 0 decided ([#8302](https://github.com/hivecommons/hive/issues/8302)); Gate 1 report-only pilot shipped on v5, default off ([#8361](https://github.com/hivecommons/hive/issues/8361)). Publication (Gate 2) remains a separate, undecided gate.**
+
+The first half of this page is the Gate 0 decision record for
+[#8201](https://github.com/hivecommons/hive/issues/8201). The sections from
+"Gate 1 implementation" onward describe what #8361 built against that
+decision: the engine-neutral binding, the Flue adapter and fixture, the
+side-effect inventory, operational status and recovery, and the comparison
+against today's local integration.
 
 This page records the maintainer selection requested by #8201 before any Flue
 binding is implemented. It is a decision record, not an implementation plan for
@@ -219,10 +226,109 @@ Every observation in the audit linked from #8201 is accounted for here:
 | Non-obvious failure scenarios in the audit. | Mapped to Gate 1 rows for start acknowledgment, late results, negative lookup limits, wrong authority, missing artifact bytes, duplicate semantic work, retention/incarnation reuse, retry budget, and artifact intake. Publication-boundary TOCTOU is deferred to the publication gate. |
 | Filing and branch mechanics. | Not reproduced as a runtime concern; #8201, #8290, and #8302 now carry the upstream tracking state. |
 
+## Gate 1 implementation (#8361)
+
+### Shape
+
+| Piece | Where | What it owns |
+| --- | --- | --- |
+| Engine-neutral contract | `src/pkg/extwork` | `Adapter` (keyed `Start`, `Observe` with accepted/running/waiting/terminal/unknown, `Cancel` returning requested/acknowledged/stopped as separate facts, `OpenArtifact` by execution key and relative path only), `Admission` and its derived `ExecutionKey`, the accept-or-decline `Host` step, `ProgressEvent`s, `Decide`, receipt fetch with path, size, and digest rules applied before parsing, `Registry`. |
+| Flue adapter | `src/pkg/extwork/flue` | Maps the contract onto Flue's native surface as probed at commit `c5a2a725fe1d93209ed294cca90af97060f6f2e2`: `idempotency_key` dispatch (`deduplicated`, `submission_conflict`), runtime uid as incarnation, abort, artifacts. Talks only to its configured endpoint, honours no proxy environment, carries no credential. Linked into `hive` only with `-tags extwork_flue`. |
+| Deterministic fixture | `src/pkg/extwork/flue/fixture` + `testdata/flue-fixture/` | A second local process that executes the three-stage workflow (`analyze`, `instrument`, `report`) from a pinned source bundle, advances only when ticked, resumes from its own state file, and can be told to ignore abort. No Node, network, model, or GitHub token. `cmd/flue-fixture` wraps it for `examples/flue/`. |
+| Hive seams | `src/pkg/dashboard/extwork_binding.go` | The task lease is the admission and authority record (`leaseAdmissionStore` refuses an admission that does not name a live lease with the same work key, generation, stage, tier, and identity, and forces the lease to disk before dispatch); progress events go to the agent audit trail; `externalFlueBinding` constructs the binding only when `runs.external.flue` is on and the engine is linked. The `ext-exec/flue` relay capability gates offers; an item bound to an engine is refused, never downgraded. |
+| Config and toggle | `runs.external.flue` in `hive.yaml`; Settings > Features | Default off. Enabled with no mode is shadow. `report-only` is the only mode that dispatches. Endpoint and workflow version are yaml-only. |
+
+### Identity binding
+
+`ExecutionKey` is `StableDigest(work key, assignment id, generation, stage,
+contract revision, engine, workflow version, input revision)`. It deliberately
+excludes the request digest, so a changed bundle under an unchanged identity
+reaches the engine under the same key and is rejected there as
+`submission_conflict` (#8201 row 5) instead of quietly becoming a second run.
+The request digest, the contract and input revisions, and the engine
+incarnation pinned at dispatch are the parts the lease cannot hold; they are
+written beside the verified receipt under the agent report directory
+(`extwork/<assignment>.admission.json`), and `Load` re-checks the lease before
+trusting that file. No lease, no authority.
+
+### Side-effect inventory (step 8)
+
+The Astro triage handler that Flue ships publicly performs these effects. Each
+is classified as (a) blocked by the proxy and scoped MCP, (b) expressible in
+the stage receipt as an artifact, or (c) not available under Hive at all. The
+pilot proceeds with class (c) effects absent. The fixture's `instrument` stage
+attempts one class (a) effect of each network kind and the conformance test
+`TestConformanceSideEffectsBlockedAndArtifactsListed` proves both are refused
+at the egress boundary while every class (b) artifact appears in the receipt.
+
+| Astro triage effect | Class | Under Hive | Proven by |
+| --- | --- | --- | --- |
+| Clone the target repository | (b) | The engine reads the pinned source bundle in the context bundle; the bundle's `input_revision` is echoed in the receipt and must match the admission. | `BindReceipt` input revision check; row 11 test. |
+| Instrument / build the checkout | (b) | Local to the engine sandbox; nothing leaves it. Its result is a claim carried as `report.md`. | Receipt artifact listing. |
+| Publish a preview package to pkg.pr.new | (a) | Outbound POST is refused by the egress boundary; no publication credential exists in the engine. | Fixture `outbound_post` attempt refused (CONNECT 403 recorded by the deny proxy). |
+| Post a comment through the workflow's own GitHub channel | (a) | GitHub write is refused by the egress boundary and no token is present (`github_token_present: false`). | Fixture `github_write` attempt refused; stats assert no token. |
+| Open a pull request | (a) for the engine; (c) for the pilot | The engine cannot reach GitHub; Hive's own publication path is deliberately not enabled at Gate 1. | Report-only scope; Gate 2. |
+| Write files to a sandbox that outlive the run | (b) | Only what the receipt lists exists for Hive: `report.md` and the optional `patch.diff`. Anything else in the engine's sandbox is invisible and unused. | Receipt artifact set equals the workflow's declared artifacts. |
+| Outbound calls from author-defined tools | (a) | Every route goes through the egress boundary; without a route the fixture records `no_route` and opens no connection. | Fixture effect outcomes. |
+| Label, assign, close, or edit the issue | (c) | Not available; Hive keeps issue lifecycle. | Out of scope. |
+
+Any effect that is neither blocked nor described is a Gate 1 failure; the
+fixture's stats endpoint and the deny proxy make such an effect visible.
+
+### Operational status and recovery
+
+Status is read from two places: the engine's native state through
+`Binding.Observe` (the runs API surfaces the lease stage; the audit trail
+carries the `ext_work_*` events keyed by assignment id), and the Features
+panel, which reports the effective mode, whether the adapter is linked into
+this build, and whether an endpoint is configured.
+
+| Situation | What Hive does | Operator action |
+| --- | --- | --- |
+| Binding off, or engine not linked | Nothing external happens; `externalFlueBinding` fails closed with a named error. | None. A build without `-tags extwork_flue` cannot be switched on by configuration. |
+| Shadow mode | Admissions are persisted and `ext_work_shadow_observed` is recorded; `Observe` reads native state; no `Start`, no `Cancel` effects. | Promote to `report-only` only after the shadow soak shows the expected admissions. |
+| Hub restarts before start | `Recover` finds the durable admission, asks the engine by key, gets not-found, and issues one keyed start (idempotent at the engine). | None. |
+| Hub restarts after the engine accepted | `Recover` observes the existing run and adopts it (`deduplicated: true`); no second dispatch. | None. |
+| Hub restarts after the receipt was persisted | `Recover` returns terminal from the receipt store; `Replay` rehydrates the typed receipt. The engine is not called. | None. |
+| Engine unreachable | `Observe` returns `unknown` with `ErrTransport`; `Recover` returns uncertain and starts nothing. | Fix the endpoint. When the same incarnation returns, its state wins. |
+| Engine deleted and recreated | The pinned incarnation no longer matches; `Observe` and `Recover` return `ErrIncarnationMismatch`; nothing is adopted or started. | Retire the assignment (a stage retry mints a new generation and therefore a new execution key) or restore the original engine state. |
+| Cancel ignored by the workload | `Cancel` records requested and acknowledged, `stopped: false`; the run stays visibly running. Late output is rejected when authority is no longer current. | Wait for the engine or retire the lease; never assume stopped. |
+| Receipt missing, truncated, wrong digest, malicious path, oversized | Refused before parsing; `ext_work_receipt_refused` is recorded; nothing is stored. | Inspect the engine. |
+| Engine reports no_change, blocked, failed, unknown | Own verdicts (`no_change`, `blocked`, `rejected`, `uncertain`); never success. | Per verdict. |
+
+### Comparison: local sandbox launch versus the binding (step 7)
+
+The same fixture workflow can be run through today's local integration (the
+sandbox executor launching a local process and reading its report file) and
+through the binding. Measured on the conformance suite, one assignment, one
+stage:
+
+| Measure | Local sandbox launch | Flue binding |
+| --- | --- | --- |
+| Dispatch count, happy path | 1 process launch | 1 native run; a repeated dispatch of the same key and payload is `deduplicated`, never a second run. |
+| Recovery after hub restart before start | Re-launch (the launch itself is the record; a lost launch is invisible). | 1 keyed start after a positive not-found from the engine. |
+| Recovery after hub restart mid-run | The orphaned process is not re-attachable; work is repeated on re-launch. | 0 new dispatches; the run is adopted by execution key and pinned incarnation. |
+| Recovery after the receipt is on disk | Re-launch unless the caller checks the report file first. | 0 engine calls; replay from the receipt store. |
+| Repeated work across the three crash windows | Up to 3 launches for one logical execution. | 1 native run. |
+| Operator interventions | Manual cleanup of orphaned processes and duplicate PR candidates. | None for the covered windows; one decision (retire or restore) for a recreated engine. |
+| Resource accounting | Local CPU and disk, counted per launch. | Engine compute counted per native run; Hive holds no repository mutation slot while waiting, only the lease. |
+| Cancellation | Process kill: stopped is certain, acknowledgement is not a concept. | Requested, acknowledged, and stopped are separate facts; an ignored abort stays visibly running. |
+| Evidence | Report file, trusted by location. | Receipt bytes verified against digest and size, schema-validated, bound to the admission identities. |
+
+The binding buys re-attachment and non-duplication for an asynchronous,
+restart-surviving engine; it does not reduce issue count, and that was never
+the measure. For a synchronous local command, the local integration remains
+the right tool.
+
 ## Deferred items
 
-- Gate 1 implementation of the single report-only Flue binding.
-- Deterministic multi-stage fixture and removal-sensitive conformance tests.
-- Operational status and recovery documentation for that binding.
 - Any publication authority, target-repository mutation, broker integration,
-  security-finding publication, or generalized outcome aggregation.
+  security-finding publication, or generalized outcome aggregation (Gate 2).
+- The OMP workbench as a second host (#6899): the accept-or-decline step
+  (`extwork.Host`, `InteractiveHost`) and the progress events
+  (`extwork.ProgressEvent` on the lease audit) are the seams it needs and are
+  in place; the OMP transport itself is not.
+- Wiring the binding into the assignment path so an admitted run-stage item is
+  dispatched automatically; Gate 1 refuses external items to relays without the
+  capability and constructs the binding, but the hub does not yet call
+  `Dispatch` on assignment.

@@ -1,0 +1,10 @@
+--- a/source/handler.ts
++++ b/source/handler.ts
+@@ -1,6 +1,6 @@
+ export async function triage(issue: { title: string; body: string }): Promise<string> {
+   if (!issue.title.trim()) {
+     return "needs-title";
+   }
+-  return issue.body.includes("reproduction") ? "ready" : "needs-repro";
++  return /reproduc(e|tion)/i.test(issue.body) ? "ready" : "needs-repro";
+ }

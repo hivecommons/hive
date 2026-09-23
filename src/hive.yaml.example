@@ -519,6 +519,23 @@ governor:
 # quality:
 #   formal: false
 
+# Report-only external-execution binding pilot (#8361; Gate 0 decision in
+# docs/design/external-workflow-admission.md). OFF by default. `enabled: true`
+# with no mode runs in shadow: admissions are persisted on the task lease and
+# observed, but no external run is started and nothing external is mutated.
+# `mode: report-only` dispatches one bounded Flue generation workflow to the
+# runtime at `endpoint`, pinned to `workflow_version`; the engine never receives
+# a repository write credential, a dashboard token, or a publication tool. The
+# adapter is compiled in only with the `extwork_flue` build tag; without it the
+# toggle is inert and the Features panel says so.
+# runs:
+#   external:
+#     flue:
+#       enabled: false
+#       mode: shadow                  # or report-only
+#       endpoint: http://127.0.0.1:8585
+#       workflow_version: flue-fixture/1.0.0
+
 # CEL-based agent triggers — declarative rules that kick an agent directly off
 # a normalized source-control event (issue opened, PR opened, a label applied,
 # a comment posted), evaluated with CEL against the `event` variable. This is

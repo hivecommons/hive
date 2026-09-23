@@ -81,6 +81,12 @@ const (
 	// plain task metadata, a stage is load-bearing for per-stage generations, so
 	// opted-in run-stage work is offered only to relays that declare this token.
 	capRunStage = "run-stage"
+	// capExtExecFlue (declared in extwork_binding.go as the string
+	// "ext-exec/flue") is the relay-side opt-in for the report-only Flue
+	// external-execution binding (#8361). An item bound to that engine is
+	// offered only to relays that declare it, and only while the operator has
+	// enabled runs.external.flue; a relay that lacks it is refused that item,
+	// never handed it as ordinary local work.
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -100,6 +106,7 @@ func serverCapabilities() []string {
 		capQuotaPreflight,
 		capBlockedVerdict,
 		capRunStage,
+		capExtExecFlue,
 	}
 }
 

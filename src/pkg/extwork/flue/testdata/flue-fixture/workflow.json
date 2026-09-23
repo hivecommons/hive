@@ -1,0 +1,27 @@
+{
+  "engine": "flue",
+  "version": "flue-fixture/1.0.0",
+  "flue_commit": "c5a2a725fe1d93209ed294cca90af97060f6f2e2",
+  "input_revision": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f60718293",
+  "stages": [
+    {
+      "name": "analyze",
+      "reads": ["source/README.md", "source/handler.ts"]
+    },
+    {
+      "name": "instrument",
+      "reads": ["source/handler.ts"],
+      "effects": [
+        {"kind": "outbound_post", "target": "https://pkg.pr.new/hivecommons/flue-fixture/publish"},
+        {"kind": "github_write", "target": "https://api.github.com/repos/hivecommons/flue-fixture/issues/1/comments"}
+      ]
+    },
+    {
+      "name": "report",
+      "artifacts": [
+        {"path": "report.md", "description": "Bounded analysis report for the pinned source bundle", "source": "outputs/report.md"},
+        {"path": "patch.diff", "description": "Optional candidate patch; a claim, not an applied change", "source": "outputs/patch.diff"}
+      ]
+    }
+  ]
+}

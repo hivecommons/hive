@@ -1174,6 +1174,16 @@ there. A relay that is offered staged run work must declare `run-stage` in
 `capabilities.relay_capabilities`; otherwise the hub refuses that staged item
 instead of silently downgrading it to an unstaged task.
 
+External-execution items add a second engine-scoped token: `ext-exec/flue`
+([#8361](https://github.com/hivecommons/hive/issues/8361)). A run-stage item
+that names an external engine (`ext_exec: flue`) is offered only while the
+operator has enabled `runs.external.flue` AND the relay declares
+`ext-exec/flue` in `capabilities.relay_capabilities`. A relay without the
+token, or a hub with the binding off, refuses that item; it is never handed
+out as ordinary local work. The token grants nothing by itself: the engine
+still receives only a bounded context bundle, and the hub still decides
+acceptance of its receipt.
+
 **Compatibility boundary with [#6825](https://github.com/hivecommons/hive/issues/6825).**
 Adding a relay→hub capability list is a change to the assignment boundary that
 RFC #6825 is still designing (its status is *proposal — open for maintainer

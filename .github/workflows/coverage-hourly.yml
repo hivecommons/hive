@@ -215,6 +215,7 @@ jobs:
             # longer exempt below — floored here instead of falling back to the
             # 90 default (#7407).
             [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
+            [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the

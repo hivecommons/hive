@@ -24917,6 +24917,15 @@ function burnAreaChart() {
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">External execution <span class="config-info">i<span class="config-tooltip">Report-only pilot of one externally hosted Flue generation workflow admitted through the contributor protocol (#8361). The engine receives a bounded context bundle and returns a stage receipt; it never receives a repository write credential, a dashboard token, or a publication tool.</span></span></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.extFlueEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extFlueEnabled"></div>
+            <span class="config-toggle-label">Flue binding (runs.external.flue) <span class="config-info">i<span class="config-tooltip">OFF by default. When on with no mode it runs in shadow: Hive persists admissions and observes but performs no external start and no external mutation. Only mode report-only dispatches, and only to relays that declare the ext-exec/flue capability; a relay without it is refused that work, never handed it as local work. Endpoint and workflow version are yaml-only. Requires a build with the extwork_flue tag; see src/docs/design/external-workflow-admission.md.</span></span></span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Mode: <b>${esc(f.extFlueMode || 'off')}</b> · adapter ${f.extFlueLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_flue); the toggle stays inert'} · endpoint ${f.extFlueEndpointSet ? 'configured' : 'not configured'}.</p>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.mintEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="mintEnabled"></div>
             <span class="config-toggle-label">Token Mint (Workload Identity) <span class="config-info">i<span class="config-tooltip">Issues short-lived scoped JWTs that downstream cloud/registry WIF providers can trust via the issuer + JWKS.</span></span></span>

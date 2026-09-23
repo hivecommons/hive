@@ -36,6 +36,8 @@ const (
 //   - publication       (Config.Publication: the audit campaign's authorized
 //     issue publisher, default off, ACMM L3+ effective gate, plus the private
 //     disclosure channel security-sensitive findings route to)
+//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361;
+//     endpoint and workflow version are yaml-only)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -87,6 +89,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PublicationEnabled        *bool   `json:"publicationEnabled"`
 		PublicationPrivateChannel *string `json:"publicationPrivateChannel"`
 		PublicationOwner          *string `json:"publicationOwner"`
+		// #8361: the report-only Flue external-execution binding. Endpoint
+		// and workflow version stay yaml-only; the dialog flips the toggle
+		// and picks the mode.
+		ExtFlueEnabled *bool   `json:"extFlueEnabled"`
+		ExtFlueMode    *string `json:"extFlueMode"`
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
@@ -130,6 +137,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.ClaimsTTLS != nil && *body.ClaimsTTLS < 0 {
 		jsonError(w, "claims ttl_s must be zero (default) or positive", http.StatusBadRequest)
+		return
+	}
+	if body.ExtFlueMode != nil && !config.ValidFlueBindingMode(*body.ExtFlueMode) {
+		jsonError(w, fmt.Sprintf("extFlueMode must be one of %s", strings.Join(config.FlueBindingModes(), ", ")), http.StatusBadRequest)
 		return
 	}
 	if body.RotationThresholdPct != nil && (*body.RotationThresholdPct < 1 || *body.RotationThresholdPct > 100) {
@@ -274,6 +285,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.AutonomyCooldownDays != nil {
 		cfg.Autonomy.CooldownDays = *body.AutonomyCooldownDays
 	}
+	if body.ExtFlueEnabled != nil {
+		cfg.Runs.External.Flue.Enabled = *body.ExtFlueEnabled
+	}
+	if body.ExtFlueMode != nil {
+		cfg.Runs.External.Flue.Mode = strings.TrimSpace(*body.ExtFlueMode)
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -332,6 +349,11 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"planFromLabel":              planFromLabel,
 		"formalEnabled":              cfg.Quality.Formal,
 		"planMatchEnabled":           cfg.Review.PlanMatch.Enabled,
+		"extFlueEnabled":             cfg.Runs.External.Flue.Enabled,
+		"extFlueMode":                cfg.FlueBindingMode(),
+		"extFlueModes":               config.FlueBindingModes(),
+		"extFlueLinked":              extworkRegistry.Linked(extExecEngineFlue),
+		"extFlueEndpointSet":         strings.TrimSpace(cfg.Runs.External.Flue.Endpoint) != "",
 		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
 		"claimsEnabled":              cfg.Governor.Claims.Enabled,

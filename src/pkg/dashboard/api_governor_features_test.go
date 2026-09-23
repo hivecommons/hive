@@ -463,3 +463,36 @@ func TestCovGov_FeaturesPublicationRoundTripAndGate(t *testing.T) {
 		t.Fatalf("low-ACMM publication payload = %+v, want persisted enabled but unavailable", payload.Features)
 	}
 }
+
+// TestCovGov_FeaturesExtFlueToggle covers the #8361 external-execution toggle:
+// it is off by default, an unknown mode is rejected, the toggle and mode round
+// trip through Config, and the GET payload reports the effective mode and
+// whether the adapter is linked into this build.
+func TestCovGov_FeaturesExtFlueToggle(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.FlueBindingEnabled() {
+		t.Fatal("binding must be off by default")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extFlueMode": "publish"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad mode: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.Runs.External.Flue.Mode != "" {
+		t.Fatal("a rejected mode must not be applied")
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extFlueEnabled": true, "extFlueMode": config.FlueBindingModeReportOnly}); rec.Code != http.StatusOK {
+		t.Fatalf("toggle PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Runs.External.Flue.Enabled || s.deps.Config.FlueBindingMode() != config.FlueBindingModeReportOnly {
+		t.Fatalf("config after PUT = %+v", s.deps.Config.Runs.External.Flue)
+	}
+	got := featuresSectionResponse(s.deps.Config)
+	if got["extFlueEnabled"] != true || got["extFlueMode"] != config.FlueBindingModeReportOnly || got["extFlueLinked"] != false || got["extFlueEndpointSet"] != false {
+		t.Fatalf("features response = %v", got)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"extFlueEnabled": false}); rec.Code != http.StatusOK {
+		t.Fatalf("toggle off PUT: %d", rec.Code)
+	}
+	if s.deps.Config.FlueBindingEnabled() || featuresSectionResponse(s.deps.Config)["extFlueMode"] != config.FlueBindingModeOff {
+		t.Fatal("toggle off did not disable the binding")
+	}
+}

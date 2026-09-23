@@ -756,6 +756,17 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 					"repo", repo.Full, "number", number, "stage", stage, "required_capability", capRunStage)
 				return
 			}
+			// #8361: an item bound to an external engine is refused, never
+			// downgraded to local work, unless the binding is enabled and the
+			// relay declared the engine capability.
+			if engine := extExecEngineFromIssueMap(issue); engine != "" {
+				if ok, reason := h.extExecAdmissible(engine, c); !ok {
+					capabilityMismatchSeen = true
+					h.logger.Info("[contribute-ws] skip: external execution item refused",
+						"repo", repo.Full, "number", number, "engine", engine, "reason", reason)
+					return
+				}
+			}
 			requirements := TaskRequirementsFromLabels(labels)
 			if !ContributorCanRunTask(declaredCaps, declaredBackend, requirements) {
 				capabilityMismatchSeen = true
