@@ -1,6 +1,7 @@
 package mutation
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -68,6 +69,12 @@ func (x Executor) now() time.Time {
 // may still have taken effect externally — and returns the error; Reconcile
 // against authoritative external state then resolves the same logical
 // operation before any retry.
+//
+// A replay of an already-Applied logical operation skips the effect and
+// returns the recorded Operation together with ErrAlreadyApplied, so the
+// caller can both detect the dedup and read the original typed result. An
+// operation whose latest attempt is Unknown replays as ErrNeedsReconciliation,
+// never as a success carrying an empty result.
 func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFunc) (Operation, error) {
 	if !JournalingEnabled(x.Mode) {
 		result, err := effect()
@@ -93,6 +100,16 @@ func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFu
 	// Intent before effect, durably.
 	op, err := x.Journal.Begin(e, epoch, holder, now)
 	if err != nil {
+		if errors.Is(err, ErrAlreadyApplied) {
+			// Dedup replay: the journal already holds this logical operation
+			// as Applied, so the effect is skipped. Hand back the RECORDED
+			// operation alongside the sentinel so the caller sees the same
+			// typed result (status and provenance) the original attempt
+			// produced, not an empty Operation that only says "already done".
+			if recorded, ok := x.Journal.Get(e.LogicalID()); ok {
+				return recorded, err
+			}
+		}
 		return Operation{}, err
 	}
 

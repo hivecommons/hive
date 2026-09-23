@@ -110,11 +110,10 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 		if errors.Is(execErr, ErrAlreadyApplied) {
 			// The journal says this exact effect already happened. The
 			// caller's desired state holds, so this is idempotent success:
-			// hand back the recorded provenance rather than an error that a
+			// hand back the recorded provenance (Execute returns the
+			// journaled operation on a replay) rather than an error that a
 			// retry loop would replay forever.
-			if op, ok := executor.Journal.Get(mutEffect.LogicalID()); ok {
-				out.Provenance = op.Result
-			}
+			out.Provenance = op.Result
 			if b.Logger != nil {
 				b.Logger.Info("external mutation already applied; treating as idempotent success",
 					"repo", claim.Repo, "kind", claim.Kind, "target", claim.Target)

@@ -138,7 +138,7 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	}
 
 	var pr *gh.PullRequest
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	res, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestCreate,
 		Target: head,
@@ -165,6 +165,21 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			}
 		}
 		return CreatePRResult{}, fmt.Errorf("creating PR %s/%s %s->%s: %w", owner, repo, head, base, err)
+	}
+	if pr == nil {
+		// The mutation boundary deduplicated this call as a replay of an
+		// already-applied create (#8347): the effect never ran, so there is
+		// no API response to read the PR from. Rebuild the typed reference
+		// from the journaled provenance (the PR URL) instead of reporting a
+		// zero PR number as success; an unparsable provenance is an error,
+		// never a fabricated result.
+		ref, parseErr := ParsePRURL(res.Provenance)
+		if parseErr != nil {
+			return CreatePRResult{}, fmt.Errorf("creating PR %s/%s %s->%s: replayed as already applied but recorded provenance %q is not a PR URL: %w", owner, repo, head, base, res.Provenance, parseErr)
+		}
+		c.logger.Info("CreatePR: mutation boundary replayed an already-applied create, returning the recorded PR",
+			slog.String("repo", repo), slog.String("head", head), slog.Int("number", ref.Number))
+		return CreatePRResult{Number: ref.Number, URL: res.Provenance, AlreadyExisted: true}, nil
 	}
 	c.logger.Info("CreatePR: opened PR as the App bot",
 		slog.String("repo", repo), slog.String("head", head), slog.Int("number", pr.GetNumber()))
@@ -215,7 +230,7 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		opts.SHA = expectSHA
 	}
 	var res *gh.PullRequestMergeResult
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	out, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: strconv.Itoa(number),
@@ -231,9 +246,16 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if err != nil {
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
+	sha, merged := res.GetSHA(), res.GetMerged()
+	if res == nil {
+		// Dedup replay (#8347): the boundary skipped the effect and returned
+		// the journaled merge SHA as provenance; surface it as the typed
+		// result rather than an empty, unmerged-looking success.
+		sha, merged = out.Provenance, out.Provenance != ""
+	}
 	c.logger.Info("MergePR: merged PR as the App bot over REST",
 		slog.String("repo", owner+"/"+repo), slog.Int("number", number),
-		slog.String("method", mergeMethod), slog.String("sha", res.GetSHA()))
+		slog.String("method", mergeMethod), slog.String("sha", sha))
 	// Audit the merge UNCONDITIONALLY so the dashboard audit log shows the full
 	// create→merge loop. The merge is performed by the hive itself (not a single
 	// coding agent), so it is attributed to the governor flow, mirroring the
@@ -242,8 +264,8 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		"repo", owner+"/"+repo,
 		"number", strconv.Itoa(number),
 		"method", mergeMethod,
-		"sha", res.GetSHA())
-	return MergePRResult{SHA: res.GetSHA(), Merged: res.GetMerged(), Message: res.GetMessage()}, nil
+		"sha", sha)
+	return MergePRResult{SHA: sha, Merged: merged, Message: res.GetMessage()}, nil
 }
 
 // UpdateBranch syncs a PR's head branch with its base (PUT
