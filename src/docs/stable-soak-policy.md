@@ -17,10 +17,13 @@ workflow advances `stable` by digest only after the gate below passes.
 A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
-1. **Minimum soak:** the candidate digest has been the newest candidate for at
-   least 24 hours.
-2. **No superseding candidate:** if a newer `candidate` appears before the soak
-   window ends, the timer restarts on the newer digest.
+1. **Minimum lineage soak:** the oldest un-promoted candidate generation after
+   the current `stable` generation was published has aged at least 24 hours.
+   Frequent `v5` merges may keep moving `candidate`, but they do not reset this
+   lineage timer.
+2. **Current candidate only:** the digest being promoted must still be the
+   current `candidate` when the gate decides and again immediately before any
+   tag is moved.
 3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy.
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate
@@ -43,26 +46,31 @@ It:
 1. resolves the current `candidate` digest for `hive`, `hive-contributor`, and
    `hive-hub`;
 2. compares the candidate digest with the current `stable` digest;
-3. reads the candidate's first-seen time from the successful `docker.yml` run
-   number recorded in the image metadata;
-4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the
-   candidate SHA;
-5. requires no open **issue** labelled `release-blocker` — `blocker_count` in
+3. reads the current candidate's first-seen time from the successful `docker.yml`
+   run number recorded in the image metadata;
+4. reads the lineage first-seen time from the oldest successful `docker.yml`
+   candidate generation newer than the current `stable` generation and no newer
+   than the current candidate generation;
+5. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
+   candidate SHA. The workflow does not currently have per-generation release
+   evidence for every candidate generation in the lineage; until that is added,
+   the enforced invariant is current-candidate green evidence plus lineage age;
+6. requires no open **issue** labelled `release-blocker` — `blocker_count` in
    `src/scripts/promote-stable.sh` runs `gh issue list`, which does not return
    pull requests, so condition 4's "issue or PR" is enforced by CI only for the
    issue half. A `release-blocker` label on an open PR alone does not hold the
    gate; open an issue when you need the promotion stopped;
-6. requires maintained-hive smoke evidence from the dispatch input or the
+7. requires maintained-hive smoke evidence from the dispatch input or the
    `STABLE_SMOKE_EVIDENCE` repository variable; and
-7. retags `stable` to the candidate digest only when the gate passes and the
+8. retags `stable` to the candidate digest only when the gate passes and the
    moving-tag generation is newer than the currently published `stable` tag.
 
-The workflow writes the candidate digest, SHA, generation, first-seen time, age,
-checks consulted, blocker count, smoke evidence, decision, and any exception note
-to the GitHub Actions step summary. If the gate fails, the workflow leaves
-`stable` unchanged with a human-readable reason such as `candidate age 3600s <
-required 86400s (24h)` or `newer candidate superseded this digest before the soak
-window completed`.
+The workflow writes the candidate digest, SHA, generation, candidate first-seen
+time and age, lineage first-seen time and age, checks consulted, blocker count,
+smoke evidence, decision, and any exception note to the GitHub Actions step
+summary. If the gate fails, the workflow leaves `stable` unchanged with a
+human-readable reason such as `lineage age 3600s < required 86400s (24h)` or
+`newer candidate superseded this digest before the soak window completed`.
 
 One hold is expected and benign: the candidate digest is pushed part-way
 through its `docker.yml` run, so an hourly promotion that lands in that window
@@ -96,8 +104,8 @@ issue.
 branch *before* the soak-age and smoke-evidence branches, so an exception waives
 exactly two of the five promotion conditions:
 
-- **condition 1, minimum soak** — the candidate age is never compared against
-  `soak-hours`; and
+- **condition 1, minimum lineage soak** — the lineage age is never compared
+  against `soak-hours`; and
 - **condition 5, operator smoke signal** — the `smoke_evidence` test is only
   reached on the non-exception path, so an exception promotes even when both the
   `smoke-evidence` input and `STABLE_SMOKE_EVIDENCE` are empty.

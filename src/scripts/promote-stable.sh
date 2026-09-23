@@ -75,6 +75,7 @@ normalized_decision() {
   local candidate_digest=${CANDIDATE_DIGEST:-}
   local stable_digest=${STABLE_DIGEST:-}
   local candidate_age_seconds=${CANDIDATE_AGE_SECONDS:-0}
+  local lineage_age_seconds=${LINEAGE_AGE_SECONDS:-$candidate_age_seconds}
   local soak_hours=${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}
   local current_candidate=${CURRENT_CANDIDATE:-false}
   local green_evidence=${GREEN_EVIDENCE:-false}
@@ -112,8 +113,10 @@ normalized_decision() {
       decision=promote
       reason="emergency exception recorded: $emergency_reason"
     fi
-  elif (( candidate_age_seconds < soak_seconds )); then
-    reason="candidate age ${candidate_age_seconds}s < required ${soak_seconds}s (${soak_hours}h)"
+  elif ! [[ $lineage_age_seconds =~ ^[0-9]+$ ]]; then
+    reason="lineage age is invalid: $lineage_age_seconds"
+  elif (( lineage_age_seconds < soak_seconds )); then
+    reason="lineage age ${lineage_age_seconds}s < required ${soak_seconds}s (${soak_hours}h)"
   elif [[ $current_candidate != true ]]; then
     reason="newer candidate superseded this digest before the soak window completed"
   elif [[ $green_evidence != true ]]; then
@@ -124,7 +127,7 @@ normalized_decision() {
     reason="operator smoke signal is missing"
   else
     decision=promote
-    reason="all stable soak promotion conditions passed"
+    reason="all stable lineage soak promotion conditions passed"
   fi
 
   printf 'decision=%s\nreason=%s\n' "$decision" "$reason"
@@ -298,6 +301,36 @@ workflow_run_created_at() {
   echo "$result"
 }
 
+workflow_lineage_created_at() {
+  local repo=$1 stable_run=$2 candidate_run=$3
+  local workflow=${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}
+  local branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}
+  local page=1 page_json page_min line number created best_number= best_created=
+
+  while :; do
+    page_json=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
+      "/repos/${repo}/actions/workflows/${workflow}/runs?branch=${branch}&per_page=100&page=${page}") || return 1
+    page_min=$(jq -r '[.workflow_runs[].run_number] | min // empty' <<<"$page_json")
+    [[ -n $page_min ]] || break
+    line=$(jq -r --argjson stable "$stable_run" --argjson candidate "$candidate_run" \
+      '[.workflow_runs[] | select(.run_number > $stable and .run_number <= $candidate) | select(.status == "completed" and .conclusion == "success")] | sort_by(.run_number) | (.[0] // {}) | select(has("run_number")) | "\(.run_number)\t\(.created_at)"' <<<"$page_json")
+    if [[ -n $line ]]; then
+      IFS=$'\t' read -r number created <<<"$line"
+      if [[ -z $best_number || $number -lt $best_number ]]; then
+        best_number=$number
+        best_created=$created
+      fi
+    fi
+    if (( page_min <= stable_run )); then
+      break
+    fi
+    (( page++ ))
+  done
+
+  [[ -n $best_created ]] || return 1
+  echo "$best_created"
+}
+
 blocker_count() {
   unset GITHUB_TOKEN && gh issue list -R "$1" --state open --label "${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}" --json number --limit 100 --jq 'length'
 }
@@ -353,6 +386,7 @@ promote() {
   local stable_channel=${STABLE_CHANNEL:-$STABLE_CHANNEL_DEFAULT}
   local images=( ${IMAGE_NAMES:-$IMAGE_NAMES_DEFAULT} )
   local candidate_digest stable_digest candidate_generation stable_generation revision run_created run_epoch age now
+  local lineage_created lineage_epoch lineage_age
   local first_digest= first_revision= first_generation= evidence_text green=true blockers smoke decision reason image image_stable_digest
   local max_stable_generation=0 min_stable_generation= stable_all_candidate=true newer_stable=false
   declare -A candidate_digests
@@ -409,6 +443,13 @@ promote() {
   now=$(now_epoch)
   age=$((now - run_epoch))
   (( age >= 0 )) || age=0
+  if ! lineage_created=$(workflow_lineage_created_at "$repo" "$stable_generation" "$first_generation"); then
+    lineage_created=$run_created
+    echo "::warning::could not resolve the oldest completed candidate generation after stable generation ${stable_generation}; using current candidate generation ${first_generation} for soak age"
+  fi
+  lineage_epoch=$(iso_to_epoch "$lineage_created")
+  lineage_age=$((now - lineage_epoch))
+  (( lineage_age >= 0 )) || lineage_age=0
 
   evidence_text=$(collect_required_workflows "$repo" "$first_revision" 2>&1) || green=false
   # Echo the per-workflow verdicts to the LOG, not only the job summary. A hold
@@ -427,6 +468,7 @@ promote() {
 
   local out
   out=$(CANDIDATE_DIGEST="$first_digest" STABLE_DIGEST="$stable_digest" CANDIDATE_AGE_SECONDS="$age" \
+    LINEAGE_AGE_SECONDS="$lineage_age" LINEAGE_FIRST_SEEN="$lineage_created" \
     CURRENT_CANDIDATE=true GREEN_EVIDENCE="$green" BLOCKER_COUNT="$blockers" SMOKE_EVIDENCE="$smoke" \
     CANDIDATE_GENERATION="$first_generation" STABLE_GENERATION="$stable_generation" \
     EMERGENCY_EXCEPTION_REASON="${EMERGENCY_EXCEPTION_REASON:-}" EMERGENCY_FOLLOWUP_ISSUE="${EMERGENCY_FOLLOWUP_ISSUE:-}" normalized_decision)
@@ -451,6 +493,8 @@ promote() {
     echo "- Candidate generation: ${first_generation}"
     echo "- Candidate first seen: ${run_created}"
     echo "- Candidate age: ${age}s"
+    echo "- Lineage first seen: ${lineage_created}"
+    echo "- Lineage age: ${lineage_age}s"
     echo "- Required soak: ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h"
     echo "- Stable digest: ${stable_digest:-missing}"
     echo "- Stable generation: ${stable_generation}"

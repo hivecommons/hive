@@ -13,6 +13,7 @@ run_decide() {
     CANDIDATE_DIGEST="${CANDIDATE_DIGEST-sha256:candidate}" \
     STABLE_DIGEST="${STABLE_DIGEST-sha256:stable}" \
     CANDIDATE_AGE_SECONDS="${CANDIDATE_AGE_SECONDS-90000}" \
+    LINEAGE_AGE_SECONDS="${LINEAGE_AGE_SECONDS-}" \
     SOAK_HOURS="${SOAK_HOURS-24}" \
     CURRENT_CANDIDATE="${CURRENT_CANDIDATE-true}" \
     GREEN_EVIDENCE="${GREEN_EVIDENCE-true}" \
@@ -38,8 +39,9 @@ expect_decision() {
 }
 
 expect_decision promote "all five policy conditions promote"
-CANDIDATE_AGE_SECONDS=3600 expect_decision hold "minimum soak failure holds" "candidate age"
-CURRENT_CANDIDATE=false expect_decision hold "superseded candidate failure holds" "superseded"
+CANDIDATE_AGE_SECONDS=3600 LINEAGE_AGE_SECONDS=90000 expect_decision promote "newest candidate can be young when un-promoted lineage is old"
+LINEAGE_AGE_SECONDS=3600 expect_decision hold "lineage soak failure holds" "lineage age"
+LINEAGE_AGE_SECONDS=90000 CURRENT_CANDIDATE=false expect_decision hold "superseded candidate failure holds even after lineage soak" "superseded"
 GREEN_EVIDENCE=false expect_decision hold "green evidence failure holds" "evidence"
 BLOCKER_COUNT=1 expect_decision hold "open release blocker failure holds" "release blocker"
 SMOKE_EVIDENCE= expect_decision hold "missing operator smoke signal holds" "smoke signal"
@@ -103,6 +105,49 @@ elif [[ -e $capture ]]; then
   bad "mirror-stable created a tag from an unverified source digest"
 else
   pass "mirror-stable fails closed when source digest metadata is missing"
+fi
+
+# The oldest un-promoted candidate generation may sit beyond the first gh run
+# page on busy release days. The lineage lookup must keep paging until it has
+# inspected runs at or below the current stable generation; otherwise it can
+# incorrectly restart the soak from a newer candidate.
+# shellcheck source=/dev/null
+source <(sed -n '/^workflow_lineage_created_at()/,/^}/p' "$promoter")
+lineage="$tmp/lineage"
+mkdir -p "$lineage/bin"
+cat > "$lineage/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *'&page=1'*)
+    cat <<'JSON'
+{"workflow_runs":[
+  {"run_number":300,"created_at":"2026-09-23T12:00:00Z","status":"completed","conclusion":"success"},
+  {"run_number":250,"created_at":"2026-09-22T12:00:00Z","status":"completed","conclusion":"success"}
+]}
+JSON
+    ;;
+  *'&page=2'*)
+    cat <<'JSON'
+{"workflow_runs":[
+  {"run_number":151,"created_at":"2026-09-21T12:00:00Z","status":"completed","conclusion":"success"},
+  {"run_number":149,"created_at":"2026-09-20T12:00:00Z","status":"completed","conclusion":"success"}
+]}
+JSON
+    ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 1
+    ;;
+esac
+MOCK
+chmod +x "$lineage/bin/gh"
+got=$(PATH="$lineage/bin:$PATH" DOCKER_WORKFLOW_DEFAULT=docker.yml RELEASE_BRANCH_DEFAULT=v5 \
+  workflow_lineage_created_at example/repo 150 300)
+if [[ $got == "2026-09-21T12:00:00Z" ]]; then
+  pass "lineage lookup pages back to the oldest un-promoted candidate generation"
+else
+  bad "lineage lookup did not find the oldest un-promoted generation across pages (got ${got})"
 fi
 
 workflow="$script_dir/../../.github/workflows/docker.yml"
