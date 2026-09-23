@@ -154,9 +154,165 @@ fetch_knowledge_export() {
   return 1
 }
 
+DEFAULT_CONTRIBUTOR_KNOWLEDGE_TOKEN_BUDGET=12000
+
+budget_backend_knowledge() {
+  local backend="$1"
+  local agent_md="$2"
+  local budgeted_agent_md
+
+  if [[ "$backend" != "pi" || ! -s "$agent_md" ]]; then
+    printf '%s\n' "$agent_md"
+    return 0
+  fi
+
+  budgeted_agent_md="${HOME}/agent.pi-context.md"
+  HIVE_KNOWLEDGE_SOURCE="$agent_md" \
+  HIVE_KNOWLEDGE_DEST="$budgeted_agent_md" \
+  HIVE_KNOWLEDGE_FULL_EXPORT_PATH="${agent_md/#$HOME/\~}" \
+  HIVE_KNOWLEDGE_TOKEN_BUDGET="${HIVE_CONTRIBUTOR_KNOWLEDGE_TOKEN_BUDGET:-$DEFAULT_CONTRIBUTOR_KNOWLEDGE_TOKEN_BUDGET}" \
+  python3 <<'PY'
+import os
+import re
+from pathlib import Path
+
+DEFAULT_TOKEN_BUDGET = 12000
+CHARS_PER_TOKEN = 4
+TRUNCATION_MARKER = (
+    "\n\n[Hive knowledge truncated: token budget reached. Full export: {full_path}. "
+    "Fetch more on demand with `hive knowledge` or the Hive MCP knowledge tool.]\n"
+)
+
+def parse_budget(raw):
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        return DEFAULT_TOKEN_BUDGET
+    return value if value > 0 else DEFAULT_TOKEN_BUDGET
+
+def estimate_tokens(text):
+    return (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+
+def task_terms(env):
+    text = " ".join(env.get(name, "") for name in (
+        "HIVE_TASK_TITLE",
+        "HIVE_TASK_BODY",
+        "HIVE_ISSUE_TITLE",
+        "HIVE_ISSUE_BODY",
+        "HIVE_ASSIGNMENT_TITLE",
+        "HIVE_ASSIGNMENT_BODY",
+    ))
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]{3,}", text)
+        if not token.isdigit()
+    }
+
+def repo_needles(env):
+    out = []
+    for name in ("HIVE_REPO", "HIVE_REPOSITORY", "HIVE_TASK_REPO", "GITHUB_REPOSITORY"):
+        value = env.get(name, "").strip().lower()
+        if not value:
+            continue
+        out.append(value)
+        if "/" in value:
+            out.append(value.rsplit("/", 1)[-1])
+    return [value for i, value in enumerate(out) if value and value not in out[:i]]
+
+def split_entries(text):
+    lines = text.splitlines(keepends=True)
+    prefix_lines = []
+    entries = []
+    current_section = ""
+    current_entry = None
+    for line in lines:
+        if line.startswith("## ") and not line.startswith("### "):
+            if current_entry is not None:
+                entries.append((len(entries), current_section, "".join(current_entry)))
+                current_entry = None
+            current_section = line
+            continue
+        if line.startswith("### "):
+            if current_entry is not None:
+                entries.append((len(entries), current_section, "".join(current_entry)))
+            current_entry = [line]
+            continue
+        if current_entry is None:
+            prefix_lines.append(line)
+        else:
+            current_entry.append(line)
+    if current_entry is not None:
+        entries.append((len(entries), current_section, "".join(current_entry)))
+    prefix = "".join(prefix_lines)
+    if entries:
+        return prefix, entries
+    return text, []
+
+def render():
+    source = Path(os.environ["HIVE_KNOWLEDGE_SOURCE"])
+    dest = Path(os.environ["HIVE_KNOWLEDGE_DEST"])
+    full_path = os.environ.get("HIVE_KNOWLEDGE_FULL_EXPORT_PATH", "~/agent.md")
+    source_text = source.read_text(encoding="utf-8")
+    budget = parse_budget(os.environ.get("HIVE_KNOWLEDGE_TOKEN_BUDGET"))
+    max_chars = budget * CHARS_PER_TOKEN
+    marker = TRUNCATION_MARKER.format(full_path=full_path)
+    pointer = (
+        "\nStartup context is budgeted for this backend. "
+        f"Budget: ~{budget} tokens. "
+        f"Full export: {full_path}; fetch more with `hive knowledge` or the Hive MCP knowledge tool.\n\n"
+    )
+    prefix, entries = split_entries(source_text)
+    header = prefix.rstrip() + pointer
+    needles = repo_needles(os.environ)
+    terms = task_terms(os.environ)
+
+    def score(entry):
+        idx, _section, body = entry
+        lower = body.lower()
+        repo_score = 10000 if any(needle in lower for needle in needles) else 0
+        term_score = sum(1 for term in terms if term in lower)
+        return (-repo_score, -term_score, idx)
+
+    entries = sorted(entries, key=score)
+    out = header
+    seen_sections = set()
+    truncated = False
+    for _idx, section, body in entries:
+        candidate = ""
+        if section and section not in seen_sections:
+            candidate += section
+        candidate += body
+        if len(out) + len(candidate) <= max_chars:
+            out += candidate
+            if section:
+                seen_sections.add(section)
+            continue
+        remaining = max_chars - len(out) - len(marker)
+        if remaining > 80:
+            out += candidate[:remaining].rstrip()
+        truncated = True
+        break
+    if not entries and len(out) > max_chars:
+        remaining = max_chars - len(marker)
+        out = out[:max(0, remaining)].rstrip()
+        truncated = True
+    if truncated or len(out) > max_chars:
+        marker_budget = max_chars - len(marker)
+        out = out[:max(0, marker_budget)].rstrip() + marker
+    if estimate_tokens(out) > budget:
+        marker_budget = max_chars - len(marker)
+        out = out[:max(0, marker_budget)].rstrip() + marker
+    dest.write_text(out, encoding="utf-8")
+
+render()
+PY
+  printf '%s\n' "$budgeted_agent_md"
+}
+
 link_backend_knowledge() {
   local backend="$1"
   local agent_md="$2"
+  local backend_agent_md="$agent_md"
 
   case "$backend" in
     claude|litellm)
@@ -196,9 +352,14 @@ GOOSECFG
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
-    codex|pi)
+    codex)
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    pi)
+      backend_agent_md="$(budget_backend_knowledge "$backend" "$agent_md")"
+      ln -sf "$backend_agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$backend_agent_md" "${HOME}/CLAUDE.md"
       ;;
     bob)
       # Bobshell 1.0.6 defaults to AGENTS.md and documents ~/.bob/AGENTS.md as

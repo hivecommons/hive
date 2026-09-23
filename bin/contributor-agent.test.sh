@@ -321,6 +321,81 @@ if env -i \
 fi
 echo "contributor-agent Pi selection tests passed"
 
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md" "${HOME_DIR}/agent.pi-context.md"
+PI_AGENT_MD="${HOME_DIR}/agent.md"
+cat >"$PI_AGENT_MD" <<'EOF'
+# Agent Knowledge
+
+This file is auto-generated from the hive knowledge base.
+It refreshes periodically — do not edit manually.
+
+## Patterns
+
+### Generic background
+
+generic filler generic filler generic filler generic filler generic filler generic filler
+generic filler generic filler generic filler generic filler generic filler generic filler
+generic filler generic filler generic filler generic filler generic filler generic filler
+generic filler generic filler generic filler generic filler generic filler generic filler
+
+### Target repo task guidance
+
+target-repo guidance for failing contributor context overflow and pi startup.
+
+### Another global fact
+
+global filler global filler global filler global filler global filler global filler
+global filler global filler global filler global filler global filler global filler
+global filler global filler global filler global filler global filler global filler
+EOF
+env -i \
+  PATH="${PATH}" \
+  HOME="$HOME_DIR" \
+  HIVE_REGISTRATION_TOKEN="test-token" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$PI_AGENT_MD" \
+  HIVE_CONTRIBUTOR_KNOWLEDGE_TOKEN_BUDGET=120 \
+  HIVE_REPO=target-repo \
+  HIVE_TASK_TITLE="Fix contributor context overflow" \
+  AGENT_BACKEND=pi \
+  bash "${ROOT_DIR}/bin/contributor-agent.sh"
+
+if [[ "$(readlink "${HOME_DIR}/AGENTS.md")" != "${HOME_DIR}/agent.pi-context.md" ]]; then
+  echo "expected pi AGENTS.md to link to the budgeted Hive knowledge context" >&2
+  exit 1
+fi
+if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "${HOME_DIR}/agent.pi-context.md" ]]; then
+  echo "expected pi CLAUDE.md compatibility link to use the budgeted context" >&2
+  exit 1
+fi
+if [[ ! -s "${HOME_DIR}/agent.pi-context.md" ]]; then
+  echo "expected pi budgeted context file to be written" >&2
+  exit 1
+fi
+if [[ "$(wc -c < "${HOME_DIR}/agent.pi-context.md")" -gt 480 ]]; then
+  echo "expected pi budgeted context to stay within the 120-token estimate" >&2
+  exit 1
+fi
+grep -q "Target repo task guidance" "${HOME_DIR}/agent.pi-context.md" || {
+  echo "expected repo/task-scoped knowledge to survive budgeting" >&2
+  exit 1
+}
+grep -q "Hive knowledge truncated: token budget reached" "${HOME_DIR}/agent.pi-context.md" || {
+  echo "expected pi budgeted context to carry the truncation marker" >&2
+  exit 1
+}
+grep -q "hive knowledge" "${HOME_DIR}/agent.pi-context.md" || {
+  echo "expected pi budgeted context to point at on-demand knowledge fetching" >&2
+  exit 1
+}
+target_line="$(grep -n "Target repo task guidance" "${HOME_DIR}/agent.pi-context.md" | head -n1 | cut -d: -f1)"
+generic_line="$(grep -n "Generic background" "${HOME_DIR}/agent.pi-context.md" | head -n1 | cut -d: -f1 || true)"
+if [[ -n "$generic_line" && "$generic_line" -lt "$target_line" ]]; then
+  echo "expected repo/task-scoped knowledge to be ordered before global knowledge" >&2
+  exit 1
+fi
+echo "contributor-agent pi knowledge budget tests passed"
+
 rm -f "${HOME_DIR}/CLAUDE.md"
 rm -rf "${HOME_DIR}/.bob"
 BOB_AGENT_MD="${HOME_DIR}/agent.md"
