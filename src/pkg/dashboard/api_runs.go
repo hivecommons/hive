@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 	hubspoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -50,6 +51,17 @@ type Run struct {
 }
 
 type RunSummary = Run
+
+type RunWaitSnapshot struct {
+	Key          string
+	Title        string
+	Repo         string
+	Stage        string
+	Gen          uint64
+	WaitingOn    string
+	WaitingSince time.Time
+	Link         string
+}
 
 type runLeaseSnapshot struct {
 	identity     string
@@ -119,9 +131,13 @@ func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
 	}
 	plans := s.runPlanSnapshots()
 	holds := runHumanReviewHolds(runReviewDispatchStatePath)
+	var cfg *config.Config
+	if s.deps != nil {
+		cfg = s.deps.Config
+	}
 	runs := make([]Run, 0, len(leases))
 	for _, lease := range leases {
-		run := runFromLease(lease, plans[lease.key], holds[lease.key])
+		run := runFromLease(lease, plans[lease.key], holds[lease.key], cfg)
 		events := s.LifecycleTimeline().ByIssue(lease.key)
 		run.LastReceipt = latestRunReceipt(events)
 		if run.StageStartedAt == "" {
@@ -195,7 +211,7 @@ func (h *ContributeWSHub) currentTaskInfos() map[string]currentTaskRunInfo {
 	return out
 }
 
-func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanReviewHold) Run {
+func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanReviewHold, cfg *config.Config) Run {
 	started := formatRunTime(lease.stageStarted)
 	run := Run{
 		Key: lease.key, Title: redactTokens(lease.title), Repo: lease.repo,
@@ -206,14 +222,27 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	}
 	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
-		run.WaitingOn = RunWaitingOnHuman
-		run.WaitingSince = formatRunTime(plan.waitingSince)
+		if runCheckpointBlocks(cfg, lease.stage) {
+			run.WaitingOn = RunWaitingOnHuman
+			run.WaitingSince = formatRunTime(plan.waitingSince)
+		}
 	}
-	if !hold.UpdatedAt.IsZero() {
+	if !hold.UpdatedAt.IsZero() && runCheckpointBlocks(cfg, lease.stage) {
 		run.WaitingOn = RunWaitingOnHuman
 		run.WaitingSince = formatRunTime(hold.UpdatedAt)
 	}
 	return run
+}
+
+func runCheckpointBlocks(cfg *config.Config, stage string) bool {
+	if cfg == nil {
+		return true
+	}
+	if strings.TrimSpace(strings.ToLower(stage)) == StageImplement &&
+		cfg.ACMMLevelOrZero() < config.RunImplementCheckpointMinACMM {
+		return true
+	}
+	return cfg.Runs.CheckpointBlocks(stage)
 }
 
 func leaseRunStages(current string, gen uint64) []RunStage {
@@ -343,6 +372,31 @@ func (s *Server) HeartbeatRunsSummary() *hubspoke.RunsSummary {
 		}
 		return s.LifecycleTimeline().ByIssue(key)
 	}, time.Now())
+}
+
+func (s *Server) RunWaitSnapshot() []RunWaitSnapshot {
+	runs, err := s.activeRuns(false)
+	if err != nil {
+		return nil
+	}
+	out := make([]RunWaitSnapshot, 0, len(runs))
+	for _, run := range runs {
+		var since time.Time
+		if run.WaitingSince != "" {
+			since, _ = time.Parse(time.RFC3339, run.WaitingSince)
+		}
+		out = append(out, RunWaitSnapshot{
+			Key:          run.Key,
+			Title:        run.Title,
+			Repo:         run.Repo,
+			Stage:        run.Stage,
+			Gen:          run.Gen,
+			WaitingOn:    string(run.WaitingOn),
+			WaitingSince: since,
+			Link:         s.runDashboardURL(run.Key),
+		})
+	}
+	return out
 }
 
 func heartbeatRunsSummary(runs []Run, eventsFor func(string) []timeline.Event, now time.Time) *hubspoke.RunsSummary {

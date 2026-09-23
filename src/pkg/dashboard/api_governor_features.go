@@ -74,6 +74,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		FormalEnabled *bool `json:"formalEnabled"`
 
+		CheckpointSpecEnabled      *bool   `json:"checkpointSpecEnabled"`
+		CheckpointPlanEnabled      *bool   `json:"checkpointPlanEnabled"`
+		CheckpointImplementEnabled *bool   `json:"checkpointImplementEnabled"`
+		RunWaitTimeoutSeconds      *int    `json:"runWaitTimeoutSeconds"`
+		RunWaitSeverity            *string `json:"runWaitSeverity"`
+
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
@@ -106,6 +112,21 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.RotationThresholdPct != nil && (*body.RotationThresholdPct < 1 || *body.RotationThresholdPct > 100) {
 		jsonError(w, "rotation threshold must be between 1 and 100", http.StatusBadRequest)
+		return
+	}
+	if body.RunWaitTimeoutSeconds != nil && *body.RunWaitTimeoutSeconds <= 0 {
+		jsonError(w, "run wait timeout must be positive", http.StatusBadRequest)
+		return
+	}
+	if body.RunWaitSeverity != nil {
+		if !validRunWaitSeverity(*body.RunWaitSeverity) {
+			jsonError(w, "run wait severity must be info, decision, or page", http.StatusBadRequest)
+			return
+		}
+	}
+	if body.CheckpointImplementEnabled != nil && !*body.CheckpointImplementEnabled &&
+		s.deps.Config.ACMMLevelOrZero() < config.RunImplementCheckpointMinACMM {
+		jsonError(w, "implement checkpoint changes require ACMM L5+", http.StatusBadRequest)
 		return
 	}
 	if body.RotationAgents != nil {
@@ -177,6 +198,24 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.FormalEnabled != nil {
 		cfg.Quality.Formal = *body.FormalEnabled
 	}
+	if body.CheckpointSpecEnabled != nil {
+		v := *body.CheckpointSpecEnabled
+		cfg.Runs.Checkpoints.Spec = &v
+	}
+	if body.CheckpointPlanEnabled != nil {
+		v := *body.CheckpointPlanEnabled
+		cfg.Runs.Checkpoints.Plan = &v
+	}
+	if body.CheckpointImplementEnabled != nil {
+		v := *body.CheckpointImplementEnabled
+		cfg.Runs.Checkpoints.Implement = &v
+	}
+	if body.RunWaitTimeoutSeconds != nil {
+		cfg.Runs.WaitTimeoutSeconds = *body.RunWaitTimeoutSeconds
+	}
+	if body.RunWaitSeverity != nil {
+		cfg.Runs.WaitSeverity = strings.ToLower(strings.TrimSpace(*body.RunWaitSeverity))
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -218,36 +257,52 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
 	return map[string]interface{}{
-		"ioscanEnabled":              cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":             otelCfg.Enabled,
-		"tracingEndpoint":            otelCfg.Endpoint,
-		"tracingSampleRatio":         otelCfg.SampleRatio,
-		"otelEnabled":                otelCfg.Enabled,
-		"otelEndpoint":               otelCfg.Endpoint,
-		"otelServiceName":            otelCfg.ServiceName,
-		"otelInsecure":               otelCfg.Insecure,
-		"otelSampleRatio":            otelCfg.SampleRatio,
-		"otelHasHeaders":             len(otelCfg.Headers) > 0,
-		"retroEnabled":               cfg.Retro.Enabled,
-		"retroAnalysisModel":         cfg.Retro.AnalysisModel,
-		"mintEnabled":                cfg.Mint.Enabled,
-		"mintIssuer":                 cfg.Mint.Issuer,
-		"planFromLabel":              planFromLabel,
-		"formalEnabled":              cfg.Quality.Formal,
-		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
-		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
-		"acmmLevel":                  acmmLevel,
-		"rotationEnabled":            rotationCfg.Enabled,
-		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),
-		"rotationHighVolumeCadenceS": rotationCfg.EffectiveHighVolumeCadenceS(),
-		"rotationProviders":          rotationCfg.Providers,
-		"rotationAgents":             rotationCfg.AgentTiers,
+		"ioscanEnabled":                   cfg.Ioscan.IsEnabled(),
+		"tracingEnabled":                  otelCfg.Enabled,
+		"tracingEndpoint":                 otelCfg.Endpoint,
+		"tracingSampleRatio":              otelCfg.SampleRatio,
+		"otelEnabled":                     otelCfg.Enabled,
+		"otelEndpoint":                    otelCfg.Endpoint,
+		"otelServiceName":                 otelCfg.ServiceName,
+		"otelInsecure":                    otelCfg.Insecure,
+		"otelSampleRatio":                 otelCfg.SampleRatio,
+		"otelHasHeaders":                  len(otelCfg.Headers) > 0,
+		"retroEnabled":                    cfg.Retro.Enabled,
+		"retroAnalysisModel":              cfg.Retro.AnalysisModel,
+		"mintEnabled":                     cfg.Mint.Enabled,
+		"mintIssuer":                      cfg.Mint.Issuer,
+		"planFromLabel":                   planFromLabel,
+		"formalEnabled":                   cfg.Quality.Formal,
+		"formalAvailable":                 acmmLevel >= config.FormalQualityMinACMMLevel,
+		"formalMinACMMLevel":              config.FormalQualityMinACMMLevel,
+		"checkpointSpecEnabled":           cfg.Runs.CheckpointBlocks("spec"),
+		"checkpointPlanEnabled":           cfg.Runs.CheckpointBlocks("plan"),
+		"checkpointImplementEnabled":      cfg.Runs.CheckpointBlocks("implement"),
+		"checkpointImplementAvailable":    acmmLevel >= config.RunImplementCheckpointMinACMM,
+		"checkpointImplementMinACMMLevel": config.RunImplementCheckpointMinACMM,
+		"runWaitTimeoutSeconds":           cfg.Runs.EffectiveWaitTimeoutSeconds(),
+		"runWaitSeverity":                 cfg.Runs.EffectiveWaitSeverity(),
+		"acmmLevel":                       acmmLevel,
+		"rotationEnabled":                 rotationCfg.Enabled,
+		"rotationThresholdPct":            rotationCfg.EffectiveThreshold(),
+		"rotationHighVolumeCadenceS":      rotationCfg.EffectiveHighVolumeCadenceS(),
+		"rotationProviders":               rotationCfg.Providers,
+		"rotationAgents":                  rotationCfg.AgentTiers,
 	}
 }
 
 func validRotationTier(tier string) bool {
 	switch tier {
 	case "T1", "T2", "T3":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRunWaitSeverity(severity string) bool {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "info", "decision", "page":
 		return true
 	default:
 		return false

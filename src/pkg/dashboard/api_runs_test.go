@@ -133,6 +133,53 @@ func TestRunsPlanDraftWaitsOnHuman(t *testing.T) {
 	}
 }
 
+func TestRunsPlanCheckpointPolicyLetsRunContinueWithoutHumanWait(t *testing.T) {
+	s, deps := runsTestServer(t)
+	planBlocks := false
+	deps.Config.Runs.Checkpoints.Plan = &planBlocks
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	epic, err := store.Create("draft plan", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusDraft
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8312"
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	deps.BeadStores = map[string]*beads.Store{"architect": store}
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8312", "myorg/repo1", 8312, "myorg/repo1#8312", "contributor", StagePlan, 9, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	rec := runsGet(s, "/api/runs", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/runs = %d body=%s", rec.Code, rec.Body.String())
+	}
+	runs := decodeRuns(t, rec)
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d, want 1: %+v", len(runs), runs)
+	}
+	if runs[0].WaitingOn != RunWaitingOnAgent || runs[0].WaitingSince != "" || runs[0].PlanEpicID != epic.ID {
+		t.Fatalf("checkpoint-disabled run = %+v, want agent wait with same plan artifact", runs[0])
+	}
+}
+
+func TestRunsImplementCheckpointStillBlocksBelowACMML5(t *testing.T) {
+	off := false
+	low := config.RunImplementCheckpointMinACMM - 1
+	cfg := &config.Config{ACMMLevel: &low}
+	cfg.Runs.Checkpoints.Implement = &off
+	if !runCheckpointBlocks(cfg, StageImplement) {
+		t.Fatal("implement checkpoint must remain blocking below ACMM L5")
+	}
+}
+
 func TestRunsAuthBoundaryAndNonOwnerRead(t *testing.T) {
 	s, _ := runsTestServer(t)
 	s.authToken = "secret"

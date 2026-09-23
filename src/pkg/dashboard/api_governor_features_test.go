@@ -298,3 +298,73 @@ func TestGovernorFeaturesRotationValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestGovernorFeaturesRunCheckpointPolicyRoundTripAndValidation(t *testing.T) {
+	s := covApiServer(t)
+	level := config.RunImplementCheckpointMinACMM
+	s.deps.Config.ACMMLevel = &level
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"checkpointSpecEnabled":      true,
+		"checkpointPlanEnabled":      false,
+		"checkpointImplementEnabled": true,
+		"runWaitTimeoutSeconds":      120,
+		"runWaitSeverity":            "page",
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("run checkpoint policy update status = %d; body=%q", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Runs.CheckpointBlocks("spec") || s.deps.Config.Runs.CheckpointBlocks("plan") || !s.deps.Config.Runs.CheckpointBlocks("implement") {
+		t.Fatalf("checkpoint policy = %+v", s.deps.Config.Runs.Checkpoints)
+	}
+	if s.deps.Config.Runs.EffectiveWaitTimeoutSeconds() != 120 || s.deps.Config.Runs.EffectiveWaitSeverity() != "page" {
+		t.Fatalf("wait policy = %+v", s.deps.Config.Runs)
+	}
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("governor config status = %d; body=%q", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			CheckpointSpecEnabled           bool   `json:"checkpointSpecEnabled"`
+			CheckpointPlanEnabled           bool   `json:"checkpointPlanEnabled"`
+			CheckpointImplementEnabled      bool   `json:"checkpointImplementEnabled"`
+			CheckpointImplementAvailable    bool   `json:"checkpointImplementAvailable"`
+			CheckpointImplementMinACMMLevel int    `json:"checkpointImplementMinACMMLevel"`
+			RunWaitTimeoutSeconds           int    `json:"runWaitTimeoutSeconds"`
+			RunWaitSeverity                 string `json:"runWaitSeverity"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid governor JSON: %v", err)
+	}
+	if !payload.Features.CheckpointSpecEnabled || payload.Features.CheckpointPlanEnabled || !payload.Features.CheckpointImplementEnabled ||
+		!payload.Features.CheckpointImplementAvailable || payload.Features.CheckpointImplementMinACMMLevel != config.RunImplementCheckpointMinACMM ||
+		payload.Features.RunWaitTimeoutSeconds != 120 || payload.Features.RunWaitSeverity != "page" {
+		t.Fatalf("run checkpoint payload = %+v", payload.Features)
+	}
+
+	low := config.RunImplementCheckpointMinACMM - 3
+	s.deps.Config.ACMMLevel = &low
+	rec = doOwnerGet(s, "/api/config/governor")
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid low-ACMM governor JSON: %v", err)
+	}
+	if payload.Features.CheckpointImplementAvailable {
+		t.Fatalf("implement checkpoint should be unavailable at L%d: %+v", low, payload.Features)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"checkpointImplementEnabled": false,
+	}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("low-ACMM implement checkpoint disable status = %d, want 400", rec.Code)
+	}
+
+	for _, body := range []map[string]any{
+		{"runWaitTimeoutSeconds": 0},
+		{"runWaitSeverity": "loud"},
+	} {
+		if rec := doPut(s, "/api/config/governor/features", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid run wait body %v status = %d, want 400", body, rec.Code)
+		}
+	}
+}

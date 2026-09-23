@@ -24960,6 +24960,8 @@ function burnAreaChart() {
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
+      const checkpointImplementAvailable = f.checkpointImplementAvailable === true;
+      const checkpointImplementMinACMMLevel = f.checkpointImplementMinACMMLevel || 5;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
@@ -25072,6 +25074,31 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-plan from label <span class="config-info">i<span class="config-tooltip">When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Run checkpoints</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.checkpointSpecEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="checkpointSpecEnabled"></div>
+            <span class="config-toggle-label">Spec checkpoint blocks <span class="config-info">i<span class="config-tooltip">When on, the spec boundary waits for an owner approval before the next run stage can proceed. When off, the runner records the same stage receipt shape without an approval record.</span></span></span>
+          </div>
+          <div class="config-toggle" style="margin-top:8px">
+            <div class="config-toggle-switch ${f.checkpointPlanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="checkpointPlanEnabled"></div>
+            <span class="config-toggle-label">Plan checkpoint blocks <span class="config-info">i<span class="config-tooltip">When on, plan review waits for an owner approval. When off, the run may continue past the plan boundary while preserving the same receipt shape.</span></span></span>
+          </div>
+          <div class="config-toggle" style="margin-top:8px">
+            <div class="config-toggle-switch ${checkpointImplementAvailable && f.checkpointImplementEnabled ? 'on' : ''} ${checkpointImplementAvailable ? '' : 'disabled'}" data-action="${checkpointImplementAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="checkpointImplementEnabled" data-disabled="${checkpointImplementAvailable ? 'false' : 'true'}" title="${checkpointImplementAvailable ? '' : 'Requires ACMM L' + checkpointImplementMinACMMLevel + '+'}"></div>
+            <span class="config-toggle-label">Implement checkpoint blocks <span class="config-info">i<span class="config-tooltip">Controls whether the implement boundary requires an owner approval. ACMM below L5 keeps this control unavailable.</span></span></span>
+          </div>
+          ${checkpointImplementAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Requires ACMM L${checkpointImplementMinACMMLevel}+</p>`}
+          <div class="config-field-row" style="margin-top:10px">
+            <div class="config-field"><label>Wait timeout seconds <span class="config-info">i<span class="config-tooltip">How long a run may wait on a human checkpoint before Hive escalates through configured escalation sinks. Defaults to 3600.</span></span></label><input type="number" min="1" step="1" value="${f.runWaitTimeoutSeconds || 3600}" data-change-action="markDirty" data-arg0="features" data-arg1="runWaitTimeoutSeconds" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Wait severity <span class="config-info">i<span class="config-tooltip">Severity used when the wait timeout expires.</span></span></label><select data-change-action="markDirty" data-arg0="features" data-arg1="runWaitSeverity" data-arg-types="s,s,v">
+              <option value="info" ${(f.runWaitSeverity || 'decision') === 'info' ? 'selected' : ''}>info</option>
+              <option value="decision" ${(f.runWaitSeverity || 'decision') === 'decision' ? 'selected' : ''}>decision</option>
+              <option value="page" ${(f.runWaitSeverity || 'decision') === 'page' ? 'selected' : ''}>page</option>
+            </select></div>
+          </div>
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	escalatepkg "github.com/hivecommons/hive/pkg/escalate"
 )
 
 // DefaultThreshold is the number of distinct red head SHAs (fix attempts that
@@ -145,6 +147,9 @@ type Entry struct {
 	// has converged, and a future regression starts a fresh story.
 	ReviewerPassedSHA string    `json:"reviewer_passed_sha,omitempty"`
 	ReviewerPassedAt  time.Time `json:"reviewer_passed_at,omitempty"`
+	// RunWaitEscalatedGen records the run generation whose human wait timeout
+	// already paged a human. It makes run-wait escalation once-per-generation.
+	RunWaitEscalatedGen uint64 `json:"run_wait_escalated_gen,omitempty"`
 }
 
 // Store is the on-PVC attempt ledger. All methods are safe for concurrent use.
@@ -224,6 +229,23 @@ type Result struct {
 	// AddLabels call failed at escalation time. The caller should retry ONLY
 	// the label (never the comment) and then call MarkLabelApplied.
 	NeedsLabel bool
+}
+
+type RunObservation struct {
+	Key          string
+	Title        string
+	Repo         string
+	Stage        string
+	Gen          uint64
+	WaitingOn    string
+	WaitingSince time.Time
+	Link         string
+}
+
+type RunEscalation struct {
+	Key   string
+	Gen   uint64
+	Event escalatepkg.Event
 }
 
 // PruneAfter is how long a ledger entry survives after its PR stops
@@ -419,6 +441,106 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 	}
 	s.saveLocked()
 	return results
+}
+
+func (s *Store) SweepRuns(obs []RunObservation, timeout time.Duration, severity escalatepkg.Severity) []RunEscalation {
+	if timeout <= 0 {
+		return nil
+	}
+	if !escalatepkg.SeverityAtLeast(severity, escalatepkg.SeverityInfo) {
+		severity = escalatepkg.SeverityDecision
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	seen := make(map[string]bool, len(obs))
+	events := make([]RunEscalation, 0)
+	for _, o := range obs {
+		if strings.TrimSpace(o.Key) == "" {
+			continue
+		}
+		key := runWaitKey(o.Key)
+		seen[key] = true
+		if o.WaitingOn != "human" || o.WaitingSince.IsZero() || now.Sub(o.WaitingSince) < timeout {
+			continue
+		}
+		e := s.entries[key]
+		if e == nil {
+			e = &Entry{Machinery: MachineryVersion}
+			s.entries[key] = e
+		}
+		e.UpdatedAt = now
+		if e.RunWaitEscalatedGen == o.Gen {
+			continue
+		}
+		events = append(events, RunEscalation{
+			Key: o.Key,
+			Gen: o.Gen,
+			Event: escalatepkg.Event{
+				Severity: severity,
+				Title:    fmt.Sprintf("Run checkpoint waiting: %s", o.Key),
+				Body:     runWaitEventBody(o, now),
+				Link:     o.Link,
+			},
+		})
+	}
+	for key, e := range s.entries {
+		if strings.HasPrefix(key, runWaitEntryPrefix) && !seen[key] && now.Sub(e.UpdatedAt) >= PruneAfter {
+			delete(s.entries, key)
+		}
+	}
+	s.saveLocked()
+	return events
+}
+
+func (s *Store) MarkRunWaitEscalated(key string, gen uint64) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entryKey := runWaitKey(key)
+	e := s.entries[entryKey]
+	if e == nil {
+		e = &Entry{Machinery: MachineryVersion}
+		s.entries[entryKey] = e
+	}
+	e.RunWaitEscalatedGen = gen
+	e.UpdatedAt = s.now()
+	s.saveLocked()
+}
+
+const runWaitEntryPrefix = "run-wait:"
+
+func runWaitKey(key string) string {
+	return runWaitEntryPrefix + key
+}
+
+func runWaitEventBody(o RunObservation, now time.Time) string {
+	parts := []string{
+		fmt.Sprintf("Run: %s", o.Key),
+		fmt.Sprintf("Stage: %s", firstNonEmpty(o.Stage, "unknown")),
+		fmt.Sprintf("Generation: %d", o.Gen),
+		fmt.Sprintf("Waiting since: %s", o.WaitingSince.UTC().Format(time.RFC3339)),
+		fmt.Sprintf("Wait age: %s", now.Sub(o.WaitingSince).Round(time.Second)),
+	}
+	if o.Title != "" && o.Title != o.Key {
+		parts = append(parts, "Title: "+o.Title)
+	}
+	if o.Repo != "" {
+		parts = append(parts, "Repo: "+o.Repo)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // appendSHA appends sha to the distinct red-SHA history, bounded to

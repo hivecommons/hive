@@ -81,6 +81,7 @@ type Config struct {
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Runs         RunsConfig         `yaml:"runs,omitempty" json:"runs,omitempty"`
 	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review       ReviewConfig       `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge    AutoMergeConfig    `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
@@ -1857,6 +1858,59 @@ type FleetConfig struct {
 }
 
 func (f FleetReportConfig) DryRun() bool { return !f.FileUpstream }
+
+const (
+	DefaultRunsWaitTimeoutSeconds = 3600
+	DefaultRunsWaitSeverity       = "decision"
+	RunImplementCheckpointMinACMM = 5
+)
+
+// RunsConfig tunes long-running run checkpoints. The pointer booleans preserve
+// the rollout invariant: an absent checkpoint key keeps the historical
+// hold-gated behavior for that boundary, while an explicit false lets a stage
+// runner advance without recording a human approval.
+type RunsConfig struct {
+	Checkpoints        RunCheckpointConfig `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
+	WaitTimeoutSeconds int                 `yaml:"wait_timeout_seconds,omitempty" json:"wait_timeout_seconds,omitempty"`
+	WaitSeverity       string              `yaml:"wait_severity,omitempty" json:"wait_severity,omitempty"`
+}
+
+type RunCheckpointConfig struct {
+	Spec      *bool `yaml:"spec,omitempty" json:"spec,omitempty"`
+	Plan      *bool `yaml:"plan,omitempty" json:"plan,omitempty"`
+	Implement *bool `yaml:"implement,omitempty" json:"implement,omitempty"`
+}
+
+func (r RunsConfig) CheckpointBlocks(stage string) bool {
+	switch strings.TrimSpace(strings.ToLower(stage)) {
+	case "spec":
+		return boolDefaultTrue(r.Checkpoints.Spec)
+	case "plan":
+		return boolDefaultTrue(r.Checkpoints.Plan)
+	case "implement":
+		return boolDefaultTrue(r.Checkpoints.Implement)
+	default:
+		return true
+	}
+}
+
+func (r RunsConfig) EffectiveWaitTimeoutSeconds() int {
+	if r.WaitTimeoutSeconds > 0 {
+		return r.WaitTimeoutSeconds
+	}
+	return DefaultRunsWaitTimeoutSeconds
+}
+
+func (r RunsConfig) EffectiveWaitSeverity() string {
+	if s := strings.TrimSpace(strings.ToLower(r.WaitSeverity)); s != "" {
+		return s
+	}
+	return DefaultRunsWaitSeverity
+}
+
+func boolDefaultTrue(v *bool) bool {
+	return v == nil || *v
+}
 
 // ProviderBudgetConfig tunes how long the hive keeps agent kicks suspended
 // after the inference provider refuses on a spending limit (#4294).

@@ -36,6 +36,7 @@ import (
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/discord"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/forge"
@@ -6391,6 +6392,7 @@ func runEvalCycle(
 	recordEnumeratedIssues(ctx, dashSrv, actionable)
 
 	escalatedPRs := runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+	runWaitEscalationSweep(cfg, dashSrv, logger)
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
@@ -7775,6 +7777,49 @@ func runEscalationSweep(
 		}
 	}
 	return escalated
+}
+
+type runWaitObserver interface {
+	RunWaitSnapshot() []dashboard.RunWaitSnapshot
+}
+
+var runWaitEscalationStore = getEscalationStore
+
+func runWaitEscalationSweep(cfg *config.Config, runs runWaitObserver, logger *slog.Logger) {
+	if cfg == nil || runs == nil {
+		return
+	}
+	d := currentEscalationDispatcher()
+	if d == nil {
+		return
+	}
+	sev, ok := escalate.ParseSeverity(cfg.Runs.EffectiveWaitSeverity())
+	if !ok {
+		sev = escalate.SeverityDecision
+	}
+	timeout := time.Duration(cfg.Runs.EffectiveWaitTimeoutSeconds()) * time.Second
+	snapshots := runs.RunWaitSnapshot()
+	obs := make([]escalation.RunObservation, 0, len(snapshots))
+	for _, run := range snapshots {
+		obs = append(obs, escalation.RunObservation{
+			Key:          run.Key,
+			Title:        run.Title,
+			Repo:         run.Repo,
+			Stage:        run.Stage,
+			Gen:          run.Gen,
+			WaitingOn:    run.WaitingOn,
+			WaitingSince: run.WaitingSince,
+			Link:         run.Link,
+		})
+	}
+	store := runWaitEscalationStore()
+	for _, ev := range store.SweepRuns(obs, timeout, sev) {
+		d.Dispatch(ev.Event)
+		store.MarkRunWaitEscalated(ev.Key, ev.Gen)
+		if logger != nil {
+			logger.Info("run checkpoint wait escalated", "title", ev.Event.Title, "severity", ev.Event.Severity)
+		}
+	}
 }
 
 // autoMergeSweepInterval is the minimum spacing between label-queued

@@ -27,6 +27,8 @@ already looking. The escalation cases that matter are precisely the ones
 where nobody is looking:
 
 - a `requires_human` verdict sits in the queue over a weekend;
+- a long-running run has waited on a human checkpoint past
+  `runs.wait_timeout_seconds`;
 - the governor halts on budget exhaustion at 03:00;
 - a spoke's App token loses a permission and every kick starts failing.
 
