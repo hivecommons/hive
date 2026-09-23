@@ -42,3 +42,16 @@ This identity is used only as a candidate/reporting key. Missing or malformed
 identity fields fall back to the existing title/file heuristics, and uncertain
 matches remain `Unknown` for human review; no LLM or external embedding service
 participates in the identity path.
+
+## Provenance guard
+
+Stage receipts carry `input_revision` and `contract_revision`. Until the
+Spektacular status verb exposes a stable current-spec join key, Hive uses the
+receipt chain as the provenance source: when a plan stage finalizes, the plan's
+metadata records the spec `input_revision` as `spec_revision`. Before an
+implementation stage starts, Hive compares that recorded revision with the
+current spec artifact revision. A mismatch refuses the kick, sets
+`waiting_on=human` with reason `stale_plan`, and leaves the existing plan gate
+as the recovery path: re-run or re-approve a fresh plan so the stored revision
+matches the current spec. This is intentionally metadata-only and adds no
+store, CRD, DSL, or credential path.

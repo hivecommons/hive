@@ -79,6 +79,7 @@ type Run struct {
 	Gen            uint64       `json:"gen"`
 	StageStartedAt string       `json:"stage_started_at,omitempty"`
 	WaitingOn      RunWaitingOn `json:"waiting_on"`
+	WaitingReason  string       `json:"waiting_reason,omitempty"`
 	WaitingSince   string       `json:"waiting_since,omitempty"`
 	Assignee       string       `json:"assignee,omitempty"`
 	// ClaimedBy / ClaimExpiresAt expose the issue claim recorded on the run's
@@ -123,6 +124,7 @@ type currentTaskRunInfo struct {
 type runPlanSnapshot struct {
 	epicID       string
 	state        string
+	reason       string
 	waitingSince time.Time
 }
 
@@ -372,6 +374,12 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 	if plan.epicID != "" && (plan.state == planning.PlanStateReview ||
 		plan.state == planning.PlanStateStuck || plan.state == planning.PlanStateDesignReview || plan.state == planning.PlanStateDesignStuck) {
 		run.WaitingOn = RunWaitingOnHuman
+		run.WaitingReason = plan.reason
+		run.WaitingSince = formatRunTime(plan.waitingSince)
+	}
+	if plan.reason == planning.WaitingReasonStalePlan {
+		run.WaitingOn = RunWaitingOnHuman
+		run.WaitingReason = plan.reason
 		run.WaitingSince = formatRunTime(plan.waitingSince)
 	}
 	if !hold.UpdatedAt.IsZero() {
@@ -470,6 +478,10 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 				continue
 			}
 			snap := out[repo+"#"+number]
+			snap.epicID = firstRunNonEmpty(snap.epicID, b.ID)
+			if reason := b.Meta(planning.MetaRunWaitingReason); reason != "" {
+				snap.reason = reason
+			}
 			snap.waitingSince = b.UpdatedAt.Time
 			out[repo+"#"+number] = snap
 		}

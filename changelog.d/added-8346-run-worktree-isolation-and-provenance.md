@@ -1,0 +1,1 @@
+- Isolate run-stage work in per-stage git worktrees and block stale implementation plans whose spec input_revision no longer matches the current spec revision.

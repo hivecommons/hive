@@ -102,6 +102,20 @@ func TestTaskPromptReusedCheckoutMustBeCleanBeforeBranching(t *testing.T) {
 	}
 }
 
+func TestRunStagePromptNamesPerStageWorktree(t *testing.T) {
+	prompt := runStageWorktreePrompt("acme/widgets", "acme/widgets#8346", StageImplement, 9)
+	for _, want := range []string{
+		`run stage "implement" generation 9`,
+		`$HIVE_WORKSPACE_DIR/runs/acme-widgets-8346/implement-9`,
+		`git -C "$HIVE_WORKSPACE_DIR/acme/widgets" worktree add --detach`,
+		"do all edits and git status checks in that worktree, not in the shared checkout",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("run stage prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestContributorCanPushOwnRepositoryWithoutAPI(t *testing.T) {
 	hub := &ContributeWSHub{}
 	if !hub.contributorCanPush("Alice/widgets", "alice") {

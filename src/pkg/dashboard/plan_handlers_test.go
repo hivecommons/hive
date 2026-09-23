@@ -142,6 +142,36 @@ func TestHandlePlanReject(t *testing.T) {
 	}
 }
 
+func TestHandlePlanRejectResetsImplementRunLease(t *testing.T) {
+	srv, store, epic := planServer(t)
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8346"
+	}); err != nil {
+		t.Fatalf("tag epic issue: %v", err)
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	srv.contributeHub.persistTaskLedgers = false
+	now := time.Now()
+	if err := srv.contributeHub.recordLeaseForKeyStage("alice", "task-8346", "myorg/repo1", 8346, "myorg/repo1#8346", "contributor", StageImplement, 4, now); err != nil {
+		t.Fatalf("record run lease: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/reject", nil)
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	lease, ok := srv.contributeHub.runLeaseHolder("myorg/repo1#8346", time.Now())
+	if !ok || lease.stage != StagePlan || lease.gen <= 4 {
+		t.Fatalf("reject did not reset implement run to plan with new generation: %#v", lease)
+	}
+}
+
 func TestHandlePlanChild_Retag(t *testing.T) {
 	srv, store, epic := planServer(t)
 	children := store.List(beads.ListFilter{})

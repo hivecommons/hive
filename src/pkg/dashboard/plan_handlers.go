@@ -10,6 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // planEpicStore returns the bead store to mint issue-sourced epics into: the
@@ -488,10 +489,39 @@ func (s *Server) handlePlanReject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := s.resetRunLeaseAfterPlanReject(store, epicID); err != nil {
+		jsonError(w, err.Error(), runResetErrorStatus(err))
+		return
+	}
 	s.auditFromRequest(r, "plan_reject", auditDetail("epic", epicID), agentName)
 	s.refreshAndPersist()
 	tree, _ := planning.GetPlanTree(store, epicID)
 	jsonResponse(w, map[string]interface{}{"ok": true, "status": "draft", "plan": tree})
+}
+
+func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string) error {
+	if s == nil || s.contributeHub == nil || store == nil {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil || epic == nil {
+		return nil
+	}
+	repo, number := strings.TrimSpace(epic.Meta(planning.MetaIssueRepo)), strings.TrimSpace(epic.Meta(planning.MetaIssueNumber))
+	if repo == "" || number == "" {
+		return nil
+	}
+	key := worksource.Ref{Repo: repo, ExternalID: number}.Key()
+	if n, err := strconv.Atoi(number); err == nil && n > 0 {
+		key = worksource.Ref{Repo: repo, Number: n}.Key()
+	}
+	now := time.Now()
+	held, ok := s.contributeHub.runLeaseHolder(key, now)
+	if !ok || leaseStageIndex(held.stage) <= leaseStageIndex(StagePlan) {
+		return nil
+	}
+	_, err = s.contributeHub.resetLeaseStage(held.identity, held.taskID, StagePlan, "plan rejected", now)
+	return err
 }
 
 // handlePlanChild serves POST /api/plan/{epicID}/child/{childID}: edit a child

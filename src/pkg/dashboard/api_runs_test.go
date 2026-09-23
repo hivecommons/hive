@@ -203,6 +203,37 @@ func TestRunsHumanReviewHoldWaitsOnHuman(t *testing.T) {
 	}
 }
 
+func TestRunsReportsStalePlanReason(t *testing.T) {
+	s, deps := runsTestServer(t)
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	epic, err := store.Create("stale plan", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	if err := store.Update(epic.ID, func(b *beads.Bead) {
+		b.Metadata[planning.MetaPlanStatus] = planning.PlanStatusApproved
+		b.Metadata[planning.MetaIssueRepo] = "myorg/repo1"
+		b.Metadata[planning.MetaIssueNumber] = "8346"
+		b.Metadata[planning.MetaRunWaitingOn] = "human"
+		b.Metadata[planning.MetaRunWaitingReason] = planning.WaitingReasonStalePlan
+	}); err != nil {
+		t.Fatalf("update epic: %v", err)
+	}
+	deps.BeadStores = map[string]*beads.Store{"architect": store}
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-stale", "myorg/repo1", 8346, "myorg/repo1#8346", "contributor", StageImplement, 13, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	rec := doGet(s, "/api/runs")
+	runs := decodeRuns(t, rec)
+	if len(runs) != 1 || runs[0].WaitingOn != RunWaitingOnHuman || runs[0].WaitingReason != planning.WaitingReasonStalePlan {
+		t.Fatalf("stale plan run = %+v", runs)
+	}
+}
+
 func TestRunDetailGroupsWavePRsUnderSingleReviewAction(t *testing.T) {
 	s, deps := runsTestServer(t)
 	store, err := beads.NewStore(t.TempDir())

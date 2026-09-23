@@ -15,6 +15,8 @@ const (
 	// generation: at the default of 2 a stage runs once, is retried once, and
 	// escalates on the second expiry, so no third generation is ever minted.
 	DefaultMaxStageRetries = 2
+	// DefaultRunsMaxWorktrees caps live per-stage git worktrees on one hive.
+	DefaultRunsMaxWorktrees = 8
 	// DefaultSpektacularBinary is the executable the runner shells out to when
 	// runs.spektacular.binary is unset; it is resolved through PATH.
 	DefaultSpektacularBinary = "spektacular"
@@ -30,6 +32,9 @@ type RunsConfig struct {
 	// MaxStageRetries bounds the generations one stage may burn before the
 	// runner escalates. Zero or negative means DefaultMaxStageRetries.
 	MaxStageRetries int `yaml:"max_stage_retries,omitempty" json:"max_stage_retries,omitempty"`
+	// MaxWorktrees caps live per-stage git worktrees. Zero or negative means
+	// DefaultRunsMaxWorktrees.
+	MaxWorktrees int `yaml:"max_worktrees,omitempty" json:"max_worktrees,omitempty"`
 	// Spektacular configures the stage runner that polls Spektacular's status
 	// verb and advances the lease on final.
 	Spektacular SpektacularConfig `yaml:"spektacular,omitempty" json:"spektacular,omitempty"`
@@ -54,6 +59,13 @@ func (r RunsConfig) MaxStageRetriesOrDefault() int {
 		return DefaultMaxStageRetries
 	}
 	return r.MaxStageRetries
+}
+
+func (r RunsConfig) EffectiveMaxWorktrees() int {
+	if r.MaxWorktrees > 0 {
+		return r.MaxWorktrees
+	}
+	return DefaultRunsMaxWorktrees
 }
 
 // BinaryOrDefault returns the configured executable or the default name.

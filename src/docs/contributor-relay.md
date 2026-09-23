@@ -64,6 +64,14 @@ the corresponding cgroup controller.
 These overrides affect the `just contribute-hive` container only; Kubernetes
 keeps the resource requests and limits rendered in its generated manifest.
 
+Run-stage work uses per-stage git worktrees instead of sharing a dirty checkout
+between concurrent stages. The hub keeps a shared source clone and creates
+worktrees under the workspace root as `runs/<run-key>/<stage>-<generation>`,
+starting each from the target branch. The default live-worktree cap is eight
+(`runs.max_worktrees`); a ninth concurrent run-stage kick is refused and audited
+rather than reusing another stage's tree. Reclaiming or completing a stage
+removes its worktree.
+
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
 ## Docker Compose workflow

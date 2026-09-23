@@ -53,6 +53,10 @@ type SandboxKickSpec struct {
 	BaseRef      string
 	Branch       string
 	WorkspaceDir string
+	RunKey       string
+	Stage        string
+	Generation   uint64
+	MaxWorktrees int
 	Image        string
 	EnvAllowlist []string
 	NetworkMode  string
@@ -116,6 +120,17 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		return res, err
 	}
 	res.Workspace, res.Branch, res.BaseSHA = workspace, spec.Branch, baseSHA
+	if strings.TrimSpace(spec.Stage) != "" {
+		source := runStageSourceRepo(spec)
+		defer func() {
+			mgr := sandbox.WorktreeManager{Runner: func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+				return e.runner().Run(ctx, dir, pushbroker.PushEnv(os.Environ()), name, args...)
+			}}
+			if err := mgr.Remove(context.Background(), source, workspace); err != nil && e.Logger != nil {
+				e.Logger.Warn("sandbox run-stage worktree cleanup failed", "workspace", workspace, "error", err)
+			}
+		}()
+	}
 	if err := writeSandboxPrompt(workspace, spec.Message); err != nil {
 		res.Error = err.Error()
 		return res, err
@@ -224,6 +239,9 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 	if err := os.MkdirAll(spec.WorkspaceDir, 0o770); err != nil {
 		return "", "", err
 	}
+	if strings.TrimSpace(spec.Stage) != "" {
+		return e.prepareRunStageWorkspace(ctx, spec)
+	}
 	workspace := filepath.Join(spec.WorkspaceDir, sanitizeBranchPart(spec.Agent)+"-"+fmt.Sprint(e.now().UnixNano()))
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", spec.Org, spec.Repo)
 	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
@@ -254,6 +272,63 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 		return "", "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 	return workspace, strings.TrimSpace(string(base)), nil
+}
+
+func (e *SandboxExecutor) prepareRunStageWorkspace(ctx context.Context, spec *SandboxKickSpec) (string, string, error) {
+	if strings.TrimSpace(spec.RunKey) == "" || spec.Generation == 0 {
+		return "", "", errors.New("sandbox run-stage workspace prep requires run key and generation")
+	}
+	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", spec.Org, spec.Repo)
+	source := runStageSourceRepo(*spec)
+	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
+	if err != nil {
+		return "", "", err
+	}
+
+	defer cleanupAuth()
+	if _, err := os.Stat(filepath.Join(source, ".git")); err != nil {
+		if !os.IsNotExist(err) {
+			return "", "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(source), 0o770); err != nil {
+			return "", "", err
+		}
+		cloneArgs := append(append([]string{}, authArgs...), "clone", "--no-checkout", repoURL, source)
+		if out, err := e.runner().Run(ctx, "", pushbroker.PushEnv(os.Environ()), "git", cloneArgs...); err != nil {
+			return "", "", fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	if strings.TrimSpace(spec.BaseRef) == "" {
+		ref, err := e.resolveBaseRef(ctx, source)
+		if err != nil {
+			return "", "", fmt.Errorf("sandbox workspace prep: could not resolve %s/%s's default branch and no explicit base ref was given (refusing to guess %q): %w", spec.Org, spec.Repo, FallbackSandboxBaseRef, err)
+		}
+		spec.BaseRef = ref
+	}
+	fetchArgs := append(append([]string{}, authArgs...), "fetch", "origin", spec.BaseRef)
+	if out, err := e.runner().Run(ctx, source, pushbroker.PushEnv(os.Environ()), "git", fetchArgs...); err != nil {
+		return "", "", fmt.Errorf("git fetch %s: %w: %s", spec.BaseRef, err, strings.TrimSpace(string(out)))
+	}
+	mgr := sandbox.WorktreeManager{Runner: func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		return e.runner().Run(ctx, dir, pushbroker.PushEnv(os.Environ()), name, args...)
+	}}
+	wt, err := mgr.Add(ctx, sandbox.WorktreeSpec{
+		SourceRepo:   source,
+		WorkspaceDir: spec.WorkspaceDir,
+		RunKey:       spec.RunKey,
+		Stage:        spec.Stage,
+		Generation:   spec.Generation,
+		TargetRef:    "FETCH_HEAD",
+		MaxWorktrees: spec.MaxWorktrees,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return wt.Path, wt.SHA, nil
+}
+
+func runStageSourceRepo(spec SandboxKickSpec) string {
+	return filepath.Join(spec.WorkspaceDir, "_repos", sanitizeBranchPart(spec.Org), sanitizeBranchPart(spec.Repo))
 }
 
 // FallbackSandboxBaseRef names the branch resolveBaseRef would have used had

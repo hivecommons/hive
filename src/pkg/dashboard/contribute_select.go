@@ -1170,6 +1170,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	if requestedRole != "" {
 		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide)
 	}
+	if chosen.stage != "" {
+		prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
+	}
 	// #4105: tell the agent up front — from the hub's own handshake-recorded
 	// invocation values — the exact attribution trailer its PR body must end
 	// with, so the footer is intentionally produced rather than appended only
@@ -1187,6 +1190,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			"username", ownUsername, "task", taskID)
 		return nil
 	}
+
 	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539).
 	c.currentPrompt = prompt
 	// #2537: hold the minted scoped token as PENDING rather than shipping it in the
@@ -1252,6 +1256,39 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
 		TurnEnvelopeID: turnEnvelopeID,
 	}
+}
+
+// runStageWorktreePrompt tells a run-stage-capable relay to put the task's
+// writes in a per-stage git worktree instead of the shared checkout.
+func runStageWorktreePrompt(repoFull, runKey, stage string, gen uint64) string {
+	if repoFull == "" || runKey == "" || stage == "" || gen == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" This is run stage %q generation %d for %s. After the shared checkout exists, create and use a per-stage worktree at '$HIVE_WORKSPACE_DIR/runs/%s/%s-%d' from the task's target base branch with 'mkdir -p \"$HIVE_WORKSPACE_DIR/runs/%s\"' and 'git -C \"$HIVE_WORKSPACE_DIR/%s\" worktree add --detach \"$HIVE_WORKSPACE_DIR/runs/%s/%s-%d\" upstream/<base-branch>'; do all edits and git status checks in that worktree, not in the shared checkout. ",
+		stage, gen, runKey, sanitizeRunPromptPath(runKey), sanitizeRunPromptPath(stage), gen, sanitizeRunPromptPath(runKey), repoFull, sanitizeRunPromptPath(runKey), sanitizeRunPromptPath(stage), gen)
+}
+
+func sanitizeRunPromptPath(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "run"
+	}
+	return out
 }
 
 // assignedToOthers reports whether an issue is assigned to at least one user
