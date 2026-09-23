@@ -1302,6 +1302,12 @@ select.admin-act{min-width:0;max-width:100%%}
 .announcement-admin textarea{min-height:72px}
 .announcement-admin .ann-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .announcement-admin select,.announcement-admin input{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:7px 9px;font-family:inherit}
+.help-links{display:none;margin:12px 0 16px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:12px 14px;color:var(--cc-text-2);font-size:.84rem;line-height:1.45}
+.help-links h4{margin:0 0 8px;color:var(--cc-text);font-size:.86rem}
+.help-links .links{display:flex;flex-wrap:wrap;gap:8px}
+.help-links a{display:inline-flex;align-items:center;gap:5px;color:var(--cc-accent);text-decoration:none;border:1px solid var(--cc-border);border-radius:999px;padding:4px 10px;background:var(--cc-bg)}
+.help-links a:hover{border-color:var(--cc-accent);text-decoration:none}
+.help-links-admin textarea{min-height:84px}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
@@ -1953,6 +1959,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 <p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/hivecommons/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:var(--cc-accent)">docs/podman-rootless-ci.md</a>.</p>
 <p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/hivecommons/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
+<div id="onboarding-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
 <button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-accent);text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
@@ -2008,6 +2015,14 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <textarea id="admin-announcement-text" maxlength="500" placeholder="e.g. Hive upgrade at 18:00 UTC; relays may reconnect automatically."></textarea>
 <div class="ann-row"><select id="admin-announcement-level"><option value="info">Info</option><option value="warning">Warning</option></select><input type="datetime-local" id="admin-announcement-expires"><button type="button" class="admin-save" id="admin-announcement-save">Save announcement</button></div>
 <div class="admin-toggle-sub">Stored as <code>hub.contribute_announcement</code>. The server rotates the announcement id when the text changes.</div>
+</div>
+<hr class="admin-hr">
+
+<div class="admin-field help-links-admin">
+<label>Help &amp; community links <span style="color:var(--cc-muted-2)">&mdash; one per line as <code>Label | https://example</code>.</span></label>
+<textarea id="admin-help-links-text" maxlength="1200" placeholder="Chat with other contributors | https://discord.gg/your-hive&#10;Contributor docs | https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md"></textarea>
+<button type="button" class="admin-save" id="admin-help-links-save" style="margin-top:8px">Save help links</button>
+<div class="admin-toggle-sub">Stored as <code>contribute.help_links</code>. Use <code>https://discord.gg/...</code> invites for Discord; <code>https://discord.com/channels/server/channel</code> only opens for people already in that server.</div>
 </div>
 <hr class="admin-hr">
 
@@ -2084,6 +2099,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <h1>Operations</h1>
 <p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
+<div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 
 <!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
      dedicated full-height DEV-LOG RAIL (chat/notifications-panel style). The rail is
@@ -2588,6 +2604,30 @@ function ccLoadAnnouncement(){
   fetch('/api/contribute/status').then(function(r){return r.json();}).then(function(d){if(d)ccSetAnnouncement(d.announcement||null);}).catch(function(){});
   fetch('/api/contribute/me').then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&d.announcement_dismissed_id){ccAnnouncementDismissedID=d.announcement_dismissed_id;ccRenderAnnouncement();}}).catch(function(){});
 }
+var ccHelpLinks=[];
+function ccSetHelpLinks(links){ccHelpLinks=Array.isArray(links)?links.filter(function(l){return l&&l.label&&l.url;}):[];ccRenderHelpLinks();}
+function ccRenderHelpLinks(){
+  ['onboarding-help-links','ops-help-links'].forEach(function(id){
+    var box=document.getElementById(id);if(!box)return;
+    var links=box.querySelector('.links');if(!links)return;
+    links.textContent='';
+    if(!ccHelpLinks.length){box.style.display='none';return;}
+    ccHelpLinks.forEach(function(l){
+      var a=document.createElement('a');a.href=l.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=l.label;links.appendChild(a);
+    });
+    box.style.display='';
+  });
+}
+function ccLoadHelpLinks(){
+  fetch('/api/contribute/status').then(function(r){return r.json();}).then(function(d){if(d)ccSetHelpLinks(d.help_links||[]);}).catch(function(){});
+}
+// Tab switching for the /contribute page. Additive: leaves onboarding intact.
+var tabs=document.querySelectorAll('.page-tab');
+var panels=document.querySelectorAll('.tab-panel');
+var opsStarted=false;   // Operations fleet polling started
+var adminStarted=false; // /api/role gate resolved (adminEnabled set)
+var lbStarted=false;    // Leaderboard hydrated (fetches /api/leaderboard once)
+var profileStarted=false; // Profile tab hydrated (fetches the dossier once)
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
@@ -2737,6 +2777,7 @@ function tabFromLocation(){
   // (bare /contribute = onboarding, no activateTab call). Guarded.
   try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
   try{ccLoadAnnouncement();}catch(e){}
+  try{ccLoadHelpLinks();}catch(e){}
 })();
 // Back/Forward: re-derive the tab from the (now-updated) location and activate it
 // WITHOUT pushing — popstate already moved history, a push here would loop. When
@@ -4052,6 +4093,19 @@ async function adminSaveAnnouncement(){
   }catch(e){toast('Save failed: '+(e&&e.message||'network error'),false);return;}
   if(ok){adminHub.contribute_announcement=ann;ccLoadAnnouncement();}
 }
+function formatHelpLinksForAdmin(links){return (links||[]).map(function(l){return (l.label||'')+' | '+(l.url||'');}).join('\n');}
+function parseAdminHelpLinks(v){return (v||'').split(/\r?\n/).map(function(line){line=line.trim();if(!line)return null;var i=line.indexOf('|');if(i<0)return {label:line,url:''};return {label:line.slice(0,i).trim(),url:line.slice(i+1).trim()};}).filter(Boolean);}
+function renderAdminHelpLinks(){
+  var txt=document.getElementById('admin-help-links-text');if(txt)txt.value=formatHelpLinksForAdmin((adminHub&&adminHub.contribute_help_links)||ccHelpLinks||[]);
+}
+async function adminSaveHelpLinks(){
+  var txt=document.getElementById('admin-help-links-text');
+  var links=parseAdminHelpLinks((txt&&txt.value)||'');
+  try{var res=await fetch('/api/contribute/help-links',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({help_links:links})});
+    if(!res.ok){var msg='Save failed ('+res.status+')';try{var d=await res.json();if(d&&d.error)msg=d.error;}catch(e){}toast(msg,false);return false;}
+    var data=await res.json();adminHub.contribute_help_links=(data&&data.help_links)||links;ccSetHelpLinks(adminHub.contribute_help_links);renderAdminHelpLinks();toast('Help links saved',true);return true;
+  }catch(e){toast('Save failed: '+(e&&e.message||'network error'),false);return false;}
+}
 async function adminSaveHub(patch,okMsg){
   try{
     var res=await fetch('/api/config/governor/hub',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
@@ -4532,6 +4586,8 @@ async function initAdmin(){
   renderAdminControls();
   renderAdminAnnouncement();
   var annBtn=document.getElementById('admin-announcement-save');if(annBtn&&!annBtn._wired){annBtn._wired=true;annBtn.addEventListener('click',adminSaveAnnouncement);}
+  renderAdminHelpLinks();
+  var helpBtn=document.getElementById('admin-help-links-save');if(helpBtn&&!helpBtn._wired){helpBtn._wired=true;helpBtn.addEventListener('click',adminSaveHelpLinks);}
   // Resume-all (#queue-hold): wire the header button once, now that we know the viewer
   // is owner/read-write. Visibility is still driven by ccRenderResumeAll (count-gated).
   var resumeAllBtn=document.getElementById('queue-resume-all-btn');
@@ -6343,6 +6399,7 @@ function ccOnGap(ev){
 // ── SSE lifecycle with graceful fallback ───────────────────────────────────────
 function ccHydrate(payload){
   ccSetAnnouncement(payload.announcement||null);
+  ccSetHelpLinks(payload.help_links||[]);
   if(payload.queue){ccQueue=payload.queue.slice();ccRenderQueue();}
   if(payload.replay&&payload.replay.length){
     // Route the SSE replay through the SHARED store so it dedupes against the poll
@@ -6403,6 +6460,7 @@ function ccStart(){
       else if(ev.type==='activity'&&ev.activity)ccOnActivity(ev.activity);
       else if(ev.type==='announcement')ccSetAnnouncement(ev.announcement||null);
       else if((ev.type==='wall_post'||ev.type==='wall_hidden')&&ev.wall_post)ccOnWallEvent(ev);
+      else if(ev.type==='help_links')ccSetHelpLinks(ev.help_links||[]);
       else if(ev.type==='gap')ccOnGap(ev);
     };
     ccEs.onerror=function(){

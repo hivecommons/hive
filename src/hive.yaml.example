@@ -40,6 +40,17 @@ project:
 #   no_ci_ok:
 #     - your-org/docs-only-repo
 
+# Optional contributor help/community links. Shown on /contribute Onboarding,
+# Operations, and printed by relays when they connect. Empty/omitted defaults to
+# Hive's contributor docs and issue tracker. URLs must be absolute http(s).
+# Prefer discord.gg invites over discord.com/channels URLs for new contributors.
+# contribute:
+#   help_links:
+#     - label: Contributor docs
+#       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
+#     - label: Chat with other contributors
+#       url: https://discord.gg/your-hive
+
 # GitHub App / PR policy. The #5117 self-authorization hold is on by default:
 # App-authored PRs whose only tracked rationale is an unacknowledged hive-filed
 # issue receive `hold` until a human signs off on the direction. Set false only

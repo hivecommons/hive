@@ -47,6 +47,11 @@ func (c *Config) Validate() error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
+	if normalized, err := NormalizeContributeHelpLinks(c.Contribute.HelpLinks); err != nil {
+		return err
+	} else {
+		c.Contribute.HelpLinks = normalized
+	}
 	if !ValidateThresholdScaling(c.Governor.ThresholdScaling) {
 		return fmt.Errorf("governor: invalid threshold_scaling %q (must be linear, sqrt, or none)", c.Governor.ThresholdScaling)
 	}

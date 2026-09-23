@@ -222,6 +222,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
 			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
 			"contribute_announcement":      s.activeContributeAnnouncement(),
+			"contribute_help_links":        s.contributeHelpLinks(),
 			"disabled_repos":               s.normalizedHubDisabledRepos(),
 			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
 			"disabled_tiers":               cfg.Hub.DisabledTiers,
@@ -920,6 +921,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeCooldownHours        *int                                   `json:"contribute_cooldown_hours"`
 		ContributeDelegatableRoles     []string                               `json:"contribute_delegatable_roles"`
 		ContributeAnnouncement         *config.ContributeAnnouncement         `json:"contribute_announcement"`
+		ContributeHelpLinks            []config.ContributeHelpLink            `json:"contribute_help_links"`
 		DisabledRepos                  []string                               `json:"disabled_repos"`
 		DisabledTiers                  []string                               `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate             `json:"tier_limits"`
@@ -1052,6 +1054,16 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Hub.ContributeAnnouncement = ann
 	}
+	oldHelpLinks := s.contributeHelpLinks()
+	helpLinksTouched := body.ContributeHelpLinks != nil
+	if body.ContributeHelpLinks != nil {
+		links, err := config.NormalizeContributeHelpLinks(body.ContributeHelpLinks)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Contribute.HelpLinks = links
+	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = s.normalizeHubDisabledReposForWrite(body.DisabledRepos)
 	}
@@ -1074,6 +1086,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		newAnnouncement := s.activeContributeAnnouncement()
 		if !sameContributeAnnouncement(oldAnnouncement, newAnnouncement) {
 			s.publishContributeAnnouncementChange(newAnnouncement)
+		}
+	}
+	if helpLinksTouched {
+		newHelpLinks := s.contributeHelpLinks()
+		if !sameContributeHelpLinks(oldHelpLinks, newHelpLinks) {
+			s.publishContributeHelpLinksChange(newHelpLinks)
 		}
 	}
 	okResponse(w, map[string]string{"status": "updated"})

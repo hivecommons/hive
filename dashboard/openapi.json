@@ -2813,11 +2813,79 @@
                     },
                     "served_sha": {
                       "type": "string"
+                    },
+                    "help_links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        }
+                      }
                     }
                   }
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/contribute/help-links": {
+      "put": {
+        "tags": [
+          "Contributors"
+        ],
+        "summary": "Set contributor Help & community links",
+        "description": "Owner/read-write operator endpoint for contribute.help_links. Labels are normalized as plain text; URLs must be absolute http(s); an empty list restores the default docs and issue links.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "help_links": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "label",
+                        "url"
+                      ],
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Help links saved"
+          },
+          "400": {
+            "description": "Invalid JSON or unsafe URL"
+          },
+          "403": {
+            "description": "Read-only viewer"
           }
         }
       }

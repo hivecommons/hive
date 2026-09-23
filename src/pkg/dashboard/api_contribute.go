@@ -141,6 +141,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("PUT /api/contribute/announcement", s.handleContributeAnnouncement)
 	s.mux.HandleFunc("POST /api/contribute/announcement/dismiss", s.handleContributeAnnouncementDismiss)
+	s.mux.HandleFunc("PUT /api/contribute/help-links", s.handleContributeHelpLinks)
 	s.mux.HandleFunc("GET /api/contribute/activity", s.handleContributeActivity)
 	s.mux.HandleFunc("GET /api/contribute/fleet", s.handleContributeFleet)
 	// Read-only live event stream for the Operations command center. Under the
@@ -595,6 +596,7 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"api_version":     contributorProtocolVersion,
 		"served_sha":      versionShort,
 		"announcement":    s.activeContributeAnnouncement(),
+		"help_links":      s.contributeHelpLinks(),
 	})
 }
 

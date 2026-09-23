@@ -1268,6 +1268,7 @@ function makeHub(url, token) {
     serverCapabilities: [],
     contributeNeedsDecisionLabel: DEFAULT_NEEDS_DECISION_LABEL,
     announcementSeen: new Set(),
+    helpLinksPrinted: false,
     // #7732: true from the moment a `ready` is actually transmitted to this hub
     // until the hub answers it (task_assign or task_unavailable), or the
     // conversation it belonged to ends (socket close, re-auth). While it is
@@ -2100,7 +2101,6 @@ function sanitizeDeclaredValue(raw) {
     : clean;
 }
 
-
 // sanitizeHubText neutralizes hub-supplied text before it reaches this
 // terminal. Frames arrive from every configured hub — including third-party
 // hives (multi-hub, #2846) — so their free-text fields are untrusted input:
@@ -2141,6 +2141,23 @@ function printHubAnnouncementOnce(hub, ann) {
     ? `[7m${line}[0m`
     : line;
   console.log(decorated);
+  return true;
+}
+
+function formatHelpLinkLine(hub, link) {
+  const label = link && typeof link.label === 'string' ? link.label.trim() : '';
+  const url = link && typeof link.url === 'string' ? link.url.trim() : '';
+  if (!label || !url) return '';
+  const hubLabel = hub && (hub.sourceURL || hub.url) ? hubPublicURL(hub.sourceURL || hub.url) : 'hub';
+  return `${hubLabel}: Need help? ${label}: ${url}`;
+}
+
+function printHelpLinksOnce(hub, links) {
+  if (!hub || hub.helpLinksPrinted || !Array.isArray(links) || !links.length) return false;
+  const lines = links.map((l) => formatHelpLinkLine(hub, l)).filter(Boolean);
+  if (!lines.length) return false;
+  hub.helpLinksPrinted = true;
+  lines.forEach((line) => console.log(line));
   return true;
 }
 
@@ -7423,6 +7440,7 @@ function handleMessage(data, hub) {
       // difference that is, by the additive-versioning rule, usually harmless.
       warnOnProtocolDrift(hub, msg.protocol_version);
       printHubAnnouncementOnce(hub, msg.announcement);
+      printHelpLinksOnce(hub, msg.help_links);
       hub.authenticated = true;
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
@@ -8299,6 +8317,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     formatHubAnnouncementLine,
     printHubAnnouncementOnce,
     sanitizeHubText,
+    formatHelpLinkLine,
+    printHelpLinksOnce,
     describeWsClose,
     wsCloseCorrelation,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).

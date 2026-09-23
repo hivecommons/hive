@@ -79,6 +79,7 @@ type sseEvent struct {
 	Withheld          []AdmissionWithheldItem        `json:"withheld,omitempty"`
 	AdmissionCoverage *AdmissionCoverage             `json:"admission_coverage,omitempty"`
 	Announcement      *config.ContributeAnnouncement `json:"announcement,omitempty"`
+	HelpLinks         []config.ContributeHelpLink    `json:"help_links,omitempty"`
 }
 
 // ReadyQueueItem is one admissible/ready issue in the "queue waiting to be picked
@@ -672,6 +673,7 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 		// waiting for a "gap" frame.
 		Seq:          sub.startSeq,
 		Announcement: s.activeContributeAnnouncement(),
+		HelpLinks:    s.contributeHelpLinks(),
 	}
 	if scope.collects() {
 		hello.Withheld = snap.withheld

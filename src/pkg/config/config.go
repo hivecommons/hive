@@ -48,6 +48,7 @@ type Config struct {
 	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
 	Hub           HubConfig              `yaml:"hub"`
+	Contribute    ContributeConfig       `yaml:"contribute,omitempty" json:"contribute,omitempty"`
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
@@ -4197,6 +4198,17 @@ type ContributeAnnouncement struct {
 	Text      string `yaml:"text,omitempty" json:"text,omitempty"`
 	Level     string `yaml:"level,omitempty" json:"level,omitempty"`
 	ExpiresAt string `yaml:"expires_at,omitempty" json:"expires_at,omitempty"`
+}
+
+// ContributeConfig groups operator-facing settings for contributor surfaces that
+// are not admission/queue controls.
+type ContributeConfig struct {
+	HelpLinks []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+}
+
+type ContributeHelpLink struct {
+	Label string `yaml:"label" json:"label"`
+	URL   string `yaml:"url" json:"url"`
 }
 
 type HubConfig struct {

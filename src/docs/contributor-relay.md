@@ -38,6 +38,15 @@ just contribute-hive
 
 `contribute-setup` is one-time per hive: it registers you (your GitHub identity plus a registration token stored in `${HOME}/.config/hive/contributor.env`), authenticates `gh`, and verifies the CLI backend you chose. Every hive also serves a landing page at **`https://<hive-dashboard>/contribute`** with live queue stats and copy-paste setup commands tailored to the CLI you pick.
 
+Operators can publish a short **Help & community** link list with
+`contribute.help_links` (also editable from Governor → Hub and `/contribute`
+Management). The dashboard shows those links on Onboarding and Operations, and
+the hub includes them in `auth_ok` so the relay prints them once when it
+connects. Use it for contributor docs, Discord/Slack invites, or a maintainer
+issue queue. Discord `https://discord.com/channels/<server>/<channel>` URLs only
+work for people already in that server; use a `https://discord.gg/...` invite if
+new contributors need to join.
+
 `contribute-hive` starts the relay in one of two modes:
 
 ```bash

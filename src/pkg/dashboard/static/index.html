@@ -21240,6 +21240,7 @@ function burnAreaChart() {
       const frameAncestors = (hub.snapshot_frame_ancestors || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
       const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
+      const helpLinksText = (hub.contribute_help_links || []).map(function(l) { return (l.label || '') + ' | ' + (l.url || ''); }).join('\n');
       const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
       // Filter modes: 'allow' = only matching pass; 'deny' (default) = matching skipped.
       const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
@@ -21343,6 +21344,12 @@ function burnAreaChart() {
               return '<label style="display:flex;align-items:center;gap:8px;font-size:0.78rem"><input type="checkbox" ' + (checked ? 'checked ' : '') + 'data-change-action="toggleDelegatableAgentRole" data-arg0="' + r + '" data-arg-types="s,c"> ' + r + ' <span style="font-size:0.65rem;color:var(--muted)">Delegatable to contributors</span></label>';
             }).join('')}
           </div>
+        </div>
+
+        <div class="config-field">
+          <label>Help &amp; community links <span class="config-info">i<span class="config-tooltip">Shown on /contribute Onboarding, Operations, and in relay terminals at connect. One "Label | URL" per line, max 5. Discord channel URLs only work for existing server members; prefer discord.gg invite links for new contributors.</span></span></label>
+          <textarea rows="4" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="Chat with other contributors | https://discord.gg/your-hive" data-change-action="setContributeHelpLinksFromText" data-arg-types="v">${esc(helpLinksText)}</textarea>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Stored as <code>contribute.help_links</code>. Empty restores Hive's default contributor docs and issue links.</span>
         </div>
 
         ${renderFilterWithMode({
@@ -21659,6 +21666,19 @@ function burnAreaChart() {
       _configState.data.hub.snapshot_frame_ancestors = origins;
       markDirty('hub', 'snapshot_frame_ancestors', origins);
       renderConfigTab('Hub');
+    }
+
+    function setContributeHelpLinksFromText(value) {
+      const links = (value || '').split(/\r?\n/).map(function(line) {
+        line = line.trim();
+        if (!line) return null;
+        var i = line.indexOf('|');
+        if (i < 0) return { label: line, url: '' };
+        return { label: line.slice(0, i).trim(), url: line.slice(i + 1).trim() };
+      }).filter(Boolean);
+      if (!_configState.data.hub) _configState.data.hub = {};
+      _configState.data.hub.contribute_help_links = links;
+      markDirty('hub', 'contribute_help_links', links);
     }
 
     function setTierLimit(tier, key, val) {
