@@ -14,6 +14,11 @@ type PullRequest struct {
 	URL         string
 	Lane        string
 	AuthorAgent string
+	// HiveAttributed is true when the PR body carries the hive attribution
+	// trailer: a PR an agent opened on a person's credentials, which GitHub
+	// shows under that person's login. It is one of the three authorship
+	// signals the fix gate accepts (see hiveAuthored).
+	HiveAttributed bool
 	// MergeBase is the commit the reviewer should ground its reading in. When
 	// set, the prompt instructs the reviewer to read the repository at this
 	// commit rather than reasoning from the diff alone — see groundingSection
@@ -145,6 +150,14 @@ type PromptOptions struct {
 	// text for each. The zero value means the built-in defaults.
 	Perspectives PerspectiveSet
 	Revise       bool
+	// ProposeFixesOnly tells the reviewer that no agent will push to this
+	// PR's branch — it was opened by someone outside the hive and
+	// review.fix_human_prs is off — so every fix it wants has to travel in
+	// the review comment itself, as a suggestion or a patch the author can
+	// apply. Without this a changes_requested verdict on such a PR would
+	// name a problem and then leave the author to guess at the fix the
+	// reviewer already had in mind.
+	ProposeFixesOnly bool
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -180,6 +193,24 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
 	}
+	b.WriteString(buildProposeOnlyInstruction(pr, opts))
+	return b.String()
+}
+
+// buildProposeOnlyInstruction is the fix half of a review the hive may not
+// act on itself. It is written for the reviewer of a PR the hive did not
+// open: the fix kick that would normally follow a changes_requested verdict
+// is withheld (fixPushAllowed), so whatever fix the reviewer has in mind must
+// reach the author through the comment, or it reaches nobody.
+func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
+	if !opts.ProposeFixesOnly {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nPROPOSE FIXES, DO NOT PUSH THEM.\n")
+	fmt.Fprintf(&b, "PR %s#%d was opened by someone this hive does not speak for, and review.fix_human_prs is off, so NO agent will push to its branch after your review. Do not check out, commit to, or push to this PR's branch yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number)
+	b.WriteString("For every finding you would have asked an agent to fix, put the fix in the review comment so the author can apply it: a ```suggestion block for a change that fits in a few lines at one location, or a ```diff patch block for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
+	b.WriteString("changes_requested still means what it says — the verdict is recorded and the PR waits on the author, not on the hive.\n")
 	return b.String()
 }
 
@@ -349,6 +380,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	if opts.PostComments {
 		b.WriteString(buildCombinedPublishInstruction(pr, perspectives, opts))
 	}
+	b.WriteString(buildProposeOnlyInstruction(pr, opts))
 	return b.String()
 }
 

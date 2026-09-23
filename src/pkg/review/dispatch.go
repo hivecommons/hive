@@ -95,6 +95,12 @@ type DispatchOptions struct {
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
+	// FixHumanPRs lets a changes_requested verdict dispatch a fix kick — an
+	// agent checking out the PR branch and PUSHING to it — on a PR this
+	// hive's agents did not open. Off, such a PR gets its review published
+	// and nothing more: the author decides what to change. AllAuthors never
+	// implies this (hivecommons/hive#8421).
+	FixHumanPRs bool
 	// AcknowledgeNoFindings carries config.ReviewConfig.AcknowledgeNoFindings
 	// into the prompt builder, so a clean review still leaves a record.
 	AcknowledgeNoFindings bool
@@ -116,7 +122,29 @@ type DispatchState struct {
 	Recent      []RecentReview    `json:"recent_reviews,omitempty"`
 	Fixes       []PendingFix      `json:"pending_fixes,omitempty"`
 	Human       []HumanReviewHold `json:"requires_human,omitempty"`
+	// Withheld records the PR heads whose fix kick was refused because the PR
+	// is not hive-authored and FixHumanPRs is off. Keyed by head SHA like
+	// Fixes, so each refusal is reported (and audited) once per head rather
+	// than on every eval cycle, and a new push earns a fresh decision.
+	Withheld []WithheldFix `json:"withheld_fixes,omitempty"`
 }
+
+// WithheldFix is a fix kick the planner declined to dispatch. It carries what
+// the audit trail needs to explain the silence: which PR, who opened it, and
+// the setting that would have allowed the push.
+type WithheldFix struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	HeadSHA  string    `json:"head_sha,omitempty"`
+	Author   string    `json:"author,omitempty"`
+	Setting  string    `json:"setting"`
+	Reason   string    `json:"reason"`
+	Withheld time.Time `json:"withheld_at"`
+}
+
+// WithheldFixSetting names the config key an operator turns on to let the
+// fixer push to PRs the hive did not open. It is what the audit entry cites.
+const WithheldFixSetting = "review.fix_human_prs"
 
 type PendingReview struct {
 	Repo        string      `json:"repo"`
@@ -176,7 +204,11 @@ type DispatchKick struct {
 type DispatchPlan struct {
 	ReviewKicks []DispatchKick
 	FixKicks    []DispatchKick
-	State       DispatchState
+	// WithheldFixes are the refusals NEW this cycle — the ones the caller
+	// should log and audit. Refusals already recorded in State.Withheld for
+	// the same head are not repeated here.
+	WithheldFixes []WithheldFix
+	State         DispatchState
 }
 
 func LoadDispatchState(path string) (DispatchState, error) {
@@ -267,7 +299,11 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
 				switch agg.Verdict {
 				case VerdictChangesRequested:
-					plan.dispatchFix(pr, agg, opts, now)
+					if fixPushAllowed(pr, opts) {
+						plan.dispatchFix(pr, agg, opts, now)
+					} else {
+						plan.withholdFix(pr, now)
+					}
 				case VerdictRequiresHuman:
 					plan.holdForHuman(pr, agg, now)
 				}
@@ -307,6 +343,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
+				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
@@ -353,6 +390,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
 				Revise:                revisiting,
 				Perspectives:          opts.Perspectives,
+				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
@@ -393,6 +431,49 @@ func (p *DispatchPlan) holdForHuman(pr PullRequest, agg Aggregate, now time.Time
 		reason = agg.Reasons[0]
 	}
 	p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason, UpdatedAt: now})
+}
+
+// hiveAuthored reports whether this hive is answerable for the PR: its login
+// is an agent's (isAgentAuthored), the audit trail attributes it to one of
+// this hive's agents (AuthorAgent), or its body carries the hive attribution
+// trailer (HiveAttributed — a PR an agent opened on a person's credentials).
+// Anything else was opened by someone the hive does not speak for.
+func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
+	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed
+}
+
+// fixPushAllowed is the authorship check in front of every fix kick. A fix
+// kick tells an agent to push a commit onto the PR branch, so it is only ever
+// dispatched for a PR the hive itself opened — unless the operator turned on
+// review.fix_human_prs, which grants exactly that for everyone else's PRs.
+// AllAuthors is deliberately not consulted: it widens what is REVIEWED, and
+// reviewing a contributor's PR is not a reason to rewrite it
+// (hivecommons/hive#8421).
+func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
+	return opts.FixHumanPRs || hiveAuthored(pr, opts)
+}
+
+// withholdFix records that a changes_requested PR got no fix kick because
+// fixPushAllowed refused it. Once per head: the state entry is what stops
+// the next cycle re-reporting the same refusal, and the plan entry is what
+// the caller audits this cycle.
+func (p *DispatchPlan) withholdFix(pr PullRequest, now time.Time) {
+	for _, w := range p.State.Withheld {
+		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			return
+		}
+	}
+	w := WithheldFix{
+		Repo:     pr.Repo,
+		Number:   pr.Number,
+		HeadSHA:  pr.HeadSHA,
+		Author:   strings.TrimSpace(pr.Author),
+		Setting:  WithheldFixSetting,
+		Reason:   "PR was not opened by a hive agent; review published, fix not pushed",
+		Withheld: now,
+	}
+	p.State.Withheld = append(p.State.Withheld, w)
+	p.WithheldFixes = append(p.WithheldFixes, w)
 }
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
@@ -703,6 +784,13 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 		}
 	}
 	state.Human = human
+	var withheld []WithheldFix
+	for _, w := range state.Withheld {
+		if openHeads[reviewKey(w.Repo, w.Number, w.HeadSHA)] {
+			withheld = append(withheld, w)
+		}
+	}
+	state.Withheld = withheld
 	return state
 }
 

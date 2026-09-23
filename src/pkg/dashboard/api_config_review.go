@@ -63,6 +63,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		ReviewerAgents     *[]string `json:"reviewer_agents"`
 		FixerAgent         *string   `json:"fixer_agent"`
 		AllAuthors         *bool     `json:"all_authors"`
+		FixHumanPRs        *bool     `json:"fix_human_prs"`
 		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string   `json:"human_decision_label"`
 		ConfidenceScore    *bool     `json:"confidence_score"`
@@ -192,6 +193,13 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AllAuthors != nil {
 		cfg.Review.AllAuthors = *body.AllAuthors
+	}
+	// Stored as the explicit value sent, never cleared back to nil: once an
+	// operator has decided either way, the upgrade migration in
+	// config.MigrateReviewFixHumanPRs must not decide again for them.
+	if body.FixHumanPRs != nil {
+		enabled := *body.FixHumanPRs
+		cfg.Review.FixHumanPRs = &enabled
 	}
 	if body.AcknowledgeNoFind != nil {
 		cfg.Review.AcknowledgeNoFindings = *body.AcknowledgeNoFind

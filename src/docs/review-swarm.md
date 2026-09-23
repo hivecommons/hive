@@ -122,6 +122,8 @@ review:
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
+  all_authors: true                         # optional; review every open PR, not only agent-authored ones
+  fix_human_prs: false                      # optional; let the fixer push commits to PRs Hive did not open (default off)
 ```
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
@@ -172,6 +174,19 @@ Source: `dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`.
 Phase 2 adds dispatch state in `/var/run/hive-metrics/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
 
 When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
+
+### Who may be pushed to: `all_authors` versus `fix_human_prs`
+
+A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. The two settings are therefore separate:
+
+- `review.all_authors` makes every open PR eligible for **review**, whoever opened it. It never implies pushing.
+- `review.fix_human_prs` (default off) lets the fix kick be dispatched for a PR the hive did **not** open. Owner-only; in the dashboard it sits next to "Review every PR" under Features -> Review Gate -> Reviewers, as "Push fix commits to PRs Hive did not open".
+
+Before every fix kick the planner checks authorship. A PR counts as the hive's own when its author login is an agent (`github.ai_author` or a `[bot]` login), when the audit trail attributes it to one of this hive's agents, or when its body carries the hive attribution trailer (a PR an agent opened on a person's credentials). Anything else gets a fix kick only with `fix_human_prs: true`.
+
+When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and `setting=review.fix_human_prs=false`, so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
+
+**Upgrading.** Before `fix_human_prs` existed, `all_authors: true` alone made the fixer push to every PR. A hive already running that way keeps running that way: on load, a config with `all_authors: true` and `fix_human_prs` never set is stored with `fix_human_prs: true`, logged once, and shown as on in the dashboard so the operator can turn it off deliberately. New hives and hives with `all_authors` off get `false`; an explicit `fix_human_prs: false` is never overwritten; no other review field is touched.
 
 ## Revising a recorded verdict
 

@@ -6399,6 +6399,7 @@ func runEvalCycle(
 
 	sched.SetLastActionable(kickActionable)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
+	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
 	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
@@ -8228,6 +8229,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			HeadSHA: pr.HeadSHA,
 			URL:     pr.URL,
 			Lane:    string(lane),
+			// Authorship signal for the fix gate (#8421): a PR an agent opened
+			// on a person's credentials is still the hive's own work.
+			HiveAttributed: pr.HiveAttributed,
 			// Grounding anchor for the review prompt. Repo access is the
 			// measured active ingredient in review quality (17%→67% hit rate,
 			// 61% fewer false positives), so the reviewer is told which commit
@@ -8267,6 +8271,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		FixerAgent:            cfg.Review.FixerAgent,
 		PostComments:          cfg.Review.PostComments,
 		AllAuthors:            cfg.Review.AllAuthors,
+		FixHumanPRs:           cfg.Review.FixHumanPRsEnabled(),
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
@@ -8298,6 +8303,30 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+// reviewFixAuditor is the slice of the dashboard the withheld-fix audit
+// needs, so the function is testable without a live server.
+type reviewFixAuditor interface {
+	AuditLog(user, action, detail, agent string)
+}
+
+// auditWithheldReviewFixes puts every fix the planner refused this cycle on
+// the audit trail (#8421). A refusal is silent by design — the PR just does
+// not get a bot commit — and silence is the one thing an operator cannot
+// investigate, so each one names the PR, who opened it, and the setting
+// that would have allowed the push. The planner reports each head once, so
+// this does not repeat on every eval cycle.
+func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
+	for _, w := range plan.WithheldFixes {
+		logger.Info("review fix withheld: PR not hive-authored and "+w.Setting+" is off; review published, nothing pushed",
+			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting)
+		if auditor == nil {
+			continue
+		}
+		auditor.AuditLog("governor", "review_fix_withheld",
+			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=false reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.Reason), "")
+	}
 }
 
 func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {

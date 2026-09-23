@@ -5309,6 +5309,10 @@ const (
 )
 
 func (c *Config) applyDefaults() {
+	// Runs before any review default so the pointer is settled on every load
+	// path (boot, reload, dashboard save) and Save() persists the explicit
+	// value, after which this is a no-op for the life of the hive.
+	c.MigrateReviewFixHumanPRs()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
 	// matching org prefix off both primary_repo and every repos entry on load.
@@ -6784,6 +6788,23 @@ type ReviewConfig struct {
 	// reviewer is no less stuck than an agent's, and it is the one with a
 	// person waiting on the other end.
 	AllAuthors bool `yaml:"all_authors,omitempty" json:"all_authors,omitempty"`
+	// FixHumanPRs lets the review-fix kick push commits onto PRs that this
+	// hive's agents did NOT open: a contributor's fork branch (through "allow
+	// edits by maintainers"), a maintainer's branch in the upstream repo, or
+	// another bot's PR. AllAuthors alone never implies it. AllAuthors promises
+	// that every PR is REVIEWED; a changes_requested verdict on a PR the hive
+	// did not author then stops at the published review, and the author
+	// decides what to change. Only with this on does the fixer agent
+	// (FixerAgent, then the PR lane, then scanner) check out someone else's
+	// branch and push to it (hivecommons/hive#8421).
+	//
+	// Pointer so "never set" is distinguishable from an explicit false: a hive
+	// that already ran with all_authors on was pushing fixes to every PR, and
+	// an upgrade must not silently stop that. MigrateReviewFixHumanPRs turns a
+	// nil into an explicit true on such a hive, once, and logs it; an explicit
+	// false is never overwritten. Read via FixHumanPRsEnabled(), never
+	// dereferenced raw.
+	FixHumanPRs *bool `yaml:"fix_human_prs,omitempty" json:"fix_human_prs,omitempty"`
 	// AcknowledgeNoFindings makes a clean review leave a one-line record
 	// instead of nothing. Silence keeps a PR uncluttered but is
 	// indistinguishable from a reviewer that never ran, so where review
@@ -7041,6 +7062,44 @@ func (r ReviewConfig) EffectiveMaxParallelReviews() int {
 		return r.MaxParallelReviews
 	}
 	return DefaultMaxParallelReviews
+}
+
+// FixHumanPRsEnabled reports whether the review-fix kick may push to PRs the
+// hive's own agents did not open. Nil (never set) and an explicit false both
+// mean no: pushing to someone else's branch is a power to grant deliberately.
+func (r ReviewConfig) FixHumanPRsEnabled() bool {
+	return r.FixHumanPRs != nil && *r.FixHumanPRs
+}
+
+// reviewFixHumanPRsMigrationLogOnce keeps the upgrade notice to one line per
+// process. Load runs at boot and on every config reload, and until the next
+// Save materialises the migrated value each reload would repeat it.
+var reviewFixHumanPRsMigrationLogOnce sync.Once
+
+// MigrateReviewFixHumanPRs is the upgrade step for review.fix_human_prs
+// (hivecommons/hive#8421). Before that setting existed, review.all_authors
+// alone made the fixer agent push commits onto every changes_requested PR,
+// whoever opened it. A hive that ran that way must keep running that way
+// across the upgrade, so:
+//
+//   - all_authors true and fix_human_prs never set: fix_human_prs becomes an
+//     explicit true, logged once, so the dashboard shows it ON and the operator
+//     can turn it off deliberately.
+//   - anything else (new hives, all_authors off): left nil, which reads as
+//     false. An explicit false is never touched.
+//
+// Every other review field is left exactly as the operator set it. Returns
+// true when it changed the config.
+func (c *Config) MigrateReviewFixHumanPRs() bool {
+	if c == nil || !c.Review.AllAuthors || c.Review.FixHumanPRs != nil {
+		return false
+	}
+	enabled := true
+	c.Review.FixHumanPRs = &enabled
+	reviewFixHumanPRsMigrationLogOnce.Do(func() {
+		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true to keep this hive pushing review fixes to PRs its agents did not open (as it did before #8421). Turn it off under Features > Review Gate > Reviewers if that is not wanted.")
+	})
+	return true
 }
 
 // EffectiveThreshold resolves the configured threshold with its default.

@@ -355,6 +355,53 @@ func TestReviewConfigPut_RejectsNonOwner(t *testing.T) {
 	}
 }
 
+// TestReviewConfigPut_FixHumanPRs covers the owner-only push grant
+// (hivecommons/hive#8421): it is stored as the explicit value sent — true or
+// false — so the upgrade migration never decides it again, an absent key
+// leaves it alone, and a request without the owner role cannot flip it.
+func TestReviewConfigPut_FixHumanPRs(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.Review.FixHumanPRs != nil {
+		t.Fatalf("fresh config must have fix_human_prs unset: %+v", s.deps.Config.Review)
+	}
+
+	if rec := doPutNoRole(s, "/api/config/review", `{"fix_human_prs":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("un-gated PUT fix_human_prs: expected 403, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.FixHumanPRs != nil {
+		t.Fatal("refused write still set fix_human_prs")
+	}
+
+	if rec := doPut(s, "/api/config/review", map[string]any{"fix_human_prs": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT fix_human_prs=true: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Review.FixHumanPRsEnabled() {
+		t.Fatalf("fix_human_prs=true not applied: %+v", s.deps.Config.Review)
+	}
+	if s.deps.Config.Review.AllAuthors {
+		t.Fatal("granting the push must not turn all_authors on")
+	}
+
+	if rec := doPut(s, "/api/config/review", map[string]any{"all_authors": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT without the key: expected 200, got %d", rec.Code)
+	}
+	if !s.deps.Config.Review.FixHumanPRsEnabled() {
+		t.Fatal("absent fix_human_prs key changed the stored value")
+	}
+
+	if rec := doPut(s, "/api/config/review", map[string]any{"fix_human_prs": false}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT fix_human_prs=false: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Review.FixHumanPRs == nil || *s.deps.Config.Review.FixHumanPRs {
+		t.Fatalf("fix_human_prs=false must be stored as an explicit false, got %+v", s.deps.Config.Review.FixHumanPRs)
+	}
+
+	rec := doGetNoRole(s, "/api/config/review")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"fix_human_prs":false`) {
+		t.Fatalf("GET review must expose the explicit value: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // The perspective set is validated by the same resolver the hive loads it
 // with, so what the dialog accepts is exactly what will run. A typo must be a
 // 400 with the offending name, not a silently dropped perspective.
