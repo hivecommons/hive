@@ -37,6 +37,12 @@ contributor_cpu_limit := "2"
 default:
     @just --list
 
+# Run the live run-level acceptance test (#8466 layer 2). Requires HIVE_URL and
+# HIVE_TOKEN like the rest of src/test, plus HIVE_RUNS_E2E_KEY or
+# HIVE_RUNS_E2E_REPO/HIVE_RUNS_E2E_ISSUE for the pinned run/spec issue.
+runs-e2e:
+    cd src && go test -tags integration ./test -run Runs
+
 [private]
 check-version skip="false":
     #!/usr/bin/env bash

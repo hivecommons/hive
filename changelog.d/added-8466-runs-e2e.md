@@ -1,0 +1,1 @@
+- Add an integration-tagged run-level acceptance test for live Hive runs and document its guarded #8460 gaps.
