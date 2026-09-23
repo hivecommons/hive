@@ -291,6 +291,14 @@ func (p *Publisher) disclose(ctx context.Context, f Finding, grant Grant, mode s
 		p.audit(AuditFindingRefused, f, agentaudit.Fields("outcome", ReasonNoPrivateChannel))
 		return Publication{State: StateRefused, Reason: ReasonNoPrivateChannel}, ErrNoPrivateChannel
 	}
+	// Pre-flight: an unroutable channel is a refusal decided here, before any
+	// journal entry exists, never an uncertain effect awaiting reconciliation.
+	if checker, ok := p.Private.(ReadyChecker); ok {
+		if err := checker.Ready(); err != nil {
+			p.audit(AuditFindingRefused, f, agentaudit.Fields("outcome", ReasonNoPrivateChannel, "error", err.Error()))
+			return Publication{State: StateRefused, Reason: ReasonNoPrivateChannel}, err
+		}
+	}
 	marker := f.Marker()
 	var lookup func(context.Context) (string, bool, error)
 	if finder, ok := p.Private.(DisclosureFinder); ok {

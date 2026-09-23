@@ -35,6 +35,15 @@ type PrivateChannel interface {
 	Disclose(ctx context.Context, d Disclosure) (DisclosureRef, error)
 }
 
+// ReadyChecker is the optional pre-flight seam a channel implements so the
+// publisher can refuse an unroutable channel BEFORE any effect is journaled:
+// a refusal raised inside the effect would be recorded as an uncertain
+// outcome needing reconciliation, which is the wrong status for "nowhere to
+// send this".
+type ReadyChecker interface {
+	Ready() error
+}
+
 // DisclosureFinder is the optional reconciliation seam a channel implements
 // when it can find an earlier disclosure by marker.
 type DisclosureFinder interface {
@@ -51,6 +60,17 @@ type RepoChannel struct {
 
 // repoChannelLabel marks issues the repo channel files.
 const repoChannelLabel = "security-disclosure"
+
+// Ready reports whether the repo channel has an issue seam to file through.
+func (c RepoChannel) Ready() error {
+	if c.Issues == nil {
+		return fmt.Errorf("%w: private repo channel has no issue seam", ErrNoPrivateChannel)
+	}
+	if c.Repo == "" {
+		return fmt.Errorf("%w: private repo channel names no repository", ErrNoPrivateChannel)
+	}
+	return nil
+}
 
 // Disclose files the finding in the private repository.
 func (c RepoChannel) Disclose(ctx context.Context, d Disclosure) (DisclosureRef, error) {
@@ -94,6 +114,14 @@ type NotifyChannel struct {
 
 // notifyRefPrefix opens the reference a notify disclosure records.
 const notifyRefPrefix = "notify:"
+
+// Ready reports whether the notify channel has a notifier to send through.
+func (c NotifyChannel) Ready() error {
+	if c.Notifier == nil {
+		return fmt.Errorf("%w: notify channel has no notifier", ErrNoPrivateChannel)
+	}
+	return nil
+}
 
 // Disclose notifies the operator that a sensitive finding awaits them.
 func (c NotifyChannel) Disclose(ctx context.Context, d Disclosure) (DisclosureRef, error) {

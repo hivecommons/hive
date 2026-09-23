@@ -489,8 +489,19 @@ func TestPublishRefusesInvalidFindingAndMissingSeam(t *testing.T) {
 		t.Fatalf("no seam = %+v err=%v", pub, err)
 	}
 	p.Private = RepoChannel{Repo: testPrivate}
-	if _, err := p.Publish(context.Background(), sensitiveFinding(), grant); !errors.Is(err, ErrNoPrivateChannel) {
-		t.Fatalf("repo channel without seam must refuse, got %v", err)
+	sensitive := sensitiveFinding()
+	if pub, err := p.Publish(context.Background(), sensitive, grant); !errors.Is(err, ErrNoPrivateChannel) || pub.Record() != "refused:no-private-channel" {
+		t.Fatalf("repo channel without seam must refuse, got %+v err=%v", pub, err)
+	}
+	if _, ok := st.journal.Get(p.effect(sensitive, grant, mutation.EffectPrivateDisclosure, channelPrivate).LogicalID()); ok {
+		t.Fatal("a refused disclosure must never enter the journal")
+	}
+	p.Private = NotifyChannel{}
+	if _, err := p.Publish(context.Background(), sensitive, grant); !errors.Is(err, ErrNoPrivateChannel) {
+		t.Fatalf("notify channel without notifier must refuse, got %v", err)
+	}
+	if err := (RepoChannel{Issues: newFakeSeam()}).Ready(); !errors.Is(err, ErrNoPrivateChannel) {
+		t.Fatalf("repo channel without a repo must not be ready, got %v", err)
 	}
 	if _, err := (NotifyChannel{}).Disclose(context.Background(), Disclosure{}); !errors.Is(err, ErrNoPrivateChannel) {
 		t.Fatalf("notify channel without notifier must refuse, got %v", err)
