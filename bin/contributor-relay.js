@@ -2091,7 +2091,7 @@ function detectAgentCLIVersion() {
 // truncates. The hub renders declarations into an operator row, so a multi-line
 // or unbounded value would be its problem rather than ours.
 function sanitizeRelayTerminalText(raw) {
-  return String(raw || '').replace(/[ --]/g, '').trim();
+  return String(raw || '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x1b]/g, '').trim();
 }
 
 function formatOperatorMessageLine(hub, msg) {
@@ -2164,7 +2164,7 @@ function printHubAnnouncementOnce(hub, ann) {
   if (!line) return false;
   hub.announcementSeen.add(ann.id);
   const decorated = process.stdout && process.stdout.isTTY && !process.env.NO_COLOR
-    ? `[7m${line}[0m`
+    ? `\x1b[7m${line}\x1b[0m`
     : line;
   console.log(decorated);
   return true;
