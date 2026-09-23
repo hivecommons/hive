@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -340,6 +341,36 @@ func TestWavefrontQueueItemHasRunBurndownDetail(t *testing.T) {
 	if run.Burndown == nil || run.Burndown.Source != "wavefront" || run.Burndown.Scope != 24 ||
 		run.Burndown.Satisfied != 2 || run.Burndown.Remaining != 22 {
 		t.Fatalf("burndown = %+v", run.Burndown)
+	}
+}
+
+func TestQueuedRunDetailLookupIsUnboundedAndSkipsHeld(t *testing.T) {
+	s, deps := runsTestServer(t)
+	const repo = "clubanderson/hive-runs-e2e"
+	items := make([]any, 0, readyQueueDefaultLimit+1)
+	for i := 0; i < readyQueueDefaultLimit+1; i++ {
+		items = append(items, map[string]any{
+			"source_type": "run",
+			"external_id": "crustify-fixture:node-" + strconv.Itoa(i),
+			"title":       "implement: node",
+			"labels":      []string{"hive-run", "stage/implement", "wavefront"},
+			"state":       "open",
+		})
+	}
+	s.status = &StatusPayload{Repos: []FrontendRepo{{
+		Name:             "hive-runs-e2e",
+		Full:             repo,
+		ActionableIssues: items,
+	}}}
+	key := repo + "!crustify-fixture:node-" + strconv.Itoa(readyQueueDefaultLimit)
+	deps.RunBurndown = func(context.Context, string) (*RunBurndown, error) { return nil, nil }
+	if rec := doGet(s, "/api/runs/"+url.PathEscape(key)); rec.Code != http.StatusOK {
+		t.Fatalf("detail for item beyond display limit = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	deps.Config.Hub.ContributeQueueHold = []string{key}
+	if rec := doGet(s, "/api/runs/"+url.PathEscape(key)); rec.Code != http.StatusNotFound {
+		t.Fatalf("held queued detail = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

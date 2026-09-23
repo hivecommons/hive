@@ -255,8 +255,9 @@ func (s *Server) queuedRunByKey(key string) (Run, bool) {
 	if s == nil || s.contributeHub == nil {
 		return Run{}, false
 	}
-	for _, item := range s.contributeHub.ReadyQueue(readyQueueDefaultLimit) {
-		if item.Key != key || item.SourceType != worksource.SourceTypeRun || item.ExternalID == "" {
+	snap := s.contributeHub.admissionQueueSnapshot(int(^uint(0)>>1), withheldNone)
+	for _, item := range snap.queue {
+		if item.Held || item.Key != key || item.SourceType != worksource.SourceTypeRun || item.ExternalID == "" {
 			continue
 		}
 		stage := runStageFromLabels(item.Labels)
