@@ -177,8 +177,8 @@ RUN mkdir -p /etc/apt/keyrings \
 # npm cache is cleaned in the same layer it's populated (issue #2613,
 # Observation 2 "also minor") so the cache doesn't linger in this layer's
 # diff, mirroring the cleanup already done for the bobshell install below.
-ARG CLAUDE_CODE_VERSION=2.1.226
-ARG COPILOT_VERSION=1.0.59
+ARG CLAUDE_CODE_VERSION=2.1.280
+ARG COPILOT_VERSION=1.0.88
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during
 # the build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. Without the link every invocation in
@@ -200,7 +200,7 @@ ARG KILO_CLI_VERSION=7.5.6
 # Same ARG name and value as src/Dockerfile so bin/test_backend_smoke.sh can
 # assert the two pins agree — this line was previously an inline hardcode that
 # could (and did) drift from the main image's CODEX_VERSION unnoticed.
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.156.1
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @github/copilot@${COPILOT_VERSION} \
@@ -227,9 +227,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 #
 # No credential is baked in: muse needs META_API_KEY in the environment or a
 # credential at $HOME/.config/muse/auth.json.
-ARG MUSE_VERSION=1.0.3-R2198.1
-ARG MUSE_SHA256_AMD64=75a68f98c437dfd17d264730c5bc72d57e5f1e18d10472a9f53261ffcc091352
-ARG MUSE_SHA256_ARM64=4ffcf55f5eb0668643f30c5febd90d188b9a2da65858918444d31f6046940120
+ARG MUSE_VERSION=1.3.0-R3401.1
+ARG MUSE_SHA256_AMD64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
+ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
@@ -268,11 +268,11 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 #
 # Checksum mismatches are still never tolerated — the || only covers the
 # curl download step, not the verify/install steps.
-ARG BOBSHELL_VERSION=1.0.6
+ARG BOBSHELL_VERSION=2.0.4
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
 ARG TARGETARCH
-ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
-ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+ARG BOBSHELL_SHA256_AMD64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
+ARG BOBSHELL_SHA256_ARM64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
@@ -303,9 +303,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # build time (sec-check issue #2919). Pin to a specific release tag and verify
 # the tarball before extraction. Download failures are tolerated because Goose
 # is an optional contributor backend; checksum mismatches are not tolerated.
-ARG GOOSE_VERSION=1.45.0
-ARG GOOSE_SHA256_AMD64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
-ARG GOOSE_SHA256_ARM64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
+ARG GOOSE_VERSION=1.51.0
+ARG GOOSE_SHA256_AMD64=fc53761f5b907499d5fe21ef940c2bc57b2d93b4c8b858be24261cc136c6108e
+ARG GOOSE_SHA256_ARM64=e47da01a5378383b050bd736be3989d94ba8160d0a7e7df8280ddb2aec6fd306
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -347,9 +347,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # API-key mode, so a fresh container still needs an operator to sign in
 # inside it (or a future credential-mount fix, see Justfile's `agy)` staging
 # case) before it can do unattended work.
-ARG AGY_VERSION=1.1.22-5711547746615296
-ARG AGY_SHA256_AMD64=1e1a219a86e75d7c6351f96d182ca2105302d5c34d8fa9c31265dc0adf24145f
-ARG AGY_SHA256_ARM64=a68925bc7336eb0b90de1e1aefd44d535f5487b7cf606a76fdb982207aef9a2e
+ARG AGY_VERSION=1.2.9-5905287731871744
+ARG AGY_SHA256_AMD64=d9850373f3df866011024a961fa9740cc4adaac060eebe9c70fbf263ac6b2624
+ARG AGY_SHA256_ARM64=8a63cf4c4f559e2ff91bd46fbdf015ca7937415805d0cff82015b9cb9dbbdfcd
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) AGY_PLATFORM=linux-x64; AGY_TARBALL=cli_linux_x64.tar.gz; AGY_SHA256="$AGY_SHA256_AMD64" ;; \
@@ -399,9 +399,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # No credential is baked in: omp reads the selected model's provider
 # credential from its documented environment variables (ANTHROPIC_API_KEY,
 # OPENAI_API_KEY, …), which the Justfile's container arm already forwards.
-ARG OMP_VERSION=18.2.6
-ARG OMP_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
-ARG OMP_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
+ARG OMP_VERSION=18.2.11
+ARG OMP_SHA256_AMD64=97cf39557bf3d98327dd4c9814380b7e6bcb76e41169edd9b0ff30424c733a2a
+ARG OMP_SHA256_ARM64=c115f95a0a0081d3724a3c878231fb8c3b2fdb25ad5ad6c3b30d152a82b3939e
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -424,7 +424,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
 # disabled and fail the image build if the binary is absent.
-ARG PI_CODING_AGENT_VERSION=0.84.1
+ARG PI_CODING_AGENT_VERSION=0.87.1
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
   && npm cache clean --force \

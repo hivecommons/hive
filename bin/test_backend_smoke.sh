@@ -33,7 +33,8 @@
 #   HIVE_SMOKE_BACKENDS              space-separated, default "claude codex"
 #   HIVE_SMOKE_MODEL_CLAUDE          default claude-haiku-4-5 (cheapest tier —
 #                                    the plumbing is under test, not the model)
-#   HIVE_SMOKE_MODEL_CODEX           default gpt-5.4-mini
+#   HIVE_SMOKE_MODEL_CODEX           default gpt-5.5 (gpt-5.4-mini left the
+#                                    bundled catalog in codex 0.155.0)
 #   HIVE_TEST_REQUIRE_BACKEND_SMOKE  1 = skips become failures (the CI lane
 #                                    inversion, same shape as
 #                                    HIVE_TEST_REQUIRE_BEHAVIOURAL in
@@ -86,7 +87,7 @@ REAL_HOME="$HOME"
 
 SMOKE_BACKENDS="${HIVE_SMOKE_BACKENDS:-claude codex}"
 MODEL_CLAUDE="${HIVE_SMOKE_MODEL_CLAUDE:-claude-haiku-4-5}"
-MODEL_CODEX="${HIVE_SMOKE_MODEL_CODEX:-gpt-5.4-mini}"
+MODEL_CODEX="${HIVE_SMOKE_MODEL_CODEX:-gpt-5.5}"
 
 # shellcheck source=../config/backends.conf disable=SC1091
 source "$ROOT/config/backends.conf"

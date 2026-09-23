@@ -216,7 +216,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # without any binary surgery. Do NOT re-add the old rm-the-binary hack: the
 # 1.0.78 npm wrapper only spawns the platform binary — deleting it now
 # breaks the CLI outright instead of triggering a fallback.
-ARG COPILOT_VERSION=1.0.78
+ARG COPILOT_VERSION=1.0.88
 # NOTE (#7365): --ignore-scripts is safe here and needs NO vendor follow-up
 # step, unlike Layer 7 (claude-code). The two packages link their platform
 # binary by different mechanisms:
@@ -258,12 +258,12 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.156.1
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.226
+ARG CLAUDE_CODE_VERSION=2.1.280
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -284,9 +284,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.45.0
-ARG GOOSE_SHA256_AMD64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
-ARG GOOSE_SHA256_ARM64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
+ARG GOOSE_VERSION=1.51.0
+ARG GOOSE_SHA256_AMD64=fc53761f5b907499d5fe21ef940c2bc57b2d93b4c8b858be24261cc136c6108e
+ARG GOOSE_SHA256_ARM64=e47da01a5378383b050bd736be3989d94ba8160d0a7e7df8280ddb2aec6fd306
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -311,10 +311,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # complete the interactive OAuth flow itself). This enables a self-hosted Hive
 # controller to use its configured agy fallback rung without pretending that
 # generic contributor containers can bootstrap Google login.
-ARG AGY_VERSION=1.1.19
-ARG AGY_BUILD=4894004681244672
-ARG AGY_SHA512_AMD64=7c3b310c80685adcba714994207eb870fb4817403975da46555b7d9fade446487da3d8f897aa220dfbc30f602ab461a0147a6f7b3c8228fdebd35951e3f250fd
-ARG AGY_SHA512_ARM64=488c3dac1c7ca866a9da990f9a88648bfb7176992a0a2d27605e3bc10143e5b17af552ed99f0bf4250e2d69fed6d0d5f50684c729bf03f269f2b52b44503558d
+ARG AGY_VERSION=1.2.9
+ARG AGY_BUILD=5905287731871744
+ARG AGY_SHA512_AMD64=75e83d46cb1632da4aca29b785017753c8c2dfb0320166da6b2c8007678982943515e64c8824ff2d8510d9b52eb2b3c27f306aeec58c4a4f4f8aa5550cb0cb12
+ARG AGY_SHA512_ARM64=524daf6ce6138d58455f3b82eba4923b3da2d4f874eda31a7699fb0275d18de3d4ae6d2c3acc4b43fdb063f6c51adaab42785054cd1852b8455892fa2404d019
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \
@@ -332,9 +332,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.2.6
-ARG OMP_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
-ARG OMP_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
+ARG OMP_VERSION=18.2.11
+ARG OMP_SHA256_AMD64=97cf39557bf3d98327dd4c9814380b7e6bcb76e41169edd9b0ff30424c733a2a
+ARG OMP_SHA256_ARM64=c115f95a0a0081d3724a3c878231fb8c3b2fdb25ad5ad6c3b30d152a82b3939e
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -372,9 +372,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # credential at $HOME/.config/muse/auth.json seeded by an operator
 # (`muse login` / `muse auth set --api-key-stdin`). The image supplies only the
 # binary, exactly as the agy layer does for Google OAuth.
-ARG MUSE_VERSION=1.0.3-R2198.1
-ARG MUSE_SHA256_AMD64=75a68f98c437dfd17d264730c5bc72d57e5f1e18d10472a9f53261ffcc091352
-ARG MUSE_SHA256_ARM64=4ffcf55f5eb0668643f30c5febd90d188b9a2da65858918444d31f6046940120
+ARG MUSE_VERSION=1.3.0-R3401.1
+ARG MUSE_SHA256_AMD64=71b089d055dfe6e4562092bc484896b61bd96fd6ef9fef9da54a14aa174e2a33
+ARG MUSE_SHA256_ARM64=5e5ea2a3de3a3fabdff8982aec9423d20eaa7dad05df37efb4264356d0d2e223
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
@@ -392,7 +392,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=0.84.1
+ARG PI_VERSION=0.87.1
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
@@ -405,15 +405,20 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # tarball directly at a pinned version instead: piping a remote script into the
 # build would be unpinned and unauditable, and inconsistent with the copilot /
 # claude / goose layers above.
-# The package is pure JavaScript (no native .node/.so payloads, no os/cpu
-# fields), so a single layer serves both linux/amd64 and linux/arm64.
-# package.json declares "bin": {"bob": "bundle/bob.js"} — npm therefore creates
+# The tarball is one artifact for every platform (no os/cpu fields): the
+# vendor resolves the current version from bobshell2-version.txt next to the
+# tarball and publishes a .tgz.sha256 beside it, which is where the digest
+# below is cross-checked. As of 2.x the bundle carries a single x86-64
+# vscode-policy-watcher.node that dist/bob.js requires lazily (only when the
+# policy watcher is used), so the same layer still serves linux/amd64 and
+# linux/arm64.
+# package.json declares "bin": {"bob": "dist/bob.js"} — npm therefore creates
 # /usr/local/bin/bob directly, matching the binary name the agent launcher
 # invokes (manager.go maps "bob" -> "bob"). No symlink is required.
-ARG BOBSHELL_VERSION=1.0.6
+ARG BOBSHELL_VERSION=2.0.4
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
-ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
-ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+ARG BOBSHELL_SHA256_AMD64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
+ARG BOBSHELL_SHA256_ARM64=10de047ffdc23a50f3e1ef69fad3b6313ff6dda0010589a22efe26b24685254b
 # Tolerant of download failure now, like the copilot/codex/goose/pi layers
 # above (issue #5203) — IBM COS (s3.us-south.cloud-object-storage.appdomain.cloud)
 # has gone unreachable for multi-minute windows three times in one day

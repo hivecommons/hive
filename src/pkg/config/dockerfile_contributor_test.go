@@ -17,7 +17,7 @@ func TestContributorDockerfileInstallsPiWithoutCurlPipeShell(t *testing.T) {
 		t.Fatal("Dockerfile.contributor must not execute the mutable pi.dev installer with curl|sh")
 	}
 	for _, want := range []string{
-		"ARG PI_CODING_AGENT_VERSION=0.84.1",
+		"ARG PI_CODING_AGENT_VERSION=0.87.1",
 		"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}",
 		"npm install -g --ignore-scripts",
 		"which pi",
