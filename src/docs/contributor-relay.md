@@ -1415,7 +1415,7 @@ Note that this is different from the poisoned-server case above: a recreated ses
 
 Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/hivecommons/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:
 
-- **On the relay** — a mismatch prints one line on the contributor's own terminal (`Protocol older: hub 1.3 is behind this relay 1.2 …`), once per hub.
+- **On the relay** — a mismatch prints one line on the contributor's own terminal (`Protocol older: hub 1.4 is behind this relay 1.2 …`), once per hub.
 - **On the hub** — the Operations tab shows a `protocol: client 1.1 · hub 1.2 · older than this hub` line under the clanker row, and the hub log records the verdict at connect.
 
 Versions are `MAJOR.MINOR`. A MINOR difference is purely additive — the older side simply doesn't know about features added since. A MAJOR difference means the wire contract changed and behaviour is undefined; update the relay.
@@ -1425,6 +1425,15 @@ Versions are `MAJOR.MINOR`. A MINOR difference is purely additive — the older 
 A relay that declares no version at all reads as `unknown` and is **not** treated as incompatible — that is what every relay written before the versioned handshake sends.
 
 Both surfaces render nothing when the versions agree, so a healthy fleet stays quiet. The in-tree relay and hub always match (a test fails the build if they drift); the comparison exists for third-party relays and for deployments running a hub and relay from different releases.
+
+Protocol 1.4 adds one optional relay health report: `auth_response` may carry
+`knowledge_loaded: true|false` plus `knowledge_error` when the relay's
+`~/agent.md` is missing or fails the knowledge-export shape check. The hub stores
+that state on the contributor profile and surfaces it on the Operations clanker
+row as either `no knowledge loaded` or `knowledge: unknown` for old relays that
+omit the field. A relay may later send `knowledge_state` with the same two fields
+when its background knowledge refresh changes the loaded state; old hubs ignore
+the new message, and new hubs treat an absent field as unknown rather than false.
 
 ## Custom stylesheets
 

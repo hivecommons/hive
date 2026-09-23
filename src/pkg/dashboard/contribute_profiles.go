@@ -134,6 +134,8 @@ type ContributorProfile struct {
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
 	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
+	KnowledgeLoaded   *bool  `json:"knowledge_loaded,omitempty"`
+	KnowledgeError    string `json:"knowledge_error,omitempty"`
 	// AdvisorModel / AdvisorEffort: the last-reported second model that
 	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
 	AdvisorModel  string `json:"advisor_model,omitempty"`

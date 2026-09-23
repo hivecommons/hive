@@ -13,7 +13,7 @@ import (
 // backward-compatible by construction. Semantic: MAJOR.MINOR where a MINOR bump
 // is purely additive and a MAJOR bump would be a breaking change (none is made
 // here).
-const contributorProtocolVersion = "1.3"
+const contributorProtocolVersion = "1.4"
 
 // Server capability tokens advertised on auth_ok (#2567). Each names a message
 // type or feature this hub supports so a client can adapt without probing. They
@@ -357,6 +357,15 @@ func truncateFailureReason(s string) string {
 		return s
 	}
 	return string(r[:maxFailureReasonLen]) + "… (truncated)"
+}
+
+func boolPtr(v bool) *bool {
+	b := v
+	return &b
+}
+
+func sanitizeKnowledgeError(s string) string {
+	return truncateFailureReason(redactTokens(sanitizeString(s)))
 }
 
 // ContributorTaskRequirements is the hub-derived task-side vocabulary used for

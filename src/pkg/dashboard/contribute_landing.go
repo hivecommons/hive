@@ -1041,6 +1041,7 @@ select.admin-act{min-width:0;max-width:100%%}
    an error state, and must not read as "this clanker is broken/blocked". */
 .clanker-proto{margin-top:3px;font-size:.68rem;color:var(--cc-amber)}
 .clanker-proto.incompatible{color:var(--cc-red)}
+.clanker-knowledge{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(218,54,51,.10);color:var(--cc-amber);border:1px solid rgba(210,153,34,.35)}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
    route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
@@ -4308,6 +4309,12 @@ function protocolLine(p){
   return '<div class="'+cls+'" title="'+esc(p.detail||'')+' The hub does not gate on this — the client is served exactly as before.">'+
     'protocol: client '+shown+' &middot; hub '+esc(p.hub||'')+' &middot; '+label+'</div>';
 }
+function knowledgeLine(c){
+  if(c&&c.knowledge_loaded===true)return '';
+  var known=c&&c.knowledge_loaded===false;
+  var title=c&&c.knowledge_error?(' title="'+esc(c.knowledge_error)+'"'):'';
+  return '<div class="clanker-sub"><span class="clanker-knowledge"'+title+'>'+(known?'no knowledge loaded':'knowledge: unknown')+'</span></div>';
+}
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
@@ -4428,6 +4435,7 @@ function renderClankers(list){
     // meaningful next to the hub's own. Renders nothing when they agree or when
     // the client declared none, so this is silent for a healthy fleet.
     var protoLine=protocolLine(c.protocol);
+    var knowLine=knowledgeLine(c);
     // #2677: this contributor's own label interests, read-only, so the operator
     // gets a fleet-wide view of who prefers what without cross-referencing each
     // profile separately (the data already travels in this same fleet snapshot).
@@ -4490,7 +4498,7 @@ function renderClankers(list){
     var rowTitle=c.role_mismatch?(' title="'+esc(c.role_mismatch)+'"'):'';
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"'+rowTitle+'><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
-      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+failLine+capsLine+protoLine+interestsLine+paneBlock+histLink+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+knowLine+failLine+capsLine+protoLine+interestsLine+paneBlock+histLink+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }

@@ -105,6 +105,8 @@ type FleetClanker struct {
 	CLIBackend      string `json:"cli_backend,omitempty"`
 	Model           string `json:"model,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	KnowledgeLoaded *bool  `json:"knowledge_loaded,omitempty"`
+	KnowledgeError  string `json:"knowledge_error,omitempty"`
 	// AdvisorModel / AdvisorEffort: the second model reviewing this
 	// contributor's work and its effort (hivecommons/hive#7760); omitted for a
 	// single-model backend.
@@ -221,6 +223,8 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			CLIBackend:      c.cliBackend,
 			Model:           c.model,
 			ReasoningEffort: c.reasoningEffort,
+			KnowledgeLoaded: c.knowledgeLoaded,
+			KnowledgeError:  c.knowledgeError,
 			AdvisorModel:    c.advisorModel,
 			AdvisorEffort:   c.advisorEffort,
 			Role:            c.role,

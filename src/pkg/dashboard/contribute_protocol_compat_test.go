@@ -377,6 +377,57 @@ func TestWS_UnversionedPeerIsQuiet(t *testing.T) {
 	if fc.Protocol.Peer != "" {
 		t.Errorf("Peer = %q, want empty for an unversioned client", fc.Protocol.Peer)
 	}
+	if fc.KnowledgeLoaded != nil {
+		t.Errorf("KnowledgeLoaded = %v, want nil/unknown for an old relay", *fc.KnowledgeLoaded)
+	}
+}
+
+func TestWS_KnowledgeLoadedStateIsStoredAndUpdated(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+	token, cid := registerWSUser(t, s, "knowledge-state-user")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	readMsg(t, conn) // challenge
+	loaded := false
+	conn.WriteJSON(WSMessage{
+		Type:              "auth_response",
+		RegistrationToken: token,
+		CLIBackend:        "claude",
+		KnowledgeLoaded:   &loaded,
+		KnowledgeError:    "agent.md missing",
+	})
+	if authOK := readMsg(t, conn); authOK.Type != "auth_ok" {
+		t.Fatalf("expected auth_ok, got %s: %s", authOK.Type, authOK.Reason)
+	}
+
+	fc := waitForClanker(t, s, cid)
+	if fc.KnowledgeLoaded == nil || *fc.KnowledgeLoaded || fc.KnowledgeError != "agent.md missing" {
+		t.Fatalf("fleet knowledge state = loaded:%v err:%q, want false with reason", fc.KnowledgeLoaded, fc.KnowledgeError)
+	}
+	profile, err := loadContributorProfile("knowledge-state-user")
+	if err != nil {
+		t.Fatalf("load profile: %v", err)
+	}
+	if profile.KnowledgeLoaded == nil || *profile.KnowledgeLoaded || profile.KnowledgeError != "agent.md missing" {
+		t.Fatalf("profile knowledge state = loaded:%v err:%q, want false with reason", profile.KnowledgeLoaded, profile.KnowledgeError)
+	}
+
+	loaded = true
+	conn.WriteJSON(WSMessage{Type: "knowledge_state", KnowledgeLoaded: &loaded, KnowledgeError: "stale error"})
+	waitFor(t, func() bool {
+		got := waitForClanker(t, s, cid)
+		return got.KnowledgeLoaded != nil && *got.KnowledgeLoaded && got.KnowledgeError == ""
+	}, "knowledge_state update")
+	fc = waitForClanker(t, s, cid)
+	if fc.KnowledgeLoaded == nil || !*fc.KnowledgeLoaded || fc.KnowledgeError != "" {
+		t.Fatalf("updated fleet knowledge state = loaded:%v err:%q, want true with cleared reason", fc.KnowledgeLoaded, fc.KnowledgeError)
+	}
 }
 
 // TestWS_TopLevelProtocolVersionIsCompared covers the version-only client: a
@@ -427,6 +478,21 @@ func TestOpsPage_ProtocolMismatchIsVisibleAndAdvisory(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("ops page missing %q — an incompatible peer must be visible to the operator, and visibly advisory (#2547)", want)
+		}
+	}
+}
+
+func TestOpsPage_KnowledgeLoadedChipIsVisible(t *testing.T) {
+	body := renderContributePage(t)
+	for _, want := range []string{
+		"function knowledgeLine",
+		"clanker-knowledge",
+		"no knowledge loaded",
+		"knowledge: unknown",
+		"knowledgeLine(c)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ops page missing %q — knowledge-loaded state must be visible on contributor rows (#8343)", want)
 		}
 	}
 }

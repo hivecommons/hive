@@ -1155,7 +1155,7 @@ const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
 // (handled by the token_refresh case below) and left this at 1.1, so the relay
 // under-declared itself for months with nothing to notice. It is now pinned by
 // TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
-const RELAY_PROTOCOL_VERSION = '1.3';
+const RELAY_PROTOCOL_VERSION = '1.4';
 
 // RELAY_CAPABILITIES is this relay's OUTBOUND capability set — the mirror of the
 // hub's server_capabilities (kubestellar/hive#6954). It is DECLARED to the hub in
@@ -1173,6 +1173,44 @@ const RELAY_PROTOCOL_VERSION = '1.3';
 // bumped here and stays in step with the hub, keeping
 // TestRelayProtocolVersionMatchesHub honest.
 const RELAY_CAPABILITIES = ['quota_preflight_v1', 'run-stage'];
+
+const KNOWLEDGE_AGENT_MD = process.env.HIVE_AGENT_MD || path.join(process.env.HOME || require('os').homedir() || process.cwd(), 'agent.md');
+const KNOWLEDGE_STATE_POLL_MS = Number(process.env.HIVE_KNOWLEDGE_STATE_POLL_MS || (RELAY_TEST_TIMING ? 200 : 30000));
+const KNOWLEDGE_ERROR_MAX = 500;
+
+function boundKnowledgeError(reason) {
+  reason = String(reason || '').replace(/\s+/g, ' ').trim();
+  return reason.length > KNOWLEDGE_ERROR_MAX ? `${reason.slice(0, KNOWLEDGE_ERROR_MAX)}…` : reason;
+}
+
+function knowledgeExportLooksValid(file) {
+  let text;
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size <= 0) return { ok: false, reason: `${file} is absent or empty` };
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return { ok: false, reason: `${file} is not readable: ${e.message}` };
+  }
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== '# Agent Knowledge') return { ok: false, reason: `${file} is not a knowledge export (expected first line "# Agent Knowledge")` };
+  if (!lines.includes('This file is auto-generated from the hive knowledge base.')) {
+    return { ok: false, reason: `${file} is not a knowledge export (missing generated marker)` };
+  }
+  return { ok: true, reason: '' };
+}
+
+function currentKnowledgeState() {
+  const valid = knowledgeExportLooksValid(KNOWLEDGE_AGENT_MD);
+  return {
+    knowledge_loaded: !!valid.ok,
+    knowledge_error: valid.ok ? '' : boundKnowledgeError(valid.reason),
+  };
+}
+
+function knowledgeStateChanged(a, b) {
+  return !a || !b || a.knowledge_loaded !== b.knowledge_loaded || a.knowledge_error !== b.knowledge_error;
+}
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -1721,6 +1759,28 @@ function sendTo(hub, msg) {
 function send(msg) {
   sendTo((currentTask && currentTask._hub) || hubs[activeHubIndex], msg);
 }
+
+let lastKnowledgeState = null;
+function knowledgeStateFrame(state) {
+  return {
+    type: 'knowledge_state',
+    seq: nextSeq(),
+    knowledge_loaded: state.knowledge_loaded,
+    knowledge_error: state.knowledge_error || undefined,
+  };
+}
+
+function broadcastKnowledgeStateIfChanged() {
+  const state = currentKnowledgeState();
+  if (!knowledgeStateChanged(lastKnowledgeState, state)) return;
+  lastKnowledgeState = state;
+  for (const hub of hubs) {
+    if (hub && hub.authenticated) sendTo(hub, knowledgeStateFrame(state));
+  }
+}
+
+let knowledgeStateTimer = setInterval(broadcastKnowledgeStateIfChanged, KNOWLEDGE_STATE_POLL_MS);
+if (typeof knowledgeStateTimer.unref === 'function') knowledgeStateTimer.unref();
 
 function currentTaskHub() {
   return (currentTask && currentTask._hub) || hubs[activeHubIndex];
@@ -7169,6 +7229,7 @@ function handleMessage(data, hub) {
         // Multi-session-per-account: additive, optional. An older hub ignores
         // this unknown field and treats the relay as a single session.
         session: AGENT_SESSION || undefined,
+        ...currentKnowledgeState(),
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.
         protocol_version: RELAY_PROTOCOL_VERSION,
@@ -7728,6 +7789,7 @@ function cleanup() {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  if (knowledgeStateTimer) { clearInterval(knowledgeStateTimer); knowledgeStateTimer = null; }
   stopVerdictWatch();
   // A shutdown with a task in flight must run the same task-exit contract as
   // every other way a task stops being ours (kubestellar/hive#5655, #5353).

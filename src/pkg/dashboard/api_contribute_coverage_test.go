@@ -85,13 +85,17 @@ func TestCovH_ContributorProfileStore(t *testing.T) {
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", dir)
 
 	// save + load round trip.
-	p := &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-abc", TrustTier: "newcomer"}
+	loaded := false
+	p := &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-abc", TrustTier: "newcomer", KnowledgeLoaded: &loaded, KnowledgeError: "missing agent.md"}
 	if err := saveContributorProfile(p); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	got, err := loadContributorProfile("alice")
 	if err != nil || got == nil || got.ContributorID != "c-abc" {
 		t.Fatalf("load: %v %+v", err, got)
+	}
+	if got.KnowledgeLoaded == nil || *got.KnowledgeLoaded || got.KnowledgeError != "missing agent.md" {
+		t.Fatalf("knowledge fields did not round-trip: %+v", got)
 	}
 
 	// path-traversal guards.

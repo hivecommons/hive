@@ -92,6 +92,8 @@ type ContributorConnection struct {
 	session         string
 	model           string
 	reasoningEffort string
+	knowledgeLoaded *bool
+	knowledgeError  string
 	// advisorModel / advisorEffort name the SECOND model that reviewed this
 	// contributor's work and the effort it ran at (hivecommons/hive#7760) —
 	// omp's --advisor today; any backend that grows a reviewer role can fill
@@ -273,6 +275,10 @@ type WSMessage struct {
 	// routing authority; Model remains the canonical selection transport.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// KnowledgeLoaded is optional on auth_response/knowledge_state: nil means an
+	// old relay did not report whether ~/agent.md loaded, not false.
+	KnowledgeLoaded *bool  `json:"knowledge_loaded,omitempty"`
+	KnowledgeError  string `json:"knowledge_error,omitempty"`
 	// Session is an OPTIONAL client-declared session label (hivecommons/hive:
 	// multi-session-per-account). One GitHub account has ONE contributor profile
 	// (one ContributorID, one auth token, one trust tier), but a contributor may
@@ -1885,6 +1891,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleTaskComplete(msg)
 		case "task_failed":
 			s.handleTaskFailed(msg)
+		case "knowledge_state":
+			s.handleKnowledgeState(msg)
 		case "pong":
 			if s.contributor != nil {
 				s.contributor.mu.Lock()
@@ -2221,6 +2229,16 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	if msg.ReasoningEffort != "" {
 		profile.ReasoningEffort = msg.ReasoningEffort
 	}
+	knowledgeLoaded := msg.KnowledgeLoaded
+	knowledgeError := ""
+	if knowledgeLoaded != nil {
+		profile.KnowledgeLoaded = boolPtr(*knowledgeLoaded)
+		knowledgeError = sanitizeKnowledgeError(msg.KnowledgeError)
+		if *knowledgeLoaded {
+			knowledgeError = ""
+		}
+		profile.KnowledgeError = knowledgeError
+	}
 	// #7760: the advisor pair is client text. It is re-serialized into every
 	// fleet poll and lands in PR trailers, so it is HTML-stripped like every
 	// other stored contributor string AND bounded the way the declared
@@ -2297,6 +2315,8 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		session:         sanitizeSessionLabel(msg.Session),
 		model:           msg.Model,
 		reasoningEffort: msg.ReasoningEffort,
+		knowledgeLoaded: knowledgeLoaded,
+		knowledgeError:  knowledgeError,
 		advisorModel:    advisorModel,
 		advisorEffort:   advisorEffort,
 		role:            requestedRole,
@@ -2388,6 +2408,64 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	go h.heartbeatLoop(s.contributor)
 
 	return false
+}
+
+func (s *wsSession) handleKnowledgeState(msg WSMessage) {
+	if s.contributor == nil || msg.KnowledgeLoaded == nil {
+		return
+	}
+	loaded := *msg.KnowledgeLoaded
+	errText := sanitizeKnowledgeError(msg.KnowledgeError)
+	if loaded {
+		errText = ""
+	}
+
+	c := s.contributor
+	username := ""
+	c.mu.Lock()
+	c.knowledgeLoaded = boolPtr(loaded)
+	c.knowledgeError = errText
+	if c.profile != nil {
+		c.profile.KnowledgeLoaded = boolPtr(loaded)
+		c.profile.KnowledgeError = errText
+		username = c.profile.GitHubUsername
+	}
+	c.mu.Unlock()
+	if username == "" {
+		return
+	}
+	profile, err := saveContributorKnowledgeState(username, loaded, errText)
+	if err != nil {
+		s.h.logger.Warn("[contribute-ws] failed to persist contributor knowledge state",
+			"username", username, "error", err)
+		return
+	}
+	if profile != nil {
+		c.mu.Lock()
+		if c.profile != nil && c.profile.GitHubUsername == username {
+			c.profile = profile
+		}
+		c.mu.Unlock()
+	}
+}
+
+func saveContributorKnowledgeState(username string, loaded bool, errText string) (*ContributorProfile, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		profile, err := loadContributorProfile(username)
+		if err != nil || profile == nil {
+			return profile, err
+		}
+		profile.KnowledgeLoaded = boolPtr(loaded)
+		profile.KnowledgeError = errText
+		if err := saveContributorProfile(profile); err != nil {
+			if errors.Is(err, errProfileConflict) {
+				continue
+			}
+			return nil, err
+		}
+		return profile, nil
+	}
+	return nil, errProfileConflict
 }
 
 // handleReady is the dispatch phase: a contributor with no task asks for work
