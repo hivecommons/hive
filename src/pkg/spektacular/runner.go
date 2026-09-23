@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -46,6 +47,8 @@ const (
 const (
 	verbStatus = "status"
 	verbExport = "export"
+	verbFile   = "file"
+	verbRead   = "read"
 )
 
 // Error codes the runner recognises in the JSON error envelope printed with
@@ -202,7 +205,9 @@ func (s ArtifactStatus) Final() bool { return s.DocumentStatus == DocumentFinal 
 // plan-local id (T1, T2, ...), DependsOn references other refs, Execution is
 // agent_suitable or human_required (empty means agent_suitable).
 type PlanTask struct {
+	ID        string   `json:"id,omitempty"`
 	Ref       string   `json:"ref"`
+	Repo      string   `json:"repo,omitempty"`
 	Title     string   `json:"title"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	Execution string   `json:"execution,omitempty"`
@@ -373,7 +378,7 @@ func (r *Runner) Status(ctx context.Context, kind, name string) (ArtifactStatus,
 	return st, nil
 }
 
-// ExportPlan invokes `spektacular plan export <name>` and returns the
+// ExportPlan invokes `spektacular plan export <name> --format json` and returns the
 // structured task list of a final plan. It is the one verb beyond #8301 the
 // runner needs and is still an open ask on the Spektacular side; the fixture
 // encodes its assumed shape.
@@ -382,7 +387,7 @@ func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
 	if name == "" {
 		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
 	}
-	out, execErr := r.exec(ctx, []string{KindPlan, verbExport, name})
+	out, execErr := r.exec(ctx, []string{KindPlan, verbExport, name, "--format", "json"})
 	if execErr != nil {
 		return Plan{}, classifyExecError(KindPlan, name, out, execErr)
 	}
@@ -390,18 +395,186 @@ func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
 	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
 		return Plan{}, classifyEnvelope(KindPlan, name, env, message)
 	}
+	plan, err := parsePlanJSON(name, trimmed, "plan export")
+	if err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+// ExportPlanWithFallback preserves `spektacular plan export <name> --format json` as the
+// primary task-list source. Until upstream ships that verb, an
+// unknown-subcommand response falls back to Hive's documented on-disk plan
+// artifact convention: `<name>/tasks.json` first, then `<name>/plan.md`, both
+// read through `spektacular plan file read` so the CLI still owns store
+// access.
+func (r *Runner) ExportPlanWithFallback(ctx context.Context, name string) (Plan, error) {
+	plan, err := r.ExportPlan(ctx, name)
+	if err == nil || !planExportUnavailable(err) {
+		return plan, err
+	}
+	fallback, fallbackErr := r.ExportPlanFallback(ctx, name)
+	if fallbackErr == nil {
+		return fallback, nil
+	}
+	return Plan{}, fmt.Errorf("%w; fallback failed: %v", err, fallbackErr)
+}
+
+// ExportPlanFallback reads the Hive-side task-list convention from a
+// Spektacular plan artifact. `<name>/tasks.json` uses the same task graph JSON
+// as the requested export verb. `<name>/plan.md` may carry lines like
+// `- [T1] Title (repo: owner/repo) (depends: T0) [agent_suitable]`.
+func (r *Runner) ExportPlanFallback(ctx context.Context, name string) (Plan, error) {
+	name = ArtifactKey(name)
+	if name == "" {
+		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
+	}
+	tasksPath := name + "/tasks.json"
+	out, err := r.readPlanFile(ctx, name, tasksPath)
+	if err == nil {
+		return parsePlanJSON(name, bytes.TrimSpace(out), "tasks.json")
+	}
+	if !isNotFound(err) {
+		return Plan{}, err
+	}
+	planPath := name + "/plan.md"
+	out, err = r.readPlanFile(ctx, name, planPath)
+	if err != nil {
+		return Plan{}, err
+	}
+	return ParsePlanMarkdown(name, out)
+}
+
+func (r *Runner) readPlanFile(ctx context.Context, name, path string) ([]byte, error) {
+	out, execErr := r.exec(ctx, []string{KindPlan, verbFile, verbRead, path})
+	if execErr != nil {
+		return nil, classifyExecError(KindPlan, name, out, execErr)
+	}
+	trimmed := bytes.TrimSpace(out)
+	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
+		return nil, classifyEnvelope(KindPlan, name, env, message)
+	}
+	return out, nil
+}
+
+func parsePlanJSON(name string, data []byte, source string) (Plan, error) {
 	var plan Plan
-	if err := json.Unmarshal(trimmed, &plan); err != nil {
-		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: "plan export is not valid JSON", Err: err}
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: source + " is not valid JSON", Err: err}
 	}
 	if ArtifactKey(plan.Name) != name {
-		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: fmt.Sprintf("export name %q does not match requested %q", plan.Name, name)}
+		if strings.TrimSpace(plan.Name) != "" {
+			return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: fmt.Sprintf("%s name %q does not match requested %q", source, plan.Name, name)}
+		}
+		plan.Name = name
 	}
 	plan.Name = name
 	if len(plan.Tasks) == 0 {
-		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: "plan export carries no tasks"}
+		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: source + " carries no tasks"}
 	}
 	return plan, nil
+}
+
+var markdownTaskLine = regexp.MustCompile(`^\s*(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?(?:\[([^\]]+)\]\s+)?(.+?)\s*$`)
+
+// ParsePlanMarkdown parses Hive's plan.md fallback convention into the same
+// structured plan shape as `plan export`. It intentionally accepts only a
+// small task-list subset so accidental prose does not become implement work.
+func ParsePlanMarkdown(name string, data []byte) (Plan, error) {
+	name = ArtifactKey(name)
+	if name == "" {
+		return Plan{}, &ContractError{Kind: KindPlan, Reason: "empty artifact name"}
+	}
+	body := stripFrontmatter(data)
+	var tasks []PlanTask
+	for _, line := range strings.Split(string(body), "\n") {
+		m := markdownTaskLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		title := strings.TrimSpace(m[2])
+		execution := trailingBracketValue(&title)
+		depends := parenListValue(&title, "depends")
+		repo := parenValue(&title, "repo")
+		title = strings.TrimSpace(title)
+		if title == "" {
+			continue
+		}
+		ref := strings.TrimSpace(m[1])
+		if ref == "" {
+			ref = fmt.Sprintf("T%d", len(tasks)+1)
+		}
+		tasks = append(tasks, PlanTask{Ref: ref, ID: ref, Title: title, Repo: repo, DependsOn: depends, Execution: execution})
+	}
+	if len(tasks) == 0 {
+		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: "plan.md carries no task-list entries"}
+	}
+	return Plan{Kind: KindPlan, Name: name, Tasks: tasks}, nil
+}
+
+func stripFrontmatter(data []byte) []byte {
+	text := string(data)
+	if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
+		return data
+	}
+	lines := strings.SplitAfter(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return []byte(strings.Join(lines[i+1:], ""))
+		}
+	}
+	return data
+}
+
+func trailingBracketValue(title *string) string {
+	s := strings.TrimSpace(*title)
+	if !strings.HasSuffix(s, "]") {
+		return ""
+	}
+	start := strings.LastIndex(s, "[")
+	if start < 0 {
+		return ""
+	}
+	value := strings.TrimSpace(s[start+1 : len(s)-1])
+	switch value {
+	case "agent_suitable", "human_required":
+		*title = strings.TrimSpace(s[:start])
+		return value
+	default:
+		return ""
+	}
+}
+
+func parenValue(title *string, key string) string {
+	s := *title
+	needle := "(" + key + ":"
+	start := strings.LastIndex(strings.ToLower(s), needle)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(s[start:], ")")
+	if end < 0 {
+		return ""
+	}
+	end += start
+	value := strings.TrimSpace(s[start+len(needle) : end])
+	*title = strings.TrimSpace(s[:start] + s[end+1:])
+	return value
+}
+
+func parenListValue(title *string, key string) []string {
+	value := parenValue(title, key)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // RenderTaskList turns an exported plan into the ordered task-list text that
@@ -412,9 +585,15 @@ func RenderTaskList(plan Plan) string {
 	for i, task := range plan.Tasks {
 		ref := strings.TrimSpace(task.Ref)
 		if ref == "" {
+			ref = strings.TrimSpace(task.ID)
+		}
+		if ref == "" {
 			ref = fmt.Sprintf("T%d", i+1)
 		}
 		fmt.Fprintf(&b, "%d. [%s] %s", i+1, ref, strings.TrimSpace(task.Title))
+		if repo := strings.TrimSpace(task.Repo); repo != "" {
+			fmt.Fprintf(&b, " [repo:%s]", repo)
+		}
 		if len(task.DependsOn) > 0 {
 			fmt.Fprintf(&b, " (depends: %s)", strings.Join(task.DependsOn, ", "))
 		}
@@ -462,4 +641,25 @@ func classifyEnvelope(kind, name string, env errorEnvelope, message string) erro
 		return &NotFoundError{Kind: kind, Name: name, Message: message}
 	}
 	return &VerbError{Kind: kind, Name: name, Code: env.Code, Message: message}
+}
+
+func isNotFound(err error) bool {
+	var nf *NotFoundError
+	return errors.As(err, &nf)
+}
+
+func planExportUnavailable(err error) bool {
+	var ve *VerbError
+	if errors.As(err, &ve) {
+		code := strings.ToLower(ve.Code)
+		msg := strings.ToLower(ve.Message)
+		return code == "unknown_subcommand" || code == "unknown_command" ||
+			(strings.Contains(msg, "unknown") && strings.Contains(msg, "export"))
+	}
+	var ce *ContractError
+	if errors.As(err, &ce) && ce.Err != nil {
+		msg := strings.ToLower(ce.Err.Error())
+		return strings.Contains(msg, "unknown") && strings.Contains(msg, "export")
+	}
+	return false
 }

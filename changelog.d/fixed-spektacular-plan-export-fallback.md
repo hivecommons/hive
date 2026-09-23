@@ -1,0 +1,1 @@
+- Allow final Spektacular plans to advance through a documented tasks.json/plan.md fallback while the upstream plan export verb is unavailable.

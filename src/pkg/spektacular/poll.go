@@ -276,10 +276,10 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	state.seenFinal = true
 	var plan *Plan
 	if st.Stage == StagePlan {
-		exported, err := r.ExportPlan(ctx, st.Artifact)
+		exported, err := r.ExportPlanWithFallback(ctx, st.Artifact)
 		if err != nil {
 			res.Errors++
-			r.logger().Warn("[spektacular] plan is final but export failed; not advancing",
+			r.logger().Warn("[spektacular] plan is final but task-list import failed; not advancing",
 				"run", st.RunKey, "artifact", st.Artifact, "error", err)
 			return
 		}

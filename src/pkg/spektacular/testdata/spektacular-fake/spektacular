@@ -21,7 +21,8 @@
 #     missing artifact -> non-zero exit and the JSON error envelope
 #        {"error":true,"code":"artifact_not_found","message":"...",
 #         "resource":"<name>","next_action":"..."} on stdout
-#   spektacular plan export <name>   (still an open ask on the Spektacular
+#   spektacular plan export <name> --format json
+#                                    (still an open ask on the Spektacular
 #                                     side; shape assumed)
 #     -> {"error":false,"kind":"plan","name",
 #         "tasks":[{"ref","title","depends_on","execution"}]}
@@ -32,7 +33,7 @@
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
 
-kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"
+kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"; format="${5:-}"
 scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
 state="${SPEK_FAKE_STATE:?SPEK_FAKE_STATE is required}"
 
@@ -49,7 +50,7 @@ usage_error() {
 # The real CLI has no --json flag (its only global flag is --fields); an
 # unknown flag is a usage error, which is what a caller still passing it
 # would see.
-if [ -n "$extra" ]; then
+if [ -n "$extra" ] && { [ "$verb" != "export" ] || [ "$extra" != "--format" ] || [ "$format" != "json" ]; }; then
   usage_error "unknown flag: $extra"
 fi
 

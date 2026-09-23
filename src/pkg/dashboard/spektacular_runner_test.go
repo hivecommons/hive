@@ -61,8 +61,8 @@ func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 
 func (e *spekExec) exec(_ context.Context, args []string) ([]byte, error) {
 	e.calls++
-	if len(args) > 3 {
-		// The CLI has no --json flag; a fourth argument is a usage error.
+	if len(args) > 3 && !(len(args) == 5 && args[1] == "export" && args[3] == "--format" && args[4] == "json") {
+		// The CLI has no --json flag; unexpected extra status args are usage errors.
 		return []byte(`{"error":true,"code":"usage","message":"unknown flag: ` + args[3] + `"}`), errors.New("exit status 64")
 	}
 	if len(args) >= 2 && args[1] == "export" {

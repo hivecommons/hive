@@ -135,18 +135,61 @@ live lease.
 When a `plan` reaches `final` the runner runs
 
 ```
-spektacular plan export <name>
+spektacular plan export <name> --format json
 ```
 
-(still an open ask on the Spektacular side; see the contract section) and
+(requested upstream in
+[spektacular#50](https://github.com/hivecommons/spektacular/issues/50)) and
 admits the returned tasks through `planning.DecomposeFromOutput` with
 `AutoApprove: false`. Spektacular's structure is rendered verbatim into the
 planner's task-list shape (`[T1] title (depends: T2) [agent_suitable]`); no
-model is asked to redecompose an already-structured plan. The epic is found by
-its `run_key` metadata (or created with it, bound to the run key as its external
-ref). Its plan is a DRAFT: the run-stage work source lists `implement` only
-after `ApprovePlan` (`POST /api/plans/{id}/approve`) sets `plan_status` to
-`approved`. A run whose epic already carries a plan is not re-imported.
+model is asked to redecompose an already-structured plan.
+
+Until that export verb exists, Hive falls back only when export is unavailable
+(for example `unknown_subcommand` for `plan export`). The fallback reads the
+plan artifact through Spektacular's existing store boundary:
+
+```
+spektacular plan file read <name>/tasks.json
+spektacular plan file read <name>/plan.md
+```
+
+The preferred fallback file is `<name>/tasks.json`, using the same shape Hive
+asked upstream to standardize:
+
+```json
+{
+  "kind": "plan",
+  "name": "000057_git-commit",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add encoding helpers",
+      "repo": "hivecommons/hive",
+      "depends_on": ["T0"],
+      "execution": "agent_suitable"
+    }
+  ]
+}
+```
+
+If `tasks.json` is absent, Hive parses a deliberately small `plan.md` task-list
+convention from the same plan directory:
+
+```markdown
+- [T1] Add encoding helpers (repo: hivecommons/hive) [agent_suitable]
+- [T2] Wire helpers into the parser (depends: T1)
+```
+
+`repo`, `depends`, and the trailing execution marker are optional; a missing
+task id is assigned in order (`T1`, `T2`, ...). If neither fallback yields a
+task list, the final plan stays parked and the runner logs the import error.
+
+The epic is found by its `run_key` metadata (or created with it, bound to the
+run key as its external ref). Its plan is a DRAFT: the run-stage work source
+lists `implement` only after `ApprovePlan` (`POST /api/plans/{id}/approve`)
+sets `plan_status` to `approved`. A run whose epic already carries a plan is
+not re-imported.
 
 ## Defensive handling of the open questions
 
@@ -234,12 +277,12 @@ Changed:
 
 Still open:
 
-10. `spektacular plan export <name>` printing `{kind: "plan", name, tasks:
-    [{ref, title, depends_on, execution}]}` for a final plan is still an
-    assumption: the verb does not exist yet and remains an open ask on the
-    Spektacular side. It is the only verb the runner needs beyond #8301.
-    Until it lands, a plan that reaches `final` logs an export failure and
-    does not advance.
+10. `spektacular plan export <name> --format json` printing `{kind: "plan",
+    name, tasks: [{id, title, repo, depends_on, execution}]}` for a final plan
+    is still an upstream ask
+    ([spektacular#50](https://github.com/hivecommons/spektacular/issues/50)).
+    Until it lands, Hive advances final plans through the documented
+    `<name>/tasks.json` or `<name>/plan.md` fallback contract above.
 
 Scenarios: `draft-final` (draft, draft, final), `never-final`,
 `final-then-draft`, `final-no-updated-at` (final with the `updated_at`

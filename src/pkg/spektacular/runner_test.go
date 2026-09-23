@@ -40,6 +40,7 @@ type scriptedExec struct {
 	statuses   []string
 	exportJSON string
 	exportErr  error
+	files      map[string]string
 	calls      [][]string
 	idx        int
 }
@@ -50,9 +51,20 @@ func (s *scriptedExec) exec(_ context.Context, args []string) ([]byte, error) {
 	s.calls = append(s.calls, append([]string(nil), args...))
 	if len(args) >= 2 && args[1] == verbExport {
 		if s.exportErr != nil {
+			if s.exportJSON != "" {
+				return []byte(s.exportJSON), s.exportErr
+			}
 			return nil, s.exportErr
 		}
 		return []byte(s.exportJSON), nil
+	}
+	if len(args) >= 4 && args[0] == KindPlan && args[1] == verbFile && args[2] == verbRead {
+		if s.files != nil {
+			if out, ok := s.files[args[3]]; ok {
+				return []byte(out), nil
+			}
+		}
+		return []byte(`{"error":true,"code":"not_found","message":"file ` + args[3] + ` not found","resource":"` + args[3] + `"}`), errors.New("exit status 1")
 	}
 	if len(s.statuses) == 0 {
 		return nil, errors.New("no scripted status")
@@ -100,7 +112,7 @@ func statusJSON(kind, name string, status DocumentStatus) string {
 // notFoundJSON is the #45 error envelope for a missing artifact.
 const notFoundJSON = `ERR:{"error":true,"code":"artifact_not_found","message":"plan artifact \"x\" was not found","resource":"x","next_action":"run ` + "`spektacular plan file list`" + ` to see available plans"}`
 
-const exportJSON = `{"kind":"plan","name":"` + testRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"]},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}`
+const exportJSON = `{"kind":"plan","name":"` + testRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers","repo":"hivecommons/hive","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"]},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}`
 
 // fakeRegistry is an in-memory lease registry with the same generation and
 // expiry rules the dashboard applies.
@@ -436,6 +448,50 @@ func TestExportPlanAndRenderTaskList(t *testing.T) {
 	}
 }
 
+func TestPlanFallbackParsers(t *testing.T) {
+	jsonPlan, err := parsePlanJSON(testRunKey, []byte(`{"tasks":[{"id":"T1","title":"Add API","repo":"hivecommons/hive"},{"id":"T2","title":"Wire runner","depends_on":["T1"]}]}`), "tasks.json")
+	if err != nil {
+		t.Fatalf("parsePlanJSON: %v", err)
+	}
+	if jsonPlan.Name != testRunKey || jsonPlan.Tasks[0].Ref != "" || jsonPlan.Tasks[0].ID != "T1" || jsonPlan.Tasks[0].Repo != "hivecommons/hive" {
+		t.Fatalf("json plan = %+v", jsonPlan)
+	}
+	rendered := RenderTaskList(jsonPlan)
+	if !strings.Contains(rendered, "[T1] Add API") || !strings.Contains(rendered, "[T2] Wire runner (depends: T1)") {
+		t.Fatalf("rendered json-id plan = %q", rendered)
+	}
+
+	md := []byte(`---
+document_status: final
+---
+
+## Tasks
+
+- [T1] Add API (repo: hivecommons/hive) [agent_suitable]
+2. [T2] Wire runner (depends: T1) [human_required]
+- [ ] Write docs (depends: T1, T2)
+`)
+	plan, err := ParsePlanMarkdown(testRunKey+"/plan.md", md)
+	if err != nil {
+		t.Fatalf("ParsePlanMarkdown: %v", err)
+	}
+	if plan.Name != testRunKey || len(plan.Tasks) != 3 {
+		t.Fatalf("markdown plan = %+v", plan)
+	}
+	if plan.Tasks[0].Ref != "T1" || plan.Tasks[0].Repo != "hivecommons/hive" || plan.Tasks[0].Execution != "agent_suitable" {
+		t.Fatalf("T1 = %+v", plan.Tasks[0])
+	}
+	if plan.Tasks[1].Execution != "human_required" || len(plan.Tasks[1].DependsOn) != 1 || plan.Tasks[1].DependsOn[0] != "T1" {
+		t.Fatalf("T2 = %+v", plan.Tasks[1])
+	}
+	if plan.Tasks[2].Ref != "T3" || len(plan.Tasks[2].DependsOn) != 2 {
+		t.Fatalf("T3 = %+v", plan.Tasks[2])
+	}
+	if _, err := ParsePlanMarkdown(testRunKey, []byte("# prose only")); err == nil {
+		t.Fatal("prose-only plan.md parsed as tasks")
+	}
+}
+
 // --- Tick: the poll loop --------------------------------------------------
 
 func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
@@ -568,6 +624,13 @@ func TestTick_PlanFinalImportsStructuredPlanAsDraft(t *testing.T) {
 	if len(result.Children) != 3 {
 		t.Fatalf("children = %d", len(result.Children))
 	}
+	first, err := store.Get(result.Children[0].ID)
+	if err != nil {
+		t.Fatalf("first child: %v", err)
+	}
+	if first.Meta(planning.MetaPlanRepo) != "hivecommons/hive" {
+		t.Fatalf("plan_repo = %q, want hivecommons/hive", first.Meta(planning.MetaPlanRepo))
+	}
 	got, _ := store.Get(epic.ID)
 	if got.Meta(planning.MetaPlanStatus) != planning.PlanStatusDraft {
 		t.Fatalf("plan_status = %q, want draft until ApprovePlan", got.Meta(planning.MetaPlanStatus))
@@ -578,6 +641,59 @@ func TestTick_PlanFinalImportsStructuredPlanAsDraft(t *testing.T) {
 	got, _ = store.Get(epic.ID)
 	if got.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved {
 		t.Fatal("ApprovePlan did not approve")
+	}
+}
+
+func TestTick_PlanFinalFallsBackWhenExportVerbIsMissing(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	ex := &scriptedExec{
+		statuses:   []string{statusJSON(KindPlan, testRunKey, DocumentFinal)},
+		exportJSON: `{"error":true,"code":"unknown_subcommand","message":"unknown subcommand \"export\" for \"spektacular plan\""}`,
+		exportErr:  errors.New("exit status 1"),
+		files: map[string]string{
+			testRunKey + "/tasks.json": `{"name":"` + testRunKey + `","tasks":[{"id":"T1","title":"Read task JSON","repo":"hivecommons/hive"},{"id":"T2","title":"Advance plan","depends_on":["T1"]}]}`,
+		},
+	}
+	r := newRunner(reg, ex, &escalations{})
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("plan final fallback tick = %+v", res)
+	}
+	if reg.stage.Stage != StageImplement {
+		t.Fatalf("stage after fallback = %q, want implement", reg.stage.Stage)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 2 || reg.plans[0].Tasks[0].ID != "T1" || reg.plans[0].Tasks[0].Repo != "hivecommons/hive" {
+		t.Fatalf("fallback plan = %+v", reg.plans)
+	}
+	var sawExport, sawTasks bool
+	for _, call := range ex.calls {
+		if strings.Join(call, " ") == "plan export "+testRunKey+" --format json" {
+			sawExport = true
+		}
+		if strings.Join(call, " ") == "plan file read "+testRunKey+"/tasks.json" {
+			sawTasks = true
+		}
+	}
+	if !sawExport || !sawTasks {
+		t.Fatalf("calls = %+v, want export then tasks.json fallback", ex.calls)
+	}
+}
+
+func TestTick_PlanFinalFallsBackToPlanMarkdown(t *testing.T) {
+	reg := newFakeRegistry(StagePlan)
+	ex := &scriptedExec{
+		statuses:   []string{statusJSON(KindPlan, testRunKey, DocumentFinal)},
+		exportJSON: `{"error":true,"code":"unknown_subcommand","message":"unknown subcommand \"export\" for \"spektacular plan\""}`,
+		exportErr:  errors.New("exit status 1"),
+		files: map[string]string{
+			testRunKey + "/plan.md": "- [T1] Add markdown fallback [agent_suitable]\n- [T2] Advance implement (depends: T1)\n",
+		},
+	}
+	r := newRunner(reg, ex, &escalations{})
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("plan.md fallback tick = %+v", res)
+	}
+	if len(reg.plans) != 1 || len(reg.plans[0].Tasks) != 2 || reg.plans[0].Tasks[1].DependsOn[0] != "T1" {
+		t.Fatalf("markdown fallback plan = %+v", reg.plans)
 	}
 }
 
