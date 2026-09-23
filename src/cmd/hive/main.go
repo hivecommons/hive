@@ -1471,9 +1471,10 @@ func (b *boot) wireBootClosures() {
 					Scope:     bd.Scope,
 				}, nil
 			},
-			// #8361: which external-execution engines this build links; the
-			// Flue adapter registers itself only under the extwork_flue tag.
-			ExternalExec: extworkStatus{registry: extwork.DefaultRegistry},
+			// #8361/#6899: external-execution linked-engine status plus
+			// lazy dispatch/peer attachment. Adapters register only under
+			// their extwork_* build tags.
+			ExternalExec: &extworkStatus{registry: extwork.DefaultRegistry, srv: b.dashSrv, cfg: b.cfg, now: time.Now},
 			CELTrigger: func(ctx context.Context, ev celtrigger.NormalizedEvent, reason string) {
 				celTriggerKickAgents(ctx, celEngineFor(b.cfg, b.logger), ev, b.cfg, b.gov, b.agentMgr.IsPaused, b.agentMgr, reason, b.logger)
 			},

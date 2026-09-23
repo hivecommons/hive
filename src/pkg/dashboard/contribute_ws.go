@@ -204,8 +204,14 @@ type ContributorConnection struct {
 	// explicit-accept paths cannot both fire. Reset when a task ends. This is the
 	// single flag that makes "the credential arrived AFTER acceptance" observable
 	// and idempotent.
-	credentialDelivered bool
-	mu                  sync.Mutex
+	credentialDelivered      bool
+	pendingExternalTask      *ExternalExecutionTask
+	externalMu               sync.Mutex
+	externalRecv             chan ExternalExecutionMessage
+	externalCancel           context.CancelFunc
+	externalIncarnation      string
+	externalWorkbenchVersion string
+	mu                       sync.Mutex
 	// writeMu serializes ALL writes to this connection's ws. gorilla/websocket
 	// forbids concurrent writes to one connection ("Applications are responsible
 	// for ensuring that no more than one goroutine calls the write methods
@@ -250,6 +256,193 @@ func (c *ContributorConnection) send(msg WSMessage) error {
 	return c.ws.WriteJSON(msg)
 }
 
+func (c *ContributorConnection) Identity() string {
+	return identityOf(c)
+}
+
+func (c *ContributorConnection) Incarnation() string {
+	if c == nil {
+		return ""
+	}
+	c.externalMu.Lock()
+	defer c.externalMu.Unlock()
+	return c.externalIncarnation
+}
+
+func (c *ContributorConnection) WorkbenchVersion() string {
+	if c == nil {
+		return ""
+	}
+	c.externalMu.Lock()
+	defer c.externalMu.Unlock()
+	return c.externalWorkbenchVersion
+}
+
+func (c *ContributorConnection) ExternalCapabilities() []string {
+	if c == nil || c.capabilities == nil {
+		return nil
+	}
+	return append([]string(nil), c.capabilities.RelayCapabilities...)
+}
+
+func (c *ContributorConnection) SendExternal(ctx context.Context, msg ExternalExecutionMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.send(wsMessageFromExternal(msg))
+}
+
+func (c *ContributorConnection) RecvExternal(ctx context.Context) (ExternalExecutionMessage, error) {
+	c.externalMu.Lock()
+	ch := c.externalRecv
+	c.externalMu.Unlock()
+	if ch == nil {
+		return ExternalExecutionMessage{}, fmt.Errorf("external peer not attached")
+	}
+	select {
+	case <-ctx.Done():
+		return ExternalExecutionMessage{}, ctx.Err()
+	case msg, ok := <-ch:
+		if !ok {
+			return ExternalExecutionMessage{}, fmt.Errorf("external peer detached")
+		}
+		return msg, nil
+	}
+}
+
+func (c *ContributorConnection) CloseExternal() error {
+	c.stopExternalPeer()
+	return nil
+}
+
+func (c *ContributorConnection) startExternalPeer(ctx context.Context, h *ContributeWSHub, incarnation, version string) {
+	if c == nil {
+		return
+	}
+	c.externalMu.Lock()
+	if c.externalCancel != nil {
+		c.externalCancel()
+	}
+	peerCtx, cancel := context.WithCancel(ctx)
+	c.externalRecv = make(chan ExternalExecutionMessage, 64)
+	c.externalCancel = cancel
+	c.externalIncarnation = incarnation
+	c.externalWorkbenchVersion = version
+	c.externalMu.Unlock()
+	if err := h.attachExternalExecPeer(peerCtx, c); err != nil {
+		h.logger.Warn("[contribute-ws] external peer attach refused", "username", contributorUsername(c), "error", err)
+		c.stopExternalPeer()
+	}
+}
+
+func (c *ContributorConnection) stopExternalPeer() {
+	if c == nil {
+		return
+	}
+	c.externalMu.Lock()
+	cancel := c.externalCancel
+	c.externalCancel = nil
+	c.externalRecv = nil
+	c.externalIncarnation = ""
+	c.externalWorkbenchVersion = ""
+	c.externalMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (c *ContributorConnection) deliverExternal(msg WSMessage) error {
+	c.externalMu.Lock()
+	ch := c.externalRecv
+	c.externalMu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("external peer not attached")
+	}
+	select {
+	case ch <- externalMessageFromWS(msg):
+		return nil
+	default:
+		return fmt.Errorf("external peer receive buffer full")
+	}
+}
+
+func externalMessageFromWS(msg WSMessage) ExternalExecutionMessage {
+	out := ExternalExecutionMessage{
+		Type:             msg.Type,
+		Seq:              msg.Seq,
+		ContributorID:    msg.ContributorID,
+		WorkbenchVersion: msg.WorkbenchVersion,
+		Incarnation:      msg.Incarnation,
+		ExecutionKey:     msg.ExecutionKey,
+		TaskID:           msg.TaskID,
+		TaskGen:          msg.TaskGen,
+		WorkKey:          msg.WorkKey,
+		Stage:            msg.Stage,
+		Summary:          msg.Summary,
+		Reason:           msg.Reason,
+		State:            msg.State,
+		Detail:           msg.Detail,
+		RemoteRunID:      msg.RemoteRunID,
+		Deduplicated:     msg.Deduplicated,
+		Acknowledged:     msg.Acknowledged,
+		Stopped:          msg.Stopped,
+		Payload:          msg.Payload,
+	}
+	if msg.Capabilities != nil {
+		out.RelayCapabilities = append([]string(nil), msg.Capabilities.RelayCapabilities...)
+	}
+	if msg.Artifact != nil {
+		out.Artifact = &ExternalExecutionArtifact{
+			Path:   msg.Artifact.Path,
+			Digest: msg.Artifact.Digest,
+			Size:   msg.Artifact.Size,
+			Body:   append([]byte(nil), msg.Artifact.Body...),
+		}
+	}
+	return out
+}
+
+func wsMessageFromExternal(msg ExternalExecutionMessage) WSMessage {
+	out := WSMessage{
+		Type:             msg.Type,
+		Seq:              msg.Seq,
+		ContributorID:    msg.ContributorID,
+		WorkbenchVersion: msg.WorkbenchVersion,
+		Incarnation:      msg.Incarnation,
+		ExecutionKey:     msg.ExecutionKey,
+		TaskID:           msg.TaskID,
+		TaskGen:          msg.TaskGen,
+		WorkKey:          msg.WorkKey,
+		Stage:            msg.Stage,
+		Summary:          msg.Summary,
+		Reason:           msg.Reason,
+		State:            msg.State,
+		Detail:           msg.Detail,
+		RemoteRunID:      msg.RemoteRunID,
+		Deduplicated:     msg.Deduplicated,
+		Acknowledged:     msg.Acknowledged,
+		Stopped:          msg.Stopped,
+		Payload:          msg.Payload,
+	}
+	if len(msg.RelayCapabilities) > 0 {
+		out.Capabilities = &ContributorCapabilities{RelayCapabilities: append([]string(nil), msg.RelayCapabilities...)}
+	}
+	if msg.Artifact != nil {
+		out.Artifact = &struct {
+			Path   string `json:"path"`
+			Digest string `json:"digest"`
+			Size   int64  `json:"size"`
+			Body   []byte `json:"body"`
+		}{
+			Path:   msg.Artifact.Path,
+			Digest: msg.Artifact.Digest,
+			Size:   msg.Artifact.Size,
+			Body:   append([]byte(nil), msg.Artifact.Body...),
+		}
+	}
+	return out
+}
+
 type WSMessage struct {
 	Type                         string   `json:"type"`
 	Seq                          int      `json:"seq,omitempty"`
@@ -258,6 +451,7 @@ type WSMessage struct {
 	TrustTier                    string   `json:"trust_tier,omitempty"`
 	Permissions                  []string `json:"permissions,omitempty"`
 	Reason                       string   `json:"reason,omitempty"`
+	State                        string   `json:"state,omitempty"`
 	ContributeNeedsDecisionLabel *string  `json:"contribute_needs_decision_label,omitempty"`
 	// FailureKind is the OPTIONAL, client-declared cause of a task_failed
 	// (#2547): "environment" (the client's runtime could not run the work) or
@@ -385,12 +579,32 @@ type WSMessage struct {
 	MaxMessageBytes int                            `json:"max_message_bytes,omitempty"`
 	Announcement    *config.ContributeAnnouncement `json:"announcement,omitempty"`
 	Role            string                         `json:"role,omitempty"`
-	ContribLabels   []string                       `json:"contributor_labels,omitempty"`
-	Status          string                         `json:"status,omitempty"`
-	Result          string                         `json:"result,omitempty"`
-	Summary         string                         `json:"summary,omitempty"`
-	TmuxOutput      []string                       `json:"tmux_output,omitempty"`
-	AcceptedModels  []string                       `json:"accepted_models,omitempty"`
+	// WorkbenchVersion and Incarnation are optional on auth_response for an
+	// external-execution workbench peer; ext_* frames below are routed to the
+	// attached peer after auth_ok.
+	WorkbenchVersion string `json:"workbench_version,omitempty"`
+	Incarnation      string `json:"incarnation,omitempty"`
+	ExecutionKey     string `json:"execution_key,omitempty"`
+	WorkKey          string `json:"work_key,omitempty"`
+	ExternalEngine   string `json:"external_engine,omitempty"`
+	Detail           string `json:"detail,omitempty"`
+	RemoteRunID      string `json:"remote_run_id,omitempty"`
+	Deduplicated     bool   `json:"deduplicated,omitempty"`
+	Acknowledged     bool   `json:"acknowledged,omitempty"`
+	Stopped          bool   `json:"stopped,omitempty"`
+	Payload          []byte `json:"payload,omitempty"`
+	Artifact         *struct {
+		Path   string `json:"path"`
+		Digest string `json:"digest"`
+		Size   int64  `json:"size"`
+		Body   []byte `json:"body"`
+	} `json:"artifact,omitempty"`
+	ContribLabels  []string `json:"contributor_labels,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	Result         string   `json:"result,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	TmuxOutput     []string `json:"tmux_output,omitempty"`
+	AcceptedModels []string `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -1952,6 +2166,13 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			} else {
 				_ = sendJSON(s.conn, WSMessage{Type: "pong", Seq: msg.Seq})
 			}
+		default:
+			if strings.HasPrefix(msg.Type, "ext_") && s.contributor != nil {
+				if err := s.contributor.deliverExternal(msg); err != nil {
+					h.logger.Warn("[contribute-ws] external peer frame refused", "id", connID, "type", msg.Type, "error", err)
+					return
+				}
+			}
 		}
 	}
 }
@@ -1977,6 +2198,7 @@ type wsSession struct {
 func (s *wsSession) releaseOnDisconnect() {
 	h := s.h
 	if s.contributor != nil && s.contributor.profile != nil {
+		s.contributor.stopExternalPeer()
 		s.contributor.mu.Lock()
 		abandonedTask := s.contributor.currentTask
 		// #7317: see the `ready` path — captured under the same lock so the
@@ -1992,6 +2214,7 @@ func (s *wsSession) releaseOnDisconnect() {
 		// #2537: clear any pending/delivered credential state with the task.
 		s.contributor.pendingToken = ""
 		s.contributor.credentialDelivered = false
+		s.contributor.pendingExternalTask = nil
 		s.contributor.mu.Unlock()
 
 		// #5322: deregister THIS socket before deciding whether its task is
@@ -2427,6 +2650,11 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true
 	}
+	if caps != nil && caps.DeclaresCapability(capExtExecOMP) {
+		if h.server != nil && h.server.externalExecLinked(extExecEngineOMP) {
+			s.contributor.startExternalPeer(context.Background(), h, strings.TrimSpace(msg.Incarnation), strings.TrimSpace(msg.WorkbenchVersion))
+		}
+	}
 
 	h.logger.Info("[contribute-ws] authenticated",
 		"id", s.connID,
@@ -2635,6 +2863,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	// #2537: clear any pending/delivered credential state with the task.
 	s.contributor.pendingToken = ""
 	s.contributor.credentialDelivered = false
+	s.contributor.pendingExternalTask = nil
 	s.contributor.mu.Unlock()
 	if abandoned != nil {
 		// C4: the relay explicitly gave up this task, so revoke its
@@ -2713,6 +2942,13 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 			"username", s.contributor.profile.GitHubUsername,
 			"reason", task.Reason,
 		)
+	case task.Type == "task_assign_external":
+		if err := s.contributor.send(*task); err != nil {
+			h.logger.Warn("[contribute-ws] failed to send external task assignment ack; releasing the claim", "error", err, "task", task.TaskID)
+			h.rollbackAssignment(s.contributor, task.TaskID)
+			return true
+		}
+		go h.dispatchExternalAssignment(s.contributor, *task)
 	default:
 		if err := s.contributor.send(*task); err != nil {
 			// #7775: the socket is already gone — typically closed by the
@@ -2758,6 +2994,45 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 	}
 
 	return false
+}
+
+func (h *ContributeWSHub) dispatchExternalAssignment(c *ContributorConnection, ack WSMessage) {
+	if h == nil || c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.currentTask == nil || c.currentTask.TaskID != ack.TaskID || c.pendingExternalTask == nil {
+		c.mu.Unlock()
+		h.logger.Info("[contribute-ws] external dispatch skipped: assignment no longer current", "task", ack.TaskID)
+		return
+	}
+	task := *c.pendingExternalTask
+	c.pendingExternalTask = nil
+	c.mu.Unlock()
+
+	if err := h.externalExecDispatch(context.Background(), task); err != nil {
+		h.rollbackAssignment(c, task.TaskID)
+		h.logger.Warn("[contribute-ws] external task dispatch failed",
+			"username", contributorUsername(c), "task", task.TaskID, "repo", task.Repo,
+			"number", task.Number, "engine", task.Engine, "error", err)
+		h.recordDecision(decisionUsername(c), decisionRefused, task.TaskID, task.Repo, task.Number,
+			"reason="+taskUnavailableExternalDispatchFailed+": "+err.Error())
+		return
+	}
+
+	pickupKey := ack.TaskKey
+	if pickupKey == "" {
+		pickupKey = worksource.Ref{Repo: ack.Repo, Number: ack.Number}.Key()
+	}
+	taskDesc := assignDesc(ack.Kind, pickupKey, ack.Title, ack.TaskID)
+	h.addActivity(contributorUsername(c), "external dispatch", c.role, c.cliBackend, c.model, c.reasoningEffort, taskDesc, c.advisor())
+	h.logger.Info("[contribute-ws] external task dispatched",
+		"username", contributorUsername(c),
+		"task", task.TaskID,
+		"repo", task.Repo,
+		"number", task.Number,
+		"engine", task.Engine,
+	)
 }
 
 // handleTaskAccepted records that the contributor acknowledged its assignment.

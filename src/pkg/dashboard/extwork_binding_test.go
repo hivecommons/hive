@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/extwork/flue"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
 )
@@ -107,9 +109,17 @@ func TestLeaseAuthorityVerifyAndFlush(t *testing.T) {
 	}
 }
 
-type fakeExternalExec struct{ engines map[string]bool }
+type fakeExternalExec struct {
+	engines    map[string]bool
+	dispatches []ExternalExecutionTask
+}
 
 func (f fakeExternalExec) Linked(engine string) bool { return f.engines[engine] }
+func (f *fakeExternalExec) Dispatch(_ context.Context, task ExternalExecutionTask) error {
+	f.dispatches = append(f.dispatches, task)
+	return nil
+}
+func (f fakeExternalExec) AttachPeer(context.Context, ExternalExecutionPeer) error { return nil }
 
 func TestExternalExecSeam(t *testing.T) {
 	s := covApiServer(t)
@@ -119,7 +129,7 @@ func TestExternalExecSeam(t *testing.T) {
 	if s.ContributeHub() != nil {
 		t.Log("hub registered by test deps; accessor still nil-safe")
 	}
-	s.deps.ExternalExec = fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true}}
+	s.deps.ExternalExec = &fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true}}
 	if !s.externalExecLinked(extExecEngineFlue) || s.externalExecLinked("other") {
 		t.Fatal("seam not consulted")
 	}
@@ -132,7 +142,7 @@ func TestExternalExecSeam(t *testing.T) {
 	if got := s.featuresSectionWithLinked(s.deps.Config)["extOmpLinked"]; got != false {
 		t.Fatalf("omp linked view = %v, want false when only flue is linked", got)
 	}
-	s.deps.ExternalExec = fakeExternalExec{engines: map[string]bool{extExecEngineOMP: true}}
+	s.deps.ExternalExec = &fakeExternalExec{engines: map[string]bool{extExecEngineOMP: true}}
 	if got := s.featuresSectionWithLinked(s.deps.Config)["extOmpLinked"]; got != true {
 		t.Fatalf("omp linked view = %v", got)
 	}
@@ -144,6 +154,7 @@ func TestExternalExecSeam(t *testing.T) {
 
 func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 	s := covApiServer(t)
+	s.deps.ExternalExec = &fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true, extExecEngineOMP: true}}
 	h := &ContributeWSHub{logger: covBLogger(), server: s}
 	if got := extExecEngineFromIssueMap(map[string]any{"title": "x"}); got != "" {
 		t.Fatalf("plain issue engine = %q", got)
@@ -164,6 +175,10 @@ func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 		t.Fatalf("disabled binding = %v %q", ok, reason)
 	}
 	s.deps.Config.Runs.External.Flue.Enabled = true
+	if ok, reason := h.extExecAdmissible(extExecEngineFlue, withCap); ok || !strings.Contains(reason, "does not dispatch") {
+		t.Fatalf("shadow binding = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.Flue.Mode = config.FlueBindingModeReportOnly
 	if ok, reason := h.extExecAdmissible(extExecEngineFlue, withoutCap); ok || !strings.Contains(reason, capExtExecFlue) {
 		t.Fatalf("relay without capability = %v %q", ok, reason)
 	}
@@ -188,6 +203,10 @@ func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 		t.Fatalf("omp with only flue enabled = %v %q", ok, reason)
 	}
 	s.deps.Config.Runs.External.OMP.Enabled = true
+	if ok, reason := h.extExecAdmissible(extExecEngineOMP, ompCap); ok || !strings.Contains(reason, "does not dispatch") {
+		t.Fatalf("omp shadow = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.OMP.Mode = config.FlueBindingModeReportOnly
 	if ok, reason := h.extExecAdmissible(extExecEngineOMP, withCap); ok || !strings.Contains(reason, capExtExecOMP) {
 		t.Fatalf("omp item to a flue-only relay = %v %q", ok, reason)
 	}

@@ -1,6 +1,9 @@
 package dashboard
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -37,7 +40,9 @@ const (
 	capExtExecOMP = "ext-exec/omp"
 	// ExtworkRecordDirName is the subdirectory of the agent report directory
 	// that holds admission records and verified receipts.
-	ExtworkRecordDirName = "extwork"
+	ExtworkRecordDirName             = "extwork"
+	externalWorkflowContractRevision = "external-workflow-admission/v1"
+	externalDispatchInputPrefix      = "task"
 )
 
 // ExternalExecution is the status seam the dashboard reads about external
@@ -46,6 +51,83 @@ const (
 type ExternalExecution interface {
 	// Linked reports whether the named engine is compiled into this binary.
 	Linked(engine string) bool
+	// Dispatch hands an engine-bound assignment to the selected external
+	// binding. Implementations live outside pkg/dashboard so builds without
+	// extwork tags remain inert.
+	Dispatch(ctx context.Context, task ExternalExecutionTask) error
+	// AttachPeer registers a live external-execution peer, when this build has
+	// a peer-backed engine. Tag-free builds and non-peer engines no-op.
+	AttachPeer(ctx context.Context, peer ExternalExecutionPeer) error
+}
+
+// ExternalExecutionTask is the extwork-free assignment shape dashboard passes
+// to the concrete binding in cmd/hive.
+type ExternalExecutionTask struct {
+	Engine           string
+	Mode             string
+	Capability       string
+	WorkflowVersion  string
+	ContractRevision string
+	InputRevision    string
+	Identity         string
+	Tier             string
+	TaskID           string
+	TaskGen          uint64
+	WorkKey          string
+	Repo             string
+	Number           int
+	Stage            string
+	Title            string
+	Summary          string
+	SourceType       string
+	ExternalID       string
+	URL              string
+}
+
+// ExternalExecutionMessage mirrors the ext_* peer protocol without importing
+// pkg/extwork/omp into dashboard.
+type ExternalExecutionMessage struct {
+	Type              string
+	Seq               int
+	ContributorID     string
+	RelayCapabilities []string
+	WorkbenchVersion  string
+	Incarnation       string
+	ExecutionKey      string
+	TaskID            string
+	TaskGen           uint64
+	WorkKey           string
+	Stage             string
+	Summary           string
+	Reason            string
+	State             string
+	Detail            string
+	RemoteRunID       string
+	Deduplicated      bool
+	Acknowledged      bool
+	Stopped           bool
+	Payload           []byte
+	Artifact          *ExternalExecutionArtifact
+}
+
+// ExternalExecutionArtifact is one inline artifact on an external peer frame.
+type ExternalExecutionArtifact struct {
+	Path   string
+	Digest string
+	Size   int64
+	Body   []byte
+}
+
+// ExternalExecutionPeer is a live contributor socket that can carry ext_*
+// frames for a peer-backed engine.
+type ExternalExecutionPeer interface {
+	Identity() string
+	Incarnation() string
+	WorkbenchVersion() string
+	ExternalCapabilities() []string
+	SendExternal(context.Context, ExternalExecutionMessage) error
+	RecvExternal(context.Context) (ExternalExecutionMessage, error)
+	CloseExternal() error
 }
 
 // externalExecLinked is nil-safe: no seam, nothing linked.
@@ -140,6 +222,38 @@ func extExecGate(engine string, cfg *config.Config) (capability string, enabled 
 	}
 }
 
+func extExecMode(engine string, cfg *config.Config) string {
+	if cfg == nil {
+		return config.FlueBindingModeOff
+	}
+	switch engine {
+	case extExecEngineFlue:
+		return cfg.FlueBindingMode()
+	case extExecEngineOMP:
+		return cfg.OMPBindingMode()
+	default:
+		return config.FlueBindingModeOff
+	}
+}
+
+func extExecWorkflowVersion(engine string, cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	switch engine {
+	case extExecEngineFlue:
+		return strings.TrimSpace(cfg.Runs.External.Flue.WorkflowVersion)
+	case extExecEngineOMP:
+		return strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion)
+	default:
+		return ""
+	}
+}
+
+func extExecDispatchesMode(mode string) bool {
+	return strings.TrimSpace(mode) == config.FlueBindingModeReportOnly
+}
+
 // extExecAdmissible decides whether an item bound to an external engine may be
 // offered to this relay. It is refuse-only, never downgrade: an item that asks
 // for an engine is skipped unless the engine is a supported one, the operator
@@ -157,8 +271,44 @@ func (h *ContributeWSHub) extExecAdmissible(engine string, c *ContributorConnect
 	if cfg == nil || !enabled {
 		return false, "external binding disabled"
 	}
+	if mode := extExecMode(engine, cfg); !extExecDispatchesMode(mode) {
+		return false, "external binding mode " + mode + " does not dispatch"
+	}
+	if h == nil || h.server == nil || !h.server.externalExecLinked(engine) {
+		return false, "external binding engine not linked"
+	}
 	if c == nil || c.capabilities == nil || !c.capabilities.DeclaresCapability(capability) {
 		return false, "relay lacks capability " + capability
 	}
 	return true, ""
+}
+
+func (h *ContributeWSHub) externalExecDispatch(ctx context.Context, task ExternalExecutionTask) error {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.ExternalExec == nil {
+		return fmt.Errorf("external execution binding unavailable")
+	}
+	return h.server.deps.ExternalExec.Dispatch(ctx, task)
+}
+
+func (h *ContributeWSHub) attachExternalExecPeer(ctx context.Context, peer ExternalExecutionPeer) error {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.ExternalExec == nil {
+		return nil
+	}
+	return h.server.deps.ExternalExec.AttachPeer(ctx, peer)
+}
+
+func externalInputRevision(task ExternalExecutionTask) string {
+	if rev := strings.TrimSpace(task.InputRevision); rev != "" {
+		return rev
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		task.Engine,
+		task.WorkflowVersion,
+		task.WorkKey,
+		task.TaskID,
+		task.Stage,
+		task.Repo,
+		task.Title,
+	}, "\x00")))
+	return externalDispatchInputPrefix + "@sha256:" + hex.EncodeToString(sum[:])
 }
