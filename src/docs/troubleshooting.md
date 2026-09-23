@@ -204,6 +204,8 @@ If an agent returns to "needs login" immediately after resuming, the credentials
 
 On the containerized runtime you normally do **not** need to configure an auto-approve phrase. Claude Code agents launch with `--dangerously-skip-permissions` (`src/pkg/agent/manager.go`), and the manager's `dismissInferencePrompts` routine polls the pane and auto-dismisses the startup consent screens (the "Bypass Permissions mode" dialog, the custom-API-key prompt, and generic "Enter to confirm" menus) dynamically, without a hardcoded phrase list.
 
+Inference backends (`litellm`, `vllm`, `llm-d`) run Claude Code with an isolated per-agent `HOME`. Hive pre-seeds that HOME's `.claude.json` with onboarding complete and workspace trust entries for `/data/agents/<agent>` and any repo/worktree directories already present below it, then repairs those entries before each Claude launch. This keeps fresh pods from stopping on Claude Code's "Quick safety check: Is this a project you created or one you trust?" dialog.
+
 If an agent still looks wedged on a prompt, capture the pane (`tmux capture-pane -t hive-<agent> -p -S -80`) and check the `hive` logs. A prompt whose selected default is negative (for example "No, exit") is navigated away from before Enter is sent; a genuinely novel prompt that the routine does not recognize is the case to report, along with the captured pane text.
 
 ## Notifications (ntfy / Slack / Discord) never arrive

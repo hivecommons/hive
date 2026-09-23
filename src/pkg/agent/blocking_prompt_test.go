@@ -23,6 +23,19 @@ const copilotTrustPane = `Confirm folder trust
   2. Yes, and remember for future sessions
   3. No`
 
+const claudeWorkspaceTrustPane = ` Accessing workspace:
+
+ /data/agents/guide
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel`
+
 // TestBlockingPromptKey_CodexUpdateSkipsInsteadOfInstalling is the whole point
 // of this mechanism.
 //
@@ -56,6 +69,7 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		want    string
 	}{
 		{"codex directory trust", "codex", codexTrustPane, "1"},
+		{"claude workspace trust", "claude", claudeWorkspaceTrustPane, "Down"},
 		// "1" (session-only), NOT "2" (remember): remembering makes the CLI
 		// rewrite the shared config.json from its stale in-memory snapshot,
 		// stomping other agents' state — see blockingPrompts.
@@ -109,8 +123,8 @@ func TestBackendHasBlockingPrompts_GateMatchesTable(t *testing.T) {
 	if !backendHasBlockingPrompts("codex") {
 		t.Error("codex must run the watcher: its update menu kills the CLI on every launch")
 	}
-	if backendHasBlockingPrompts("claude") {
-		t.Error("claude has no table entries; the watcher should not be started for it")
+	if !backendHasBlockingPrompts("claude") {
+		t.Error("claude must run the watcher: its workspace trust menu exits the CLI by default")
 	}
 }
 
@@ -204,5 +218,48 @@ func TestBlockingPromptKey_AgyScoped(t *testing.T) {
 		if _, _, ok := blockingPromptKey(b, agyTrustPane); ok {
 			t.Errorf("agy trust prompt matched while running %q", b)
 		}
+	}
+}
+
+func TestBlockingPromptKey_ClaudeWorkspaceTrustTailOnly(t *testing.T) {
+	key, label, ok := blockingPromptKey("claude", claudeWorkspaceTrustPane)
+	if !ok {
+		t.Fatal("claude workspace trust prompt not recognised; the agent would exit and leave bash")
+	}
+	if key != "Down" {
+		t.Errorf("key = %q, want Down then Enter to avoid the default No/exit selection", key)
+	}
+	if label == "" {
+		t.Error("label is empty; the audit log would not say which prompt was answered")
+	}
+
+	deadCLIPane := claudeWorkspaceTrustPane + `
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$
+hive-guide@pod:/data/agents/guide$`
+	if key, _, ok := blockingPromptKey("claude", deadCLIPane); ok {
+		t.Errorf("answered %q against scrollback of a dead Claude CLI; keystrokes would go to the shell", key)
 	}
 }

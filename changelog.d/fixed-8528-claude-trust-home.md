@@ -1,0 +1,1 @@
+- Fixed #8528 so inference agents pre-trust their isolated Claude HOME workspaces and never type kick prompts into bash after Claude exits on a trust dialog.

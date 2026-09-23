@@ -483,6 +483,7 @@ func TestDeliverKickLocked(t *testing.T) {
 	m.mu.Lock()
 	agent := m.agents["covkick"]
 	agent.tmuxSession = session
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "❯" }
 	m.deliverKickLocked(agent, "do the thing", "test")
 	m.mu.Unlock()
 
@@ -507,6 +508,7 @@ func TestDeliverKickLocked_LongMessageChunks(t *testing.T) {
 	m.mu.Lock()
 	agent := m.agents["covchunk"]
 	agent.tmuxSession = session
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "goose is ready" }
 	// > chunkSize (400) runes to exercise chunk loop; goose skips the C-c clear.
 	long := ""
 	for i := 0; i < 500; i++ {

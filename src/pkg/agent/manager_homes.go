@@ -297,6 +297,13 @@ func inferenceUserConfigSeed(agentName string) map[string]any {
 	}
 }
 
+func inferenceProjectTrustSeed() map[string]any {
+	return map[string]any{
+		"hasTrustDialogAccepted": true,
+		"allowedTools":           []any{},
+	}
+}
+
 // inferenceSettingsSeed returns the required keys for an inference agent's
 // Claude settings.json — both ~/.claude/settings.json (userSettings) and the
 // standalone file passed via --settings (flagSettings).
@@ -337,6 +344,90 @@ func inferenceSettingsSeed() map[string]any {
 func (m *Manager) seedClaudeUserConfig(agentName, path string) {
 	m.seedJSONFile(agentName, path, inferenceUserConfigSeed(agentName))
 	m.mergeApprovedAPIKeys(agentName, path)
+}
+
+func (m *Manager) seedClaudeProjectTrust(agentName, path string, projectDirs []string) {
+	if len(projectDirs) == 0 {
+		return
+	}
+	data, err := readInferenceConfigFile(path)
+	existing := map[string]any{}
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &existing); jsonErr != nil {
+			m.logger.Warn("inference config unparseable, rewriting",
+				"agent", agentName, "path", path, "error", jsonErr)
+			existing = map[string]any{}
+		}
+	}
+	changed := false
+	if _, ok := existing["hasCompletedOnboarding"]; !ok {
+		existing["hasCompletedOnboarding"] = true
+		changed = true
+	}
+	projects, ok := existing["projects"].(map[string]any)
+	if !ok {
+		projects = map[string]any{}
+		existing["projects"] = projects
+		changed = true
+	}
+	for _, dir := range projectDirs {
+		if dir == "" {
+			continue
+		}
+		project, ok := projects[dir].(map[string]any)
+		if !ok {
+			project = map[string]any{}
+			projects[dir] = project
+			changed = true
+		}
+		for key, value := range inferenceProjectTrustSeed() {
+			if _, ok := project[key]; !ok {
+				project[key] = value
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return
+	}
+	out, err := json.Marshal(existing)
+	if err != nil {
+		m.logger.Warn("failed to marshal inference config", "agent", agentName, "path", path, "error", err)
+		return
+	}
+	if err := writeInferenceConfigFile(path, out); err != nil {
+		m.logger.Warn("failed to write inference config", "agent", agentName, "path", path, "error", err)
+	}
+}
+
+func (m *Manager) claudeTrustedProjectDirs(agentName string) []string {
+	agentDir := filepath.Join(m.workDir, agentName)
+	dirs := []string{agentDir}
+	seen := map[string]bool{agentDir: true}
+	_ = filepath.WalkDir(agentDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == agentDir {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() == ".git" {
+			repoDir := filepath.Dir(path)
+			if !seen[repoDir] {
+				dirs = append(dirs, repoDir)
+				seen[repoDir] = true
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return dirs
 }
 
 // mergeApprovedAPIKeys ensures every seeded approved API key form is present
@@ -472,7 +563,9 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	m.seedClaudeSettingsFile(agentName, settingsFile)
 	m.seedClaudeSettingsFile(agentName, claudeInferenceSettingsPath)
 	// Pre-populate (or repair) .claude.json so the CLI skips first-run setup.
-	m.seedClaudeUserConfig(agentName, filepath.Join(homePath, ".claude.json"))
+	userConfigPath := filepath.Join(homePath, ".claude.json")
+	m.seedClaudeUserConfig(agentName, userConfigPath)
+	m.seedClaudeProjectTrust(agentName, userConfigPath, m.claudeTrustedProjectDirs(agentName))
 	// Only widen when the home is NOT agent-owned. tightenInferenceHome may have
 	// just established a 0700 home owned by the agent UID; running the widening
 	// walk unconditionally would chmod it straight back to 0777 and silently

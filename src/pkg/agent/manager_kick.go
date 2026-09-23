@@ -256,6 +256,14 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	}
 	defer agent.kickDelivering.Store(false)
 
+	visible := m.captureVisiblePaneForAgent(agent)
+	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) {
+		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
+			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
+			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible))
+		return
+	}
+
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
 	// input touches the pane, so each archived kick log is cleanly delimited
 	// (#4296). Must be the first thing this function does.

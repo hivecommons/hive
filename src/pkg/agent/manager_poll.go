@@ -349,7 +349,11 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 				return
 			}
 			output := m.captureTmuxPaneForAgent(agent)
-			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+			backend := agent.effectiveBackend()
+			if m.routableBackend(backend) {
+				backend = "claude"
+			}
+			if key, label, ok := blockingPromptKey(backend, output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
 				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected

@@ -163,6 +163,18 @@ type blockingPrompt struct {
 
 var blockingPrompts = []blockingPrompt{
 	{
+		backend: "claude",
+		// Claude Code: "Quick safety check: Is this a project you created or
+		// one you trust?" defaults to "No, exit". If it is not answered before
+		// the kick path runs, Claude exits and the prompt text lands in bash.
+		match: func(p string) bool {
+			return strings.Contains(p, "Is this a project you created or one you trust") &&
+				strings.Contains(p, "Yes, I trust this folder")
+		},
+		key:   "Down",
+		label: "claude workspace trust",
+	},
+	{
 		backend: "copilot",
 		// Copilot: "Confirm folder trust" → 1. Yes (THIS SESSION ONLY).
 		//

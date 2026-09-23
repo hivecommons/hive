@@ -39,6 +39,7 @@ func kickLogTestManager(t *testing.T, captured string) (*Manager, *AgentProcess,
 		kickLogMaxBytes:  defaultKickLogMaxBytes,
 	}
 	termSeams(m).captureFullLog = func(*AgentProcess) (string, error) { return captured, nil }
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "❯" }
 	termSeams(m).clearHistory = func(*AgentProcess) {}
 	return m, agent, dir
 }
@@ -241,7 +242,7 @@ func TestDeliverKickLocked_ArchivesAndClearsBeforeInput(t *testing.T) {
 	termSeams(m).sendKeys = func(_ *AgentProcess, keys ...string) {
 		events = append(events, "sendkeys:"+strings.Join(keys, "+"))
 	}
-	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "" }
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "❯" }
 	agent.kickLogPending = true
 
 	m.deliverKickLocked(agent, "next task", "send-kick")
@@ -270,7 +271,7 @@ func TestDeliverKickLocked_NoRotationWithoutPendingOutput(t *testing.T) {
 	captured := false
 	termSeams(m).captureFullLog = func(*AgentProcess) (string, error) { captured = true; return "boot banner", nil }
 	termSeams(m).sendKeys = func(*AgentProcess, ...string) {}
-	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "" }
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return "❯" }
 
 	m.deliverKickLocked(agent, "first task", "startup")
 

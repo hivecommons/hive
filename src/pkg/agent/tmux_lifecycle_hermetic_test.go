@@ -26,9 +26,6 @@ func TestHermeticWaitForInputPromptForAgentSkipsConsentScreen(t *testing.T) {
 		if visibleCalls == 1 {
 			return "Bypass Permissions mode\n❯ No, exit\nEnter to confirm\n"
 		}
-		return ""
-	}
-	termSeams(m).capturePane = func(*AgentProcess) string {
 		return "goose is ready\n"
 	}
 

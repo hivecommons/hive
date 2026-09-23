@@ -38,3 +38,23 @@ func TestCodexKickDoesNotExitCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestKickDoesNotTypeClearOrPromptIntoBashAfterClaudeTrustExit(t *testing.T) {
+	m, agent, _ := kickLogTestManager(t, claudeWorkspaceTrustPane+"\n")
+	agent.Config.Backend = "claude"
+	agent.Config.ClearOnKick = true
+	visibleShell := "hive-guide@pod:/data/agents/guide$"
+	var typed []string
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return visibleShell }
+	termSeams(m).sendKeys = func(_ *AgentProcess, keys ...string) {
+		typed = append(typed, keys...)
+	}
+	termSeams(m).sendLiteral = func(_ *AgentProcess, text string) {
+		typed = append(typed, text)
+	}
+
+	m.deliverKickLocked(agent, "You are an AI agent. Await further instructions.", "send-kick")
+	if len(typed) != 0 {
+		t.Fatalf("typed into a bash pane after Claude exited on trust prompt: %#v", typed)
+	}
+}

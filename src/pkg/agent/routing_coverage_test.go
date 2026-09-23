@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -470,6 +471,8 @@ func TestMergeApprovedAPIKeys_MalformedShapes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnsureClaudeSettings(t *testing.T) {
+	homeRoot := t.TempDir()
+	claudeInferenceHomePrefixForTest(t, filepath.Join(homeRoot, "home-"))
 	name := "cov-inference-test"
 	home := inferenceHomePath(name)
 	t.Cleanup(func() {
@@ -487,6 +490,84 @@ func TestEnsureClaudeSettings(t *testing.T) {
 	}
 	// Second call repairs/no-ops without error.
 	m.ensureClaudeSettings(name, 0)
+}
+
+func TestEnsureClaudeSettingsPreTrustsAgentAndRepoDirs(t *testing.T) {
+	homeRoot := t.TempDir()
+	claudeInferenceHomePrefixForTest(t, filepath.Join(homeRoot, "home-"))
+	workRoot := t.TempDir()
+	name := "guide"
+	agentDir := filepath.Join(workRoot, name)
+	repoDir := filepath.Join(agentDir, "llm-d-fast-model-actuation")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	m.workDir = workRoot
+	m.ensureClaudeSettings(name, 0)
+
+	configPath := filepath.Join(inferenceHomePath(name), ".claude.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	projects, ok := cfg["projects"].(map[string]any)
+	if !ok {
+		t.Fatalf("projects missing or wrong type in %s: %#v", configPath, cfg["projects"])
+	}
+	for _, dir := range []string{agentDir, repoDir} {
+		project, ok := projects[dir].(map[string]any)
+		if !ok {
+			t.Fatalf("project %q not seeded: %#v", dir, projects)
+		}
+		if project["hasTrustDialogAccepted"] != true {
+			t.Errorf("%s hasTrustDialogAccepted = %#v, want true", dir, project["hasTrustDialogAccepted"])
+		}
+		if _, ok := project["allowedTools"].([]any); !ok {
+			t.Errorf("%s allowedTools = %#v, want JSON array", dir, project["allowedTools"])
+		}
+	}
+
+	m.seedClaudeProjectTrust(name, configPath, []string{agentDir, repoDir})
+	again, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(again) {
+		t.Error("second trust seed changed an already-complete config; want idempotent merge")
+	}
+}
+
+func TestSeedClaudeProjectTrustMergesExistingProject(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	projectDir := filepath.Join(dir, "agent")
+	if err := os.WriteFile(path, []byte(`{"projects":{"`+projectDir+`":{"custom":true}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	m.seedClaudeProjectTrust("guide", path, []string{projectDir})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	project := cfg["projects"].(map[string]any)[projectDir].(map[string]any)
+	if project["custom"] != true {
+		t.Errorf("custom project key was not preserved: %#v", project)
+	}
+	if project["hasTrustDialogAccepted"] != true {
+		t.Errorf("hasTrustDialogAccepted = %#v, want true", project["hasTrustDialogAccepted"])
+	}
 }
 
 // ---------------------------------------------------------------------------
