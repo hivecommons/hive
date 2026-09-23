@@ -256,6 +256,87 @@ const maxRecentlyResolved = 100
 // comment at the cap's use in FormatDigestMarkdown.
 const maxFindingsPerAgentType = 5
 
+func formatResolvedAt(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func parseResolvedAt(s string) (time.Time, bool) {
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func linkedResolvedAtForBead(b *beads.Bead, opts DigestOptions) (time.Time, bool) {
+	if b == nil || opts.ResolveRef == nil {
+		return time.Time{}, false
+	}
+	owner, repo := opts.snapshotRepo()
+	if owner == "" || repo == "" {
+		owner, repo = opts.Org, opts.PrimaryRepo
+		if parts := strings.Split(repo, "/"); len(parts) == 2 && owner == "" {
+			owner, repo = parts[0], parts[1]
+		}
+	}
+	if owner == "" || repo == "" {
+		return time.Time{}, false
+	}
+	refs := findingIssueRefs(Finding{
+		Title:  b.Title,
+		Detail: b.Notes,
+		File:   b.ExternalRef,
+	}, owner, repo)
+	if len(refs) == 0 {
+		return time.Time{}, false
+	}
+	var latest time.Time
+	for _, r := range refs {
+		st, ok := opts.ResolveRef(r.Owner, r.Repo, r.Number)
+		if !ok || !st.Closed {
+			return time.Time{}, false
+		}
+		if st.ClosedAt.IsZero() {
+			continue
+		}
+		if st.ClosedAt.After(latest) {
+			latest = st.ClosedAt
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, false
+	}
+	return latest, true
+}
+
+func resolvedAtForBead(store *beads.Store, b *beads.Bead, opts DigestOptions) time.Time {
+	persisted, hasPersisted := parseResolvedAt(b.Meta(resolvedAtMetadataKey))
+	if hasPersisted && b.Meta(closeReasonMetadataKey) == prLinkedCloseReason {
+		return persisted
+	}
+	if linkedAt, ok := linkedResolvedAtForBead(b, opts); ok {
+		if !hasPersisted || persisted.After(linkedAt) {
+			_ = store.SetMetadata(b.ID, resolvedAtMetadataKey, formatResolvedAt(linkedAt))
+			return linkedAt
+		}
+	}
+	if hasPersisted {
+		return persisted
+	}
+
+	resolvedAt := b.UpdatedAt.Time
+	if b.ClosedAt != nil {
+		resolvedAt = b.ClosedAt.Time
+	}
+	if !resolvedAt.IsZero() {
+		_ = store.SetMetadata(b.ID, resolvedAtMetadataKey, formatResolvedAt(resolvedAt))
+	}
+	return resolvedAt
+}
+
 // nearDuplicateThreshold is the Jaccard similarity at or above which two
 // findings from the SAME agent with the SAME finding type are treated as the
 // same finding reported twice (#2364).
@@ -677,12 +758,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 			// with either status, and a "done" finding lingering in the digest
 			// as if still open is exactly the staleness #2575 is about.
 			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
-				// Done beads carry no ClosedAt (only Close sets it); their
-				// UpdatedAt is when the agent marked them done.
-				resolvedAt := b.UpdatedAt.Time
-				if b.ClosedAt != nil {
-					resolvedAt = b.ClosedAt.Time
-				}
+				resolvedAt := resolvedAtForBead(store, b, opts)
 				if resolvedAt.After(cutoff) {
 					resolved = append(resolved, ResolvedFinding{
 						Agent:    agentName,

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -24,11 +25,12 @@ func advisoryPRHub(t *testing.T, merged bool, prTitle, findingTitle string, prAu
 	mux.HandleFunc("/repos/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"number":   7,
-			"html_url": "https://github.com/myorg/repo1/pull/7",
-			"title":    prTitle,
-			"merged":   merged,
-			"user":     map[string]any{"login": "alice"},
+			"number":    7,
+			"html_url":  "https://github.com/myorg/repo1/pull/7",
+			"title":     prTitle,
+			"merged":    merged,
+			"merged_at": advisoryFixPRMergedAt.Format(time.RFC3339),
+			"user":      map[string]any{"login": "alice"},
 			"base": map[string]any{
 				"repo": map[string]any{
 					"name":      "repo1",
@@ -68,6 +70,8 @@ func advisoryPRHub(t *testing.T, merged bool, prTitle, findingTitle string, prAu
 const advisoryFindingTitle = "pr-verifier workflow fails on every pull request"
 const advisoryFixPRTitle = "fix the pr-verifier workflow so it stops failing on every pull request"
 
+var advisoryFixPRMergedAt = time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
 func advisoryBeadStatus(t *testing.T, store *beads.Store, id string) beads.Status {
 	t.Helper()
 	b, err := store.Get(id)
@@ -82,7 +86,7 @@ func advisoryBeadStatus(t *testing.T, store *beads.Store, id string) beads.Statu
 func TestCloseAdvisoryForMergedPR_ClosesMatchingFinding(t *testing.T) {
 	hub, store, id := advisoryPRHub(t, true, advisoryFixPRTitle, advisoryFindingTitle, nil)
 
-	hub.closeAdvisoryForMergedPR(advisoryFixPRTitle)
+	hub.closeAdvisoryForMergedPR(advisoryFixPRTitle, advisoryFixPRMergedAt)
 
 	if got := advisoryBeadStatus(t, store, id); got != beads.StatusClosed {
 		t.Errorf("bead status = %q, want %q", got, beads.StatusClosed)
@@ -95,7 +99,7 @@ func TestCloseAdvisoryForMergedPR_RespectsConfigGate(t *testing.T) {
 	off := false
 	hub, store, id := advisoryPRHub(t, true, advisoryFixPRTitle, advisoryFindingTitle, &off)
 
-	hub.closeAdvisoryForMergedPR(advisoryFixPRTitle)
+	hub.closeAdvisoryForMergedPR(advisoryFixPRTitle, advisoryFixPRMergedAt)
 
 	if got := advisoryBeadStatus(t, store, id); got != beads.StatusOpen {
 		t.Errorf("bead status = %q, want %q — pr_autoclose: false must close nothing", got, beads.StatusOpen)
@@ -118,6 +122,9 @@ func TestVerifyReportedPRDetail_ReportsMergedAndTitle(t *testing.T) {
 		}
 		if got.Title != advisoryFixPRTitle {
 			t.Errorf("merged=%v: Title = %q, want the PR's own title %q", merged, got.Title, advisoryFixPRTitle)
+		}
+		if merged && !got.MergedAt.Equal(advisoryFixPRMergedAt) {
+			t.Errorf("merged=%v: MergedAt = %v, want %v", merged, got.MergedAt, advisoryFixPRMergedAt)
 		}
 	}
 }

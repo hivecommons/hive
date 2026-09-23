@@ -1,0 +1,1 @@
+- The advisory digest now keeps the first resolved timestamp for Recently Resolved findings and backfills linked PR or issue closure dates so regenerated reports do not stamp old fixes with the render day ([#8529](https://github.com/hivecommons/hive/issues/8529)).

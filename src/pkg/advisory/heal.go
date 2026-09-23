@@ -3,6 +3,7 @@ package advisory
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 )
@@ -269,6 +270,8 @@ func CloseHealedRepoAccessFindings(stores map[string]*beads.Store, canRead func(
 // retires it.
 const prLinkedCloseReason = "auto-closed: a merged pull request addresses this finding"
 
+const resolvedAtMetadataKey = "resolved_at"
+
 // prLinkThreshold is the Jaccard title similarity at or above which a merged
 // PR is taken to address an open advisory finding.
 //
@@ -290,6 +293,13 @@ const prLinkThreshold = 0.4
 // retires it from the digest automatically instead of waiting out the staleness
 // window.
 func ClosePRLinkedAdvisoryBeads(stores map[string]*beads.Store, prTitle string) []string {
+	return ClosePRLinkedAdvisoryBeadsAt(stores, prTitle, time.Time{})
+}
+
+// ClosePRLinkedAdvisoryBeadsAt is ClosePRLinkedAdvisoryBeads with the PR's
+// merge timestamp. When GitHub supplies it, Recently Resolved reports when the
+// fix landed rather than when the next digest happened to notice it.
+func ClosePRLinkedAdvisoryBeadsAt(stores map[string]*beads.Store, prTitle string, prMergedAt time.Time) []string {
 	prTokens := findingTokens(prTitle)
 	if len(prTokens) == 0 {
 		return nil
@@ -318,6 +328,9 @@ func ClosePRLinkedAdvisoryBeads(stores map[string]*beads.Store, prTitle string) 
 				continue
 			}
 			_ = store.SetMetadata(b.ID, closeReasonMetadataKey, prLinkedCloseReason)
+			if !prMergedAt.IsZero() {
+				_ = store.SetMetadata(b.ID, resolvedAtMetadataKey, formatResolvedAt(prMergedAt))
+			}
 			closed = append(closed, b.Title)
 		}
 	}

@@ -1435,7 +1435,7 @@ func (h *ContributeWSHub) verifyReportedPRDetail(assignedRepo, prURL, contributo
 // not want title-based closing can turn it off. Entirely best-effort: it never
 // affects the completion outcome, and a finding closed in error comes straight
 // back the next time an agent files it.
-func (h *ContributeWSHub) closeAdvisoryForMergedPR(prTitle string) {
+func (h *ContributeWSHub) closeAdvisoryForMergedPR(prTitle string, prMergedAt time.Time) {
 	if prTitle == "" || h.server == nil || h.server.deps == nil {
 		return
 	}
@@ -1446,9 +1446,9 @@ func (h *ContributeWSHub) closeAdvisoryForMergedPR(prTitle string) {
 	if deps.Config != nil && !deps.Config.Governor.Advisory.PRAutoCloseEnabled() {
 		return
 	}
-	if closed := advisory.ClosePRLinkedAdvisoryBeads(deps.BeadStores, prTitle); len(closed) > 0 {
+	if closed := advisory.ClosePRLinkedAdvisoryBeadsAt(deps.BeadStores, prTitle, prMergedAt); len(closed) > 0 {
 		h.logger.Info("[contribute-ws] closed advisory findings addressed by merged PR",
-			"pr_title", prTitle, "count", len(closed), "titles", strings.Join(closed, "; "))
+			"pr_title", prTitle, "pr_merged_at", prMergedAt, "count", len(closed), "titles", strings.Join(closed, "; "))
 	}
 }
 
@@ -3544,7 +3544,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// assignment's issue title would match the finding it
 				// was minted from on the mere existence of a PR.
 				if prDetail.Merged {
-					h.closeAdvisoryForMergedPR(prDetail.Title)
+					h.closeAdvisoryForMergedPR(prDetail.Title, prDetail.MergedAt)
 				}
 			}
 			// #3987: normalize the completion's verdict. A verified PR always

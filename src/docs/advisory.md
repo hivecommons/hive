@@ -198,6 +198,11 @@ digest of 2026-09-03 rendered 10 open findings in 4,937 characters, under a note
 saying 286 more existed, and 100 resolved ones in 22,138, so 82% of the comment
 was work already done.
 
+Each entry's `resolved` date comes from the bead's persisted first resolution
+time. When the finding names a GitHub issue or PR that has closed, the digest
+uses that closure or merge timestamp instead of the time a later render noticed
+the bead was resolved.
+
 Withheld resolved entries are announced the same way withheld findings are, as
 the last line of the section:
 

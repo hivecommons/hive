@@ -3,6 +3,7 @@ package advisory
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 )
@@ -251,6 +252,139 @@ func TestClosePRLinkedAdvisoryBeads(t *testing.T) {
 	}
 	if other.Status != beads.StatusOpen {
 		t.Errorf("unrelated bead status = %q, want %q — a dissimilar PR title must close nothing", other.Status, beads.StatusOpen)
+	}
+}
+
+func TestClosePRLinkedAdvisoryBeadsAtPersistsMergeTime(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	mergedAt := time.Now().UTC().Add(-24 * time.Hour)
+	b, err := store.Create("pr-verifier workflow fails on every pull request", beads.TypeAdvisory, beads.PriorityHigh, "ci-maintainer", "")
+	if err != nil {
+		t.Fatalf("creating bead: %v", err)
+	}
+
+	closed := ClosePRLinkedAdvisoryBeadsAt(map[string]*beads.Store{"ci-maintainer": store}, "fix the pr-verifier workflow so it stops failing on every pull request", mergedAt)
+	if len(closed) != 1 {
+		t.Fatalf("closed %d, want 1", len(closed))
+	}
+
+	got, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatalf("reading bead: %v", err)
+	}
+	if got.Meta(resolvedAtMetadataKey) != formatResolvedAt(mergedAt) {
+		t.Fatalf("resolved_at = %q, want %q", got.Meta(resolvedAtMetadataKey), formatResolvedAt(mergedAt))
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy", DigestOptions{})
+	if len(d.RecentlyResolved) != 1 {
+		t.Fatalf("RecentlyResolved = %d entries, want 1", len(d.RecentlyResolved))
+	}
+	if !d.RecentlyResolved[0].ClosedAt.Equal(mergedAt) {
+		t.Fatalf("ClosedAt = %v, want PR merge time %v", d.RecentlyResolved[0].ClosedAt, mergedAt)
+	}
+
+	if err := store.SetMetadata(b.ID, "later_edit", "true"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+	d = BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy", DigestOptions{})
+	if !d.RecentlyResolved[0].ClosedAt.Equal(mergedAt) {
+		t.Fatalf("ClosedAt after re-scan = %v, want unchanged %v", d.RecentlyResolved[0].ClosedAt, mergedAt)
+	}
+}
+
+func TestBuildDigestFromBeadsBackfillsResolvedAtFromLinkedPR(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	mergedAt := time.Now().UTC().Add(-24 * time.Hour)
+	b, err := store.Create("PR #756 stop() drops second join leaves zombie process", beads.TypeAdvisory, beads.PriorityHigh, "quality", "gh-756")
+	if err != nil {
+		t.Fatalf("creating bead: %v", err)
+	}
+	if err := store.Close(b.ID); err != nil {
+		t.Fatalf("closing bead: %v", err)
+	}
+	laterRender := mergedAt.AddDate(0, 0, 5)
+	if err := store.SetMetadata(b.ID, resolvedAtMetadataKey, formatResolvedAt(laterRender)); err != nil {
+		t.Fatalf("seeding bogus resolved_at: %v", err)
+	}
+
+	opts := DigestOptions{
+		Org:         "llm-d-incubation",
+		PrimaryRepo: "llm-d-fast-model-actuation",
+		ResolveRef: func(owner, repo string, number int) (RefState, bool) {
+			if owner != "llm-d-incubation" || repo != "llm-d-fast-model-actuation" || number != 756 {
+				return RefState{}, false
+			}
+			return RefState{Closed: true, ClosedAt: mergedAt}, true
+		},
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"quality": store}, "busy", opts)
+	if len(d.RecentlyResolved) != 1 {
+		t.Fatalf("RecentlyResolved = %d entries, want 1", len(d.RecentlyResolved))
+	}
+	if !d.RecentlyResolved[0].ClosedAt.Equal(mergedAt) {
+		t.Fatalf("ClosedAt = %v, want linked PR merge time %v", d.RecentlyResolved[0].ClosedAt, mergedAt)
+	}
+	got, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatalf("reading bead: %v", err)
+	}
+	if got.Meta(resolvedAtMetadataKey) != formatResolvedAt(mergedAt) {
+		t.Fatalf("resolved_at backfill = %q, want %q", got.Meta(resolvedAtMetadataKey), formatResolvedAt(mergedAt))
+	}
+
+	md := FormatDigestMarkdown(d, opts)
+	wantDay := "resolved " + mergedAt.Format("Jan 2")
+	if !strings.Contains(md, wantDay) {
+		t.Fatalf("rendered digest does not show PR merge day:\n%s", md)
+	}
+}
+
+func TestBuildDigestFromBeadsKeepsPRMergeTimeWhenLinkedRefOlder(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	mergedAt := time.Now().UTC().Add(-24 * time.Hour)
+	olderIssueClosedAt := mergedAt.Add(-12 * time.Hour)
+	b, err := store.Create("PR #756 fixes pr-verifier workflow failures", beads.TypeAdvisory, beads.PriorityHigh, "ci-maintainer", "")
+	if err != nil {
+		t.Fatalf("creating bead: %v", err)
+	}
+
+	closed := ClosePRLinkedAdvisoryBeadsAt(map[string]*beads.Store{"ci-maintainer": store}, "fix pr-verifier workflow failures", mergedAt)
+	if len(closed) != 1 {
+		t.Fatalf("closed %d, want 1", len(closed))
+	}
+
+	opts := DigestOptions{
+		Org:         "llm-d-incubation",
+		PrimaryRepo: "llm-d-fast-model-actuation",
+		ResolveRef: func(owner, repo string, number int) (RefState, bool) {
+			if number != 756 {
+				return RefState{}, false
+			}
+			return RefState{Closed: true, ClosedAt: olderIssueClosedAt}, true
+		},
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy", opts)
+	if len(d.RecentlyResolved) != 1 {
+		t.Fatalf("RecentlyResolved = %d entries, want 1", len(d.RecentlyResolved))
+	}
+	if !d.RecentlyResolved[0].ClosedAt.Equal(mergedAt) {
+		t.Fatalf("ClosedAt = %v, want persisted PR merge time %v", d.RecentlyResolved[0].ClosedAt, mergedAt)
+	}
+	got, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatalf("reading bead: %v", err)
+	}
+	if got.Meta(resolvedAtMetadataKey) != formatResolvedAt(mergedAt) {
+		t.Fatalf("resolved_at = %q, want %q", got.Meta(resolvedAtMetadataKey), formatResolvedAt(mergedAt))
 	}
 }
 
