@@ -55,6 +55,8 @@ func metricsToken() string {
 //	hive_prs_by_model_total{hive_id,model,outcome}  — attributed PR outcomes
 //	hive_pr_rework_by_model{hive_id,model,metric}   — all-time rework evidence for merged attributed PRs
 //	hive_reviews_by_model_pair_total{hive_id,author_model,review_model,verdict} — review verdicts by author/reviewer model pair
+//	hive_review_outcome_prs{hive_id,reviewed,outcome} — 30d PRs by reviewed cohort and outcome (review effectiveness)
+//	hive_review_outcome_median_hours_to_merge{hive_id,reviewed} — 30d median first-seen→merged hours per cohort
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Mandatory bearer auth (#3399, hardened in #3785): the cost/agent series
 	// are business-sensitive, so /metrics FAILS CLOSED when metrics are enabled
@@ -132,6 +134,20 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"All-time cumulative review verdicts by author model, review model, and verdict.", "counter")
 	for _, s := range prometheusReviewModelPairSeries() {
 		fmt.Fprintf(&b, "hive_reviews_by_model_pair_total{hive_id=%q,author_model=%q,review_model=%q,verdict=%q} %d\n", hiveID, s.AuthorModel, s.ReviewModel, s.Verdict, s.Count)
+	}
+
+	outcomeCounts, outcomeMedians := prometheusReviewOutcomeSeries(time.Now())
+	if len(outcomeCounts) > 0 {
+		writeHeader("hive_review_outcome_prs",
+			"PRs first seen in the last 30 days by whether the hive reviewed them before their outcome, and that outcome.", "gauge")
+		for _, s := range outcomeCounts {
+			fmt.Fprintf(&b, "hive_review_outcome_prs{hive_id=%q,reviewed=%q,outcome=%q} %d\n", hiveID, s.Cohort, s.Outcome, s.Count)
+		}
+		writeHeader("hive_review_outcome_median_hours_to_merge",
+			"Median hours from first seen to merged over the last 30 days, per cohort.", "gauge")
+		for _, s := range outcomeMedians {
+			fmt.Fprintf(&b, "hive_review_outcome_median_hours_to_merge{hive_id=%q,reviewed=%q} %.2f\n", hiveID, s.Cohort, s.Median)
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

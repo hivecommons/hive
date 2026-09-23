@@ -18003,6 +18003,234 @@
         }
       }
     },
+    "/api/review/outcomes": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review effectiveness: reviewed vs unreviewed PR outcomes",
+        "description": "Summarises the review-outcome ledger (/data/review-outcomes.json): PRs first seen in the window, split by whether the hive posted a review before the PR merged or closed. The unreviewed cohort is the control group. Not owner-gated for reads.",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            },
+            "description": "Window in days, keyed on when the hive first saw the PR."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Outcome summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "reviewed": {
+                      "type": "object",
+                      "properties": {
+                        "prs": {
+                          "type": "integer"
+                        },
+                        "merged": {
+                          "type": "integer"
+                        },
+                        "closed": {
+                          "type": "integer"
+                        },
+                        "open": {
+                          "type": "integer"
+                        },
+                        "merged_within_24h": {
+                          "type": "integer"
+                        },
+                        "merged_within_72h": {
+                          "type": "integer"
+                        },
+                        "median_hours_seen_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_review_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_open_age": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "unreviewed": {
+                      "type": "object",
+                      "properties": {
+                        "prs": {
+                          "type": "integer"
+                        },
+                        "merged": {
+                          "type": "integer"
+                        },
+                        "closed": {
+                          "type": "integer"
+                        },
+                        "open": {
+                          "type": "integer"
+                        },
+                        "merged_within_24h": {
+                          "type": "integer"
+                        },
+                        "merged_within_72h": {
+                          "type": "integer"
+                        },
+                        "median_hours_seen_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_review_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_open_age": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "by_verdict": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "prs": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "merged_within_24h": {
+                            "type": "integer"
+                          },
+                          "merged_within_72h": {
+                            "type": "integer"
+                          },
+                          "median_hours_seen_to_merge": {
+                            "type": "number"
+                          },
+                          "median_hours_review_to_merge": {
+                            "type": "number"
+                          },
+                          "median_hours_open_age": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "agent_authored": {
+                      "type": "object",
+                      "properties": {
+                        "prs": {
+                          "type": "integer"
+                        },
+                        "merged": {
+                          "type": "integer"
+                        },
+                        "closed": {
+                          "type": "integer"
+                        },
+                        "open": {
+                          "type": "integer"
+                        },
+                        "merged_within_24h": {
+                          "type": "integer"
+                        },
+                        "merged_within_72h": {
+                          "type": "integer"
+                        },
+                        "median_hours_seen_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_review_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_open_age": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "human_authored": {
+                      "type": "object",
+                      "properties": {
+                        "prs": {
+                          "type": "integer"
+                        },
+                        "merged": {
+                          "type": "integer"
+                        },
+                        "closed": {
+                          "type": "integer"
+                        },
+                        "open": {
+                          "type": "integer"
+                        },
+                        "merged_within_24h": {
+                          "type": "integer"
+                        },
+                        "merged_within_72h": {
+                          "type": "integer"
+                        },
+                        "median_hours_seen_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_review_to_merge": {
+                          "type": "number"
+                        },
+                        "median_hours_open_age": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "snapshots": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "open_reviewed": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days out of range"
+          }
+        }
+      }
+    },
     "/api/config/variables": {
       "get": {
         "tags": [

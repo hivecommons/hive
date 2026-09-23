@@ -16317,6 +16317,7 @@ function burnAreaChart() {
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'linearAgentConnect': linearAgentConnect(); break;
         case 'linearAgentDisconnect': linearAgentDisconnect(); break;
@@ -25043,6 +25044,11 @@ function burnAreaChart() {
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
+          <div class="config-subgroup" style="margin-top:14px">Effectiveness <span class="config-info">i<span class="config-tooltip">Does reviewing PRs actually shrink the queue? Every eval cycle the hive records each open PR it sees and, when it later leaves the queue, whether it merged or closed. PRs the hive reviewed before their outcome are compared against the ones it did not (the control group) on merge rate and median time to merge. Verdict counts alone cannot answer this; the comparison can.</span></span></div>
+          <div class="config-field">
+            <button class="btn" data-action="loadReviewOutcomes">Load 30-day outcomes</button>
+            <div id="review-outcomes-summary" style="font-size:0.72rem;color:var(--muted);margin-top:6px"></div>
+          </div>
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
@@ -25577,6 +25583,47 @@ function burnAreaChart() {
         repos: reposEl ? reposEl.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         min_ready_to_open: minEl ? (Number(minEl.value) || 0) : 0
       });
+    }
+
+    // loadReviewOutcomes fetches the review-outcome ledger summary and
+    // renders the reviewed-vs-unreviewed comparison in place. It is the
+    // queue-reduction evidence for the review gate: same cohort split the
+    // metrics endpoint publishes, read here on demand.
+    async function loadReviewOutcomes() {
+      const out = document.getElementById('review-outcomes-summary');
+      if (!out) return;
+      out.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/review/outcomes?days=30');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const total = (d.reviewed?.prs || 0) + (d.unreviewed?.prs || 0);
+        if (!total) {
+          out.textContent = 'No outcomes recorded yet — the ledger fills one row per open PR per eval cycle and resolves them as they merge or close, so give it a day.';
+          return;
+        }
+        const hrs = v => (v && v > 0) ? `${v.toFixed(1)}h` : '—';
+        const pct = (n, dnm) => dnm ? `${Math.round(100 * n / dnm)}%` : '—';
+        const row = (label, g) => `<tr><td style="padding:2px 8px 2px 0"><strong>${esc(label)}</strong></td><td style="padding:2px 8px">${g.prs}</td><td style="padding:2px 8px">${g.merged} (${pct(g.merged, g.prs)})</td><td style="padding:2px 8px">${g.closed}</td><td style="padding:2px 8px">${g.open}</td><td style="padding:2px 8px">${hrs(g.median_hours_seen_to_merge)}</td><td style="padding:2px 8px">${pct(g.merged_within_72h, g.prs)}</td></tr>`;
+        let html = `<table style="border-collapse:collapse;margin-top:4px"><thead><tr style="text-align:left"><th></th><th style="padding:2px 8px">PRs</th><th style="padding:2px 8px">merged</th><th style="padding:2px 8px">closed</th><th style="padding:2px 8px">open</th><th style="padding:2px 8px">median seen→merge</th><th style="padding:2px 8px">merged ≤72h</th></tr></thead><tbody>`;
+        html += row('Reviewed by hive', d.reviewed || {});
+        html += row('Not reviewed (control)', d.unreviewed || {});
+        html += '</tbody></table>';
+        const parts = [];
+        if (d.reviewed?.median_hours_review_to_merge > 0) parts.push(`median review→merge ${hrs(d.reviewed.median_hours_review_to_merge)}`);
+        if (d.agent_authored?.prs) parts.push(`agent-authored reviewed: ${d.agent_authored.merged}/${d.agent_authored.prs} merged`);
+        if (d.human_authored?.prs) parts.push(`human-authored reviewed: ${d.human_authored.merged}/${d.human_authored.prs} merged`);
+        const snaps = Array.isArray(d.snapshots) ? d.snapshots : [];
+        if (snaps.length >= 2) {
+          const first = snaps[0], last = snaps[snaps.length - 1];
+          parts.push(`open queue ${first.open} → ${last.open} over ${snaps.length} days`);
+        }
+        if (parts.length) html += `<div style="margin-top:4px">${esc(parts.join(' · '))}</div>`;
+        html += `<div style="margin-top:4px">Window: PRs first seen in the last ${d.window_days} days. Reviewed means the hive posted a review before the PR merged or closed; a review after the fact counts as control.</div>`;
+        out.innerHTML = html;
+      } catch (e) {
+        out.textContent = `Could not load outcomes: ${e.message}`;
+      }
     }
 
     // loadConvergenceSoak fetches the owner-only fixed-commit soak telemetry

@@ -183,6 +183,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Review-swarm merge gate is a top-level Config field (not GovernorConfig),
 	// but its UI lives on the governor Features tab — see api_config_review.go.
 	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)
+	s.mux.HandleFunc("GET /api/review/outcomes", s.handleReviewOutcomes)
 	s.mux.HandleFunc("PUT /api/config/review", s.handleReviewConfigPut)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)

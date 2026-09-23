@@ -1558,6 +1558,36 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 	return safeGetLogin(pr.GetUser()), nil
 }
 
+// PRState is the answer to "what became of this PR": GitHub's open/closed
+// state plus the merge and close timestamps that tell the two apart.
+type PRState struct {
+	State    string
+	MergedAt time.Time
+	ClosedAt time.Time
+}
+
+// GetPRState fetches a single PR's state. The review-outcome ledger calls it
+// for PRs that left the governor's open list, one GET each, so the ledger can
+// tell a merge from a close from a transient enumeration miss.
+func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRState, error) {
+	if c == nil {
+		return PRState{}, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	if err != nil {
+		return PRState{}, err
+	}
+	st := PRState{State: pr.GetState()}
+	if !pr.GetMergedAt().IsZero() {
+		st.MergedAt = pr.GetMergedAt().Time
+	}
+	if !pr.GetClosedAt().IsZero() {
+		st.ClosedAt = pr.GetClosedAt().Time
+	}
+	return st, nil
+}
+
 // QueuePRAutoMerge approves a PR as the hive App and marks it for Hive's
 // auto-merge-on-green sweep. The approval body records who queued the PR so
 // the sweep can re-check the self-merge ban before it squashes anything.

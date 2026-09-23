@@ -209,6 +209,27 @@ The correction **edits the hive's existing review in place** rather than posting
 
 Both keys are also writable at runtime through `PUT /api/config/review` (owner only). The cutoff is validated as RFC 3339, and the GitHub client's cached revise allowlist refreshes on write rather than at the next boot.
 
+## Measuring effectiveness
+
+Verdict counts say how much the reviewer did; they cannot say whether it helped. The **review-outcome ledger** (`/data/review-outcomes.json`, `pkg/review/outcomes.go`) answers the question the review gate exists for — *do reviewed PRs leave the queue faster than unreviewed ones?* — by keeping a control group.
+
+Every eval cycle, after the verdict artifact is refreshed, the hive:
+
+1. upserts every open PR the governor enumerated (repo, number, author, agent- or human-authored, first-seen time);
+2. attaches the **earliest** review evidence it has for each — the verdict artifact's `recorded_at`, or the posted-review links ledger's `at` when a queue-lane review could not bind a verdict;
+3. resolves PRs that left the list with one `GET /pulls/{n}` each (capped at 40 per cycle; the rest resolve next cycle) to `merged` or `closed`;
+4. appends one daily queue snapshot (open count, open-and-reviewed count).
+
+A PR counts as **reviewed** only if the hive's first review landed *before* its outcome; a review posted after the merge is control, not treatment. Rows are kept for 90 days after resolution.
+
+Read it from:
+
+- **Dashboard** — Features → Review gate → *Effectiveness* → "Load 30-day outcomes": reviewed vs control on PRs, merged %, closed, still open, median first-seen→merge hours and merged-within-72h, plus the queue trend from the snapshots.
+- **`GET /api/review/outcomes?days=N`** (1–90, default 30) — the full `OutcomeSummary`: `reviewed`, `unreviewed`, `by_verdict`, `agent_authored`, `human_authored`, `snapshots`.
+- **`/metrics`** — `hive_review_outcome_prs{reviewed,outcome}` and `hive_review_outcome_median_hours_to_merge{reviewed}` over the 30-day window.
+
+Read the numbers with care: the cohorts are not randomised. The reviewer reaches PRs in queue order, so early on the reviewed cohort skews towards whatever it got to first. The comparison becomes meaningful once both cohorts have dozens of resolved PRs; until then treat it as directional.
+
 ## Deferred work
 
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.

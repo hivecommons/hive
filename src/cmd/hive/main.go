@@ -6303,6 +6303,7 @@ func runEvalCycle(
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
+	recordReviewOutcomes(ctx, cfg, ghClient, actionable, logger)
 	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSet()
 
 	// Hold guard (#5589): snapshot hold-gated PR heads, and when a hold lifts
@@ -8415,6 +8416,106 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+// reviewOutcomeResolveCap bounds how many vanished PRs one eval cycle asks
+// GitHub about. A hive pointed at a busy org can see dozens of PRs merge
+// between cycles; the rest are resolved next cycle, and an unresolved PR
+// reads as still open, never as merged.
+const reviewOutcomeResolveCap = 40
+
+// prStateGetter is the slice of the GitHub client the outcome ledger needs.
+type prStateGetter interface {
+	GetPRState(ctx context.Context, repo string, number int) (github.PRState, error)
+}
+
+// recordReviewOutcomes folds this cycle's open-PR enumeration into the
+// review-outcome ledger (pkg/review/outcomes.go): every open PR is upserted,
+// review evidence from the verdict artifact and the posted-review ledger is
+// attached, and PRs that left the list are resolved to merged/closed with one
+// GET each. It is what lets the dashboard say whether reviewed PRs merge
+// faster than unreviewed ones on THIS hive, rather than counting verdicts.
+func recordReviewOutcomes(ctx context.Context, cfg *config.Config, gh prStateGetter, actionable *github.ActionableResult, logger *slog.Logger) {
+	if cfg == nil || actionable == nil {
+		return
+	}
+	recordReviewOutcomesAt(ctx, cfg, gh, actionable, "", time.Now().UTC(), logger)
+}
+
+func recordReviewOutcomesAt(ctx context.Context, cfg *config.Config, gh prStateGetter, actionable *github.ActionableResult, path string, now time.Time, logger *slog.Logger) {
+	ledger, err := review.LoadOutcomeLedger(path)
+	if err != nil {
+		logger.Warn("review outcomes: ledger unreadable, starting fresh", "error", err)
+	}
+	aiAuthor := cfg.EffectiveAIAuthor()
+	open := make([]review.OpenPR, 0, len(actionable.PRs.Items))
+	for _, pr := range actionable.PRs.Items {
+		full := config.QualifyRepo(cfg.Project.Org, pr.Repo)
+		open = append(open, review.OpenPR{
+			Repo:          full,
+			Number:        pr.Number,
+			Author:        pr.Author,
+			AgentAuthored: pr.HiveAttributed || pr.AppAuthored || (aiAuthor != "" && strings.EqualFold(pr.Author, aiAuthor)),
+			CreatedAt:     pr.CreatedAt,
+		})
+	}
+
+	// Review evidence: the verdict artifact knows the verdict; the links
+	// ledger knows a review was posted even when its verdict could not bind
+	// (queue-lane reviews of undispatched PRs). Earliest time wins.
+	signals := map[string]review.ReviewSignal{}
+	if art, err := review.LoadArtifact(""); err == nil {
+		for _, it := range art.Items {
+			key := it.Repo + "#" + strconv.Itoa(it.Number)
+			prev, ok := signals[key]
+			if !ok || (!it.RecordedAt.IsZero() && it.RecordedAt.Before(prev.At)) {
+				signals[key] = review.ReviewSignal{At: it.RecordedAt, Verdict: it.Verdict}
+			} else if ok && prev.Verdict == "" {
+				prev.Verdict = it.Verdict
+				signals[key] = prev
+			}
+		}
+	}
+	if links, err := github.LoadReviewLinks(""); err == nil {
+		for key, link := range links {
+			at := link.At
+			if at.IsZero() {
+				continue
+			}
+			prev, ok := signals[key]
+			if !ok {
+				signals[key] = review.ReviewSignal{At: at}
+			} else if at.Before(prev.At) {
+				prev.At = at
+				signals[key] = prev
+			}
+		}
+	}
+
+	missing := ledger.Observe(now, open, signals)
+	resolved := 0
+	if gh != nil {
+		for i, m := range missing {
+			if i >= reviewOutcomeResolveCap {
+				break
+			}
+			st, err := gh.GetPRState(ctx, m.Repo, m.Number)
+			if err != nil {
+				logger.Debug("review outcomes: could not resolve vanished PR", "repo", m.Repo, "number", m.Number, "error", err)
+				continue
+			}
+			ledger.Resolve(m.Repo, m.Number, st.State, st.MergedAt, st.ClosedAt)
+			resolved++
+		}
+	}
+	ledger.Snapshot(now)
+	if err := ledger.Save(path, now); err != nil {
+		logger.Warn("review outcomes: save failed", "error", err)
+		return
+	}
+	if len(missing) > 0 {
+		logger.Info("review outcomes recorded", "open", len(open), "left_queue", len(missing), "resolved", resolved)
+	}
 }
 
 // reviewFixAuditor is the slice of the dashboard the withheld-fix audit
