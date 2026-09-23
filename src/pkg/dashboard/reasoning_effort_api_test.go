@@ -47,11 +47,15 @@ func TestHandleAgentConfigModels_ReasoningEffort(t *testing.T) {
 func TestHandleAgentConfigModels_ReasoningEffortRejected(t *testing.T) {
 	s, deps := apiServer(t)
 
-	// scanner's fixture backend is claude, which has no effort control.
+	// gemini has no effort control (claude gained one in #8377, so the
+	// fixture's claude scanner is switched off it first).
 	rec := doPut(s, "/api/config/agent/scanner/models",
-		map[string]interface{}{"reasoning_effort": "high"})
+		map[string]interface{}{"backend": "gemini", "reasoning_effort": "high"})
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("claude effort: status = %d, want 400", rec.Code)
+		t.Fatalf("gemini effort: status = %d, want 400", rec.Code)
+	}
+	if got := deps.Config.Agents["scanner"].Backend; got != "claude" {
+		t.Fatalf("rejected request must persist nothing; backend = %q", got)
 	}
 
 	// codex rejects values outside its vocabulary; the backend change in the
@@ -97,11 +101,64 @@ func TestHandleEffortSet(t *testing.T) {
 }
 
 // TestHandleEffortSet_NoEffortBackend pins the 400 for a backend with no
-// effort control (scanner's fixture backend is claude).
+// effort control (the fixture's claude scanner is moved to gemini first;
+// claude itself has an effort control since #8377).
 func TestHandleEffortSet_NoEffortBackend(t *testing.T) {
 	s, _ := apiServer(t)
+	if rec := doPut(s, "/api/config/agent/scanner/models",
+		map[string]interface{}{"backend": "gemini"}); rec.Code != http.StatusOK {
+		t.Fatalf("backend switch: status = %d, want 200", rec.Code)
+	}
 	if rec := doPost(s, "/api/effort/scanner/high", nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestHandleEffortSet_ClaudeRoundTrip pins the per-agent claude effort
+// (#8377) through the same durable path every other per-agent setting takes:
+// an owner POST stores a claude-valid value on the fixture's claude scanner
+// and it reads back from config; each of the five levels is accepted;
+// "default" clears it; a value outside claude's set (codex's "minimal") is
+// rejected without touching the stored value.
+func TestHandleEffortSet_ClaudeRoundTrip(t *testing.T) {
+	s, deps := apiServer(t)
+	if got := deps.Config.Agents["scanner"].Backend; got != "claude" {
+		t.Fatalf("fixture scanner backend = %q, want claude", got)
+	}
+
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		rec := doOwnerPost(s, "/api/effort/scanner/"+level, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("set %s: status = %d, want 200 (%s)", level, rec.Code, rec.Body.String())
+		}
+		if got := deps.Config.Agents["scanner"].ReasoningEffort; got != level {
+			t.Fatalf("after set %s: reasoning_effort = %q", level, got)
+		}
+	}
+
+	if rec := doOwnerPost(s, "/api/effort/scanner/minimal", nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("codex-only value on claude: status = %d, want 400", rec.Code)
+	}
+	if got := deps.Config.Agents["scanner"].ReasoningEffort; got != "max" {
+		t.Fatalf("rejected value must leave the stored effort alone; got %q", got)
+	}
+
+	rec := doOwnerPost(s, "/api/effort/scanner/default", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear: status = %d, want 200", rec.Code)
+	}
+	if got := deps.Config.Agents["scanner"].ReasoningEffort; got != "" {
+		t.Fatalf("'default' must clear the claude effort; got %q", got)
+	}
+
+	// The models endpoint takes the same field for claude.
+	rec = doPut(s, "/api/config/agent/scanner/models",
+		map[string]interface{}{"reasoning_effort": "high"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models endpoint set: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := deps.Config.Agents["scanner"].ReasoningEffort; got != "high" {
+		t.Fatalf("models endpoint: reasoning_effort = %q, want high", got)
 	}
 }
 

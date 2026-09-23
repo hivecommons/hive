@@ -167,6 +167,16 @@ else
   if [[ "$BACKEND" == "codex" && -n "$REASONING_EFFORT" ]]; then
     FULL_CMD+=("-c" "model_reasoning_effort=\"${REASONING_EFFORT}\"")
   fi
+  # claude takes `--effort low|medium|high|xhigh|max` (hivecommons/hive#8377).
+  # A value outside that set is dropped rather than passed, like muse on the
+  # relay path, so a codex-only value never turns into a claude launch that
+  # fails to parse its flags. Unset leaves Claude Code at its own default.
+  if [[ "$BACKEND" == "claude" && -n "$REASONING_EFFORT" ]]; then
+    case "$REASONING_EFFORT" in
+      low|medium|high|xhigh|max) FULL_CMD+=("--effort" "$REASONING_EFFORT") ;;
+      *) echo "agent-launch: ignoring reasoning effort '${REASONING_EFFORT}' (claude accepts low|medium|high|xhigh|max)" >&2 ;;
+    esac
+  fi
   if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     FULL_CMD+=("${EXTRA_ARGS[@]}")
   fi

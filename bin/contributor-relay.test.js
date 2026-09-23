@@ -1486,6 +1486,84 @@ test('agy headless argv carries the same --model/--effort pairing', () => {
   } finally { teardown(relay); }
 });
 
+test('claude interactive launch carries --effort only for claude-valid values (#8377)', () => {
+  // Claude Code takes `--effort low|medium|high|xhigh|max`. Like muse, a value
+  // outside that set is dropped rather than passed, so a codex-only token can
+  // never turn into a claude launch that fails at flag parsing.
+  const withEffort = loadRelay({ backend: 'claude', model: 'claude-opus-5', reasoningEffort: 'xhigh' });
+  try {
+    const cmd = withEffort.buildLaunchCommand();
+    assert.match(cmd, /--model claude-opus-5/, `expected model flag, got: ${cmd}`);
+    assert.match(cmd, /--effort xhigh/, `claude dropped --effort: ${cmd}`);
+  } finally { teardown(withEffort); }
+
+  // Unlike agy, claude's effort does not depend on a model being set.
+  const noModel = loadRelay({ backend: 'claude', reasoningEffort: 'max' });
+  try {
+    assert.match(noModel.buildLaunchCommand(), /--effort max/);
+  } finally { teardown(noModel); }
+
+  const unset = loadRelay({ backend: 'claude', model: 'claude-opus-5' });
+  try {
+    const cmd = unset.buildLaunchCommand();
+    assert.ok(!/--effort/.test(cmd), `unset effort must leave Claude Code at its default, got: ${cmd}`);
+  } finally { teardown(unset); }
+
+  const bogus = loadRelay({ backend: 'claude', model: 'claude-opus-5', reasoningEffort: 'minimal' });
+  try {
+    const cmd = bogus.buildLaunchCommand();
+    assert.ok(!/--effort/.test(cmd), `codex-only effort must be dropped for claude, got: ${cmd}`);
+    assert.equal(bogus.effectiveReasoningEffort(), '', 'a dropped effort must not be reported either');
+  } finally { teardown(bogus); }
+});
+
+test('claude headless argv carries --effort exactly once, and other backends do not inherit it (#8377)', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', model: 'claude-opus-5', reasoningEffort: 'high' });
+  try {
+    const a = relay.buildHeadlessArgv('review this');
+    const n = a.args.filter(x => x === '--effort').length;
+    assert.equal(n, 1, `--effort must appear exactly once: ${JSON.stringify(a.args)}`);
+    assert.strictEqual(a.args[a.args.indexOf('--effort') + 1], 'high');
+    assert.ok(a.args.includes('--model'), `headless claude dropped --model: ${JSON.stringify(a.args)}`);
+    assert.deepStrictEqual(a.args.slice(-2), ['-p', 'review this']);
+  } finally { teardown(relay); }
+
+  const copilot = loadRelay({ backend: 'copilot', mode: 'headless', model: 'gpt-5.6-luna', reasoningEffort: 'high' });
+  try {
+    const a = copilot.buildHeadlessArgv('review this');
+    assert.ok(!a.args.includes('--effort'), `copilot must not inherit claude's --effort: ${JSON.stringify(a.args)}`);
+  } finally { teardown(copilot); }
+
+  const litellm = loadRelay({ backend: 'litellm', model: 'claude-opus-5', reasoningEffort: 'high' });
+  try {
+    const cmd = litellm.buildLaunchCommand();
+    assert.ok(!/--effort/.test(cmd), `inference routes are not the claude backend here: ${cmd}`);
+  } finally { teardown(litellm); }
+});
+
+test('claude reports the same effort it launched with (#8377)', () => {
+  // The effort travels twice — argv and auth_response — and must come from
+  // the one resolver, or the dashboard advertises an effort the CLI never got.
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'claude', AGENT_MODEL: 'claude-opus-5', AGENT_REASONING_EFFORT: 'medium' } });
+  try {
+    const resolved = relay.effectiveReasoningEffort();
+    assert.strictEqual(resolved, 'medium');
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.reasoning_effort, resolved, 'auth_response must report the resolved effort');
+    assert.match(relay.buildLaunchCommand(), /--effort medium/, 'the launch command must carry the SAME resolved effort');
+  } finally { teardown(relay); }
+
+  const bogus = loadRelay({ env: { AGENT_BACKEND: 'claude', AGENT_MODEL: 'claude-opus-5', AGENT_REASONING_EFFORT: 'ultra' } });
+  try {
+    bogus.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = bogus.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.reasoning_effort, undefined,
+      'a value claude rejects is dropped from argv, so it must not be reported as in effect');
+  } finally { teardown(bogus); }
+});
+
 test('goose is also excluded from --model', () => {
   const relay = loadRelay({ backend: 'goose', model: 'some-model' });
   try {

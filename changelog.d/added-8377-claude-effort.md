@@ -1,0 +1,1 @@
+- Per-agent reasoning effort for the claude backend: the dashboard effort dropdown now appears on claude agents and a stored `reasoning_effort` (low|medium|high|xhigh|max) is passed to Claude Code as `--effort <v>`; unset leaves the CLI at its own default, and the scripted and contributor-relay launches honor `AGENT_REASONING_EFFORT` for claude the same way (#8377)

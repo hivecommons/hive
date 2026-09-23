@@ -9560,11 +9560,14 @@
     }
     // Backends with a reasoning-effort control and the values each accepts.
     // Mirrors config.ReasoningEffortsByBackend server-side: codex is launched
-    // with -c model_reasoning_effort="<v>", agy with --effort <v>. Backends
-    // absent here have no effort flag, so they get no dropdown at all.
+    // with -c model_reasoning_effort="<v>", agy with --effort <v>, and claude
+    // with --effort <v> (hivecommons/hive#8377; unset leaves Claude Code at
+    // its own default). Backends absent here have no effort flag, so they get
+    // no dropdown at all.
     const BACKEND_REASONING_EFFORTS = {
       codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
       agy: ['low', 'medium', 'high'],
+      claude: ['low', 'medium', 'high', 'xhigh', 'max'],
     };
     // effortSelectHtml renders the reasoning-effort dropdown beside the model
     // dropdown, only for backends that have an effort control. "default"

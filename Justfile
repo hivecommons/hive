@@ -81,6 +81,7 @@ contribute-check-backend backend="claude":
         fi
         if claude -p "reply with OK" --max-turns 1 2>/dev/null | grep -qi "ok"; then
           echo "Claude Code authenticated and working."
+          echo "  Effort: export AGENT_REASONING_EFFORT=low|medium|high|xhigh|max (unset = Claude Code's default)"
         else
           echo ""
           echo "Claude Code needs authentication."

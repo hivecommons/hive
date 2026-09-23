@@ -811,6 +811,15 @@ REASONING_FLAG=""
 if [[ "$AGENT_BACKEND" == "codex" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then
   REASONING_FLAG="-c 'model_reasoning_effort=\"${AGENT_REASONING_EFFORT}\"'"
 fi
+# claude takes `--effort low|medium|high|xhigh|max` (hivecommons/hive#8377).
+# Same drop-not-fail rule as the relay: a value claude does not accept is
+# logged and left off rather than handed to a CLI that would refuse it.
+if [[ "$AGENT_BACKEND" == "claude" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then
+  case "$AGENT_REASONING_EFFORT" in
+    low|medium|high|xhigh|max) REASONING_FLAG="--effort ${AGENT_REASONING_EFFORT}" ;;
+    *) echo "contributor-agent: ignoring AGENT_REASONING_EFFORT='${AGENT_REASONING_EFFORT}' (claude accepts low|medium|high|xhigh|max)" >&2 ;;
+  esac
+fi
 
 # Seed Claude Code's first-run config for every backend that drives the claude
 # CLI. See seed_claude_config above for why OAuth/subscription claude needs

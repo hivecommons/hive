@@ -41,6 +41,21 @@ func TestInvocationMetadata(t *testing.T) {
 			wantEffort:  "",
 		},
 		{
+			name:        "claude with a configured effort reports it (#8377)",
+			agent:       &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "claude", Model: "claude-opus-4-6", ReasoningEffort: "xhigh"}},
+			wantBackend: "claude",
+			wantModel:   "claude-opus-4-6",
+			wantEffort:  "xhigh",
+		},
+		{
+			name: "backend override off claude drops the claude effort",
+			agent: &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "claude", Model: "claude-opus-4-6", ReasoningEffort: "xhigh"},
+				BackendOverride: "copilot"},
+			wantBackend: "copilot",
+			wantModel:   "claude-opus-4-6",
+			wantEffort:  "",
+		},
+		{
 			name:        "agy with model resolves default effort",
 			agent:       &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "agy", Model: "gemini-3.7-flash"}},
 			wantBackend: "agy",

@@ -17,8 +17,11 @@
 //                           session transcript for claude/copilot/bob (#4117);
 //                           other backends report no model, as before.
 //   AGENT_REASONING_EFFORT — reasoning effort override (optional). Consumed by
-//                           codex (-c model_reasoning_effort) and by agy
-//                           (--effort low|medium|high); ignored elsewhere.
+//                           codex (-c model_reasoning_effort), by agy
+//                           (--effort low|medium|high), by muse
+//                           (--reasoning-effort) and by claude
+//                           (--effort low|medium|high|xhigh|max, #8377);
+//                           ignored elsewhere.
 //   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
 //                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
@@ -2269,12 +2272,21 @@ function setPiInvocationState(state) {
 // on anything else, so an unrecognised contributor value is dropped rather
 // than turned into a launch that cannot start.
 const MUSE_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+// Claude Code's `--effort` levels (claude --help, v2.1.273+), mirroring
+// config.ReasoningEffortsByBackend["claude"] hub-side (hivecommons/hive#8377).
+// Like muse, a value outside the set is dropped rather than passed — the CLI
+// would refuse the flag and the task would die at argv parsing — and unset
+// leaves Claude Code at its own default. Only the plain `claude` backend gets
+// the flag; inference routes (litellm) that drive the same binary do not.
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 function effectiveReasoningEffort() {
   // agy is the only backend whose effort is conditional on a model being passed.
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
   // muse applies effort with or without a model, but only for values it takes.
   if (BACKEND === 'muse') return MUSE_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : '';
+  // claude likewise: --effort with or without --model, only for its own levels.
+  if (BACKEND === 'claude') return CLAUDE_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : '';
   // omp takes its effort from its own config (the `:level` suffix on the model
   // selection), read by detectOmpSelection; the env var still wins when set,
   // the same precedence effectiveModel() applies (#7760).
@@ -2787,7 +2799,11 @@ function buildLaunchCommand() {
   const museEffortFlag = BACKEND === 'muse' && effectiveReasoningEffort()
     ? `--reasoning-effort ${effectiveReasoningEffort()}`
     : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag, museEffortFlag].filter(Boolean).join(' ');
+  // claude: `--effort <v>` only when a claude-valid effort is set (#8377).
+  const claudeEffortFlag = BACKEND === 'claude' && effectiveReasoningEffort()
+    ? `--effort ${effectiveReasoningEffort()}`
+    : '';
+  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag, museEffortFlag, claudeEffortFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -2906,7 +2922,11 @@ function buildHeadlessArgv(prompt) {
   const museEffortArgs = BACKEND === 'muse' && effectiveReasoningEffort()
     ? ['--reasoning-effort', effectiveReasoningEffort()]
     : [];
-  const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs];
+  // Same claude-valid-only rule as the interactive launch (#8377).
+  const claudeEffortArgs = BACKEND === 'claude' && effectiveReasoningEffort()
+    ? ['--effort', effectiveReasoningEffort()]
+    : [];
+  const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs, ...claudeEffortArgs];
   // Sub-command-first CLIs parse their options on the sub-command, not the
   // root binary, so the one-shot token has to lead (see flagsAfterCommand).
   const args = spec.flagsAfterCommand

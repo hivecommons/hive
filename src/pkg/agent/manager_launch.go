@@ -754,7 +754,8 @@ func bobLaunchCmd(binary string) string {
 
 // toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
 // effort is the configured per-agent reasoning effort; only backends with an
-// effort control consume it (see codexEffortFlag / agyLaunchEffort).
+// effort control consume it (see codexEffortFlag / agyLaunchEffort /
+// claudeEffortFlag).
 func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort string) string {
 	denies := tools.DenyPatterns()
 
@@ -773,7 +774,7 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		if isInference {
 			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 		}
-		cmd := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
+		cmd := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s%s", binary, model, bareFlag, claudeEffortFlag(effort))
 		for _, p := range denies {
 			cmd += fmt.Sprintf(" --disallowed-tools '%s'", p)
 		}
@@ -820,7 +821,8 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 // process — so the flag contract each backend depends on can be asserted
 // directly in tests instead of by polling a live pane for typed output.
 // effort is the configured per-agent reasoning effort; only backends with an
-// effort control consume it (see codexEffortFlag / agyLaunchEffort).
+// effort control consume it (see codexEffortFlag / agyLaunchEffort /
+// claudeEffortFlag).
 func backendLaunchCmd(binary, model, backend string, isInference bool, effort string) string {
 	var launchCmd string
 	switch backend {
@@ -829,7 +831,7 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 		if isInference {
 			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 		}
-		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
+		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s%s", binary, model, bareFlag, claudeEffortFlag(effort))
 		// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
 		// App-gated gh wrapper, never as the user via the MCP. Mode governs the
 		// gh-wrapper/proxy layer only, not what the MCP may write.
@@ -925,6 +927,22 @@ func codexEffortFlag(effort string) string {
 		return ""
 	}
 	return fmt.Sprintf(" -c model_reasoning_effort=%q", effort)
+}
+
+// claudeEffortFlag renders Claude Code's `--effort <v>` argument for a
+// configured reasoning effort, or "" when unset or not one of the levels
+// claude accepts (config.ReasoningEffortsByBackend["claude"]). Absent means
+// Claude Code keeps its own default effort; an unknown value is dropped
+// rather than passed, so a stale or mistyped stored effort can never turn
+// into a launch that fails to parse its flags (hivecommons/hive#8377). Set
+// time already rejects unknown values (config.ValidateReasoningEffort), so
+// this is the launch-side half of the same rule, mirrored in
+// ResolveReasoningEffort for the attribution trail.
+func claudeEffortFlag(effort string) string {
+	if !config.ValidEffort(config.ClaudeBackend, effort) {
+		return ""
+	}
+	return fmt.Sprintf(" --effort %s", effort)
 }
 
 // agyLaunchEffort returns the --effort agy is launched with: the configured
