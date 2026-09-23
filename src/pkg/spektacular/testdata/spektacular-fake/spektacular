@@ -1,32 +1,67 @@
 #!/bin/sh
 # Fake Spektacular CLI for hivecommons/hive#8303 tests.
 #
-# It emits the hivecommons/hive#8301 status contract from a scripted sequence
-# so the Hive runner can be exercised end to end through BinaryExec without the
-# real Spektacular repository. Hive never reads this file's state: the counter
-# below is the fake's own bookkeeping, hidden behind the CLI boundary.
+# It emits the per-artifact status contract as shipped by
+# jumppad-labs/spektacular#45 (hivecommons/hive#8301) from a scripted sequence
+# so the Hive runner can be exercised end to end through BinaryExec without
+# the real Spektacular repository. Hive never reads this file's state: the
+# counter below is the fake's own bookkeeping, hidden behind the CLI boundary.
 #
-# Contract assumptions encoded here (see src/docs/spektacular.md):
-#   spektacular <spec|plan> status <name> --json
-#     -> {"kind","name","document_status":"draft"|"final","current_step",
-#         "completed_steps":[],"created_at","updated_at","closed_at"}
-#     missing artifact -> exit 2 and {"error":"...","code":"not_found"} on stdout
-#   spektacular plan export <name> --json   (assumed, not in #8301)
-#     -> {"kind":"plan","name","tasks":[{"ref","title","depends_on","execution"}]}
+# Contract encoded here (see src/docs/spektacular.md):
+#   spektacular <spec|plan> status <name>           (bare name, no extension;
+#                                                    the CLI has no --json flag)
+#     -> {"error":false,"kind","name","document_status":"draft"|"final",
+#         "current_step","completed_steps":[],"created_at","updated_at",
+#         "closed_at","spec","plan"}
+#        created_at / closed_at are frontmatter dates emitted as RFC3339
+#        midnight UTC, "" when unset; updated_at is workflow activity only
+#        while the in-progress state matches the artifact, otherwise a file
+#        mtime, and may be absent altogether; spec / plan are the frontmatter
+#        cross-references and are almost never populated.
+#     missing artifact -> non-zero exit and the JSON error envelope
+#        {"error":true,"code":"artifact_not_found","message":"...",
+#         "resource":"<name>","next_action":"..."} on stdout
+#   spektacular plan export <name>   (still an open ask on the Spektacular
+#                                     side; shape assumed)
+#     -> {"error":false,"kind":"plan","name",
+#         "tasks":[{"ref","title","depends_on","execution"}]}
 #
 # Environment:
-#   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft | missing
+#   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
+#                       final-no-updated-at | missing
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
 
-kind="${1:-}"; verb="${2:-}"; name="${3:-}"; flag="${4:-}"
+kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"
 scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
 state="${SPEK_FAKE_STATE:?SPEK_FAKE_STATE is required}"
 
-if [ "$flag" != "--json" ]; then
-  echo '{"error":"--json is required","code":"usage"}'
-  exit 64
+# Exit codes the fake uses. The real CLI exits non-zero on every envelope
+# error; the exact code is not part of the contract.
+EXIT_USAGE=64
+EXIT_NOT_FOUND=1
+
+usage_error() {
+  printf '{"error":true,"code":"usage","message":"%s","next_action":"see spektacular --help"}\n' "$1"
+  exit "$EXIT_USAGE"
+}
+
+# The real CLI has no --json flag (its only global flag is --fields); an
+# unknown flag is a usage error, which is what a caller still passing it
+# would see.
+if [ -n "$extra" ]; then
+  usage_error "unknown flag: $extra"
 fi
+
+# Status and export verbs take the bare artifact name. A file address
+# (`<name>.md`, `<name>/plan.md`) is not an artifact and is reported missing,
+# which is what the real store answers for it.
+case "$name" in
+  *.md|*/*)
+    printf '{"error":true,"code":"artifact_not_found","message":"%s artifact \\"%s\\" was not found","resource":"%s","next_action":"run `spektacular %s file list` to see available %ss"}\n' "$kind" "$name" "$name" "$kind" "$kind"
+    exit "$EXIT_NOT_FOUND"
+    ;;
+esac
 
 count=0
 if [ -f "$state" ]; then
@@ -35,25 +70,24 @@ fi
 
 if [ "$verb" = "export" ]; then
   if [ "$kind" != "plan" ]; then
-    echo '{"error":"only plans export","code":"usage"}'
-    exit 64
+    usage_error "only plans export"
   fi
-  printf '{"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":"agent_suitable"},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}\n' "$name"
+  printf '{"error":false,"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":"agent_suitable"},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}\n' "$name"
   exit 0
 fi
 
 if [ "$verb" != "status" ]; then
-  echo '{"error":"unknown verb","code":"usage"}'
-  exit 64
+  usage_error "unknown verb: $verb"
 fi
 
 count=$((count + 1))
 printf '%s' "$count" > "$state"
 
+with_updated=1
 case "$scenario" in
   missing)
-    printf '{"error":"%s %s not found","code":"not_found","kind":"%s","name":"%s"}\n' "$kind" "$name" "$kind" "$name"
-    exit 2
+    printf '{"error":true,"code":"artifact_not_found","message":"%s artifact \\"%s\\" was not found","resource":"%s","next_action":"run `spektacular %s file list` to see available %ss"}\n' "$kind" "$name" "$name" "$kind" "$kind"
+    exit "$EXIT_NOT_FOUND"
     ;;
   never-final)
     status=draft
@@ -61,18 +95,37 @@ case "$scenario" in
   final-then-draft)
     if [ "$count" -le 1 ]; then status=final; else status=draft; fi
     ;;
+  final-no-updated-at)
+    # A closed artifact with no matching workflow state: Spektacular may drop
+    # updated_at entirely rather than report a file mtime.
+    status=final
+    with_updated=0
+    ;;
   draft-final|*)
     if [ "$count" -le 2 ]; then status=draft; else status=final; fi
     ;;
 esac
 
-closed='null'
+# Frontmatter dates: created_date / closed_date as RFC3339 midnight UTC,
+# closed_at "" while the document is open.
+closed='""'
 steps='["interview"]'
 step='authoring'
 if [ "$status" = "final" ]; then
-  closed='"2026-09-22T13:40:00Z"'
+  closed='"2026-09-22T00:00:00Z"'
   steps='["interview","authoring","review"]'
-  step='done'
+  step='finished'
 fi
-printf '{"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-22T13:25:17Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s}\n' \
-  "$kind" "$name" "$status" "$step" "$steps" "$count" "$closed"
+# The plan cross-reference is populated for a spec only in the rare case the
+# author filled it in; the fake mirrors the common case (empty) for specs and
+# the self-reference for plans, which is what the #45 example shows.
+plan=''
+if [ "$kind" = "plan" ]; then plan="$name"; fi
+
+if [ "$with_updated" -eq 1 ]; then
+  printf '{"error":false,"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$status" "$step" "$steps" "$count" "$closed" "$plan"
+else
+  printf '{"error":false,"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$status" "$step" "$steps" "$closed" "$plan"
+fi

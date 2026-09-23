@@ -18,8 +18,8 @@ const (
 	// EngineName identifies Spektacular as the producing engine on the receipt.
 	EngineName = "spektacular"
 	// engineVersion is the CLI version the runner assumes; the status verb does
-	// not report one, so it names the contract revision instead.
-	engineVersion = "8301"
+	// not report one, so it names the Spektacular PR that shipped the contract.
+	engineVersion = "spektacular-pr-45"
 )
 
 // BuildReceipt produces the stage receipt Hive records when an artifact
@@ -34,10 +34,11 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 	if started.IsZero() {
 		started = now
 	}
+	// closed_at is the frontmatter close date; when the artifact carries none
+	// the advance instant is the end. updated_at is deliberately not a
+	// fallback: it is a file mtime whenever no workflow state matches the
+	// artifact, so it says nothing about when the stage finished.
 	ended := status.ClosedAt
-	if ended.IsZero() {
-		ended = status.UpdatedAt
-	}
 	if ended.IsZero() {
 		ended = now
 	}
@@ -58,11 +59,14 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		parts = append(parts, strings.Join([]string{artifact.Repo, artifact.Path, artifact.Description}, "\x00"))
 	}
 	sort.Strings(parts)
-	// InputRevision is artifact@<hash>: the hash pins the status document the
-	// advance was decided on, so a re-observation is distinguishable.
+	// InputRevision is artifact@<hash>: the hash pins the facts the advance
+	// was decided on (kind, name, document_status, current_step,
+	// completed_steps, closed_at). updated_at is excluded on purpose: a
+	// checkout or reformat moves it without anything having happened, and
+	// two observations of the same final document must hash the same.
 	inputHash := effects.StableDigest(
 		status.Kind, status.Name, string(status.DocumentStatus), status.CurrentStep,
-		strings.Join(steps, "\x00"), status.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		strings.Join(steps, "\x00"), status.ClosedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return outputschema.StageReceipt{
 		SchemaVersion:    outputschema.StageReceiptSchemaVersion,
@@ -78,7 +82,7 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		ResultClass:      outputschema.ReceiptResultCompleted,
 		StartedAt:        started.UTC().Format(time.RFC3339Nano),
 		EndedAt:          ended.UTC().Format(time.RFC3339Nano),
-		Provenance:       &proof.Provenance{Query: "spektacular " + status.Kind + " status " + status.Name + " --json"},
+		Provenance:       &proof.Provenance{Query: "spektacular " + status.Kind + " status " + status.Name},
 		Artifacts:        artifacts,
 	}
 }

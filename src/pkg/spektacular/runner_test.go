@@ -81,15 +81,24 @@ func (s *scriptedExec) statusCalls() int {
 	return n
 }
 
+// statusJSON is the exact per-artifact status shape jumppad-labs/spektacular#45
+// prints: an `error:false` envelope, frontmatter dates as RFC3339 midnight
+// UTC with closed_at "" while open, and the (usually empty) spec / plan
+// cross-references.
 func statusJSON(kind, name string, status DocumentStatus) string {
-	closed := "null"
+	closed := `""`
 	if status == DocumentFinal {
-		closed = `"2026-09-22T13:40:00Z"`
+		closed = `"2026-09-22T00:00:00Z"`
 	}
-	return fmt.Sprintf(`{"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-22T13:25:17Z","updated_at":"2026-09-22T13:30:00Z","closed_at":%s}`, kind, name, status, closed)
+	plan := ""
+	if kind == KindPlan {
+		plan = name
+	}
+	return fmt.Sprintf(`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:30:00Z","closed_at":%s,"spec":"","plan":%q}`, kind, name, status, closed, plan)
 }
 
-const notFoundJSON = `ERR:{"error":"plan not found","code":"not_found"}`
+// notFoundJSON is the #45 error envelope for a missing artifact.
+const notFoundJSON = `ERR:{"error":true,"code":"artifact_not_found","message":"plan artifact \"x\" was not found","resource":"x","next_action":"run ` + "`spektacular plan file list`" + ` to see available plans"}`
 
 const exportJSON = `{"kind":"plan","name":"` + testRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"]},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}`
 
@@ -210,19 +219,116 @@ func TestStatus_ParsesContract(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 	if st.Kind != KindPlan || st.Name != testRunKey || !st.Final() || st.CurrentStep != "authoring" ||
-		len(st.CompletedSteps) != 1 || st.CreatedAt.IsZero() || st.UpdatedAt.IsZero() || st.ClosedAt.IsZero() {
+		len(st.CompletedSteps) != 1 || st.CreatedAt.IsZero() || st.UpdatedAt.IsZero() || st.ClosedAt.IsZero() ||
+		st.Spec != "" || st.Plan != testRunKey {
 		t.Fatalf("parsed status = %+v", st)
 	}
-	want := []string{KindPlan, verbStatus, testRunKey, flagJSON}
+	// The CLI has no --json flag: the invocation is exactly `<kind> status <name>`.
+	want := []string{KindPlan, verbStatus, testRunKey}
 	if got := ex.calls[0]; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("args = %v, want %v", got, want)
+	}
+	if st.CreatedAt.Hour() != 0 || st.CreatedAt.Location() != time.UTC {
+		t.Fatalf("created_at should be the midnight-UTC frontmatter date, got %s", st.CreatedAt)
+	}
+}
+
+func TestStatus_ToleratesAbsentUpdatedAt(t *testing.T) {
+	// Spektacular may drop updated_at when no workflow state matches the
+	// artifact, emit it as "" or null, and emits closed_at "" while open.
+	// None of those may fail the parse or change the progress decision.
+	base := `{"error":false,"kind":"spec","name":%q,"document_status":"final","current_step":"finished","completed_steps":["interview","authoring"],"created_at":"2026-09-21T00:00:00Z","closed_at":"2026-09-22T00:00:00Z","spec":"","plan":""%s}`
+	for name, tail := range map[string]string{
+		"absent": ``,
+		"null":   `,"updated_at":null`,
+		"empty":  `,"updated_at":""`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ex := &scriptedExec{statuses: []string{fmt.Sprintf(base, testRunKey, tail)}}
+			st, err := (&Runner{Exec: ex.exec}).Status(context.Background(), KindSpec, testRunKey)
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if !st.UpdatedAt.IsZero() || !st.Final() || st.CurrentStep != "finished" || len(st.CompletedSteps) != 2 {
+				t.Fatalf("status = %+v", st)
+			}
+		})
+	}
+	// An open document reports closed_at "" and created_at may be "" when the
+	// frontmatter carries no date; both decode to the zero time.
+	open := fmt.Sprintf(`{"error":false,"kind":"spec","name":%q,"document_status":"draft","current_step":"authoring","completed_steps":[],"created_at":"","updated_at":"2026-09-22T13:30:00Z","closed_at":"","spec":"","plan":""}`, testRunKey)
+	st, err := (&Runner{Exec: (&scriptedExec{statuses: []string{open}}).exec}).Status(context.Background(), KindSpec, testRunKey)
+	if err != nil || !st.CreatedAt.IsZero() || !st.ClosedAt.IsZero() || st.Final() {
+		t.Fatalf("open status = %+v err=%v", st, err)
+	}
+	// A timestamp that is present but malformed is still a contract error.
+	bad := fmt.Sprintf(`{"error":false,"kind":"spec","name":%q,"document_status":"draft","current_step":"authoring","completed_steps":[],"created_at":"yesterday","closed_at":""}`, testRunKey)
+	var ce *ContractError
+	if _, err := (&Runner{Exec: (&scriptedExec{statuses: []string{bad}}).exec}).Status(context.Background(), KindSpec, testRunKey); !errors.As(err, &ce) {
+		t.Fatalf("malformed timestamp err = %v (%T)", err, err)
+	}
+	var ft flexTime
+	if err := ft.UnmarshalJSON([]byte(`42`)); err == nil {
+		t.Fatal("numeric timestamp accepted")
+	}
+}
+
+func TestArtifactKey(t *testing.T) {
+	// The bare artifact name is the only stable join key across stages
+	// (spektacular#45, #46); every file-address spelling reduces to it.
+	const bare = "000057_git-commit"
+	for _, in := range []string{bare, bare + ".md", bare + "/plan.md", bare + "/PLAN.MD", " " + bare + ".MD ", bare + ".markdown"} {
+		if got := ArtifactKey(in); got != bare {
+			t.Fatalf("ArtifactKey(%q) = %q, want %q", in, got, bare)
+		}
+	}
+	// A dot inside a name is not an extension, and a path that does not end
+	// in a markdown document (an issue-style key) is not an artifact address.
+	for _, keep := range []string{"000058_v1.2-upgrade", "myorg/repo1#42", "other/repo!x:nope", bare + "/plan"} {
+		if got := ArtifactKey(keep); got != keep {
+			t.Fatalf("ArtifactKey(%q) = %q, want it unchanged", keep, got)
+		}
+	}
+	if got := ArtifactKey("  "); got != "" {
+		t.Fatalf("ArtifactKey(blank) = %q", got)
+	}
+}
+
+func TestStatus_JoinsByBareNameAcrossSpellings(t *testing.T) {
+	// The lease may still carry a file address; the CLI is always asked for
+	// the bare name, and a status answered under the bare name matches a
+	// request made with the extension.
+	const bare = "000057_git-commit"
+	for _, spelling := range []string{bare + ".md", bare + "/plan.md", bare} {
+		ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, bare, DocumentFinal)}, exportJSON: strings.ReplaceAll(exportJSON, testRunKey, bare)}
+		r := &Runner{Exec: ex.exec}
+		st, err := r.Status(context.Background(), KindPlan, spelling)
+		if err != nil || st.Name != bare {
+			t.Fatalf("Status(%q): %+v %v", spelling, st, err)
+		}
+		plan, err := r.ExportPlan(context.Background(), spelling)
+		if err != nil || plan.Name != bare {
+			t.Fatalf("ExportPlan(%q): %+v %v", spelling, plan, err)
+		}
+		for _, call := range ex.calls {
+			if call[2] != bare {
+				t.Fatalf("CLI asked for %q, want bare %q (call %v)", call[2], bare, call)
+			}
+		}
+	}
+	// Two leases spelled differently key the same stage state in the runner.
+	if stageKey(Stage{RunKey: ArtifactKey(bare + ".md"), Stage: StageSpec}) != stageKey(Stage{RunKey: ArtifactKey(bare), Stage: StageSpec}) {
+		t.Fatal("stage keys differ across spellings")
 	}
 }
 
 func TestStatus_MissingDocumentIsTyped(t *testing.T) {
 	for name, body := range map[string]string{
-		"code":    notFoundJSON,
-		"message": `ERR:{"error":"no such spec: not found"}`,
+		"artifact_not_found":  notFoundJSON,
+		"file verb not_found": `ERR:{"error":true,"code":"not_found","message":"file \"x\" not found"}`,
+		"legacy string error": `ERR:{"error":"plan not found","code":"not_found"}`,
+		"message only":        `ERR:{"error":"no such spec: not found"}`,
+		"zero exit envelope":  `{"error":true,"code":"artifact_not_found","message":"gone"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ex := &scriptedExec{statuses: []string{body}}
@@ -240,7 +346,9 @@ func TestStatus_OtherErrorsAreTyped(t *testing.T) {
 		body string
 		want any
 	}{
-		"verb error":      {`ERR:{"error":"store unreachable","code":"backend"}`, new(*VerbError)},
+		"verb error":      {`ERR:{"error":true,"code":"backend","message":"store unreachable"}`, new(*VerbError)},
+		"legacy verb err": {`ERR:{"error":"store unreachable","code":"backend"}`, new(*VerbError)},
+		"zero exit error": {`{"error":true,"code":"backend","message":"store unreachable"}`, new(*VerbError)},
 		"non-json exit":   {`ERR:panic: boom`, new(*ContractError)},
 		"empty exit":      {`ERR:`, new(*ContractError)},
 		"bad json":        {`{not json`, new(*ContractError)},
@@ -258,7 +366,7 @@ func TestStatus_OtherErrorsAreTyped(t *testing.T) {
 			}
 			switch want := tc.want.(type) {
 			case **VerbError:
-				if !errors.As(err, want) || (*want).Code != "backend" || (*want).Error() == "" {
+				if !errors.As(err, want) || (*want).Code != "backend" || (*want).Message != "store unreachable" || (*want).Error() == "" {
 					t.Fatalf("err = %v (%T), want *VerbError", err, err)
 				}
 			case **ContractError:
@@ -651,11 +759,48 @@ func TestBuildReceipt_FallsBackWhenStatusLacksTimes(t *testing.T) {
 	if receipt.Artifacts[0].Repo != testRunKey {
 		t.Fatalf("artifact repo fell back to %q", receipt.Artifacts[0].Repo)
 	}
-	// updated_at without closed_at ends the receipt at updated_at.
+	// updated_at is a file mtime whenever no workflow state matches the
+	// artifact, so it never stands in for closed_at: without closed_at the
+	// receipt ends at the advance instant.
 	updated := t0.Add(time.Hour)
-	receipt = BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated}, t0.Add(2*time.Hour))
-	if receipt.EndedAt != updated.UTC().Format(time.RFC3339Nano) {
-		t.Fatalf("EndedAt = %s, want updated_at", receipt.EndedAt)
+	now := t0.Add(2 * time.Hour)
+	receipt = BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated}, now)
+	if receipt.EndedAt != now.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("EndedAt = %s, want the advance instant, never updated_at", receipt.EndedAt)
+	}
+	// Two observations of the same final document that differ only in
+	// updated_at (a checkout or reformat moved the mtime) are the same input.
+	a := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated, ClosedAt: t0.Add(time.Hour)}, now)
+	b := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, ClosedAt: t0.Add(time.Hour)}, now)
+	if a.InputRevision != b.InputRevision {
+		t.Fatalf("InputRevision moved with updated_at: %s vs %s", a.InputRevision, b.InputRevision)
+	}
+	if !strings.Contains(a.Provenance.Query, "spektacular spec status "+testRunKey) || strings.Contains(a.Provenance.Query, "--json") {
+		t.Fatalf("provenance query = %q", a.Provenance.Query)
+	}
+}
+
+// TestUpdatedAtNeverDecides pins the contract answer from spektacular#45:
+// updated_at is a file mtime whenever no workflow state matches the artifact,
+// so no progress or staleness decision in this package may read it. Only
+// runner.go (the parser) may mention the field.
+func TestUpdatedAtNeverDecides(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "runner.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "UpdatedAt") {
+			t.Fatalf("%s reads updated_at; progress is document_status/current_step/completed_steps and staleness is the lease clock", name)
+		}
 	}
 }
 
@@ -700,8 +845,36 @@ func TestFixture_MissingIsTypedNotFound(t *testing.T) {
 	r := &Runner{Exec: fixtureExec(t, "missing")}
 	_, err := r.Status(context.Background(), KindPlan, testRunKey)
 	var nf *NotFoundError
-	if !errors.As(err, &nf) {
+	if !errors.As(err, &nf) || !strings.Contains(nf.Message, "was not found") {
 		t.Fatalf("fixture missing: err = %v (%T)", err, err)
+	}
+}
+
+func TestFixture_FinalWithoutUpdatedAtAdvances(t *testing.T) {
+	// The fixture drops updated_at for a closed artifact with no matching
+	// workflow state; the advance is decided on document_status alone.
+	reg := newFakeRegistry(StageSpec)
+	r := &Runner{Exec: fixtureExec(t, "final-no-updated-at"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("fixture final-no-updated-at: %+v", res)
+	}
+	if len(reg.receipts) != 1 || reg.receipts[0].EndedAt != "2026-09-22T00:00:00Z" {
+		t.Fatalf("receipt ended at closed_at expected, got %+v", reg.receipts)
+	}
+}
+
+func TestFixture_LeaseSpelledAsFileAddressPollsBareName(t *testing.T) {
+	// The fixture answers artifact_not_found for `<name>.md`, exactly as the
+	// real store does, so an advance proves the runner asked by bare name.
+	reg := newFakeRegistry(StageSpec)
+	reg.stage.RunKey = testRunKey + ".md"
+	reg.stage.Artifact = ArtifactKey(reg.stage.RunKey)
+	r := &Runner{Exec: fixtureExec(t, "final-no-updated-at"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
+		t.Fatalf("fixture .md lease: %+v", res)
+	}
+	if _, err := (&Runner{Exec: fixtureExec(t, "draft-final")}).Status(context.Background(), KindSpec, testRunKey+"/plan.md"); err != nil {
+		t.Fatalf("plan-path spelling through the fixture: %v", err)
 	}
 }
 

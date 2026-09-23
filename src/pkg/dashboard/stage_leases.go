@@ -86,10 +86,54 @@ func (s *Server) tickStageRunner(now time.Time) bool {
 	return true
 }
 
-// runKeyOfLease derives the run key (Spektacular's data.name) from a lease's
-// canonical work-item key. Run-stage items are keyed `<repo>!<runKey>:<stage>`
-// (docs/work-sources.md); anything else is used verbatim, which only works
-// when the operator named the run after the artifact.
+// Artifact address spellings the dashboard reduces to the bare name. They
+// mirror spektacular.ArtifactKey (asserted equal by this package's tests)
+// without importing it: Spektacular's `file` verbs address a spec as
+// `<name>.md` and a plan as `<name>/plan.md`, but the bare name is the only
+// stable join key across stages (jumppad-labs/spektacular#45, #46).
+const (
+	artifactPathSeparator   = "/"
+	artifactExtMarkdown     = ".md"
+	artifactExtMarkdownLong = ".markdown"
+)
+
+// bareArtifactName strips a document path segment and a markdown extension
+// from an artifact address so `000057_git-commit.md`,
+// `000057_git-commit/plan.md` and `000057_git-commit` all key the same run.
+func bareArtifactName(name string) string {
+	key := strings.TrimSpace(name)
+	// `<name>/plan.md`: drop the document segment, but only when it is a
+	// markdown document, so an issue-style key such as `org/repo#42` is
+	// left alone.
+	if i := strings.LastIndex(key, artifactPathSeparator); i >= 0 && hasMarkdownExt(key[i+1:]) {
+		key = key[:i]
+	}
+	if ext := markdownExt(key); ext != "" {
+		key = key[:len(key)-len(ext)]
+	}
+	return strings.TrimSpace(key)
+}
+
+// markdownExt returns the markdown extension name carries, or "".
+func markdownExt(name string) string {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{artifactExtMarkdown, artifactExtMarkdownLong} {
+		if strings.HasSuffix(lower, ext) {
+			return ext
+		}
+	}
+	return ""
+}
+
+func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
+
+// runKeyOfLease derives the run key (Spektacular's bare artifact name, the
+// workflow's data.name) from a lease's canonical work-item key. Run-stage
+// items are keyed `<repo>!<runKey>:<stage>` (docs/work-sources.md); anything
+// else is used verbatim, which only works when the operator named the run
+// after the artifact. A run key spelled as a file address (`<name>.md`,
+// `<name>/plan.md`) is reduced to the bare name so the lease joins the same
+// artifact across spec, plan and implement.
 func runKeyOfLease(key, repo string) string {
 	k := key
 	if repo != "" {
@@ -97,6 +141,9 @@ func runKeyOfLease(key, repo string) string {
 	}
 	if i := strings.LastIndex(k, ":"); i > 0 && validStage(k[i+1:]) {
 		k = k[:i]
+	}
+	if bare := bareArtifactName(k); bare != "" {
+		return bare
 	}
 	return k
 }

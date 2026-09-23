@@ -44,12 +44,17 @@ lease that carries a stage. For each `spec` or `plan` stage whose poll interval
 has elapsed it runs
 
 ```
-spektacular <spec|plan> status <name> --json
+spektacular <spec|plan> status <name>
 ```
 
-where `<name>` is the run key: the lease's canonical work-item key
-`<repo>!<runKey>:<stage>` (see [work-sources.md](work-sources.md)) with the
-repository prefix and stage suffix stripped. Then:
+where `<name>` is the bare artifact name (`000057_git-commit`, never
+`000057_git-commit.md` or `000057_git-commit/plan.md`): the lease's canonical
+work-item key `<repo>!<runKey>:<stage>` (see [work-sources.md](work-sources.md))
+with the repository prefix and stage suffix stripped, then reduced to the bare
+name (`spektacular.ArtifactKey`; the dashboard applies the same rule in
+`runKeyOfLease`). The CLI has no `--json` flag (its only global flag is
+`--fields`); every verb already prints JSON, and an unknown flag is a usage
+error. Then:
 
 - `document_status: draft` leaves the lease alone.
 - `document_status: final` writes a stage receipt
@@ -59,6 +64,17 @@ repository prefix and stage suffix stripped. Then:
   `advanceLeaseStage` path the API uses. That fires the `stage_completed` hook
   and CEL trigger and records the `lease_stage_advanced` audit entry exactly
   as a manual advance would.
+- Progress is decided by `document_status`, `current_step` and
+  `completed_steps` only. The status document's `updated_at` is never read
+  for a progress or staleness decision: it is workflow activity only while
+  Spektacular's in-progress state matches the artifact, and otherwise a file
+  mtime that a `git checkout`, a reformat or a `touch` moves without anything
+  having happened. Spektacular may also omit it entirely when no workflow
+  state matches, so the parser treats an absent, `null` or empty
+  `updated_at` (and an empty `created_at` / `closed_at`) as unknown. A stale
+  stage is decided by Hive's own lease clock (the lease's expiry), never by
+  the artifact's timestamps. `TestUpdatedAtNeverDecides` in `pkg/spektacular`
+  keeps it that way.
 - A lease that lapses without `final` is retried through `retryLeaseStage`
   (a new generation of the same stage, `lease_stage_retried` in the audit
   log) while the budget allows. `max_stage_retries` counts generations
@@ -85,10 +101,11 @@ live lease.
 When a `plan` reaches `final` the runner runs
 
 ```
-spektacular plan export <name> --json
+spektacular plan export <name>
 ```
 
-and admits the returned tasks through `planning.DecomposeFromOutput` with
+(still an open ask on the Spektacular side; see the contract section) and
+admits the returned tasks through `planning.DecomposeFromOutput` with
 `AutoApprove: false`. Spektacular's structure is rendered verbatim into the
 planner's task-list shape (`[T1] title (depends: T2) [agent_suitable]`); no
 model is asked to redecompose an already-structured plan. The epic is found by
@@ -99,12 +116,20 @@ after `ApprovePlan` (`POST /api/plans/{id}/approve`) sets `plan_status` to
 
 ## Defensive handling of the open questions
 
-Two questions from the #8227 discussion are still owed by the Spektacular side.
-The runner handles both answers so it does not have to wait:
+The #8227 questions were answered on jumppad-labs/spektacular#45. The runner
+encodes the answers and still handles the alternatives it cannot rule out:
 
-- **Stable `data.name` as the join key.** The runner assumes it is stable and
-  uses it as the run key across spec, plan, and implement. If a status answer
-  ever carries a different `name` than the one requested, the runner treats
+- **The bare artifact name is the join key.** The stable key across spec,
+  plan and implement is the artifact name itself (`000057_git-commit`),
+  shared by convention across the spec file, the plan directory and the
+  changelog record, and recorded as the workflow's `data.name`. It is NOT the
+  `spec:` / `plan:` frontmatter cross-references the status response also
+  carries: those are almost never populated (0 of 57 specs, 3 of 55 plans in
+  the Spektacular repository itself), so the runner surfaces them as
+  `ArtifactStatus.Spec` / `.Plan` for diagnostics only and never joins on
+  them. Every spelling of an address (`<name>.md`, `<name>/plan.md`) reduces
+  to the bare name before it reaches the CLI. If a status answer ever
+  carries a different bare `name` than the one requested, the runner treats
   it as a contract violation and does not advance.
 - **Invalidation after `final`.** If `document_status` goes from `final` back
   to `draft` under the same name, the runner treats the artifact as a stale
@@ -122,29 +147,71 @@ runner through the CLI boundary (`Runner.Exec`), which is also the seam tests
 replace. `TestNoDirectFileAccess` in `pkg/spektacular` scans the package for
 file access to keep it that way.
 
-## Contract assumptions encoded in the fixture
+## Contract: what is confirmed, what changed, what is still open
 
 `pkg/spektacular/testdata/spektacular-fake/spektacular` is a shell fake of the
-CLI. It encodes the following assumptions; the ones marked "assumed" go beyond
-#8301 and must be confirmed on the Spektacular side:
+CLI. It encodes the per-artifact status contract exactly as
+jumppad-labs/spektacular#45 ships it, after the Spektacular maintainer's
+review of 2026-09-23 answered the questions Hive had left open. The original
+assumptions from the first cut of the runner (PR #8398) and their fate:
 
-1. `spektacular <spec|plan> status <name> --json` prints
-   `{kind, name, document_status, current_step, completed_steps, created_at,
-   updated_at, closed_at}` with `document_status` in `draft|final`, RFC3339
-   timestamps, and `closed_at` `null` while not final (#8301).
-2. A missing artifact exits non-zero and prints a JSON error object on
-   stdout (#8301). Assumed: the object is `{"error": "...", "code":
-   "not_found"}`; the runner also accepts a message containing "not found".
-   Any other JSON error object is a `VerbError`; a non-zero exit without JSON
-   is a `ContractError`.
-3. Assumed: `spektacular plan export <name> --json` prints
-   `{kind: "plan", name, tasks: [{ref, title, depends_on, execution}]}` for a
-   final plan. This is the only verb the runner needs beyond #8301.
-4. Assumed: the artifact name equals the run key (`data.name`) and is shared
-   by the spec and the plan of one run.
+Confirmed:
+
+1. `spektacular <spec|plan> status <name>` prints one JSON object with
+   `kind`, `name`, `document_status` (`draft|final`), `current_step`,
+   `completed_steps[]`, `created_at`, `updated_at`, `closed_at` (#8301). The
+   response also carries `error: false` (every Spektacular result does) and
+   the `spec` / `plan` frontmatter cross-references. `created_at` and
+   `closed_at` are frontmatter dates emitted as RFC3339 midnight UTC.
+2. A missing artifact exits non-zero and prints the JSON error envelope on
+   stdout. The code is `artifact_not_found` (the `file` verbs use
+   `not_found` for the same condition; both are typed as `NotFoundError`).
+3. Returning a `final` artifact to `draft` flips `document_status` on the
+   same document and clears its close date; it does not create a new
+   document. This is stated in the #45 description from the metadata
+   lifecycle rules and was not contradicted in review, though the maintainer
+   did not address it explicitly. The `stale_plan` refusal is therefore the
+   normal invalidation path and `replaced_document` the exception.
+
+Changed:
+
+4. The join key is the bare artifact name, not the `spec:` / `plan:`
+   cross-references (see above). Hive now strips a document path and a
+   markdown extension from every address before it reaches the CLI.
+5. The error envelope is `{"error": true, "code", "message", "resource",
+   "next_action"}`, not `{"error": "<message>", "code"}`. The parser accepts
+   both (the string form stays as a defensive fallback).
+6. `updated_at` is "last modified", not "last activity", and may be absent.
+   Hive no longer uses it anywhere: the receipt ends at `closed_at` (or the
+   advance instant) and its input hash excludes `updated_at` so two
+   observations of one final document hash the same.
+7. `closed_at` is `""` while the document is open, not `null`; `created_at`
+   may be `""` when the frontmatter carries no date. Both decode as unknown.
+8. There is no `--json` flag on any verb (`unknown flag: --json`); output is
+   already JSON. Hive passes none. `spec file list` / `plan file list`
+   likewise take no flag; Hive does not call them today, but Spektacular may
+   add a `ModTime` per list entry so one list call can replace N status
+   calls, which is the shape a future list-based poll would consume.
+9. `plan status <name>` reports `plan.md` only (`PlanFilePath` hardcodes
+   it), so a plan's `document_status` is that of `plan.md`, not of the whole
+   plan document set. Hive advances on it as the plan's status; if a plan
+   ever grows documents whose completion matters, the verb has to widen
+   first.
+
+Still open:
+
+10. `spektacular plan export <name>` printing `{kind: "plan", name, tasks:
+    [{ref, title, depends_on, execution}]}` for a final plan is still an
+    assumption: the verb does not exist yet and remains an open ask on the
+    Spektacular side. It is the only verb the runner needs beyond #8301.
+    Until it lands, a plan that reaches `final` logs an export failure and
+    does not advance.
 
 Scenarios: `draft-final` (draft, draft, final), `never-final`,
-`final-then-draft`, `missing`, selected through `SPEK_FAKE_SCENARIO`.
+`final-then-draft`, `final-no-updated-at` (final with the `updated_at`
+member absent), `missing`, selected through `SPEK_FAKE_SCENARIO`. The fake
+answers `artifact_not_found` for a name spelled with an extension or a
+document path, as the real store does, and a usage error for `--json`.
 
 ## Related
 

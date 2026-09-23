@@ -46,20 +46,31 @@ func newSpekExec() *spekExec {
 
 func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 	for _, st := range statuses {
+		// The exact jumppad-labs/spektacular#45 shape: error:false envelope,
+		// closed_at "" while open, no updated_at once the document is closed
+		// and no workflow state matches it.
+		closed, updated := `""`, `,"updated_at":"2026-09-22T13:30:00Z"`
+		if st == spektacular.DocumentFinal {
+			closed, updated = `"2026-09-22T00:00:00Z"`, ``
+		}
 		e.queues[kind] = append(e.queues[kind], fmt.Sprintf(
-			`{"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-22T13:25:17Z","updated_at":"2026-09-22T13:30:00Z","closed_at":null}`,
-			kind, spekRunKey, st))
+			`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
+			kind, spekRunKey, st, updated, closed))
 	}
 }
 
 func (e *spekExec) exec(_ context.Context, args []string) ([]byte, error) {
 	e.calls++
+	if len(args) > 3 {
+		// The CLI has no --json flag; a fourth argument is a usage error.
+		return []byte(`{"error":true,"code":"usage","message":"unknown flag: ` + args[3] + `"}`), errors.New("exit status 64")
+	}
 	if len(args) >= 2 && args[1] == "export" {
-		return []byte(`{"kind":"plan","name":"` + spekRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers"},{"ref":"T2","title":"Wire helpers","depends_on":["T1"]},{"ref":"T3","title":"Sign off","depends_on":["T2"],"execution":"human_required"}]}`), nil
+		return []byte(`{"error":false,"kind":"plan","name":"` + spekRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers"},{"ref":"T2","title":"Wire helpers","depends_on":["T1"]},{"ref":"T3","title":"Sign off","depends_on":["T2"],"execution":"human_required"}]}`), nil
 	}
 	q := e.queues[args[0]]
 	if len(q) == 0 {
-		return []byte(`{"error":"` + args[0] + ` not found","code":"not_found"}`), errors.New("exit status 2")
+		return []byte(`{"error":true,"code":"artifact_not_found","message":"` + args[0] + ` artifact \"` + args[2] + `\" was not found","resource":"` + args[2] + `","next_action":"run spektacular ` + args[0] + ` file list"}`), errors.New("exit status 1")
 	}
 	i := e.idx[args[0]]
 	if i >= len(q) {
@@ -426,9 +437,19 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 		spekRepo + "!" + spekRunKey:                   spekRunKey,
 		spekRepo + "#42":                              spekRepo + "#42",
 		"other/repo!" + spekRunKey + ":nope":          "other/repo!" + spekRunKey + ":nope",
+		// File-address spellings join the same run (spektacular#45, #46).
+		spekRepo + "!" + spekRunKey + ".md:" + StageSpec:      spekRunKey,
+		spekRepo + "!" + spekRunKey + "/plan.md:" + StagePlan: spekRunKey,
+		spekRunKey + ".md": spekRunKey,
 	} {
 		if got := runKeyOfLease(key, spekRepo); got != want {
 			t.Fatalf("runKeyOfLease(%q) = %q, want %q", key, got, want)
+		}
+	}
+	// The dashboard's copy of the bare-name rule must agree with the runner's.
+	for _, name := range []string{"000057_git-commit", "000057_git-commit.md", "000057_git-commit/plan.md", "000058_v1.2-upgrade", "myorg/repo1#42", "  ", "x.MD"} {
+		if dash, spek := bareArtifactName(name), spektacular.ArtifactKey(name); dash != spek {
+			t.Fatalf("bare-name drift for %q: dashboard %q vs spektacular %q", name, dash, spek)
 		}
 	}
 	if got := sanitizeReceiptSegment("a/b c:d"); got != "a_b_c_d" {

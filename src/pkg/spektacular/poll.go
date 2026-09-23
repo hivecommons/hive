@@ -23,10 +23,11 @@ const (
 
 // Stage is one active lease stage as the registry exposes it to the runner.
 type Stage struct {
-	// RunKey is the stable run identity: Spektacular's data.name.
+	// RunKey is the stable run identity: Spektacular's bare artifact name
+	// (the workflow's data.name), as the registry spells it.
 	RunKey string
-	// Artifact is the Spektacular artifact name to poll. It is the run key
-	// unless the registry knows a different binding.
+	// Artifact is the bare Spektacular artifact name to poll (ArtifactKey of
+	// the run key unless the registry knows a different binding).
 	Artifact string
 	// Stage is the lease stage (spec, plan, implement).
 	Stage string
@@ -40,7 +41,9 @@ type Stage struct {
 	Repo string
 	// Gen is the lease generation; a change means a retry or advance happened.
 	Gen uint64
-	// ExpiresAt is when the lease lapses without renewal.
+	// ExpiresAt is when the lease lapses without renewal. It is Hive's own
+	// lease clock and the only input to the stale-stage decision; the status
+	// document's updated_at is never consulted.
 	ExpiresAt time.Time
 }
 
