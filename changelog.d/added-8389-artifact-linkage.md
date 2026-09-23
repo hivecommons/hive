@@ -1,0 +1,1 @@
+- Add run artifact commit trailers and a trace reader that links commits to plan, spec, approval, and audit rationale.

@@ -30,6 +30,12 @@ const (
 	AuditLeaseStageReset     = agentaudit.AuditLeaseStageReset
 	AuditLeaseStageRefused   = agentaudit.AuditLeaseStageRefused
 	AuditLeaseStageEscalated = agentaudit.AuditLeaseStageEscalated
+
+	TrailerRun  = agentaudit.TrailerRun
+	TrailerPlan = agentaudit.TrailerPlan
+	TrailerSpec = agentaudit.TrailerSpec
+
+	AuditArtifactLinkMissing = agentaudit.AuditArtifactLinkMissing
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
@@ -44,6 +50,17 @@ const auditActorSystem = "system"
 // See agentaudit.AuditSink for the contract; the alias exists so the many
 // existing consumers keep compiling unchanged.
 type AuditSink = agentaudit.AuditSink
+
+type AuditRecord = agentaudit.AuditRecord
+type AuditReader = agentaudit.AuditReader
+type CommitMessageReader = agentaudit.CommitMessageReader
+type ArtifactLinks = agentaudit.Links
+type ArtifactResolver = agentaudit.Resolver
+type LocalGit = agentaudit.LocalGit
+
+var ResolveCommit = agentaudit.ResolveCommit
+var ParseTrailers = agentaudit.ParseTrailers
+var MissingTrailers = agentaudit.MissingTrailers
 
 // SetAuditSink installs the durable audit sink. Safe to leave unset: a nil
 // sink makes every audit call a no-op, which is what unit tests and any

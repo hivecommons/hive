@@ -2003,6 +2003,23 @@ func (c *Client) CommitMessage(ctx context.Context, owner, repo, sha string) (st
 	return msg, nil
 }
 
+// FullCommitMessage returns the complete commit message for the given SHA,
+// including body and trailers. Artifact linkage uses this rather than
+// CommitMessage's one-line status summary.
+func (c *Client) FullCommitMessage(ctx context.Context, owner, repo, sha string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", ErrNoGitHubClient
+	}
+	commit, _, err := c.client.Repositories.GetCommit(ctx, owner, repo, sha, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetching commit %s/%s@%s: %w", owner, repo, sha, err)
+	}
+	if commit == nil || commit.GetCommit() == nil {
+		return "", fmt.Errorf("github returned no commit message for %s/%s@%s", owner, repo, sha)
+	}
+	return commit.GetCommit().GetMessage(), nil
+}
+
 func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*gh.Repository, *gh.Response, error) {
 	return c.client.Repositories.Get(ctx, owner, repo)
 }

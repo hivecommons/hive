@@ -19435,6 +19435,134 @@
         }
       }
     },
+    "/api/runs/{key}/trace": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Trace a run commit to its artifacts",
+        "description": "Resolves Hive commit trailers for a run commit and returns the linked plan section, spec clause, approval audit record, and rationale audit entries. Missing trailers return a typed no-linkage result and record an audit finding.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sha",
+            "in": "query",
+            "required": true,
+            "description": "Commit SHA to resolve.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact trace for the commit, or a typed no-linkage result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sha",
+                    "rationale"
+                  ],
+                  "properties": {
+                    "sha": {
+                      "type": "string"
+                    },
+                    "run": {
+                      "type": "string"
+                    },
+                    "plan": {
+                      "type": "string"
+                    },
+                    "spec": {
+                      "type": "string"
+                    },
+                    "clause": {
+                      "type": "string"
+                    },
+                    "plan_section": {
+                      "type": "string"
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "ts": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "user": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "agent": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "rationale": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "user": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "no_linkage": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Run key or sha missing."
+          },
+          "404": {
+            "description": "Resolved commit belongs to a different run."
+          },
+          "502": {
+            "description": "Commit could not be read."
+          }
+        }
+      }
+    },
     "/api/runs/{key}": {
       "get": {
         "tags": [

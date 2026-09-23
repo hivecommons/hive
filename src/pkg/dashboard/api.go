@@ -76,6 +76,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/timeline", s.handleTimeline)
 	s.mux.HandleFunc("GET /api/lifecycle-timeline", s.handleLifecycleTimeline)
 	s.mux.HandleFunc("GET /api/runs", s.handleRunsList)
+	s.mux.HandleFunc("GET /api/runs/{key}/trace", s.handleRunTrace)
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)

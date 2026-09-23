@@ -45,7 +45,7 @@ func TestListPRCommitsProjectsLoginFallbackAndTitle(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("commits = %+v, want 2", got)
 	}
-	if got[0].SHA != "c1c1c1" || got[0].Author != "alice" || got[0].Title != "feat: base" {
+	if got[0].SHA != "c1c1c1" || got[0].Author != "alice" || got[0].Title != "feat: base" || got[0].Message != "feat: base\n\nbody text" {
 		t.Fatalf("commit[0] = %+v, want login author and first message line", got[0])
 	}
 	if got[1].Author != "Mallory Local" || got[1].Title != "sneak: saas.go" {

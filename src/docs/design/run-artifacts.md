@@ -55,3 +55,29 @@ current spec artifact revision. A mismatch refuses the kick, sets
 as the recovery path: re-run or re-approve a fresh plan so the stored revision
 matches the current spec. This is intentionally metadata-only and adds no
 store, CRD, DSL, or credential path.
+
+## Commit artifact linkage
+
+Implementation-stage commits may carry informational trailers that connect a
+commit back to the run, plan, and specification clause that motivated it:
+
+```text
+Hive-Run: <work item key>
+Hive-Plan: <plan section or plan name>
+Hive-Spec: <spec name>#<clause id>
+```
+
+- `Hive-Run` is the canonical run key, such as `hivecommons/hive#8311`.
+- `Hive-Plan` names the approved plan section or plan identifier used for the
+  implementation stage.
+- `Hive-Spec` names the Spektacular spec and clause identifier that supplied the
+  requirement.
+
+The implementation stage writes all three trailers on each commit it creates.
+The dashboard trace reader resolves them through the retained timeline and audit
+entries so reviewers can find the plan section, spec clause, approval record,
+and agent rationale without reading chat history.
+
+These trailers are evidence, not authority. A missing trailer is recorded as an
+`artifact_link_missing` audit finding; it does not fail the run, reject the
+commit, or write any state outside the existing audit log and timeline.

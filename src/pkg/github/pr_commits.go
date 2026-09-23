@@ -24,6 +24,9 @@ type PRCommit struct {
 	Author string
 	// Title is the first line of the commit message.
 	Title string
+	// Message is the full commit message, including trailers. Empty only when
+	// GitHub omitted the embedded commit object.
+	Message string
 }
 
 // ListPRCommits returns the commits currently on a PR's branch, oldest first
@@ -48,14 +51,16 @@ func (c *Client) ListPRCommits(ctx context.Context, repo string, number int) ([]
 			if author == "" {
 				author = rc.GetCommit().GetAuthor().GetName()
 			}
-			title := rc.GetCommit().GetMessage()
+			message := rc.GetCommit().GetMessage()
+			title := message
 			if i := strings.IndexByte(title, '\n'); i >= 0 {
 				title = title[:i]
 			}
 			out = append(out, PRCommit{
-				SHA:    rc.GetSHA(),
-				Author: author,
-				Title:  strings.TrimSpace(title),
+				SHA:     rc.GetSHA(),
+				Author:  author,
+				Title:   strings.TrimSpace(title),
+				Message: message,
 			})
 		}
 		if resp.NextPage == 0 {

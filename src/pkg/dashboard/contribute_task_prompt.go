@@ -84,7 +84,16 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
 	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide)
+		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide) +
+		artifactTrailerPromptInstruction(issueRef)
+}
+
+func artifactTrailerPromptInstruction(issueRef string) string {
+	issueRef = strings.TrimSpace(issueRef)
+	if issueRef == "" {
+		return ""
+	}
+	return " For every commit you create for this implementation stage, include these informational trailers in the commit message: 'Hive-Run: " + issueRef + "', 'Hive-Plan: <plan section or plan name>', and 'Hive-Spec: <spec name>#<clause id>'. Use the plan and Spektacular spec/clause identifiers supplied by the task when available; if one is not available, still include the trailer with the best known identifier."
 }
 
 // writingGuideSection renders this hub's own project.writing_guide for the

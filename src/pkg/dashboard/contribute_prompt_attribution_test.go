@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // --- #4105: the assignment prompt tells the agent up front the exact
@@ -59,6 +60,19 @@ func TestPromptInvocationMeta_FromConnection(t *testing.T) {
 func TestPromptInvocationMeta_NilConnection(t *testing.T) {
 	if got := attributionPromptInstruction(promptInvocationMeta(nil)); got != "" {
 		t.Fatalf("nil connection should yield no instruction, got %q", got)
+	}
+}
+
+func TestArtifactTrailerPromptInstruction(t *testing.T) {
+	got := buildTaskPromptForContributor(worksource.Ref{Repo: "hivecommons/hive", Number: 8311}, "artifact linkage", true, "")
+	for _, want := range []string{
+		"Hive-Run: hivecommons/hive#8311",
+		"Hive-Plan: <plan section or plan name>",
+		"Hive-Spec: <spec name>#<clause id>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("assignment prompt missing artifact trailer %q: %q", want, got)
+		}
 	}
 }
 

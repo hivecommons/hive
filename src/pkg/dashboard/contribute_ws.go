@@ -3137,6 +3137,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			}
 			if prDetail.Verified {
 				verifiedPR = msg.PRURL
+				if completedTask != nil {
+					taskCopy := *completedTask
+					go h.validatePRArtifactTrailers(&taskCopy, msg.PRURL)
+				}
 				// Off the read loop, deliberately. This is cosmetic
 				// best-effort work that gates NOTHING — unlike
 				// verifyReportedPR above, whose result decides the cooldown
