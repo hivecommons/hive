@@ -15,8 +15,9 @@ import (
 type taskMCPLeaseContextKey struct{}
 
 type taskMCPLeaseContext struct {
-	Claims    taskmcp.LeaseTokenClaims
-	TokenHash string
+	Claims       taskmcp.LeaseTokenClaims
+	TokenHash    string
+	CurrentStage string
 }
 
 func (s *Server) taskMCPRemoteEnabled() bool {
@@ -91,9 +92,15 @@ func (h *ContributeWSHub) mintTaskMCPForAssignment(identity string, assign *WSTa
 	if endpoint == "" || len(secret) == 0 {
 		return nil
 	}
+	stage := ""
+	h.leaseMu.Lock()
+	if l := h.leaseForLocked(identity, assign.TaskID); l != nil {
+		stage = l.stage
+	}
+	h.leaseMu.Unlock()
 	token, claims, err := taskmcp.MintLeaseToken(secret, taskmcp.LeaseTokenClaims{
 		TaskID: assign.TaskID, Identity: identity, Repo: assign.Repo, Number: assign.Number,
-		ExpiresAt: expiresAt, Contributor: contributor,
+		Stage: stage, ExpiresAt: expiresAt, Contributor: contributor,
 	}, time.Now())
 	if err != nil {
 		h.logger.Warn("[task-mcp] failed to mint lease token", "task", assign.TaskID, "repo", assign.Repo, "error", err)
@@ -103,6 +110,7 @@ func (h *ContributeWSHub) mintTaskMCPForAssignment(identity string, assign *WSTa
 	if l := h.leaseForLocked(identity, assign.TaskID); l != nil {
 		l.mcpTokenID = claims.ID
 		l.mcpTokenHash = taskmcp.HashLeaseToken(token)
+		l.mcpTokenStage = claims.Stage
 		h.saveLeasesLocked()
 	}
 	h.leaseMu.Unlock()
@@ -123,16 +131,21 @@ func (s *Server) authenticateTaskMCPLease(r *http.Request) (*http.Request, bool)
 	}
 	hash := taskmcp.HashLeaseToken(token)
 	h := s.contributeHub
+	currentStage := ""
 	h.leaseMu.Lock()
 	l := h.leaseForLocked(claims.Identity, claims.TaskID)
+	if l != nil {
+		currentStage = l.stage
+	}
 	ok := l != nil && !time.Now().After(l.expiresAt) && l.mcpTokenID == claims.ID &&
 		subtle.ConstantTimeCompare([]byte(l.mcpTokenHash), []byte(hash)) == 1 &&
-		l.repo == claims.Repo && l.number == claims.Number
+		l.repo == claims.Repo && l.number == claims.Number &&
+		(l.mcpTokenStage == "" || l.mcpTokenStage == claims.Stage)
 	h.leaseMu.Unlock()
 	if !ok {
 		return r, false
 	}
-	ctx := context.WithValue(r.Context(), taskMCPLeaseContextKey{}, taskMCPLeaseContext{Claims: claims, TokenHash: hash})
+	ctx := context.WithValue(r.Context(), taskMCPLeaseContextKey{}, taskMCPLeaseContext{Claims: claims, TokenHash: hash, CurrentStage: currentStage})
 	return r.WithContext(ctx), true
 }
 

@@ -73,6 +73,7 @@ type Scope struct {
 	TaskID string `json:"task_id,omitempty"`
 	Repo   string `json:"repo,omitempty"`
 	Number int    `json:"number,omitempty"`
+	Stage  string `json:"stage,omitempty"`
 }
 
 type LaunchScope struct {
@@ -135,6 +136,7 @@ type ServedText struct {
 type AssignmentData struct {
 	TaskID     string `json:"task_id"`
 	Kind       string `json:"kind,omitempty"`
+	Stage      string `json:"stage,omitempty"`
 	Role       string `json:"role,omitempty"`
 	Repo       string `json:"repo"`
 	Number     int    `json:"number"`
@@ -156,6 +158,7 @@ type ClaimData struct {
 type LeaseData struct {
 	Generation uint64 `json:"generation,omitempty"`
 	AgeSeconds int64  `json:"age_seconds,omitempty"`
+	Stage      string `json:"stage,omitempty"`
 }
 
 type PolicyData struct {

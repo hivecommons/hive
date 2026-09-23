@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/taskmcp"
 )
@@ -75,6 +76,19 @@ func (p dashboardTaskMCPProvider) Scope(r *http.Request, args map[string]any) (t
 				Reason: "requested task or repository is outside this lease scope",
 			}}
 		}
+		if lease.Claims.Stage != "" && lease.Claims.Stage != lease.CurrentStage {
+			if p.server != nil && p.server.logger != nil {
+				p.server.logger.Warn("[task-mcp] lease stage mismatch", "lease_id", lease.Claims.ID, "tool", tool, "repo", repo, "claim_stage", lease.Claims.Stage, "current_stage", lease.CurrentStage)
+			}
+			if p.server != nil {
+				p.server.AgentAuditSink().Record("system", agent.AuditTaskMCPStageMismatch, lease.Claims.TaskID,
+					agent.Fields("lease_id", lease.Claims.ID, "tool", tool, "repo", repo, "reason", "stage_mismatch", "stage_claimed", lease.Claims.Stage, "stage_current", lease.CurrentStage))
+			}
+			return taskmcp.Scope{}, taskmcp.RefusalError{Err: fmt.Errorf("%w: task MCP lease stage mismatch", taskmcp.ErrForbidden), Data: taskmcp.RefusalData{
+				Type: "refusal", Code: "stage_mismatch", LeaseID: lease.Claims.ID, Tool: tool, Repo: repo,
+				Reason: "task MCP lease was minted for a different run stage",
+			}}
+		}
 		if p.server == nil || p.server.contributeHub == nil || !p.server.contributeHub.allowTaskMCPCall(lease.Claims.ID, time.Now()) {
 			return taskmcp.Scope{}, taskmcp.RefusalError{Err: fmt.Errorf("%w: task MCP lease rate limit exceeded", taskmcp.ErrForbidden), Data: taskmcp.RefusalData{
 				Type: "refusal", Code: "rate_limited", LeaseID: lease.Claims.ID, Tool: tool, Repo: repo,
@@ -84,13 +98,13 @@ func (p dashboardTaskMCPProvider) Scope(r *http.Request, args map[string]any) (t
 		if p.server != nil && p.server.logger != nil {
 			p.server.logger.Info("[task-mcp] lease tool call", "lease_id", lease.Claims.ID, "tool", tool, "repo", repo)
 		}
-		return taskmcp.Scope{TaskID: lease.Claims.TaskID, Repo: lease.Claims.Repo, Number: lease.Claims.Number}, nil
+		return taskmcp.Scope{TaskID: lease.Claims.TaskID, Repo: lease.Claims.Repo, Number: lease.Claims.Number, Stage: lease.Claims.Stage}, nil
 	}
 	snap, err := p.snapshot(r, args)
 	if err != nil {
 		return taskmcp.Scope{}, err
 	}
-	return taskmcp.Scope{TaskID: snap.assign.TaskID, Repo: snap.assign.Repo, Number: snap.assign.Number}, nil
+	return taskmcp.Scope{TaskID: snap.assign.TaskID, Repo: snap.assign.Repo, Number: snap.assign.Number, Stage: snap.assign.Stage}, nil
 }
 
 func stringArg(args map[string]any, key string) string {
@@ -110,6 +124,7 @@ func (p dashboardTaskMCPProvider) TaskContext(_ context.Context, scope taskmcp.S
 		Assignment: taskmcp.AssignmentData{
 			TaskID:     snap.assign.TaskID,
 			Kind:       snap.assign.Kind,
+			Stage:      snap.assign.Stage,
 			Role:       snap.assign.Role,
 			Repo:       snap.assign.Repo,
 			Number:     snap.assign.Number,
@@ -124,6 +139,7 @@ func (p dashboardTaskMCPProvider) TaskContext(_ context.Context, scope taskmcp.S
 		Lease: taskmcp.LeaseData{
 			Generation: snap.generation,
 			AgeSeconds: leaseAgeSeconds(snap.assignedAt),
+			Stage:      snap.assign.Stage,
 		},
 		Policies: p.policyData(snap),
 	}, nil

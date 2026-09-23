@@ -64,8 +64,9 @@ const (
 	// lease is bound to vanished). AuditLeaseStageEscalated records the runner
 	// exhausting a stage's retry budget and raising a decision escalation
 	// (hivecommons/hive#8303).
-	AuditLeaseStageRefused   = "lease_stage_refused"
-	AuditLeaseStageEscalated = "lease_stage_escalated"
+	AuditLeaseStageRefused    = "lease_stage_refused"
+	AuditLeaseStageEscalated  = "lease_stage_escalated"
+	AuditTaskMCPStageMismatch = "task_mcp_stage_mismatch"
 
 	// AuditPersonaAdjusted records a user accepting, rejecting, or undoing a
 	// persona learning suggestion (hivecommons/hive#8363). The actor is the

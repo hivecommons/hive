@@ -25,11 +25,12 @@ const (
 	AuditCopilotTokenMissing = agentaudit.AuditCopilotTokenMissing
 	AuditClaudeTokenMissing  = agentaudit.AuditClaudeTokenMissing
 
-	AuditLeaseStageAdvanced  = agentaudit.AuditLeaseStageAdvanced
-	AuditLeaseStageRetried   = agentaudit.AuditLeaseStageRetried
-	AuditLeaseStageReset     = agentaudit.AuditLeaseStageReset
-	AuditLeaseStageRefused   = agentaudit.AuditLeaseStageRefused
-	AuditLeaseStageEscalated = agentaudit.AuditLeaseStageEscalated
+	AuditLeaseStageAdvanced   = agentaudit.AuditLeaseStageAdvanced
+	AuditLeaseStageRetried    = agentaudit.AuditLeaseStageRetried
+	AuditLeaseStageReset      = agentaudit.AuditLeaseStageReset
+	AuditLeaseStageRefused    = agentaudit.AuditLeaseStageRefused
+	AuditLeaseStageEscalated  = agentaudit.AuditLeaseStageEscalated
+	AuditTaskMCPStageMismatch = agentaudit.AuditTaskMCPStageMismatch
 
 	TrailerRun  = agentaudit.TrailerRun
 	TrailerPlan = agentaudit.TrailerPlan

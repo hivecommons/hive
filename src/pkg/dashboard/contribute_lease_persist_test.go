@@ -236,6 +236,16 @@ func TestLeasePersist_StageSurvivesSaveLoad(t *testing.T) {
 		"hivecommons/hive#8297", "C4", StageSpec, 8, now); err != nil {
 		t.Fatalf("record staged lease: %v", err)
 	}
+	h.leaseMu.Lock()
+	if l := h.leaseForLocked("clanker-stage", "task-stage"); l != nil {
+		l.mcpTokenID = "lease-token-1"
+		l.mcpTokenHash = "hash-1"
+		l.mcpTokenStage = StageSpec
+	}
+	if err := h.saveLeasesLocked(); err != nil {
+		t.Fatalf("persist staged MCP token claim: %v", err)
+	}
+	h.leaseMu.Unlock()
 
 	h2 := &ContributeWSHub{
 		logger:             covBLogger(),
@@ -250,6 +260,9 @@ func TestLeasePersist_StageSurvivesSaveLoad(t *testing.T) {
 	}
 	if got.stage != StageSpec {
 		t.Fatalf("loaded stage = %q, want %q", got.stage, StageSpec)
+	}
+	if got.mcpTokenID != "lease-token-1" || got.mcpTokenHash != "hash-1" || got.mcpTokenStage != StageSpec {
+		t.Fatalf("loaded MCP token claim = id=%q hash=%q stage=%q", got.mcpTokenID, got.mcpTokenHash, got.mcpTokenStage)
 	}
 }
 

@@ -1199,6 +1199,10 @@ still one task lease, but the lease now carries a Hive-owned `stage`
 there. A relay that is offered staged run work must declare `run-stage` in
 `capabilities.relay_capabilities`; otherwise the hub refuses that staged item
 instead of silently downgrading it to an unstaged task.
+When `task_mcp.remote_enabled` is on, the per-task MCP lease token also carries
+the stage that was on the task lease when the token was minted. The hub refuses
+that bearer with `stage_mismatch` after the run moves to another stage, while
+plain unstaged task tokens retain the existing behavior.
 
 External-execution items add engine-scoped tokens: `ext-exec/flue` and
 `ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A

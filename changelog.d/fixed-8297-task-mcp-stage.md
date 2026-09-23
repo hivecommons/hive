@@ -1,0 +1,1 @@
+- Task-MCP lease tokens for staged runs now carry their mint-time stage and are refused with `stage_mismatch` after the run advances to another stage.

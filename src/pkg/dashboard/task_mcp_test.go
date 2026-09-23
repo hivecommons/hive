@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -204,6 +205,71 @@ func TestContributeMCPLeaseBearerScopesAndRefusesCrossTask(t *testing.T) {
 	s.handleContributeMCP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("revoked lease status = %d, want 403", rec.Code)
+	}
+}
+
+func TestContributeMCPLeaseBearerStageMismatchRefusesAndAudits(t *testing.T) {
+	s := newTestServer()
+	s.authToken = "secret"
+	s.deps = &Dependencies{Config: &config.Config{TaskMCP: config.TaskMCPConfig{RemoteEnabled: true, LeaseRateLimitPerMinute: 10}, Dashboard: config.DashboardConfig{PublicURL: "https://hive.example"}}}
+	s.contributeHub = NewContributeWSHub(s.logger, s)
+	assign := &WSTaskAssign{TaskID: "run-lease", Kind: "issue", Stage: StageSpec, Repo: "owner/repo", Number: 42, Title: "leased run", Key: "owner/repo#42"}
+	s.contributeHub.connections["alice"] = &ContributorConnection{
+		profile:        &ContributorProfile{GitHubUsername: "alice", ContributorID: "alice-id"},
+		currentTask:    assign,
+		currentTaskGen: 2,
+		taskAssignedAt: time.Now().Add(-time.Minute),
+	}
+	s.contributeHub.taskLeasesFile = filepath.Join(t.TempDir(), "task-leases.json")
+	if err := s.contributeHub.recordLeaseForKeyStage("alice-id", assign.TaskID, assign.Repo, assign.Number, assign.identityKey(), "trusted", StageSpec, 2, time.Now()); err != nil {
+		t.Fatalf("recordLeaseForKeyStage: %v", err)
+	}
+	mcp := s.contributeHub.mintTaskMCPForAssignment("alice-id", assign, time.Now().Add(leaseTTL), "alice")
+	if mcp == nil || mcp.Token == "" {
+		t.Fatalf("mcp = %#v", mcp)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_context","arguments":{"task_id":"run-lease","repo":"owner/repo","number":42}}}`))
+	req.Header.Set("Authorization", "Bearer "+mcp.Token)
+	s.handleContributeMCP(rec, req)
+	text := mcpResultText(t, rec.Body.Bytes())
+	var okEnv struct {
+		Data taskmcp.TaskContextData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &okEnv); err != nil {
+		t.Fatal(err)
+	}
+	if okEnv.Data.Assignment.Stage != StageSpec || okEnv.Data.Lease.Stage != StageSpec {
+		t.Fatalf("staged context = %#v", okEnv.Data)
+	}
+
+	if _, err := s.contributeHub.advanceLeaseStage("alice-id", assign.TaskID, StagePlan, time.Now()); err != nil {
+		t.Fatalf("advanceLeaseStage: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"related_work","arguments":{"task_id":"run-lease","repo":"owner/repo","number":42}}}`))
+	req.Header.Set("Authorization", "Bearer "+mcp.Token)
+	s.handleContributeMCP(rec, req)
+	text = mcpResultText(t, rec.Body.Bytes())
+	var refused struct {
+		Data taskmcp.RefusalData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &refused); err != nil {
+		t.Fatal(err)
+	}
+	if refused.Data.Type != "refusal" || refused.Data.Code != "stage_mismatch" || refused.Data.LeaseID == "" {
+		t.Fatalf("refusal = %#v", refused.Data)
+	}
+	foundAudit := false
+	for _, entry := range s.audit.Recent(10) {
+		if entry.Action == agent.AuditTaskMCPStageMismatch && strings.Contains(entry.Detail, "reason=stage_mismatch") {
+			foundAudit = true
+			break
+		}
+	}
+	if !foundAudit {
+		t.Fatalf("stage mismatch audit not recorded; recent=%#v", s.audit.Recent(10))
 	}
 }
 

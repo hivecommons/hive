@@ -261,6 +261,10 @@ pilot proceeds with class (c) effects absent. The fixture's `instrument` stage
 attempts one class (a) effect of each network kind and the conformance test
 `TestConformanceSideEffectsBlockedAndArtifactsListed` proves both are refused
 at the egress boundary while every class (b) artifact appears in the receipt.
+Task-MCP lease bearers used during these staged runs carry the stage that was
+current when Hive minted them; if an engine or relay presents a bearer after the
+lease has advanced, Hive returns `stage_mismatch` and audits the refusal instead
+of serving context for the new stage under an old-stage token.
 
 | Astro triage effect | Class | Under Hive | Proven by |
 | --- | --- | --- | --- |

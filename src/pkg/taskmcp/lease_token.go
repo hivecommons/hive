@@ -25,6 +25,7 @@ type LeaseTokenClaims struct {
 	Identity    string    `json:"identity"`
 	Repo        string    `json:"repo"`
 	Number      int       `json:"number,omitempty"`
+	Stage       string    `json:"stage,omitempty"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	IssuedAt    time.Time `json:"issued_at"`
 	Contributor string    `json:"contributor,omitempty"`

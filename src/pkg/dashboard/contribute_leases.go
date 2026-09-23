@@ -64,10 +64,11 @@ type taskLease struct {
 	// double-assignment guard's hold on the item to a post-restart grace window;
 	// since #7773 every unexpired lease is a hold (leasedIssueKeys), so this is
 	// diagnostic — it says where a lease came from, not what it does.
-	restored     bool
-	expiresAt    time.Time
-	mcpTokenID   string
-	mcpTokenHash string
+	restored      bool
+	expiresAt     time.Time
+	mcpTokenID    string
+	mcpTokenHash  string
+	mcpTokenStage string
 	// claimedBy / claimExpiresAt / claimPosted record the issue claim the hub
 	// asserted for this task (hivecommons/hive#8380): who, until when, and
 	// whether the claim comment reached the forge or lives on this lease only
@@ -714,6 +715,7 @@ type persistedLease struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 	MCPTokenID      string    `json:"mcp_token_id,omitempty"`
 	MCPTokenHash    string    `json:"mcp_token_hash,omitempty"`
+	MCPTokenStage   string    `json:"mcp_token_stage,omitempty"`
 	// Claim fields (#8380); all omitempty so a registry written with claims
 	// off is byte-for-byte what it was.
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
@@ -800,6 +802,7 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 			ExpiresAt:       l.expiresAt,
 			MCPTokenID:      l.mcpTokenID,
 			MCPTokenHash:    l.mcpTokenHash,
+			MCPTokenStage:   l.mcpTokenStage,
 			ClaimedBy:       l.claimedBy,
 			ClaimPosted:     l.claimPosted,
 		}
@@ -947,6 +950,7 @@ func (h *ContributeWSHub) loadLeases() {
 			expiresAt:       rec.ExpiresAt,
 			mcpTokenID:      rec.MCPTokenID,
 			mcpTokenHash:    rec.MCPTokenHash,
+			mcpTokenStage:   rec.MCPTokenStage,
 			claimedBy:       rec.ClaimedBy,
 			claimPosted:     rec.ClaimPosted,
 		}
