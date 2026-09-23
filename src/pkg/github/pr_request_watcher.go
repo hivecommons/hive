@@ -56,6 +56,9 @@ type PRRequest struct {
 	// each one (Closes #N / Refs #N) and rejects the request otherwise — a
 	// body that lost its issue line is lost content (see validatePRRequestBody).
 	IssueN []int `json:"issues,omitempty"`
+	// RunKey and PlanRef are long-running run trailers appended to implementation PR bodies.
+	RunKey  string `json:"run_key,omitempty"`
+	PlanRef string `json:"plan_ref,omitempty"`
 }
 
 // PRResponse is written back next to a consumed request (as <name>.result.json)
@@ -375,6 +378,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// because the proxy hard-denies direct POST /pulls.
 	meta := c.attributionMeta(req.Agent)
 	meta.RequestedBy = c.resolveRequestedBy(ctx, req.Repo, title, body, req.IssueN)
+	body = AppendRunTrailers(body, req.RunKey, req.PlanRef)
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

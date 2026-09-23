@@ -405,3 +405,16 @@ func TestCompileFromConfigRejectsKickUnknownAgent(t *testing.T) {
 		t.Fatalf("expected unknown agent rejection, got: %v", err)
 	}
 }
+
+func TestCompileAcceptsStageCompletedAnnotateRule(t *testing.T) {
+	reg, err := Compile([]Hook{{
+		Name: "run-stage-status", On: TransitionStageCompleted, Action: ActionAnnotate,
+		When: `t.run != "" && t.stage_to != ""`,
+	}})
+	if err != nil {
+		t.Fatalf("stage_completed annotate hook rejected: %v", err)
+	}
+	if got := len(reg.For(TransitionStageCompleted)); got != 1 {
+		t.Fatalf("stage_completed hooks = %d, want 1", got)
+	}
+}

@@ -43,6 +43,7 @@ jobs:
       - name: Check out action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Dispatch manual hive status
+        id: hive
         uses: ./.github/actions/hive
         with:
           command: status
@@ -51,3 +52,17 @@ jobs:
           transport: ${{ inputs.transport }}
           hub_url: ${{ inputs.hub_url }}
           audience: ${{ inputs.audience }}
+
+      - name: Assert OIDC receipt output
+        if: ${{ inputs.transport == 'oidc' }}
+        shell: bash
+        env:
+          HIVE_RECEIPT: ${{ steps.hive.outputs.receipt }}
+        run: |
+          test -n "${HIVE_RECEIPT}"
+          python3 - <<'PY'
+          import json, os
+          receipt = json.loads(os.environ["HIVE_RECEIPT"])
+          assert receipt["kind"] == "stage_receipt"
+          assert receipt["stage_receipt"]["schema_version"] == "stage-receipt/v1"
+          PY

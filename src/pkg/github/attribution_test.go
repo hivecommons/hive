@@ -503,3 +503,16 @@ func TestReconcilePRAttribution_AuditsOnlyWhenAnEditLands(t *testing.T) {
 		}
 	})
 }
+
+func TestAppendRunTrailers(t *testing.T) {
+	body := AppendRunTrailers("Summary", "org/repo#1", "EPIC-1#2")
+	for _, want := range []string{"Hive-Run: org/repo#1", "Hive-Plan: EPIC-1#2"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %q", want, body)
+		}
+	}
+	again := AppendRunTrailers(body, "org/repo#1", "EPIC-1#2")
+	if strings.Count(again, "Hive-Run:") != 1 || strings.Count(again, "Hive-Plan:") != 1 {
+		t.Fatalf("trailers stacked: %q", again)
+	}
+}

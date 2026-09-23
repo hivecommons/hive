@@ -112,6 +112,9 @@ jobs:
           command: status
           issue: ${{ inputs.issue }}
           prompt: Status check from GitHub Actions OIDC dispatch.
+
+      - name: Read Hive receipt
+        run: echo '${{ steps.hive.outputs.receipt }}' | jq .stage_receipt
 ```
 
-The hub verifies the JWT issuer, signature, audience, expiry, not-before, and issued-at claims against GitHub's Actions JWKS. Refusals are audited without echoing prompt text. Reruns are deduped by repository, `run_id`, and `run_attempt` in the same store used by the comment transport.
+The hub verifies the JWT issuer, signature, audience, expiry, not-before, and issued-at claims against GitHub's Actions JWKS. Refusals are audited without echoing prompt text. Reruns are deduped by repository, `run_id`, and `run_attempt` in the same store used by the comment transport. For `transport: oidc`, the composite action exposes `steps.<id>.outputs.receipt`, a JSON `stage_receipt` report that callers can archive or assert in workflow steps.

@@ -120,6 +120,7 @@ EOF_COAUTHOR_ISSUES
 }
 
 REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
+RUN_KEY="${HIVE_RUN_KEY:-}"; PLAN_REF="${HIVE_PLAN_REF:-}"
 BODY_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -130,6 +131,8 @@ while [ $# -gt 0 ]; do
     --body|-b)  BODY="$2"; BODY_SET=1; shift 2;;
     --body-file|-F) BODY_FILE="$2"; shift 2;;
     --issues|--issue) ISSUES="$ISSUES,$2"; shift 2;;
+    --run-key) RUN_KEY="$2"; shift 2;;
+    --plan-ref) PLAN_REF="$2"; shift 2;;
     --repo=*)  REPO="${1#*=}"; shift;;
     --head=*)  HEAD="${1#*=}"; shift;;
     --base=*)  BASE="${1#*=}"; shift;;
@@ -137,6 +140,8 @@ while [ $# -gt 0 ]; do
     --body=*)  BODY="${1#*=}"; BODY_SET=1; shift;;
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --issues=*|--issue=*) ISSUES="$ISSUES,${1#*=}"; shift;;
+    --run-key=*) RUN_KEY="${1#*=}"; shift;;
+    --plan-ref=*) PLAN_REF="${1#*=}"; shift;;
     # Tolerate value-less flags gh accepts but we don't need.
     --draft|--fill|--web|--no-maintainer-edit) shift;;
     # `--label hold` is in every hold-gated policy template, so it arrives on
@@ -235,12 +240,16 @@ fi
 # Write the request as valid JSON. Use python for correct escaping of title/body.
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
 if command -v python3 >/dev/null 2>&1; then
-  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" <<'PY'
+  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" "$RUN_KEY" "$PLAN_REF" <<'PY'
 import json, sys
-path, repo, head, base, title, body, agent, issues = sys.argv[1:9]
+path, repo, head, base, title, body, agent, issues, run_key, plan_ref = sys.argv[1:11]
 req = {"repo":repo,"head":head,"base":base,"title":title,"body":body,"agent":agent}
 if issues:
     req["issues"] = [int(n) for n in issues.split(",")]
+if run_key.strip():
+    req["run_key"] = run_key.strip()
+if plan_ref.strip():
+    req["plan_ref"] = plan_ref.strip()
 json.dump(req, open(path,"w"))
 PY
 else
@@ -290,10 +299,16 @@ else
   E_TITLE=$(esc_or_die "$TITLE")
   E_BODY=$(esc_or_die "$BODY")
   E_AGENT=$(esc_or_die "$AGENT")
+  E_RUN_KEY=$(esc_or_die "$RUN_KEY")
+  E_PLAN_REF=$(esc_or_die "$PLAN_REF")
   ISSUES_JSON=""
   [ -n "$ISSUE_LIST" ] && ISSUES_JSON=",\"issues\":[$ISSUE_LIST]"
-  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s}\n' \
-    "$E_REPO" "$E_HEAD" "$E_BASE" "$E_TITLE" "$E_BODY" "$E_AGENT" "$ISSUES_JSON" \
+  RUN_JSON=""
+  [ -n "$RUN_KEY" ] && RUN_JSON=",\"run_key\":\"$E_RUN_KEY\""
+  PLAN_JSON=""
+  [ -n "$PLAN_REF" ] && PLAN_JSON=",\"plan_ref\":\"$E_PLAN_REF\""
+  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s%s%s}\n' \
+    "$E_REPO" "$E_HEAD" "$E_BASE" "$E_TITLE" "$E_BODY" "$E_AGENT" "$ISSUES_JSON" "$RUN_JSON" "$PLAN_JSON" \
     > "$REQ_FILE"
 fi
 

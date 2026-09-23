@@ -10,12 +10,14 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/mention"
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 const (
@@ -131,8 +133,51 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditActionDispatch("accepted", "transport", "oidc", "repo", claims.Repository, "actor", claims.Actor, "workflow", claims.Workflow, "ref", claims.Ref, "run_id", body.RunID, "run_attempt", body.RunAttempt)
+	receipt := actionsStageReceiptJSON(claims, body, kickID, now)
+	s.auditActionDispatch("receipt", "transport", "oidc", "repo", claims.Repository, "actor", claims.Actor, "run_id", body.RunID, "run_attempt", body.RunAttempt)
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "kick_id": kickID})
+	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "kick_id": kickID, "receipt": receipt})
+}
+
+func actionsStageReceiptJSON(claims actionsOIDCClaims, body actionsDispatchRequest, kickID string, at time.Time) string {
+	// StableDigest with no artifact inputs is SHA-256 over the empty stream; keep
+	// the response validated without importing the receipt internals here.
+	const emptyArtifactDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	report := map[string]any{
+		"lane":        "runs",
+		"kind":        string(outputschema.KindStageReceipt),
+		"findings":    []any{},
+		"prs_opened":  []any{},
+		"beads_filed": []any{},
+		"summary":     "GitHub Actions OIDC dispatch accepted",
+		"stage_receipt": map[string]any{
+			"schema_version":     outputschema.StageReceiptSchemaVersion,
+			"work_key":           strings.TrimSpace(claims.Repository) + "#" + strconv.Itoa(body.Issue),
+			"assignment_id":      kickID,
+			"generation":         1,
+			"stage":              "dispatch",
+			"contract_revision":  "runs-action/v1",
+			"execution_key":      kickID + "|dispatch",
+			"engine":             map[string]string{"name": "github-actions", "version": "oidc"},
+			"remote_run_id":      strings.TrimSpace(body.RunID),
+			"remote_incarnation": strings.TrimSpace(body.RunAttempt),
+			"input_revision":     "0000000000000000000000000000000000000000",
+			"output_digest":      emptyArtifactDigest,
+			"result_class":       string(outputschema.ReceiptResultNoChange),
+			"started_at":         at.UTC().Format(time.RFC3339Nano),
+			"ended_at":           at.UTC().Format(time.RFC3339Nano),
+			"provenance":         map[string]any{"query": "actions_oidc_dispatch@" + strings.TrimSpace(body.RunID)},
+			"artifacts":          []any{},
+		},
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return "{}"
+	}
+	if _, err := outputschema.Validate(raw); err != nil {
+		return "{}"
+	}
+	return string(raw)
 }
 
 type actionsGitHub struct{ app string }

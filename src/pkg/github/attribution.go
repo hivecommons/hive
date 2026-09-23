@@ -214,6 +214,43 @@ func (m InvocationMeta) AuditDetail(extra ...string) string {
 	return strings.Join(parts, ", ")
 }
 
+// AppendRunTrailers appends the long-running run identity trailers expected on
+// implementation PRs. The operation is idempotent so watcher retries do not
+// stack duplicate metadata.
+func AppendRunTrailers(body, runKey, planRef string) string {
+	runKey = strings.TrimSpace(runKey)
+	planRef = strings.TrimSpace(planRef)
+	if runKey == "" && planRef == "" {
+		return body
+	}
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	hasRun, hasPlan := false, false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Hive-Run:") {
+			hasRun = true
+		}
+		if strings.HasPrefix(line, "Hive-Plan:") {
+			hasPlan = true
+		}
+	}
+	trailers := []string{}
+	if runKey != "" && !hasRun {
+		trailers = append(trailers, "Hive-Run: "+runKey)
+	}
+	if planRef != "" && !hasPlan {
+		trailers = append(trailers, "Hive-Plan: "+planRef)
+	}
+	if len(trailers) == 0 {
+		return body
+	}
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return strings.Join(trailers, "\n")
+	}
+	return body + "\n\n" + strings.Join(trailers, "\n")
+}
+
 // AppendTrailer appends the visible trailer to body, blank-line separated.
 // No-op when the trailer is empty or the body already carries one — a request
 // the watcher retries after a partial failure must not stack trailers.

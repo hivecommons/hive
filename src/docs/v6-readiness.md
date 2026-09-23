@@ -89,7 +89,7 @@ not a unit test:
 | --- | --- | --- |
 | GitHub @-mention triggers | A human mentions the App on a real issue/PR; the kick runs; the 👀 ack and audit entries are linked. | ⬜ |
 | GitHub Actions trigger (comment relay) | One manual `workflow_dispatch` of `hive-action-smoke` against a real issue; kick recorded with `source=action`; 👀 ack and audit are linked. | ⬜ |
-| GitHub Actions trigger (hub OIDC dispatch) | One manual `workflow_dispatch` of `hive-action-smoke` with `transport=oidc`; kick recorded with `source=action, transport=oidc`; audit is linked. | ⬜ |
+| GitHub Actions trigger (hub OIDC dispatch) | One manual `workflow_dispatch` of `hive-action-smoke` with `transport=oidc`; kick recorded with `source=action, transport=oidc`; Actions receipt: one `workflow_dispatch` of `hive-action-smoke` returns a receipt; audit is linked. | ⬜ |
 | Slack | One command round-trip and one notification delivery over Socket Mode from a pull-only cluster. | ⬜ |
 | Discord | Reconnect/backoff observed across one induced disconnect; notification parity spot-checked. | ⬜ |
 | Teams / Matrix / Telegram | One command round-trip and one notification delivery each. | ⬜ |

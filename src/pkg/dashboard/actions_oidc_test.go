@@ -227,3 +227,32 @@ func TestActionsDispatchNeverEchoesPromptOnRefusal(t *testing.T) {
 		t.Fatalf("refusal echoed prompt: %s", body)
 	}
 }
+
+func TestActionsDispatchOIDCReceiptOutput(t *testing.T) {
+	key := actionsTestKey(t)
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	deps := actionsTestDeps(t, key, now)
+	deps.ActionDispatchKick = func(agent, message, source string) error { return nil }
+	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.RegisterAPI(deps)
+	code, body := postActionsDispatch(t, s, key, actionsTestClaims(now), actionsDispatchRequest{Command: "review", Prompt: "once", Issue: 42, RunID: "100", RunAttempt: "1"})
+	if code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	var resp struct {
+		Receipt string `json:"receipt"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Receipt == "" {
+		t.Fatalf("missing receipt in %s", body)
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(resp.Receipt), &receipt); err != nil {
+		t.Fatalf("receipt json: %v", err)
+	}
+	if receipt["kind"] != "stage_receipt" {
+		t.Fatalf("kind=%v", receipt["kind"])
+	}
+}

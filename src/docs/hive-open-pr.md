@@ -44,6 +44,8 @@ hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
 | `--body` / `-b` | yes (or `--body-file`) | — |
 | `--body-file` / `-F` | — | read the body from a file, or stdin with `-` |
 | `--issues` / `--issue` | no | declare the originating issue number(s) |
+| `--run-key` | no | append `Hive-Run: <key>` to the PR body |
+| `--plan-ref` | no | append `Hive-Plan: <epic id>#<wave>` to the PR body |
 
 `--repo`, `--head`, and `--title` must resolve or the script exits `2`. Both
 `--flag value` and `--flag=value` forms work.
@@ -81,6 +83,8 @@ swallowed by a command substitution and the request was written with the
 offending field silently blanked — the exact loss the empty-body guard above
 exists to prevent; now nothing is written. Install `python3`, or strip the
 control character, and rerun.
+
+`--run-key` and `--plan-ref` (or `HIVE_RUN_KEY` and `HIVE_PLAN_REF`) declare the long-running run that produced the implementation PR. When present, the watcher appends visible `Hive-Run: <key>` and `Hive-Plan: <epic id>#<wave>` trailer lines to the opened PR body, idempotently, before the regular `— hive:` attribution footer.
 
 `--issues` declares which issue(s) this PR is for. The watcher then verifies
 the body actually references each declared issue — `Closes #N`, or `Refs #N`

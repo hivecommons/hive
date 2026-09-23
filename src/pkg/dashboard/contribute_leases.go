@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -290,6 +293,7 @@ func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) 
 	if l.key != "" {
 		attrs["issue_ref"] = l.key
 	}
+	attrs["waiting_on"] = "agent"
 	h.server.LifecycleTimeline().Record(timeline.Event{
 		IssueRef: firstNonEmptyString(l.key, worksource.Ref{Repo: l.repo, Number: l.number}.Key()),
 		Kind:     timeline.KindStageCompleted,
@@ -307,6 +311,7 @@ func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) 
 		Attrs:      attrs,
 	}
 	if h.server.deps != nil {
+		h.emitStageStatusComment(payload, l)
 		if h.server.deps.HookFire != nil {
 			h.server.deps.HookFire(context.Background(), payload)
 		}
@@ -323,6 +328,43 @@ func (h *ContributeWSHub) emitLeaseStageCompleted(from, to string, l taskLease) 
 			}, fmt.Sprintf("stage_completed %s→%s for %s", from, to, l.taskID))
 		}
 	}
+}
+
+func (h *ContributeWSHub) emitStageStatusComment(payload hooks.Payload, l taskLease) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.MentionStore == nil {
+		return
+	}
+	commenter := mention.StageCommenter{
+		Store:  h.server.deps.MentionStore,
+		GitHub: func() mention.GitHub { return h.server.deps.GHClient },
+		Agents: h.server.actionsAgents,
+		Audit: func(action, detail, agent string) {
+			h.server.AuditLog("system", action, detail, agent)
+		},
+	}
+	_ = commenter.Post(context.Background(), mention.StageTransition{
+		Run:          payload.Run,
+		Repo:         payload.Repo,
+		IssueRef:     firstNonEmptyString(l.key, worksource.Ref{Repo: l.repo, Number: l.number}.Key()),
+		Number:       l.number,
+		Agent:        payload.Agent,
+		From:         payload.StageFrom,
+		To:           payload.StageTo,
+		Gen:          payload.Gen,
+		WaitingOn:    payload.Attrs["waiting_on"],
+		DashboardURL: h.server.runDashboardURL(payload.Run),
+	})
+}
+
+func (s *Server) runDashboardURL(run string) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	base := strings.TrimRight(s.deps.Config.Dashboard.PublicURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/runs/" + url.PathEscape(strings.TrimSpace(run))
 }
 
 func firstNonEmptyString(values ...string) string {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/mention"
 )
 
@@ -205,4 +206,40 @@ func (c *Client) RecordMentionAudit(action, repo string, number int, commentID i
 		extra = append(extra, "guard", guard)
 	}
 	c.recordCreationAudit(action, InvocationMeta{Agent: agent}, extra...)
+}
+
+// ListIssueComments exposes issue comments through the mention package's small
+// neutral shape for run-stage status comment reconciliation.
+func (c *Client) ListIssueComments(ctx context.Context, repo string, number int) ([]mention.IssueComment, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	out := []mention.IssueComment{}
+	for {
+		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing issue comments for %s#%d: %w", owner+"/"+repoName, number, err)
+		}
+		for _, cm := range comments {
+			out = append(out, mention.IssueComment{ID: cm.GetID(), Body: cm.GetBody()})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+// EditIssueComment edits an existing issue comment by database ID.
+func (c *Client) EditIssueComment(ctx context.Context, repo string, id int64, body string) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	body = logscrub.ScrubString(body)
+	_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, id, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
 }
