@@ -88,15 +88,49 @@ func TestLive_ExpiryIsExclusiveAndZeroIsNeverLive(t *testing.T) {
 func TestLatest_NewestStartWins(t *testing.T) {
 	older := Marker("first", started, started.Add(time.Hour))
 	newer := Marker("second", started.Add(2*time.Hour), started.Add(6*time.Hour))
-	claim, ok := Latest([]string{newer, "noise", older})
+	claim, ok := Latest([]string{newer, "noise", older}, DefaultTTL)
 	if !ok || claim.Identity != "second" {
 		t.Fatalf("newest start must win regardless of order, got ok=%v %+v", ok, claim)
 	}
-	if _, ok := Latest([]string{"nothing", "here"}); ok {
+	if _, ok := Latest([]string{"nothing", "here"}, DefaultTTL); ok {
 		t.Fatal("no markers must yield no claim")
 	}
-	if _, ok := Latest(nil); ok {
+	if _, ok := Latest(nil, DefaultTTL); ok {
 		t.Fatal("nil bodies must yield no claim")
+	}
+}
+
+func TestLatest_ClampsMarkerExpiryToTTL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		markerExpires time.Time
+		ttl           time.Duration
+		wantExpires   time.Time
+	}{
+		"beyond ttl clamps": {
+			markerExpires: started.Add(24 * time.Hour),
+			ttl:           90 * time.Minute,
+			wantExpires:   started.Add(90 * time.Minute),
+		},
+		"within ttl unchanged": {
+			markerExpires: started.Add(30 * time.Minute),
+			ttl:           90 * time.Minute,
+			wantExpires:   started.Add(30 * time.Minute),
+		},
+		"nonpositive ttl leaves parser result unchanged": {
+			markerExpires: started.Add(24 * time.Hour),
+			ttl:           0,
+			wantExpires:   started.Add(24 * time.Hour),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claim, ok := Latest([]string{Marker("agent", started, tc.markerExpires)}, tc.ttl)
+			if !ok {
+				t.Fatal("marker did not parse")
+			}
+			if !claim.ExpiresAt.Equal(tc.wantExpires) {
+				t.Fatalf("ExpiresAt = %v, want %v", claim.ExpiresAt, tc.wantExpires)
+			}
+		})
 	}
 }
 

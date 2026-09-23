@@ -1,0 +1,1 @@
+- security: issue-claim markers are only honoured from the hub bot and their expiry is clamped to governor.claims.ttl_s (#8434)

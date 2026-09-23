@@ -105,10 +105,13 @@ func (c *Client) issueClaimFor(ctx context.Context, owner, repo string, issue *I
 	}
 	bodies := make([]string, 0, len(comments))
 	for _, comment := range comments {
+		if !c.isTrustedAppBotCommentAuthor(comment) {
+			continue
+		}
 		bodies = append(bodies, comment.GetBody())
 	}
 	entry = issueClaimCacheEntry{updatedAt: issue.UpdatedAt}
-	entry.claim, entry.found = issueclaim.Latest(bodies)
+	entry.claim, entry.found = issueclaim.Latest(bodies, ttl)
 
 	c.issueClaimMu.Lock()
 	if c.issueClaimCache == nil || len(c.issueClaimCache) >= issueClaimCacheMax {
@@ -125,6 +128,7 @@ func (c *Client) issueClaimFor(ctx context.Context, owner, repo string, issue *I
 // falls back to the assignee inference.
 func resolveCachedClaim(entry issueClaimCacheEntry, issue *Issue, ttl time.Duration, now time.Time) (issueclaim.Claim, bool, error) {
 	if entry.found {
+		entry.claim = issueclaim.ClampToTTL(entry.claim, ttl)
 		if entry.claim.Live(now) {
 			return entry.claim, true, nil
 		}

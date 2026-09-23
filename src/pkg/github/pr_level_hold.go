@@ -125,10 +125,7 @@ func (c *Client) releaseLevelHoldIfEligible(ctx context.Context, owner, repo str
 }
 
 func (c *Client) isTrustedLevelHoldNoticeAuthor(comment *gh.IssueComment) bool {
-	if c == nil || comment == nil || strings.TrimSpace(c.appBotLogin) == "" {
-		return false
-	}
-	return strings.EqualFold(safeGetLogin(comment.GetUser()), c.appBotLogin)
+	return c.isTrustedAppBotCommentAuthor(comment)
 }
 
 func hasSelfAuthorizationNotice(comments []*gh.IssueComment, appBotLogin string) bool {

@@ -132,12 +132,24 @@ func ParseMarker(body string) (Claim, bool) {
 	}, true
 }
 
+// ClampToTTL returns claim with its expiry capped at StartedAt + ttl.
+func ClampToTTL(claim Claim, ttl time.Duration) Claim {
+	if claim.StartedAt.IsZero() || ttl <= 0 {
+		return claim
+	}
+	ttlExpires := claim.StartedAt.Add(ttl)
+	if claim.ExpiresAt.IsZero() || claim.ExpiresAt.After(ttlExpires) {
+		claim.ExpiresAt = ttlExpires
+	}
+	return claim
+}
+
 // Latest returns the most recently STARTED marker claim among the comment
 // bodies, whether or not it is still live. Callers decide what an expired
 // claim means for them (usually: nothing) with Claim.Live. The newest claim
 // wins so a renewal comment supersedes the one it renews and an expired
 // earlier claim cannot shadow a fresh one.
-func Latest(bodies []string) (Claim, bool) {
+func Latest(bodies []string, ttl time.Duration) (Claim, bool) {
 	var best Claim
 	found := false
 	for _, body := range bodies {
@@ -145,6 +157,7 @@ func Latest(bodies []string) (Claim, bool) {
 		if !ok {
 			continue
 		}
+		claim = ClampToTTL(claim, ttl)
 		if !found || claim.StartedAt.After(best.StartedAt) {
 			best = claim
 			found = true
@@ -184,7 +197,7 @@ func FromAssignees(assignees []string, updatedAt time.Time, ttl time.Duration) (
 // expired marker releases the issue rather than falling back to the assignee
 // — the marker is the explicit statement, and it explicitly lapsed.
 func Resolve(bodies []string, assignees []string, updatedAt time.Time, ttl time.Duration, now time.Time) (Claim, bool) {
-	if claim, ok := Latest(bodies); ok {
+	if claim, ok := Latest(bodies, ttl); ok {
 		if claim.Live(now) {
 			return claim, true
 		}

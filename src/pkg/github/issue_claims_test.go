@@ -24,6 +24,8 @@ var (
 	claimUpdated = claimNow.Add(-30 * time.Minute)
 )
 
+const claimBotLogin = "hive-app[bot]"
+
 // claimServer serves one issue's comments and counts how often they are
 // fetched, so a test can prove the cache (or the off switch) held.
 func claimServer(t *testing.T, bodies []string) (*httptest.Server, *atomic.Int32) {
@@ -33,12 +35,13 @@ func claimServer(t *testing.T, bodies []string) (*httptest.Server, *atomic.Int32
 	mux.HandleFunc("/repos/acme/widgets/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
 		fetches.Add(1)
 		type wireComment struct {
-			ID   int    `json:"id"`
-			Body string `json:"body"`
+			ID   int               `json:"id"`
+			Body string            `json:"body"`
+			User map[string]string `json:"user"`
 		}
 		out := make([]wireComment, 0, len(bodies))
 		for i, b := range bodies {
-			out = append(out, wireComment{ID: i + 1, Body: b})
+			out = append(out, wireComment{ID: i + 1, Body: b, User: map[string]string{"login": claimBotLogin}})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
@@ -53,6 +56,7 @@ func claimIssue() Issue {
 }
 
 func enableClaims(c *Client, ttl time.Duration) {
+	c.appBotLogin = claimBotLogin
 	c.SetIssueClaims(func() (bool, time.Duration) { return true, ttl })
 }
 
@@ -155,6 +159,79 @@ func TestAnnotateIssueClaims_AssigneeFallback(t *testing.T) {
 	if stale[0].ClaimedBy != "" {
 		t.Fatalf("assignee claim past ttl must release, got %+v", stale[0])
 	}
+}
+
+func TestIssueClaimFor_OnlyTrustsAppBotMarkers(t *testing.T) {
+	started := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	ttl := time.Hour
+
+	for name, tc := range map[string]struct {
+		comments     []map[string]any
+		wantFound    bool
+		wantIdentity string
+	}{
+		"untrusted marker ignored": {
+			comments: []map[string]any{
+				issueClaimComment("alice", issueclaim.Marker("alice", started, started.Add(ttl))),
+			},
+			wantFound: false,
+		},
+		"forged newer marker does not supersede bot marker": {
+			comments: []map[string]any{
+				issueClaimComment(claimBotLogin, issueclaim.Marker("bot-claim", started, started.Add(ttl))),
+				issueClaimComment("alice", issueclaim.Marker("alice", started.Add(time.Minute), started.Add(ttl))),
+			},
+			wantFound:    true,
+			wantIdentity: "bot-claim",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := issueClaimAuthorTestClient(t, tc.comments)
+			claim, found, err := client.issueClaimFor(
+				context.Background(),
+				"acme",
+				"widgets",
+				&Issue{Repo: "widgets", Number: 7, UpdatedAt: started},
+				ttl,
+				started.Add(30*time.Minute),
+			)
+			if err != nil {
+				t.Fatalf("issueClaimFor returned error: %v", err)
+			}
+			if found != tc.wantFound {
+				t.Fatalf("found = %v, want %v (claim %+v)", found, tc.wantFound, claim)
+			}
+			if claim.Identity != tc.wantIdentity {
+				t.Fatalf("identity = %q, want %q (claim %+v)", claim.Identity, tc.wantIdentity, claim)
+			}
+		})
+	}
+}
+
+func issueClaimComment(author, body string) map[string]any {
+	return map[string]any{
+		"body": body,
+		"user": map[string]any{"login": author},
+	}
+}
+
+func issueClaimAuthorTestClient(t *testing.T, comments []map[string]any) *Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(comments)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server, "acme", []string{"widgets"})
+	client.appBotLogin = claimBotLogin
+	return client
 }
 
 // The comment fetch happens once per updated_at, not once per enumeration;
