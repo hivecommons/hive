@@ -316,6 +316,15 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:249` |
 | `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:144` |
 
+### Issue claims (hivecommons/hive#8380)
+
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| `GET` | `/api/claims` | Dashboard auth | Every live worker claim (`{enabled, claims:[…]}`); `enabled:false` when `claims.enabled: false` | `pkg/dashboard/claims_api.go:50` |
+| `GET` | `/api/claims/{owner}/{repo}/{number}` | Dashboard auth | `{held, claim}` for one issue | `pkg/dashboard/claims_api.go:51` |
+| `POST` | `/api/claims/{owner}/{repo}/{number}` | Signed-in / hub-proxied / GitHub-token caller claims as a **human** under their login; a verified owner token claims as the owner | Body `{force, ttl_s, session}`. 200 with `outcome` `claimed`/`renewed`/`taken_over`; 409 with `outcome` `held` (same rank, retry with `force`) or `refused` (higher rank holds it) and a `hint` | `pkg/dashboard/claims_api.go:52` |
+| `DELETE` | `/api/claims/{owner}/{repo}/{number}` | Same identity rules | Body `{force, reason}`. Releases your claim or a lower-ranked holder's; `force` with a verified owner role releases regardless of holder | `pkg/dashboard/claims_api.go:53` |
+
 ### `/api/v1` contributor subpaths
 
 `handleAPIv1` dispatches authenticated contributor API calls below `/api/v1`.

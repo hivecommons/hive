@@ -172,6 +172,29 @@ hivectl governor agent-add ux-discovery --backend copilot --model claude-sonnet-
 hivectl governor agent-remove ux-discovery --yes
 ```
 
+### claim / unclaim / claims — issue claims
+
+```bash
+hivectl claim hivecommons/hive#8380              # "mine" — contributors and agents back off
+hivectl claim hivecommons/hive#8380 --until 6h   # hold longer than the hive default (4h)
+hivectl claim hivecommons/hive#8380              # run again to renew
+hivectl takeover hivecommons/hive#8380           # = claim --force: take over another person's claim
+hivectl unclaim hivecommons/hive#8380            # release yours (or a lower-ranked holder's)
+hivectl unclaim hivecommons/hive#8380 --force    # owner override: release regardless of holder
+hivectl claims -o json                           # every live claim on this hive
+```
+
+A claim records who is working an issue *right now* ([#8380](https://github.com/hivecommons/hive/issues/8380)).
+Holders are ranked **human > agent > contributor > external**: a human's claim takes an issue over from a hive
+agent or a relay contributor (the "clanker") and the displaced holder is told to stop — a relay session is
+yanked off the item and handed different work immediately; an agent or an external bot sees the takeover
+comment and the `preempted:<login>` label on the issue. At the same rank the command warns (`held`, exit 3
+with the holder named) unless `--force`. A lower rank can never displace a higher one. Claims lapse on their
+own (default 4h for a person, 2h for an agent kick, 30m for a relay task — configurable under `claims:` in
+`hive.yaml`) and a relay's claim is released the moment its task finishes or is revoked. The hive mirrors each
+transition onto the GitHub issue as a `🔒`/`🔁`/`🔓` comment with a machine-readable `<!-- hive:claim … -->`
+marker and a `claimed` label, so a human, a script or another hive can see the hold without asking the API.
+
 ### observe — read-only metrics
 
 ```bash
