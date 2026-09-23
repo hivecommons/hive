@@ -5,7 +5,9 @@ of the governor loop — see [Architecture](architecture.md)). It accepts four
 primary `type` values: `github` (default), `github_projects`, `linear`, and
 `jira`. A fifth item kind, `type: run`, is additive rather than a primary
 adapter: enable it with `run_stages: true` to append pending long-running run
-stages as work items without fabricating GitHub issues.
+stages as work items without fabricating GitHub issues. A second additive
+kind, `wavefront`, lists the ready nodes of an imported migration graph the
+same way (see below).
 Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
 (`pkg/config/config.go:1336-1348`, `pkg/worksource/factory.go:15-89`).
@@ -35,6 +37,91 @@ ID of `<runKey>:<stage>`. Their stable key is therefore
 `<owner/repo>!<runKey>:<stage>`, not a fabricated `repo#0`. Later stages carry
 a dependency on the previous stage's run key, so `plan` records its dependency
 on `spec` and `implement` records its dependency on `plan`.
+
+## Wavefront migration graph (`wavefront.enabled: true`)
+
+The second additive item kind is a versioned code-migration graph such as
+Crustify's C/C++ to Rust migration driven by Wavefront (#8362, the second
+proving workload of #7620). Wavefront stays authoritative for its semantic
+graph: it owns dependency closure, cycle handling, waves, and batching. Hive
+reads the graph, lists each ready node as a run-stage work item, withholds
+blocked nodes, and records a receipt when a node completes. Hive never
+re-derives the graph with an LLM, never fabricates GitHub issues or pull
+requests for nodes, and the adapter (`pkg/worksource/wavefront`) makes no
+GitHub call at all. Publication of results is out of scope (#8353).
+
+```yaml
+governor:
+  work_source:
+    type: github
+    wavefront:
+      enabled: true
+      path: /data/wavefront/graph.json     # or url: https://wavefront.example/graph.json
+      repo: acme/crust                     # owner/name every node key is scoped to
+      receipts_dir: /data/wavefront/receipts
+```
+
+`enabled` defaults to `false`; with it off, `ListIssues` output is
+byte-identical to a hive that has never heard of the block. Exactly one of
+`path` or `url` is required when enabled, and `repo` is required. The graph
+is re-read on every governor cycle, so a plan Wavefront republishes is picked
+up without a restart. `receipts_dir` is optional; empty keeps receipts in
+memory for the life of the process.
+
+**Graph document.** A JSON object with a `graph` name, a `revision`, and a
+`nodes` list. Each node has `id`, `title`, an optional `kind`, an optional
+`depends_on` list of node ids, and an optional `status` (`pending` (default),
+`ready`, `done`, or `blocked`). Hive validates structure only: an unnamed
+graph, a missing revision, a duplicate or malformed id, an edge to an
+undefined node, or a cycle is refused as a whole; the graph is never repaired.
+A small fixture lives at
+`pkg/worksource/wavefront/testdata/wavefront-fixture/graph.json`.
+
+**Listing.** A node is ready when it is not `done` or `blocked`, holds no
+completion receipt at the current revision, and every node it depends on is
+either `done` in the graph or holds a completion receipt at the current
+revision. Ready nodes are listed in wave order as run-stage items: source type
+`run`, `Number: 0`, stage `implement`, external id `<graph>:<node>`, stable
+key `<owner/repo>!<graph>:<node>`, labels `hive-run`, `stage/implement`,
+`wavefront`, `wavefront/<kind>`, and `graph-rev/<revision>`. Each
+`depends_on` edge is carried as a `DependsOn` entry keyed
+`<owner/repo>!<graph>:<dep>`, so admission sees the same edges Wavefront
+declared. Blocked nodes and everything downstream of them are withheld, not
+listed as unresolved.
+
+**Stale-plan guard.** The `graph-rev/<revision>` label is the revision the
+item was minted at. `Source.Verify` and `Source.Complete` take that revision
+back and refuse it with `ErrStaleRevision` when the graph has since moved.
+A refused item is never mapped onto the new graph; it is simply re-listed
+from the current revision if it is still ready. A receipt recorded under an
+older revision no longer satisfies anything, so a dependent whose upstream
+changed is withheld again rather than silently continuing (the #8346
+provenance guard, expressed through the revision).
+
+**Receipts.** `Source.Complete(ctx, externalID, revision, artifacts, startedAt)`
+writes one `stage-receipt/v1` record (#8295) per completed node under
+`<receipts_dir>/<graph>/<node>.json`: work key, assignment id
+`<graph>:<node>`, stage `implement`, contract `wavefront-node/v1`,
+`input_revision` `wavefront-graph@<graph digest>`, and the artifact-borne
+progress anchors the stage produced (default `wavefront/<graph>/<node>`).
+Completing an already-completed node at the same revision returns the existing
+receipt unchanged, so a retry is idempotent. Completing a node whose
+dependencies are not all satisfied is refused with `ErrNotReady`. Receipts are
+the only state Hive keeps for the migration; there is no side database.
+
+**Plan import.** `wavefront.ImportPlan(store, epic, graph, expectedRevision,
+opts)` admits the graph as an epic's child beads through
+`planning.DecomposeFromOutput`: the graph is rendered as the already-structured
+task list that function consumes (`N. [<node>] <title> (depends: ...)
+[agent_suitable]`, in wave order) and materialized with no prompt and no
+planner call. Node ids become each child's `plan_ref`; edges become bead
+dependencies. A graph whose revision is not `expectedRevision` is refused
+before anything is written.
+
+**Not wired yet.** The adapter lists work and records receipts. Handing a
+listed node to an agent worktree, the mid-node crash reconciling to Unknown,
+and the burndown counts on `/api/runs/{key}` are follow-ups on the #8290
+umbrella; the adapter's `Receipts()` and `Ready()` are the seams they read.
 
 ## `type: github` (default)
 

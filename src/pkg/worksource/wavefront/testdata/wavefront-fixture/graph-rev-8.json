@@ -1,0 +1,202 @@
+{
+  "graph": "crustify-fixture",
+  "revision": "rev-8",
+  "nodes": [
+    {
+      "id": "survey-headers",
+      "title": "Survey public C headers",
+      "kind": "survey",
+      "status": "done"
+    },
+    {
+      "id": "build-graph",
+      "title": "Build the symbol dependency graph",
+      "kind": "survey",
+      "depends_on": [
+        "survey-headers"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "parse-ast",
+      "title": "Port the AST parser to Rust (split visitor)",
+      "kind": "port",
+      "depends_on": [
+        "build-graph"
+      ]
+    },
+    {
+      "id": "lower-types",
+      "title": "Port type lowering",
+      "kind": "port",
+      "depends_on": [
+        "parse-ast"
+      ]
+    },
+    {
+      "id": "lower-exprs",
+      "title": "Port expression lowering",
+      "kind": "port",
+      "depends_on": [
+        "parse-ast"
+      ]
+    },
+    {
+      "id": "emit-ir",
+      "title": "Port IR emission",
+      "kind": "port",
+      "depends_on": [
+        "lower-types",
+        "lower-exprs"
+      ]
+    },
+    {
+      "id": "wrap-alloc",
+      "title": "Wrap the allocator behind a Rust trait",
+      "kind": "wrap",
+      "depends_on": [
+        "build-graph"
+      ]
+    },
+    {
+      "id": "wrap-io",
+      "title": "Wrap file I/O helpers",
+      "kind": "wrap",
+      "depends_on": [
+        "build-graph"
+      ]
+    },
+    {
+      "id": "wrap-logging",
+      "title": "Wrap the logging shim",
+      "kind": "wrap",
+      "depends_on": [
+        "build-graph"
+      ]
+    },
+    {
+      "id": "port-strings",
+      "title": "Port string utilities",
+      "kind": "port",
+      "depends_on": [
+        "wrap-alloc"
+      ]
+    },
+    {
+      "id": "port-hashmap",
+      "title": "Port the open-addressing hashmap",
+      "kind": "port",
+      "depends_on": [
+        "wrap-alloc"
+      ]
+    },
+    {
+      "id": "port-arena",
+      "title": "Port the arena allocator",
+      "kind": "port",
+      "depends_on": [
+        "wrap-alloc"
+      ]
+    },
+    {
+      "id": "port-lexer",
+      "title": "Port the lexer",
+      "kind": "port",
+      "depends_on": [
+        "port-strings"
+      ]
+    },
+    {
+      "id": "port-config",
+      "title": "Port config file parsing",
+      "kind": "port",
+      "depends_on": [
+        "wrap-io",
+        "port-strings"
+      ]
+    },
+    {
+      "id": "port-cli",
+      "title": "Port the CLI front end",
+      "kind": "port",
+      "depends_on": [
+        "port-config",
+        "wrap-logging"
+      ]
+    },
+    {
+      "id": "port-driver",
+      "title": "Port the compiler driver",
+      "kind": "port",
+      "depends_on": [
+        "emit-ir",
+        "port-cli"
+      ]
+    },
+    {
+      "id": "review-unsafe",
+      "title": "Review remaining unsafe blocks",
+      "kind": "review",
+      "depends_on": [
+        "port-driver"
+      ]
+    },
+    {
+      "id": "legacy-plugin",
+      "title": "Port the legacy plugin loader",
+      "kind": "port",
+      "depends_on": [
+        "wrap-io"
+      ],
+      "status": "blocked"
+    },
+    {
+      "id": "plugin-tests",
+      "title": "Port plugin loader tests",
+      "kind": "test",
+      "depends_on": [
+        "legacy-plugin"
+      ]
+    },
+    {
+      "id": "test-lexer",
+      "title": "Port lexer tests",
+      "kind": "test",
+      "depends_on": [
+        "port-lexer"
+      ]
+    },
+    {
+      "id": "test-hashmap",
+      "title": "Port hashmap tests",
+      "kind": "test",
+      "depends_on": [
+        "port-hashmap"
+      ]
+    },
+    {
+      "id": "test-arena",
+      "title": "Port arena tests",
+      "kind": "test",
+      "depends_on": [
+        "port-arena"
+      ]
+    },
+    {
+      "id": "bench-hashmap",
+      "title": "Benchmark the ported hashmap",
+      "kind": "bench",
+      "depends_on": [
+        "test-hashmap"
+      ]
+    },
+    {
+      "id": "docs-migration",
+      "title": "Write the migration status page",
+      "kind": "docs",
+      "depends_on": [
+        "review-unsafe"
+      ]
+    }
+  ]
+}

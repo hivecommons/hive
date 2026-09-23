@@ -71,6 +71,7 @@ import (
 	"github.com/hivecommons/hive/pkg/watchdog"
 	"github.com/hivecommons/hive/pkg/watsonx"
 	"github.com/hivecommons/hive/pkg/worksource"
+	_ "github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"go.opentelemetry.io/otel/attribute"
 	"gopkg.in/natefinch/lumberjack.v2"
 )

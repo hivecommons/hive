@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sync"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -97,10 +98,72 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 	default:
 		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, or jira)", cfg.Type)
 	}
-	if cfg.RunStages {
-		return NewComposite(primary, NewRunStageSource(nil)), nil
+	return AppendAdditive(primary, cfg)
+}
+
+// AdditiveBuilder constructs one additive (non-primary) work source from the
+// governor's work-source config. Additive sources live in sub-packages that
+// import this package, so they register here at init time instead of being
+// imported by the factory directly.
+type AdditiveBuilder func(cfg config.WorkSourceConfig, logger *slog.Logger) (WorkSource, error)
+
+// AdditiveWavefront is the registry name of the Wavefront migration-graph
+// source (pkg/worksource/wavefront). It is enabled by
+// governor.work_source.wavefront.enabled.
+const AdditiveWavefront = "wavefront"
+
+var (
+	additiveMu       sync.RWMutex
+	additiveBuilders = map[string]AdditiveBuilder{}
+)
+
+// RegisterAdditive registers the builder for a named additive source. A
+// sub-package calls it from init(); the hive binary links the sub-package with
+// a blank import. Registering the same name twice panics: two builders for one
+// flag would make the composed output depend on link order.
+func RegisterAdditive(name string, build AdditiveBuilder) {
+	additiveMu.Lock()
+	defer additiveMu.Unlock()
+	if _, dup := additiveBuilders[name]; dup {
+		panic(fmt.Sprintf("worksource: additive source %q registered twice", name))
 	}
-	return primary, nil
+	additiveBuilders[name] = build
+}
+
+func lookupAdditive(name string) (AdditiveBuilder, bool) {
+	additiveMu.RLock()
+	defer additiveMu.RUnlock()
+	b, ok := additiveBuilders[name]
+	return b, ok
+}
+
+// AppendAdditive wraps primary with every additive source the config enables.
+// With no flag set it returns primary itself, so ListIssues output is
+// byte-identical to a hive that has never heard of run stages or Wavefront.
+func AppendAdditive(primary WorkSource, cfg config.WorkSourceConfig) (WorkSource, error) {
+	return appendAdditive(primary, cfg, slog.Default())
+}
+
+func appendAdditive(primary WorkSource, cfg config.WorkSourceConfig, logger *slog.Logger) (WorkSource, error) {
+	var extras []WorkSource
+	if cfg.RunStages {
+		extras = append(extras, NewRunStageSource(nil))
+	}
+	if cfg.Wavefront.Enabled {
+		build, ok := lookupAdditive(AdditiveWavefront)
+		if !ok {
+			return nil, fmt.Errorf("work_source.wavefront.enabled is set but the wavefront source is not linked into this binary")
+		}
+		extra, err := build(cfg, logger)
+		if err != nil {
+			return nil, fmt.Errorf("work_source.wavefront: %w", err)
+		}
+		extras = append(extras, extra)
+	}
+	if len(extras) == 0 {
+		return primary, nil
+	}
+	return NewComposite(primary, extras...), nil
 }
 
 // secretRefPattern matches a credential written as a whole-value environment

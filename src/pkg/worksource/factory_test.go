@@ -125,3 +125,37 @@ func TestCoalesce(t *testing.T) {
 		t.Error("coalesce should fall back to second")
 	}
 }
+
+func TestAppendAdditive_FlagOffReturnsPrimaryUnchanged(t *testing.T) {
+	primary := staticSource{sourceType: "github", issues: []Issue{{
+		SourceType: "github", Repo: "hivecommons/hive", ExternalID: "42", Number: 42,
+		Title: "regular issue", State: "open",
+	}}}
+	ws, err := AppendAdditive(primary, config.WorkSourceConfig{})
+	if err != nil {
+		t.Fatalf("AppendAdditive: %v", err)
+	}
+	if _, ok := ws.(staticSource); !ok {
+		t.Fatalf("flag off must return the primary itself, got %T", ws)
+	}
+}
+
+func TestAppendAdditive_WavefrontNotLinkedIsAnError(t *testing.T) {
+	_, err := AppendAdditive(staticSource{sourceType: "github"}, config.WorkSourceConfig{
+		Wavefront: config.WavefrontSourceConfig{Enabled: true, Path: "graph.json", Repo: "acme/repo"},
+	})
+	if err == nil {
+		t.Fatal("enabling wavefront without a linked builder must fail closed, not silently list nothing")
+	}
+}
+
+func TestRegisterAdditive_DuplicatePanics(t *testing.T) {
+	const name = "test-additive-dup"
+	RegisterAdditive(name, func(config.WorkSourceConfig, *slog.Logger) (WorkSource, error) { return nil, nil })
+	defer func() {
+		if recover() == nil {
+			t.Fatal("second RegisterAdditive with the same name should panic")
+		}
+	}()
+	RegisterAdditive(name, func(config.WorkSourceConfig, *slog.Logger) (WorkSource, error) { return nil, nil })
+}

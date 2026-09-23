@@ -1918,6 +1918,53 @@ type WorkSourceConfig struct {
 	Linear LinearSourceConfig `yaml:"linear,omitempty" json:"linear,omitempty"`
 	// Jira configures the Jira Cloud REST v3 adapter.
 	Jira JiraSourceConfig `yaml:"jira,omitempty" json:"jira,omitempty"`
+	// Wavefront appends the ready nodes of an imported, versioned migration
+	// graph (Crustify/Wavefront) as run-stage work items. Default disabled
+	// preserves byte-identical ListIssues output.
+	Wavefront WavefrontSourceConfig `yaml:"wavefront,omitempty" json:"wavefront,omitempty"`
+}
+
+// WavefrontSourceConfig configures the additive Wavefront migration-graph work
+// source (hivecommons/hive#8362). Wavefront stays authoritative for its
+// semantic graph: Hive reads the graph, lists its ready nodes, and records
+// receipts when a node completes. It never re-derives the graph with an LLM.
+type WavefrontSourceConfig struct {
+	// Enabled turns the source on. Default false: nothing is read or listed.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Path is a local JSON file holding the versioned migration graph. Exactly
+	// one of Path or URL must be set when Enabled is true.
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	// URL is an HTTP(S) endpoint that serves the same JSON document.
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// Repo is the owner/name repository the migration happens against. It
+	// scopes every node key ("owner/name!<graph>:<node>").
+	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	// ReceiptsDir is where node-completion receipts are written. Empty means
+	// receipts are kept only in memory for the life of the process.
+	ReceiptsDir string `yaml:"receipts_dir,omitempty" json:"receipts_dir,omitempty"`
+}
+
+// Validate checks the Wavefront source block. A disabled block is always valid
+// so an operator can stage settings before switching the source on.
+func (w WavefrontSourceConfig) Validate() error {
+	if !w.Enabled {
+		return nil
+	}
+	graphPath := strings.TrimSpace(w.Path)
+	endpoint := strings.TrimSpace(w.URL)
+	switch {
+	case graphPath == "" && endpoint == "":
+		return fmt.Errorf("work_source.wavefront: one of path or url is required when enabled")
+	case graphPath != "" && endpoint != "":
+		return fmt.Errorf("work_source.wavefront: path and url are mutually exclusive")
+	}
+	if endpoint != "" && !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		return fmt.Errorf("work_source.wavefront: url must start with http:// or https://")
+	}
+	if strings.TrimSpace(w.Repo) == "" {
+		return fmt.Errorf("work_source.wavefront: repo (owner/name) is required when enabled")
+	}
+	return nil
 }
 
 // IsZero reports whether no work source has been configured at all: no type
@@ -1928,7 +1975,8 @@ func (w WorkSourceConfig) IsZero() bool {
 		!w.RunStages &&
 		reflect.DeepEqual(w.GitHubProjects, GitHubProjectsSourceConfig{}) &&
 		reflect.DeepEqual(w.Linear, LinearSourceConfig{}) &&
-		reflect.DeepEqual(w.Jira, JiraSourceConfig{})
+		reflect.DeepEqual(w.Jira, JiraSourceConfig{}) &&
+		reflect.DeepEqual(w.Wavefront, WavefrontSourceConfig{})
 }
 
 // GitHubProjectsSourceConfig configures the GitHub Projects v2 work source.

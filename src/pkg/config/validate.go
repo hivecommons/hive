@@ -64,6 +64,9 @@ func (c *Config) Validate() error {
 	if !ValidateExplainMode(strings.TrimSpace(c.Governor.ExplainMode)) {
 		return fmt.Errorf("governor: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", c.Governor.ExplainMode, ExplainModeEnvVar)
 	}
+	if err := c.Governor.WorkSource.Wavefront.Validate(); err != nil {
+		return fmt.Errorf("governor: %w", err)
+	}
 	if !ValidateACMMIssueTracker(strings.TrimSpace(c.Governor.ACMM.IssueTracker)) {
 		return fmt.Errorf("governor: invalid acmm.issue_tracker %q (must be %s or %s, or empty for %s)", c.Governor.ACMM.IssueTracker, ACMMIssueTrackerGitHub, ACMMIssueTrackerWorkSource, ACMMIssueTrackerGitHub)
 	}
