@@ -7833,6 +7833,15 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	// #8380: a LIVE issue claim covers an issue the same way an open PR does,
+	// for every kick prompt (the scanner's included). The claim fields are
+	// only ever set while governor.claims.enabled is on, so with the feature
+	// off this touches nothing.
+	if cfg != nil && cfg.Governor.Claims.Enabled {
+		if withheld := github.FilterLiveIssueClaims(actionable, time.Now(), logger); withheld > 0 {
+			logger.Info("issue-claim guard applied", "withheld", withheld)
+		}
+	}
 	ledger := getClaimLedger(logger)
 	if ledger == nil {
 		return
@@ -7923,6 +7932,12 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
+	// #8380: issue claims are read at enumeration time only while
+	// governor.claims.enabled is on; the setting is read live so the Features
+	// toggle applies without a client rebuild.
+	client.SetIssueClaims(func() (bool, time.Duration) {
+		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
+	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },

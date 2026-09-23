@@ -127,3 +127,32 @@ func TokenTierForRole(m AgentMode, role string) string {
 	}
 	return m.TokenTier()
 }
+
+// CanComment reports whether an agent at this mode may post a comment on an
+// issue. It sits at the ISSUES_ONLY rung: the newcomer token tier is the first
+// with Issues:write, and ADVISORY (advisor, and the reviewer refinement whose
+// extra permission is PullRequests:write only) may not write to issues at all.
+// Used by the issue-claim path (hivecommons/hive#8380) to decide whether a
+// claim is posted on the forge or recorded on the lease only.
+func (m AgentMode) CanComment() bool { return m >= ModeIssuesOnly }
+
+// ModeForTokenTier is the inverse of TokenTier / TokenTierForRole: the mode a
+// scoped-token tier corresponds to. The reviewer tier maps to ADVISORY (it is
+// a role refinement of that mode, see TokenTierForRole); "merger" is the
+// contribute queue's name for the tier above trusted and shares its mode. An
+// unknown tier reports ADVISORY and false, so a caller that gates a write on
+// the result fails closed.
+func ModeForTokenTier(tier string) (AgentMode, bool) {
+	switch tier {
+	case "advisor", "reviewer":
+		return ModeAdvisory, true
+	case "newcomer":
+		return ModeIssuesOnly, true
+	case "contributor":
+		return ModeIssuesAndPRs, true
+	case "trusted", "merger":
+		return ModeIssuesPRsMerge, true
+	default:
+		return ModeAdvisory, false
+	}
+}

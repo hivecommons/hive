@@ -78,6 +78,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		PlanMatchEnabled *bool `json:"planMatchEnabled"`
 
+		ClaimsEnabled *bool `json:"claimsEnabled"`
+		ClaimsTTLS    *int  `json:"claimsTtlS"`
+
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
@@ -107,6 +110,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, "otel sample_ratio must be between 0.0 and 1.0", http.StatusBadRequest)
 			return
 		}
+	}
+	if body.ClaimsTTLS != nil && *body.ClaimsTTLS < 0 {
+		jsonError(w, "claims ttl_s must be zero (default) or positive", http.StatusBadRequest)
+		return
 	}
 	if body.RotationThresholdPct != nil && (*body.RotationThresholdPct < 1 || *body.RotationThresholdPct > 100) {
 		jsonError(w, "rotation threshold must be between 1 and 100", http.StatusBadRequest)
@@ -184,6 +191,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.PlanMatchEnabled != nil {
 		cfg.Review.PlanMatch.Enabled = *body.PlanMatchEnabled
 	}
+	if body.ClaimsEnabled != nil {
+		cfg.Governor.Claims.Enabled = *body.ClaimsEnabled
+	}
+	if body.ClaimsTTLS != nil {
+		cfg.Governor.Claims.TTLS = *body.ClaimsTTLS
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -244,6 +257,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"planMatchEnabled":           cfg.Review.PlanMatch.Enabled,
 		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
+		"claimsEnabled":              cfg.Governor.Claims.Enabled,
+		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
 		"acmmLevel":                  acmmLevel,
 		"rotationEnabled":            rotationCfg.Enabled,
 		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),

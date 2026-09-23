@@ -99,6 +99,16 @@ type Client struct {
 	perspectives review.PerspectiveSet
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore func() bool
+	// issueClaims reports whether issue claims are recognised at enumeration
+	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
+	// false → no comment is fetched, no Issue carries claim fields. Read live
+	// so a Features-panel toggle applies without a client rebuild.
+	issueClaims func() (enabled bool, ttl time.Duration)
+	// issueClaimCache remembers the claim read for an issue at a given
+	// updated_at, so the per-issue comment fetch happens once per activity
+	// change rather than once per enumeration. Guarded by issueClaimMu.
+	issueClaimCache map[string]issueClaimCacheEntry
+	issueClaimMu    sync.Mutex
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -377,6 +387,15 @@ type Issue struct {
 	// issue should be worked or triaged despite a related PR claim, but the
 	// downstream agent must know about that PR before deciding what remains.
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
+	// ClaimedBy / ClaimExpiresAt / ClaimSource carry a LIVE issue claim
+	// (hivecommons/hive#8380) read at enumeration time: a `hive-claim` marker
+	// comment, or an assignee. All three are set together and only while
+	// governor.claims.enabled is on, so a hive with claims off emits an
+	// envelope byte-for-byte identical to before. ClaimSource is
+	// issueclaim.SourceMarker or issueclaim.SourceAssignee.
+	ClaimedBy      string     `json:"claimed_by,omitempty"`
+	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
+	ClaimSource    string     `json:"claim_source,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -983,6 +1002,9 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 	if unclassified := totalIssues - breakdown.Total(); unclassified > 0 {
 		breakdown.Other += unclassified
 	}
+	// #8380: decorate the actionable set with any live issue claim. A no-op
+	// (no fetch, no fields) unless governor.claims.enabled is on.
+	c.annotateIssueClaims(ctx, owner, repoName, actionable, now)
 	return actionable, held, totalIssues, breakdown, nil
 }
 

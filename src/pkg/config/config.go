@@ -1824,6 +1824,12 @@ type GovernorConfig struct {
 	// is dry-run: operators must explicitly set file_upstream=true before any
 	// report leaves the hive.
 	FleetReport FleetReportConfig `yaml:"fleet_report,omitempty" json:"fleet_report,omitempty"`
+
+	// Claims configures issue claims (hivecommons/hive#8380): the visible,
+	// expiring marker on an issue that says someone is already working it,
+	// covering the window before a PR exists. Zero value = off; see
+	// ClaimsConfig.
+	Claims ClaimsConfig `yaml:"claims,omitempty" json:"claims,omitempty"`
 }
 
 // FleetReportConfig controls upstream fleet self-reporting.

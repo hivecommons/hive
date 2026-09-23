@@ -434,13 +434,16 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				return
 			}
 			labels := stringSliceFromAny(issue["labels"])
+			issueClaim, claimed := h.claimFromIssueMap(issue, time.Now())
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
-				repoFull:  repo.Full,
-				repoName:  repo.Name,
-				number:    number,
-				ref:       ref,
-				labels:    labels,
-				dependsOn: dependenciesFromIssueMap(issue),
+				repoFull:   repo.Full,
+				repoName:   repo.Name,
+				number:     number,
+				ref:        ref,
+				labels:     labels,
+				dependsOn:  dependenciesFromIssueMap(issue),
+				issueClaim: issueClaim,
+				claimed:    claimed,
 			})
 			if !decision.admitted {
 				// #4246 retained the convergence Decision behind this refusal

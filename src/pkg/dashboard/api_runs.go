@@ -47,15 +47,22 @@ type RunReviewWave struct {
 }
 
 type Run struct {
-	Key            string          `json:"key"`
-	Title          string          `json:"title"`
-	Repo           string          `json:"repo"`
-	Stage          string          `json:"stage"`
-	Gen            uint64          `json:"gen"`
-	StageStartedAt string          `json:"stage_started_at,omitempty"`
-	WaitingOn      RunWaitingOn    `json:"waiting_on"`
-	WaitingSince   string          `json:"waiting_since,omitempty"`
-	Assignee       string          `json:"assignee,omitempty"`
+	Key            string       `json:"key"`
+	Title          string       `json:"title"`
+	Repo           string       `json:"repo"`
+	Stage          string       `json:"stage"`
+	Gen            uint64       `json:"gen"`
+	StageStartedAt string       `json:"stage_started_at,omitempty"`
+	WaitingOn      RunWaitingOn `json:"waiting_on"`
+	WaitingSince   string       `json:"waiting_since,omitempty"`
+	Assignee       string       `json:"assignee,omitempty"`
+	// ClaimedBy / ClaimExpiresAt expose the issue claim recorded on the run's
+	// lease (hivecommons/hive#8380). ClaimPosted says whether the claim
+	// comment reached the forge or lives on the lease only. All omitempty:
+	// absent while claims are off.
+	ClaimedBy      string          `json:"claimed_by,omitempty"`
+	ClaimExpiresAt string          `json:"claim_expires_at,omitempty"`
+	ClaimPosted    bool            `json:"claim_posted,omitempty"`
 	LastReceipt    string          `json:"last_receipt,omitempty"`
 	PlanEpicID     string          `json:"plan_epic_id,omitempty"`
 	Stages         []RunStage      `json:"stages"`
@@ -68,16 +75,19 @@ type RunsSummary struct {
 }
 
 type runLeaseSnapshot struct {
-	identity     string
-	taskID       string
-	repo         string
-	number       int
-	key          string
-	stage        string
-	gen          uint64
-	expiresAt    time.Time
-	title        string
-	stageStarted time.Time
+	identity       string
+	taskID         string
+	repo           string
+	number         int
+	key            string
+	stage          string
+	gen            uint64
+	expiresAt      time.Time
+	title          string
+	stageStarted   time.Time
+	claimedBy      string
+	claimExpiresAt time.Time
+	claimPosted    bool
 }
 
 type currentTaskRunInfo struct {
@@ -229,6 +239,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 			identity: l.identity, taskID: l.taskID, repo: l.repo, number: l.number,
 			key: key, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
 			title: title, stageStarted: info.startedAt,
+			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 		})
 	}
 	return out, nil
@@ -263,6 +274,7 @@ func runFromLease(lease runLeaseSnapshot, plan runPlanSnapshot, hold runHumanRev
 		Key: lease.key, Title: redactTokens(lease.title), Repo: lease.repo,
 		Stage: lease.stage, Gen: lease.gen, StageStartedAt: started,
 		WaitingOn: RunWaitingOnAgent, Assignee: lease.identity,
+		ClaimedBy: lease.claimedBy, ClaimExpiresAt: formatRunTime(lease.claimExpiresAt), ClaimPosted: lease.claimPosted,
 		PlanEpicID: plan.epicID,
 		Stages:     leaseRunStages(lease.stage, lease.gen),
 	}

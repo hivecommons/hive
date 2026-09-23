@@ -24858,6 +24858,14 @@ function burnAreaChart() {
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
+            <span class="config-toggle-label">Issue claims <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the hub recognises a claim on an issue itself (a hive-claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.</span></span></span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Claims expire after ${Math.round(Number(f.claimsTtlS || 0) / 60)} minutes.</p>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Provider rotation</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // TestCovGov_Features exercises PUT /api/config/governor/features: a bad body is
@@ -55,11 +56,16 @@ func TestCovGov_Features(t *testing.T) {
 		"mintIssuer":         "https://mint.example.com",
 		"planFromLabel":      planTrue,
 		"formalEnabled":      true,
+		"claimsEnabled":      true,
+		"claimsTtlS":         7200,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("features ok: %d", rec.Code)
 	}
 
 	cfg := s.deps.Config
+	if !cfg.Governor.Claims.Enabled || cfg.Governor.Claims.TTLS != 7200 {
+		t.Errorf("claims = %+v, want enabled with ttl_s 7200", cfg.Governor.Claims)
+	}
 	if !cfg.Ioscan.IsEnabled() {
 		t.Errorf("ioscan not enabled")
 	}
@@ -347,5 +353,46 @@ func TestGovernorFeaturesRotationValidation(t *testing.T) {
 				t.Fatalf("status = %d, want 400; body=%q", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+// #8380: the issue-claims toggle follows the formalEnabled pattern — off by
+// default, owner-writable, reported on the governor GET with the effective
+// TTL, and a negative TTL is refused.
+func TestGovernorFeatures_IssueClaimsToggle(t *testing.T) {
+	s := covApiServer(t)
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor config: %d — %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			ClaimsEnabled bool `json:"claimsEnabled"`
+			ClaimsTTLS    int  `json:"claimsTtlS"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	if payload.Features.ClaimsEnabled {
+		t.Fatal("claims must report off by default")
+	}
+	if payload.Features.ClaimsTTLS != int(issueclaim.DefaultTTL.Seconds()) {
+		t.Fatalf("claimsTtlS = %d, want the default %d", payload.Features.ClaimsTTLS, int(issueclaim.DefaultTTL.Seconds()))
+	}
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"claimsTtlS": -1}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative ttl accepted: %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"claimsEnabled": true, "claimsTtlS": 600}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT claims: %d — %s", rec.Code, rec.Body.String())
+	}
+	rec = doOwnerGet(s, "/api/config/governor")
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	if !payload.Features.ClaimsEnabled || payload.Features.ClaimsTTLS != 600 {
+		t.Fatalf("claims payload = %+v, want enabled with 600s", payload.Features)
 	}
 }

@@ -163,6 +163,27 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
+			// #8380: a live issue claim on the issue itself, read off the
+			// enumerator's envelope. Only honoured while claims are enabled.
+			name:   "issue claim",
+			reason: contributorAdmissionReasonIssueClaim,
+			decorate: func(issue map[string]any) {
+				issue["claimed_by"] = "claimant"
+				issue["claim_expires_at"] = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+			},
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				s.deps.Config.Governor.Claims.Enabled = true
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimedBy != "claimant" {
+					t.Errorf("claimed_by = %q, want claimant", item.ClaimedBy)
+				}
+				if item.ClaimExpiresAt == "" {
+					t.Error("claim_expires_at must name when the claim lapses")
+				}
+			},
+		},
+		{
 			name:   "open PR claim",
 			reason: contributorAdmissionReasonOpenPRClaim,
 			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
@@ -513,6 +534,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		withheldReasonAssignedToOther,
 		contributorAdmissionReasonIssueChurn,
 		contributorAdmissionReasonMergedClaimStale,
+		contributorAdmissionReasonIssueClaim,
 	}
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {

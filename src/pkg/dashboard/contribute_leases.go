@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -58,6 +59,13 @@ type taskLease struct {
 	// diagnostic — it says where a lease came from, not what it does.
 	restored  bool
 	expiresAt time.Time
+	// claimedBy / claimExpiresAt / claimPosted record the issue claim the hub
+	// asserted for this task (hivecommons/hive#8380): who, until when, and
+	// whether the claim comment reached the forge or lives on this lease only
+	// (a tier below the comment rung). Zero when claims are off.
+	claimedBy      string
+	claimExpiresAt time.Time
+	claimPosted    bool
 }
 
 // leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
@@ -490,6 +498,34 @@ type persistedLease struct {
 	Stage     string    `json:"stage,omitempty"`
 	Gen       uint64    `json:"gen"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Claim fields (#8380); all omitempty so a registry written with claims
+	// off is byte-for-byte what it was.
+	ClaimedBy      string     `json:"claimed_by,omitempty"`
+	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
+	ClaimPosted    bool       `json:"claim_posted,omitempty"`
+}
+
+// setLeaseClaim records an issue claim on an existing lease (#8380). A lease
+// that is not there (already released, or never persisted) is left alone —
+// the claim has nothing to attach to. The persist failure policy matches
+// renewLease: the in-memory record keeps the claim and the error is logged,
+// because the claim's source of truth is the forge, not this file.
+func (h *ContributeWSHub) setLeaseClaim(identity, taskID string, claim issueclaim.Claim, posted bool) {
+	if h == nil || identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	l := h.leases[leaseKey(identity, taskID)]
+	if l == nil {
+		return
+	}
+	l.claimedBy = claim.Identity
+	l.claimExpiresAt = claim.ExpiresAt
+	l.claimPosted = posted
+	if err := h.saveLeasesLocked(); err != nil {
+		h.logger.Warn("[contribute-ws] lease claim not persisted", "task", taskID, "error", err)
+	}
 }
 
 func (h *ContributeWSHub) taskLeasesPath() string {
@@ -533,17 +569,24 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 		if l == nil || l.expiresAt.IsZero() || now.After(l.expiresAt) {
 			continue
 		}
-		records = append(records, persistedLease{
-			Identity:  l.identity,
-			TaskID:    l.taskID,
-			Repo:      l.repo,
-			Number:    l.number,
-			Key:       l.key,
-			Tier:      l.tier,
-			Stage:     l.stage,
-			Gen:       l.gen,
-			ExpiresAt: l.expiresAt,
-		})
+		rec := persistedLease{
+			Identity:    l.identity,
+			TaskID:      l.taskID,
+			Repo:        l.repo,
+			Number:      l.number,
+			Key:         l.key,
+			Tier:        l.tier,
+			Stage:       l.stage,
+			Gen:         l.gen,
+			ExpiresAt:   l.expiresAt,
+			ClaimedBy:   l.claimedBy,
+			ClaimPosted: l.claimPosted,
+		}
+		if !l.claimExpiresAt.IsZero() {
+			exp := l.claimExpiresAt
+			rec.ClaimExpiresAt = &exp
+		}
+		records = append(records, rec)
 	}
 	data, err := json.Marshal(records)
 	if err != nil {
@@ -667,18 +710,24 @@ func (h *ContributeWSHub) loadLeases() {
 		// One record per task (#7774). A file written before that held at most
 		// one record per identity and loads unchanged; a file written after may
 		// hold several for one identity, each of which must come back.
-		h.leases[leaseKey(rec.Identity, rec.TaskID)] = &taskLease{
-			identity:  rec.Identity,
-			taskID:    rec.TaskID,
-			repo:      rec.Repo,
-			number:    rec.Number,
-			key:       key,
-			tier:      rec.Tier,
-			stage:     rec.Stage,
-			gen:       rec.Gen,
-			restored:  true,
-			expiresAt: rec.ExpiresAt,
+		l := &taskLease{
+			identity:    rec.Identity,
+			taskID:      rec.TaskID,
+			repo:        rec.Repo,
+			number:      rec.Number,
+			key:         key,
+			tier:        rec.Tier,
+			stage:       rec.Stage,
+			gen:         rec.Gen,
+			restored:    true,
+			expiresAt:   rec.ExpiresAt,
+			claimedBy:   rec.ClaimedBy,
+			claimPosted: rec.ClaimPosted,
 		}
+		if rec.ClaimExpiresAt != nil {
+			l.claimExpiresAt = *rec.ClaimExpiresAt
+		}
+		h.leases[leaseKey(rec.Identity, rec.TaskID)] = l
 		if rec.Gen > maxGen {
 			maxGen = rec.Gen
 		}

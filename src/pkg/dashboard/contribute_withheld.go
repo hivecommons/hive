@@ -69,6 +69,7 @@ const (
 // rule applies to the WORDS as much as to the decisions).
 var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonOpenPRClaim:       "An open pull request already claims this issue",
+	contributorAdmissionReasonIssueClaim:        "Someone has claimed this issue; the claim expires on its own",
 	contributorAdmissionReasonMergedClaimStale:  "Fixed by a merged pull request; the issue is still open — close it or say what remains",
 	contributorAdmissionReasonIssueChurn:        "Too many pull requests on one issue — needs maintainer triage",
 	contributorAdmissionReasonWorkflowBlocked:   "Workflow label: blocked",
@@ -104,6 +105,7 @@ func withheldReasonLabel(reason string) string {
 func isConvergenceWithheldReason(reason string) bool {
 	switch reason {
 	case contributorAdmissionReasonOpenPRClaim,
+		contributorAdmissionReasonIssueClaim,
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
 		withheldReasonDisabledRepo,
@@ -294,6 +296,14 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		item.ClaimURL = d.claim.PRURL
 		item.ClaimAuthor = d.claim.PRAuthor
 		item.Detail = mergedClaimStaleDetail(d.claim, time.Now())
+		return item
+	case contributorAdmissionReasonIssueClaim:
+		// #8380: the evidence is the claimant and the expiry — the two facts
+		// a reader needs to decide whether to wait or to coordinate.
+		item := newWithheldItem(c, d.reason)
+		item.ClaimedBy = d.issueClaim.Identity
+		item.ClaimExpiresAt = formatRunTime(d.issueClaim.ExpiresAt)
+		item.Detail = fmt.Sprintf("Claimed by %s until %s", d.issueClaim.Identity, item.ClaimExpiresAt)
 		return item
 	case contributorAdmissionReasonIssueChurn:
 		item := newWithheldItem(c, d.reason)

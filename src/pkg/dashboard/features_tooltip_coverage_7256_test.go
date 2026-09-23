@@ -177,3 +177,26 @@ func controlTooltip(t *testing.T, body, label string) string {
 	}
 	return rest[:end]
 }
+
+// #8380: the issue-claims toggle saves features.claimsEnabled and its tooltip
+// states the default, the TTL and the comment-rung rule.
+func TestIssueClaimsFeatureTooltip(t *testing.T) {
+	html := indexHTML(t)
+	body := extractJSFunction(t, html, "renderGovFeatures")
+
+	tooltip := controlTooltip(t, body, "Issue claims")
+	for _, want := range []string{
+		"OFF by default",
+		"hive-claim marker comment",
+		"expire on their own",
+		"tiers that may write issue comments",
+		"src/docs/contributor-relay.md",
+	} {
+		if !strings.Contains(tooltip, want) {
+			t.Errorf("issue claims tooltip missing %q; got:\n%s", want, tooltip)
+		}
+	}
+	if !strings.Contains(body, `data-section="features" data-key="claimsEnabled"`) {
+		t.Fatal("Issue claims toggle must save features.claimsEnabled")
+	}
+}

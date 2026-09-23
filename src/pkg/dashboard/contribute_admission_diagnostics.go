@@ -61,6 +61,12 @@ type AdmissionWithheldItem struct {
 	// (reason open_pr_claim). Public metadata from the governor's claim ledger.
 	ClaimURL    string `json:"claim_url,omitempty"`
 	ClaimAuthor string `json:"claim_author,omitempty"`
+	// ClaimedBy / ClaimExpiresAt carry the live ISSUE claim behind an
+	// issue_claim refusal (hivecommons/hive#8380): who holds it and when it
+	// lapses (RFC3339). Distinct from ClaimURL/ClaimAuthor, which describe a
+	// pull request. omitempty: absent for every other reason.
+	ClaimedBy      string `json:"claimed_by,omitempty"`
+	ClaimExpiresAt string `json:"claim_expires_at,omitempty"`
 	// CooldownUntil is when a completion or failure cooldown lapses, RFC3339 in
 	// UTC, so a client can render a countdown without guessing the window.
 	CooldownUntil string `json:"cooldown_until,omitempty"`

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -778,13 +779,16 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// PR per window. The claim ledger sees the open PR itself on the
 			// next eval cycle, which closes that hole regardless of what the
 			// relay managed to report.
+			issueClaim, claimed := h.claimFromIssueMap(issue, time.Now())
 			decision := h.evaluateContributorNeutralAdmission(admissionSweep, contributorAdmissionCandidate{
-				repoFull:  repo.Full,
-				repoName:  repo.Name,
-				number:    number,
-				ref:       ref,
-				labels:    labels,
-				dependsOn: dependenciesFromIssueMap(issue),
+				repoFull:   repo.Full,
+				repoName:   repo.Name,
+				number:     number,
+				ref:        ref,
+				labels:     labels,
+				dependsOn:  dependenciesFromIssueMap(issue),
+				issueClaim: issueClaim,
+				claimed:    claimed,
 			})
 			if !decision.admitted {
 				switch decision.reason {
@@ -794,6 +798,14 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
 						"merged", decision.claim.MergedPR,
 						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
+				case contributorAdmissionReasonIssueClaim:
+					// #8380: someone claimed the issue on the issue itself; the
+					// claim expires on its own, so the log names when.
+					h.logger.Info("[contribute-ws] skip: issue claimed",
+						"repo", repo.Full, "number", number,
+						"claimed_by", decision.issueClaim.Identity,
+						"claim_expires_at", decision.issueClaim.ExpiresAt.UTC().Format(time.RFC3339),
+						"claim_source", decision.issueClaim.Source)
 				case contributorAdmissionReasonMergedClaimStale:
 					// #8003: the fix landed days ago and the issue is still
 					// open. Logged as the question it is, so the Operations
@@ -1191,6 +1203,12 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	c.mu.Unlock()
 
 	turnEnvelopeID := h.persistTurnEnvelopeForAssignment(c, assignment, gen, prompt, chosen.labels)
+
+	// #8380: assert the issue claim for this lease — on the issue itself when
+	// the tier may write comments, on the lease alone otherwise. Runs after the
+	// assignment is confirmed still live and off the selection lock, like the
+	// mint; a failed post never refuses the task.
+	h.recordAgentClaim(context.Background(), c, taskID, chosen.repoFull, chosen.number, time.Now())
 
 	return &WSMessage{
 		Type:    "task_assign",

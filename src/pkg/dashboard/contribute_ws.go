@@ -564,6 +564,10 @@ func (c *ContributorConnection) advisor() advisorInfo {
 type ContributeWSHub struct {
 	connections map[string]*ContributorConnection
 	mu          sync.RWMutex
+	// claimCommenter is the forge seam issue claims are posted through
+	// (hivecommons/hive#8380). Nil means "use the wired GitHub client"; tests
+	// inject a recorder. See contribute_claims.go.
+	claimCommenter planIssueCommenter
 	// unmintableRepos maps "owner/repo" to the instant its post-mint-failure
 	// exclusion lapses (#7869); guarded by its own mutex because it is consulted
 	// inside selectTask's candidate scan, which runs under selectMu, and written

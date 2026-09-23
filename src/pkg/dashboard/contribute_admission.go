@@ -7,6 +7,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -71,6 +72,11 @@ type contributorAdmissionCandidate struct {
 	// current edge snapshot through the same convergence evaluator.
 	dependsOn []ghpkg.IssueDependency
 	labels    []string
+	// issueClaim / claimed carry a LIVE issue claim read off the enumerator's
+	// envelope (hivecommons/hive#8380) via claimFromIssueMap. claimed is false
+	// whenever claims are disabled, so the gate below never fires then.
+	issueClaim issueclaim.Claim
+	claimed    bool
 }
 
 // isGitHubBacked reports whether this candidate may be handed to the two
@@ -101,6 +107,9 @@ type contributorAdmissionDecision struct {
 	// skippedLabel carries the exact issue label that matched the contribute
 	// skip-label set for workflow_blocked / label_skipped refusals.
 	skippedLabel string
+	// issueClaim carries the live claim behind an issue_claim refusal
+	// (#8380): who holds it and until when. Zero for every other reason.
+	issueClaim issueclaim.Claim
 	// convergence carries the dependency judgment behind a dependency-based
 	// refusal (#3845): which record was observed, at which generation, and
 	// which dependency IDs blocked. Zero-valued when admission never reached
@@ -110,6 +119,12 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonIssueClaim: someone has claimed the issue on
+	// the issue itself — a `hive-claim` marker comment or an assignee — and
+	// the claim has not expired (hivecommons/hive#8380). It covers the window
+	// before a PR exists that open_pr_claim cannot see. Never returned while
+	// governor.claims.enabled is off.
+	contributorAdmissionReasonIssueClaim = "issue_claim"
 	// contributorAdmissionReasonMergedClaimStale: a merged pull request has
 	// claimed to fix this issue for at least SettledClaimStaleAfter and the
 	// issue is still open (#8003). Nothing an agent can do moves it — the
@@ -176,6 +191,17 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 		return contributorAdmissionDecision{
 			reason: reason,
 			claim:  claim,
+		}
+	}
+
+	// Issue claim (#8380): checked after the open-PR claim — a PR is the
+	// stronger, later signal and subsumes the claim — and before churn, which
+	// is a property of the issue's history rather than of who is on it now.
+	// The candidate's claimed flag is only ever set while claims are enabled.
+	if candidate.claimed {
+		return contributorAdmissionDecision{
+			reason:     contributorAdmissionReasonIssueClaim,
+			issueClaim: candidate.issueClaim,
 		}
 	}
 
