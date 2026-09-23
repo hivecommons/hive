@@ -12,6 +12,10 @@ The `pkg/review` package ships five built-in review perspectives:
 - `style` — maintainability, conventions, readability, repository idioms
 - `docs-currency` — documentation, examples, generated docs, operator-facing text that must change with behavior
 
+One more is built in but off by default:
+
+- `plan_match` — whether the diff implements the approved plan wave named by the PR's `Hive-Run:` / `Hive-Plan:` trailers (hivecommons/hive#8317). See [Plan match](#plan-match) below.
+
 Which perspectives run, and what each is told to look for, are per-hive settings under `review:` (Governor → Features → Review Gate → Perspectives in the dashboard):
 
 ```yaml
@@ -28,6 +32,27 @@ review:
 - `combined_perspectives` reviews every enabled perspective in **one** agent session that leaves **one** review comment, with findings grouped under the perspective they belong to. Off, each perspective is its own session and its own comment, and `max_perspectives_per_pr` caps how many a PR receives. Combined mode ignores that cap: it exists to bound comments, and a combined review is always exactly one. The reviewer still emits one verdict per perspective — as a JSON array in the verdict file — so any single perspective can still hold a PR for a human.
 
 Verdicts are validated against the hive's own perspective set: a verdict naming a perspective this hive does not review with is refused by the relay, since nothing dispatched it and nothing is waiting on it.
+
+### Plan match
+
+`plan_match` judges intent as well as diff. Implementation PRs opened for a long-running run carry `Hive-Run: <run key>` and `Hive-Plan: <plan ref>` trailer lines in their body (hivecommons/hive#8310). When the perspective is on, the hive reads those trailers at enumeration time, resolves the plan they name from its bead stores (the ref may be the epic bead ID or the source issue's `owner/repo#N`), and renders the approved wave - the epic and each planned item with its status - into the review kick. The reviewer compares the diff summary against that list and reports exactly two kinds of finding:
+
+- `scope exceeds plan` - a file, behaviour or surface the diff adds that no planned item covers. High severity when the unplanned change is user- or operator-visible or lands outside every planned item's area; medium for supporting changes the plan implies but does not name; low for incidental cleanup.
+- `planned item missing` - an item in the wave the PR should have delivered and did not.
+
+A high-severity scope finding is a human decision: it promotes the aggregate to `requires_human` and the PR is held for a human exactly like any other blocking finding. The plan text is planner output, not the PR author's rationale, so quoting it does not reintroduce the measured worst-performing reviewer arm (see `groundingSection` in `pkg/review/prompts.go`).
+
+A PR with no run trailer has nothing to judge. The reviewer returns a **not applicable** report (`verdict: approve`, `not_applicable: true`, no findings), which the aggregate treats as approve for unanimity and the confidence score drops from both the reported and the expected count - it neither helps nor hurts. A PR whose trailer names a plan the hive cannot find gets `requires_human` from this perspective, since the reviewer must not infer a plan from the diff.
+
+Turn it on from Governor -> Features -> Review Gate -> "Match PRs against their approved plan", or in config:
+
+```yaml
+review:
+  plan_match:
+    enabled: true   # default false; appends plan_match to the perspective set
+```
+
+The toggle is separate from `review.perspectives` so enabling it never requires spelling out the whole selection; `plan_match` may also be listed there explicitly. It is omitted from the settings UI's built-in list for the same reason. Off by default because the perspective only earns its cost on a hive whose PRs carry run trailers and whose plans live in its bead stores.
 
 Each reviewer returns a JSON object that extends the `pkg/outputschema.AgentReport` contract — or, for a combined review, a JSON array of one such object per perspective, all for the same PR and head SHA. Required AgentReport fields remain `lane`, `kind`, `findings`, `prs_opened`, `beads_filed`, and `summary`; review reports add `perspective`, `verdict`, `repo`, `number`, and optional `head_sha`. `kind` must be `review`.
 
@@ -72,6 +97,7 @@ Every aggregate also carries a derived 0–5 **mergeability confidence** (`confi
 | any `critical` finding | 0 |
 | any `changes_requested` or `requires_human` perspective | capped at 3 |
 | a configured perspective that did not report | capped at 3 |
+| a `not_applicable` report (`plan_match` on a PR without a run trailer) | excluded from both counts |
 | any `reject` | 0 |
 
 `info` and `low` findings cost nothing. Bands: 4–5 *safe*, 1–3 *needs attention*, 0 *do not merge*. `reasons` lists only what actually moved the score, worst first.

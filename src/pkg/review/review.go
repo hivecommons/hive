@@ -23,6 +23,12 @@ const (
 	PerspectiveIntentAlignment Perspective = "intent-alignment"
 	PerspectiveStyle           Perspective = "style"
 	PerspectiveDocsCurrency    Perspective = "docs-currency"
+	// PerspectivePlanMatch scores a PR against the approved plan wave it
+	// claims to implement (hivecommons/hive#8317). Built in but NOT in
+	// DefaultPerspectives: it runs only when review.plan_match.enabled is set,
+	// because it needs the run trailers (#8310) and a plan to compare against,
+	// and a hive without either would pay a perspective for nothing.
+	PerspectivePlanMatch Perspective = "plan_match"
 )
 
 var DefaultPerspectives = []Perspective{
@@ -113,6 +119,12 @@ type PerspectiveReport struct {
 	HeadSHA     string      `json:"head_sha,omitempty"`
 	AuthorModel string      `json:"author_model,omitempty"`
 	ReviewModel string      `json:"review_model,omitempty"`
+	// NotApplicable marks a report whose perspective had nothing to judge on
+	// this PR -- today only plan_match on a PR with no Hive-Run / Hive-Plan
+	// trailer. It is neither an approval nor a withheld one: the aggregate
+	// treats it as approve for unanimity and the confidence score drops it
+	// from the expected count, so it neither helps nor hurts.
+	NotApplicable bool `json:"not_applicable,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -252,6 +264,14 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		if agg.ReviewModel == "" {
 			agg.ReviewModel = r.ReviewModel
 		}
+		if r.NotApplicable {
+			// Nothing to judge is not a judgement withheld. Findings on a
+			// not-applicable report are ignored: there was no plan to find
+			// anything against.
+			agg.Perspectives[r.Perspective] = VerdictApprove
+			seenVerdicts[VerdictApprove] = true
+			continue
+		}
 		agg.Perspectives[r.Perspective] = r.Verdict
 		seenVerdicts[r.Verdict] = true
 		for _, f := range r.Findings {
@@ -311,7 +331,11 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, err
 		}
-		report, err := ValidateReport(raw)
+		// Reports on disk are accepted for every built-in perspective plus
+		// whatever this hive configured, not the selected set alone: a
+		// perspective toggled off after its report landed must not make the
+		// whole collect fail on a file the hive itself wrote.
+		report, err := ValidateReportFor(raw, opts.Perspectives.acceptingBuiltins())
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}

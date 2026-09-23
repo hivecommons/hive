@@ -15,12 +15,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -82,7 +85,7 @@ func actionableWithPR(author string) *github.ActionableResult {
 
 func TestPlanReviewDispatch_KicksReviewerForAgentAuthoredPR(t *testing.T) {
 	redirectReviewPaths(t)
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, restoreTestLogger())
+	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, nil, restoreTestLogger())
 
 	// A single reviewer agent is throttled to one perspective per cycle.
 	if len(plan.ReviewKicks) != 1 {
@@ -109,7 +112,7 @@ func TestPlanReviewDispatch_KicksReviewerForAgentAuthoredPR(t *testing.T) {
 
 func TestPlanReviewDispatch_SkipsHumanAuthoredPR(t *testing.T) {
 	redirectReviewPaths(t)
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("some-human"), nil, restoreTestLogger())
+	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("some-human"), nil, nil, restoreTestLogger())
 	if len(plan.ReviewKicks) != 0 || len(plan.FixKicks) != 0 {
 		t.Fatalf("human-authored PR must not be dispatched, got %d review kicks and %d fix kicks",
 			len(plan.ReviewKicks), len(plan.FixKicks))
@@ -123,7 +126,7 @@ func TestPlanReviewDispatch_PausedAgentConfigExcludesReviewer(t *testing.T) {
 	reviewer.Paused = true
 	cfg.Agents["reviewer"] = reviewer
 
-	plan := planReviewDispatch(cfg, actionableWithPR("hive-bot"), nil, restoreTestLogger())
+	plan := planReviewDispatch(cfg, actionableWithPR("hive-bot"), nil, nil, restoreTestLogger())
 	if len(plan.ReviewKicks) != 0 {
 		t.Fatalf("paused reviewer must not receive kicks, got %d", len(plan.ReviewKicks))
 	}
@@ -144,7 +147,7 @@ func TestPlanReviewDispatch_ChangesRequestedVerdictDispatchesFixer(t *testing.T)
 		t.Fatalf("seed verdict artifact: %v", err)
 	}
 
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, restoreTestLogger())
+	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, nil, restoreTestLogger())
 	if len(plan.ReviewKicks) != 0 {
 		t.Errorf("PR with an aggregate verdict must not be re-reviewed, got %d review kicks", len(plan.ReviewKicks))
 	}
@@ -280,4 +283,58 @@ func TestPersistReviewDispatchState_WriteFailureIsNonFatal(t *testing.T) {
 
 	plan := review.DispatchPlan{State: review.DispatchState{GeneratedAt: time.Now().UTC()}}
 	persistReviewDispatchState(plan, nil, restoreTestLogger()) // must not panic
+}
+
+// plan_match wiring (#8317): the run trailers read at enumeration time reach
+// the kick as identifiers, and the plan they name is rendered from the bead
+// store. A PR without a trailer is told to report not-applicable.
+func TestPlanReviewDispatch_PlanMatchCarriesPlanWave(t *testing.T) {
+	redirectReviewPaths(t)
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	epic, err := store.Create("widget subsystem", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planning.DecomposeFromOutput(store, epic, "1. [T1] Implement persistence [agent_suitable]\n", planning.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	stores := map[string]*beads.Store{"architect": store}
+
+	cfg := reviewSwarmConfig()
+	cfg.Review.CombinedPerspectives = true
+	cfg.Review.PlanMatch.Enabled = true
+
+	actionable := actionableWithPR("hive-bot")
+	actionable.PRs.Items[0].HiveRun = "hivecommons/hive#4321"
+	actionable.PRs.Items[0].HivePlan = epic.ID
+	plan := planReviewDispatch(cfg, actionable, nil, stores, restoreTestLogger())
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("expected 1 combined kick, got %d", len(plan.ReviewKicks))
+	}
+	msg := plan.ReviewKicks[0].Message
+	for _, want := range []string{"plan_match", "Hive-Run: hivecommons/hive#4321", "Hive-Plan: " + epic.ID, "[T1] Implement persistence"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("kick lacks %q:\n%s", want, msg)
+		}
+	}
+
+	// No trailer: the perspective is still dispatched, and told there is
+	// nothing to judge.
+	bare := planReviewDispatch(cfg, actionableWithPR("hive-bot"), nil, stores, restoreTestLogger())
+	if len(bare.ReviewKicks) != 1 || !strings.Contains(bare.ReviewKicks[0].Message, "not_applicable") {
+		t.Fatalf("trailer-less PR kick should ask for a not-applicable report: %+v", bare.ReviewKicks)
+	}
+
+	// Toggle off: plan_match is not in the set and the wave is not rendered.
+	cfg.Review.PlanMatch.Enabled = false
+	off := planReviewDispatch(cfg, actionable, nil, stores, restoreTestLogger())
+	if len(off.ReviewKicks) != 1 || strings.Contains(off.ReviewKicks[0].Message, "plan_match") {
+		t.Fatalf("plan_match ran with the toggle off: %+v", off.ReviewKicks)
+	}
+	if planWaveFor(cfg, stores, epic.ID, "") != "" {
+		t.Fatal("planWaveFor rendered a wave with plan_match off")
+	}
 }

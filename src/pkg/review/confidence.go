@@ -75,7 +75,16 @@ func ScoreConfidence(reports []PerspectiveReport, expected int) Confidence {
 	seen := map[Perspective]bool{}
 	verdicts := map[Verdict]int{}
 	sevCounts := map[outputschema.Severity]int{}
+	notApplicable := 0
 	for _, r := range reports {
+		// A perspective with nothing to judge (plan_match on a PR with no
+		// run trailer) is dropped from both sides of the coverage check: it
+		// is not a perspective that reported, and not one that was expected
+		// to. Its verdict and findings carry no weight either way.
+		if r.NotApplicable {
+			notApplicable++
+			continue
+		}
 		seen[r.Perspective] = true
 		verdicts[r.Verdict]++
 		for _, f := range r.Findings {
@@ -115,6 +124,9 @@ func ScoreConfidence(reports []PerspectiveReport, expected int) Confidence {
 	}
 	if n := verdicts[VerdictChangesRequested]; n > 0 {
 		capAt(ConfidenceNeedsAttentionCap, plural(n, "perspective")+" requested changes")
+	}
+	if expected > 0 {
+		expected -= notApplicable
 	}
 	if expected > 0 && len(seen) < expected {
 		capAt(ConfidenceCoverageCap, fmt.Sprintf("%d of %d perspectives reported", len(seen), expected))

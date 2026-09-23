@@ -195,6 +195,42 @@ var defaultFocus = map[Perspective]string{
 	PerspectiveIntentAlignment: "whether the diff solves the linked issue without unrelated scope creep",
 	PerspectiveStyle:           "maintainability, conventions, readability, and repository idioms",
 	PerspectiveDocsCurrency:    "documentation, examples, generated docs, and operator-facing text that must change with behavior",
+	PerspectivePlanMatch:       "whether the diff implements the approved plan wave named by its Hive-Run / Hive-Plan trailers: files or behaviour the plan never asked for (scope creep), and planned items the diff leaves out",
+}
+
+// builtinPerspectives is every perspective this package defines. It is
+// DefaultPerspectives plus the opt-in ones: a name here is accepted without
+// focus text and validated as a built-in, whether or not it runs by default.
+var builtinPerspectives = append(append([]Perspective(nil), DefaultPerspectives...), PerspectivePlanMatch)
+
+// WithPlanMatch returns the set with plan_match appended, if it is not already
+// selected. It is how review.plan_match.enabled reaches the set: the toggle is
+// a separate switch from review.perspectives so that turning the perspective
+// on does not require an operator to spell out the whole selection.
+//
+// A set already at MaxPerspectives is returned unchanged: the cap is a
+// reminder that every perspective costs every review, and the toggle does not
+// get to exceed it silently.
+func (s PerspectiveSet) WithPlanMatch() PerspectiveSet {
+	if s.Known(PerspectivePlanMatch) || s.Len() >= MaxPerspectives {
+		return s
+	}
+	order := append(append([]Perspective(nil), s.List()...), PerspectivePlanMatch)
+	return PerspectiveSet{order: order, focus: s.focus}
+}
+
+// acceptingBuiltins widens the set to every built-in perspective plus the
+// hive's own selection, for validating reports already written to disk. It is
+// deliberately not what the relay validates against: a live verdict must name
+// a perspective the hive actually dispatched.
+func (s PerspectiveSet) acceptingBuiltins() PerspectiveSet {
+	order := append([]Perspective(nil), builtinPerspectives...)
+	for _, p := range s.List() {
+		if !isBuiltinPerspective(p) {
+			order = append(order, p)
+		}
+	}
+	return PerspectiveSet{order: order, focus: s.focus}
 }
 
 // DefaultFocus returns the built-in focus line, so the settings UI can show an
@@ -203,17 +239,21 @@ var defaultFocus = map[Perspective]string{
 // for a hive-defined perspective, which has no default.
 func DefaultFocus(p Perspective) string { return defaultFocus[p] }
 
-// DefaultFocusAll returns every built-in focus line, for the settings UI.
+// DefaultFocusAll returns the focus line of every perspective in the default
+// set, for the settings UI. plan_match is deliberately absent: it is toggled
+// from the Features panel (review.plan_match.enabled), not selected from this
+// list, and listing it here would render it as on by default when it is not.
+// DefaultFocus still answers for it.
 func DefaultFocusAll() map[Perspective]string {
-	out := make(map[Perspective]string, len(defaultFocus))
-	for p, f := range defaultFocus {
-		out[p] = f
+	out := make(map[Perspective]string, len(DefaultPerspectives))
+	for _, p := range DefaultPerspectives {
+		out[p] = defaultFocus[p]
 	}
 	return out
 }
 
 func isBuiltinPerspective(p Perspective) bool {
-	for _, want := range DefaultPerspectives {
+	for _, want := range builtinPerspectives {
 		if p == want {
 			return true
 		}

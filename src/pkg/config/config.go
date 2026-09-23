@@ -6695,6 +6695,20 @@ type ReviewConfig struct {
 	// repository that answers "what should I merge next?" for a human working
 	// the queue by hand.
 	Recommendations RecommendationsConfig `yaml:"recommendations,omitempty" json:"recommendations,omitempty"`
+	// PlanMatch gates the plan_match review perspective
+	// (hivecommons/hive#8317), which scores a PR against the approved plan
+	// wave its Hive-Run / Hive-Plan trailers name.
+	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+}
+
+// PlanMatchConfig is the switch for the plan_match review perspective
+// (hivecommons/hive#8317). Off by default: the perspective only earns its cost
+// on a hive whose implementation PRs carry run trailers and whose plans live
+// in its bead stores. When on, plan_match is appended to the hive's review
+// perspective set; a PR without a run trailer gets a not-applicable report
+// that neither helps nor hurts its confidence score.
+type PlanMatchConfig struct {
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep

@@ -105,4 +105,16 @@ func TestReviewPerspectivesSection(t *testing.T) {
 	if strings.Contains(got, "`correctness`") || !strings.Contains(got, "- `api-compat` — wire and CLI compatibility with the previous minor") {
 		t.Errorf("configured set not rendered:\n%s", got)
 	}
+
+	// plan_match (#8317) is listed only when its toggle is on, after the
+	// configured perspectives, with its built-in focus text.
+	if strings.Contains(got, "`plan_match`") {
+		t.Errorf("plan_match listed with the toggle off:\n%s", got)
+	}
+	s.cfg.Review.PlanMatch.Enabled = true
+	got = s.reviewPerspectivesSection()
+	lines := strings.Split(got, "\n")
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "- `plan_match` — "+review.DefaultFocus(review.PerspectivePlanMatch)) {
+		t.Errorf("plan_match not appended with the toggle on:\n%s", got)
+	}
 }

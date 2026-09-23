@@ -19,6 +19,20 @@ type PullRequest struct {
 	// commit rather than reasoning from the diff alone — see groundingSection
 	// for the measurement that makes this the load-bearing field.
 	MergeBase string
+	// RunKey and PlanRef are the values of the PR's `Hive-Run:` and
+	// `Hive-Plan:` trailers (hivecommons/hive#8310), parsed by the caller.
+	// They name the long-running run and plan this PR claims to implement.
+	// Empty means the PR carries no trailer, and the plan_match perspective
+	// reports itself not applicable. These are identifiers, not free text:
+	// nothing else from the trailer block reaches the prompt.
+	RunKey  string
+	PlanRef string
+	// PlanWave is the approved plan rendered for the reviewer (see
+	// planning.PlanTree.WaveText): the epic and each planned item with its
+	// status. It is the reference plan_match judges the diff against, and it
+	// is written by the planner, not the PR author -- which is what keeps it
+	// on the right side of the Arm A finding above.
+	PlanWave string
 }
 
 // Grounding thresholds, named so the numbers never appear bare in the prompt.
@@ -156,6 +170,9 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
 	b.WriteString(buildReadInstruction(pr))
 	b.WriteString(groundingSection(pr))
+	if p == PerspectivePlanMatch {
+		b.WriteString(planMatchSection(pr))
+	}
 	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(findingSchemaInstruction)
@@ -318,6 +335,9 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("These are distinct questions, not one question asked several ways. A change can be correct and still leak a secret, or secure and still not do what its issue asked. Ask each one separately and answer it on its own evidence.\n")
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
 	b.WriteString(buildReadInstruction(pr))
+	if hasPerspective(perspectives, PerspectivePlanMatch) {
+		b.WriteString(planMatchSection(pr))
+	}
 	b.WriteString("Return exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
 	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
@@ -377,6 +397,15 @@ const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspectiv
 
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional). A finding missing title, severity or summary fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
+
+func hasPerspective(ps []Perspective, want Perspective) bool {
+	for _, p := range ps {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
 
 func perspectiveNames(ps []Perspective) []string {
 	out := make([]string, 0, len(ps))

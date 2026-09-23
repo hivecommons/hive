@@ -426,6 +426,13 @@ type PullRequest struct {
 	HiveAgent      string `json:"hive_agent,omitempty"`
 	HiveBackend    string `json:"hive_backend,omitempty"`
 	HiveModel      string `json:"hive_model,omitempty"`
+	// HiveRun and HivePlan are the `Hive-Run:` / `Hive-Plan:` trailer values
+	// (ParseRunTrailers, hivecommons/hive#8310), read from the same list
+	// payload as the attribution trailer so the plan_match review perspective
+	// (#8317) can name the run and plan a PR implements without keeping the
+	// body. Empty when the PR carries no run trailer.
+	HiveRun  string `json:"hive_run,omitempty"`
+	HivePlan string `json:"hive_plan,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
@@ -1027,6 +1034,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
+		runKey, planRef := ParseRunTrailers(pr.GetBody())
 
 		if isHeld(labels) {
 			breakdown.Hold++
@@ -1065,6 +1073,8 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 					HiveAgent:      attrMeta.Agent,
 					HiveBackend:    attrMeta.Backend,
 					HiveModel:      attrMeta.Model,
+					HiveRun:        runKey,
+					HivePlan:       planRef,
 					HeadSHA:        prHeadSHA(pr),
 					HeadRef:        headRef,
 					HeadRepo:       headRepo,
@@ -1127,6 +1137,8 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			HiveAgent:      attrMeta.Agent,
 			HiveBackend:    attrMeta.Backend,
 			HiveModel:      attrMeta.Model,
+			HiveRun:        runKey,
+			HivePlan:       planRef,
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it

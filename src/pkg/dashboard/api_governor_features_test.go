@@ -174,6 +174,57 @@ func TestCovGov_FeaturesFormalRoundTripAndGate(t *testing.T) {
 	}
 }
 
+// review.plan_match.enabled (#8317) follows the formal toggle's contract:
+// owner-only, absent key leaves it alone, explicit false turns it off, and
+// the GET reports it so the Features tab can prefill the switch.
+func TestCovGov_FeaturesPlanMatchToggle(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.Review.PlanMatch.Enabled {
+		t.Fatal("plan_match must default off")
+	}
+	if rec := putFeatures(s, map[string]any{"planMatchEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT planMatchEnabled = %d, want 403", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"planMatchEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("plan_match toggle PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Review.PlanMatch.Enabled {
+		t.Fatal("review.plan_match.enabled was not persisted into config")
+	}
+	// A PUT that does not mention the key leaves it as it was.
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"retroEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated PUT: %d", rec.Code)
+	}
+	if !s.deps.Config.Review.PlanMatch.Enabled {
+		t.Fatal("absent planMatchEnabled key cleared the toggle")
+	}
+
+	rec := doOwnerGet(s, "/api/config/governor")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET governor config: %d — %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Features struct {
+			PlanMatchEnabled bool `json:"planMatchEnabled"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decoding governor payload: %v", err)
+	}
+	if !payload.Features.PlanMatchEnabled {
+		t.Fatalf("features payload does not report plan_match on: %s", rec.Body.String())
+	}
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"planMatchEnabled": false}); rec.Code != http.StatusOK {
+		t.Fatalf("plan_match off PUT: %d", rec.Code)
+	}
+	if s.deps.Config.Review.PlanMatch.Enabled {
+		t.Fatal("explicit false did not turn plan_match off")
+	}
+}
+
 func TestCovGov_FeaturesEndpointOnlyPreservesLegacyEnabled(t *testing.T) {
 	s := covApiServer(t)
 	s.deps.Config.Tracing.Enabled = true

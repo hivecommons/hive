@@ -34,7 +34,7 @@ func TestPlanReviewDispatchRequiresBothToggles(t *testing.T) {
 			cfg := &config.Config{
 				Review: config.ReviewConfig{RequireApproval: tc.requireApproval, FanOut: tc.fanOut},
 			}
-			plan := planReviewDispatch(cfg, actionable, nil, restoreTestLogger())
+			plan := planReviewDispatch(cfg, actionable, nil, nil, restoreTestLogger())
 			if !emptyDispatchPlan(plan) {
 				t.Errorf("plan = %+v, want empty (gate must hold with require_approval=%v fan_out=%v)",
 					plan, tc.requireApproval, tc.fanOut)
@@ -46,11 +46,11 @@ func TestPlanReviewDispatchRequiresBothToggles(t *testing.T) {
 // A nil config or nil enumeration must yield an empty plan, never a panic —
 // the eval cycle calls this before the first successful GitHub pass.
 func TestPlanReviewDispatchNilInputs(t *testing.T) {
-	if plan := planReviewDispatch(nil, &github.ActionableResult{}, nil, restoreTestLogger()); !emptyDispatchPlan(plan) {
+	if plan := planReviewDispatch(nil, &github.ActionableResult{}, nil, nil, restoreTestLogger()); !emptyDispatchPlan(plan) {
 		t.Errorf("nil config produced a non-empty plan: %+v", plan)
 	}
 	cfg := &config.Config{Review: config.ReviewConfig{RequireApproval: true, FanOut: true}}
-	if plan := planReviewDispatch(cfg, nil, nil, restoreTestLogger()); !emptyDispatchPlan(plan) {
+	if plan := planReviewDispatch(cfg, nil, nil, nil, restoreTestLogger()); !emptyDispatchPlan(plan) {
 		t.Errorf("nil actionable produced a non-empty plan: %+v", plan)
 	}
 }

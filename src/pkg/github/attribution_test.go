@@ -495,3 +495,24 @@ func TestReconcilePRAttribution_AuditsOnlyWhenAnEditLands(t *testing.T) {
 		}
 	})
 }
+
+// --- Run trailers (#8310 reader, #8317 consumer) ---
+
+func TestParseRunTrailers(t *testing.T) {
+	body := "Fixes #42\n\nSome prose that mentions Hive-Run: in passing is not a trailer line.\n\nHive-Run: acme/hive#42\r\nHive-Plan: epic-7\n\n— hive: agent=builder backend=claude"
+	run, plan := ParseRunTrailers(body)
+	if run != "acme/hive#42" || plan != "epic-7" {
+		t.Fatalf("ParseRunTrailers = (%q, %q), want (acme/hive#42, epic-7)", run, plan)
+	}
+	if run, plan := ParseRunTrailers("no trailers here"); run != "" || plan != "" {
+		t.Fatalf("plain body parsed as (%q, %q)", run, plan)
+	}
+	// Only the first of each wins, and either may stand alone.
+	if run, plan := ParseRunTrailers("Hive-Plan: first\nHive-Plan: second"); run != "" || plan != "first" {
+		t.Fatalf("plan-only body parsed as (%q, %q)", run, plan)
+	}
+	// Case-sensitive like the writer: a lowercase key is prose.
+	if run, _ := ParseRunTrailers("hive-run: x"); run != "" {
+		t.Fatalf("lowercase key accepted as a trailer: %q", run)
+	}
+}

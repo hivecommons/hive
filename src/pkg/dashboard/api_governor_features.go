@@ -29,6 +29,8 @@ const (
 //     secret-free)
 //   - plan_from_label   (Config.Planning.PlanFromLabel, a *bool tri-state)
 //   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
+//   - review.plan_match (Config.Review.PlanMatch.Enabled, the plan_match
+//     review perspective, hivecommons/hive#8317)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -73,6 +75,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PlanFromLabel *bool `json:"planFromLabel"`
 
 		FormalEnabled *bool `json:"formalEnabled"`
+
+		PlanMatchEnabled *bool `json:"planMatchEnabled"`
 
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
@@ -177,6 +181,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.FormalEnabled != nil {
 		cfg.Quality.Formal = *body.FormalEnabled
 	}
+	if body.PlanMatchEnabled != nil {
+		cfg.Review.PlanMatch.Enabled = *body.PlanMatchEnabled
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -234,6 +241,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"mintIssuer":                 cfg.Mint.Issuer,
 		"planFromLabel":              planFromLabel,
 		"formalEnabled":              cfg.Quality.Formal,
+		"planMatchEnabled":           cfg.Review.PlanMatch.Enabled,
 		"formalAvailable":            acmmLevel >= config.FormalQualityMinACMMLevel,
 		"formalMinACMMLevel":         config.FormalQualityMinACMMLevel,
 		"acmmLevel":                  acmmLevel,

@@ -64,6 +64,44 @@ func TestScoreConfidenceNoCoverageJudgementWhenExpectedUnknown(t *testing.T) {
 	}
 }
 
+// A not-applicable report (plan_match on a PR without a run trailer) is
+// excluded from the expected count: it neither counts as coverage nor as a
+// gap, so the score is exactly what the other perspectives earned.
+func TestScoreConfidenceExcludesNotApplicablePerspective(t *testing.T) {
+	n := len(DefaultPerspectives)
+	na := baseReport(PerspectivePlanMatch, VerdictApprove)
+	na.NotApplicable = true
+
+	// Expected includes plan_match; the not-applicable report fills its slot
+	// without being counted as a reporter.
+	got := ScoreConfidence(append(allApprove(), na), n+1)
+	if got.Score != ConfidenceMax || len(got.Reasons) != 0 {
+		t.Fatalf("not-applicable report changed a clean score: %+v", got)
+	}
+
+	// The same expected count WITHOUT the report is still a coverage gap:
+	// exclusion is earned by the report, not assumed for the perspective.
+	if capped := ScoreConfidence(allApprove(), n+1); capped.Score != ConfidenceCoverageCap {
+		t.Fatalf("missing plan_match report not capped: %+v", capped)
+	}
+
+	// Findings and verdict on a not-applicable report carry no weight.
+	na = baseReport(PerspectivePlanMatch, VerdictReject, finding(outputschema.SeverityCritical))
+	na.NotApplicable = true
+	if got := ScoreConfidence(append(allApprove(), na), n+1); got.Score != ConfidenceMax {
+		t.Fatalf("not-applicable findings scored: %+v", got)
+	}
+
+	// Deductions from the real reports still apply underneath.
+	reps := allApprove()
+	reps[0] = baseReport(DefaultPerspectives[0], VerdictApprove, finding(outputschema.SeverityMedium))
+	na = baseReport(PerspectivePlanMatch, VerdictApprove)
+	na.NotApplicable = true
+	if got := ScoreConfidence(append(reps, na), n+1); got.Score != ConfidenceMax-confidenceDeductMedium {
+		t.Fatalf("medium deduction lost beside a not-applicable report: %+v", got)
+	}
+}
+
 func TestConfidenceBandAndRender(t *testing.T) {
 	for score, band := range map[int]string{5: "safe", 4: "safe", 3: "needs attention", 1: "needs attention", 0: "do not merge"} {
 		if got := ConfidenceBand(score); got != band {

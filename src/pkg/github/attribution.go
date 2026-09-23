@@ -207,6 +207,34 @@ func (m InvocationMeta) AuditDetail(extra ...string) string {
 	return strings.Join(parts, ", ")
 }
 
+// Run trailer keys (hivecommons/hive#8310). An implementation PR opened for a
+// long-running run carries `Hive-Run: <run key>` and `Hive-Plan: <plan ref>`
+// as git-style trailer lines in its body, so downstream consumers -- the
+// plan_match review perspective (#8317) among them -- can find the run and the
+// approved plan the PR claims to implement without a GitHub round trip.
+const (
+	RunTrailerKey  = "Hive-Run:"
+	PlanTrailerKey = "Hive-Plan:"
+)
+
+// ParseRunTrailers extracts the run key and plan ref from a PR body. Each is
+// the trimmed remainder of the first line that starts with its key; a body
+// without the line yields "". The reader is deliberately line-anchored and
+// case-sensitive, matching the writer, so prose that mentions "Hive-Run" is
+// never mistaken for a trailer.
+func ParseRunTrailers(body string) (runKey, planRef string) {
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case runKey == "" && strings.HasPrefix(line, RunTrailerKey):
+			runKey = strings.TrimSpace(strings.TrimPrefix(line, RunTrailerKey))
+		case planRef == "" && strings.HasPrefix(line, PlanTrailerKey):
+			planRef = strings.TrimSpace(strings.TrimPrefix(line, PlanTrailerKey))
+		}
+	}
+	return runKey, planRef
+}
+
 // AppendTrailer appends the visible trailer to body, blank-line separated.
 // No-op when the trailer is empty or the body already carries one — a request
 // the watcher retries after a partial failure must not stack trailers.
