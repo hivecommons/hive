@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -257,8 +258,9 @@ func TestRunImplementTaskFailedDoesNotCompleteRun(t *testing.T) {
 
 func TestRunDetailIncludesBurndownWhenSourceMatches(t *testing.T) {
 	s, deps := runsTestServer(t)
-	key := "myorg/repo1!audit-campaign"
-	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-audit", "myorg/repo1", 0, key, "contributor", StageImplement, 1, time.Now()); err != nil {
+	key := "myorg/repo1#8299"
+	leaseKey := "myorg/repo1!myorg/repo1#8299:implement"
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-audit", "myorg/repo1", 8299, leaseKey, "contributor", StageImplement, 1, time.Now()); err != nil {
 		t.Fatalf("record lease: %v", err)
 	}
 	deps.RunBurndown = func(_ context.Context, got string) (*RunBurndown, error) {
@@ -268,7 +270,7 @@ func TestRunDetailIncludesBurndownWhenSourceMatches(t *testing.T) {
 		return &RunBurndown{Source: "audit", Satisfied: 7, Remaining: 2, Unknown: 1, Scope: 10}, nil
 	}
 
-	rec := doGet(s, "/api/runs/myorg%2Frepo1%21audit-campaign")
+	rec := doGet(s, "/api/runs/myorg%2Frepo1%238299")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET run detail = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -279,6 +281,35 @@ func TestRunDetailIncludesBurndownWhenSourceMatches(t *testing.T) {
 	if run.Burndown == nil || run.Burndown.Source != "audit" || run.Burndown.Satisfied != 7 ||
 		run.Burndown.Remaining != 2 || run.Burndown.Unknown != 1 || run.Burndown.Scope != 10 {
 		t.Fatalf("burndown = %+v", run.Burndown)
+	}
+	if run.Key != key || run.LeaseKey != leaseKey || run.Repo != "myorg/repo1" {
+		t.Fatalf("run keys = key %q lease %q repo %q", run.Key, run.LeaseKey, run.Repo)
+	}
+}
+
+func TestRunsCanonicalKeyListAndDetailAcceptsLeaseKey(t *testing.T) {
+	s, _ := runsTestServer(t)
+	leaseKey := "repo1!repo1#8533:spec"
+	if err := s.contributeHub.recordLeaseForKeyStage("hive-triage", "task-8533", "repo1", 8533, leaseKey, "triage", StageSpec, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	rec := doGet(s, "/api/runs")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET runs = %d body=%s", rec.Code, rec.Body.String())
+	}
+	runs := decodeRuns(t, rec)
+	if len(runs) != 1 {
+		t.Fatalf("runs len = %d: %+v", len(runs), runs)
+	}
+	if runs[0].Key != "myorg/repo1#8533" || runs[0].LeaseKey != leaseKey || runs[0].Repo != "myorg/repo1" {
+		t.Fatalf("run projection = %+v", runs[0])
+	}
+	for _, path := range []string{"/api/runs/myorg%2Frepo1%238533", "/api/runs/" + url.PathEscape(leaseKey)} {
+		rec := doGet(s, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

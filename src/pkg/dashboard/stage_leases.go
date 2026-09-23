@@ -233,10 +233,12 @@ func (s *Server) RunTriageFixRetired(repo string, number int) bool {
 	if runKey == "" {
 		return false
 	}
-	issueRef := strings.TrimSpace(repo) + "!" + runKey + ":" + StageSpec
-	for _, ev := range s.LifecycleTimeline().ByIssue(issueRef) {
-		if ev.Attrs != nil && ev.Attrs[stageAttrReason] == runResetReasonTriageFix {
-			return true
+	issueRefs := []string{runKey, strings.TrimSpace(repo) + "!" + runKey + ":" + StageSpec}
+	for _, issueRef := range issueRefs {
+		for _, ev := range s.LifecycleTimeline().ByIssue(issueRef) {
+			if ev.Attrs != nil && ev.Attrs[stageAttrReason] == runResetReasonTriageFix {
+				return true
+			}
 		}
 	}
 	return false

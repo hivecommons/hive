@@ -58,6 +58,20 @@ func TestRunStageRefRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRunStageLeaseKeyWithIssueShapedRunKeyRoundTrips(t *testing.T) {
+	key := "acme/repo!acme/repo#8533:spec"
+	parsed, ok := ParseKey(key)
+	if !ok {
+		t.Fatalf("ParseKey(%q) failed", key)
+	}
+	if !parsed.IsRunStage() {
+		t.Fatalf("parsed run stage not recognized: %+v", parsed)
+	}
+	if parsed.Key() != key {
+		t.Fatalf("round trip = %q", parsed.Key())
+	}
+}
+
 // TestParseKeyRefusesMalformedInput pins every rejection branch: a malformed or
 // hand-edited operator entry must be skipped, never matched against the wrong
 // item — and "repo#0" is exactly the fabricated identity that must be refused.

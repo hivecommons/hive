@@ -3,7 +3,8 @@
 Runs are long-lived, staged work items driven through the v5 HTTP API and the
 Spektacular stage runner. A live run is visible through `/api/runs`, individual
 run details are served at `/api/runs/{key}`, and approved plans release the
-`implement` stage through the existing plan approval API.
+`implement` stage through the existing plan approval API. The public run key is
+the canonical issue key, `<owner/repo>#<number>`, matching the contribute queue.
 
 ## Acceptance
 
@@ -43,9 +44,15 @@ Known #8460 gaps are guarded in the test rather than hidden:
 | gap 10 of #8460 | `burndown` field on `/api/runs/{key}` | satisfied/remaining/unknown/scope-changed burndown assertions |
 | gap 9 of #8460 | Wavefront receipts update when run-stage tasks finish | completed/unknown transitions and run worktree cleanup |
 
-`GET /api/runs` lists active staged runs from live leases and keeps the shape cheap for polling.
+`GET /api/runs` lists active staged runs from live leases and keeps the shape
+cheap for polling. Each item reports `key` as `<owner/repo>#<number>`, `repo` as
+`<owner/repo>`, and `lease_key` as the current stage lease key
+(`<repo>!<run-key>:<stage>`) while the run is active.
 
-`GET /api/runs/{key}` returns the same run detail plus timeline-derived stage history. When the run key maps to a wired convergence campaign, the detail response may include:
+`GET /api/runs/{key}` returns the same run detail plus timeline-derived stage
+history. `{key}` may be the canonical key (URL-escape `#` as `%23`) or, for
+backward compatibility with early v5 run leases, the lease-shaped key. When the
+run key maps to a wired convergence campaign, the detail response may include:
 
 ```json
 "burndown": {

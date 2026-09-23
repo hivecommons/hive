@@ -132,13 +132,17 @@ func TaskKey(issue Issue) string {
 // malformed or hand-edited entry is skipped rather than silently matching
 // nothing (or, worse, matching the wrong item).
 //
-// The "#" form is tried FIRST and its number must parse as a positive integer,
-// which keeps "owner/repo#12" GitHub-backed and refuses "owner/repo#0" —
-// exactly the fabricated identity that must never be admitted.
+// The external "!" form is tried first only when it appears before any "#".
+// That keeps "owner/repo#12" GitHub-backed while allowing run-stage lease keys
+// such as "owner/repo!owner/repo#12:spec" to round-trip as external run stages.
 func ParseKey(raw string) (Ref, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Ref{}, false
+	}
+	if strings.Index(raw, externalKeySeparator) >= 0 &&
+		(strings.Index(raw, "#") < 0 || strings.Index(raw, externalKeySeparator) < strings.Index(raw, "#")) {
+		return parseExternalKey(raw)
 	}
 	if repo, num, found := strings.Cut(raw, "#"); found {
 		repo = strings.TrimSpace(repo)
@@ -148,6 +152,10 @@ func ParseKey(raw string) (Ref, bool) {
 		}
 		return Ref{Repo: repo, Number: n, ExternalID: strconv.Itoa(n)}, true
 	}
+	return parseExternalKey(raw)
+}
+
+func parseExternalKey(raw string) (Ref, bool) {
 	if repo, ext, found := strings.Cut(raw, externalKeySeparator); found {
 		repo = strings.TrimSpace(repo)
 		ext = strings.TrimSpace(ext)

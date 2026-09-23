@@ -541,7 +541,15 @@ func (h *ContributeWSHub) runLeaseHolder(key string, now time.Time) (taskLease, 
 	defer h.leaseMu.Unlock()
 	var best *taskLease
 	for _, l := range h.leases {
-		if l == nil || l.stage == "" || l.expiresAt.IsZero() || now.After(l.expiresAt) || l.runKey() != key {
+		if l == nil || l.stage == "" || l.expiresAt.IsZero() || now.After(l.expiresAt) {
+			continue
+		}
+		leaseKey := leaseWorkKey(l)
+		canonicalKey := ""
+		if h.server != nil {
+			canonicalKey = h.server.canonicalRunKey(l.repo, l.number, runKeyOfLease(leaseKey, l.repo), leaseKey)
+		}
+		if l.runKey() != key && leaseKey != key && canonicalKey != key {
 			continue
 		}
 		if best == nil || l.gen > best.gen {
