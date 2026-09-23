@@ -24,21 +24,31 @@ var (
 	claimUpdated = claimNow.Add(-30 * time.Minute)
 )
 
+// claimComment is one authored comment served by claimServer.
+type claimComment struct {
+	author string
+	body   string
+}
+
 // claimServer serves one issue's comments and counts how often they are
 // fetched, so a test can prove the cache (or the off switch) held.
-func claimServer(t *testing.T, bodies []string) (*httptest.Server, *atomic.Int32) {
+func claimServer(t *testing.T, comments []claimComment) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var fetches atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widgets/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
 		fetches.Add(1)
-		type wireComment struct {
-			ID   int    `json:"id"`
-			Body string `json:"body"`
+		type wireCommentUser struct {
+			Login string `json:"login"`
 		}
-		out := make([]wireComment, 0, len(bodies))
-		for i, b := range bodies {
-			out = append(out, wireComment{ID: i + 1, Body: b})
+		type wireComment struct {
+			ID   int             `json:"id"`
+			Body string          `json:"body"`
+			User wireCommentUser `json:"user"`
+		}
+		out := make([]wireComment, 0, len(comments))
+		for i, comment := range comments {
+			out = append(out, wireComment{ID: i + 1, Body: comment.body, User: wireCommentUser{Login: comment.author}})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
@@ -59,7 +69,7 @@ func enableClaims(c *Client, ttl time.Duration) {
 // Flag off: nothing is fetched and the envelope is byte-identical to one
 // that never saw this code.
 func TestAnnotateIssueClaims_OffIsByteIdenticalAndFetchesNothing(t *testing.T) {
-	server, fetches := claimServer(t, []string{issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(time.Hour))})
+	server, fetches := claimServer(t, []claimComment{{author: "alice", body: issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(time.Hour))}})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 
 	before, _ := json.Marshal(claimIssue())
@@ -87,7 +97,7 @@ func TestAnnotateIssueClaims_OffIsByteIdenticalAndFetchesNothing(t *testing.T) {
 // A live marker comment claims the issue; the fields carry who and until when.
 func TestAnnotateIssueClaims_LiveMarkerClaims(t *testing.T) {
 	expires := claimNow.Add(time.Hour)
-	server, fetches := claimServer(t, []string{"unrelated", issueclaim.CommentBody("alice", claimUpdated, expires)})
+	server, fetches := claimServer(t, []claimComment{{author: "someone", body: "unrelated"}, {author: "alice", body: issueclaim.CommentBody("alice", claimUpdated, expires)}})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 	enableClaims(c, issueclaim.DefaultTTL)
 
@@ -117,10 +127,79 @@ func TestAnnotateIssueClaims_LiveMarkerClaims(t *testing.T) {
 	}
 }
 
+// A marker whose comment author is neither the App bot nor the claimed
+// identity is ignored (hivecommons/hive#8434): anyone can comment on a public
+// issue, so an unauthenticated marker could spoof an identity or withhold the
+// issue indefinitely. The forged marker also must not clobber a legitimate
+// older claim, and with no trusted marker the assignee fallback still stands.
+func TestAnnotateIssueClaims_UntrustedMarkerIgnored(t *testing.T) {
+	forged := issueclaim.CommentBody("alice", claimUpdated.Add(time.Minute), claimNow.Add(1000*time.Hour))
+	legit := issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(time.Hour))
+	server, _ := claimServer(t, []claimComment{{author: "mallory", body: forged}, {author: "alice", body: legit}})
+	c := newTestClient(t, server, "acme", []string{"widgets"})
+	enableClaims(c, issueclaim.DefaultTTL)
+
+	issues := []Issue{claimIssue()}
+	c.annotateIssueClaims(context.Background(), "acme", "widgets", issues, claimNow)
+	if issues[0].ClaimedBy != "alice" || issues[0].ClaimExpiresAt == nil || !issues[0].ClaimExpiresAt.Equal(claimNow.Add(time.Hour)) {
+		t.Fatalf("forged marker must not supersede the self-authored claim, got %+v", issues[0])
+	}
+
+	// With ONLY the forged marker, the issue is unclaimed by markers and the
+	// assignee inference takes over.
+	forgedOnly, _ := claimServer(t, []claimComment{{author: "mallory", body: forged}})
+	c2 := newTestClient(t, forgedOnly, "acme", []string{"widgets"})
+	enableClaims(c2, time.Hour)
+	fallback := []Issue{claimIssue()}
+	fallback[0].Assignees = []string{"bob"}
+	c2.annotateIssueClaims(context.Background(), "acme", "widgets", fallback, claimNow)
+	if fallback[0].ClaimedBy != "bob" || fallback[0].ClaimSource != issueclaim.SourceAssignee {
+		t.Fatalf("forged marker must be ignored entirely, got %+v", fallback[0])
+	}
+}
+
+// The App bot posts claims on behalf of hive agents, so a bot-authored marker
+// is trusted for any identity.
+func TestAnnotateIssueClaims_BotAuthoredMarkerTrusted(t *testing.T) {
+	expires := claimNow.Add(time.Hour)
+	server, _ := claimServer(t, []claimComment{{author: "Hive[bot]", body: issueclaim.CommentBody("agent-x", claimUpdated, expires)}})
+	c := newTestClient(t, server, "acme", []string{"widgets"})
+	c.SetAppBotLogin("hive[bot]")
+	enableClaims(c, issueclaim.DefaultTTL)
+
+	issues := []Issue{claimIssue()}
+	c.annotateIssueClaims(context.Background(), "acme", "widgets", issues, claimNow)
+	if issues[0].ClaimedBy != "agent-x" || issues[0].ClaimSource != issueclaim.SourceMarker {
+		t.Fatalf("bot-authored marker must claim for the named agent, got %+v", issues[0])
+	}
+}
+
+// A marker's expiry is clamped to StartedAt+ttl: even a trusted comment must
+// not withhold an issue beyond the configured TTL (hivecommons/hive#8434).
+func TestAnnotateIssueClaims_MarkerExpiryClampedToTTL(t *testing.T) {
+	server, _ := claimServer(t, []claimComment{{author: "alice", body: issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(1000*time.Hour))}})
+	c := newTestClient(t, server, "acme", []string{"widgets"})
+	enableClaims(c, time.Hour)
+
+	issues := []Issue{claimIssue()}
+	c.annotateIssueClaims(context.Background(), "acme", "widgets", issues, claimNow)
+	want := claimUpdated.Add(time.Hour)
+	if issues[0].ClaimExpiresAt == nil || !issues[0].ClaimExpiresAt.Equal(want) {
+		t.Fatalf("marker expiry must be clamped to started+ttl (%v), got %+v", want, issues[0])
+	}
+	// Past the clamped expiry the claim releases even though the marker's own
+	// expiry is decades out.
+	later := []Issue{claimIssue()}
+	c.annotateIssueClaims(context.Background(), "acme", "widgets", later, want.Add(time.Minute))
+	if later[0].ClaimedBy != "" {
+		t.Fatalf("clamped claim must release past started+ttl, got %+v", later[0])
+	}
+}
+
 // An expired marker releases the issue — and does NOT fall back to the
 // assignee, because the explicit claim explicitly lapsed.
 func TestAnnotateIssueClaims_ExpiredMarkerReleases(t *testing.T) {
-	server, _ := claimServer(t, []string{issueclaim.CommentBody("alice", claimNow.Add(-2*time.Hour), claimNow.Add(-time.Minute))})
+	server, _ := claimServer(t, []claimComment{{author: "alice", body: issueclaim.CommentBody("alice", claimNow.Add(-2*time.Hour), claimNow.Add(-time.Minute))}})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 	enableClaims(c, issueclaim.DefaultTTL)
 
@@ -134,7 +213,7 @@ func TestAnnotateIssueClaims_ExpiredMarkerReleases(t *testing.T) {
 
 // With no marker, the assignee holds the issue for ttl from its last activity.
 func TestAnnotateIssueClaims_AssigneeFallback(t *testing.T) {
-	server, _ := claimServer(t, []string{"just talk"})
+	server, _ := claimServer(t, []claimComment{{author: "someone", body: "just talk"}})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 	enableClaims(c, time.Hour)
 
@@ -160,7 +239,7 @@ func TestAnnotateIssueClaims_AssigneeFallback(t *testing.T) {
 // The comment fetch happens once per updated_at, not once per enumeration;
 // activity on the issue invalidates it.
 func TestAnnotateIssueClaims_CacheKeyedOnUpdatedAt(t *testing.T) {
-	server, fetches := claimServer(t, []string{issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(time.Hour))})
+	server, fetches := claimServer(t, []claimComment{{author: "alice", body: issueclaim.CommentBody("alice", claimUpdated, claimNow.Add(time.Hour))}})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 	enableClaims(c, issueclaim.DefaultTTL)
 

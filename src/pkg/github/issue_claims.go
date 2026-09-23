@@ -4,8 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/agentmode"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
@@ -103,12 +105,8 @@ func (c *Client) issueClaimFor(ctx context.Context, owner, repo string, issue *I
 	if err != nil {
 		return issueclaim.Claim{}, false, err
 	}
-	bodies := make([]string, 0, len(comments))
-	for _, comment := range comments {
-		bodies = append(bodies, comment.GetBody())
-	}
 	entry = issueClaimCacheEntry{updatedAt: issue.UpdatedAt}
-	entry.claim, entry.found = issueclaim.Latest(bodies)
+	entry.claim, entry.found = c.latestTrustedClaimMarker(comments)
 
 	c.issueClaimMu.Lock()
 	if c.issueClaimCache == nil || len(c.issueClaimCache) >= issueClaimCacheMax {
@@ -120,13 +118,55 @@ func (c *Client) issueClaimFor(ctx context.Context, owner, repo string, issue *I
 	return resolveCachedClaim(entry, issue, ttl, now)
 }
 
+// latestTrustedClaimMarker returns the newest-started marker claim among the
+// comments whose author may assert it. Anyone can comment on a public issue,
+// so an unauthenticated marker could spoof another identity, clobber a
+// legitimate claim, or withhold the issue from every worker indefinitely
+// (hivecommons/hive#8434). A marker is trusted only when the comment's author
+// is the hub's App bot — which posts claims on behalf of hive agents
+// (pkg/dashboard/contribute_claims.go) — or the author IS the claimed
+// identity: a human claiming an issue for themselves. It mirrors
+// issueclaim.Latest over the trusted subset: the newest claim wins so a
+// renewal supersedes the one it renews.
+func (c *Client) latestTrustedClaimMarker(comments []*gh.IssueComment) (issueclaim.Claim, bool) {
+	var best issueclaim.Claim
+	found := false
+	for _, comment := range comments {
+		if comment == nil {
+			continue
+		}
+		claim, ok := issueclaim.ParseMarker(comment.GetBody())
+		if !ok {
+			continue
+		}
+		author := safeGetLogin(comment.GetUser())
+		if author == "" {
+			continue
+		}
+		trusted := (c.appBotLogin != "" && strings.EqualFold(author, c.appBotLogin)) ||
+			strings.EqualFold(author, claim.Identity)
+		if !trusted {
+			continue
+		}
+		if !found || claim.StartedAt.After(best.StartedAt) {
+			best = claim
+			found = true
+		}
+	}
+	return best, found
+}
+
 // resolveCachedClaim applies issueclaim.Resolve's precedence to a cached
 // marker read: a live marker claims; an expired marker releases; no marker
 // falls back to the assignee inference.
 func resolveCachedClaim(entry issueClaimCacheEntry, issue *Issue, ttl time.Duration, now time.Time) (issueclaim.Claim, bool, error) {
 	if entry.found {
-		if entry.claim.Live(now) {
-			return entry.claim, true, nil
+		// Clamp the marker's expiry to the configured TTL: a marker carries
+		// its expiry verbatim, and one comment must never withhold an issue
+		// beyond the TTL (hivecommons/hive#8434).
+		claim := entry.claim.Clamped(ttl)
+		if claim.Live(now) {
+			return claim, true, nil
 		}
 		return issueclaim.Claim{}, false, nil
 	}

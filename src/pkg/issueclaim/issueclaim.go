@@ -83,6 +83,21 @@ func (c Claim) Live(now time.Time) bool {
 	return c.Identity != "" && !c.ExpiresAt.IsZero() && now.Before(c.ExpiresAt)
 }
 
+// Clamped returns the claim with ExpiresAt capped at StartedAt+ttl. A marker
+// carries its expiry verbatim, so readers clamp it to the configured TTL as
+// defense in depth: one comment must never withhold an issue beyond the TTL
+// (hivecommons/hive#8434). A non-positive ttl or a zero StartedAt leaves the
+// claim unchanged.
+func (c Claim) Clamped(ttl time.Duration) Claim {
+	if ttl <= 0 || c.StartedAt.IsZero() {
+		return c
+	}
+	if limit := c.StartedAt.Add(ttl); c.ExpiresAt.After(limit) {
+		c.ExpiresAt = limit
+	}
+	return c
+}
+
 // Marker renders the machine-readable comment marker for a claim.
 func Marker(identity string, started, expires time.Time) string {
 	return fmt.Sprintf("%s %s %s %s %s", MarkerPrefix, identity,

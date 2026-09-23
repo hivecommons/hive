@@ -85,6 +85,25 @@ func TestLive_ExpiryIsExclusiveAndZeroIsNeverLive(t *testing.T) {
 	}
 }
 
+func TestClamped_CapsExpiryAtStartedPlusTTL(t *testing.T) {
+	claim := Claim{Identity: "who", StartedAt: started, ExpiresAt: started.Add(1000 * time.Hour)}
+	got := claim.Clamped(2 * time.Hour)
+	if want := started.Add(2 * time.Hour); !got.ExpiresAt.Equal(want) {
+		t.Errorf("clamped expiry = %v, want %v", got.ExpiresAt, want)
+	}
+	within := Claim{Identity: "who", StartedAt: started, ExpiresAt: started.Add(time.Hour)}
+	if got := within.Clamped(2 * time.Hour); !got.ExpiresAt.Equal(within.ExpiresAt) {
+		t.Errorf("expiry within ttl must be unchanged, got %v", got.ExpiresAt)
+	}
+	if got := claim.Clamped(0); !got.ExpiresAt.Equal(claim.ExpiresAt) {
+		t.Errorf("non-positive ttl must not clamp, got %v", got.ExpiresAt)
+	}
+	noStart := Claim{Identity: "who", ExpiresAt: started.Add(1000 * time.Hour)}
+	if got := noStart.Clamped(2 * time.Hour); !got.ExpiresAt.Equal(noStart.ExpiresAt) {
+		t.Errorf("zero StartedAt must not clamp, got %v", got.ExpiresAt)
+	}
+}
+
 func TestLatest_NewestStartWins(t *testing.T) {
 	older := Marker("first", started, started.Add(time.Hour))
 	newer := Marker("second", started.Add(2*time.Hour), started.Add(6*time.Hour))
