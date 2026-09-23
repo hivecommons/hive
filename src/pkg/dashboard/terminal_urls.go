@@ -58,6 +58,27 @@ const (
 	maxRejoinedURLLen       = 4096
 )
 
+// terminalURLLineContent removes one layer of CLI box chrome from a pane line
+// before URL wrap analysis. OMP draws OAuth URLs as `│ <url fragment>     │`;
+// the border and padding are visual decoration, not bytes an operator should
+// copy, and they otherwise prevent the fragment from looking like it reaches
+// the end of the line.
+func terminalURLLineContent(line string) string {
+	trimmedRight := strings.TrimRight(line, " \t")
+	trimmedLeft := strings.TrimLeft(trimmedRight, " \t")
+	withoutLeft, ok := strings.CutPrefix(trimmedLeft, "│")
+	if !ok {
+		return trimmedRight
+	}
+	withoutLeft = strings.TrimPrefix(withoutLeft, " ")
+	withoutRight := strings.TrimRight(withoutLeft, " \t")
+	withoutRight, ok = strings.CutSuffix(withoutRight, "│")
+	if !ok {
+		return trimmedRight
+	}
+	return strings.TrimRight(withoutRight, " \t")
+}
+
 // rejoinHardWrappedURLs puts a URL back together that the CLI — not tmux —
 // broke across lines.
 //
@@ -89,7 +110,7 @@ func rejoinHardWrappedURLs(capture string) string {
 	out := make([]string, 0, len(lines))
 
 	for i := 0; i < len(lines); i++ {
-		line := strings.TrimRight(lines[i], " \t")
+		line := terminalURLLineContent(lines[i])
 		matches := terminalURLPattern.FindAllStringIndex(line, -1)
 		if len(matches) == 0 || matches[len(matches)-1][1] != len(line) {
 			out = append(out, lines[i])
@@ -98,7 +119,7 @@ func rejoinHardWrappedURLs(capture string) string {
 
 		joined := line
 		for n := 0; n < maxURLContinuationLines && i+1 < len(lines); n++ {
-			next := strings.TrimSpace(lines[i+1])
+			next := strings.TrimSpace(terminalURLLineContent(lines[i+1]))
 			// Never bridge a redacted segment: redactTokens is entitled to cut
 			// a credential out of a line, and reassembling across that cut
 			// would hand back bytes it removed. Checked against the same

@@ -113,3 +113,22 @@ func TestAgyPatternsDoNotMatchOrdinaryProse(t *testing.T) {
 		}
 	}
 }
+
+// TestOMPLoginPromptIsDetected pins the boxed login screen reported in #8420:
+// omp renders the shared browser hand-off entirely inside the tail of the pane,
+// after its earlier /login directive has scrolled out of the poller's window.
+func TestOMPLoginPromptIsDetected(t *testing.T) {
+	pane := strings.Split(`╭─ Login to Anthropic (Claude Pro/Max) ──────────────────────────────╮
+│ https://claude.ai/oauth/authorize?client_id=9d1c250a-a8a1-4dbc-8f52-e2c6f5cda0a0&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainf │
+│ erence+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afil                                            │
+│ e_upload&code_challenge=abcDEF0123456789_-abcDEF0123456789&state=omp-login-state&code=true                  │
+│ Ctrl+click to open                                                                                           │
+│ Complete login in your browser. If the browser cannot reach this machine, paste the final redirect URL or   │
+│ authorization code when prompted.                                                                            │
+│ Waiting for browser authentication...                                                                        │
+│ Paste the authorization code (or full redirect URL), then press Enter:                                       │
+│ >                                                                                                            │`, "\n")
+	if !paneShowsLoginPrompt(pane) {
+		t.Fatal("omp's boxed OAuth hand-off is not recognised as a login prompt")
+	}
+}

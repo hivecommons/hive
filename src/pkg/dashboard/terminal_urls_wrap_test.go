@@ -78,3 +78,32 @@ func TestRejoinStopsAtANewURL(t *testing.T) {
 		t.Fatalf("joined two distinct URLs: %q", got)
 	}
 }
+
+const ompBoxedLoginURL = "https://claude.ai/oauth/authorize?client_id=9d1c250a-a8a1-4dbc-8f52-e2c6f5cda0a0&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&code_challenge=abcDEF0123456789_-abcDEF0123456789&state=omp-login-state&code=true"
+
+// ompBoxedLoginPane is the #8420 OMP login shape: the OAuth URL is split
+// across box-drawn rows, so the continuation fragments have a leading border
+// and each physical row ends in padding plus a trailing border.
+const ompBoxedLoginPane = `╭─ Login to Anthropic (Claude Pro/Max) ──────────────────────────────╮
+│ https://claude.ai/oauth/authorize?client_id=9d1c250a-a8a1-4dbc-8f52-e2c6f5cda0a0&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainf │
+│ erence+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afil                                            │
+│ e_upload&code_challenge=abcDEF0123456789_-abcDEF0123456789&state=omp-login-state&code=true                  │
+│ Ctrl+click to open                                                                                           │
+│ Complete login in your browser. If the browser cannot reach this machine, paste the final redirect URL or   │
+│ authorization code when prompted.                                                                            │
+│ Waiting for browser authentication...                                                                        │
+│ Paste the authorization code (or full redirect URL), then press Enter:                                       │
+│ >                                                                                                            │`
+
+func TestTerminalURLsRejoinsOMPBoxedURL(t *testing.T) {
+	urls := filterAuthURLs(prepareTerminalURLs(ompBoxedLoginPane))
+	if len(urls) != 1 {
+		t.Fatalf("want exactly one auth URL from omp login box, got %v", urls)
+	}
+	if urls[0] != ompBoxedLoginURL {
+		t.Fatalf("boxed omp URL was not reconstructed byte-for-byte:\n got (%d): %s\nwant (%d): %s", len(urls[0]), urls[0], len(ompBoxedLoginURL), ompBoxedLoginURL)
+	}
+	if strings.ContainsAny(urls[0], " │\n") {
+		t.Fatalf("copied omp URL still contains box drawing, padding, or whitespace: %q", urls[0])
+	}
+}

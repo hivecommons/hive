@@ -1,0 +1,1 @@
+- Recognize OMP's boxed browser-login prompt in the agent pane and rebuild its boxed, hard-wrapped OAuth URL before the dashboard copy-login control filters it, so #8420 agents surface the login row and copy a complete sign-in URL.

@@ -29,12 +29,16 @@ var loginPromptPatterns = []string{
 	"Paste code here if prompted",
 	"Select login method",
 	"/cai/oauth/authorize",
+	"claude.ai/oauth/authorize",
 	// GitHub device-flow screen (Copilot CLI)
 	"Enter one-time code",
 	"github.com/login/device",
 	// Antigravity OAuth hand-off
 	"accounts.google.com/o/oauth2/auth",
 	"If you aren't automatically redirected, paste the authorization code below:",
+	// OMP OAuth hand-off
+	"Complete login in your browser. If the browser cannot reach this machine",
+	"Paste the authorization code (or full redirect URL), then press Enter:",
 }
 
 // fatalNetworkErrorPatterns are substrings that indicate a transient TLS or
