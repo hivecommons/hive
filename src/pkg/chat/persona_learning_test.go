@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -342,5 +343,197 @@ func TestPersonaLearningIgnoresAuthorsWithoutPersona(t *testing.T) {
 	reply, err := s.cmdPersona(ctx, "")
 	if err != nil || !strings.Contains(reply, "suggestions") {
 		t.Fatalf("usage should list learning subcommands: %q, %v", reply, err)
+	}
+}
+
+// faultyPersonaStore wraps a testPersonaStore and fails reads or writes on
+// demand so every store-error branch of the learning commands is exercised.
+type faultyPersonaStore struct {
+	inner  *testPersonaStore
+	getErr error
+	putErr error
+}
+
+func (f *faultyPersonaStore) GetPersona(ctx context.Context, author string) (persona.Record, bool, error) {
+	if f.getErr != nil {
+		return persona.Record{}, false, f.getErr
+	}
+	return f.inner.GetPersona(ctx, author)
+}
+
+func (f *faultyPersonaStore) PutPersona(ctx context.Context, author string, record persona.Record) error {
+	if f.putErr != nil {
+		return f.putErr
+	}
+	return f.inner.PutPersona(ctx, author, record)
+}
+
+func newFaultyLearningService(t *testing.T, store *faultyPersonaStore) *Service {
+	t.Helper()
+	ts := learningRunsServer(t)
+	s := NewService(&recordingBackend{}, Config{
+		DashboardURL: ts.URL,
+		AllowedUsers: []string{"alice:owner"},
+		PersonaStore: store,
+		PersonaLearning: func() persona.LearningConfig {
+			return persona.LearningConfig{Enabled: true, Threshold: 1}
+		},
+	}, discardLogger())
+	s.client = ts.Client()
+	s.now = func() time.Time { return learningTestClock }
+	return s
+}
+
+func TestPersonaLearningCommandsSurfaceStoreReadErrors(t *testing.T) {
+	store := &faultyPersonaStore{
+		inner:  &testPersonaStore{records: map[string]persona.Record{"alice": {Depth: persona.DepthOutcomes}}},
+		getErr: errors.New("store offline"),
+	}
+	s := newFaultyLearningService(t, store)
+	ctx := ownerCtx("alice")
+	for _, sub := range []string{"suggestions", "accept 1", "reject", "undo", "pin", "unpin"} {
+		reply, err := s.cmdPersona(ctx, sub)
+		if err != nil || !strings.Contains(reply, "Failed to load persona: store offline") {
+			t.Fatalf("%s with read error = %q, %v", sub, reply, err)
+		}
+	}
+	// Signal paths swallow read errors: no panic, no announcement, no write.
+	var sent []string
+	for _, args := range []string{"acme/w#1 more", "acme/w#1", "acme/w#1", "approve acme/w#2"} {
+		if _, err := s.cmdRuns(ctx, args); err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+	}
+	drainQueue(s, &sent)
+	if len(sent) != 0 || store.inner.records["alice"].Learning != nil {
+		t.Fatalf("read error leaked into signals: sent=%#v record=%#v", sent, store.inner.records["alice"])
+	}
+}
+
+func TestPersonaLearningCommandsSurfaceStoreWriteErrors(t *testing.T) {
+	seeded := persona.Record{Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryStandard}
+	var err error
+	if seeded, err = seeded.RecordSignal(persona.SignalExpanded, learningTestClock, persona.LearningConfig{Enabled: true, Threshold: 1}); err != nil {
+		t.Fatalf("seed suggestion: %v", err)
+	}
+	accepted, _, err := seeded.AcceptSuggestion(1, learningTestClock)
+	if err != nil {
+		t.Fatalf("seed adjustment: %v", err)
+	}
+	store := &faultyPersonaStore{
+		inner: &testPersonaStore{records: map[string]persona.Record{
+			"alice": seeded,
+			"bob":   accepted,
+		}},
+		putErr: errors.New("disk full"),
+	}
+	s := newFaultyLearningService(t, store)
+	for _, tc := range []struct{ author, sub string }{
+		{"alice", "accept 1"},
+		{"alice", "reject"},
+		{"bob", "undo"},
+		{"alice", "pin"},
+		{"alice", "unpin"},
+	} {
+		reply, err := s.cmdPersona(ownerCtx(tc.author), tc.sub)
+		if err != nil || !strings.Contains(reply, "Failed to save persona: disk full") {
+			t.Fatalf("%s %s with write error = %q, %v", tc.author, tc.sub, reply, err)
+		}
+	}
+	if store.inner.records["alice"].Depth != persona.DepthOutcomes || len(store.inner.records["alice"].Suggestions()) != 1 {
+		t.Fatalf("failed writes mutated the stored record: %#v", store.inner.records["alice"])
+	}
+	// A signal whose save fails is logged and dropped, never announced.
+	var sent []string
+	if _, err := s.cmdRuns(ownerCtx("alice"), "acme/w#9 more"); err != nil {
+		t.Fatalf("more: %v", err)
+	}
+	drainQueue(s, &sent)
+	if len(sent) != 0 {
+		t.Fatalf("failed signal save was announced: %#v", sent)
+	}
+}
+
+func TestPersonaLearningAcceptWithoutAuditSinkAndUsageBranches(t *testing.T) {
+	store := &testPersonaStore{records: map[string]persona.Record{
+		"alice": {Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryStandard},
+	}}
+	s := newLearningService(t, store, true, nil)
+	ctx := ownerCtx("alice")
+	for _, key := range []string{"acme/w#1 more", "acme/w#2 more"} {
+		if _, err := s.cmdRuns(ctx, key); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+	}
+	reply, err := s.cmdPersona(ctx, "accept")
+	if err != nil || !strings.Contains(reply, "Usage: `!persona accept <n>`") {
+		t.Fatalf("accept without index = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ctx, "accept 1")
+	if err != nil || !strings.Contains(reply, "Persona adjusted") || store.records["alice"].Depth != persona.DepthTechnical {
+		t.Fatalf("accept with nil audit sink = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ctx, "undo")
+	if err != nil || !strings.Contains(reply, "Reverted") || !store.records["alice"].Pinned {
+		t.Fatalf("undo with nil audit sink = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ctx, "bogus")
+	if err != nil || !strings.Contains(reply, "Unknown persona subcommand") || !strings.Contains(reply, "accept <n>") {
+		t.Fatalf("unknown subcommand = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(context.Background(), "suggestions")
+	if err != nil || !strings.Contains(reply, "authenticated chat author") {
+		t.Fatalf("no author = %q, %v", reply, err)
+	}
+}
+
+func TestPersonaLearningSignalEdgeCases(t *testing.T) {
+	store := &testPersonaStore{records: map[string]persona.Record{
+		"alice": {Depth: persona.DepthOutcomes, SummaryLength: persona.SummaryStandard},
+	}}
+	s := newLearningService(t, store, true, nil)
+	ctx := ownerCtx("alice")
+
+	// Summary, expand, summary again: the expansion means no re-ask.
+	for _, args := range []string{"acme/w#1", "acme/w#1 more", "acme/w#1"} {
+		if _, err := s.cmdRuns(ctx, args); err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+	}
+	got := store.records["alice"].Learning
+	if got == nil || got.Signals.ReAsked != 0 {
+		t.Fatalf("re-ask counted after an expansion: %#v", got)
+	}
+
+	// A decision without a command author is ignored, and a technical-depth
+	// author's `more` marks the run without counting an expansion.
+	s.observeRunDecision(context.Background(), "acme/w#1")
+	store.records["bob"] = persona.Record{Depth: persona.DepthTechnical}
+	if _, err := s.cmdRuns(ownerCtx("bob"), "acme/w#5 more"); err != nil {
+		t.Fatalf("bob more: %v", err)
+	}
+	if store.records["bob"].Learning != nil {
+		t.Fatalf("technical author counted an expansion: %#v", store.records["bob"].Learning)
+	}
+	if _, ok := s.expandedRuns[s.personaRunKey("bob", "acme/w#5")]; !ok {
+		t.Fatal("technical author's expansion was not marked for the skip signal")
+	}
+
+	// Reject and undo with nothing pending or applied stay informational.
+	reply, err := s.cmdPersona(ownerCtx("bob"), "reject")
+	if err != nil || !strings.Contains(reply, "No persona suggestions pending") {
+		t.Fatalf("reject nothing = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ownerCtx("bob"), "undo")
+	if err != nil || !strings.Contains(reply, "no persona adjustment to undo") {
+		t.Fatalf("undo nothing = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ownerCtx("bob"), "suggestions")
+	if err != nil || !strings.Contains(reply, "No persona suggestions pending") {
+		t.Fatalf("suggestions nothing = %q, %v", reply, err)
+	}
+	reply, err = s.cmdPersona(ownerCtx("bob"), "show")
+	if err != nil || strings.Contains(reply, "pinned") || strings.Contains(reply, "last adjustment") || strings.Contains(reply, "suggestions:") {
+		t.Fatalf("show without learning state = %q, %v", reply, err)
 	}
 }
