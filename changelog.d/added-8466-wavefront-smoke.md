@@ -1,0 +1,1 @@
+- Added a scheduled Wavefront smoke canary for a real Crustify graph, with latest/pinned lanes, missing-secret skip notices, and deduplicated failure issues for #8466.

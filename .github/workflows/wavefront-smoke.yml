@@ -1,0 +1,109 @@
+name: Wavefront smoke
+
+on:
+  schedule:
+    - cron: '37 3,15 * * *'
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: 'Which lane(s) to run'
+        type: choice
+        options: [both, latest, pinned]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wavefront-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ matrix.lane == 'pinned' && 'ubuntu-latest' || fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: >-
+          ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'both')
+              && fromJSON(format('["{0}"]', inputs.lane))
+              || fromJSON('["latest","pinned"]') }}
+    env:
+      CRUSTIFY_WAVEFRONT_GRAPH_URL: ${{ vars.CRUSTIFY_WAVEFRONT_GRAPH_URL }}
+      CRUSTIFY_WAVEFRONT_REPO: ${{ vars.CRUSTIFY_WAVEFRONT_REPO }}
+      CRUSTIFY_WAVEFRONT_TOKEN: ${{ secrets.CRUSTIFY_WAVEFRONT_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check live graph configuration
+        id: cfg
+        run: |
+          if [ -z "$CRUSTIFY_WAVEFRONT_GRAPH_URL" ] || [ -z "$CRUSTIFY_WAVEFRONT_REPO" ] || [ -z "$CRUSTIFY_WAVEFRONT_TOKEN" ]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Skipping Wavefront smoke: set vars.CRUSTIFY_WAVEFRONT_GRAPH_URL, vars.CRUSTIFY_WAVEFRONT_REPO, and secret CRUSTIFY_WAVEFRONT_TOKEN to exercise the real Crustify graph.'
+            exit 0
+          fi
+          echo 'run=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v7.0.0
+        if: steps.cfg.outputs.run == 'true' && matrix.lane == 'latest'
+        with:
+          go-version-file: src/go.mod
+      - name: Fetch real Crustify graph
+        if: steps.cfg.outputs.run == 'true'
+        run: |
+          mkdir -p .hive-smoke-bin
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${CRUSTIFY_WAVEFRONT_TOKEN}" \
+            --header 'Accept: application/json' \
+            "$CRUSTIFY_WAVEFRONT_GRAPH_URL" > .hive-smoke-bin/wavefront-graph.json
+      - name: Wavefront smoke (latest)
+        if: steps.cfg.outputs.run == 'true' && matrix.lane == 'latest'
+        working-directory: src
+        env:
+          WAVEFRONT_SMOKE_GRAPH: ../.hive-smoke-bin/wavefront-graph.json
+          WAVEFRONT_SMOKE_REPO: ${{ env.CRUSTIFY_WAVEFRONT_REPO }}
+        run: go test -tags integration ./pkg/worksource/wavefront -run TestLiveCrustifyWavefrontSmoke -count=1
+      - name: Require container engine
+        if: steps.cfg.outputs.run == 'true' && matrix.lane == 'pinned'
+        run: |
+          if command -v podman >/dev/null 2>&1; then podman --version; exit 0; fi
+          echo '::error::pinned wavefront-smoke needs podman to run inside ghcr.io/hivecommons/hive-contributor:latest'
+          exit 1
+      - name: Wavefront smoke (pinned image)
+        if: steps.cfg.outputs.run == 'true' && matrix.lane == 'pinned'
+        env:
+          WAVEFRONT_SMOKE_REPO: ${{ env.CRUSTIFY_WAVEFRONT_REPO }}
+        run: |
+          podman pull ghcr.io/hivecommons/hive-contributor:latest
+          podman run --rm --entrypoint /bin/bash \
+            -e WAVEFRONT_SMOKE_GRAPH=/opt/hive-src/.hive-smoke-bin/wavefront-graph.json \
+            -e WAVEFRONT_SMOKE_REPO \
+            -v "$GITHUB_WORKSPACE:/opt/hive-src:ro,Z" \
+            ghcr.io/hivecommons/hive-contributor:latest \
+            -lc 'cd /opt/hive-src/src && go test -tags integration ./pkg/worksource/wavefront -run TestLiveCrustifyWavefrontSmoke -count=1'
+
+  create-issue-on-failure:
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: [smoke]
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId, per_page: 100});
+            const failed = jobs.filter(j => j.name.startsWith('smoke (') && j.conclusion === 'failure').map(j => (j.name.match(/\(([^)]+)\)/) || [,'unknown'])[1]);
+            if (failed.length === 0) return;
+            const existing = await github.rest.issues.listForRepo({owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'wavefront-smoke', per_page: 20});
+            for (const lane of [...new Set(failed)]) {
+              const prefix = `[Wavefront smoke: ${lane}]`;
+              const dup = existing.data.find(i => i.title.startsWith(prefix));
+              const body = `Scheduled Wavefront smoke failed on ${context.sha}.\n\nRun: ${runUrl}\n\nLane: ${lane}\n\nPart of #8466 / #8290.`;
+              if (dup) await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: dup.number, body});
+              else await github.rest.issues.create({owner: context.repo.owner, repo: context.repo.repo, title: `${prefix} failure on ${context.sha.substring(0, 7)}`, body, labels: ['wavefront-smoke','ci-failure','kind/bug']});
+            }

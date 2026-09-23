@@ -72,6 +72,26 @@ If Hive restarts and later finds a restored in-flight Wavefront lease stale, it
 records an `unknown` receipt for the node so the burndown distinguishes "lost
 in flight" from work that still has no evidence.
 
+## Scheduled engine smokes
+
+`wavefront-smoke.yml` is the scheduled Crustify/Wavefront canary for #8466. It
+uses two lanes: `latest` for the current checkout and `pinned` inside
+`ghcr.io/hivecommons/hive-contributor:latest`. The job exercises a real
+Wavefront graph only when all of the following repository settings exist:
+
+- repository variable `CRUSTIFY_WAVEFRONT_GRAPH_URL`: HTTPS URL of the pinned
+  Crustify/Wavefront graph JSON;
+- repository variable `CRUSTIFY_WAVEFRONT_REPO`: owner/name repo scoped by the
+  graph;
+- repository secret `CRUSTIFY_WAVEFRONT_TOKEN`: bearer token allowed to read the
+  graph URL.
+
+If any setting is absent, the workflow exits green with an explicit notice. That
+keeps forks and unprovisioned environments from failing while documenting the
+secret needed for the real smoke. Scheduled failures file one open
+`wavefront-smoke` issue per lane and add comments to the existing lane issue on
+subsequent reds.
+
 ## How long-running runs start
 
 Long-running runs are the Hive workflow behind `spec` -> `plan` -> `implement`
