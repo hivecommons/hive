@@ -37,13 +37,13 @@ const claimsGitHubTimeout = 15 * time.Second
 // starts empty rather than failing boot — losing claims is recoverable (they
 // expire and re-form); a hive that will not start is not.
 func buildClaimsLedger(cfg *config.Config, logger *slog.Logger) *claims.Ledger {
-	if cfg == nil || !cfg.Claims.IsEnabled() {
+	if cfg == nil || !cfg.Governor.Claims.IsEnabled() {
 		if logger != nil {
 			logger.Info("issue-claims: disabled by config")
 		}
 		return nil
 	}
-	human, agent, contributor, max := cfg.Claims.TTLs()
+	human, agent, contributor, max := cfg.Governor.Claims.TTLs()
 	path := claimsLedgerPath
 	ledger, err := claims.New(path, claims.PolicyWith(human, agent, contributor, max), claims.Hooks{})
 	if err != nil && logger != nil {
@@ -66,8 +66,8 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	if client == nil || cfg == nil {
 		return claims.Hooks{}
 	}
-	comment := cfg.Claims.CommentEnabled()
-	label := cfg.Claims.LabelEnabled()
+	comment := cfg.Governor.Claims.CommentEnabled()
+	label := cfg.Governor.Claims.LabelEnabled()
 	run := func(what string, c claims.Claim, fn func(ctx context.Context, gh *github.Client) error) {
 		gh := client()
 		if gh == nil {

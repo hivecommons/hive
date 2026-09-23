@@ -24,13 +24,12 @@ func testClaimsLedger(t *testing.T) *claims.Ledger {
 func TestBuildClaimsLedger_RespectsConfig(t *testing.T) {
 	claimsLedgerPath = filepath.Join(t.TempDir(), "issue-claims.json")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	off := false
-	if l := buildClaimsLedger(&config.Config{Claims: config.ClaimsConfig{Enabled: &off}}, logger); l != nil {
+	if l := buildClaimsLedger(&config.Config{}, logger); l != nil {
 		t.Fatal("claims.enabled=false still built a ledger")
 	}
-	l := buildClaimsLedger(&config.Config{HiveID: "h1", Claims: config.ClaimsConfig{HumanTTLS: 60}}, logger)
+	l := buildClaimsLedger(&config.Config{HiveID: "h1", Governor: config.GovernorConfig{Claims: config.ClaimsConfig{Enabled: true, HumanTTLS: 60}}}, logger)
 	if l == nil {
-		t.Fatal("default config did not build a ledger")
+		t.Fatal("enabled config did not build a ledger")
 	}
 	res, err := l.Claim(claims.Request{Repo: "o/r", Issue: 1, Holder: "a", Kind: claims.KindHuman})
 	if err != nil || res.Claim.Hive != "h1" || res.Claim.ExpiresAt.Sub(res.Claim.ClaimedAt).Seconds() != 60 {

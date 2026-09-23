@@ -194,6 +194,73 @@ func TestTTLOverrideAndClamp(t *testing.T) {
 	}
 }
 
+func TestPolicyWithOverridesAndFallbackTTL(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	policy := PolicyWith(5*time.Hour, 3*time.Hour, time.Hour, 6*time.Hour)
+	l, err := New("", policy, Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.SetNow(func() time.Time { return now })
+
+	cases := []struct {
+		name string
+		req  Request
+		want time.Duration
+	}{
+		{"human override", Request{Repo: "o/r", Issue: 1, Holder: "human", Kind: KindHuman}, 5 * time.Hour},
+		{"agent override", Request{Repo: "o/r", Issue: 2, Holder: "agent", Kind: KindAgent}, 3 * time.Hour},
+		{"contributor override", Request{Repo: "o/r", Issue: 3, Holder: "relay", Kind: KindContributor}, time.Hour},
+		{"default external retained", Request{Repo: "o/r", Issue: 4, Holder: "bot", Kind: KindExternal}, DefaultExternalTTL},
+		{"request clamped", Request{Repo: "o/r", Issue: 5, Holder: "human", Kind: KindHuman, TTL: 12 * time.Hour}, 6 * time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := l.Claim(tc.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := res.Claim.ExpiresAt.Sub(now); got != tc.want {
+				t.Fatalf("ttl=%v want %v", got, tc.want)
+			}
+		})
+	}
+
+	fallback, err := New("", Policy{TTL: map[Kind]time.Duration{}, Default: 90 * time.Minute}, Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback.SetNow(func() time.Time { return now })
+	res, err := fallback.Claim(Request{Repo: "o/r", Issue: 6, Holder: "bot", Kind: KindExternal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Claim.ExpiresAt.Sub(now); got != 90*time.Minute {
+		t.Fatalf("fallback ttl=%v want 90m", got)
+	}
+}
+
+func TestSetHooksAndForceRelease(t *testing.T) {
+	l, _ := newTestLedger(t, Hooks{})
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: KindHuman}); err != nil {
+		t.Fatal(err)
+	}
+
+	var released []string
+	l.SetHooks(Hooks{OnReleased: func(c Claim, reason string) {
+		released = append(released, c.Holder+":"+reason)
+	}})
+	if c, ok := l.ForceRelease(" o/r ", 1, "operator"); !ok || c.Holder != "alice" {
+		t.Fatalf("ForceRelease=%+v ok=%v", c, ok)
+	}
+	if len(released) != 1 || released[0] != "alice:operator" {
+		t.Fatalf("OnReleased=%v", released)
+	}
+	if _, ok := l.ForceRelease("o/r", 99, "missing"); ok {
+		t.Fatal("ForceRelease reported missing claim as released")
+	}
+}
+
 func TestPersistenceRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "claims.json")
 	l, err := New(path, DefaultPolicy(), Hooks{})
@@ -220,6 +287,45 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
 		t.Fatalf("temp files left behind: %v", entries)
+	}
+}
+
+func TestPersistenceErrorsKeepInMemoryClaimAndFireHooks(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := New(filepath.Join(blocker, "claims.json"), DefaultPolicy(), Hooks{})
+	if err == nil {
+		t.Fatal("New did not report path under regular file")
+	}
+
+	var claimed []Claim
+	l.SetHooks(Hooks{OnClaimed: func(c Claim, _ Outcome) { claimed = append(claimed, c) }})
+	res, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: KindHuman})
+	if err == nil || res.Outcome != OutcomeClaimed {
+		t.Fatalf("Claim outcome=%s err=%v", res.Outcome, err)
+	}
+	if len(claimed) != 1 || claimed[0].Holder != "alice" {
+		t.Fatalf("OnClaimed=%+v", claimed)
+	}
+	if c, ok := l.Lookup("o/r", 1); !ok || c.Holder != "alice" {
+		t.Fatalf("in-memory claim missing after persist error: %+v ok=%v", c, ok)
+	}
+
+	dirPath := filepath.Join(t.TempDir(), "claims-dir")
+	if err := os.Mkdir(dirPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, err = New(dirPath, DefaultPolicy(), Hooks{})
+	if err == nil {
+		t.Fatal("New did not report directory path")
+	}
+	if res, err = l.Claim(Request{Repo: "o/r", Issue: 2, Holder: "bob", Kind: KindHuman}); err == nil || res.Outcome != OutcomeClaimed {
+		t.Fatalf("Claim with directory path outcome=%s err=%v", res.Outcome, err)
+	}
+	if c, ok := l.Lookup("o/r", 2); !ok || c.Holder != "bob" {
+		t.Fatalf("directory-path claim missing after persist error: %+v ok=%v", c, ok)
 	}
 }
 
