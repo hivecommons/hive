@@ -104,7 +104,7 @@
                           },
                           "user": {
                             "type": "string",
-                            "description": "Actor identity. May be an opaque OIDC identity key rather than a human-readable name — see user_name."
+                            "description": "Actor identity. May be an opaque OIDC identity key rather than a human-readable name \u2014 see user_name."
                           },
                           "action": {
                             "type": "string"
@@ -459,7 +459,7 @@
                         },
                         "thresholds": {
                           "type": "object",
-                          "description": "dashboard.FrontendThresholds: the EFFECTIVE ladder boundaries that produced mode, after per-repo scaling. Idle is absent by design — its threshold is always 0.",
+                          "description": "dashboard.FrontendThresholds: the EFFECTIVE ladder boundaries that produced mode, after per-repo scaling. Idle is absent by design \u2014 its threshold is always 0.",
                           "properties": {
                             "quiet": {
                               "type": "integer"
@@ -530,7 +530,7 @@
                           },
                           "enabled": {
                             "type": "boolean",
-                            "description": "Mirrors the CONFIG flag, not runtime state — the only thing distinguishing \"switched off on purpose\" from \"stopped because something broke\". Never omitted: false is meaningful."
+                            "description": "Mirrors the CONFIG flag, not runtime state \u2014 the only thing distinguishing \"switched off on purpose\" from \"stopped because something broke\". Never omitted: false is meaningful."
                           },
                           "offByCadence": {
                             "type": "boolean"
@@ -616,7 +616,7 @@
                       "items": {
                         "type": "object"
                       },
-                      "description": "dashboard.FrontendConfiguredAgent — secret-free config inventory covering agents with no runtime process (notably enabled: false)."
+                      "description": "dashboard.FrontendConfiguredAgent \u2014 secret-free config inventory covering agents with no runtime process (notably enabled: false)."
                     },
                     "repos": {
                       "type": "array",
@@ -643,28 +643,28 @@
                             "items": {
                               "type": "object"
                             },
-                            "description": "Untyped in the Go source ([]any) — populated from forge issue records whose shape is not fixed by a Go struct."
+                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge issue records whose shape is not fixed by a Go struct."
                           },
                           "openPrs": {
                             "type": "array",
                             "items": {
                               "type": "object"
                             },
-                            "description": "Untyped in the Go source ([]any) — populated from forge PR records whose shape is not fixed by a Go struct."
+                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge PR records whose shape is not fixed by a Go struct."
                           },
                           "heldIssues": {
                             "type": "array",
                             "items": {
                               "type": "object"
                             },
-                            "description": "Issues parked behind a hold label, display-only (#7896). Untyped in the Go source ([]any) — populated from the hold list's items (number, title, url, labels, created_at)."
+                            "description": "Issues parked behind a hold label, display-only (#7896). Untyped in the Go source ([]any) \u2014 populated from the hold list's items (number, title, url, labels, created_at)."
                           },
                           "heldPrs": {
                             "type": "array",
                             "items": {
                               "type": "object"
                             },
-                            "description": "Non-draft PRs parked behind a hold label, display-only (#7896) — kept apart from openPrs so the hold gate is untouched. Untyped in the Go source ([]any) — the same PR record shape as openPrs."
+                            "description": "Non-draft PRs parked behind a hold label, display-only (#7896) \u2014 kept apart from openPrs so the hold gate is untouched. Untyped in the Go source ([]any) \u2014 the same PR record shape as openPrs."
                           }
                         },
                         "required": [
@@ -677,7 +677,7 @@
                     },
                     "acmmLevel": {
                       "type": "integer",
-                      "description": "Hive ACMM maturity level, 1-6. TOP-LEVEL, not nested under governor. 1 is also the fallback when nothing is configured — see acmmLevelConfigured to tell those apart."
+                      "description": "Hive ACMM maturity level, 1-6. TOP-LEVEL, not nested under governor. 1 is also the fallback when nothing is configured \u2014 see acmmLevelConfigured to tell those apart."
                     },
                     "acmmLevelConfigured": {
                       "type": "boolean",
@@ -691,7 +691,7 @@
                     },
                     "tokens": {
                       "type": "object",
-                      "description": "dashboard.FrontendTokens — the status-embedded token rollup (lookbackHours, sessions, totals, byAgent, byModel, byAgentModel). This is a DIFFERENT shape from GET /api/tokens, which returns tokens.AggregateSummary with snake_case keys."
+                      "description": "dashboard.FrontendTokens \u2014 the status-embedded token rollup (lookbackHours, sessions, totals, byAgent, byModel, byAgentModel). This is a DIFFERENT shape from GET /api/tokens, which returns tokens.AggregateSummary with snake_case keys."
                     },
                     "budget": {
                       "type": "object",
@@ -1372,7 +1372,7 @@
           "Tokens"
         ],
         "summary": "Token usage by agent and model",
-        "description": "Returns tokens.AggregateSummary (src/pkg/tokens/collector.go) as served by dashboard.Server.handleTokens (src/pkg/dashboard/api.go). Keys are snake_case and differ from the camelCase `tokens` block embedded in GET /api/status. NO COST FIELD is returned — this endpoint reports token counts only; cost must be estimated by the caller or read from a cost endpoint. The handler has two degenerate responses: {\"status\": \"no_collector\"} when no token collector is wired, and {\"total_tokens\": 0, \"sessions\": []} when the collector has no summary yet.",
+        "description": "Returns tokens.AggregateSummary (src/pkg/tokens/collector.go) as served by dashboard.Server.handleTokens (src/pkg/dashboard/api.go). Keys are snake_case and differ from the camelCase `tokens` block embedded in GET /api/status. NO COST FIELD is returned \u2014 this endpoint reports token counts only; cost must be estimated by the caller or read from a cost endpoint. The handler has two degenerate responses: {\"status\": \"no_collector\"} when no token collector is wired, and {\"total_tokens\": 0, \"sessions\": []} when the collector has no summary yet.",
         "responses": {
           "200": {
             "description": "Aggregate token usage, or one of the two degenerate shapes (no_collector / empty summary).",
@@ -1557,7 +1557,7 @@
                             "type": "array",
                             "items": {
                               "type": "object",
-                              "description": "tokens.UsageEvent — one timestamped slice of a session's usage timeline.",
+                              "description": "tokens.UsageEvent \u2014 one timestamped slice of a session's usage timeline.",
                               "properties": {
                                 "ts_ms": {
                                   "type": "integer",
@@ -1596,7 +1596,7 @@
                                 "cache_create"
                               ]
                             },
-                            "description": "Per-message usage timeline, populated only by scanners that can observe the grain (currently claude). ADDITIVE: when present its sums equal the summed session fields exactly — use either, never add both. Absent on sessions restored from the persisted snapshot, which strips timelines."
+                            "description": "Per-message usage timeline, populated only by scanners that can observe the grain (currently claude). ADDITIVE: when present its sums equal the summed session fields exactly \u2014 use either, never add both. Absent on sessions restored from the persisted snapshot, which strips timelines."
                           },
                           "usage_coalesced": {
                             "type": "integer",
@@ -1974,7 +1974,7 @@
           "Agents"
         ],
         "summary": "Agent prompt template",
-        "description": "Returns the agent's kick prompt template (`prompt`, variables substituted unless `?raw=1`), the `sourceFiles` it came from (a repo `url` is present only when pkg/policies/defaults actually ships the file), and `template`: the scheduler's resolution of the configured kick_template — `{kickTemplate, resolved, source, fallback, pathsTried, embeddedDefaultExists}` — so a dangling kick_template is reported with the fallback the kicks actually use rather than rendered as an empty editor (#7390).",
+        "description": "Returns the agent's kick prompt template (`prompt`, variables substituted unless `?raw=1`), the `sourceFiles` it came from (a repo `url` is present only when pkg/policies/defaults actually ships the file), and `template`: the scheduler's resolution of the configured kick_template \u2014 `{kickTemplate, resolved, source, fallback, pathsTried, embeddedDefaultExists}` \u2014 so a dangling kick_template is reported with the fallback the kicks actually use rather than rendered as an empty editor (#7390).",
         "parameters": [
           {
             "name": "name",
@@ -2315,7 +2315,7 @@
           "System"
         ],
         "summary": "Available CLI backends and models",
-        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models. Each CLI backend entry carries `fallback` (the static list is being served because discovery returned nothing), `degraded` (the list came from a live probe that is NOT the catalog the CLI uses — the raw-HTTP Copilot probe after the installed SDK helper failed), an optional `notice` (an entitlement verdict from upstream), and, whenever discovery failed or degraded, `discovery: {ok: false, error, fallback, degraded}` with the token-free failure text so the dropdown can render an explicit error state (#7384). Neither a fallback nor a degraded list is authoritative: clients must not treat a model's absence from one as evidence it is unavailable. The same failures and their recovery are recorded in the audit log as `model_discovery_failed` / `model_discovery_recovered`, once per transition.",
+        "description": "Returns the list of available CLI backends (claude, aider, codex, etc.) and their supported models. Each CLI backend entry carries `fallback` (the static list is being served because discovery returned nothing), `degraded` (the list came from a live probe that is NOT the catalog the CLI uses \u2014 the raw-HTTP Copilot probe after the installed SDK helper failed), an optional `notice` (an entitlement verdict from upstream), and, whenever discovery failed or degraded, `discovery: {ok: false, error, fallback, degraded}` with the token-free failure text so the dropdown can render an explicit error state (#7384). Neither a fallback nor a degraded list is authoritative: clients must not treat a model's absence from one as evidence it is unavailable. The same failures and their recovery are recorded in the audit log as `model_discovery_failed` / `model_discovery_recovered`, once per transition.",
         "responses": {
           "200": {
             "description": "Backends config",
@@ -2729,7 +2729,7 @@
           "Contributors"
         ],
         "summary": "Delete a contributor",
-        "description": "Permanently removes a contributor's stored profile file. Requires the HIVE_DASHBOARD_TOKEN dashboard auth AND the owner role (X-Hive-Role: owner, verified) — enforced in-handler via requireOwnerRole; any other role gets 403.",
+        "description": "Permanently removes a contributor's stored profile file. Requires the HIVE_DASHBOARD_TOKEN dashboard auth AND the owner role (X-Hive-Role: owner, verified) \u2014 enforced in-handler via requireOwnerRole; any other role gets 403.",
         "parameters": [
           {
             "name": "id",
@@ -3027,7 +3027,7 @@
                   },
                   "agent": {
                     "type": "object",
-                    "description": "Agent config fields (backend, model, display_name, mode, kick_template, etc.) — see the full AgentConfig shape returned by GET /api/config/agent/{name}."
+                    "description": "Agent config fields (backend, model, display_name, mode, kick_template, etc.) \u2014 see the full AgentConfig shape returned by GET /api/config/agent/{name}."
                   }
                 }
               }
@@ -3205,7 +3205,7 @@
                       "items": {
                         "type": "integer"
                       },
-                      "description": "Present when the agent is defined by one or more ACMM pack levels — those levels will not recreate it after this tombstone."
+                      "description": "Present when the agent is defined by one or more ACMM pack levels \u2014 those levels will not recreate it after this tombstone."
                     }
                   }
                 }
@@ -3700,7 +3700,7 @@
           "Agents"
         ],
         "summary": "Set an agent's reasoning effort",
-        "description": "Sets and persists the agent's reasoning effort for backends that expose one (codex: minimal|low|medium|high|xhigh, passed as -c model_reasoning_effort; agy: low|medium|high, passed as --effort), then restarts the agent's session so the change takes effect — the effort only exists on the launch command line. The path value \"default\" clears the field back to the backend's own default. Rejects a value the agent's effective backend does not accept, and any value for a backend with no effort control.",
+        "description": "Sets and persists the agent's reasoning effort for backends that expose one (codex: minimal|low|medium|high|xhigh, passed as -c model_reasoning_effort; agy: low|medium|high, passed as --effort), then restarts the agent's session so the change takes effect \u2014 the effort only exists on the launch command line. The path value \"default\" clears the field back to the backend's own default. Rejects a value the agent's effective backend does not accept, and any value for a backend with no effort control.",
         "parameters": [
           {
             "name": "agent",
@@ -3980,7 +3980,7 @@
           "Agents"
         ],
         "summary": "Switch an agent's backend",
-        "description": "Sets and persists the agent's backend override, claims operator ownership of the field, and restarts the agent's session so the new backend takes effect immediately.\n\nChanging the backend alone is what this route is for. To change backend AND model, use PUT /api/config/agent/{name}/models instead — pairing this call with POST /api/model is not atomic and can leave an unlaunchable backend/model combination (hivecommons/hive#5698).",
+        "description": "Sets and persists the agent's backend override, claims operator ownership of the field, and restarts the agent's session so the new backend takes effect immediately.\n\nChanging the backend alone is what this route is for. To change backend AND model, use PUT /api/config/agent/{name}/models instead \u2014 pairing this call with POST /api/model is not atomic and can leave an unlaunchable backend/model combination (hivecommons/hive#5698).",
         "parameters": [
           {
             "name": "agent",
@@ -4586,7 +4586,7 @@
           "Agents"
         ],
         "summary": "Update an agent's general config",
-        "description": "Owner-only. Merges any of the listed fields present in the body into the agent's config (fields absent from the body are left untouched). Setting model or cliPinValue claims operator ownership of that field and — after saving — applies it live and restarts the agent. promptSource/definitionSource are nested {owner,repo,path,ref[,url]} objects; passing null clears the field, and setting promptSource re-bakes the kick template. Values are validated (mode enum, explain_mode, caveman_mode, backend availability) before being persisted.",
+        "description": "Owner-only. Merges any of the listed fields present in the body into the agent's config (fields absent from the body are left untouched). Setting model or cliPinValue claims operator ownership of that field and \u2014 after saving \u2014 applies it live and restarts the agent. promptSource/definitionSource are nested {owner,repo,path,ref[,url]} objects; passing null clears the field, and setting promptSource re-bakes the kick template. Values are validated (mode enum, explain_mode, caveman_mode, backend availability) before being persisted.",
         "parameters": [
           {
             "name": "name",
@@ -4856,7 +4856,7 @@
           "Agents"
         ],
         "summary": "Update an agent's backend/model",
-        "description": "Owner-only. Sets backend, model and/or reasoning_effort (backend and model may be omitted/empty to leave unchanged; reasoning_effort is applied when present, with \"\" meaning the backend default), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. The change is persisted AND applied to the live launch configuration (#7374): a new model/backend replaces any runtime override left by /api/model, /api/switch, a pin or the governor — previously such an override silently won at launch, so a restart respawned the agent on the old model. Because all three are launch-time flags, the agent is restarted once when any of them actually changed; an unchanged value does not restart.",
+        "description": "Owner-only. Sets backend, model and/or reasoning_effort (backend and model may be omitted/empty to leave unchanged; reasoning_effort is applied when present, with \"\" meaning the backend default), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. The change is persisted AND applied to the live launch configuration (#7374): a new model/backend replaces any runtime override left by /api/model, /api/switch, a pin or the governor \u2014 previously such an override silently won at launch, so a restart respawned the agent on the old model. Because all three are launch-time flags, the agent is restarted once when any of them actually changed; an unchanged value does not restart.",
         "parameters": [
           {
             "name": "name",
@@ -6240,7 +6240,7 @@
           "Governor"
         ],
         "summary": "Watchdog activity readout",
-        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and — in observe mode — whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
+        "description": "The agent self-healing watchdog's audit trail (`watchdog-*` actions) over a trailing window of whole UTC days, aggregated for the Health tab: total and per-action counts, a zero-filled daily histogram, the current liveness verdict per probed agent, and \u2014 in observe mode \u2014 whether the window argues against promoting to heal. Read from the on-disk audit log (rotated backups included), falling back to the in-memory ring only when no file exists. Requires read-write role (same tier as GET /api/audit, its source).",
         "parameters": [
           {
             "name": "days",
@@ -6369,7 +6369,7 @@
                     },
                     "promotion": {
                       "type": "object",
-                      "description": "Observe → Heal hint; present only in observe mode",
+                      "description": "Observe \u2192 Heal hint; present only in observe mode",
                       "properties": {
                         "safe": {
                           "type": "boolean",
@@ -6641,7 +6641,7 @@
           "Governor"
         ],
         "summary": "Update the attribution-trailer toggle",
-        "description": "Sets the hive-wide toggle for appending a visible \"— hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
+        "description": "Sets the hive-wide toggle for appending a visible \"\u2014 hive: \u2026\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6721,7 +6721,7 @@
           "Governor"
         ],
         "summary": "Backup encryption key status",
-        "description": "Reports whether a backup encryption key is configured and usable, and its safe source label — never the key value itself. Requires owner role.",
+        "description": "Reports whether a backup encryption key is configured and usable, and its safe source label \u2014 never the key value itself. Requires owner role.",
         "responses": {
           "200": {
             "description": "Backup key status",
@@ -6867,7 +6867,7 @@
           "Governor"
         ],
         "summary": "Bob API key status",
-        "description": "Reports whether a bob API key is configured and its safe source label — never the key value.",
+        "description": "Reports whether a bob API key is configured and its safe source label \u2014 never the key value.",
         "responses": {
           "200": {
             "description": "Bob key status",
@@ -7722,7 +7722,7 @@
           "Governor"
         ],
         "summary": "vLLM/llm-d inference auth settings",
-        "description": "Returns the discovery-auth configuration for the self-hosted vllm and llm-d backends. References only (header name, env var name, file path, endpoint override) — never a key value. Requires owner role.",
+        "description": "Returns the discovery-auth configuration for the self-hosted vllm and llm-d backends. References only (header name, env var name, file path, endpoint override) \u2014 never a key value. Requires owner role.",
         "responses": {
           "200": {
             "description": "Inference auth config",
@@ -10816,7 +10816,7 @@
           "Knowledge"
         ],
         "summary": "Get a single fact",
-        "description": "Returns one fact by slug. Note the handler resolves the fact by slug alone (via ReadFact, which also checks vaults) — the `{layer}` path segment identifies which layer/collection UI context the request came from but is not otherwise used to scope the lookup.",
+        "description": "Returns one fact by slug. Note the handler resolves the fact by slug alone (via ReadFact, which also checks vaults) \u2014 the `{layer}` path segment identifies which layer/collection UI context the request came from but is not otherwise used to scope the lookup.",
         "parameters": [
           {
             "name": "layer",
@@ -11403,7 +11403,7 @@
           "Hives"
         ],
         "summary": "Remove a hive from the federation registry",
-        "description": "Unregisters a peer hive from the discovery list. Destructive administrative action on shared state — requires the HIVE_DASHBOARD_TOKEN dashboard auth AND the owner role (requireOwnerRole); any other role gets 403. The hive can re-register itself later via POST /api/hives/register.",
+        "description": "Unregisters a peer hive from the discovery list. Destructive administrative action on shared state \u2014 requires the HIVE_DASHBOARD_TOKEN dashboard auth AND the owner role (requireOwnerRole); any other role gets 403. The hive can re-register itself later via POST /api/hives/register.",
         "parameters": [
           {
             "name": "id",
@@ -11446,7 +11446,7 @@
           "Contribute"
         ],
         "summary": "Recent contributor activity",
-        "description": "Returns the recent contributor activity feed held by the contribute hub. Public (no auth) — lives under the /api/contribute prefix which isPublicPath treats as public, read-only, no side effects. Returns an empty activity list if the contribute hub is not initialized. The feed is a BOUNDED RING, not a full history: the hub keeps at most `capacity` events across ALL contributors and evicts older ones. `retained` reports how many it currently holds, so a caller can tell three cases apart — activity.length < retained means this response was cut short by `limit`; retained == capacity means the ring is full and older events are gone; retained < capacity means the hive really has produced only this many. Before hivecommons/hive#5704 `limit` was accepted and silently ignored, and the response carried neither count, so a truncated read was indistinguishable from a short history.",
+        "description": "Returns the recent contributor activity feed held by the contribute hub. Public (no auth) \u2014 lives under the /api/contribute prefix which isPublicPath treats as public, read-only, no side effects. Returns an empty activity list if the contribute hub is not initialized. The feed is a BOUNDED RING, not a full history: the hub keeps at most `capacity` events across ALL contributors and evicts older ones. `retained` reports how many it currently holds, so a caller can tell three cases apart \u2014 activity.length < retained means this response was cut short by `limit`; retained == capacity means the ring is full and older events are gone; retained < capacity means the hive really has produced only this many. Before hivecommons/hive#5704 `limit` was accepted and silently ignored, and the response carried neither count, so a truncated read was indistinguishable from a short history.",
         "responses": {
           "200": {
             "description": "Recent activity",
@@ -11460,7 +11460,7 @@
                       "items": {
                         "type": "object"
                       },
-                      "description": "Recent ActivityEntry records (untyped here — see contribute_sse.go ActivityEntry for the full shape)"
+                      "description": "Recent ActivityEntry records (untyped here \u2014 see contribute_sse.go ActivityEntry for the full shape)"
                     },
                     "retained": {
                       "type": "integer",
@@ -11468,7 +11468,7 @@
                     },
                     "capacity": {
                       "type": "integer",
-                      "description": "The ring's size — the hard ceiling on what this endpoint can ever return, shared across all contributors. retained == capacity means older events have already been evicted."
+                      "description": "The ring's size \u2014 the hard ceiling on what this endpoint can ever return, shared across all contributors. retained == capacity means older events have already been evicted."
                     }
                   }
                 }
@@ -11481,7 +11481,7 @@
             "name": "limit",
             "in": "query",
             "required": false,
-            "description": "How many of the MOST RECENT events to return, preserving the oldest-first order within the window. Omitted, non-numeric or <= 0 returns everything retained. A value above what the hub retains clamps to it rather than padding — compare against retained/capacity to detect that.",
+            "description": "How many of the MOST RECENT events to return, preserving the oldest-first order within the window. Omitted, non-numeric or <= 0 returns everything retained. A value above what the hub retains clamps to it rather than padding \u2014 compare against retained/capacity to detect that.",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -11496,7 +11496,7 @@
           "Contribute"
         ],
         "summary": "Get the caller's own dossier fields",
-        "description": "Returns the caller's own self-service dossier fields (archetype, specializations, testimony, equipped title, Credly name, emblem seed). Identity is resolved server-side (session / X-Hive-User header / Authorization: Bearer <gh-token>) via resolveContributeCaller — never from the request — so a caller only ever sees their own dossier. Public path, but requires the caller to be identifiable and already have a contributor profile.",
+        "description": "Returns the caller's own self-service dossier fields (archetype, specializations, testimony, equipped title, Credly name, emblem seed). Identity is resolved server-side (session / X-Hive-User header / Authorization: Bearer <gh-token>) via resolveContributeCaller \u2014 never from the request \u2014 so a caller only ever sees their own dossier. Public path, but requires the caller to be identifiable and already have a contributor profile.",
         "responses": {
           "200": {
             "description": "Caller's dossier fields",
@@ -11544,7 +11544,7 @@
           "Contribute"
         ],
         "summary": "Update the caller's own dossier fields",
-        "description": "Partially updates the caller's self-service dossier fields (archetype, specializations, testimony, equipped title, Credly name, emblem seed). Every field is a pointer: an absent field leaves the stored value untouched, an explicit empty value clears it. All values are sanitized/bounded server-side (never rejected for length — truncated instead). Identity resolved server-side via resolveContributeCaller, never from the body. Same handler function as GET /api/contribute/dossier, dispatching on HTTP method.",
+        "description": "Partially updates the caller's self-service dossier fields (archetype, specializations, testimony, equipped title, Credly name, emblem seed). Every field is a pointer: an absent field leaves the stored value untouched, an explicit empty value clears it. All values are sanitized/bounded server-side (never rejected for length \u2014 truncated instead). Identity resolved server-side via resolveContributeCaller, never from the body. Same handler function as GET /api/contribute/dossier, dispatching on HTTP method.",
         "requestBody": {
           "required": true,
           "content": {
@@ -11639,7 +11639,7 @@
           "Contribute"
         ],
         "summary": "Live contributor activity event stream (SSE)",
-        "description": "Server-Sent Events stream (Content-Type: text/event-stream), NOT a single JSON response. Public, read-only — anonymous browsers may subscribe. On connect it sends one 'hello' frame carrying a bounded replay of recent activity plus a ready-work queue snapshot (and, when the convergence-diagnostics shadow-mode toggle is on, additive 'withheld'/'admission_coverage' fields), then forwards each subsequent activity event as an 'activity' frame. An idle connection receives a ': ping' comment roughly every 25s to keep intermediaries from timing out the stream. Each event line is JSON-encoded per the sseEvent shape ({type, activity?, replay?, queue?, seq?, dropped?, withheld?, admission_coverage?}).\n\nGap detection (#6218): every frame carries 'seq', a monotonic stream position assigned once at fan-out, so the same event has the same number for every subscriber. On 'hello' it is the position when this client connected, so its first 'activity' frame should be seq+1; a larger jump means events were lost. A subscriber whose channel fills has events DISCARDED rather than being back-pressured onto the hub (unchanged, and deliberate — a slow observer must not stall worker assignment), but the loss is no longer silent: the server then sends a 'gap' frame carrying 'dropped' (how many events this connection missed) and 'seq' (the position reached). The connection stays open; reconnecting replays the recent buffer, which is the recovery path. The gap frame is emitted before the next activity frame, and on the heartbeat tick if none arrives, so a client that has gone quiet still learns it is behind rather than reading pings as health.",
+        "description": "Server-Sent Events stream (Content-Type: text/event-stream), NOT a single JSON response. Public, read-only \u2014 anonymous browsers may subscribe. On connect it sends one 'hello' frame carrying a bounded replay of recent activity plus a ready-work queue snapshot (and, when the convergence-diagnostics shadow-mode toggle is on, additive 'withheld'/'admission_coverage' fields), then forwards each subsequent activity event as an 'activity' frame. An idle connection receives a ': ping' comment roughly every 25s to keep intermediaries from timing out the stream. Each event line is JSON-encoded per the sseEvent shape ({type, activity?, replay?, queue?, seq?, dropped?, withheld?, admission_coverage?}).\n\nGap detection (#6218): every frame carries 'seq', a monotonic stream position assigned once at fan-out, so the same event has the same number for every subscriber. On 'hello' it is the position when this client connected, so its first 'activity' frame should be seq+1; a larger jump means events were lost. A subscriber whose channel fills has events DISCARDED rather than being back-pressured onto the hub (unchanged, and deliberate \u2014 a slow observer must not stall worker assignment), but the loss is no longer silent: the server then sends a 'gap' frame carrying 'dropped' (how many events this connection missed) and 'seq' (the position reached). The connection stays open; reconnecting replays the recent buffer, which is the recovery path. The gap frame is emitted before the next activity frame, and on the heartbeat tick if none arrives, so a client that has gone quiet still learns it is behind rather than reading pings as health.",
         "responses": {
           "200": {
             "description": "text/event-stream of sseEvent frames (hello, then activity, a gap frame when events were dropped for this connection, with periodic heartbeat comments)",
@@ -11691,7 +11691,7 @@
                     },
                     "policy": {
                       "type": "object",
-                      "description": "ContributeAdmissionPolicy — the configured merge/automation posture and admission filters",
+                      "description": "ContributeAdmissionPolicy \u2014 the configured merge/automation posture and admission filters",
                       "properties": {
                         "suspended": {
                           "type": "boolean"
@@ -11891,7 +11891,7 @@
           "Contribute"
         ],
         "summary": "Get the caller's own label interests",
-        "description": "Returns the caller's own opt-in list of GitHub labels used to prioritise matching issues for them. Self-service — identity resolved server-side via resolveContributeCaller, never from the request; a caller only ever reads their own interests.",
+        "description": "Returns the caller's own opt-in list of GitHub labels used to prioritise matching issues for them. Self-service \u2014 identity resolved server-side via resolveContributeCaller, never from the request; a caller only ever reads their own interests.",
         "responses": {
           "200": {
             "description": "Caller's label interests",
@@ -11924,7 +11924,7 @@
           "Contribute"
         ],
         "summary": "Replace the caller's own label interests",
-        "description": "Replaces the caller's opt-in list of GitHub labels with the submitted set. Entries are trimmed, lower-cased, de-duplicated, capped at 64 entries of up to 128 characters each; a hostile payload is cleaned rather than rejected. Self-service — identity resolved server-side via resolveContributeCaller, never from the body — so a caller only ever writes their own interests. Deliberately does NOT require write-tier (any registered contributor may set this preference).",
+        "description": "Replaces the caller's opt-in list of GitHub labels with the submitted set. Entries are trimmed, lower-cased, de-duplicated, capped at 64 entries of up to 128 characters each; a hostile payload is cleaned rather than rejected. Self-service \u2014 identity resolved server-side via resolveContributeCaller, never from the body \u2014 so a caller only ever writes their own interests. Deliberately does NOT require write-tier (any registered contributor may set this preference).",
         "requestBody": {
           "required": true,
           "content": {
@@ -12053,7 +12053,7 @@
           "Contribute"
         ],
         "summary": "Persisted hourly metrics series",
-        "description": "Returns up to 168 hourly buckets (7 days) of persisted series feeding the Operations/Leaderboard sparklines: queue depth, task completions, fleet size, and per-contributor completions. Public, GET only, no side effects — only counts and already-public github_usernames, no tokens or PII.",
+        "description": "Returns up to 168 hourly buckets (7 days) of persisted series feeding the Operations/Leaderboard sparklines: queue depth, task completions, fleet size, and per-contributor completions. Public, GET only, no side effects \u2014 only counts and already-public github_usernames, no tokens or PII.",
         "responses": {
           "200": {
             "description": "Hourly metrics series",
@@ -12197,7 +12197,7 @@
           "Contribute"
         ],
         "summary": "Get the caller's own contribution stats",
-        "description": "Returns the caller's own contribution numbers: issues worked in the last 24 hours, issues worked all-time, how many of those completions reported a pull request the hub verified (in the last 24 hours and all-time), and how many failed. Self-service — identity is resolved server-side via resolveContributeCaller and there is NO username parameter, so a caller only ever reads their own record. The all-time counters come from the stored ContributorProfile; the 24-hour figures are summed from the trailing 24 buckets of the caller's per-hour completion series (the one served by /api/contribute/metrics) and of a per-hour PR series rolled up alongside it from the same cumulative counters.",
+        "description": "Returns the caller's own contribution numbers: issues worked in the last 24 hours, issues worked all-time, how many of those completions reported a pull request the hub verified (in the last 24 hours and all-time), and how many failed. Self-service \u2014 identity is resolved server-side via resolveContributeCaller and there is NO username parameter, so a caller only ever reads their own record. The all-time counters come from the stored ContributorProfile; the 24-hour figures are summed from the trailing 24 buckets of the caller's per-hour completion series (the one served by /api/contribute/metrics) and of a per-hour PR series rolled up alongside it from the same cumulative counters.",
         "responses": {
           "200": {
             "description": "Caller's own contribution stats",
@@ -12241,7 +12241,7 @@
                     },
                     "prs_produced_24h": {
                       "type": "integer",
-                      "description": "Completions in the trailing window_hours hourly buckets that reported a pull request the hub could verify — the per-hour counterpart of total_tasks_completed_with_pr. Meaningful only when pr_history_available is true."
+                      "description": "Completions in the trailing window_hours hourly buckets that reported a pull request the hub could verify \u2014 the per-hour counterpart of total_tasks_completed_with_pr. Meaningful only when pr_history_available is true."
                     },
                     "pr_window_hours_covered": {
                       "type": "integer",
@@ -12249,7 +12249,7 @@
                     },
                     "pr_history_available": {
                       "type": "boolean",
-                      "description": "False when this contributor has no hourly PR series yet — registered since the last rollup, or the spoke has not rolled up since the upgrade that introduced the series — which is distinct from a real zero."
+                      "description": "False when this contributor has no hourly PR series yet \u2014 registered since the last rollup, or the spoke has not rolled up since the upgrade that introduced the series \u2014 which is distinct from a real zero."
                     }
                   }
                 }
@@ -12271,7 +12271,7 @@
           "Contribute"
         ],
         "summary": "Per-backend run-scenario aggregates",
-        "description": "Aggregates the durable contributor task-run log into per-backend scenario counts (verdict_complete, idle_complete, headless_complete, env_failure, task_failure, unspecified_failure), the chrome-idle share (the completion-sentinel non-compliance rate), and duration percentiles, over a trailing window. Public, GET only, no side effects — aggregate counts only, no usernames, reasons, or tokens.",
+        "description": "Aggregates the durable contributor task-run log into per-backend scenario counts (verdict_complete, idle_complete, headless_complete, env_failure, task_failure, unspecified_failure), the chrome-idle share (the completion-sentinel non-compliance rate), and duration percentiles, over a trailing window. Public, GET only, no side effects \u2014 aggregate counts only, no usernames, reasons, or tokens.",
         "parameters": [
           {
             "name": "days",
@@ -12330,7 +12330,7 @@
                           },
                           "chrome_idle_share": {
                             "type": "number",
-                            "description": "idle_complete / completed — the completion-sentinel non-compliance rate to ratchet toward zero"
+                            "description": "idle_complete / completed \u2014 the completion-sentinel non-compliance rate to ratchet toward zero"
                           },
                           "duration_p50_s": {
                             "type": "number"
@@ -12355,7 +12355,7 @@
           "Contribute"
         ],
         "summary": "Per-run task history for one contributor",
-        "description": "The per-run records behind /api/contribute/run-stats' aggregates: outcome, failure kind, reason, duration and scenario for each task a contributor ran in the window. Answers \"why is this contributor struggling?\" from the dashboard, without shell access to the hub host. Public, GET only, no side effects — the username is already public on /api/contribute/activity and the reason is already served on /api/contribute/fleet's last_failure for a connected contributor; what this adds is durability, not audience. No tokens. `pane_tail` (the agent's terminal at the moment a failed or abandoned run stopped, #7317 item 3) is served only to owner/read-write viewers; for anyone else the field is stripped and `pane_tail_visible` is false.",
+        "description": "The per-run records behind /api/contribute/run-stats' aggregates: outcome, failure kind, reason, duration and scenario for each task a contributor ran in the window. Answers \"why is this contributor struggling?\" from the dashboard, without shell access to the hub host. Public, GET only, no side effects \u2014 the username is already public on /api/contribute/activity and the reason is already served on /api/contribute/fleet's last_failure for a connected contributor; what this adds is durability, not audience. No tokens. `pane_tail` (the agent's terminal at the moment a failed or abandoned run stopped, #7317 item 3) is served only to owner/read-write viewers; for anyone else the field is stripped and `pane_tail_visible` is false.",
         "parameters": [
           {
             "name": "username",
@@ -12481,14 +12481,14 @@
                           },
                           "reason": {
                             "type": "string",
-                            "description": "The client-reported failure reason, or — for an abandonment — the hub's synthetic description of what it observed."
+                            "description": "The client-reported failure reason, or \u2014 for an abandonment \u2014 the hub's synthetic description of what it observed."
                           },
                           "permanent": {
                             "type": "boolean"
                           },
                           "duration_s": {
                             "type": "number",
-                            "description": "Assignment to terminal report, in seconds. Omitted when the task was adopted on the resume path and has no fresh assignment timestamp — absent means unknown, not zero."
+                            "description": "Assignment to terminal report, in seconds. Omitted when the task was adopted on the resume path and has no fresh assignment timestamp \u2014 absent means unknown, not zero."
                           },
                           "pr_url": {
                             "type": "string"
@@ -12530,7 +12530,7 @@
           "Contribute"
         ],
         "summary": "Hub decisions about one contributor",
-        "description": "The refusals, generation fences, ignored reports and lease expiries the hub decided ABOUT a contributor, which previously existed only as log lines on the hub's stdout. Answers \"is this contributor's relay being silently dropped?\" from the dashboard, without shell access to the hub host.\n\nOWNER / READ-WRITE ONLY, enforced in-handler: unlike a run's failure reason (already served anonymously as last_failure on /api/contribute/fleet) these carry the hub's internal protocol state — generation numbers, lease identity, configured rate-limit thresholds. Anyone else gets 403 rather than a stripped list, because nothing useful remains once those fields are removed.\n\nIN MEMORY ONLY and bounded (200 entries per login, 200 logins). It does not survive a hub restart; `since` reports when the ring started, so an empty list reads as \"nothing since boot\" rather than \"nothing happened\".",
+        "description": "The refusals, generation fences, ignored reports and lease expiries the hub decided ABOUT a contributor, which previously existed only as log lines on the hub's stdout. Answers \"is this contributor's relay being silently dropped?\" from the dashboard, without shell access to the hub host.\n\nOWNER / READ-WRITE ONLY, enforced in-handler: unlike a run's failure reason (already served anonymously as last_failure on /api/contribute/fleet) these carry the hub's internal protocol state \u2014 generation numbers, lease identity, configured rate-limit thresholds. Anyone else gets 403 rather than a stripped list, because nothing useful remains once those fields are removed.\n\nIN MEMORY ONLY and bounded (200 entries per login, 200 logins). It does not survive a hub restart; `since` reports when the ring started, so an empty list reads as \"nothing since boot\" rather than \"nothing happened\".",
         "parameters": [
           {
             "name": "username",
@@ -12902,7 +12902,7 @@
           "Contribute"
         ],
         "summary": "Central cross-hive contributor profile (\"Me\" card)",
-        "description": "Returns one contributor's central profile aggregated from the contributor store, the ranked leaderboard, and the federation registry: identity, trust tier, task stats, rank, milestones, related hives, collaborators, and self-service dossier fields. Public, GET only, read-only — every field here is already visible elsewhere on the public leaderboard/dossier surfaces. Never errors for an unknown username; instead returns found:false.",
+        "description": "Returns one contributor's central profile aggregated from the contributor store, the ranked leaderboard, and the federation registry: identity, trust tier, task stats, rank, milestones, related hives, collaborators, and self-service dossier fields. Public, GET only, read-only \u2014 every field here is already visible elsewhere on the public leaderboard/dossier surfaces. Never errors for an unknown username; instead returns found:false.",
         "parameters": [
           {
             "name": "username",
@@ -13100,7 +13100,7 @@
           "Contribute"
         ],
         "summary": "Contributor's public Credly badges",
-        "description": "Returns the trimmed public Credly badges for one contributor, mirrored through a 6h server-side cache (5min negative cache on fetch failure). Public, GET only, read-only — Credly badges are already public at credly.com. A contributor with no linked Credly name (or a failed fetch) returns an empty, unlinked response.",
+        "description": "Returns the trimmed public Credly badges for one contributor, mirrored through a 6h server-side cache (5min negative cache on fetch failure). Public, GET only, read-only \u2014 Credly badges are already public at credly.com. A contributor with no linked Credly name (or a failed fetch) returns an empty, unlinked response.",
         "parameters": [
           {
             "name": "username",
@@ -13167,7 +13167,7 @@
           "Contribute"
         ],
         "summary": "Sanitized custom leaderboard CSS",
-        "description": "Fetches, sanitizes, and returns a caller-supplied stylesheet (?src=... — a raw.githubusercontent.com or same-origin/data-URL-excluded source, scope forced to \"leaderboard\") for the leaderboard's optional custom-style feature. Public, GET only. Response is normally raw CSS (text/css) with a Cache-Control of 5 minutes and an X-Hive-Style-Dropped header when unsafe rules were stripped; pass ?report=1 to get a JSON diagnostic report instead of raw CSS. Returns 404 if the source cannot be found, 422 on any other validation/sanitization failure.",
+        "description": "Fetches, sanitizes, and returns a caller-supplied stylesheet (?src=... \u2014 a raw.githubusercontent.com or same-origin/data-URL-excluded source, scope forced to \"leaderboard\") for the leaderboard's optional custom-style feature. Public, GET only. Response is normally raw CSS (text/css) with a Cache-Control of 5 minutes and an X-Hive-Style-Dropped header when unsafe rules were stripped; pass ?report=1 to get a JSON diagnostic report instead of raw CSS. Returns 404 if the source cannot be found, 422 on any other validation/sanitization failure.",
         "parameters": [
           {
             "name": "src",
@@ -13241,7 +13241,7 @@
           "Contribute"
         ],
         "summary": "Mint a trusted, attributed invite link",
-        "description": "Mints a shareable /contribute onboarding link carrying a signed invite token that attributes whoever registers via it to the caller. Requires the caller be signed in AND hold trusted/merger/advisor trust tier (checked in-handler, since /api/contribute is exempt from the dashboard's read-only role middleware) — an anonymous or insufficiently-trusted caller gets 401/403. The invite never elevates the invitee's tier; they still join as newcomer.",
+        "description": "Mints a shareable /contribute onboarding link carrying a signed invite token that attributes whoever registers via it to the caller. Requires the caller be signed in AND hold trusted/merger/advisor trust tier (checked in-handler, since /api/contribute is exempt from the dashboard's read-only role middleware) \u2014 an anonymous or insufficiently-trusted caller gets 401/403. The invite never elevates the invitee's tier; they still join as newcomer.",
         "responses": {
           "200": {
             "description": "Minted invite",
@@ -13398,7 +13398,7 @@
           "Contribute"
         ],
         "summary": "Register a new contributor",
-        "description": "Self-service, unauthenticated registration: creates a new contributor profile for the given GitHub username and returns a one-time plaintext registration token (never recoverable — only its hash is stored). If the username is already registered, returns its contributor_id and a message pointing to POST /api/contribute/reissue-token instead of reissuing a token here (SECURITY: reissuing here would let anyone take over a known username's token). An optional invite token attributes (but never elevates) the new contributor to their inviter.",
+        "description": "Self-service, unauthenticated registration: creates a new contributor profile for the given GitHub username and returns a one-time plaintext registration token (never recoverable \u2014 only its hash is stored). If the username is already registered, returns its contributor_id and a message pointing to POST /api/contribute/reissue-token instead of reissuing a token here (SECURITY: reissuing here would let anyone take over a known username's token). An optional invite token attributes (but never elevates) the new contributor to their inviter.",
         "requestBody": {
           "required": true,
           "content": {
@@ -13438,7 +13438,7 @@
                     },
                     "registration_token": {
                       "type": "string",
-                      "description": "Present only on first registration — save it, it cannot be recovered"
+                      "description": "Present only on first registration \u2014 save it, it cannot be recovered"
                     },
                     "message": {
                       "type": "string"
@@ -13835,7 +13835,7 @@
           "Contribute"
         ],
         "summary": "Set the operator priority override for the ready queue",
-        "description": "Persists an ordered list of \"owner/repo#number\" keys as the operator's priority override for the ready-work queue's offer order. Owner/read-write only, enforced in-handler via requireContributorWrite (read/anonymous caller gets 403). Malformed or duplicate keys are dropped rather than rejected. The override only changes offer priority — it is applied AFTER admission/cooldown/disabled/in-flight exclusions, so a pinned-but-filtered issue is never resurrected. Persists into Config.Hub.ContributeQueueOrder via refreshAndPersist.",
+        "description": "Persists an ordered list of \"owner/repo#number\" keys as the operator's priority override for the ready-work queue's offer order. Owner/read-write only, enforced in-handler via requireContributorWrite (read/anonymous caller gets 403). Malformed or duplicate keys are dropped rather than rejected. The override only changes offer priority \u2014 it is applied AFTER admission/cooldown/disabled/in-flight exclusions, so a pinned-but-filtered issue is never resurrected. Persists into Config.Hub.ContributeQueueOrder via refreshAndPersist.",
         "requestBody": {
           "required": true,
           "content": {
@@ -13892,7 +13892,7 @@
           "Contributors"
         ],
         "summary": "Assign a contributor's agent role",
-        "description": "Assigns (or clears, with agent_role=\"none\") a contributor's assigned agent role. Owner-only, enforced in-handler via requireOwnerRole (issue #3011 — previously under-gated to read-write). The requested role must be on the server-side assignable allowlist; a role requiring an operator grant (roleClaimNeedsGrant) is refused unless the contributor already holds that grant (grants are issued separately via PUT .../agent-role-grants and are never auto-granted here).",
+        "description": "Assigns (or clears, with agent_role=\"none\") a contributor's assigned agent role. Owner-only, enforced in-handler via requireOwnerRole (issue #3011 \u2014 previously under-gated to read-write). The requested role must be on the server-side assignable allowlist; a role requiring an operator grant (roleClaimNeedsGrant) is refused unless the contributor already holds that grant (grants are issued separately via PUT .../agent-role-grants and are never auto-granted here).",
         "parameters": [
           {
             "name": "id",
@@ -14057,7 +14057,7 @@
           "Contributors"
         ],
         "summary": "Set a contributor's trust tier",
-        "description": "Sets the contributor's trust tier directly (admin override — able to change a terminal \"revoked\" tier, via a CAS write that wins against any concurrent stale WebSocket save). Owner-only, enforced in-handler via requireOwnerRole. If the new tier is \"revoked\", any live WebSocket sessions the contributor holds are disconnected.",
+        "description": "Sets the contributor's trust tier directly (admin override \u2014 able to change a terminal \"revoked\" tier, via a CAS write that wins against any concurrent stale WebSocket save). Owner-only, enforced in-handler via requireOwnerRole. If the new tier is \"revoked\", any live WebSocket sessions the contributor holds are disconnected.",
         "parameters": [
           {
             "name": "id",
@@ -14865,7 +14865,7 @@
                     },
                     "scaffold": {
                       "type": "object",
-                      "description": "Scaffold result including a Files list; shape not fully enumerated here — see inception.ProduceScaffold."
+                      "description": "Scaffold result including a Files list; shape not fully enumerated here \u2014 see inception.ProduceScaffold."
                     }
                   }
                 }
@@ -15467,7 +15467,7 @@
           "Plan"
         ],
         "summary": "Propose a plan from a GitHub issue",
-        "description": "Mints a DRAFT epic from an issue (idempotent) and requests decomposition by kicking the architect agent out-of-band (respecting its pause). Deliberately NOT owner-gated — mints a draft epic whose children are withheld from execution until approved. Rejected with 409 when planning is not allowed at the hive's current ACMM level.",
+        "description": "Mints a DRAFT epic from an issue (idempotent) and requests decomposition by kicking the architect agent out-of-band (respecting its pause). Deliberately NOT owner-gated \u2014 mints a draft epic whose children are withheld from execution until approved. Rejected with 409 when planning is not allowed at the hive's current ACMM level.",
         "requestBody": {
           "required": true,
           "content": {
@@ -15865,7 +15865,7 @@
           "System"
         ],
         "summary": "Check whether a dashboard auth token is configured",
-        "description": "Reports only whether HIVE_DASHBOARD_TOKEN (or the configured dashboard token) is set — never the token value. Returns 404 on direct-route or hub-proxied hives, where the shared token is not exposed to browsers.",
+        "description": "Reports only whether HIVE_DASHBOARD_TOKEN (or the configured dashboard token) is set \u2014 never the token value. Returns 404 on direct-route or hub-proxied hives, where the shared token is not exposed to browsers.",
         "responses": {
           "200": {
             "description": "Token configuration status",
@@ -16697,7 +16697,7 @@
           "System"
         ],
         "summary": "Render a QR code for an OpenRouter authorize URL",
-        "description": "Renders a same-origin PNG QR code for the `data` query param, which must be an OpenRouter authorize URL (validated by prefix) — used to keep the connect-flow off vendored client JS.",
+        "description": "Renders a same-origin PNG QR code for the `data` query param, which must be an OpenRouter authorize URL (validated by prefix) \u2014 used to keep the connect-flow off vendored client JS.",
         "parameters": [
           {
             "name": "data",
@@ -17212,7 +17212,7 @@
           "System"
         ],
         "summary": "List the login allowlist",
-        "description": "Returns the spoke's device-flow login allowlist (username, role, optional display_name) — read-only; authoritative source is the hub's Manage Access, propagated via heartbeat.",
+        "description": "Returns the spoke's device-flow login allowlist (username, role, optional display_name) \u2014 read-only; authoritative source is the hub's Manage Access, propagated via heartbeat.",
         "responses": {
           "200": {
             "description": "Allowlist",
@@ -17535,7 +17535,7 @@
           "System"
         ],
         "summary": "Download the raw hive.yaml config file",
-        "description": "Streams the raw config file (hive.yaml, or HIVE_CONFIG path) as an attachment. Carries secrets — strictly owner-gated (an empty role does NOT default to owner here).",
+        "description": "Streams the raw config file (hive.yaml, or HIVE_CONFIG path) as an attachment. Carries secrets \u2014 strictly owner-gated (an empty role does NOT default to owner here).",
         "responses": {
           "200": {
             "description": "hive.yaml file",
@@ -19059,7 +19059,7 @@
           "Status"
         ],
         "summary": "List the repositories currently paused",
-        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it — the same state is already on the repository cards.",
+        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it \u2014 the same state is already on the repository cards.",
         "responses": {
           "200": {
             "description": "Current repo pauses",
@@ -19561,7 +19561,7 @@
           "History"
         ],
         "summary": "Get trend history",
-        "description": "Returns the recorded trend-history samples (same data source as /api/timeseries — trend series is not exposed there, but this dedicated endpoint always is).",
+        "description": "Returns the recorded trend-history samples (same data source as /api/timeseries \u2014 trend series is not exposed there, but this dedicated endpoint always is).",
         "responses": {
           "200": {
             "description": "Trend history entries",
@@ -19729,7 +19729,7 @@
           "Agents"
         ],
         "summary": "Outcome of the most recent kick",
-        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (hivecommons/hive#5325). This is where kick success or failure is decided — POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
+        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (hivecommons/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
         "parameters": [
           {
             "name": "agent",
@@ -21050,6 +21050,83 @@
           },
           "404": {
             "description": "Message not found"
+          }
+        }
+      }
+    },
+    "/api/theme.css": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard theme stylesheet",
+        "description": "Returns the effective dashboard theme CSS with ETag and Cache-Control headers. Requires dashboard auth/session.",
+        "responses": {
+          "200": {
+            "description": "Theme CSS",
+            "content": {
+              "text/css": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Theme CSS not modified"
+          }
+        }
+      }
+    },
+    "/api/config/dashboard/theme": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard theme config",
+        "description": "Owner-only read of dashboard theme selection, overrides, effective theme, and built-in catalog.",
+        "responses": {
+          "200": {
+            "description": "Theme configuration"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update dashboard theme config",
+        "description": "Owner-only update of dashboard.theme and dashboard.theme_overrides. Persists through hive.yaml and audit-logs the change.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "theme": {
+                    "type": "string"
+                  },
+                  "theme_overrides": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated theme"
+          },
+          "400": {
+            "description": "Invalid theme or unsafe CSS/background"
+          },
+          "403": {
+            "description": "Owner access required"
           }
         }
       }

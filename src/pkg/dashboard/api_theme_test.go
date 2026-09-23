@@ -1,0 +1,87 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
+)
+
+func TestThemeCSSServesETagAndEffectiveTokens(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.Dashboard.Theme = "honeycomb"
+	s.deps.Config.Dashboard.ThemeOverrides.Tokens = map[string]string{"--accent": "#e0a33a"}
+	rec := doGet(s, "/api/theme.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/theme.css = %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/css") {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("missing ETag")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "#e0a33a") || !strings.Contains(body, "honeycomb") {
+		t.Fatalf("theme css missing expected content: %s", body)
+	}
+	rec304 := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/theme.css", nil)
+	req.Header.Set("If-None-Match", etag)
+	s.mux.ServeHTTP(rec304, req)
+	if rec304.Code != http.StatusNotModified {
+		t.Fatalf("conditional GET = %d, want 304", rec304.Code)
+	}
+}
+
+func TestDashboardThemeAPIRoundTripAndOwnerGate(t *testing.T) {
+	s := govServer(t)
+	if rec := doGet(s, "/api/config/dashboard/theme"); rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated GET = %d, want 403", rec.Code)
+	}
+	put := doPut(s, "/api/config/dashboard/theme", map[string]any{
+		"theme": "nord",
+		"theme_overrides": map[string]any{
+			"tokens":     map[string]string{"--accent": "#88c0d0"},
+			"background": map[string]any{"image": dashboardtheme.HoneycombDataURI, "opacity": 0.1, "attachment": "fixed"},
+		},
+	})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", put.Code, put.Body.String())
+	}
+	if s.deps.Config.Dashboard.Theme != "nord" || s.deps.Config.Dashboard.ThemeOverrides.Tokens["--accent"] != "#88c0d0" {
+		t.Fatalf("config not updated: %+v", s.deps.Config.Dashboard)
+	}
+	get := doOwnerGet(s, "/api/config/dashboard/theme")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d: %s", get.Code, get.Body.String())
+	}
+	var payload struct {
+		Theme     string                 `json:"theme"`
+		Catalog   []dashboardtheme.Theme `json:"catalog"`
+		Effective dashboardtheme.Theme   `json:"effective"`
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Theme != "nord" || len(payload.Catalog) < 8 || payload.Effective.Tokens["--accent"] != "#88c0d0" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestDashboardThemeAPIRejectsUnsafeCSSAndTokens(t *testing.T) {
+	s := govServer(t)
+	for _, body := range []map[string]any{
+		{"theme": "missing"},
+		{"theme": "openclaw", "theme_overrides": map[string]any{"tokens": map[string]string{"--typo": "red"}}},
+		{"theme": "openclaw", "theme_overrides": map[string]any{"custom_css": ".x{background:url(http://example.org/x.png)}"}},
+	} {
+		rec := doPut(s, "/api/config/dashboard/theme", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %#v => %d, want 400 (%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+}

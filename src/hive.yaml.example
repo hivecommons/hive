@@ -686,6 +686,15 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # theme: honeycomb                    # Built-in: openclaw, openclaw-light, honeycomb, graphite, nord, dracula, solarized-dark, github-light, high-contrast; or custom
+  # theme_overrides:
+  #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
+  #   background:
+  #     image: https://example.org/bg.svg # https or data: URI (inlined data capped at 256 KiB)
+  #     opacity: 0.08
+  #     attachment: fixed
+  #   custom_css: |                       # owner-only; capped at 32 KiB and sanitized
+  #     .panel { border-radius: 2px; }
 
 # Hub/spoke metadata — normally written by hosted-hive provisioning.
 # Standalone operators usually leave this disabled.

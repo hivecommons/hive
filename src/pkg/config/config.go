@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
 )
@@ -4676,6 +4677,12 @@ type DashboardConfig struct {
 	// "redirect_uri is invalid". Validated at load time by
 	// ValidateDashboardPublicURL.
 	PublicURL string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
+	// Theme names the built-in dashboard theme id ("openclaw" by default) or
+	// "custom" when theme_overrides supplies the complete operator palette.
+	Theme string `yaml:"theme,omitempty" json:"theme,omitempty"`
+	// ThemeOverrides are layered on the selected built-in theme and are mutable
+	// through the owner-only dashboard appearance API.
+	ThemeOverrides dashboardtheme.Overrides `yaml:"theme_overrides,omitempty" json:"theme_overrides,omitempty"`
 }
 
 // ValidateDashboardPublicURL validates and normalizes dashboard.public_url:

@@ -61,6 +61,8 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"bead synth toggle", http.MethodPut, "/api/bead-synth/enabled", srv.handleBeadSynthToggle},
 		{"budget ignore", http.MethodPut, "/api/config/governor/budget/ignore", srv.handleBudgetIgnoreSet},
 		{"config download", http.MethodGet, "/api/config/download", srv.handleConfigDownload},
+		{"dashboard theme get", http.MethodGet, "/api/config/dashboard/theme", srv.handleDashboardThemeGet},
+		{"dashboard theme put", http.MethodPut, "/api/config/dashboard/theme", srv.handleDashboardThemePut},
 		{"github config", http.MethodPut, "/api/config/github", srv.handleConfigGitHub},
 		{"git sources connect", http.MethodPost, "/api/config/git-sources/connect", srv.handleGitSourcesConnect},
 		{"git sources disconnect", http.MethodPost, "/api/config/git-sources/disconnect", srv.handleGitSourcesDisconnect},
