@@ -3731,6 +3731,13 @@ func (h *ContributeWSHub) cleanupLoop() {
 			// through the SAME cooldown+generation-bump path a manual requeue uses.
 			h.reclaimExpiredLeases(time.Now())
 
+			// #8303: drive the installed stage runner (advance on final, retry or
+			// escalate on expiry). Nothing is installed unless
+			// runs.spektacular.enabled was set at boot.
+			if h.server != nil {
+				h.server.tickStageRunner(time.Now())
+			}
+
 			// #5681: drop leases that aged out without ever being looked up — a relay
 			// that never came back after a restart leaves one behind, and it would
 			// otherwise keep its issue out of the assignment pool until the process

@@ -65,6 +65,10 @@ const (
 	KindBlocked Kind = "blocked"
 	// KindStageCompleted: a long-running run lease stage advanced/retried.
 	KindStageCompleted Kind = "stage_completed"
+	// KindStageReceipt records the stage receipt the Spektacular runner wrote
+	// when an artifact reached final; attrs carry the receipt digest and path
+	// (hivecommons/hive#8303).
+	KindStageReceipt Kind = "stage_receipt"
 )
 
 // progressKinds are the non-terminal stages in furthest-first order, used to

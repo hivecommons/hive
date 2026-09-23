@@ -298,7 +298,12 @@ func (h *ContributeWSHub) mutateLeaseStage(identity, taskID, to string, mode lea
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("%w for %s", errLeaseNotFound, taskID)
 	}
-	if l.expiresAt.IsZero() || now.After(l.expiresAt) {
+	// An ADVANCE or RESET needs a live lease: a stage can only complete, or be
+	// stepped back by an owner, while someone holds it. A RETRY is the reclaim
+	// path (#8303): it exists precisely because the generation lapsed without
+	// reaching final, so an expired lease is its expected input and gets a
+	// fresh window under its new generation.
+	if l.expiresAt.IsZero() || (mode != leaseStageRetry && now.After(l.expiresAt)) {
 		h.leaseMu.Unlock()
 		return taskLease{}, fmt.Errorf("%w for %s", errLeaseExpired, taskID)
 	}

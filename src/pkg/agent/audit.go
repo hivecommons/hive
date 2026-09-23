@@ -25,9 +25,11 @@ const (
 	AuditCopilotTokenMissing = agentaudit.AuditCopilotTokenMissing
 	AuditClaudeTokenMissing  = agentaudit.AuditClaudeTokenMissing
 
-	AuditLeaseStageAdvanced = agentaudit.AuditLeaseStageAdvanced
-	AuditLeaseStageRetried  = agentaudit.AuditLeaseStageRetried
-	AuditLeaseStageReset    = agentaudit.AuditLeaseStageReset
+	AuditLeaseStageAdvanced  = agentaudit.AuditLeaseStageAdvanced
+	AuditLeaseStageRetried   = agentaudit.AuditLeaseStageRetried
+	AuditLeaseStageReset     = agentaudit.AuditLeaseStageReset
+	AuditLeaseStageRefused   = agentaudit.AuditLeaseStageRefused
+	AuditLeaseStageEscalated = agentaudit.AuditLeaseStageEscalated
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than

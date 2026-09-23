@@ -290,6 +290,10 @@ type Server struct {
 	hubPushedDashboardURL string
 
 	contributeHub *ContributeWSHub
+	// stageRunner is the Spektacular stage runner installed at boot
+	// (hivecommons/hive#8303); nil when runs.spektacular.enabled is off.
+	stageRunner   StageRunner
+	stageRunnerMu sync.Mutex
 
 	// contributeMetrics holds the persistent hourly time-series behind the
 	// Operations + Leaderboard sparklines (queue depth, tasks/hour, fleet size,

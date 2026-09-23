@@ -81,8 +81,11 @@ type Config struct {
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
-	Review       ReviewConfig       `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge    AutoMergeConfig    `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	// Runs tunes long-running runs and the opt-in Spektacular stage runner
+	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
+	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
+	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
+	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.

@@ -24866,6 +24866,19 @@ function burnAreaChart() {
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Long-running runs <span class="config-info">i<span class="config-tooltip">Spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.</span></span></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>
+            <span class="config-toggle-label">Spektacular stage runner <span class="config-info">i<span class="config-tooltip">Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spektacular file; see src/docs/spektacular.md.</span></span></span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Spektacular binary <span class="config-info">i<span class="config-tooltip">Path of the spektacular executable the runner shells out to. Empty resolves spektacular through PATH.</span></span></label>
+            <input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w">
+            <p style="font-size:0.72rem;color:var(--muted);margin:4px 0 0">Poll every ${esc(String(f.spektacularPollS || ''))}s (runs.spektacular.poll_interval_s, yaml only).</p>
+          </div>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Provider rotation</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>

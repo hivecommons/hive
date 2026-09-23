@@ -60,6 +60,10 @@ const (
 	MetaPlanRepoRole = "plan_repo_role"
 	// MetaPlanWave records the 1-based wave number for multi-repo run barriers.
 	MetaPlanWave = "plan_wave"
+	// MetaRunKey ties an epic to a long-running run by Spektacular's stable
+	// data.name, so the stage runner can find the plan it imported
+	// (hivecommons/hive#8303).
+	MetaRunKey = "run_key"
 )
 
 const (

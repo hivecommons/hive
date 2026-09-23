@@ -38,6 +38,12 @@ ID of `<runKey>:<stage>`. Their stable key is therefore
 a dependency on the previous stage's run key, so `plan` records its dependency
 on `spec` and `implement` records its dependency on `plan`.
 
+The dashboard's `RunStageAccessor` backs this source with the lease registry:
+each stage lease is the run's pending stage, a stage some connection is
+currently working is not offered again, and `implement` is listed only once the
+run's imported plan is approved. The Spektacular stage runner that advances the
+lease is described in [spektacular.md](spektacular.md).
+
 ## Wavefront migration graph (`wavefront.enabled: true`)
 
 The second additive item kind is a versioned code-migration graph such as

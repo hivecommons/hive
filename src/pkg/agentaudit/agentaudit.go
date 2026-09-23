@@ -59,6 +59,13 @@ const (
 	AuditLeaseStageAdvanced = "lease_stage_advanced"
 	AuditLeaseStageRetried  = "lease_stage_retried"
 	AuditLeaseStageReset    = "lease_stage_reset"
+	// AuditLeaseStageRefused records the Spektacular runner declining to
+	// advance a stage (a final artifact went back to draft, or the artifact the
+	// lease is bound to vanished). AuditLeaseStageEscalated records the runner
+	// exhausting a stage's retry budget and raising a decision escalation
+	// (hivecommons/hive#8303).
+	AuditLeaseStageRefused   = "lease_stage_refused"
+	AuditLeaseStageEscalated = "lease_stage_escalated"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

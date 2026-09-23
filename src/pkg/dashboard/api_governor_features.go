@@ -31,6 +31,8 @@ const (
 //   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
 //   - review.plan_match (Config.Review.PlanMatch.Enabled, the plan_match
 //     review perspective, hivecommons/hive#8317)
+//   - runs.spektacular  (Config.Runs.Spektacular.Enabled + Binary; the stage
+//     runner of hivecommons/hive#8303, default off)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -76,7 +78,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		FormalEnabled *bool `json:"formalEnabled"`
 
-		PlanMatchEnabled *bool `json:"planMatchEnabled"`
+		PlanMatchEnabled   *bool   `json:"planMatchEnabled"`
+		SpektacularEnabled *bool   `json:"spektacularEnabled"`
+		SpektacularBinary  *string `json:"spektacularBinary"`
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
@@ -197,6 +201,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ClaimsTTLS != nil {
 		cfg.Governor.Claims.TTLS = *body.ClaimsTTLS
 	}
+	if body.SpektacularEnabled != nil {
+		cfg.Runs.Spektacular.Enabled = *body.SpektacularEnabled
+	}
+	if body.SpektacularBinary != nil {
+		cfg.Runs.Spektacular.Binary = strings.TrimSpace(*body.SpektacularBinary)
+	}
 	if body.RotationEnabled != nil {
 		cfg.Governor.Rotation.Enabled = *body.RotationEnabled
 	}
@@ -260,6 +270,10 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"claimsEnabled":              cfg.Governor.Claims.Enabled,
 		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
 		"acmmLevel":                  acmmLevel,
+		"spektacularEnabled":         cfg.Runs.Spektacular.Enabled,
+		"spektacularBinary":          cfg.Runs.Spektacular.Binary,
+		"spektacularPollS":           int(cfg.Runs.Spektacular.PollInterval().Seconds()),
+		"maxStageRetries":            cfg.Runs.MaxStageRetriesOrDefault(),
 		"rotationEnabled":            rotationCfg.Enabled,
 		"rotationThresholdPct":       rotationCfg.EffectiveThreshold(),
 		"rotationHighVolumeCadenceS": rotationCfg.EffectiveHighVolumeCadenceS(),

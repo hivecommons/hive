@@ -1,0 +1,78 @@
+#!/bin/sh
+# Fake Spektacular CLI for hivecommons/hive#8303 tests.
+#
+# It emits the hivecommons/hive#8301 status contract from a scripted sequence
+# so the Hive runner can be exercised end to end through BinaryExec without the
+# real Spektacular repository. Hive never reads this file's state: the counter
+# below is the fake's own bookkeeping, hidden behind the CLI boundary.
+#
+# Contract assumptions encoded here (see src/docs/spektacular.md):
+#   spektacular <spec|plan> status <name> --json
+#     -> {"kind","name","document_status":"draft"|"final","current_step",
+#         "completed_steps":[],"created_at","updated_at","closed_at"}
+#     missing artifact -> exit 2 and {"error":"...","code":"not_found"} on stdout
+#   spektacular plan export <name> --json   (assumed, not in #8301)
+#     -> {"kind":"plan","name","tasks":[{"ref","title","depends_on","execution"}]}
+#
+# Environment:
+#   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft | missing
+#   SPEK_FAKE_STATE     path of the per-scenario call counter file
+set -eu
+
+kind="${1:-}"; verb="${2:-}"; name="${3:-}"; flag="${4:-}"
+scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
+state="${SPEK_FAKE_STATE:?SPEK_FAKE_STATE is required}"
+
+if [ "$flag" != "--json" ]; then
+  echo '{"error":"--json is required","code":"usage"}'
+  exit 64
+fi
+
+count=0
+if [ -f "$state" ]; then
+  count=$(cat "$state")
+fi
+
+if [ "$verb" = "export" ]; then
+  if [ "$kind" != "plan" ]; then
+    echo '{"error":"only plans export","code":"usage"}'
+    exit 64
+  fi
+  printf '{"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":"agent_suitable"},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}\n' "$name"
+  exit 0
+fi
+
+if [ "$verb" != "status" ]; then
+  echo '{"error":"unknown verb","code":"usage"}'
+  exit 64
+fi
+
+count=$((count + 1))
+printf '%s' "$count" > "$state"
+
+case "$scenario" in
+  missing)
+    printf '{"error":"%s %s not found","code":"not_found","kind":"%s","name":"%s"}\n' "$kind" "$name" "$kind" "$name"
+    exit 2
+    ;;
+  never-final)
+    status=draft
+    ;;
+  final-then-draft)
+    if [ "$count" -le 1 ]; then status=final; else status=draft; fi
+    ;;
+  draft-final|*)
+    if [ "$count" -le 2 ]; then status=draft; else status=final; fi
+    ;;
+esac
+
+closed='null'
+steps='["interview"]'
+step='authoring'
+if [ "$status" = "final" ]; then
+  closed='"2026-09-22T13:40:00Z"'
+  steps='["interview","authoring","review"]'
+  step='done'
+fi
+printf '{"kind":"%s","name":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-22T13:25:17Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s}\n' \
+  "$kind" "$name" "$status" "$step" "$steps" "$count" "$closed"
