@@ -96,3 +96,31 @@ func TestLookupLease_FencesOldGenerationAfterStageAdvance(t *testing.T) {
 		t.Fatal("new stage generation was rejected")
 	}
 }
+
+// TestLookupLease_FencesOldGenerationAfterStageReset is the #8350 acceptance:
+// an owner reset from implement back to plan mints a higher generation, and
+// the relay still presenting the pre-reset generation can no longer resume.
+func TestLookupLease_FencesOldGenerationAfterStageReset(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	const startGen = uint64(30)
+	if err := hub.recordLeaseForKeyStage("c-fence", "task-fence", "myorg/repo1", 8350,
+		"myorg/repo1#8350", "contributor", StageImplement, startGen, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	reset, err := hub.resetLeaseStage("c-fence", "task-fence", StagePlan, "plan rejected", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("reset stage: %v", err)
+	}
+	if reset.gen <= startGen {
+		t.Fatalf("reset gen = %d, want greater than %d", reset.gen, startGen)
+	}
+
+	if got := hub.lookupLease("c-fence", "task-fence", "myorg/repo1", 8350, startGen, now); got != nil {
+		t.Fatalf("old generation was accepted after reset: %+v", got)
+	}
+	got := hub.lookupLease("c-fence", "task-fence", "myorg/repo1", 8350, reset.gen, now)
+	if got == nil || got.stage != StagePlan {
+		t.Fatalf("new generation was rejected or not at the reset stage: %+v", got)
+	}
+}

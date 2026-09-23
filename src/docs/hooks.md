@@ -114,7 +114,7 @@ The window is *sliding and half-open*: the guarantee is "at most `limit` firings
 | `acmm_level_change` | the ACMM level changes via the audited path | `from`, `to`, `actor` |
 | `upgrade_pause` | the #3836 upgrade kill switch flips (`to` is `on`/`off`) | `to`, `actor`, `reason` |
 | `review_rejected` | an owner denies a queued agent action on the approval desk (`POST /api/approvals/resolve` or `/bulk` with `approved: false`), sending that agent's output back | `agent`, `repo`, `actor`, `reason`, `model`, `backend`, `pin`, `acmm_level`, `attrs.pr`, `attrs.model_knob_url` |
-| `stage_completed` | a run lease stage advances or retries after the lease registry persists | `run`, `stage_from`, `stage_to`, `gen`, `repo` |
+| `stage_completed` | a run lease stage advances, retries, or is reset by an owner to an earlier stage after the lease registry persists; a reset carries `reason` and `attrs.reset = "true"` so `when: t.attrs.reset == "true"` can single it out | `run`, `stage_from`, `stage_to`, `gen`, `repo` |
 
 For `agent_paused`/`agent_resumed`, `trigger` carries the `paused_trigger` provenance, so you can tell an operator pause from a governor pause from the login-detector's.
 

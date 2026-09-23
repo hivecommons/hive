@@ -31,6 +31,10 @@ type RunStage struct {
 	Status  string `json:"status"`
 	Gen     uint64 `json:"gen"`
 	Receipt string `json:"receipt,omitempty"`
+	// Reason is the owner's explanation on a stage transition that carried one,
+	// today only an owner reset (#8350); it is read back from the timeline
+	// event so the run's history says why it stepped back.
+	Reason string `json:"reason,omitempty"`
 }
 
 type RunWavePR struct {
@@ -45,6 +49,27 @@ type RunReviewWave struct {
 	PRs           []RunWavePR `json:"prs"`
 	ApproveAction string      `json:"approve_action,omitempty"`
 }
+
+// runResetRequest is the body of POST /api/runs/{key}/reset (#8350).
+type runResetRequest struct {
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+}
+
+// runResetResponse is what POST /api/runs/{key}/reset returns on success.
+type runResetResponse struct {
+	OK        bool   `json:"ok"`
+	Key       string `json:"key"`
+	StageFrom string `json:"stage_from"`
+	Stage     string `json:"stage"`
+	Gen       uint64 `json:"gen"`
+	Reason    string `json:"reason"`
+}
+
+// auditActionRunStageReset is the dashboard audit action handleRunReset books
+// against the requesting owner (the agent audit sink separately records the
+// system-side lease_stage_reset with the same stage/gen fields).
+const auditActionRunStageReset = "run_stage_reset"
 
 type Run struct {
 	Key            string          `json:"key"`
@@ -126,6 +151,75 @@ func (s *Server) handleRunGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonError(w, "run not found", http.StatusNotFound)
+}
+
+// handleRunReset serves POST /api/runs/{key}/reset (#8350): move a run's lease
+// back to an earlier stage, minting a new generation so the relay working the
+// old generation cannot resume it, and record why.
+//
+// OWNER-ONLY. This is the only backwards stage move; a read-write member being
+// able to knock a run out of implement would undo an owner's plan approval
+// from the other side, so it sits behind the same gate as approve/reject. The
+// gate runs before anything else so an unverified caller learns nothing about
+// which runs exist. Body: {"to": "<stage>", "reason": "<why>"}; both required.
+func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	key := strings.TrimSpace(r.PathValue("key"))
+	if key == "" {
+		jsonError(w, "run key required", http.StatusBadRequest)
+		return
+	}
+	if s.contributeHub == nil {
+		jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body runResetRequest
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	body.To = strings.TrimSpace(body.To)
+	body.Reason = sanitizeString(body.Reason)
+	if body.To == "" || body.Reason == "" {
+		jsonError(w, "to and reason are required", http.StatusBadRequest)
+		return
+	}
+	now := time.Now()
+	held, ok := s.contributeHub.runLeaseHolder(key, now)
+	if !ok {
+		jsonError(w, "run not found", http.StatusNotFound)
+		return
+	}
+	lease, err := s.contributeHub.resetLeaseStage(held.identity, held.taskID, body.To, body.Reason, now)
+	if err != nil {
+		jsonError(w, err.Error(), runResetErrorStatus(err))
+		return
+	}
+	s.auditFromRequest(r, auditActionRunStageReset, auditDetail(
+		"run", key, "stage_from", held.stage, "stage_to", lease.stage,
+		"reason", body.Reason, "gen", strconv.FormatUint(lease.gen, 10)), "")
+	jsonResponse(w, runResetResponse{
+		OK: true, Key: key, StageFrom: held.stage, Stage: lease.stage, Gen: lease.gen, Reason: body.Reason,
+	})
+}
+
+// runResetErrorStatus maps a refused reset to its HTTP status: a run that has
+// gone away is 404, one whose lease lapsed between lookup and reset is 409, a
+// bad target stage or missing reason is 400, and a persist failure is 500 so
+// the owner knows the registry, not the request, is the problem.
+func runResetErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, errLeaseNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, errLeaseExpired):
+		return http.StatusConflict
+	case errors.Is(err, errLeaseStageInvalid), errors.Is(err, errLeaseResetReason):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (s *Server) activeRuns(includeTimeline bool) ([]Run, error) {
@@ -216,10 +310,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		if l == nil || l.stage == "" || l.expiresAt.IsZero() || now.After(l.expiresAt) {
 			continue
 		}
-		key := l.key
-		if key == "" {
-			key = worksource.Ref{Repo: l.repo, Number: l.number}.Key()
-		}
+		key := l.runKey()
 		info := infos[leaseKey(l.identity, l.taskID)]
 		title := info.title
 		if title == "" {
@@ -308,14 +399,15 @@ func mergeRunTimelineStages(stages []RunStage, events []timeline.Event) []RunSta
 			continue
 		}
 		gen := uint64(0)
-		receipt := ""
+		receipt, reason := "", ""
 		if ev.Attrs != nil {
 			if raw := ev.Attrs["gen"]; raw != "" {
 				gen, _ = strconv.ParseUint(raw, 10, 64)
 			}
 			receipt = firstRunNonEmpty(ev.Attrs["receipt"], ev.Attrs["receipt_digest"], ev.Attrs["path"], ev.Attrs["digest"])
+			reason = ev.Attrs["reason"]
 		}
-		out = append(out, RunStage{Name: name, Status: "observed", Gen: gen, Receipt: receipt})
+		out = append(out, RunStage{Name: name, Status: "observed", Gen: gen, Receipt: receipt, Reason: reason})
 	}
 	return out
 }

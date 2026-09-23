@@ -50,12 +50,15 @@ const (
 	// detail's outcome= distinguishes "missing" from "invalid or expired".
 	AuditClaudeTokenMissing = "claude_token_missing"
 
-	// AuditLeaseStageAdvanced and AuditLeaseStageRetried record Hive-owned run
-	// stage transitions on the existing task lease record. They are system
-	// actions: no contributor can advance or retry a stage by editing client
-	// fields.
+	// AuditLeaseStageAdvanced, AuditLeaseStageRetried and AuditLeaseStageReset
+	// record Hive-owned run stage transitions on the existing task lease
+	// record. They are system actions: no contributor can advance, retry or
+	// reset a stage by editing client fields. A reset (#8350) is the only
+	// backwards move and is reachable solely through an owner-gated route;
+	// its detail carries the reason the owner gave.
 	AuditLeaseStageAdvanced = "lease_stage_advanced"
 	AuditLeaseStageRetried  = "lease_stage_retried"
+	AuditLeaseStageReset    = "lease_stage_reset"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -658,5 +659,202 @@ func TestLeaseRevoke_SucceedsWhenRegistryUnwritable(t *testing.T) {
 	}
 	if hub.lookupLease("c-wedged", "t-wedged", "myorg/repo1", 42, 7, now) != nil {
 		t.Fatal("#8287: the reclaimed task's lease is still re-adoptable")
+	}
+}
+
+// --- owner reset (#8350) ------------------------------------------------------
+
+// resetTestStartGen is the generation the reset tests record their lease under;
+// every successful reset must mint something strictly greater.
+const resetTestStartGen = uint64(11)
+
+// TestLeaseStageReset_Direction proves resetLeaseStage is the one backwards
+// move: any earlier stage is accepted and fences the old generation, while the
+// same stage (that is a retry), a later stage (that is an advance), and an
+// unknown stage are refused with errLeaseStageInvalid and leave the lease as
+// it was.
+func TestLeaseStageReset_Direction(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    string
+		to      string
+		wantErr bool
+	}{
+		{"implement back to plan", StageImplement, StagePlan, false},
+		{"implement back to spec", StageImplement, StageSpec, false},
+		{"plan back to spec", StagePlan, StageSpec, false},
+		{"same stage refused", StagePlan, StagePlan, true},
+		{"forward plan to implement refused", StagePlan, StageImplement, true},
+		{"forward spec to plan refused", StageSpec, StagePlan, true},
+		{"unknown stage refused", StageImplement, "deploy", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, _ := covK2Hub(t)
+			now := time.Now()
+			if err := hub.recordLeaseForKeyStage("c-reset", "task-reset", "myorg/repo1", 8350,
+				"myorg/repo1#8350", "contributor", tc.from, resetTestStartGen, now); err != nil {
+				t.Fatalf("record staged lease: %v", err)
+			}
+
+			got, err := hub.resetLeaseStage("c-reset", "task-reset", tc.to, "plan rejected", now.Add(time.Minute))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("reset %s -> %s accepted, want refusal", tc.from, tc.to)
+				}
+				if !errors.Is(err, errLeaseStageInvalid) {
+					t.Fatalf("reset %s -> %s error = %v, want errLeaseStageInvalid", tc.from, tc.to, err)
+				}
+				cur := hub.lookupLease("c-reset", "task-reset", "myorg/repo1", 8350, resetTestStartGen, now)
+				if cur == nil || cur.stage != tc.from {
+					t.Fatalf("refused reset changed the lease: %+v", cur)
+				}
+				if entries := srvAuditEntries(t, hub); len(entries) != 0 {
+					t.Fatalf("refused reset wrote audit entries: %+v", entries)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("reset %s -> %s: %v", tc.from, tc.to, err)
+			}
+			if got.stage != tc.to || got.gen <= resetTestStartGen {
+				t.Fatalf("reset returned stage/gen = %q/%d, want %q and > %d", got.stage, got.gen, tc.to, resetTestStartGen)
+			}
+			if stale := hub.lookupLease("c-reset", "task-reset", "myorg/repo1", 8350, resetTestStartGen, now); stale != nil {
+				t.Fatalf("old generation still re-adopts after reset: %+v", stale)
+			}
+			cur := hub.lookupLease("c-reset", "task-reset", "myorg/repo1", 8350, got.gen, now)
+			if cur == nil || cur.stage != tc.to {
+				t.Fatalf("new generation did not re-adopt the reset lease: %+v", cur)
+			}
+			entries := srvAuditEntries(t, hub)
+			if len(entries) == 0 || entries[0].Action != agentaudit.AuditLeaseStageReset ||
+				!strings.Contains(entries[0].Detail, "stage_from="+tc.from) ||
+				!strings.Contains(entries[0].Detail, "stage_to="+tc.to) ||
+				!strings.Contains(entries[0].Detail, "reason=plan rejected") ||
+				!strings.Contains(entries[0].Detail, "gen=") {
+				t.Fatalf("stage reset audit entry missing or malformed: %+v", entries)
+			}
+		})
+	}
+}
+
+// TestLeaseStageReset_RequiresReasonAndLiveLease covers the refusals that are
+// not about direction: a blank reason, a lease that does not exist, and a lease
+// whose window has already lapsed.
+func TestLeaseStageReset_RequiresReasonAndLiveLease(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-reset", "task-reset", "myorg/repo1", 8350,
+		"myorg/repo1#8350", "contributor", StageImplement, resetTestStartGen, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+
+	if _, err := hub.resetLeaseStage("c-reset", "task-reset", StagePlan, "   ", now); !errors.Is(err, errLeaseResetReason) {
+		t.Fatalf("blank reason error = %v, want errLeaseResetReason", err)
+	}
+	if _, err := hub.resetLeaseStage("c-none", "task-none", StagePlan, "plan rejected", now); !errors.Is(err, errLeaseNotFound) {
+		t.Fatalf("missing lease error = %v, want errLeaseNotFound", err)
+	}
+	expiredAt := now.Add(leaseTTL + time.Minute)
+	if _, err := hub.resetLeaseStage("c-reset", "task-reset", StagePlan, "plan rejected", expiredAt); !errors.Is(err, errLeaseExpired) {
+		t.Fatalf("expired lease error = %v, want errLeaseExpired", err)
+	}
+	if cur := hub.lookupLease("c-reset", "task-reset", "myorg/repo1", 8350, resetTestStartGen, now); cur == nil || cur.stage != StageImplement {
+		t.Fatalf("refused resets changed the lease: %+v", cur)
+	}
+}
+
+// TestLeaseStageResetEmitsReasonOnHookCELAndTimeline proves a reset rides the
+// existing stage_completed transition and carries the owner's reason plus the
+// reset marker on the hook payload, the CEL description, and the timeline
+// event the runs API reads history from.
+func TestLeaseStageResetEmitsReasonOnHookCELAndTimeline(t *testing.T) {
+	hub, srv := covK2Hub(t)
+	now := time.Now()
+	capture := &hookCapture{}
+	var celEvents []celtrigger.NormalizedEvent
+	var celReasons []string
+	srv.deps.HookFire = capture.fire
+	srv.deps.CELTrigger = func(_ context.Context, ev celtrigger.NormalizedEvent, reason string) {
+		celEvents = append(celEvents, ev)
+		celReasons = append(celReasons, reason)
+	}
+	if err := hub.recordLeaseForKeyStage("c-reset", "task-reset", "myorg/repo1", 8350,
+		"myorg/repo1#8350", "contributor", StageImplement, resetTestStartGen, now); err != nil {
+		t.Fatalf("record staged lease: %v", err)
+	}
+	reset, err := hub.resetLeaseStage("c-reset", "task-reset", StagePlan, "plan rejected", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("reset implement -> plan: %v", err)
+	}
+	payloads := capture.all()
+	if len(payloads) != 1 {
+		t.Fatalf("hook payloads = %d, want 1", len(payloads))
+	}
+	p := payloads[0]
+	if p.Transition != hooks.TransitionStageCompleted || p.Run != "task-reset" ||
+		p.StageFrom != StageImplement || p.StageTo != StagePlan || p.Gen != reset.gen ||
+		p.Repo != "myorg/repo1" || p.Reason != "plan rejected" || p.Attrs["reset"] != "true" {
+		t.Fatalf("unexpected hook payload: %+v", p)
+	}
+	if len(celEvents) != 1 || len(celReasons) != 1 {
+		t.Fatalf("cel events/reasons = %d/%d, want 1/1", len(celEvents), len(celReasons))
+	}
+	if celEvents[0].Kind != celtrigger.KindStageCompleted || celEvents[0].StageFrom != StageImplement ||
+		celEvents[0].StageTo != StagePlan || celEvents[0].Gen != int64(reset.gen) {
+		t.Fatalf("unexpected CEL event: %+v", celEvents[0])
+	}
+	if !strings.Contains(celReasons[0], "stage_reset") || !strings.Contains(celReasons[0], "plan rejected") {
+		t.Fatalf("CEL description %q does not name the reset and its reason", celReasons[0])
+	}
+	j, ok := srv.LifecycleTimeline().Journey("myorg/repo1#8350")
+	if !ok {
+		t.Fatal("stage reset not recorded on lifecycle timeline")
+	}
+	stage := j.Stages[timeline.KindStageCompleted]
+	if stage == nil || stage.Attrs["stage_from"] != StageImplement || stage.Attrs["stage_to"] != StagePlan ||
+		stage.Attrs["reason"] != "plan rejected" || stage.Attrs["reset"] != "true" {
+		t.Fatalf("timeline stage missing reset attrs: %+v", stage)
+	}
+}
+
+// TestLeaseStageReset_PersistFailureSurfacesAndRollsBack proves a reset the
+// registry could not write is reported as an error and leaves the run exactly
+// where it was: the old generation still resumes at the old stage and nothing
+// is audited, so memory and disk never disagree about a run's stage.
+func TestLeaseStageReset_PersistFailureSurfacesAndRollsBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory modes do not stop root; cannot inject a write failure")
+	}
+	hub, _ := covK2Hub(t)
+	dir := filepath.Join(t.TempDir(), "ws-state")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("building leases directory: %v", err)
+	}
+	hub.persistTaskLedgers = true
+	hub.taskLeasesFile = filepath.Join(dir, "task-leases.json")
+
+	now := time.Now()
+	if err := hub.recordLeaseForKeyStage("c-reset", "task-reset", "myorg/repo1", 8350,
+		"myorg/repo1#8350", "contributor", StageImplement, resetTestStartGen, now); err != nil {
+		t.Fatalf("recording lease on a writable registry: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("making leases directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := hub.resetLeaseStage("c-reset", "task-reset", StagePlan, "plan rejected", now.Add(time.Minute)); err == nil {
+		t.Fatal("reset reported success although the registry could not be written")
+	}
+	cur := hub.lookupLease("c-reset", "task-reset", "myorg/repo1", 8350, resetTestStartGen, now)
+	if cur == nil || cur.stage != StageImplement {
+		t.Fatalf("failed reset did not roll the lease back: %+v", cur)
+	}
+	for _, e := range srvAuditEntries(t, hub) {
+		if e.Action == agentaudit.AuditLeaseStageReset {
+			t.Fatalf("failed reset was audited as if it happened: %+v", e)
+		}
 	}
 }

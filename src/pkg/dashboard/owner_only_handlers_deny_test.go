@@ -102,6 +102,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"nous scope", http.MethodPut, "/api/nous/scope", srv.handleNousScope},
 		{"pack apply", http.MethodPost, "/api/packs/apply", srv.handlePackApply},
 		{"pack set level", http.MethodPut, "/api/packs/level", srv.handlePackSetLevel},
+		{"run stage reset", http.MethodPost, "/api/runs/myorg%2Frepo1%238350/reset", srv.handleRunReset},
 		{"self upgrade", http.MethodPost, "/api/self-upgrade", srv.handleSelfUpgrade},
 		{"variable delete", http.MethodDelete, "/api/config/variables/VAR", srv.handleVariableDelete},
 		{"variable upsert", http.MethodPut, "/api/config/variables/VAR", srv.handleVariableUpsert},

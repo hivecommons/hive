@@ -27,6 +27,7 @@ const (
 
 	AuditLeaseStageAdvanced = agentaudit.AuditLeaseStageAdvanced
 	AuditLeaseStageRetried  = agentaudit.AuditLeaseStageRetried
+	AuditLeaseStageReset    = agentaudit.AuditLeaseStageReset
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
