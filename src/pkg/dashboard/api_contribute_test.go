@@ -32,6 +32,11 @@ func redirectContributeWSDisk(t *testing.T, dir string) {
 	t.Helper()
 	oldActivity, oldCompleted, oldFailed, oldNoPR := activityFilePath, completedTasksFile, failedTasksFile, noPRStreaksFile
 	oldLeases := taskLeasesFile
+	// On a live hive host /data exists, so newAuditLog both LOADS the real
+	// /data/audit.jsonl into the ring (breaking every "no audit entries"
+	// assertion) and WRITES test fixture entries into the production audit
+	// log. Redirect it with the rest of the /data state (#8545).
+	oldAuditLogPath := auditLogPath
 	oldTurnEnvelopeDir := turnEnvelopeDirPath
 	oldAsyncActivitySave := asyncActivitySave
 	oldActivityPersistenceEnabled := activityPersistenceEnabled
@@ -40,12 +45,14 @@ func redirectContributeWSDisk(t *testing.T, dir string) {
 	failedTasksFile = filepath.Join(dir, "failed-tasks.json")
 	noPRStreaksFile = filepath.Join(dir, "no-pr-streaks.json")
 	taskLeasesFile = filepath.Join(dir, "task-leases.json")
+	auditLogPath = filepath.Join(dir, "audit.jsonl")
 	turnEnvelopeDirPath = filepath.Join(dir, "turn-envelopes")
 	asyncActivitySave = false
 	activityPersistenceEnabled = false
 	t.Cleanup(func() {
 		activityFilePath, completedTasksFile, failedTasksFile, noPRStreaksFile = oldActivity, oldCompleted, oldFailed, oldNoPR
 		taskLeasesFile = oldLeases
+		auditLogPath = oldAuditLogPath
 		turnEnvelopeDirPath = oldTurnEnvelopeDir
 		asyncActivitySave = oldAsyncActivitySave
 		activityPersistenceEnabled = oldActivityPersistenceEnabled
