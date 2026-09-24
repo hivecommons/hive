@@ -1669,6 +1669,11 @@ func isPublicPath(path string) bool {
 		// spoke uses dashboard auth, so its same-origin stylesheet must be public
 		// too; the sheet contains only static custom properties and aliases.
 		return true
+	case path == "/components.css":
+		// Shared ADR-0018 component recipes. /contribute is public when a spoke
+		// uses dashboard auth, so its same-origin stylesheet must be public too.
+		// The unlinked /design-system.html preview remains auth-gated.
+		return true
 	case path == "/contribute" || strings.HasPrefix(path, "/contribute/"):
 		return true
 	case path == "/api/contribute" || strings.HasPrefix(path, "/api/contribute/"):

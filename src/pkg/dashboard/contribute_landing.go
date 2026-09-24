@@ -240,6 +240,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
      it is inline on*= ATTRIBUTES that are forbidden (ADR-0016), which is why the
      button dispatches through data-action instead of onclick. -->
 <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
 <script>
 (function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 </script>

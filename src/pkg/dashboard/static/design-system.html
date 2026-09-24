@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Hive dashboard design system preview</title>
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
+</head>
+<body class="design-system-preview">
+  <main class="preview-shell">
+    <header class="preview-title">
+      <span class="badge-status" data-status="info">Unlinked static preview</span>
+      <h1>Hive dashboard component recipes</h1>
+      <p>Shared token-layer recipes for migration PRs A4-A7. Dark and light examples render side by side without inline styles.</p>
+    </header>
+    <section class="preview-grid" aria-label="Theme previews">
+      <article class="preview-theme" aria-labelledby="dark-preview-title">
+        <div class="preview-title">
+          <h2 id="dark-preview-title">Dark tokens</h2>
+          <p>Default dashboard palette.</p>
+        </div>
+        <div class="preview-stack">
+          <section class="preview-section" aria-labelledby="dark-buttons">
+            <h3 id="dark-buttons">Buttons</h3>
+            <div class="preview-row">
+              <button class="hv-btn btn-primary">Primary</button>
+              <button class="hv-btn btn-secondary">Secondary</button>
+              <button class="hv-btn btn-ghost">Ghost</button>
+              <button class="hv-btn btn-danger">Danger</button>
+              <button class="hv-btn btn-icon" aria-label="Refresh">↻</button>
+              <button class="hv-btn btn-secondary btn-sm">Small</button>
+              <button class="hv-btn btn-primary is-hover">Hover</button>
+              <button class="hv-btn btn-secondary is-focus-visible">Focus</button>
+              <button class="hv-btn btn-secondary" disabled>Disabled</button>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="dark-chips">
+            <h3 id="dark-chips">Chips and badges</h3>
+            <div class="preview-row">
+              <span class="chip-entity">repo:hive</span>
+              <span class="badge-status" data-status="ok">ok</span>
+              <span class="badge-status" data-status="warn">warn</span>
+              <span class="badge-status" data-status="attention">attention</span>
+              <span class="badge-status" data-status="error">error</span>
+              <span class="badge-status" data-status="info">info</span>
+              <span class="badge-status" data-status="neutral">neutral</span>
+              <button class="chip-action">inline action</button>
+              <span class="badge-count">12</span>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="dark-surfaces">
+            <h3 id="dark-surfaces">Surfaces and toolbar</h3>
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <h4>Card title</h4>
+                  <p>Standard card with header and actions.</p>
+                </div>
+                <div class="card-actions">
+                  <button class="hv-btn btn-secondary btn-sm">Open</button>
+                  <button class="hv-btn btn-icon btn-sm" aria-label="More">⋯</button>
+                </div>
+              </div>
+              <div class="card-inset">Nested inset surface</div>
+            </div>
+            <div class="card-panel toolbar">
+              <span class="chip-entity">filter:active</span>
+              <span class="badge-status" data-status="info"><span class="status-dot" data-status="info" data-pulse="active"></span>live</span>
+              <div class="toolbar-actions">
+                <button class="hv-btn btn-ghost btn-sm">Reset</button>
+                <button class="hv-btn btn-primary btn-sm">Apply</button>
+              </div>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="dark-data">
+            <h3 id="dark-data">Data display</h3>
+            <div class="preview-metrics">
+              <div class="metric-tile"><span class="metric-label">Success rate</span><span class="metric-value">98%</span><span class="metric-delta" data-status="ok">+4%</span></div>
+              <div class="metric-tile"><span class="metric-label">Queue</span><span class="metric-value">07</span><span class="metric-delta" data-status="warn">+2 waiting</span></div>
+            </div>
+            <table class="table-compact">
+              <thead><tr><th>Agent</th><th>Status</th><th data-align="end">PRs</th></tr></thead>
+              <tbody><tr><td>Reviewer</td><td><span class="status-dot" data-status="ok"></span> ready</td><td class="num">8</td></tr><tr><td>Scanner</td><td><span class="status-dot" data-status="attention"></span> busy</td><td class="num">3</td></tr></tbody>
+            </table>
+            <div class="empty-state">
+              <div class="empty-state-icon" aria-hidden="true">◇</div>
+              <h3>No queued work</h3>
+              <p>Optional actions sit below the helper copy.</p>
+              <button class="hv-btn btn-secondary btn-sm">Refresh</button>
+            </div>
+          </section>
+        </div>
+      </article>
+      <article class="preview-theme" data-theme="light" aria-labelledby="light-preview-title">
+        <div class="preview-title">
+          <h2 id="light-preview-title">Light tokens</h2>
+          <p>Same recipes inherited through light-mode tokens.</p>
+        </div>
+        <div class="preview-stack">
+          <section class="preview-section" aria-labelledby="light-buttons">
+            <h3 id="light-buttons">Buttons</h3>
+            <div class="preview-row">
+              <button class="hv-btn btn-primary">Primary</button>
+              <button class="hv-btn btn-secondary">Secondary</button>
+              <button class="hv-btn btn-ghost">Ghost</button>
+              <button class="hv-btn btn-danger">Danger</button>
+              <button class="hv-btn btn-icon" aria-label="Refresh">↻</button>
+              <button class="hv-btn btn-secondary btn-sm">Small</button>
+              <button class="hv-btn btn-primary is-hover">Hover</button>
+              <button class="hv-btn btn-secondary is-focus-visible">Focus</button>
+              <button class="hv-btn btn-secondary" disabled>Disabled</button>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="light-chips">
+            <h3 id="light-chips">Chips and badges</h3>
+            <div class="preview-row">
+              <span class="chip-entity">repo:hive</span>
+              <span class="badge-status" data-status="ok">ok</span>
+              <span class="badge-status" data-status="warn">warn</span>
+              <span class="badge-status" data-status="attention">attention</span>
+              <span class="badge-status" data-status="error">error</span>
+              <span class="badge-status" data-status="info">info</span>
+              <span class="badge-status" data-status="neutral">neutral</span>
+              <button class="chip-action">inline action</button>
+              <span class="badge-count">12</span>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="light-surfaces">
+            <h3 id="light-surfaces">Surfaces and toolbar</h3>
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <h4>Card title</h4>
+                  <p>Standard card with header and actions.</p>
+                </div>
+                <div class="card-actions">
+                  <button class="hv-btn btn-secondary btn-sm">Open</button>
+                  <button class="hv-btn btn-icon btn-sm" aria-label="More">⋯</button>
+                </div>
+              </div>
+              <div class="card-inset">Nested inset surface</div>
+            </div>
+            <div class="card-panel toolbar">
+              <span class="chip-entity">filter:active</span>
+              <span class="badge-status" data-status="info"><span class="status-dot" data-status="info" data-pulse="active"></span>live</span>
+              <div class="toolbar-actions">
+                <button class="hv-btn btn-ghost btn-sm">Reset</button>
+                <button class="hv-btn btn-primary btn-sm">Apply</button>
+              </div>
+            </div>
+          </section>
+          <section class="preview-section" aria-labelledby="light-data">
+            <h3 id="light-data">Data display</h3>
+            <div class="preview-metrics">
+              <div class="metric-tile"><span class="metric-label">Success rate</span><span class="metric-value">98%</span><span class="metric-delta" data-status="ok">+4%</span></div>
+              <div class="metric-tile"><span class="metric-label">Queue</span><span class="metric-value">07</span><span class="metric-delta" data-status="warn">+2 waiting</span></div>
+            </div>
+            <table class="table-compact">
+              <thead><tr><th>Agent</th><th>Status</th><th data-align="end">PRs</th></tr></thead>
+              <tbody><tr><td>Reviewer</td><td><span class="status-dot" data-status="ok"></span> ready</td><td class="num">8</td></tr><tr><td>Scanner</td><td><span class="status-dot" data-status="attention"></span> busy</td><td class="num">3</td></tr></tbody>
+            </table>
+            <div class="empty-state">
+              <div class="empty-state-icon" aria-hidden="true">◇</div>
+              <h3>No queued work</h3>
+              <p>Optional actions sit below the helper copy.</p>
+              <button class="hv-btn btn-secondary btn-sm">Refresh</button>
+            </div>
+          </section>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

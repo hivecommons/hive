@@ -78,6 +78,46 @@
   --vendor-anthropic: #d97706;
   --vendor-google: #4285f4;
 
+  /* Component recipe metrics */
+  --line-width: 1px;
+  --focus-ring-width: 2px;
+  --control-min-h: 30px;
+  --control-compact-min-h: 22px;
+  --btn-pad-y: 7px;
+  --btn-pad-x: 16px;
+  --btn-sm-pad-y: 3px;
+  --btn-sm-pad-x: 9px;
+  --badge-min-h: 18px;
+  --badge-pad-y: 1px;
+  --badge-pad-x: 8px;
+  --badge-count-min-w: 18px;
+  --status-dot-size: 8px;
+  --table-cell-pad-y: 6px;
+  --table-cell-pad-x: 8px;
+  --empty-state-pad-y: 24px;
+  --preview-column-min: 320px;
+  --metric-tile-min: 140px;
+  --full-size: 100%;
+  --z-sticky: 1;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --lh-control: 1.2;
+  --lh-tight: 1.15;
+  --tracking-eyebrow: 0.08em;
+  --duration-fast: 140ms;
+  --duration-status-pulse: 1500ms;
+  --opacity-disabled: 0.55;
+  --component-status: var(--status-neutral);
+  --component-tint-soft: 8%;
+  --component-tint: 14%;
+  --component-tint-strong: 18%;
+  --component-border: 35%;
+  --component-border-emphasis: 55%;
+  --component-fill-hover: 88%;
+  --shadow-status-pulse-rest: 0 0 0 0 color-mix(in srgb, var(--component-status) 0%, transparent);
+  --shadow-status-pulse-active: 0 0 0 var(--sp-4) color-mix(in srgb, var(--component-status) 22%, transparent);
+
   /* Legacy aliases with exact-value matches in today's dark UI. */
   --bg: var(--surface-0);
   --bg-soft: var(--surface-1);

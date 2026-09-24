@@ -23,10 +23,36 @@ func TestHubTokensCSSMatchesDashboardSource(t *testing.T) {
 	}
 }
 
+func TestHubComponentsCSSMatchesDashboardSource(t *testing.T) {
+	dashboard, err := os.ReadFile("../dashboard/static/components.css")
+	if err != nil {
+		t.Fatalf("reading dashboard component source: %v", err)
+	}
+	hub, err := os.ReadFile("static/components.css")
+	if err != nil {
+		t.Fatalf("reading hub component copy: %v", err)
+	}
+	if !bytes.Equal(hub, dashboard) {
+		t.Fatal("pkg/hub/static/components.css drifted from pkg/dashboard/static/components.css")
+	}
+}
+
 func TestHubTokensCSSServedAsStylesheet(t *testing.T) {
 	s := &HubServer{}
 	w := httptest.NewRecorder()
 	s.serveStatic("static/tokens.css")(w, httptest.NewRequest(http.MethodGet, "/tokens.css", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Fatalf("Content-Type = %q, want text/css", got)
+	}
+}
+
+func TestHubComponentsCSSServedAsStylesheet(t *testing.T) {
+	s := &HubServer{}
+	w := httptest.NewRecorder()
+	s.serveStatic("static/components.css")(w, httptest.NewRequest(http.MethodGet, "/components.css", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}

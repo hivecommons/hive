@@ -6,7 +6,10 @@ change, then migrate section-by-section under ratchet tests.
 
 Status: the shared `tokens.css` layer has landed with compatibility aliases in
 place for exact-value matches across the operator SPA, contribute portal, and
-hub pages. Next work is the ratcheted component-by-component migration.
+hub pages. The shared `components.css` recipe layer now defines the component
+classes below for future migrations, but existing markup is not intentionally
+rewired until A4-A7. Review the unlinked static preview at
+`/design-system.html`.
 
 ## Token catalogue
 
@@ -140,6 +143,12 @@ dark alpha tints. Initial values should preserve today's light rendering:
 
 ### Buttons
 
+All shared button recipes use the `.hv-btn` base class plus a variant class,
+for example `class="hv-btn btn-primary"`. The `hv-` base prefix avoids
+colliding with the legacy `.btn`, `.btn-sm`, `.btn-primary`, and
+`.btn-secondary` families that already exist in the operator and hub pages
+while preserving the final variant names agents will migrate to.
+
 | Variant | Intended usage |
 | --- | --- |
 | `.btn-primary` | Main page action or save/apply action after changes are explicit. |
@@ -147,6 +156,7 @@ dark alpha tints. Initial values should preserve today's light rendering:
 | `.btn-ghost` | Low-emphasis navigation, read-only links, dismiss controls. |
 | `.btn-danger` | Server-mutating destructive actions such as restart, revoke, delete, reset. |
 | `.btn-icon` | Icon-only action with accessible label and tooltip. |
+| `.btn-sm` | Compact size modifier for dense tables, cards, and toolbar actions. |
 
 Danger means the action mutates server state destructively; do not use it only
 because a warning color looks visually urgent.
@@ -166,7 +176,14 @@ because a warning color looks visually urgent.
 | `.table-compact` | Dense data tables with consistent cell padding and right-aligned numbers. |
 | `.empty-state` | Icon, one-line title, helper text, optional action slot. |
 | `.status-dot` | Dot/icon paired with text and tooltip from a single status object. |
-| Toolbar pattern | Left filters/search, right actions, `--sp-4`/`--sp-5` gaps, one control height. |
+| `.toolbar` | Left filters/search with right-aligned `.toolbar-actions`, `--sp-4` gaps, wrapping, and one control height. |
+
+Status-driven recipes use `data-status="ok|warn|attention|error|info|neutral"`
+to select the corresponding `--status-*` token. `.status-dot` also supports
+`data-pulse="active"` for live activity. Recipe hover/focus-visible/disabled
+states are part of `components.css`; the preview page renders static examples
+with `.is-hover` and `.is-focus-visible` helper classes so screenshots can show
+the states without script.
 
 ### Current-to-new mapping
 

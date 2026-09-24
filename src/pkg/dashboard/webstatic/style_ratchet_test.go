@@ -45,6 +45,7 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 		rawPadding:     391,
 		rawBorderRadii: 309,
 	},
+	"design system preview": {},
 }
 
 var (
@@ -113,6 +114,56 @@ func TestStyleRatchetTokensCSS(t *testing.T) {
 	t.Logf("tokens.css: %d custom properties defined, %d var() references checked", len(defs), len(refs))
 }
 
+func TestStyleRatchetComponentsCSS(t *testing.T) {
+	tokenData, err := os.ReadFile("../static/tokens.css")
+	if err != nil {
+		t.Fatalf("reading tokens.css: %v", err)
+	}
+	componentData, err := os.ReadFile("../static/components.css")
+	if err != nil {
+		t.Fatalf("reading components.css: %v", err)
+	}
+	css := string(componentData)
+	if n := len(styleAttributeStartRE.FindAllStringIndex(css, -1)); n != 0 {
+		t.Fatalf("components.css contains %d style= attributes; component stylesheets must not emit inline style attributes", n)
+	}
+	if n := countRawColors(css); n != 0 {
+		t.Fatalf("components.css contains %d raw color literals/functions; component recipes must use tokens", n)
+	}
+	if n := countRawDeclarations(css, fontSizeRE, false); n != 0 {
+		t.Fatalf("components.css contains %d raw font-size declarations; component recipes must use tokens", n)
+	}
+	if n := countRawDeclarations(css, paddingRE, true); n != 0 {
+		t.Fatalf("components.css contains %d raw padding declarations; component recipes must use tokens", n)
+	}
+	if n := countRawDeclarations(css, borderRadiusRE, false); n != 0 {
+		t.Fatalf("components.css contains %d raw border-radius declarations; component recipes must use tokens", n)
+	}
+	if matches := pxOrRemRE.FindAllString(cssCommentRE.ReplaceAllString(css, ""), -1); len(matches) != 0 {
+		t.Fatalf("components.css contains raw px/rem values outside tokens: %s", strings.Join(matches, ", "))
+	}
+
+	defs := map[string]bool{}
+	for _, match := range tokenDefinitionRE.FindAllStringSubmatch(string(tokenData)+"\n"+css, -1) {
+		defs[match[1]] = true
+	}
+	refs := map[string]bool{}
+	for _, match := range tokenReferenceRE.FindAllStringSubmatch(css, -1) {
+		refs[match[1]] = true
+	}
+	var missing []string
+	for ref := range refs {
+		if !defs[ref] {
+			missing = append(missing, ref)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("components.css references undefined custom properties via var(): %s", strings.Join(missing, ", "))
+	}
+	t.Logf("components.css: %d var() references checked", len(refs))
+}
+
 type styleRatchetSurface struct {
 	name     string
 	contents string
@@ -132,6 +183,10 @@ func loadStyleRatchetSurfaces(t *testing.T) []styleRatchetSurface {
 		{
 			name:     "hub static pages",
 			contents: readStyleRatchetGlob(t, "../../hub/static/*.html", "../../hub/assets/*.html"),
+		},
+		{
+			name:     "design system preview",
+			contents: readStyleRatchetFile(t, "../static/design-system.html"),
 		},
 	}
 }
