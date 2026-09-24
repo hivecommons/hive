@@ -22682,6 +22682,36 @@
         }
       }
     },
+    "/api/campaigns/{id}/jam/agents": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Invite an agent to a Jam thread",
+        "description": "Maintainer-only endpoint that posts an attributed Spektacular or configured-agent reply in a Jam thread and creates an open human-reviewable suggestion without applying a spec revision.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated Jam state"
+          },
+          "403": {
+            "description": "Maintainer access required"
+          }
+        }
+      }
+    },
     "/api/campaigns/{id}/jam/suggestions": {
       "get": {
         "tags": [

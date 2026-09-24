@@ -15712,7 +15712,7 @@ function burnAreaChart() {
         <div class="campaign-jam-grid">
           <div class="campaign-jam-box">
             <h4>Threads</h4>
-            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}</div>`).join('') : 'No threads yet.'}</div>
+            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}<div class="campaign-jam-actions"><button class="hv-btn btn-secondary btn-sm" data-action="inviteCampaignJamAgent" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(t.id)}">Invite Spektacular</button></div></div>`).join('') : 'No threads yet.'}</div>
             <div class="campaign-jam-form">
               <input id="jam-thread-section" class="campaigns-input" placeholder="Spec section" />
               <textarea id="jam-thread-body" class="campaigns-input" placeholder="Comment"></textarea>
@@ -15808,6 +15808,16 @@ function burnAreaChart() {
       const section = document.getElementById('jam-thread-section')?.value || '';
       const body = document.getElementById('jam-thread-body')?.value || '';
       await postCampaignJam(id, 'threads', { section, body });
+    }
+
+    async function inviteCampaignJamAgent(id, thread_id) {
+      const prompt = promptForJamAgent();
+      if (prompt === null) return;
+      await postCampaignJam(id, 'agents', { thread_id, agent: 'spektacular', prompt });
+    }
+
+    function promptForJamAgent() {
+      return window.prompt('Prompt for the Jam agent reply and suggestion', 'Suggest spec text for this thread.');
     }
 
     async function createCampaignJamSuggestion(id) {

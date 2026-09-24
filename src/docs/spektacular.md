@@ -42,6 +42,12 @@ items to the linked project; inbound project status updates are recorded on the
 campaign without rewriting local Jam decisions. Sync failures are kept with
 retry guidance so the dashboard shows what to fix before trying again.
 
+Maintainers can invite Spektacular or another configured hive agent into a Jam
+thread. Agent participation is deliberately review-gated: the attributed agent
+reply is posted in-thread and any proposed spec text is created as an open
+suggestion, but a permitted human maintainer must still accept it before the
+spec revision changes.
+
 ## Enabling it
 
 ```yaml
