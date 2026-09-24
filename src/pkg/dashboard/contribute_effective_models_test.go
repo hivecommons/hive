@@ -32,6 +32,9 @@ func TestAggregateContributeEffectiveModelsThresholdRankingAndPrivacy(t *testing
 	if got.Ranked[0].Model != "sonnet" || got.Ranked[0].FirstPassMergeRate != 1 {
 		t.Fatalf("top row = %+v, want sonnet sorted by first-pass rate", got.Ranked[0])
 	}
+	if got.Ranked[0].EffectivenessRank != 1 || got.Ranked[1].EffectivenessRank != 2 {
+		t.Fatalf("ranks = %d/%d, want 1/2", got.Ranked[0].EffectivenessRank, got.Ranked[1].EffectivenessRank)
+	}
 	opus := got.Ranked[1]
 	if opus.RunCount != 3 || opus.VerifiedPRRuns != 1 || opus.NothingToShipRuns != 1 || opus.FailedRuns != 1 {
 		t.Fatalf("opus run stats = %+v", opus)

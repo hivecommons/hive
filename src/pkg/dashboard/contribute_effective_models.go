@@ -35,6 +35,7 @@ type contributeEffectiveModelRow struct {
 	Model              string                       `json:"model"`
 	Backend            string                       `json:"backend"`
 	Runtime            string                       `json:"runtime"`
+	EffectivenessRank  int                          `json:"effectiveness_rank,omitempty"`
 	PRs                int                          `json:"prs"`
 	MergedPRs          int                          `json:"merged_prs"`
 	FirstPassMergeRate float64                      `json:"first_pass_merge_rate"`
@@ -164,30 +165,42 @@ func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunR
 		filtered = append(filtered, pr)
 	}
 	prAgg := aggregateGovernorPRModels(filtered, window, now)
+	return aggregateEffectiveModelsFromPRAggregation(prAgg, aggregateEffectiveRunStats(runs, filter), filter, minMergedPRs)
+}
+
+func aggregateEffectiveRunStats(runs []TaskRunRecord, filter string) map[string]*effectiveRunStats {
 	runStats := map[string]*effectiveRunStats{}
-	if filter != effectiveModelsFilterHive {
-		for _, rec := range runs {
-			model := ghpkg.NormalizeAttributionModel(rec.Model)
-			backend := ghpkg.NormalizeAttributionValue(rec.Backend)
-			key := model + "\x00" + backend
-			st := runStats[key]
-			if st == nil {
-				st = &effectiveRunStats{}
-				runStats[key] = st
-			}
-			st.Runs++
-			if rec.PRVerified {
-				st.VerifiedPRRuns++
-			}
-			if rec.Outcome == outcomeFailed {
-				st.FailedRuns++
-			}
-			if rec.Outcome == outcomeCompleted && !rec.PRVerified {
-				st.NothingToShipRuns++
-			}
+	if normalizeEffectiveModelsFilter(filter) == effectiveModelsFilterHive {
+		return runStats
+	}
+	for _, rec := range runs {
+		model := ghpkg.NormalizeAttributionModel(rec.Model)
+		backend := ghpkg.NormalizeAttributionValue(rec.Backend)
+		key := effectiveModelKey(model, backend)
+		st := runStats[key]
+		if st == nil {
+			st = &effectiveRunStats{}
+			runStats[key] = st
+		}
+		st.Runs++
+		if rec.PRVerified {
+			st.VerifiedPRRuns++
+		}
+		if rec.Outcome == outcomeFailed {
+			st.FailedRuns++
+		}
+		if rec.Outcome == outcomeCompleted && !rec.PRVerified {
+			st.NothingToShipRuns++
 		}
 	}
+	return runStats
+}
 
+func aggregateEffectiveModelsFromPRAggregation(prAgg governorPRModelsResponse, runStats map[string]*effectiveRunStats, filter string, minMergedPRs int) contributeEffectiveModelsResponse {
+	filter = normalizeEffectiveModelsFilter(filter)
+	if minMergedPRs < 1 {
+		minMergedPRs = effectiveModelsDefaultMinMergedPRs
+	}
 	rows := map[string]*contributeEffectiveModelRow{}
 	for _, b := range prAgg.Buckets {
 		row := effectiveRowForKey(rows, b.Model, b.Backend)
@@ -199,6 +212,9 @@ func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunR
 	}
 	for key, st := range runStats {
 		parts := strings.Split(key, "\x00")
+		if len(parts) != 2 {
+			continue
+		}
 		row := effectiveRowForKey(rows, parts[0], parts[1])
 		row.RunCount = st.Runs
 		row.VerifiedPRRuns = st.VerifiedPRRuns
@@ -215,7 +231,7 @@ func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunR
 		row.MostReworked = append(row.MostReworked, item)
 	}
 
-	resp := contributeEffectiveModelsResponse{Window: window, Filter: filter, MinMergedPRs: minMergedPRs}
+	resp := contributeEffectiveModelsResponse{Window: prAgg.Window, Filter: filter, MinMergedPRs: minMergedPRs}
 	for _, row := range rows {
 		row.Runtime = effectiveModelRuntime(row.Model, row.Backend)
 		if row.MergedPRs >= minMergedPRs {
@@ -226,7 +242,14 @@ func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunR
 	}
 	sortEffectiveModelRows(resp.Ranked, true)
 	sortEffectiveModelRows(resp.Insufficient, false)
+	for i := range resp.Ranked {
+		resp.Ranked[i].EffectivenessRank = i + 1
+	}
 	return resp
+}
+
+func effectiveModelKey(model, backend string) string {
+	return model + "\x00" + backend
 }
 
 func effectiveRowForKey(rows map[string]*contributeEffectiveModelRow, model, backend string) *contributeEffectiveModelRow {

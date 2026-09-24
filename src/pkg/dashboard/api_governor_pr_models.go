@@ -21,6 +21,7 @@ const (
 
 type governorPRModelsResponse struct {
 	Window       string                       `json:"window"`
+	MinMergedPRs int                          `json:"min_merged_prs"`
 	Total        int                          `json:"total"`
 	Buckets      []governorPRModelBucket      `json:"buckets"`
 	Unknown      int                          `json:"unknown"`
@@ -35,6 +36,7 @@ type governorPRModelBucket struct {
 	ClosedUnmerged int                          `json:"closed_unmerged"`
 	Open           int                          `json:"open"`
 	Rework         governorPRModelRework        `json:"rework"`
+	Effectiveness  governorPRModelEffectiveness `json:"effectiveness"`
 	Agents         []governorPRModelAgentBucket `json:"agents,omitempty"`
 }
 
@@ -49,6 +51,17 @@ type governorPRModelRework struct {
 	AvgFollowUpCommits   float64 `json:"avg_follow_up_commits"`
 	HumanChangeRequests  int     `json:"human_change_requests"`
 	MedianTimeToMergeMin int     `json:"median_time_to_merge_minutes"`
+}
+
+type governorPRModelEffectiveness struct {
+	Rank               int     `json:"rank,omitempty"`
+	Eligible           bool    `json:"eligible"`
+	MergedPRs          int     `json:"merged_prs"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	RunCount           int     `json:"runs"`
+	VerifiedPRRunRate  float64 `json:"verified_pr_run_rate"`
+	FailureRate        float64 `json:"failure_rate"`
+	NothingToShipRate  float64 `json:"nothing_to_ship_rate"`
 }
 
 type governorPRMostReworkedItem struct {
@@ -76,8 +89,12 @@ type governorPRModelAgentBucket struct {
 
 func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) {
 	window := normalizeGovernorPRModelsWindow(r.URL.Query().Get("window"))
+	minMergedPRs := effectiveModelsMinMergedPRs()
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
+	runs, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
+	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
+	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -119,7 +136,7 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		rework reworkAccumulator
 	}
 	buckets := map[string]*bucketState{}
-	resp := governorPRModelsResponse{Window: window}
+	resp := governorPRModelsResponse{Window: window, MinMergedPRs: effectiveModelsMinMergedPRs()}
 	for _, pr := range prs {
 		if !pr.HiveAttributed {
 			continue
@@ -213,6 +230,36 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		resp.MostReworked = resp.MostReworked[:10]
 	}
 	return resp
+}
+
+func applyGovernorPRModelEffectiveness(resp *governorPRModelsResponse, effective contributeEffectiveModelsResponse, minMergedPRs int) {
+	if resp == nil {
+		return
+	}
+	resp.MinMergedPRs = minMergedPRs
+	rows := map[string]contributeEffectiveModelRow{}
+	for _, row := range effective.Ranked {
+		rows[effectiveModelKey(row.Model, row.Backend)] = row
+	}
+	for _, row := range effective.Insufficient {
+		rows[effectiveModelKey(row.Model, row.Backend)] = row
+	}
+	for i := range resp.Buckets {
+		row, ok := rows[effectiveModelKey(resp.Buckets[i].Model, resp.Buckets[i].Backend)]
+		if !ok {
+			continue
+		}
+		resp.Buckets[i].Effectiveness = governorPRModelEffectiveness{
+			Rank:               row.EffectivenessRank,
+			Eligible:           row.MergedPRs >= minMergedPRs,
+			MergedPRs:          row.MergedPRs,
+			FirstPassMergeRate: row.FirstPassMergeRate,
+			RunCount:           row.RunCount,
+			VerifiedPRRunRate:  row.VerifiedPRRunRate,
+			FailureRate:        row.FailureRate,
+			NothingToShipRate:  row.NothingToShipRate,
+		}
+	}
 }
 
 type reworkAccumulator struct {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -56,6 +58,59 @@ func TestHandleGovernorPRModelsEmptyAndBadWindow(t *testing.T) {
 	}
 	if got.Window != governorPRModelsWindow7d || got.Total != 0 || len(got.Buckets) != 0 {
 		t.Fatalf("response = %+v, want empty default 7d", got)
+	}
+}
+
+func TestHandleGovernorPRModelsIncludesEffectiveMetrics(t *testing.T) {
+	s := covApiServer(t)
+	dir := t.TempDir()
+	s.SetContributorsDir(dir)
+	if s.contributeHub != nil {
+		s.contributeHub.taskRunLogFile = filepath.Join(dir, taskRunLogFileName)
+	}
+	now := time.Now().UTC()
+	s.deps.Scheduler = metricsSchedulerStub{actionable: &ghpkg.ActionableResult{
+		PRs: ghpkg.PRResult{Attributed: []ghpkg.PullRequest{
+			{Repo: "org/repo", Number: 1, HiveAttributed: true, HiveModel: "opus", HiveBackend: "copilot", CreatedAt: now, MergedAt: now, Rework: ghpkg.PRReworkStats{FirstPass: true}},
+			{Repo: "org/repo", Number: 2, HiveAttributed: true, HiveModel: "opus", HiveBackend: "copilot", CreatedAt: now, MergedAt: now, Rework: ghpkg.PRReworkStats{FirstPass: true}},
+		}},
+	}}
+	var lines []byte
+	for _, rec := range []TaskRunRecord{
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "opus", Outcome: outcomeCompleted, PRVerified: true, PRURL: "https://github.com/org/repo/pull/1"},
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "opus", Outcome: outcomeCompleted},
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "opus", Outcome: outcomeFailed},
+	} {
+		line, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, line...)
+		lines = append(lines, '\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, taskRunLogFileName), lines, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/governor/pr-models?window=all", nil)
+	rec := httptest.NewRecorder()
+	s.handleGovernorPRModels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got governorPRModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.MinMergedPRs != effectiveModelsDefaultMinMergedPRs || len(got.Buckets) != 1 {
+		t.Fatalf("response = %+v, want one bucket with min threshold", got)
+	}
+	eff := got.Buckets[0].Effectiveness
+	if eff.Rank != 0 || eff.Eligible || eff.MergedPRs != 2 || eff.FirstPassMergeRate != 1 {
+		t.Fatalf("effectiveness PR stats = %+v", eff)
+	}
+	if eff.RunCount != 3 || eff.VerifiedPRRunRate != float64(1)/3 || eff.FailureRate != float64(1)/3 || eff.NothingToShipRate != float64(1)/3 {
+		t.Fatalf("effectiveness run stats = %+v", eff)
 	}
 }
 

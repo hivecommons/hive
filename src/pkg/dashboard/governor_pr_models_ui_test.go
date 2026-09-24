@@ -18,6 +18,11 @@ func TestGovernorPRModelsUIRendersReworkStats(t *testing.T) {
 		"Most reworked PRs",
 		"most_reworked",
 		"avg_review_rounds",
+		"govPRModelsSort = 'effectiveness'",
+		"setGovernorPRModelsSort",
+		"PR runs",
+		"No ship",
+		"b.effectiveness",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static/index.html missing %q", want)

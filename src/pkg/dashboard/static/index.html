@@ -1226,13 +1226,17 @@
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:999px; background:var(--bg); color:var(--muted); padding:3px 8px; font-size:0.68rem; cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
     .gov-pr-models-empty { color:var(--muted); font-size:0.82rem; padding:8px 0; }
-    .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(160px, 3fr) auto; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
+    .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) auto; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-weight:600; }
     .gov-pr-model-sub { color:var(--muted); font-size:0.68rem; font-weight:400; }
+    .gov-pr-model-rank { display:inline-flex; align-items:center; justify-content:center; min-width:22px; margin-right:5px; padding:1px 6px; border-radius:999px; color:var(--bg); background:var(--amber); font-size:0.62rem; font-weight:800; }
     .gov-pr-model-bar { height:12px; display:flex; overflow:hidden; border-radius:999px; background:var(--bg); border:1px solid var(--border); }
     .gov-pr-model-seg.merged { background:var(--green); }
     .gov-pr-model-seg.open { background:var(--blue); }
     .gov-pr-model-seg.closed { background:var(--yellow); }
+    .gov-pr-model-metrics { display:grid; grid-template-columns:repeat(5, minmax(42px, 1fr)); gap:5px; }
+    .gov-pr-model-metric { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
+    .gov-pr-model-metric span { display:block; color:var(--muted); font-size:0.58rem; text-transform:uppercase; letter-spacing:0.06em; }
     .gov-pr-model-share { color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
     .gov-pr-model-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.72rem; }
     .gov-pr-model-table th, .gov-pr-model-table td { padding:5px 6px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
@@ -1249,6 +1253,7 @@
     .gov-pr-model-legend .closed::before { background:var(--yellow); }
     @media (max-width: 620px) {
       .gov-pr-model-row { grid-template-columns:1fr; gap:4px; }
+      .gov-pr-model-metrics { grid-template-columns:repeat(2, minmax(90px, 1fr)); }
       .gov-pr-model-share { justify-self:start; }
     }
 
@@ -7858,6 +7863,7 @@
     }
 
     let govPRModelsWindow = '7d';
+    let govPRModelsSort = 'effectiveness';
     let govPRModelsLoading = false;
     let govPRModelsData = null;
 
@@ -7866,6 +7872,26 @@
       loadGovernorPRModels(true);
     }
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
+    function setGovernorPRModelsSort(sortName) {
+      govPRModelsSort = sortName === 'count' ? 'count' : 'effectiveness';
+      if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
+    }
+    window.setGovernorPRModelsSort = setGovernorPRModelsSort;
+
+    function governorPRModelRows(data) {
+      const rows = [...(data?.buckets || [])];
+      if (govPRModelsSort === 'count') {
+        return rows.sort((a, b) => (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || '')) || String(a.backend || '').localeCompare(String(b.backend || '')));
+      }
+      return rows.sort((a, b) => {
+        const ae = a.effectiveness || {}, be = b.effectiveness || {};
+        const ar = ae.rank || Number.MAX_SAFE_INTEGER, br = be.rank || Number.MAX_SAFE_INTEGER;
+        if (ar !== br) return ar - br;
+        if (!!be.eligible !== !!ae.eligible) return be.eligible ? 1 : -1;
+        if ((b.merged || 0) !== (a.merged || 0)) return (b.merged || 0) - (a.merged || 0);
+        return (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || ''));
+      });
+    }
 
     async function loadGovernorPRModels(force) {
       if (govPRModelsLoading) return;
@@ -7886,26 +7912,38 @@
       const data = govPRModelsData && govPRModelsData.window === govPRModelsWindow ? govPRModelsData : null;
       const total = data?.total || 0;
       const buttons = ['7d', '30d', 'all'].map(w => `<button type="button" class="${govPRModelsWindow === w ? 'active' : ''}" data-action="setGovernorPRModelsWindow" data-arg0="${w}" title="Show PRs authored in ${w === 'all' ? 'all time' : 'the last ' + w}">${w}</button>`).join('');
+      const sortButtons = [['effectiveness', 'rank'], ['count', 'PR count']].map(([v, label]) => `<button type="button" class="${govPRModelsSort === v ? 'active' : ''}" data-action="setGovernorPRModelsSort" data-arg0="${v}" title="Sort PRs by model by ${label}">${label}</button>`).join('');
       const rows = !data
         ? '<div class="gov-pr-models-empty">Loading PRs by model…</div>'
         : total === 0
           ? '<div class="gov-pr-models-empty">No agent-authored PRs in window.</div>'
-          : (data.buckets || []).map(b => {
+          : governorPRModelRows(data).map(b => {
               const prs = b.prs || 0;
               const share = total ? (prs / total * 100) : 0;
               const mergedPct = prs ? (b.merged || 0) / prs * 100 : 0;
               const openPct = prs ? (b.open || 0) / prs * 100 : 0;
               const closedPct = Math.max(0, 100 - mergedPct - openPct);
               const rw = b.rework || {};
+              const eff = b.effectiveness || {};
+              const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
+              const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : '';
+              const metrics = `<div class="gov-pr-model-metrics" aria-label="Model effectiveness metrics">
+                <div class="gov-pr-model-metric"><span>Merged</span>${eff.merged_prs ?? b.merged ?? 0}</div>
+                <div class="gov-pr-model-metric"><span>1st pass</span>${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)}</div>
+                <div class="gov-pr-model-metric"><span>PR runs</span>${pct(eff.verified_pr_run_rate)}</div>
+                <div class="gov-pr-model-metric"><span>Fail</span>${pct(eff.failure_rate)}</div>
+                <div class="gov-pr-model-metric"><span>No ship</span>${pct(eff.nothing_to_ship_rate)}</div>
+              </div>`;
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${(rw.first_pass_merge_rate ? rw.first_pass_merge_rate * 100 : 0).toFixed(0)}% · avg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              const tip = `${b.model || 'unknown'} via ${b.backend || 'unknown'}${eff.rank ? '\nEffectiveness rank #' + eff.rank + ' (min ' + (data.min_merged_prs || 5) + ' merged PRs)' : ''}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate)} · PR run rate ${pct(eff.verified_pr_run_rate)} · failure ${pct(eff.failure_rate)} · nothing-to-ship ${pct(eff.nothing_to_ship_rate)}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
               return `<div class="gov-pr-model-row" title="${escapeHtml(tip)}">
-                <div><div class="gov-pr-model-name">${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
+                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${escapeHtml(b.backend || 'unknown')}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
                   <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
                   <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
                   <div class="gov-pr-model-seg closed" style="width:${closedPct}%"></div>
                 </div>
+                ${metrics}
                 <div class="gov-pr-model-share">${prs} · ${share.toFixed(1)}%</div>
               </div>`;
             }).join('');
@@ -7934,7 +7972,7 @@
         }).join('')}</ol>
       </div>` : '';
       return `<div class="gov-pr-models">
-        <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">PRs by model</div><div class="gov-pr-model-sub">${total} agent-authored PR${total === 1 ? '' : 's'}</div></div><div class="gov-pr-models-toggle">${buttons}</div></div>
+        <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">PRs by model</div><div class="gov-pr-model-sub">${total} agent-authored PR${total === 1 ? '' : 's'} · rank requires ${data?.min_merged_prs || 5} merged</div></div><div class="gov-pr-models-toggle">${buttons}${sortButtons}</div></div>
         ${rows}
         ${reworkTable}
         ${mostReworked}
