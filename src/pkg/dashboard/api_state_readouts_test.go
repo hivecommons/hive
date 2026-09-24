@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/rotation"
 )
 
@@ -336,3 +337,35 @@ func TestAuditPathForActivityEmptyWithoutCollector(t *testing.T) {
 		t.Fatalf("nil Activity dep must mean default audit path, got %q", got)
 	}
 }
+
+func TestHandleProvidersHeadroomUsesPublishOnlyManager(t *testing.T) {
+	s := newFullServer(t)
+	publisher := rotation.NewManager(config.RotationConfig{})
+	publisher.SetHeadroom(rotation.Headroom{Provider: "openai", Available: true, PctRemaining: 44})
+	s.deps.HeadroomPublisher = publisher
+
+	rec := doOwnerGet(s, "/api/providers/headroom")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("headroom status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Enabled   bool `json:"enabled"`
+		Readings  bool `json:"readings"`
+		Providers []struct {
+			Provider     string `json:"provider"`
+			PctRemaining int    `json:"pct_remaining"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if body.Enabled {
+		t.Fatalf("publish-only manager must keep enabled=false, got %q", rec.Body.String())
+	}
+	if !body.Readings || len(body.Providers) != 1 || body.Providers[0].Provider != "openai" || body.Providers[0].PctRemaining != 44 {
+		t.Fatalf("publish-only readings not exposed: %q", rec.Body.String())
+	}
+}
+
+// --- handleRepoCost ---

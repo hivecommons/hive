@@ -52,6 +52,9 @@ type Dependencies struct {
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.
 	RotationMgr rotation.HeadroomReporter
+	// HeadroomPublisher is the publish-only headroom source used when rotation
+	// is disabled but contributor quota readings are still being probed.
+	HeadroomPublisher rotation.HeadroomReporter
 	// FleetStats is the spoke's fleet-stat contribution collector (PRs
 	// merged/rejected over the trailing 90-day window, cached, refreshed on a
 	// 30-minute timer). The ACMM advisor derives its baseline merge-success

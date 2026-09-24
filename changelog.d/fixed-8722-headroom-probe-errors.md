@@ -1,0 +1,1 @@
+- Fix #8722: log and publish scrubbed headroom probe error text with more specific causes.

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -42,6 +43,11 @@ const probeWaitDelay = 5 * time.Second
 
 // pollInterval is how often the Manager re-probes provider headroom.
 const pollInterval = 5 * time.Minute
+
+const claudeRateLimitStaleTTL = 15 * time.Minute
+const probeRateLimitInitialBackoff = 5 * time.Minute
+const probeRateLimitMaxBackoff = 20 * time.Minute
+const maxPublishedProbeErrorLen = 512
 
 // deepSeekMinBalanceUSD is the balance below which DeepSeek is considered
 // exhausted.
@@ -83,6 +89,10 @@ type Headroom struct {
 	PctRemaining int           `json:"pct_remaining"` // 0–100; 0 when probe failed
 	ResetAt      time.Time     `json:"reset_at,omitempty"`
 	Limits       []LimitWindow `json:"limits,omitempty"`
+	// CapturedAt records when this reading was measured; zero means unknown.
+	CapturedAt time.Time `json:"captured_at,omitempty"`
+	// Stale is true when a transient rate limit forced reuse of a recent last-good reading.
+	Stale bool `json:"stale,omitempty"`
 	// PlanType and PaidCreditsAvailable carry #6833's "whether the provider
 	// reports that paid credits or extra usage are available, without enabling
 	// them" (kubestellar/hive#6952). PaidCreditsAvailable is a pointer because
@@ -130,8 +140,12 @@ const (
 	// is the state #6986 exists to surface: on a host WITH credentials, a schema
 	// drift silently zeroes the adapter.
 	ProbeCauseUnrecognizedSchema ProbeErrorCause = "unrecognized_schema"
+	// ProbeCauseRateLimited: the provider throttled the read-only usage endpoint.
+	ProbeCauseRateLimited ProbeErrorCause = "rate_limited"
+	// ProbeCauseTimeout: the probe exceeded its bounded deadline.
+	ProbeCauseTimeout ProbeErrorCause = "timeout"
 	// ProbeCauseProbeFailed: any other measurement failure (transport error,
-	// timeout, non-zero exit, unparseable transport).
+	// non-zero exit, unparseable transport).
 	ProbeCauseProbeFailed ProbeErrorCause = "probe_failed"
 )
 
@@ -145,6 +159,31 @@ type causedError struct {
 
 func (e *causedError) Error() string { return e.err.Error() }
 func (e *causedError) Unwrap() error { return e.err }
+
+type rateLimitedError struct {
+	err        error
+	retryAfter time.Duration
+}
+
+func (e *rateLimitedError) Error() string { return e.err.Error() }
+func (e *rateLimitedError) Unwrap() error { return e.err }
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
+}
 
 // withCause tags err with cause so failOpen can surface it in diagnostics and
 // the published reading (kubestellar/hive#6986).
@@ -170,15 +209,45 @@ func probeErrorCause(err error) ProbeErrorCause {
 	if errors.Is(err, exec.ErrNotFound) {
 		return ProbeCauseNotInstalled
 	}
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return ProbeCauseTimeout
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return ProbeCauseUnrecognizedSchema
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return ProbeCauseUnrecognizedSchema
+	}
 	return ProbeCauseProbeFailed
 }
 
 // ProbeError surfaces ProbeErr as a string for JSON consumers.
 func (h Headroom) ProbeError() string {
 	if h.ProbeErr != nil {
-		return h.ProbeErr.Error()
+		return sanitizeProbeError(h.ProbeErr.Error())
 	}
 	return ""
+}
+
+func sanitizeProbeError(msg string) string {
+	msg = strings.TrimSpace(msg)
+	for _, marker := range []string{"Bearer ", "Authorization: ", "authorization: ", "x-api-key: ", "X-Api-Key: "} {
+		if i := strings.Index(msg, marker); i >= 0 {
+			end := strings.IndexAny(msg[i+len(marker):], " \t\r\n")
+			if end < 0 {
+				msg = msg[:i+len(marker)] + "******"
+			} else {
+				start := i + len(marker)
+				msg = msg[:start] + "******" + msg[start+end:]
+			}
+		}
+	}
+	if len(msg) > maxPublishedProbeErrorLen {
+		return msg[:maxPublishedProbeErrorLen] + "…"
+	}
+	return msg
 }
 
 // MarshalJSON includes the probe error text alongside the exported fields.
@@ -189,7 +258,10 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		PctRemaining  int           `json:"pct_remaining"`
 		ResetAt       time.Time     `json:"reset_at,omitempty"`
 		Limits        []LimitWindow `json:"limits,omitempty"`
+		CapturedAt    time.Time     `json:"captured_at,omitempty"`
+		Stale         bool          `json:"stale,omitempty"`
 		ProbeErr      string        `json:"probe_error,omitempty"`
+		Error         string        `json:"error,omitempty"`
 		ProbeErrCause string        `json:"probe_error_cause,omitempty"`
 	}
 	return json.Marshal(alias{
@@ -198,7 +270,10 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		PctRemaining:  h.PctRemaining,
 		ResetAt:       h.ResetAt,
 		Limits:        h.Limits,
+		CapturedAt:    h.CapturedAt,
+		Stale:         h.Stale,
 		ProbeErr:      h.ProbeError(),
+		Error:         h.ProbeError(),
 		ProbeErrCause: string(h.ProbeErrCause),
 	})
 }
@@ -222,9 +297,16 @@ type HeadroomReporter interface {
 // runCLI executes a CLI probe command with a bounded timeout and returns the
 // combined output.
 func runCLI(ctx context.Context, name string, args ...string) (string, error) {
+	return runCLIWithEnv(ctx, nil, name, args...)
+}
+
+func runCLIWithEnv(ctx context.Context, env []string, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	// See probeWaitDelay: without this a grandchild holding the output pipe
 	// makes CombinedOutput block past the context timeout, indefinitely.
 	cmd.WaitDelay = probeWaitDelay
@@ -287,6 +369,8 @@ const claudeOAuthBeta = "oauth-2025-04-20"
 // manager gives agent tmux sessions and where fleet-level CLI auth state
 // (.claude, .codex, .copilot) persists across pod restarts.
 const sharedCLIHome = "/data/home"
+
+var sharedCLIHomePath = sharedCLIHome
 
 type claudeUsageResponse struct {
 	Limits []struct {
@@ -367,7 +451,12 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return failOpen(p.Provider(), fmt.Errorf("claude usage HTTP %d", resp.StatusCode))
+		err := fmt.Errorf("claude usage HTTP %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("Retry-After") != "") {
+			err = &rateLimitedError{err: err, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+			return failOpen(p.Provider(), withCause(ProbeCauseRateLimited, err))
+		}
+		return failOpen(p.Provider(), err)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -394,7 +483,7 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 func claudeHeadroom(provider string, thresholdPct int, body []byte) (Headroom, error) {
 	var parsed claudeUsageResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return Headroom{}, err
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, err)
 	}
 	used := 0
 	var resetAt time.Time
@@ -432,7 +521,7 @@ func claudeHeadroom(provider string, thresholdPct int, body []byte) (Headroom, e
 		}
 	}
 	if len(limits) == 0 {
-		return Headroom{}, errors.New("claude usage: no limit window carried a percent (unrecognized schema)")
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, errors.New("claude usage: no limit window carried a percent (unrecognized schema)"))
 	}
 	return Headroom{
 		Provider:     provider,
@@ -489,31 +578,46 @@ type CodexProber struct {
 // was declared, so the second window was invisible and its exhaustion could
 // not hold work.
 type codexRateLimitsResult struct {
-	RateLimits struct {
-		Primary   *codexRateLimitWindow `json:"primary"`
-		Secondary *codexRateLimitWindow `json:"secondary"`
-		// RateLimitsByLimitID carries any provider-scoped limits beyond the two
-		// positional windows (kubestellar/hive#6964). The documented
-		// RateLimitSnapshot schema (codex-cli 0.154.0) reports these keyed by
-		// limitId; folding them into the reading means an exhausted scoped
-		// limit holds work rather than hiding behind roomier primary/secondary
-		// windows.
-		RateLimitsByLimitID map[string]*codexRateLimitWindow `json:"rateLimitsByLimitId"`
-		PlanType            string                           `json:"planType"`
-		Credits             *struct {
-			// Available is the provider's own statement that paid credits or
-			// extra usage COULD be spent. Reading it is not enabling it: see
-			// TestNoCodexSpendOrBillingMutation, which pins that nothing in
-			// this tree calls the consume endpoint.
-			Available *bool `json:"available"`
-			Balance   *int  `json:"balance"`
-		} `json:"credits"`
-	} `json:"rateLimits"`
+	RateLimits codexRateLimitSnapshot `json:"rateLimits"`
+	// codex-cli 0.156 moved scoped snapshots to the top-level result.
+	RateLimitsByLimitID map[string]*codexRateLimitSnapshot `json:"rateLimitsByLimitId"`
 	// OrdinaryUsageAllowed is a THREE-state field: true, false, and absent.
 	// Absent means the provider could not say, and #6833 requires that be
 	// carried as unknown rather than read as recovery — a nil deref into
 	// `false` here would silently hand back headroom nobody confirmed.
 	OrdinaryUsageAllowed *bool `json:"ordinaryUsageAllowed"`
+}
+
+type codexRateLimitSnapshot struct {
+	LimitID   string                `json:"limitId"`
+	LimitName string                `json:"limitName"`
+	Primary   *codexRateLimitWindow `json:"primary"`
+	Secondary *codexRateLimitWindow `json:"secondary"`
+	// Older codex reported this nested; keep accepting it.
+	RateLimitsByLimitID map[string]*codexRateLimitWindow `json:"rateLimitsByLimitId"`
+	PlanType            string                           `json:"planType"`
+	Credits             *codexCredits                    `json:"credits"`
+}
+
+type codexCredits struct {
+	Available  *bool           `json:"available"`
+	HasCredits *bool           `json:"hasCredits"`
+	Unlimited  *bool           `json:"unlimited"`
+	Balance    json.RawMessage `json:"balance"`
+}
+
+func (c *codexCredits) paidCreditsAvailable() *bool {
+	if c == nil {
+		return nil
+	}
+	if c.Available != nil {
+		return c.Available
+	}
+	if c.HasCredits != nil || c.Unlimited != nil {
+		v := (c.HasCredits != nil && *c.HasCredits) || (c.Unlimited != nil && *c.Unlimited)
+		return &v
+	}
+	return nil
 }
 
 type codexRateLimitWindow struct {
@@ -586,8 +690,8 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	// lives in the shared CLI home on the PVC (/data/home/.codex — the HOME
 	// the manager gives agent sessions). Point the app-server there when it
 	// exists so the probe sees the fleet's real login, not an empty home.
-	if fi, err := os.Stat(sharedCLIHome); err == nil && fi.IsDir() {
-		cmd.Env = append(os.Environ(), "HOME="+sharedCLIHome)
+	if fi, err := os.Stat(sharedCLIHomePath); err == nil && fi.IsDir() {
+		cmd.Env = append(os.Environ(), "HOME="+sharedCLIHomePath)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -675,16 +779,14 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (Headroom, error) {
 	var res codexRateLimitsResult
 	if err := json.Unmarshal(result, &res); err != nil {
-		return Headroom{}, err
+		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, err)
 	}
-	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil && len(res.RateLimits.RateLimitsByLimitID) == 0 {
+	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil && len(res.RateLimits.RateLimitsByLimitID) == 0 && len(res.RateLimitsByLimitID) == 0 {
 		return Headroom{}, errors.New("codex rateLimits: no primary, secondary, or rateLimitsByLimitId window (unrecognized schema)")
 	}
 
 	h := Headroom{Provider: provider, PlanType: res.RateLimits.PlanType, OrdinaryUsageAllowed: res.OrdinaryUsageAllowed}
-	if res.RateLimits.Credits != nil {
-		h.PaidCreditsAvailable = res.RateLimits.Credits.Available
-	}
+	h.PaidCreditsAvailable = res.RateLimits.Credits.paidCreditsAvailable()
 	windows := map[string]*codexRateLimitWindow{}
 	if res.RateLimits.Primary != nil {
 		windows["primary"] = res.RateLimits.Primary
@@ -703,11 +805,51 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 	if w := res.RateLimits.Secondary; w != nil && w.LimitID != "" {
 		positional[w.LimitID] = true
 	}
+	if res.RateLimits.LimitID != "" {
+		positional[res.RateLimits.LimitID] = true
+	}
 	for id, w := range res.RateLimits.RateLimitsByLimitID {
 		if w == nil || positional[id] {
 			continue
 		}
 		windows[id] = w
+	}
+	for id, snap := range res.RateLimitsByLimitID {
+		if snap == nil {
+			continue
+		}
+		snapID := snap.LimitID
+		if snapID == "" {
+			snapID = id
+		}
+		if positional[snapID] || positional[id] {
+			continue
+		}
+		if snap.PlanType != "" && h.PlanType == "" {
+			h.PlanType = snap.PlanType
+		}
+		if h.PaidCreditsAvailable == nil {
+			h.PaidCreditsAvailable = snap.Credits.paidCreditsAvailable()
+		}
+		if snap.Primary != nil {
+			if snap.Primary.LimitID == "" {
+				snap.Primary.LimitID = snapID
+			}
+			if snap.Primary.LimitName == "" {
+				snap.Primary.LimitName = snap.LimitName
+			}
+			windows[snapID] = snap.Primary
+		}
+		if snap.Secondary != nil {
+			secondaryID := snapID + ":secondary"
+			if snap.Secondary.LimitID != "" {
+				secondaryID = snap.Secondary.LimitID
+			}
+			if snap.Secondary.LimitName == "" {
+				snap.Secondary.LimitName = snap.LimitName
+			}
+			windows[secondaryID] = snap.Secondary
+		}
 	}
 	for id, w := range windows {
 		h.Limits = append(h.Limits, codexLimitWindow(id, w))
@@ -818,7 +960,11 @@ type agyQuotaBucket struct {
 func (p AgyProber) Provider() string { return "google" }
 
 func (p AgyProber) Probe(ctx context.Context) Headroom {
-	out, err := runCLI(ctx, "agy", "--print", "/usage", "--output-format", "json")
+	var env []string
+	if fi, err := os.Stat(sharedCLIHomePath); err == nil && fi.IsDir() {
+		env = append(env, "HOME="+sharedCLIHomePath)
+	}
+	out, err := runCLIWithEnv(ctx, env, "agy", "--print", "/usage", "--output-format", "json")
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
@@ -1072,6 +1218,143 @@ func (p DeepSeekProber) Probe(ctx context.Context) Headroom {
 	return Headroom{Provider: p.Provider(), Available: available, PctRemaining: pct}
 }
 
+// KiroProber probes AWS Kiro read-only usage limits with an API key.
+type KiroProber struct {
+	APIKey       string
+	ThresholdPct int
+	BaseURL      string
+	Client       *http.Client
+}
+
+const kiroUsageBaseURL = "https://q.us-east-1.amazonaws.com"
+const kiroDefaultThresholdPct = 85
+
+func (p KiroProber) Provider() string { return "aws-kiro" }
+
+type kiroUsageLimitsResponse struct {
+	Plan          string          `json:"plan"`
+	Used          flexibleFloat64 `json:"used"`
+	UsedCredits   flexibleFloat64 `json:"usedCredits"`
+	Limit         flexibleFloat64 `json:"limit"`
+	LimitCredits  flexibleFloat64 `json:"limitCredits"`
+	NextDateReset *time.Time      `json:"nextDateReset"`
+}
+
+type flexibleFloat64 struct {
+	value float64
+	set   bool
+}
+
+func (n *flexibleFloat64) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(b, []byte("null")) {
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal(b, &f); err == nil {
+		n.value, n.set = f, true
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return err
+	}
+	n.value, n.set = f, true
+	return nil
+}
+
+func firstSetFloat(values ...flexibleFloat64) (float64, bool) {
+	for _, v := range values {
+		if v.set {
+			return v.value, true
+		}
+	}
+	return 0, false
+}
+
+func (p KiroProber) Probe(ctx context.Context) Headroom {
+	key := strings.TrimSpace(p.APIKey)
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("KIRO_API_KEY"))
+	}
+	if key == "" {
+		return failOpen(p.Provider(), withCause(ProbeCauseNoCredentials, errors.New("kiro usage: KIRO_API_KEY is not configured")))
+	}
+	base := p.BaseURL
+	if base == "" {
+		base = kiroUsageBaseURL
+	}
+	client := p.Client
+	if client == nil {
+		client = &http.Client{Timeout: probeTimeout}
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/", strings.NewReader(`{"origin":"AI_EDITOR","resourceType":"AGENTIC_REQUEST"}`))
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.GetUsageLimits")
+	req.Header.Set("Authorization", key)
+	req.Header.Set("tokentype", "API_KEY")
+	resp, err := client.Do(req)
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return failOpen(p.Provider(), fmt.Errorf("kiro usage HTTP %d", resp.StatusCode))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	var parsed kiroUsageLimitsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return failOpen(p.Provider(), withCause(ProbeCauseUnrecognizedSchema, err))
+	}
+	used, okUsed := firstSetFloat(parsed.UsedCredits, parsed.Used)
+	limit, okLimit := firstSetFloat(parsed.LimitCredits, parsed.Limit)
+	if !okUsed || !okLimit || limit <= 0 {
+		return failOpen(p.Provider(), withCause(ProbeCauseUnrecognizedSchema, errors.New("kiro usage: missing used/limit credits (unrecognized schema)")))
+	}
+	usedPct := int((used/limit)*fullPct + 0.5)
+	if usedPct < 0 {
+		usedPct = 0
+	}
+	if usedPct > fullPct {
+		usedPct = fullPct
+	}
+	threshold := p.ThresholdPct
+	if threshold <= 0 {
+		threshold = kiroDefaultThresholdPct
+	}
+	window := LimitWindow{
+		ID:           "agentic_request",
+		Kind:         "monthly",
+		PercentUsed:  usedPct,
+		PctRemaining: fullPct - usedPct,
+	}
+	if parsed.NextDateReset != nil {
+		window.ResetAt = *parsed.NextDateReset
+	}
+	return Headroom{
+		Provider:     p.Provider(),
+		Available:    usedPct < threshold,
+		PctRemaining: window.PctRemaining,
+		ResetAt:      window.ResetAt,
+		Limits:       []LimitWindow{window},
+		PlanType:     parsed.Plan,
+	}
+}
+
 // Manager runs the rotation loop: it polls provider headroom and answers
 // "should this agent rotate, and where to?".
 type Manager struct {
@@ -1080,6 +1363,11 @@ type Manager struct {
 
 	mu       sync.RWMutex
 	headroom map[string]Headroom
+	lastGood map[string]Headroom
+
+	rateLimitBackoff map[string]time.Duration
+	nextProbeAt      map[string]time.Time
+	lastProbeErrLog  map[string]string
 
 	// Contributor quota reading publisher (kubestellar/hive#6967). When
 	// contributorPublishDir is set, every stored headroom for a guard-supported
@@ -1101,8 +1389,12 @@ type Manager struct {
 // headroom stays unknown, which fails open).
 func NewManager(cfg config.RotationConfig) *Manager {
 	m := &Manager{
-		cfg:      cfg,
-		headroom: make(map[string]Headroom),
+		cfg:              cfg,
+		headroom:         make(map[string]Headroom),
+		lastGood:         make(map[string]Headroom),
+		rateLimitBackoff: make(map[string]time.Duration),
+		nextProbeAt:      make(map[string]time.Time),
+		lastProbeErrLog:  make(map[string]string),
 	}
 	threshold := cfg.EffectiveThreshold()
 	for name, pc := range cfg.Providers {
@@ -1120,6 +1412,8 @@ func NewManager(cfg config.RotationConfig) *Manager {
 			// monthly_allowance the probe reports an explicit unknown — see
 			// CopilotProber.
 			m.probers = append(m.probers, CopilotProber{ThresholdPct: threshold, MonthlyAllowance: pc.MonthlyAllowance})
+		case "aws-kiro":
+			m.probers = append(m.probers, KiroProber{ThresholdPct: threshold})
 		}
 	}
 	return m
@@ -1161,12 +1455,107 @@ func (m *Manager) Start(ctx context.Context) {
 
 func (m *Manager) probeAll(ctx context.Context) {
 	for _, p := range m.probers {
+		now := time.Now()
+		if h, ok := m.staleHeadroomIfBackedOff(p.Provider(), now); ok {
+			m.storeHeadroom(h)
+			m.publishContributorReading(h)
+			continue
+		}
 		h := p.Probe(ctx)
-		m.mu.Lock()
-		m.headroom[p.Provider()] = h
-		m.mu.Unlock()
+		h = m.applyProbeResult(p.Provider(), h, now)
+		m.logProbeFailure(h)
+		m.storeHeadroom(h)
 		m.publishContributorReading(h)
 	}
+}
+
+func (m *Manager) staleHeadroomIfBackedOff(provider string, now time.Time) (Headroom, bool) {
+	m.mu.RLock()
+	next := m.nextProbeAt[provider]
+	last, ok := m.lastGood[provider]
+	m.mu.RUnlock()
+	if next.IsZero() || !now.Before(next) || !ok || now.Sub(last.CapturedAt) > claudeRateLimitStaleTTL {
+		return Headroom{}, false
+	}
+	last.Stale = true
+	last.ProbeErr = withCause(ProbeCauseRateLimited, fmt.Errorf("%s usage probe backed off until %s", provider, next.UTC().Format(time.RFC3339)))
+	last.ProbeErrCause = ProbeCauseRateLimited
+	return last, true
+}
+
+func (m *Manager) applyProbeResult(provider string, h Headroom, now time.Time) Headroom {
+	if h.ProbeErr == nil {
+		if h.CapturedAt.IsZero() {
+			h.CapturedAt = now.UTC()
+		}
+		m.mu.Lock()
+		m.lastGood[provider] = h
+		delete(m.rateLimitBackoff, provider)
+		delete(m.nextProbeAt, provider)
+		m.mu.Unlock()
+		return h
+	}
+	if h.ProbeErrCause != ProbeCauseRateLimited {
+		m.mu.Lock()
+		delete(m.rateLimitBackoff, provider)
+		delete(m.nextProbeAt, provider)
+		m.mu.Unlock()
+		return h
+	}
+	m.mu.Lock()
+	last, ok := m.lastGood[provider]
+	retry := rateLimitRetryAfter(h.ProbeErr)
+	if retry <= 0 {
+		retry = m.rateLimitBackoff[provider]
+		if retry <= 0 {
+			retry = probeRateLimitInitialBackoff
+		} else {
+			retry *= 2
+			if retry > probeRateLimitMaxBackoff {
+				retry = probeRateLimitMaxBackoff
+			}
+		}
+	}
+	m.rateLimitBackoff[provider] = retry
+	m.nextProbeAt[provider] = now.Add(retry)
+	m.mu.Unlock()
+	if ok && now.Sub(last.CapturedAt) <= claudeRateLimitStaleTTL {
+		last.Stale = true
+		last.ProbeErr = h.ProbeErr
+		last.ProbeErrCause = ProbeCauseRateLimited
+		return last
+	}
+	return h
+}
+
+func rateLimitRetryAfter(err error) time.Duration {
+	var rle *rateLimitedError
+	if errors.As(err, &rle) {
+		return rle.retryAfter
+	}
+	return 0
+}
+
+func (m *Manager) storeHeadroom(h Headroom) {
+	m.mu.Lock()
+	m.headroom[h.Provider] = h
+	m.mu.Unlock()
+}
+
+func (m *Manager) logProbeFailure(h Headroom) {
+	if h.ProbeErr == nil {
+		return
+	}
+	msg := h.ProbeError()
+	key := h.Provider + "\x00" + string(h.ProbeErrCause) + "\x00" + msg
+	m.mu.Lock()
+	if m.lastProbeErrLog[h.Provider] == key {
+		m.mu.Unlock()
+		return
+	}
+	m.lastProbeErrLog[h.Provider] = key
+	m.mu.Unlock()
+	slog.Warn("provider headroom probe failed", "provider", h.Provider, "cause", h.ProbeErrCause, "error", msg)
 }
 
 // SetHeadroom records a headroom observation directly (tests, external feeds).
@@ -1328,6 +1717,8 @@ func (m *Manager) StrandRecovered(backend string) bool {
 type HeadroomResponse struct {
 	Providers []Headroom `json:"providers"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	Enabled   bool       `json:"enabled"`
+	Readings  bool       `json:"readings"`
 }
 
 // HeadroomResponse snapshots the last known headroom for every provider.
@@ -1343,5 +1734,5 @@ func (m *Manager) HeadroomResponse() HeadroomResponse {
 	for _, name := range names {
 		providers = append(providers, m.headroom[name])
 	}
-	return HeadroomResponse{Providers: providers, UpdatedAt: time.Now()}
+	return HeadroomResponse{Providers: providers, UpdatedAt: time.Now(), Readings: len(providers) > 0}
 }

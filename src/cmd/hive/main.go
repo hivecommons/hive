@@ -1412,6 +1412,7 @@ func (b *boot) wireBootClosures() {
 			Scheduler:            b.sched,
 			MetricsCollector:     b.metricsCollector,
 			RotationMgr:          b.rotationMgr,
+			HeadroomPublisher:    b.quotaReadingPublisher,
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.

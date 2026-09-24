@@ -602,7 +602,7 @@ function quotaPoolActive() { return quotaPool !== null; }
 // the pool directory, so "no reading yet" is a transient startup/torn state to
 // HOLD on, not the permanent `unprovisioned` admit an unsupported backend gets.
 // `pi` fronts anthropic and `gemini` fronts google in the default rotation set.
-const QUOTA_GUARD_SUPPORTED_BACKENDS = new Set(['claude', 'pi', 'codex', 'agy', 'gemini']);
+const QUOTA_GUARD_SUPPORTED_BACKENDS = new Set(['claude', 'pi', 'codex', 'agy', 'gemini', 'kiro']);
 const quotaBackendSupported = QUOTA_GUARD_SUPPORTED_BACKENDS.has(BACKEND);
 
 // The pool-keyed reading file the Go publisher writes and this relay reads when

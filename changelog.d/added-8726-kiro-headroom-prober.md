@@ -1,0 +1,1 @@
+- Add #8726: probe read-only Kiro usage limits when an `aws-kiro` provider and `KIRO_API_KEY` are configured.

@@ -1,0 +1,1 @@
+- Fix #8718: expose publish-only headroom readings from `/api/providers/headroom` while keeping rotation disabled.
