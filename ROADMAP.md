@@ -302,10 +302,28 @@ discipline):
   with no publication credentials, defaults off behind
   `runs.external.flue`, and the adapter links into the binary only under
   the `extwork_flue` build tag; the first
-  proving workload is a report-only audit campaign. Remaining constituents
-  (#8301–#8319, #8345–#8364) are ticked off on #8290 as they merge; no
-  store, CRD, DSL or GitHub credentials are added to the pilot and every
-  surface goes through the existing guard invariant.
+  proving workload is a report-only audit campaign. The **second proving
+  workload** — a code-migration graph (Crustify's C/C++-to-Rust migration
+  via Wavefront) whose units are migration nodes with dependencies,
+  checkpointed progress, and no pull requests until the end — is also
+  built: the `wavefront` `worksource` migration-graph source
+  ([#8392](https://github.com/hivecommons/hive/pull/8392)), the Wavefront
+  smoke canary
+  ([#8521](https://github.com/hivecommons/hive/pull/8521)), completed
+  wavefront items
+  ([#8525](https://github.com/hivecommons/hive/pull/8525)), and
+  queue/burndown fixes for fixture keys
+  ([#8548](https://github.com/hivecommons/hive/pull/8548),
+  [#8552](https://github.com/hivecommons/hive/pull/8552)) are merged
+  (design: [#8362](https://github.com/hivecommons/hive/issues/8362)).
+  Proving the run model works across *both* workloads together —
+  including the 18 gaps enumerated in
+  [#8460](https://github.com/hivecommons/hive/issues/8460) — is tracked as
+  still open in
+  [#8466](https://github.com/hivecommons/hive/issues/8466). Remaining
+  constituents (#8301–#8319, #8345–#8364) are ticked off on #8290 as they
+  merge; no store, CRD, DSL or GitHub credentials are added to the pilot
+  and every surface goes through the existing guard invariant.
 - Named for later, not scheduled: Jira (mirroring the Linear agent), an
   IDE extension over the dashboard API, a subscribable calendar feed of
   scheduled kicks.
