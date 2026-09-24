@@ -46,7 +46,7 @@ func repoCardConstLine(t *testing.T, html, name string) string {
 func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		".repo-grid { --repo-cols: 4; --repo-gap: 8px; display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }",
+		".repo-grid { --repo-cols: 4; --repo-gap: var(--sp-4); display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }",
 		// The default basis is a quarter of the row: at most four cards
 		// across, so pill rows are readable instead of squashed six-wide.
 		"flex: 1 1 calc((100% - (var(--repo-cols) - 1) * var(--repo-gap)) / var(--repo-cols));",
@@ -65,7 +65,7 @@ func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 	// The track-sizing rules are gone. Either one left behind would pin every
 	// card to the same width again and the drag would do nothing visible.
 	for _, gone := range []string{
-		".repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }",
+		".repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); }",
 		"body.light-mode .repo-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }",
 		"flex: 1 1 240px;",
 		"body.light-mode .repo-card { flex-basis: 200px; }",

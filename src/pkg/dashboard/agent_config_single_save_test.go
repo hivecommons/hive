@@ -128,7 +128,7 @@ func TestModalScrollContainment(t *testing.T) {
 		"resize:vertical;white-space:pre;tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain",
 		"display:none;flex:1;min-height:300px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain",
 		"max-height:120px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain",
-		`id="import-paste-input" rows="20" style="width:100%;font-family:var(--font-mono);font-size:0.75rem;resize:vertical;min-height:300px;overscroll-behavior:contain;overscroll-behavior-y:contain`,
+		`id="import-paste-input" rows="20" style="width:100%;font-family:var(--font-mono);font-size:var(--fs-sm);resize:vertical;min-height:300px;overscroll-behavior:contain;overscroll-behavior-y:contain`,
 		`tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain">Loading...</textarea>`,
 	} {
 		if !strings.Contains(html, snippet) {
