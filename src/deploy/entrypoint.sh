@@ -1768,7 +1768,7 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
         else
         echo "[entrypoint] FATAL: this node's kernel is missing netfilter module(s) required by the forced-egress gate: ${_ipt_missing_modules}." >&2
         echo "[entrypoint] FATAL: without them the HIVE_PROXY chain would redirect nothing, so agents holding raw tokens could reach the network unproxied while the spoke reported healthy. Refusing to start." >&2
-        echo "[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in (for example /etc/modules-load.d/hive-netfilter.conf containing xt_owner and xt_REDIRECT), so they survive a node rebuild. Until then, taint or label the node so hive pods are not scheduled onto it." >&2
+        echo "[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in (for example /etc/modules-load.d/hive-netfilter.conf containing xt_owner and xt_REDIRECT), so they survive a node rebuild; with no node reboot, apply the node-prep DaemonSet src/deploy/k8s/node-prep/hive-netfilter-modules.yaml (see src/docs/net-admin-requirement.md). Until then, taint or label the node so hive pods are not scheduled onto it." >&2
         echo "[entrypoint] FATAL: exiting ${EXIT_NET_ADMIN_REQUIRED} (EX_NOPERM) rather than 1 - see EXIT_NET_ADMIN_REQUIRED near the top of entrypoint.sh." >&2
         exit "$EXIT_NET_ADMIN_REQUIRED"
         fi

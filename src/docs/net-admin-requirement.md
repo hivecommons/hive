@@ -128,8 +128,23 @@ there; the kernel simply has nothing to grant access *to*. The durable fix is
 loading the modules on the node so they survive a node rebuild — on
 OpenShift/RHCOS, a MachineConfig writing an `/etc/modules-load.d/` drop-in
 (for example `/etc/modules-load.d/hive-netfilter.conf` containing `xt_owner`
-and `xt_REDIRECT`). Until then, taint or label the node so hive pods are not
-scheduled onto it. `HIVE_PROXY_ADVISORY_OK=true` remains the explicit opt-out
+and `xt_REDIRECT`). A MachineConfig rolling-reboots every node in the pool,
+though, which is often unacceptable on a shared or GPU cluster. The no-reboot
+alternative is the node-prep DaemonSet shipped at
+[`src/deploy/k8s/node-prep/hive-netfilter-modules.yaml`](../deploy/k8s/node-prep/hive-netfilter-modules.yaml):
+
+```bash
+kubectl apply -f src/deploy/k8s/node-prep/hive-netfilter-modules.yaml
+kubectl -n hive-node-prep logs -l app=hive-netfilter-modules --prefix   # "loaded xt_REDIRECT" per node
+```
+
+It runs one tiny privileged pod per worker that `modprobe`s the modules into the
+host kernel (via `chroot /host`). It re-checks every five minutes, and because
+it restarts with the node, it reloads the modules after a reboot. Apply it once
+per cluster, not per hive. Then delete the crashlooping hive pod so it
+reschedules. Used on the vllm-d cluster (2026-09-24), where one worker lacked
+`xt_REDIRECT` and six lacked `xt_owner`. Until one of the two is in place,
+taint or label the node so hive pods are not scheduled onto it. `HIVE_PROXY_ADVISORY_OK=true` remains the explicit opt-out
 here too: the spoke starts with the gate unenforced and logs a WARN saying
 agents can bypass the proxy on this node.
 
