@@ -18240,6 +18240,68 @@
         }
       }
     },
+    "/api/reviewer/accuracy": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reviewer verdict accuracy",
+        "description": "Calibrates recorded reviewer verdicts against PR outcomes and cached GitHub rework history. Returns false-approve and false-block rates with sample counts, plus confidence buckets, per perspective and reviewer model.",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            },
+            "description": "Window in days, keyed on when the verdict was recorded. Defaults to HIVE_REVIEWER_ACCURACY_WINDOW_DAYS or 30."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reviewer accuracy summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "perspectives": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewerAccuracyGroup"
+                      }
+                    },
+                    "reviewer_models": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewerAccuracyGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "days out of range"
+          }
+        }
+      }
+    },
     "/api/config/variables": {
       "get": {
         "tags": [
@@ -21961,6 +22023,61 @@
   },
   "components": {
     "schemas": {
+      "ReviewerAccuracyGroup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "samples": {
+            "type": "integer"
+          },
+          "approvals": {
+            "type": "integer"
+          },
+          "blocks": {
+            "type": "integer"
+          },
+          "false_approvals": {
+            "type": "integer"
+          },
+          "false_blocks": {
+            "type": "integer"
+          },
+          "false_approve_rate": {
+            "type": "number"
+          },
+          "false_block_rate": {
+            "type": "number"
+          },
+          "confidence_buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "type": "string"
+                },
+                "samples": {
+                  "type": "integer"
+                },
+                "merged": {
+                  "type": "integer"
+                },
+                "bad_outcomes": {
+                  "type": "integer"
+                },
+                "merge_rate": {
+                  "type": "number"
+                },
+                "bad_outcome_rate": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
       "HiveAdviceSignal": {
         "type": "object",
         "properties": {

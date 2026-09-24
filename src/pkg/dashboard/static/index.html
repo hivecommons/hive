@@ -7858,6 +7858,8 @@
     let govPRModelsSort = 'effectiveness';
     let govPRModelsLoading = false;
     let govPRModelsData = null;
+    let reviewerAccuracyLoading = false;
+    let reviewerAccuracyData = null;
 
     function setGovernorPRModelsWindow(windowName) {
       govPRModelsWindow = ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
@@ -7898,6 +7900,42 @@
         govPRModelsLoading = false;
         if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
       }
+    }
+
+    async function loadReviewerAccuracy(force) {
+      if (reviewerAccuracyLoading) return;
+      if (!force && reviewerAccuracyData) return;
+      reviewerAccuracyLoading = true;
+      try {
+        const res = await fetch('/api/reviewer/accuracy');
+        reviewerAccuracyData = res.ok ? await res.json() : { samples: 0, perspectives: [], reviewer_models: [] };
+      } catch (_) {
+        reviewerAccuracyData = { samples: 0, perspectives: [], reviewer_models: [] };
+      } finally {
+        reviewerAccuracyLoading = false;
+        if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
+      }
+    }
+
+    function renderReviewerAccuracyTile() {
+      const data = reviewerAccuracyData;
+      const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
+      if (!data) {
+        return '<div class="gov-pr-models"><div class="gov-pr-models-head"><div><div class="gov-pr-models-title">Reviewer accuracy</div><div class="gov-pr-model-sub">Loading verdict calibration…</div></div></div></div>';
+      }
+      const perspectives = data.perspectives || [];
+      const models = data.reviewer_models || [];
+      const row = g => `<tr><td>${escapeHtml(g.name || 'unknown')}</td><td>${pct(g.false_approve_rate)} <span class="gov-pr-model-sub">(${g.false_approvals || 0}/${g.approvals || 0})</span></td><td>${pct(g.false_block_rate)} <span class="gov-pr-model-sub">(${g.false_blocks || 0}/${g.blocks || 0})</span></td><td>${g.samples || 0}</td></tr>`;
+      const modelLine = models.slice(0, 4).map(g => `${escapeHtml(g.name || 'unknown')}: FA ${pct(g.false_approve_rate)} (${g.false_approvals || 0}/${g.approvals || 0}) · FB ${pct(g.false_block_rate)} (${g.false_blocks || 0}/${g.blocks || 0})`).join('<br>');
+      const conf = models.flatMap(g => (g.confidence_buckets || []).map(b => ({...b, model: g.name || 'unknown'}))).slice(0, 8);
+      const confLine = conf.length ? `<div class="gov-pr-model-reworked"><div class="gov-pr-model-reworked-title">Confidence calibration by model</div><ol>${conf.map(b => `<li>${escapeHtml(b.model)} score ${escapeHtml(b.bucket)}: merge ${pct(b.merge_rate)} · bad ${pct(b.bad_outcome_rate)} · n=${b.samples || 0}</li>`).join('')}</ol></div>` : '';
+      const table = perspectives.length ? `<table class="gov-pr-model-table" aria-label="Reviewer accuracy by perspective"><thead><tr><th>Perspective</th><th>false approve</th><th>false block</th><th>sample</th></tr></thead><tbody>${perspectives.map(row).join('')}</tbody></table>` : '<div class="gov-pr-models-empty">No calibrated verdicts in the window yet.</div>';
+      return `<div class="gov-pr-models">
+        <div class="gov-pr-models-head"><div><div class="gov-pr-models-title">Reviewer accuracy</div><div class="gov-pr-model-sub">${data.samples || 0} verdict sample${(data.samples || 0) === 1 ? '' : 's'} · last ${data.window_days || 30}d</div></div></div>
+        ${table}
+        ${modelLine ? `<div class="gov-pr-model-sub" style="margin-top:var(--sp-2)">${modelLine}</div>` : ''}
+        ${confLine}
+      </div>`;
     }
 
     function renderGovernorPRModelsTile() {
@@ -8026,6 +8064,7 @@
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
       const holdSpark = sparkline('govHold');
       loadGovernorPRModels(false);
+      loadReviewerAccuracy(false);
 
       el.innerHTML = `
         <div class="gov-title">Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
@@ -8083,6 +8122,7 @@
         </div>
         ${renderBudgetBar(data.budget || {})}
         ${renderGovernorPRModelsTile()}
+        ${renderReviewerAccuracyTile()}
         ${renderCadenceMatrix(cadenceMatrix, currentMode, modes)}`;
     }
 
