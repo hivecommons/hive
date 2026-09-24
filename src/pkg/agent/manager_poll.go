@@ -55,12 +55,27 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				showsLogin = true
 				loginStreak++
 			} else {
+				// The streak resets unconditionally: its job is only to
+				// require the login line to PERSIST across consecutive polls,
+				// so any poll without one legitimately restarts the count.
 				loginStreak = 0
-				// The prompt cleared, so a future "token appeared, nudge it"
-				// restart is a fresh theory rather than a repeat of one that
-				// already failed. Reset both halves of the cap together.
-				agent.tokenRestartAttempts = 0
-				agent.tokenRestartGaveUp = false
+				// The CAP does not. "No login prompt" is not the same claim as
+				// "the login cleared" — a booting pane shows neither, and a
+				// boot is exactly what a token restart just caused. Resetting
+				// here unconditionally meant the give-up latch was wiped by the
+				// boot pane of its own remedy and the cap could never hold
+				// (#6578/#8711). shouldResetTokenRestartCap demands positive
+				// evidence instead; see it for the two conditions and why both.
+				m.mu.RLock()
+				startedAt := agent.StartedAt
+				m.mu.RUnlock()
+				if agent.shouldResetTokenRestartCap(paneHasCLIMarker(strings.Join(tail, "\n")), startedAt, time.Now()) {
+					// A future "token appeared, nudge it" restart is now a
+					// fresh theory rather than a repeat of one that already
+					// failed. Reset both halves of the cap together.
+					agent.tokenRestartAttempts = 0
+					agent.tokenRestartGaveUp = false
+				}
 			}
 
 			agent.paneMu.Lock()

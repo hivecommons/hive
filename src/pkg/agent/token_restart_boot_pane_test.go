@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +60,25 @@ func TestPaneFixturesMatchTheProductionDetectors(t *testing.T) {
 	}
 	if login, cli := paneFacts(t, readyPane); login || !cli {
 		t.Fatalf("ready pane: showsLogin=%v hasCLI=%v, want false/true", login, cli)
+	}
+}
+
+func TestPollerUsesTokenRestartCapResetGate(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	managerPoll := filepath.Join(filepath.Dir(file), "manager_poll.go")
+	src, err := os.ReadFile(managerPoll)
+	if err != nil {
+		t.Fatalf("read manager_poll.go: %v", err)
+	}
+	if !strings.Contains(string(src), "shouldResetTokenRestartCap(") {
+		t.Fatal("pollTmuxOutputForAgent must call shouldResetTokenRestartCap; otherwise the boot pane re-arms the restart storm (#8711)")
+	}
+	if strings.Contains(string(src), "agent.tokenRestartAttempts = 0\n\t\t\t\tagent.tokenRestartGaveUp = false") &&
+		!strings.Contains(string(src), "if agent.shouldResetTokenRestartCap") {
+		t.Fatal("poller resets token restart attempts without the cap reset gate")
 	}
 }
 
