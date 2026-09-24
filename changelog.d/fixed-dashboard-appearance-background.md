@@ -1,0 +1,1 @@
+- The dashboard Appearance settings now visibly apply configured background images, opacity, and honeycomb watermarks instead of hiding the generated layer behind the page background.
