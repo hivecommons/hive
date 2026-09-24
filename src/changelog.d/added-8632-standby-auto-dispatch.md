@@ -1,0 +1,1 @@
+- Add opt-in automatic standby dispatch per lane, preserving the existing qualification, cap, floor, suspension and hold-gated PR path.

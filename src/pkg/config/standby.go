@@ -69,6 +69,10 @@ type StandbyConfig struct {
 	// Enabled offers this lane's queue to approved standby contributors when
 	// it is paused for budget. Off is the zero value.
 	Enabled bool `yaml:"enabled" json:"enabled,omitempty"`
+	// AutoDispatch lets Hive hand this lane's paused queue to qualified standby
+	// contributors without an owner pressing the manual dispatch control.
+	// Default off: S8 is opt-in per lane and preserves S5's hold-gated path.
+	AutoDispatch bool `yaml:"auto_dispatch,omitempty" json:"auto_dispatch,omitempty"`
 	// MinModelCapability is the lane's FLOOR: the weakest capability tier a
 	// donated configuration may have and still be offered this lane's work.
 	// Absent means StandbyDefaultFloor (T1).

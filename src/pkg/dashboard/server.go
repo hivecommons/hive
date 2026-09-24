@@ -2039,6 +2039,10 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.lastFullBroadcast = time.Now()
 	s.statusMu.Unlock()
 
+	if s.contributeHub != nil {
+		s.contributeHub.AutoDispatchStandby(status.Governor.SuppressedLanes)
+	}
+
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
 	// #4298: fold the budget window into per-window history so a closed window's

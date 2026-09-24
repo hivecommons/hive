@@ -721,10 +721,18 @@ the same per-lane split `buildLaneQueueDepths` uses for the N beside it.
 
 ### S8 — Automatic dispatch, opt-in per lane
 
-`src/pkg/config/config.go` (`standby.auto_dispatch`, default `false`) ·
-`src/pkg/dashboard/contribute_ws.go` (the automatic path reuses `Qualifies`, the
-cap, the floor and the hold unchanged). Gated on S5 evidence from a live hive,
-per the RFC.
+`src/pkg/config/standby.go` (`standby.auto_dispatch`, default `false`) ·
+`src/pkg/dashboard/contribute_standby_dispatch.go` (the automatic path reuses
+`DispatchStandby`, and therefore reuses `Qualifies`, the cap, the floor and the
+hold unchanged). Gated on S5 evidence from a real-hive runbook, per the RFC.
+
+**As built.** `auto_dispatch` is a per-lane standby flag and remains off unless
+an owner edits `hive.yaml`. When the governor publishes a lane as paused for
+budget, Hive attempts automatic dispatch only for lanes with both `enabled` and
+`auto_dispatch` set. The automatic path calls the manual standby dispatcher with
+no contributor key, so zero qualified contributors, exhausted caps, below-floor
+configurations, suspended contributors, ACMM mode ceilings and hold-gated PR
+completion all behave exactly as the manual path does.
 
 ## Test plan
 
@@ -834,7 +842,8 @@ construction. The live-hive runbook above stays a human's job.
   standby consumes it; until then, "unmapped is unknown is not qualified" is the
   safe default and the out-of-the-box behaviour.
 - **Automatic dispatch policy.** S8 exists in the phase map and is deliberately
-  last, opt-in, and conditioned on evidence from S5.
+  last, opt-in, and conditioned on evidence from S5. As shipped, the policy is
+  per-lane `standby.auto_dispatch: true`; the default is still false.
 - **Cross-hive standby.** A contributor standing by for several hives is
   multiple independent relationships here; federation of standby state is out of
   scope.

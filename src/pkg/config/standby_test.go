@@ -212,6 +212,22 @@ func TestStandby_DailyCapDefaultsToZero(t *testing.T) {
 	}
 }
 
+func TestStandby_AutoDispatchDefaultsOffAndParsesOptIn(t *testing.T) {
+	cfg := mustLoadStandby(t, `    standby:
+      min_model_capability: T2
+`, "")
+	if cfg.Agents["quality"].Standby.AutoDispatch {
+		t.Error("AutoDispatch = true, want false by default")
+	}
+	cfg = mustLoadStandby(t, `    standby:
+      auto_dispatch: true
+      min_model_capability: T2
+`, "")
+	if !cfg.Agents["quality"].Standby.AutoDispatch {
+		t.Error("AutoDispatch = false, want true when explicitly configured")
+	}
+}
+
 func TestStandby_NegativeDailyCapIsLoadError(t *testing.T) {
 	_, err := loadStandby(t, `    standby:
       daily_cap_per_contributor: -1

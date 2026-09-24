@@ -94,6 +94,30 @@ func (h *ContributeWSHub) DispatchStandby(lane, key string) (*WSMessage, error) 
 	return h.assignStandbyTask(cand.conn, item, lane, cand.tier, cand.state)
 }
 
+// AutoDispatchStandby runs S8's opt-in automatic path for lanes currently
+// paused by the governor. It deliberately reuses DispatchStandby, so the manual
+// path remains the single implementation of qualification, caps, floors,
+// suspension checks, task packaging and hold-gated completion.
+func (h *ContributeWSHub) AutoDispatchStandby(lanes []string) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return
+	}
+	cfg := h.server.deps.Config
+	for _, lane := range lanes {
+		lane = strings.ToLower(strings.TrimSpace(lane))
+		if lane == "" {
+			continue
+		}
+		standby := cfg.Agents[lane].Standby
+		if standby == nil || !standby.Enabled || !standby.AutoDispatch {
+			continue
+		}
+		if _, err := h.DispatchStandby(lane, ""); err != nil {
+			h.logger.Info("[contribute-ws] standby auto dispatch skipped", "lane", lane, "reason", err.Error())
+		}
+	}
+}
+
 func standbyModeCeilingReason(cfg *config.Config, lane string) string {
 	if cfg == nil {
 		return "missing config"
@@ -113,6 +137,9 @@ func standbyModeCeilingReason(cfg *config.Config, lane string) string {
 func (h *ContributeWSHub) standbyDispatchItem(lane, key string) (ReadyQueueItem, error) {
 	snap := h.admissionQueueSnapshot(readyQueueDefaultLimit, withheldNone)
 	for _, it := range snap.queue {
+		if it.Held {
+			continue
+		}
 		if key != "" && it.identityKey() != key {
 			continue
 		}
@@ -180,6 +207,10 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 		return nil, fmt.Errorf("standby contributor unavailable")
 	}
 	h.selectMu.Lock()
+	if h.standbyItemActive(item.identityKey()) {
+		h.selectMu.Unlock()
+		return nil, fmt.Errorf("standby item %q is already assigned", item.identityKey())
+	}
 	c.mu.Lock()
 	if c.currentTask != nil {
 		c.mu.Unlock()
@@ -286,6 +317,24 @@ func (h *ContributeWSHub) assignStandbyTask(c *ContributorConnection, item Ready
 	})
 	h.addActivity(c.profile.GitHubUsername, "standby dispatched", c.role, state.CLIBackend, state.Model, state.ReasoningEffort, taskDescOf(assignment), c.advisor())
 	return msg, nil
+}
+
+func (h *ContributeWSHub) standbyItemActive(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, conn := range h.connections {
+		conn.mu.Lock()
+		active := conn.currentTask != nil && conn.currentTask.identityKey() == key
+		conn.mu.Unlock()
+		if active {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *ContributeWSHub) applyDonatedHold(prURL string) error {
