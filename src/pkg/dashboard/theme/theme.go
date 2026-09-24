@@ -296,10 +296,6 @@ func CSS(th Theme) (string, error) {
 	b.WriteString("}\nbody.light-mode{\n")
 	if len(th.LightTokens) > 0 {
 		writeTokenBlock(&b, compileTokens(th.LightTokens))
-	} else if th.Dark {
-		if light, ok := Builtin(DefaultLightID); ok {
-			writeTokenBlock(&b, compileTokens(light.Tokens))
-		}
 	} else {
 		writeTokenBlock(&b, rootTokens)
 	}

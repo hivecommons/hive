@@ -2086,7 +2086,7 @@
     .config-info:hover { background: var(--blue); border-color: var(--blue); color: var(--bg); }
 
     .theme-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:var(--sp-5); margin:12px 0 18px; }
-    .theme-card { border:1px solid var(--border); border-radius:10px; padding:var(--sp-5); background:var(--surface); cursor:pointer; transition:border-color .15s, transform .15s, box-shadow .15s; }
+    .theme-card { border:1px solid var(--border); border-radius:10px; padding:var(--sp-5); background:var(--surface); transition:border-color .15s, transform .15s, box-shadow .15s; }
     .theme-card:hover, .theme-card.preview { transform:translateY(-1px); border-color:var(--accent); box-shadow:0 6px 18px color-mix(in srgb, var(--accent) 18%, transparent); }
     .theme-card.active { border-color:var(--amber); box-shadow:0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent); }
     .theme-swatches { display:flex; height:30px; border-radius:7px; overflow:hidden; border:1px solid rgba(255,255,255,.12); margin-bottom:var(--sp-4); }
@@ -4199,7 +4199,6 @@
       const next = LAYOUT_MODES[(idx + 1) % LAYOUT_MODES.length];
       setLayout(next);
       applyLayout(next);
-      switchThemeVariantForLayout(next);
     }
     // Body scroll-lock while ANY modal overlay is open — otherwise wheel
     // scrolling leaks through the backdrop to the dashboard behind it. A
@@ -16360,6 +16359,7 @@ function burnAreaChart() {
     function hiveDispatchAction(attr, event) {
       const el = event.target.closest ? event.target.closest('[data-' + attr + ']') : null;
       if (!el) return false;
+      if ((attr === 'mouseover-action' || attr === 'mouseout-action') && event.relatedTarget && el.contains(event.relatedTarget)) return false;
       const camel = attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       const action = el.dataset[camel];
       if (!action) return false;
@@ -19805,19 +19805,24 @@ function burnAreaChart() {
       const bg = overrides.background || {};
       const customCSS = overrides.custom_css || '';
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
-      const cards = (_themeState.catalog || []).map(t => {
+      const themeCard = (t) => {
         const tok = t.tokens || {};
-        const colors = t.swatches || [tok['--surface-0'] || '#111', tok['--surface-2'] || '#222', tok['--brand'] || tok['--status-info'] || '#80bfff', tok['--text'] || '#fff'];
-        return '<div class="theme-card' + (t.id === current ? ' active' : '') + '" data-action="themePreview" data-theme-id="' + esc(t.id) + '" data-mouseover-action="themePreview" data-mouseout-action="themePreviewClear">'
+        const colors = t.swatches || [tok['--surface-0'] || '#111', tok['--surface-2'] || '#222', tok['--accent'] || tok['--brand'] || tok['--status-info'] || '#80bfff', tok['--text'] || '#fff'];
+        return '<div class="theme-card' + (t.id === current ? ' active' : '') + '" data-theme-id="' + esc(t.id) + '" data-mouseover-action="themePreview" data-mouseout-action="themePreviewClear">'
           + '<div class="theme-swatches">' + colors.map(c => '<span class="theme-swatch" style="background:' + esc(c) + '"></span>').join('') + '</div>'
           + '<div class="theme-title">' + esc(t.name || t.id) + (t.dark ? ' 🌙' : ' ☀') + '</div>'
           + '<div class="theme-desc">' + esc(t.description || '') + '</div>'
           + '<button class="hv-btn btn-secondary btn" data-action="applyThemePreset" data-theme-id="' + esc(t.id) + '" data-stop="1">Apply</button></div>';
-      }).join('');
+      };
+      const catalog = _themeState.catalog || [];
+      const dashboardThemes = catalog.filter(t => !String(t.id || '').startsWith('contributor-'));
+      const profileThemes = catalog.filter(t => String(t.id || '').startsWith('contributor-'));
+      const cards = '<div class="theme-gallery-section"><div class="section-label">Dashboard themes</div><div class="theme-gallery">' + dashboardThemes.map(themeCard).join('') + '</div></div>'
+        + (profileThemes.length ? '<div class="theme-gallery-section"><div class="section-label">Contributor profile styles</div><div class="theme-gallery">' + profileThemes.map(themeCard).join('') + '</div></div>' : '');
       return '<div id="theme-config-root">'
         + '<p style="font-size:.8rem;color:var(--muted);margin-bottom:var(--sp-5)">Choose a hive-wide dashboard theme. Owners can layer safe CSS tokens, a background image, and capped custom CSS on top of any preset.</p>'
         + '<div class="theme-actions"><button class="hv-btn btn-secondary btn" data-action="resetThemeToPreset">Reset to preset</button><button class="hv-btn btn-secondary btn" data-action="saveThemeOverrides">Apply background/CSS</button><span style="color:var(--muted);font-size:.76rem">Current: <code>' + esc(current) + '</code></span></div>'
-        + '<div class="theme-gallery">' + cards + '</div>'
+        + cards
         + '<div class="config-field-row"><div class="config-field"><label>Background image URL</label><input id="theme-bg-url" type="text" value="' + esc(bg.image || '') + '" placeholder="https://example.org/background.svg"></div>'
         + '<div class="config-field"><label>Background opacity: <span id="theme-bg-opacity-value">' + esc(String(bg.opacity || 0.08)) + '</span></label><input id="theme-bg-opacity" type="range" min="0" max="1" step="0.01" value="' + esc(String(bg.opacity || 0.08)) + '" data-input-action="updateThemeOpacityLabel"></div></div>'
         + '<label class="config-toggle" style="margin:4px 0 14px"><span class="config-toggle-switch' + (honeyOn ? ' on' : '') + '" data-action="toggleHoneycombWatermark"></span><span class="config-toggle-label">Use honeycomb watermark</span></label>'
@@ -19831,7 +19836,7 @@ function burnAreaChart() {
         const res = await fetch('/api/config/dashboard/theme');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'failed to load theme config');
-        const listRes = await fetch('/api/themes');
+        const listRes = await fetch('/api/themes?scope=dashboard');
         const listData = listRes.ok ? await listRes.json() : { themes: data.catalog || [] };
         _themeState = Object.assign({loaded:true}, data, { catalog: listData.themes || data.catalog || [] });
         if (_configState.tab === 'Appearance') document.getElementById('config-body').innerHTML = renderGovAppearance();
@@ -19856,7 +19861,10 @@ function burnAreaChart() {
       if (!res.ok) throw new Error(data.error || 'theme update failed');
       _themeState = Object.assign({loaded:true, catalog:_themeState.catalog || []}, data);
       const link = document.getElementById('hive-theme-css');
-      if (link) link.href = '/api/theme.css?v=' + Date.now();
+      if (link) {
+        _themeBaseHref = '/api/theme.css?v=' + Date.now();
+        link.href = _themeBaseHref;
+      }
       if (_configState.tab === 'Appearance') document.getElementById('config-body').innerHTML = renderGovAppearance();
       return data;
     }
@@ -19864,16 +19872,25 @@ function burnAreaChart() {
     async function saveThemeOverrides() { try { await putTheme(_themeState.theme || 'hive', selectedThemeOverrides()); showToast('Appearance saved', 'success'); } catch(e) { showToast(e.message, 'error'); } }
     async function resetThemeToPreset() { try { await putTheme(_themeState.theme || 'hive', {}); showToast('Theme overrides reset', 'success'); } catch(e) { showToast(e.message, 'error'); } }
     function toggleHoneycombWatermark() { const input=document.getElementById('theme-bg-url'); if(!input) return; input.value = input.value === HONEYCOMB_WATERMARK ? '' : HONEYCOMB_WATERMARK; const bg = input.value ? { image: input.value, opacity: parseFloat((document.getElementById('theme-bg-opacity') || {}).value || '0.08'), attachment:'fixed' } : null; _themeState.theme_overrides = Object.assign({}, _themeState.theme_overrides || {}, bg ? {background:bg} : {background:null}); document.getElementById('config-body').innerHTML = renderGovAppearance(); }
-    function themePreview() { const id=this && this.dataset && this.dataset.themeId; document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('preview', c.dataset.themeId === id)); const link=document.getElementById('hive-theme-css'); if(link&&id) link.href='/api/theme.css?theme=' + encodeURIComponent(id) + '&preview=' + Date.now(); }
-    function themePreviewClear() { document.querySelectorAll('.theme-card.preview').forEach(c => c.classList.remove('preview')); const link=document.getElementById('hive-theme-css'); if(link) link.href='/api/theme.css?v=' + Date.now(); }
-    async function switchThemeVariantForLayout(mode) {
-      if (!_themeState.loaded) { try { const r=await fetch('/api/config/dashboard/theme'); if(r.ok) _themeState=Object.assign({loaded:true}, await r.json()); } catch {} }
-      const current = _themeState.theme || '';
-      let next = '';
-      if (mode === 'light') next = current === 'hive' || current === 'hive-dark' || current === 'openclaw' ? 'hive-light' : (!current || current === 'hive-light' || current === 'openclaw-light' ? '' : 'hive-light');
-      if (mode === 'dark') next = current === 'hive-light' || current === 'openclaw-light' ? 'hive' : (!current || current === 'hive' || current === 'hive-dark' ? '' : 'hive');
-      if (next) { try { await putTheme(next, _themeState.theme_overrides || {}); } catch {} }
+    const _themePreviewHrefs = new Map();
+    let _themeBaseHref = '/api/theme.css';
+    function themeStylesheetHref(id) {
+      const key = id || '';
+      if (!key) return _themeBaseHref;
+      if (!_themePreviewHrefs.has(key)) _themePreviewHrefs.set(key, '/api/theme.css?theme=' + encodeURIComponent(key));
+      return _themePreviewHrefs.get(key);
     }
+    function setThemeStylesheet(id) {
+      const link = document.getElementById('hive-theme-css');
+      if (!link) return;
+      const href = themeStylesheetHref(id);
+      const current = new URL(link.getAttribute('href') || '', window.location.href);
+      const next = new URL(href, window.location.href);
+      if (current.pathname === next.pathname && current.search === next.search) return;
+      link.href = href;
+    }
+    function themePreview() { const id=this && this.dataset && this.dataset.themeId; document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('preview', c.dataset.themeId === id)); if(id) setThemeStylesheet(id); }
+    function themePreviewClear() { document.querySelectorAll('.theme-card.preview').forEach(c => c.classList.remove('preview')); setThemeStylesheet(''); }
 
     // looksLikeApiKeyValue mirrors the server-side guardrail: env var
     // NAMES are short with underscores; key values start with sk- or run

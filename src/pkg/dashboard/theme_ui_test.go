@@ -21,10 +21,23 @@ func TestAppearanceThemeUITabWired(t *testing.T) {
 		"theme-bg-opacity",
 		"theme-custom-css",
 		"HONEYCOMB_WATERMARK",
-		"switchThemeVariantForLayout(next)",
+		"/api/themes?scope=dashboard",
+		"Contributor profile styles",
+		"setThemeStylesheet(id)",
+		"startsWith('contributor-')",
+		"_themeBaseHref = '/api/theme.css?v=' + Date.now()",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("Appearance UI missing %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"switchThemeVariantForLayout",
+		"&preview=",
+		"data-action=\"themePreview\"",
+	} {
+		if strings.Contains(html, gone) {
+			t.Fatalf("Appearance UI still contains %q", gone)
 		}
 	}
 }

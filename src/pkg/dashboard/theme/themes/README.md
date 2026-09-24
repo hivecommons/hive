@@ -21,8 +21,9 @@ Fields:
   `--btn-*`, `--badge-*`, `--table-cell-*`, `--component-*`, and
   `--duration-*`.
 - `light_tokens` (optional): token overrides emitted in the same light-mode
-  selector used by the dashboard (`body.light-mode`). For light presets
-  (`dark: false`), the base `tokens` map is emitted there automatically.
+  selector used by the dashboard (`body.light-mode`). When a preset omits
+  `light_tokens`, the base `tokens` map is emitted for light mode too, so a
+  dark-only theme keeps its own palette instead of falling back to Hive Light.
 - `fonts.ui` / `fonts.mono`: CSS font stacks. Use system fonts or openly hosted
   fonts; do not bundle proprietary font files here.
 - `background` (optional): `image` (`https:` or bounded `data:` URI), `position`,

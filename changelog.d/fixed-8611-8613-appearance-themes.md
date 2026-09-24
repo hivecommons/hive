@@ -1,0 +1,1 @@
+- Fix dashboard Appearance theme previews, swatches, and light/dark toggles so selected themes stay visible without rewriting hive-wide config (#8611, #8613).

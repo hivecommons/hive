@@ -63,9 +63,21 @@ func TestThemesListAndExplicitThemeCSS(t *testing.T) {
 		if th.ID == "star-wars" {
 			found = th.Name != "" && len(th.Swatches) >= 4
 		}
+		key := strings.Join(th.Swatches, "|")
+		if key == "" {
+			t.Fatalf("%s has no swatches", th.ID)
+		}
 	}
 	if !found {
 		t.Fatalf("/api/themes missing star-wars with swatches: %+v", payload.Themes)
+	}
+	seenSwatches := map[string]string{}
+	for _, th := range payload.Themes {
+		key := strings.Join(th.Swatches, "|")
+		if other := seenSwatches[key]; other != "" {
+			t.Fatalf("%s and %s expose identical swatches %v", other, th.ID, th.Swatches)
+		}
+		seenSwatches[key] = th.ID
 	}
 	contrib := doGet(s, "/api/themes?scope=contributor")
 	if contrib.Code != http.StatusOK {

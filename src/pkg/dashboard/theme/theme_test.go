@@ -156,6 +156,78 @@ func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
 	}
 }
 
+func TestDarkThemesKeepOwnPaletteInLightMode(t *testing.T) {
+	for _, th := range Catalog() {
+		if !th.Dark || len(th.LightTokens) > 0 {
+			continue
+		}
+		css, err := CSS(th)
+		if err != nil {
+			t.Fatalf("CSS(%s): %v", th.ID, err)
+		}
+		lightBlock := cssBlock(t, css, "body.light-mode")
+		for _, token := range []string{"--surface-0", "--surface-2", "--text"} {
+			want := compileTokens(th.Tokens)[token]
+			if want == "" {
+				t.Fatalf("%s missing token %s", th.ID, token)
+			}
+			if !strings.Contains(lightBlock, token+": "+want+";") {
+				t.Fatalf("%s light-mode block did not keep %s=%s:\n%s", th.ID, token, want, lightBlock)
+			}
+		}
+	}
+}
+
+func TestBuiltinThemesDifferFromDefaultCoreTokens(t *testing.T) {
+	defaultTheme, ok := Builtin(DefaultDarkID)
+	if !ok {
+		t.Fatalf("missing default theme %q", DefaultDarkID)
+	}
+	defaultTokens := compileTokens(defaultTheme.Tokens)
+	core := []string{"--surface-0", "--surface-2", "--text", "--accent"}
+	for _, th := range Catalog() {
+		if th.ID == DefaultDarkID {
+			continue
+		}
+		tokens := compileTokens(th.Tokens)
+		different := false
+		for _, token := range core {
+			if tokens[token] == "" {
+				t.Fatalf("%s missing core token %s", th.ID, token)
+			}
+			if tokens[token] != defaultTokens[token] {
+				different = true
+			}
+		}
+		if !different {
+			t.Fatalf("%s core tokens match default %s", th.ID, DefaultDarkID)
+		}
+		css, err := CSS(th)
+		if err != nil {
+			t.Fatalf("CSS(%s): %v", th.ID, err)
+		}
+		for _, token := range core {
+			if !strings.Contains(css, token+": "+tokens[token]+";") {
+				t.Fatalf("%s compiled CSS missing %s=%s", th.ID, token, tokens[token])
+			}
+		}
+	}
+}
+
+func cssBlock(t *testing.T, css, selector string) string {
+	t.Helper()
+	start := strings.Index(css, selector+"{")
+	if start < 0 {
+		t.Fatalf("CSS missing selector %s", selector)
+	}
+	start += len(selector) + 1
+	end := strings.Index(css[start:], "}")
+	if end < 0 {
+		t.Fatalf("CSS selector %s has no closing brace", selector)
+	}
+	return css[start : start+end]
+}
+
 func TestSanitizeCSSGuardrails(t *testing.T) {
 	safe, err := SanitizeCSS(".panel{background:url(https://example.org/a.svg)} </style><bad")
 	if err != nil {

@@ -192,12 +192,48 @@ func themeHasScope(th config.DashboardTheme, scope string) bool {
 }
 
 func themeSwatches(th config.DashboardTheme) []string {
-	keys := []string{"--surface-0", "--surface-2", "--brand", "--text"}
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		if v := strings.TrimSpace(th.Tokens[key]); v != "" {
+	keyGroups := [][]string{
+		{"--surface-0", "--bg"},
+		{"--surface-2", "--surface", "--panel", "--card-bg"},
+		{"--accent", "--text-muted", "--brand", "--status-info"},
+		{"--text", "--fg"},
+	}
+	out := make([]string, 0, len(keyGroups))
+	for _, keys := range keyGroups {
+		if v := themeFirstSwatchToken(th, keys...); v != "" {
 			out = append(out, v)
 		}
 	}
 	return out
+}
+
+func themeFirstSwatchToken(th config.DashboardTheme, keys ...string) string {
+	for _, key := range keys {
+		if v := usableSwatchColor(th.Tokens[key]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func usableSwatchColor(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if !strings.HasPrefix(value, "var(") {
+		return value
+	}
+	comma := strings.LastIndex(value, ",")
+	if comma < 0 {
+		return ""
+	}
+	fallback := strings.TrimSpace(strings.TrimSuffix(value[comma+1:], ")"))
+	if fallback == "" {
+		return ""
+	}
+	if strings.HasPrefix(fallback, "var(") {
+		return usableSwatchColor(fallback)
+	}
+	return value
 }
