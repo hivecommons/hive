@@ -118,3 +118,5 @@ Use `src/scripts/ci-flake-tally.sh` when the v5 test workflow is red and you nee
 ```sh
 bash src/scripts/ci-flake-tally.sh -n 40
 ```
+
+Flake policy: the Go test shards rerun failing tests automatically with gotestsum (2 retries, up to 5 failing tests per shard). Any rerun is surfaced in the job summary, emitted as a warning annotation, uploaded as a `flaky-tests-*` artifact, and tracked from v5/v6 push runs with a deduplicated `ci-flake` issue. A rerun is not a pass: fix the flaky test rather than treating the green shard as resolved.

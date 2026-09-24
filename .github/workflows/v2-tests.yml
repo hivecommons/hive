@@ -37,6 +37,8 @@ on:
       - 'dashboard/openapi.json'
       - '.github/workflows/v2-tests.yml'
       - '.github/scripts/slowest-tests.sh'
+      - '.github/scripts/ci-gotestsum-flake-summary.sh'
+      - '.github/scripts/ci-gotestsum-preserve-coverprofile.sh'
       - '.github/scripts/ci-install-tool.sh'
       - '.github/scripts/test-ci-install-tool-apt-cache.sh'
   pull_request:
@@ -59,6 +61,8 @@ on:
       # the job that executes it (same rule dashboard-lint applies to its
       # checker, #5388).
       - '.github/scripts/slowest-tests.sh'
+      - '.github/scripts/ci-gotestsum-flake-summary.sh'
+      - '.github/scripts/ci-gotestsum-preserve-coverprofile.sh'
       # Same rule for the toolchain installer: every shard shells out to it
       # before it can build, so an edit to it must run the shards it gates
       # (#6648).
@@ -176,6 +180,12 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
+      - name: Install gotestsum
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install gotest.tools/gotestsum@v1.13.0
+          "$(go env GOPATH)/bin/gotestsum" --version
+
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
       # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
@@ -250,8 +260,26 @@ jobs:
           RUN="^($(paste -sd'|' slice.txt))$"
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
-          go test ./pkg/hub -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-hub-"$IDX".out \
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
+            gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+            --rerun-fails-report=flaky-tests-hub-"$IDX".txt \
+            --packages="./pkg/hub" --junitfile junit-hub-"$IDX".xml \
+            -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-hub-"$IDX".out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-hub-"$IDX".log
+
+      - name: Surface flaky reruns
+        id: flaky-reruns
+        if: always()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-hub-${{ matrix.idx }}.txt" "hub ${{ matrix.idx }}/3"
+
+      - name: Upload flaky rerun report
+        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-tests-hub-${{ matrix.idx }}
+          path: src/flaky-tests-hub-${{ matrix.idx }}.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Slowest tests in this slice
         if: always()
@@ -302,6 +330,12 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      - name: Install gotestsum
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install gotest.tools/gotestsum@v1.13.0
+          "$(go env GOPATH)/bin/gotestsum" --version
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -392,8 +426,26 @@ jobs:
           RUN="^($(paste -sd'|' slice.txt))$"
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
-          go test ./pkg/agent -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-agent-"$IDX".out \
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
+            gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+            --rerun-fails-report=flaky-tests-agent-"$IDX".txt \
+            --packages="./pkg/agent" --junitfile junit-agent-"$IDX".xml \
+            -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-agent-"$IDX".out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-agent-"$IDX".log
+
+      - name: Surface flaky reruns
+        id: flaky-reruns
+        if: always()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-agent-${{ matrix.idx }}.txt" "agent ${{ matrix.idx }}/5"
+
+      - name: Upload flaky rerun report
+        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-tests-agent-${{ matrix.idx }}
+          path: src/flaky-tests-agent-${{ matrix.idx }}.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Slowest tests in this slice
         if: always()
@@ -564,6 +616,12 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
+      - name: Install gotestsum
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install gotest.tools/gotestsum@v1.13.0
+          "$(go env GOPATH)/bin/gotestsum" --version
+
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
       # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
@@ -637,8 +695,26 @@ jobs:
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
           # shellcheck disable=SC2086 # PKGS and SHUFFLE are deliberate word-split lists
-          go test $PKGS -short -race -count=1 -v $SHUFFLE -coverprofile=coverage-rest-${{ matrix.idx }}.out \
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
+            gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+            --rerun-fails-report=flaky-tests-rest-${{ matrix.idx }}.txt \
+            --packages="$PKGS" --junitfile junit-rest-${{ matrix.idx }}.xml \
+            -- -short -race -count=1 -v $SHUFFLE -coverprofile=coverage-rest-${{ matrix.idx }}.out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-rest-${{ matrix.idx }}.log
+
+      - name: Surface flaky reruns
+        id: flaky-reruns
+        if: always()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-rest-${{ matrix.idx }}.txt" "rest ${{ matrix.idx }}/${{ matrix.total }}"
+
+      - name: Upload flaky rerun report
+        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-tests-rest-${{ matrix.idx }}
+          path: src/flaky-tests-rest-${{ matrix.idx }}.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Slowest tests in this bucket
         if: always()
@@ -689,6 +765,12 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
+
+      - name: Install gotestsum
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install gotest.tools/gotestsum@v1.13.0
+          "$(go env GOPATH)/bin/gotestsum" --version
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
@@ -758,7 +840,10 @@ jobs:
           # enough to keep the lane fast, low enough that the package's many
           # httptest servers cannot exhaust ephemeral ports (see job comment).
           PARALLEL_TESTS=4
-          if go test ./pkg/dashboard -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" -run "$RUN" \
+          if gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+            --rerun-fails-report=flaky-tests-dashboard-shuffle-"$IDX".txt \
+            --packages="./pkg/dashboard" --junitfile junit-dashboard-shuffle-"$IDX".xml \
+            -- -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" -run "$RUN" \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-dashboard-shuffle-"$IDX".log; then
             exit 0
           fi
@@ -767,6 +852,20 @@ jobs:
           SEED=$(grep -m1 -E '^-test\.shuffle [0-9]+' test-dashboard-shuffle-"$IDX".log | awk '{print $2}')
           echo "::error::pkg/dashboard failed under shuffled order (slice $IDX/$TOTAL). Reproduce from src/ with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel $PARALLEL_TESTS -run '$RUN' -shuffle=${SEED:-<seed line missing from log>}"
           exit 1
+
+      - name: Surface flaky reruns
+        id: flaky-reruns
+        if: always()
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-dashboard-shuffle-${{ matrix.idx }}.txt" "dashboard shuffle ${{ matrix.idx }}/2"
+
+      - name: Upload flaky rerun report
+        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-tests-dashboard-shuffle-${{ matrix.idx }}
+          path: src/flaky-tests-dashboard-shuffle-${{ matrix.idx }}.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Slowest tests in this lane
         if: always()
@@ -1066,7 +1165,11 @@ jobs:
             exit 1
           fi
 
-          # Classify every package exactly once from the combined logs.
+          # Classify every package exactly once from the combined logs. With
+          # gotestsum reruns, a package can have an initial FAIL line followed
+          # by a final ok line in the same successful shard; score the final
+          # successful rerun rather than treating the surfaced flake as a
+          # coverage-blocking broken package.
           # ./cmd/... is scored too (#4701): the shards have run cmd tests
           # since the partition change, but coverage floors previously applied
           # to ./pkg/... only, so a CLI package could lose all its tests
@@ -1074,7 +1177,21 @@ jobs:
           # for trend continuity.
           cat test-*.log > cover-run.log
           grep -E '^(ok|FAIL|\?)' cover-run.log \
-            | awk '$2 ~ /\/(pkg|cmd)\// {print $1, $2}' \
+            | awk '
+                $2 ~ /\/(pkg|cmd)\// {
+                  seen[$2] = 1
+                  if ($1 == "ok") ok[$2] = 1
+                  else if ($1 == "FAIL") fail[$2] = 1
+                  else if ($1 == "?") no_tests[$2] = 1
+                }
+                END {
+                  for (pkg in seen) {
+                    if (ok[pkg]) print "ok", pkg
+                    else if (fail[pkg]) print "FAIL", pkg
+                    else if (no_tests[pkg]) print "?", pkg
+                  }
+                }
+              ' \
             | LC_ALL=C sort -u > pkg-states.txt
 
           # Second fail-closed guard, for the same reason as the TOTAL one:
@@ -1103,9 +1220,9 @@ jobs:
             pkg=$(floor_key "$pkgpath")
             case "$state" in
               ok)
-                # A package that also has a FAIL line anywhere is broken; the
-                # FAIL branch handles it. (An agent slice could be ok while
-                # another failed — but any FAIL also fails that shard job.)
+                # Package states are collapsed above, so an ok means either
+                # the package passed immediately or gotestsum reran its flakes
+                # to a successful final result.
                 pct=$(awk -v p="$pkgpath" '$1 == p {print $2}' pkg-pcts.txt)
                 if [ -z "$pct" ]; then continue; fi
                 int_pct=${pct%.*}
@@ -1209,6 +1326,144 @@ jobs:
               body: `## Test ${wasCancelled ? 'Cancelled' : 'Failure'}\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** ${branch}\n\nScheduled test run was ${kind}. See the [workflow run](${runUrl}) for details.`,
               labels: ['ci-failure', 'kind/bug'],
             });
+
+  create-issues-on-flakes:
+    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: [test-hub, test-agent, test-rest, test-dashboard-shuffle]
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Download flaky rerun reports
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flaky-tests-*
+          path: flaky-reports
+          merge-multiple: false
+
+      - name: Detect flaky rerun reports
+        id: flake-reports
+        run: |
+          if [ -d flaky-reports ] && find flaky-reports -type f -size +0c | grep -q .; then
+            echo "has-flakes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-flakes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure ci-flake label exists
+        if: steps.flake-reports.outputs.has-flakes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create ci-flake --repo "${GITHUB_REPOSITORY}" \
+            --description "Go test passed only after gotestsum reran a failed test" \
+            --color F9D0C4 --force
+
+      - name: Create or update flake issues
+        if: steps.flake-reports.outputs.has-flakes == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const root = 'flaky-reports';
+            if (!fs.existsSync(root)) {
+              core.info('No flaky rerun report artifacts were downloaded.');
+              return;
+            }
+
+            const reportFiles = [];
+            for (const artifactDir of fs.readdirSync(root)) {
+              const fullDir = path.join(root, artifactDir);
+              if (!fs.statSync(fullDir).isDirectory()) continue;
+              for (const entry of fs.readdirSync(fullDir)) {
+                const fullPath = path.join(fullDir, entry);
+                if (fs.statSync(fullPath).isFile()) reportFiles.push(fullPath);
+              }
+            }
+            if (reportFiles.length === 0) {
+              core.info('No flaky rerun report files were downloaded.');
+              return;
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const branch = context.ref.replace('refs/heads/', '');
+            const seen = new Map();
+            for (const file of reportFiles) {
+              for (const rawLine of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+                const line = rawLine.trim();
+                if (!line) continue;
+                const subject = line.replace(/:\s+\d+\s+runs?,\s+\d+\s+failures?\s*$/, '');
+                const dot = subject.lastIndexOf('.');
+                const pkg = dot > -1 ? subject.slice(0, dot) : 'package unknown';
+                const testName = dot > -1 ? subject.slice(dot + 1) : subject;
+                const key = `${pkg}\t${testName}`;
+                if (!seen.has(key)) seen.set(key, {pkg, testName, lines: []});
+                seen.get(key).lines.push(line);
+              }
+            }
+
+            if (seen.size === 0) {
+              core.info('Downloaded reports were empty.');
+              return;
+            }
+
+            const openFlakeIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-flake',
+              per_page: 100,
+            });
+            const tallyCommand = `bash src/scripts/ci-flake-tally.sh --repo ${context.repo.owner}/${context.repo.repo} --workflow v2-tests.yml --branch ${branch} -n 40`;
+            const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+            for (const flake of seen.values()) {
+              const issueKey = `${flake.pkg}.${flake.testName}`;
+              const title = `ci-flake: ${issueKey}`;
+              const details = flake.lines.map(line => `- \`${line}\``).join('\n');
+              const existing = openFlakeIssues.find(issue => issue.title === title);
+              if (!existing) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title,
+                  labels: ['ci-flake'],
+                  body: `## CI flake detected\n\n`
+                    + `- **Test:** \`${flake.testName}\`\n`
+                    + `- **Package:** \`${flake.pkg}\`\n`
+                    + `- **Run:** ${runUrl}\n`
+                    + `- **Branch:** \`${branch}\`\n\n`
+                    + `### Rerun report\n\n${details}\n\n`
+                    + `### Tally recent failures\n\n\`\`\`sh\n${tallyCommand}\n\`\`\`\n\n`
+                    + `A gotestsum rerun is not a pass. Please fix the flaky test.`,
+                });
+                continue;
+              }
+
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                per_page: 100,
+              });
+              const lastComment = comments[comments.length - 1];
+              if (lastComment && new Date(lastComment.created_at).getTime() > twentyFourHoursAgo) {
+                core.info(`Skipping comment on #${existing.number}; last comment is less than 24h old.`);
+                continue;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Flaked again on \`${branch}\`: ${runUrl}\n\n${details}\n\nTally with:\n\n\`\`\`sh\n${tallyCommand}\n\`\`\``,
+              });
+            }
 
   # Compiles the whole tree's test binaries (race) plus the plain build once
   # per v4 push and saves GOCACHE keyed by SHA. Every PR shard restores the
