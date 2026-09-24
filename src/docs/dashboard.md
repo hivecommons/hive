@@ -34,6 +34,17 @@ that meet `HIVE_CONTRIBUTE_EFFECTIVE_MODELS_MIN_PRS` (default `5`) merged PRs
 get rank badges. The default row order is effectiveness rank; operators can
 toggle back to raw PR count without changing the selected window.
 
+## Repository card holds
+
+Repository cards show held issues and PRs beside the actionable pills. A user
+who owns the hive, owns the repository, or has GitHub `write`, `maintain`, or
+`admin` permission on that repository can click the `⏸` chip to add or remove a
+hold. The server always re-checks that permission before mutating labels. Adding
+a hold applies the hive's canonical `hive/<hive-id>` label; removing a hold only
+removes the label(s) that are actually causing the hold (`hive/<hive-id>` and/or
+the generic hold labels such as `hold`, `on-hold`, or `hold/review`). The
+card-level `⏸ pause` / `▶ resume` control uses the same permission rule.
+
 ## Appearance themes
 
 Owners can choose a hive-wide dashboard theme in **Settings → Appearance** or by

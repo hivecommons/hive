@@ -122,6 +122,8 @@ type Server struct {
 	repoRescanInFlight bool
 	repoRescanAt       time.Time
 	repoRescanLast     ReposRescanResult
+	repoHoldPermMu     sync.Mutex
+	repoHoldPermCache  map[string]repoHoldPermissionCacheEntry
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.

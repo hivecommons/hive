@@ -648,6 +648,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// rather than 403ing on every write until the self-heal tick runs.
 		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
 		out.Client = github.NewClientFromAppWithBotLogin(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
+		out.Client.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(cfg.HiveID)})
 		// Per-repo pause (#6203). A live predicate over the shared config, so a
 		// pause taken in the dashboard narrows the very next enumeration and
 		// automerge sweep without a restart.
@@ -667,6 +668,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	switch {
 	case ghToken != "":
 		out.Client = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
+		out.Client.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(cfg.HiveID)})
 		out.Client.SetRepoPausedFunc(cfg.IsRepoPaused)        // #6203, see the App branch above
 		out.Client.SetAgentRepoScopeFunc(cfg.AgentServesRepo) // #6204, see the App branch above
 		// PAT path only: introspect the token's granted scopes ONCE, here, so a
@@ -1619,6 +1621,7 @@ func (b *boot) wireBootClosures() {
 					return fmt.Errorf("initializing app auth: %w", err)
 				}
 				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, b.cfg.Project.Org, b.cfg.Project.Repos, b.logger, b.cfg.GitHub.BotLogin())
+				newClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 				if len(b.cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -1732,6 +1735,9 @@ func (b *boot) bootGitHubWith(deps bootGitHubDeps) {
 	if b.ghClient != nil && len(b.cfg.Governor.Labels.Exempt) > 0 {
 		b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		b.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
+	}
+	if b.ghClient != nil {
+		b.ghClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 	}
 	// Unconditional (nil-safe, zero value = no filtering): the issue filter
 	// gates which issues become actionable at all, so it must be installed
@@ -2481,6 +2487,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if b.saved.ConfigOverrides != nil {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
+			b.ghClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 				b.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -3768,6 +3775,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 					b.logger.Error("github app auth rebuild after config reload failed", "error", appErr)
 				} else {
 					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, b.cfg.Project.Org, b.cfg.Project.Repos, b.logger, b.cfg.GitHub.BotLogin())
+					newClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 					if len(b.cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -5101,6 +5109,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					// before building a client that would 403 on every write.
 					healGitHubAppInstallation(b.ctx, newAppAuth, b.cfg, b.logger)
 					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, b.cfg.Project.Org, b.cfg.Project.Repos, b.logger, b.cfg.GitHub.BotLogin())
+					newClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 					if len(b.cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -5320,6 +5329,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// way, so re-install it too — a hub-delivered filter must take
 				// effect on the next enumeration, not the next restart.
 				b.ghClient.SetRepos(b.cfg.Project.Repos)
+				b.ghClient.SetHoldLabels([]string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)})
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 

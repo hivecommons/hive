@@ -19053,6 +19053,166 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/hold-permission": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Check whether the signed-in user may toggle repository card hold chips",
+        "description": "Owners are allowed. Other signed-in GitHub users are allowed only when GitHub reports write, maintain, or admin permission on the repository; the result is cached briefly server-side.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "allowed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/hold": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Add or remove the hold for one issue or pull request",
+        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may toggle a dashboard hold chip. Adding applies the hive's canonical hive/<hive-id> label. Removing fetches the issue/PR labels and removes exactly the label(s) causing the hold.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "held"
+                ],
+                "properties": {
+                  "held": {
+                    "type": "boolean",
+                    "description": "true to add the hold, false to remove the hold-causing labels"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hold toggle result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "held": {
+                      "type": "boolean"
+                    },
+                    "hold_label": {
+                      "type": "string"
+                    },
+                    "removed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "502": {
+            "description": "GitHub label mutation failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
     "/api/repos/pauses": {
       "get": {
         "tags": [

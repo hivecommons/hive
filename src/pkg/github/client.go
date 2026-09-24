@@ -55,6 +55,8 @@ type Client struct {
 	// behaves exactly as it did before.
 	agentServesRepo func(agent, repo string) bool
 	exemptLabels    []string
+	holdLabelsMu    sync.RWMutex
+	holdLabels      []string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -956,7 +958,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			continue
 		}
 
-		if isHeld(labels) {
+		if c.isHeld(labels) {
 			breakdown.Hold++
 			held = append(held, HoldItem{
 				Number:    issue.GetNumber(),
@@ -1074,7 +1076,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
 
-		if isHeld(labels) {
+		if c.isHeld(labels) {
 			breakdown.Hold++
 			heldHeadSHA := ""
 			if pr.GetHead() != nil {
@@ -1840,6 +1842,33 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 }
 
 func isHeld(labels []string) bool { return HasHoldLabel(labels) }
+
+func CanonicalHiveHoldLabel(hiveID string) string {
+	hiveID = strings.TrimSpace(hiveID)
+	if hiveID == "" {
+		return "hold"
+	}
+	return "hive/" + hiveID
+}
+
+func (c *Client) SetHoldLabels(labels []string) {
+	if c == nil {
+		return
+	}
+	c.holdLabelsMu.Lock()
+	defer c.holdLabelsMu.Unlock()
+	c.holdLabels = append([]string{}, labels...)
+}
+
+func (c *Client) isHeld(labels []string) bool {
+	if c == nil {
+		return HasHoldLabel(labels)
+	}
+	c.holdLabelsMu.RLock()
+	extra := append([]string{}, c.holdLabels...)
+	c.holdLabelsMu.RUnlock()
+	return HasHoldLabelWith(labels, extra)
+}
 
 // SetExemptLabels is nil-receiver safe for the same reason as SetRepos.
 func (c *Client) SetExemptLabels(labels []string) {

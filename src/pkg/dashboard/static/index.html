@@ -1349,6 +1349,10 @@
     .repo-card:hover .repo-pause-btn { opacity: 1; }
     .repo-pause-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
     .repo-pause-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-hold-toggle { cursor: pointer; }
+    .repo-hold-toggle:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); }
+    .repo-hold-toggle[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-hold-static { cursor: help; opacity: 0.85; }
     .repo-name a:hover { text-decoration: underline !important; }
     /* The two stat columns (issues | PRs) and the two pill columns under
        them share one grid, so a pill sits under the number it counts
@@ -8415,10 +8419,15 @@
     // the hold spellings holds the item. The matching labels are returned by
     // name so the tooltip can say which label an operator has to remove.
     const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];
+    function canonicalHiveHoldLabel() {
+      const hiveId = String(((window._lastStatus || {}).hiveId) || '').trim();
+      return hiveId ? ('hive/' + hiveId) : 'hold';
+    }
     function holdLabels(labels) {
+      const canonical = canonicalHiveHoldLabel().toLowerCase();
       return (labels || []).map(l => String(l)).filter(l => {
         const lower = l.toLowerCase();
-        return HOLD_LABEL_SPELLINGS.some(s => lower.includes(s));
+        return lower === canonical || HOLD_LABEL_SPELLINGS.some(s => lower.includes(s));
       });
     }
 
@@ -8442,6 +8451,94 @@
       if (item && item.hive_attributed) parts.push('opened by a hive agent — a `hold` here is usually the ACMM level gate, which the hive releases itself once policy allows; a human may remove the label sooner');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
+    }
+
+    const repoHoldPermissionCache = {};
+    function repoParts(full) {
+      const parts = String(full || '').split('/');
+      if (parts.length < 2) return { owner: '', repo: String(full || '') };
+      return { owner: parts[0], repo: parts.slice(1).join('/') };
+    }
+    function repoHoldPermissionKnown(full) {
+      if (dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return true;
+      const key = String(full || '').toLowerCase();
+      return repoHoldPermissionCache[key] === true;
+    }
+    function ensureRepoHoldPermission(full) {
+      if (!window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      const key = String(full || '').toLowerCase();
+      if (!key || repoHoldPermissionCache[key] !== undefined) return;
+      repoHoldPermissionCache[key] = 'loading';
+      const p = repoParts(full);
+      fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/hold-permission')
+        .then(r => r.json().then(d => ({ ok: r.ok, data: d })).catch(() => ({ ok: r.ok, data: {} })))
+        .then(({ ok, data }) => { repoHoldPermissionCache[key] = !!(ok && data.allowed); repaintReposForWidth(); })
+        .catch(() => { repoHoldPermissionCache[key] = false; });
+    }
+    function holdToggleChip(repoFull, item, type, held, interactive, tip) {
+      const number = Number(item && item.number);
+      const label = held ? 'Remove hold' : 'Add hold';
+      const title = held ? tip : ('Add hold — applies label `' + canonicalHiveHoldLabel() + '` so agents will not act on this until the hold label is removed');
+      const cls = (type === 'pr' ? 'repo-pr-pill' : 'repo-issue-pill') + (held ? ' held' : '') + ' pill-held-badge pill-icon';
+      if (!interactive || !number) {
+        if (!held) return '';
+        return `<span class="${cls} repo-hold-static" title="${esc(title)}" aria-label="${esc(title)}">⏸</span>`;
+      }
+      return `<button class="${cls} repo-hold-toggle" data-action="toggleRepoItemHold" data-arg0="${esc(repoFull)}" data-arg1="${number}" data-arg2="${type}" data-arg3="${held ? 'false' : 'true'}" data-arg-types="s,j,s,j,t" data-stop="1" data-prevent="1" aria-pressed="${held ? 'true' : 'false'}" title="${esc(title)}" aria-label="${esc(label + ' for #' + number)}">⏸</button>`;
+    }
+    function updateRepoBreakdownForHold(repo, type, toHeld) {
+      const wb = repo && repo.workBreakdown && repo.workBreakdown[type === 'pr' ? 'prs' : 'issues'];
+      if (!wb) return;
+      wb.hold = Math.max(0, Number(wb.hold || 0) + (toHeld ? 1 : -1));
+      wb.actionable = Math.max(0, Number(wb.actionable || 0) + (toHeld ? -1 : 1));
+    }
+    function moveRepoItemHold(repoFull, number, type, toHeld, label) {
+      const status = window._lastStatus || {};
+      const repos = status.repos || [];
+      const repo = repos.find(r => (r.full || r.name || '').toLowerCase() === String(repoFull || '').toLowerCase());
+      if (!repo) return null;
+      const fromKey = type === 'pr' ? (toHeld ? 'openPrs' : 'heldPrs') : (toHeld ? 'actionableIssues' : 'heldIssues');
+      const toKey = type === 'pr' ? (toHeld ? 'heldPrs' : 'openPrs') : (toHeld ? 'heldIssues' : 'actionableIssues');
+      const from = repo[fromKey] || [];
+      const idx = from.findIndex(x => Number(x && x.number) === Number(number));
+      if (idx < 0) return null;
+      const item = from.splice(idx, 1)[0];
+      item.labels = (item.labels || []).map(l => String(l));
+      if (toHeld) {
+        if (!item.labels.some(l => l.toLowerCase() === String(label || canonicalHiveHoldLabel()).toLowerCase())) item.labels.push(label || canonicalHiveHoldLabel());
+      } else {
+        const removed = holdLabels(item.labels).map(l => l.toLowerCase());
+        item.labels = item.labels.filter(l => !removed.includes(String(l).toLowerCase()));
+      }
+      repo[toKey] = repo[toKey] || [];
+      repo[toKey].push(item);
+      updateRepoBreakdownForHold(repo, type, toHeld);
+      repaintReposForWidth();
+      return { repo, item, fromKey, toKey };
+    }
+    async function toggleRepoItemHold(repoFull, number, type, held, btn) {
+      if (btn && btn.dataset.busy === '1') return;
+      const p = repoParts(repoFull);
+      if (!p.owner || !p.repo || !number) return;
+      const wantHeld = !!held;
+      const prevText = btn ? btn.textContent : '';
+      const moved = moveRepoItemHold(repoFull, number, type, wantHeld, canonicalHiveHoldLabel());
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = '…'; }
+      try {
+        const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/items/' + number + '/hold', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ held: wantHeld })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        showToast((wantHeld ? 'Added hold to ' : 'Removed hold from ') + repoFull + '#' + number, 'success');
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        if (moved) moveRepoItemHold(repoFull, number, type, !wantHeld, canonicalHiveHoldLabel());
+        showToast('Hold toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (btn) { btn.dataset.busy = ''; btn.textContent = prevText || '⏸'; }
+      }
     }
 
     // ── Per-repo card width (hivecommons/hive#8000) ───────────────────────
@@ -8634,6 +8731,8 @@
         // grid's contents on every governor cycle, so a width set once on the
         // node would be thrown away within the minute (#8000).
         const cardRepo = r.full || r.name || '';
+        ensureRepoHoldPermission(cardRepo);
+        const canToggleHold = repoHoldPermissionKnown(cardRepo);
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
         const issuePills = (r.actionableIssues || []).map(i => {
@@ -8654,7 +8753,8 @@
           const planBtn = linked
             ? planIssueChip(linked)
             : (showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>${showDesign ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : ''}` : '');
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
+          const holdBtn = holdToggleChip(cardRepo, i, 'issue', false, canToggleHold, '');
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}${holdBtn}</span>`;
         }).join('');
         // Held issues (hivecommons/hive#7896): in the issue column, because
         // the issues number counts them, but tinted held and without the
@@ -8668,7 +8768,8 @@
           const heldTip = heldReason(i);
           const tip = (i.title || '') + (age ? ' (' + age + ')' : '') + ' (' + heldTip + ')';
           const url = i.url || (repoUrl + '/issues/' + i.number);
-          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a><span class="repo-issue-pill held pill-held-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⏸</span></span>`;
+          const holdBtn = holdToggleChip(cardRepo, i, 'issue', true, canToggleHold, heldTip);
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill held" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${holdBtn}</span>`;
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
@@ -8731,10 +8832,11 @@
                         ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
                         : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue for Hive auto-merge on green CI" aria-label="Queue for Hive auto-merge on green CI">🔀</button>`))
                 : '');
+          const holdBtn = holdToggleChip(cardRepo, p, 'pr', false, canToggleHold, '');
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see.
-          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}</span>`;
+          return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${reviewPill}${queueBtn}${holdBtn}</span>`;
         }).join('');
         // Held PRs (hivecommons/hive#7896): in the PR column, tinted held.
         // The card's PRs number is the repo's TOTAL open PR count, and a
@@ -8762,9 +8864,9 @@
           const reviewPill = p.review_url
             ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
             : '';
-          const stateBadge = needsHuman
+          const stateBadge = (needsHuman
             ? `<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⚠</span>`
-            : `<span class="repo-pr-pill held pill-held-badge pill-icon" title="${esc(heldTip)}" aria-label="${esc(heldTip)}">⏸</span>`;
+            : '') + holdToggleChip(cardRepo, p, 'pr', true, canToggleHold, heldTip);
           // needs-human wins the tint here as it does on the actionable
           // pill; the dashed border says "held" in both cases.
           return `<span class="repo-pr-pill-wrap"><a class="repo-pr-pill held${needsHuman ? ' needs-human' : ''}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span></a>${reviewPill}${stateBadge}</span>`;
@@ -8788,9 +8890,9 @@
             + '. No agent writes to it and none is handed work on it; it is still watched, scored and counted here.'
           : '';
         const pausedPill = r.paused ? `<span class="repo-paused-pill" title="${esc(pauseTip)}">⏸ paused</span>` : '';
-        const canPauseRepo = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const canPauseRepo = canToggleHold;
         const pauseBtn = canPauseRepo
-          ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(r.name || '')}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
+          ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
         // role="separator" + aria-orientation="vertical" is the window-splitter
         // pattern: a focusable handle that reports the width it controls, so

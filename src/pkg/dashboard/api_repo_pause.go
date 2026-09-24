@@ -104,19 +104,42 @@ func (s *Server) watchesRepo(repo string) bool {
 	return false
 }
 
+func (s *Server) requireRepoPausePermission(w http.ResponseWriter, r *http.Request, repo string) bool {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	full := config.QualifyRepo(s.deps.Config.Project.Org, repo)
+	owner, name, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || name == "" {
+		jsonError(w, "invalid repository", http.StatusBadRequest)
+		return false
+	}
+	allowed, status, msg := s.canToggleRepoHold(r, owner, name)
+	if allowed {
+		return true
+	}
+	if status == http.StatusUnauthorized {
+		status = http.StatusForbidden
+		msg = "owner or repository write permission required"
+	}
+	jsonError(w, msg, status)
+	return false
+}
+
 // handleRepoPause quiets one repository: agents stop writing to it and stop
 // being handed work on it, while the repo keeps its dashboard card and its ACMM
 // evaluation. Owner-gated, like the agent pause it is modelled on.
 func (s *Server) handleRepoPause(w http.ResponseWriter, r *http.Request) {
-	if !requireOwnerRole(w, r) {
-		return
-	}
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	body, ok := decodeRepoPauseRequest(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireRepoPausePermission(w, r, body.Repo) {
 		return
 	}
 	// Refuse to pause a repo the hive does not watch. Accepting it would write
@@ -154,15 +177,15 @@ func (s *Server) handleRepoPause(w http.ResponseWriter, r *http.Request) {
 // left behind by a repo that was removed while paused must still be clearable,
 // or the only way to tidy it is to hand-edit the config file.
 func (s *Server) handleRepoResume(w http.ResponseWriter, r *http.Request) {
-	if !requireOwnerRole(w, r) {
-		return
-	}
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	body, ok := decodeRepoPauseRequest(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireRepoPausePermission(w, r, body.Repo) {
 		return
 	}
 
