@@ -1260,9 +1260,9 @@ if [ "$(id -u)" = "0" ]; then
   # login serve the fleet instead of one login per agent.
   #
   # Credential first and NO tree walk, for the same reason the .claude instant
-  # path has none: this body now runs under a RECURSIVE watch (#5734), so it
-  # fires on writes anywhere under .gemini rather than only on the top level.
-  # The recursive sweep stays on the 5-minute cycle.
+  # path has none. The guard watches antigravity-cli itself, non-recursively,
+  # so agy's churny brain/ tree cannot make every event re-walk thousands of
+  # directories (#8712). The recursive sweep stays on the 5-minute cycle.
   hive_fix_gemini_instant() {
     hive_fix_shared_credential /data/home/.gemini/antigravity-cli/antigravity-oauth-token
     chmod g+rwx /data/home/.gemini /data/home/.gemini/antigravity-cli 2>/dev/null || true
@@ -1302,27 +1302,30 @@ if [ "$(id -u)" = "0" ]; then
 
   # hive_watch_once DIR EVENTS RECURSE — block until DIR changes, then return.
   # RECURSE is "-r" to watch subdirectories too, "" for the directory alone.
+  # HIVE_WATCH_ERROR receives stderr when inotifywait fails.
   #
   # The depth matters, and getting it wrong is invisible (hivecommons/hive
   # #5734). `inotifywait` without -r reports events only for entries DIRECTLY
-  # inside the watched directory, so the .gemini guard — watching
-  # /data/home/.gemini/ while agy keeps its token at
-  # .gemini/antigravity-cli/antigravity-oauth-token — could never fire. It was
-  # not merely untested: it was structurally incapable of firing, and it read
-  # as protection the whole time. Measured on a live hive: sixteen minutes and
-  # one token rewrite after boot, the .claude guard's inotifywait pid had
-  # advanced (its credential sits at depth 1) while .gemini's was still the
-  # boot pid.
+  # inside the watched directory, so a nested credential needs either a bounded
+  # direct watch on its parent or recursion. agy's token parent is
+  # antigravity-cli; watching that directory directly avoids the churny brain/
+  # subtree that made the old recursive .gemini guard crash-loop (#8712).
   #
   # Recursion is per-guard, not the default: .claude is 161 MB and 8413 entries
   # on a working hive, and watching it recursively would cost a watch per
   # subdirectory for a credential that sits at the top level anyway.
   hive_watch_once() {
+    HIVE_WATCH_ERROR=""
     if [ -n "$3" ]; then
-      inotifywait -qq -r -e "$2" "$1" 2>/dev/null
+      if HIVE_WATCH_ERROR="$(inotifywait -qq -r -e "$2" "$1" 2>&1)"; then
+        return 0
+      fi
     else
-      inotifywait -qq -e "$2" "$1" 2>/dev/null
+      if HIVE_WATCH_ERROR="$(inotifywait -qq -e "$2" "$1" 2>&1)"; then
+        return 0
+      fi
     fi
+    return 1
   }
 
   # hive_guard_forever LABEL DIR EVENTS BODY_FN [RECURSE] — run BODY_FN every
@@ -1344,7 +1347,9 @@ if [ "$(id -u)" = "0" ]; then
       # Say so — the silence here is what made #5730 undiagnosable — then repair
       # once and try again, so a hive with no working inotify at all is still
       # served by this loop rather than only by the 5s poller.
-      echo "[entrypoint] WARN: perm guard '$_label' watcher exited on $_dir; repairing and retrying in ${_backoff}s"
+      _why=""
+      [ -z "$HIVE_WATCH_ERROR" ] || _why=": $HIVE_WATCH_ERROR"
+      echo "[entrypoint] WARN: perm guard '$_label' watcher exited on $_dir${_why}; repairing and retrying in ${_backoff}s"
       "$_body" || true
       sleep "$_backoff" || true
       [ "$_backoff" -ge 60 ] || _backoff=$((_backoff * 2))
@@ -1356,8 +1361,7 @@ if [ "$(id -u)" = "0" ]; then
     hive_guard_forever copilot /data/home/.copilot/ close_write,moved_to hive_fix_copilot_config &
     hive_guard_forever claude /data/home/.claude/ close_write,moved_to,create hive_fix_claude_instant &
     hive_guard_forever codex /data/home/.codex/ close_write,moved_to,create hive_fix_codex_instant &
-    # -r: agy's token is one directory deeper than this watch (#5734).
-    hive_guard_forever gemini /data/home/.gemini/ close_write,moved_to,create hive_fix_gemini_instant -r &
+    hive_guard_forever gemini /data/home/.gemini/antigravity-cli/ close_write,moved_to,create hive_fix_gemini_instant &
     echo "[entrypoint] inotify perm guard active (copilot + claude + codex + gemini)"
   fi
   (
