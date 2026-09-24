@@ -235,7 +235,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
      visitor who pinned a theme never sees a frame of the other one. Kept to the
-     single attribute write on purpose: everything else about the control (the
+     single class/attribute write on purpose: everything else about the control (the
      button label, persistence, the cycle) lives in the deferred block at the
      foot of the document, because none of it affects the first paint. An inline
      script element is fine under CSP — webstatic.ApplyDocumentScriptSrcElem stamps a
@@ -244,7 +244,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
      button dispatches through data-action instead of onclick. -->
 {{DASHBOARD_ASSET_LINKS}}
 <script>
-(function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+(function(){try{var r=document.documentElement,k='hive-layout-mode',t=localStorage.getItem(k)||localStorage.getItem('hive.contribute.theme')||'auto';if(t==='openclaw')t='light';if(t==='classic')t='dark';var light=t==='light'||(t==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);r.classList.toggle('light-mode',!!light);if(t==='light'||t==='dark')r.setAttribute('data-theme',t);else r.removeAttribute('data-theme');}catch(e){}})();
 </script>
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
@@ -2421,18 +2421,17 @@ It clears automatically when the period elapses. An operator can shorten or disa
 //   data-stop-prop="1"            → stop click/mousedown propagating to parents
 
 // ── Theme selector (#4549) ───────────────────────────────────────────────────
-// Three states cycled in this order. "auto" means the attribute is ABSENT, not
-// resolved to a value: the sheet already follows prefers-color-scheme when no
-// data-theme is set, so removing it hands control back to the OS live. Resolving
-// auto to a concrete value here would freeze the page against an OS change made
+// Three states cycled in this order. "auto" means the persisted dashboard layout
+// key is ABSENT and the body class follows prefers-color-scheme live. Resolving
+// auto to a stored concrete value would freeze the page against an OS change made
 // while it is open, which is the one thing the default must not do.
 // The <head> guard already applied the stored value before first paint; this
 // block owns the label, the persistence and the cycle, none of which the first
-// paint needs. The storage key is deliberately NOT the one static/index.html's
-// own toggle uses: that surface keys off a body class and this one off
-// :root[data-theme], so a shared key would have each surface writing a value the
-// other cannot read. TestContributeThemeKeyDoesNotCollideWithDashboard pins that.
-var CC_THEME_KEY='hive.contribute.theme';
+// paint needs. Use the same hive-layout-mode key and body.light-mode hook as the
+// main dashboard so the proxied operations page does not carry a second theme
+// mechanism. The data-theme attribute remains only as a compatibility shim for
+// contributor-specific accent fixups and legacy stored values.
+var CC_THEME_KEY='hive-layout-mode';
 var CC_THEME_ORDER=['auto','light','dark'];
 var CC_THEME_UI={
   auto:{glyph:'\u25D0',text:'Auto',hint:'follows your system appearance'},
@@ -2442,10 +2441,15 @@ var CC_THEME_UI={
 // Any value that is not a pinned theme reads as auto, so a corrupt or foreign
 // entry degrades to the default rather than to a broken attribute. Private-mode
 // Safari throws on localStorage access, hence the try around every touch.
-function ccReadTheme(){try{var v=localStorage.getItem(CC_THEME_KEY);return(v==='light'||v==='dark')?v:'auto';}catch(e){return 'auto';}}
+var CC_THEME_MQL=window.matchMedia?window.matchMedia('(prefers-color-scheme: light)'):null;
+function ccReadTheme(){try{var v=localStorage.getItem(CC_THEME_KEY);if(v==='openclaw')v='light';if(v==='classic')v='dark';if(v==='light'||v==='dark'||v==='auto')return v;v=localStorage.getItem('hive.contribute.theme');return(v==='light'||v==='dark')?v:'auto';}catch(e){return 'auto';}}
+function ccThemeIsLight(mode){return mode==='light'||(mode==='auto'&&CC_THEME_MQL&&CC_THEME_MQL.matches);}
 function ccApplyTheme(mode,persist){
   var r=document.documentElement;
   r.classList.add('cc-theme-switching');
+  var light=ccThemeIsLight(mode);
+  r.classList.toggle('light-mode',!!light);
+  if(document.body)document.body.classList.toggle('light-mode',!!light);
   if(mode==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',mode);
   if(persist){try{if(mode==='auto')localStorage.removeItem(CC_THEME_KEY);else localStorage.setItem(CC_THEME_KEY,mode);}catch(e){}}
   var btn=document.getElementById('cc-theme-toggle');
@@ -2468,6 +2472,11 @@ function ccApplyTheme(mode,persist){
   setTimeout(clear,150);
 }
 function ccCycleTheme(){ccApplyTheme(CC_THEME_ORDER[(CC_THEME_ORDER.indexOf(ccReadTheme())+1)%%CC_THEME_ORDER.length],true);}
+function ccSyncAutoTheme(){if(ccReadTheme()==='auto')ccApplyTheme('auto',false);}
+if(CC_THEME_MQL){
+  if(CC_THEME_MQL.addEventListener)CC_THEME_MQL.addEventListener('change',ccSyncAutoTheme);
+  else if(CC_THEME_MQL.addListener)CC_THEME_MQL.addListener(ccSyncAutoTheme);
+}
 // Sync the button's label with whatever the head guard already applied. Runs
 // with persist=false so merely loading the page never writes storage.
 ccApplyTheme(ccReadTheme(),false);

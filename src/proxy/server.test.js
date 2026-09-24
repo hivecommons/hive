@@ -22,7 +22,8 @@ const CONTRIBUTOR_HTML = `<!doctype html><html><head>
   <link rel="stylesheet" href="/tokens.css">
   <link href="/components.css" rel="stylesheet">
   <link id="contributor-theme-css" rel="stylesheet" href="/api/theme.css?scope=contributor">
-</head><body><main id="tab-ops">contributor operations</main></body></html>`;
+  <script>(function(){try{var k='hive-layout-mode',t=localStorage.getItem(k)||'auto';var light=t==='light'||(t==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches);document.documentElement.classList.toggle('light-mode',!!light);}catch(e){}})();</script>
+</head><body><button type="button" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto">Auto</button><main id="tab-ops">contributor operations</main><script>var CC_THEME_KEY='hive-layout-mode';function ccApplyTheme(mode){var light=mode==='light';document.body.classList.toggle('light-mode',!!light);}window.matchMedia('(prefers-color-scheme: light)').addEventListener('change',function(){});</script></body></html>`;
 
 let goServer, ttydServer, proxyProcess;
 let mockSnapshotFrameAncestors = [];
@@ -259,6 +260,19 @@ async function testServedHTMLStylesheetsResolve() {
   const contributor = await assertStylesheetsResolve('/contribute/operations');
   assert.match(contributor, /contributor operations/, 'deep contributor route should proxy to Go HTML');
   console.log('  ✓ dashboard and contributor stylesheet links resolve through proxy as text/css');
+}
+
+async function testContributorOperationsThemeContract() {
+  const html = await assertStylesheetsResolve('/contribute/operations');
+  for (const needle of [
+    'id="cc-theme-toggle"',
+    "var CC_THEME_KEY='hive-layout-mode'",
+    "document.body.classList.toggle('light-mode'",
+    "matchMedia('(prefers-color-scheme: light)')",
+  ]) {
+    assert.ok(html.includes(needle), `contributor operations theme contract missing ${needle}`);
+  }
+  console.log('  ✓ contributor operations exposes shared light/dark/auto theme contract through proxy');
 }
 
 async function testDefaultFrameDeny() {
@@ -1064,6 +1078,7 @@ try {
   await testDashboardAssetsProxyToGo();
   await testThemeCSSStillProxiesThroughAPI();
   await testServedHTMLStylesheetsResolve();
+  await testContributorOperationsThemeContract();
   await testUnknownAssetDoesNotFallBackToIndex();
   await testDefaultFrameDeny();
 

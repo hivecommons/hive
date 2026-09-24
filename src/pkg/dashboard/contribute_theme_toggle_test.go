@@ -65,16 +65,19 @@ func TestContributeThemeToggleIsPresent(t *testing.T) {
 	}
 }
 
-// auto must REMOVE the attribute rather than resolve to a concrete theme, so a
-// visitor who never touches the control keeps prefers-color-scheme behaviour and
-// keeps following the OS if it changes while the page is open.
-func TestContributeThemeAutoRemovesAttribute(t *testing.T) {
+// Auto must remove the pinned attribute and the persisted layout key rather than
+// resolve to a concrete theme, so a visitor who returns to auto keeps following
+// the OS if it changes while the page is open.
+func TestContributeThemeAutoFollowsSystemLive(t *testing.T) {
 	body := contributeBody(t)
 
 	for _, want := range []string{
 		`if(mode==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',mode)`,
+		`document.body.classList.toggle('light-mode',!!light)`,
 		`var CC_THEME_ORDER=['auto','light','dark']`,
 		`localStorage.removeItem(CC_THEME_KEY)`,
+		`matchMedia('(prefers-color-scheme: light)')`,
+		`addEventListener('change',ccSyncAutoTheme)`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("theme cycle missing %q", want)
@@ -87,7 +90,7 @@ func TestContributeThemeAutoRemovesAttribute(t *testing.T) {
 func TestContributeThemeGuardRunsBeforeStylesheet(t *testing.T) {
 	body := contributeBody(t)
 
-	guard := strings.Index(body, `localStorage.getItem('hive.contribute.theme')`)
+	guard := strings.Index(body, `k='hive-layout-mode'`)
 	style := strings.Index(body, "<style>")
 	head := strings.Index(body, "</head>")
 	if guard < 0 || style < 0 || head < 0 {
@@ -101,17 +104,20 @@ func TestContributeThemeGuardRunsBeforeStylesheet(t *testing.T) {
 	}
 }
 
-// The dashboard's own toggle keys off a body class with hive-layout-mode; this
-// page keys off :root[data-theme]. A shared key would have each surface writing
-// a value the other cannot read, so the keys must stay distinct.
-func TestContributeThemeKeyDoesNotCollideWithDashboard(t *testing.T) {
+// The contributor operations theme control reuses the dashboard's persistence
+// key and body.light-mode hook, while retaining data-theme only as a legacy and
+// accent-override compatibility shim.
+func TestContributeThemeReusesDashboardLayoutMode(t *testing.T) {
 	body := contributeBody(t)
 
-	if !strings.Contains(body, `var CC_THEME_KEY='hive.contribute.theme'`) {
-		t.Error("contribute theme must use its own hive.contribute.theme storage key")
+	if !strings.Contains(body, `var CC_THEME_KEY='hive-layout-mode'`) {
+		t.Error("contribute theme must use the dashboard hive-layout-mode storage key")
 	}
-	if strings.Contains(body, "hive-layout-mode") {
-		t.Error("contribute page must not read or write the dashboard's hive-layout-mode key")
+	if !strings.Contains(body, `localStorage.getItem('hive.contribute.theme')`) {
+		t.Error("contribute page must still honor the legacy contributor theme key")
+	}
+	if !strings.Contains(body, `document.body.classList.toggle('light-mode',!!light)`) {
+		t.Error("contribute page must apply the shared body.light-mode hook")
 	}
 }
 

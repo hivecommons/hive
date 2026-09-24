@@ -157,6 +157,7 @@
 }
 
 [data-theme="light"],
+html.light-mode,
 body.light-mode {
   color-scheme: light;
   --surface-0: #f7f8fa;

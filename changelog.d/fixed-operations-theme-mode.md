@@ -1,0 +1,1 @@
+- Fixed the contributor Operations dashboard light/dark/auto theme control so it reuses the shared dashboard layout mode, persists choices, and follows system color-scheme changes in auto mode (#8677).
