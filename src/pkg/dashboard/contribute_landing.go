@@ -337,6 +337,16 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .ops-card-head{padding:var(--sp-6) var(--sp-7);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--text);margin:var(--sp-0)}
 .ops-card-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
+.section-header-toggle{display:inline-flex;align-items:center;cursor:pointer;user-select:none;gap:var(--sp-3);width:100%%}
+.section-header-toggle:hover{opacity:.85}
+.section-chevron{display:inline-block;font-size:var(--fs-xs);transition:transform 200ms ease;color:var(--text-muted);flex-shrink:0}
+.section-chevron.collapsed{transform:rotate(-90deg)}
+.section-body{overflow:visible;transition:opacity 200ms ease;max-height:none;opacity:1}
+.section-body.collapsed{max-height:0!important;overflow:hidden;opacity:0;pointer-events:none}
+.ops-card-collapse-toggle{background:none;border:0;color:inherit;font:inherit;padding:var(--sp-0);margin:var(--sp-0)}
+.ops-card-head .section-header-toggle{width:auto}
+.ops-card-collapse-toggle:focus-visible{outline:2px solid var(--cc-accent);outline-offset:3px;border-radius:var(--r-sm)}
+.ops-card-title{font-size:var(--fs-base);color:var(--text);font-weight:600}
 .ops-filters{display:flex;gap:var(--sp-2);padding:var(--sp-5) var(--sp-7);border-bottom:1px solid var(--line-subtle);flex-wrap:wrap}
 /* .ops-scope (the Fleet work All/Mine chips, #6945) shares the chip LOOK with the
    status filters and nothing else — the two are deliberately separate classes so
@@ -2155,7 +2165,8 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      small samples into "Not enough data yet" so a one-lucky-PR model does not
      lead the ranked list. -->
 <div class="ops-card mb-7" id="effective-models-card">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Most effective models</h3><span class="ops-card-count" id="effective-models-count"></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><button type="button" class="ops-card-collapse-toggle section-header-toggle" id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body" data-ops-section="effective-models-card" title="Collapse panel"><span class="section-chevron" aria-hidden="true">▼</span><span class="ops-card-title">Most effective models</span></button><span class="ops-card-count" id="effective-models-count"></span></div>
+<div class="section-body" id="effective-models-body">
 <div class="effective-controls" role="group" aria-label="Effective model filters">
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-window="7d">7d</button>
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-window="30d">30d</button>
@@ -2167,6 +2178,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 </div>
 <div id="effective-models-ranked"><div class="ops-empty">Loading effective models&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">Ranked by first-pass merge rate, then merged PR count. Rows below the sample threshold are listed under <b>Not enough data yet</b>; every number is an aggregate for model + CLI.</p>
+</div>
 </div>
 <!-- Fleet work (#6945): this panel was titled "My work" while rendering the work
      of EVERY connected clanker to every visitor, anonymous ones included — the
@@ -2661,6 +2673,7 @@ function activateTab(t,push){
     // The dev-log rail collapse/persist wiring is independent too: a throw here must
     // not abort fleet hydration or the SSE feed.
     try{initOpsRail();}catch(e){console.error('initOpsRail failed',e);}
+    try{initOpsCollapsiblePanels();}catch(e){console.error('initOpsCollapsiblePanels failed',e);}
     // Triage ladder (#2612 part b): fetched after the tab opens so a slow GitHub
     // PR-link lookup never delays the page. A throw must not abort the panels above.
     try{ccTriagePoll();}catch(e){console.error('ccTriagePoll failed',e);}
@@ -6133,6 +6146,35 @@ var OPS_RAIL_KEY='hive.ops.devlog.collapsed';
 var opsRailInit=false;
 function ccRailRead(){try{return localStorage.getItem(OPS_RAIL_KEY)==='1';}catch(e){return false;}}
 function ccRailWrite(collapsed){try{if(collapsed)localStorage.setItem(OPS_RAIL_KEY,'1');else localStorage.removeItem(OPS_RAIL_KEY);}catch(e){}}
+var OPS_SECTION_LS_PREFIX='hive-section-collapsed-';
+var opsCollapsiblePanelsInit=false;
+function ccOpsSectionRead(sectionId){try{return localStorage.getItem(OPS_SECTION_LS_PREFIX+sectionId)==='1';}catch(e){return false;}}
+function ccOpsSectionWrite(sectionId,collapsed){try{if(collapsed)localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'1');else localStorage.removeItem(OPS_SECTION_LS_PREFIX+sectionId);}catch(e){}}
+function ccApplySectionCollapse(sectionId){
+  var root=document.getElementById(sectionId);if(!root)return;
+  var collapsed=ccOpsSectionRead(sectionId),body=root.querySelector('.section-body'),chevron=root.querySelector('.section-chevron'),btn=root.querySelector('[data-ops-section="'+sectionId+'"]');
+  if(body)body.classList.toggle('collapsed',collapsed);
+  if(chevron)chevron.classList.toggle('collapsed',collapsed);
+  if(btn){
+    btn.setAttribute('aria-expanded',collapsed?'false':'true');
+    btn.setAttribute('title',collapsed?'Expand panel':'Collapse panel');
+  }
+}
+function ccToggleOpsSection(sectionId){
+  var collapsed=!ccOpsSectionRead(sectionId);
+  ccOpsSectionWrite(sectionId,collapsed);
+  ccApplySectionCollapse(sectionId);
+}
+function initOpsCollapsiblePanels(){
+  if(opsCollapsiblePanelsInit)return;
+  var btns=document.querySelectorAll('[data-ops-section]');if(!btns.length)return;
+  opsCollapsiblePanelsInit=true;
+  btns.forEach(function(btn){
+    var sectionId=btn.getAttribute('data-ops-section');if(!sectionId)return;
+    ccApplySectionCollapse(sectionId);
+    btn.addEventListener('click',function(){ccToggleOpsSection(sectionId);});
+  });
+}
 
 // ── Ops panel reload-bridge cache ───────────────────────────────────────────────
 // On a page refresh the ready-work queue, opportunistic work, and my-work panels
