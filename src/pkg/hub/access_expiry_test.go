@@ -293,7 +293,7 @@ func TestAccessExpiryIsCheckboxGated(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "function toggleAccessExpiry(") {
 		t.Error("toggleAccessExpiry is missing — row checkboxes could not flip a grant to permanent")
 	}
-	if !strings.Contains(dashboardHTML, `<span class="fs-xs text-default">Never</span>`) {
+	if !strings.Contains(dashboardHTML, `<span class="fs-2xs text-default">Never</span>`) {
 		t.Error(`a row with no expiry must render the word "Never" instead of a date input`)
 	}
 

@@ -68,10 +68,10 @@
       border: 1px solid #f4c75f6b;
       border-radius: .65rem;
       place-items: center;
-      font-size: var(--fs-xl);
+      font-size: 1.2rem;
       display: grid;
     }
-    nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
     nav a:hover, .header-link:hover { color: var(--text); }
     .header-link {
       border: 1px solid var(--line);
@@ -107,11 +107,11 @@
       font-size: clamp(1.8rem, 3.5vw, 3rem);
       line-height: 1;
     }
-    h3 { font-size: var(--fs-xl); line-height: 1.2; }
-    p { color: var(--muted); font-size: var(--fs-lg); line-height: 1.7; }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
     .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
     .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
-    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: var(--fs-base); color: var(--amber); }
+    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: 0.85rem; color: var(--amber); }
     pre {
       box-shadow: var(--shadow);
       background: linear-gradient(#17212deb, #0c1219eb);
@@ -120,7 +120,7 @@
       padding: 1.2rem 1.4rem;
       margin: 1rem 0 1.4rem;
       overflow-x: auto;
-      font-size: var(--fs-md);
+      font-size: .88rem;
       color: #d7deea;
       line-height: 1.7;
     }
@@ -136,14 +136,14 @@
     /* ── Wizard flow ── */
     .wizard { margin-top: 2.5rem; }
     .wizard-steps { display: flex; gap: .6rem; margin-bottom: 1.75rem; align-items: center; flex-wrap: wrap; }
-    .wizard-step { display: flex; align-items: center; gap: .55rem; font-size: var(--fs-base); font-weight: 700; color: var(--muted); }
+    .wizard-step { display: flex; align-items: center; gap: .55rem; font-size: .84rem; font-weight: 700; color: var(--muted); }
     .wizard-step.active { color: var(--amber); }
     .wizard-step.done { color: var(--green); }
     .step-dot {
       width: 2rem; height: 2rem;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-weight: 900; font-size: var(--fs-base);
+      font-weight: 900; font-size: .8rem;
       background: var(--bg-soft);
       border: 2px solid var(--line);
       flex-shrink: 0;
@@ -151,7 +151,7 @@
     }
     .wizard-step.active .step-dot { border-color: var(--amber); background: #f4c75f26; color: var(--amber); }
     .wizard-step.done .step-dot { border-color: var(--green); background: #74df9a26; color: var(--green); }
-    .step-arrow { color: var(--line); font-size: var(--fs-xs); }
+    .step-arrow { color: var(--line); font-size: .7rem; }
     .wizard-panel {
       box-shadow: var(--shadow);
       background: linear-gradient(#17212deb, #0c1219eb);
@@ -161,7 +161,7 @@
       display: none;
     }
     .wizard-panel.active { display: block; }
-    .wizard-panel h2 { font-size: var(--fs-xl); line-height: 1.15; margin-bottom: .6rem; }
+    .wizard-panel h2 { font-size: 1.35rem; line-height: 1.15; margin-bottom: .6rem; }
     .wizard-panel p { font-size: var(--fs-md); margin-bottom: var(--sp-6); }
 
     /* ── Repo selector ── */
@@ -178,8 +178,8 @@
     .repo-item:hover { border-color: #f4c75f9e; }
     .repo-item.selected { border-color: var(--amber); background: #f4c75f17; }
     .repo-item input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
-    .repo-name { font-weight: 700; font-size: var(--fs-md); color: var(--text); }
-    .repo-desc { font-size: var(--fs-sm); color: var(--muted); }
+    .repo-name { font-weight: 700; font-size: .9rem; color: var(--text); }
+    .repo-desc { font-size: .78rem; color: var(--muted); }
 
     /* ── ACMM selector ── */
     .acmm-options { display: flex; flex-direction: column; gap: .65rem; margin: var(--sp-6) var(--sp-0); }
@@ -195,26 +195,26 @@
     .acmm-option:hover { border-color: #f4c75f9e; }
     .acmm-option.selected { border-color: var(--amber); background: #f4c75f17; }
     .acmm-option input[type=radio] { accent-color: var(--amber); margin-top: var(--sp-1); flex-shrink: 0; }
-    .acmm-option .acmm-label { font-weight: 700; font-size: var(--fs-md); color: var(--text); margin-bottom: var(--sp-1); }
-    .acmm-option .acmm-desc { font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
+    .acmm-option .acmm-label { font-weight: 700; font-size: .9rem; color: var(--text); margin-bottom: var(--sp-1); }
+    .acmm-option .acmm-desc { font-size: .78rem; color: var(--muted); line-height: 1.5; }
     /* Levels above the onboarding ceiling: a quiet informational note, not a
        disabled choice. Deliberately not styled like .acmm-option so it never
        reads as a radio the requester failed to earn. */
     .acmm-later { margin-top: .35rem; padding: .7rem .85rem; border-left: 2px solid var(--border); }
-    .acmm-later-title { font-size: var(--fs-sm); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: var(--sp-2); }
-    .acmm-later-body { font-size: var(--fs-sm); color: var(--muted); line-height: 1.55; }
+    .acmm-later-title { font-size: .74rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: var(--sp-2); }
+    .acmm-later-body { font-size: .78rem; color: var(--muted); line-height: 1.55; }
     .acmm-rec {
-      display: inline-block; padding: var(--sp-1) var(--sp-5); border-radius: var(--r-pill);
-      font-size: var(--fs-xs); font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
+      display: inline-block; padding: 2px 10px; border-radius: var(--r-pill);
+      font-size: .65rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
       background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d;
       margin-left: var(--sp-4);
     }
 
     /* ── Badges ── */
     .badge {
-      display: inline-block; padding: var(--sp-2) var(--sp-5); border-radius: var(--r-pill);
-      font-size: var(--fs-sm); font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
-      margin-left: var(--sp-5); vertical-align: middle;
+      display: inline-block; padding: 3px 12px; border-radius: var(--r-pill);
+      font-size: .72rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
+      margin-left: 10px; vertical-align: middle;
     }
     .badge-ready { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
 
@@ -227,11 +227,11 @@
       border-radius: .85rem;
       padding: clamp(1.4rem, 3vw, 2.2rem);
     }
-    .alt-card p { font-size: var(--fs-md); }
+    .alt-card p { font-size: .95rem; }
     .alt-card pre { box-shadow: none; }
 
     /* ── Toast ── */
-    .toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: var(--sp-5) var(--sp-7); border-radius: var(--r); font-size: var(--fs-base); max-width: 400px; color: #fff; }
+    .toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: var(--sp-5) var(--sp-7); border-radius: 8px; font-size: 0.85rem; max-width: 400px; color: #fff; }
 
     /* ── Footer ── */
     .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: var(--fs-base); color: var(--muted); }
@@ -247,7 +247,7 @@
       .wizard-steps { gap: .4rem; }
       .step-arrow { display: none; }
       .wizard-panel { padding: var(--sp-7); }
-      pre { font-size: var(--fs-sm); }
+      pre { font-size: .78rem; }
     }
   </style>
 </head>
@@ -306,7 +306,7 @@
             <img id="user-avatar" style="width:32px;height:32px;border-radius:50%" src="">
             <div>
               <span id="user-login" style="font-weight:700"></span>
-              <span style="color:var(--green);font-size:var(--fs-base);margin-left:var(--sp-4)">✓ Authenticated</span>
+              <span style="color:var(--green);font-size:0.8rem;margin-left:var(--sp-4)">✓ Authenticated</span>
             </div>
           </div>
           <button class="hv-btn btn-primary btn-primary" onclick="goToStep(2)">Continue →</button>
@@ -334,9 +334,9 @@
           <input type="text" id="repo-manual" placeholder="github.com/my-org/my-repo"
             onkeydown="if(event.key==='Enter'){event.preventDefault();continueFromRepos()}"
             onblur="validateRepoInput()" oninput="clearRepoError()"
-            style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:var(--fs-md)">
-          <div id="repo-manual-err" style="display:none;margin-top:var(--sp-3);font-size:var(--fs-base);color:var(--red)"></div>
-          <p style="font-size:var(--fs-base);margin-top:var(--sp-4);margin-bottom:var(--sp-0)">
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.88rem">
+          <div id="repo-manual-err" style="display:none;margin-top:var(--sp-3);font-size:0.8rem;color:var(--red)"></div>
+          <p style="font-size:0.8rem;margin-top:var(--sp-4);margin-bottom:var(--sp-0)">
             With or without <code>https://</code>. Works for public GitHub and for GitHub Enterprise
             (<code>github.ibm.com</code> and similar) &mdash; we record which instance the repo lives on
             and provision against it. Examples: <code>github.com/my-org/my-repo</code>,
@@ -376,8 +376,8 @@
           </label>
           <input type="text" id="req-full-name" placeholder="Ada Lovelace" maxlength="128"
             oninput="clearContactError();updateSummary()"
-            style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:var(--fs-md)">
-          <p style="font-size:var(--fs-base);margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
             First and last name, so we know who the request is from &mdash; a GitHub username on its own
             often does not say who a person is.
           </p>
@@ -389,8 +389,8 @@
           </label>
           <input type="text" id="req-slack-id" placeholder="U01ABCDEF23 or @ada" maxlength="64"
             oninput="clearContactError();updateSummary()"
-            style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:var(--fs-md)">
-          <p style="font-size:var(--fs-base);margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
             Your Slack member ID or handle, if you have one. We use it to reach you about your hive
             &mdash; leave it blank and we will use GitHub instead.
           </p>
@@ -407,17 +407,17 @@
             Country <span style="color:var(--muted);font-weight:400">(optional)</span>
           </label>
           <select id="req-country" onchange="updateSummary()"
-            style="width:100%;padding:var(--sp-4) var(--sp-5);background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:var(--fs-md)">
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.88rem">
             <option value="">Prefer not to say</option>
           </select>
-          <p style="font-size:var(--fs-base);margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
+          <p style="font-size:0.8rem;margin-top:var(--sp-3);margin-bottom:var(--sp-0)">
             Shows a small flag next to your avatar in the hub. Leave it blank and we show none &mdash;
             we will not guess a country we have no evidence for.
           </p>
         </div>
-        <div id="contact-err" style="display:none;margin-top:var(--sp-4);font-size:var(--fs-base);color:var(--red)"></div>
+        <div id="contact-err" style="display:none;margin-top:var(--sp-4);font-size:0.8rem;color:var(--red)"></div>
 
-        <div id="request-summary" style="margin:var(--sp-7) var(--sp-0);padding:var(--sp-6);background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:var(--fs-base)">
+        <div id="request-summary" style="margin:var(--sp-7) var(--sp-0);padding:var(--sp-6);background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div class="mb-4"><strong>Summary</strong></div>
           <div class="text-muted">Repo: <span class="text-default" id="summary-repos">none added</span></div>
           <div class="text-muted">GitHub: <span class="text-default" id="summary-forge">github.com</span></div>
@@ -431,7 +431,7 @@
              the hive's own dashboard knows its forge and renders a correct
              per-instance install link (githubAppInstallURL, from
              config.GitHubConfig.AppInstallURL). -->
-        <p class="fs-base mt-2">
+        <p style="font-size:0.8rem;margin-top:var(--sp-2)">
           <strong>What happens next:</strong> an admin reviews your request. Once your hive is provisioned,
           its dashboard will prompt you to install the Hive GitHub App &mdash; with a link pointing at the
           right GitHub instance for your repos. Nothing to install before then.
@@ -1033,7 +1033,7 @@ just contribute-hive              # start taking tasks</code></pre>
         document.getElementById('nav-dashboard').style.display = '';
         var u = document.getElementById('nav-user');
         u.style.display = '';
-        u.innerHTML = '<img src="' + esc(d.avatar_url) + '" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span class="fs-base">' + esc(d.login) + '</span>';
+        u.innerHTML = '<img src="' + esc(d.avatar_url) + '" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:0.85rem">' + esc(d.login) + '</span>';
 
         document.getElementById('login-area').style.display = 'none';
         document.getElementById('logged-in-area').style.display = 'block';

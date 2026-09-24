@@ -45,10 +45,10 @@
     border: 1px solid rgba(224, 168, 0, .42);
     border-radius: .65rem;
     place-items: center;
-    font-size: var(--fs-xl);
+    font-size: 1.2rem;
     display: grid;
   }
-  nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); }
+  nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
   nav a:hover, .header-link:hover { color: var(--text); }
   nav a.active { color: var(--amber); }
   .header-link {
@@ -63,7 +63,7 @@
   .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
   .fleet-header {
     padding: 16px 22px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: baseline; gap: var(--sp-6); flex-wrap: wrap;
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
   }
   .fleet-header h1 { font-size: 18px; margin: var(--sp-0); font-weight: 600; }
   .fleet-header .sub { color: var(--muted); font-size: var(--fs-sm); }
@@ -73,19 +73,19 @@
     width: 100%;
     overflow-x: auto;
   }
-  .legend { display: flex; gap: var(--sp-6); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-6); }
+  .legend { display: flex; gap: var(--sp-6); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-bottom: 14px; }
   .legend b { color: var(--ink); font-weight: 600; }
   table { width: 100%; min-width: 1180px; border-collapse: collapse; }
   thead th {
-    text-align: left; font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); font-weight: 600; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--line);
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
   }
-  tbody td { padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   th:nth-child(2), td:nth-child(2) { min-width: 360px; }
   th:nth-child(7), td:nth-child(7) { min-width: 310px; }
   tr.spoke { cursor: pointer; }
   tr.spoke:hover { background: #16202f; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--sp-4); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
   .dot.on { background: var(--green); }
   .dot.off { background: var(--gray); }
   .name { font-weight: 600; }
@@ -94,7 +94,7 @@
   .chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .1s; }
   tr.spoke.open .chev { transform: rotate(90deg); }
   .badge {
-    display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-lg); font-size: var(--fs-sm);
+    display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
     background: var(--chip); border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
   }
   .rollup { font-variant-numeric: tabular-nums; }
@@ -108,14 +108,14 @@
   td:nth-child(7) .budget-health,
   td:nth-child(7) .github-app-health { white-space: nowrap; }
   /* agent sub-rows */
-  tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: var(--fs-base); }
+  tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: 13px; }
   tr.agent .aname { padding-left: 26px; font-weight: 500; }
   /* align-items:flex-start + a small top offset keeps the dot round and at the
      first line when the label wraps to 2-3 lines in a narrow cell (e.g. "should
      be working"). flex-shrink:0 stops the flexbox squeezing the fixed-size dot
      into an oval. */
   .rs { display: inline-flex; align-items: flex-start; gap: var(--sp-3); }
-  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: var(--sp-2); }
+  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 5px; }
   .rs.working .swatch { background: var(--green); }
   .rs.idle-at-prompt .swatch { background: var(--amber); }
   .rs.stuck-at-login .swatch { background: var(--red); }
@@ -129,29 +129,29 @@
   .cap.amber .light { background: var(--amber); }
   .cap.red .light { background: var(--red); }
   .cap.gray .light { background: var(--gray); }
-  .ticks { font-size: var(--fs-sm); color: var(--muted); }
+  .ticks { font-size: 11px; color: var(--muted); }
   .tick.yes { color: var(--green); }
   .tick.no { color: var(--red); }
-  .delta { font-size: var(--fs-sm); font-weight: 600; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-lg); }
+  .delta { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
   .delta.problem { background: rgba(229,72,77,.16); color: var(--red); border: 1px solid rgba(229,72,77,.45); }
   .delta.quiet { color: var(--muted); }
-  .rel { color: var(--muted); font-size: var(--fs-sm); }
+  .rel { color: var(--muted); font-size: 11px; }
   /* flex:0 0 8px + flex-start: same anti-squish treatment as .rs/.cap dots —
      without it a wrapped label squeezes the fixed-size dot into an oval. */
-  .advisory-activity { display: inline-flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-2); }
-  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: var(--sp-2); }
+  .advisory-activity { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
   .advisory-activity.fresh .light { background: var(--green); }
   .advisory-activity.aging .light { background: var(--amber); }
   .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
   .advisory-activity.unknown .light { background: var(--gray); }
-  .budget-health { display: inline-flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-2); }
-  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: var(--sp-2); }
+  .budget-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
   .budget-health.ok .light { background: var(--green); }
   .budget-health.warning .light { background: var(--amber); }
   .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
   .budget-health.unknown .light { background: var(--gray); }
-  .github-app-health { display: inline-flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-2); }
-  .github-app-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: var(--sp-2); }
+  .github-app-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .github-app-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
   .github-app-health.ok .light { background: var(--green); }
   .github-app-health.degraded .light { background: var(--amber); }
   .github-app-health.broken .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
@@ -167,11 +167,11 @@
   .hdot.unknown { background: var(--gray); }
   .hdot.offline { background: transparent; border: 1px solid var(--gray); }
   .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
-  .parked-chip { display: inline-block; margin-left: var(--sp-3); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-lg); font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  .parked-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
   /* WHY chip: the hive-health verdict's reason, next to the name. Muted for a
      healthy/idle hive, red-tinted when the verdict is red so the cause of a
      broken hive reads at a glance. */
-  .why-chip { display: inline-block; margin-left: var(--sp-3); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-lg); font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
+  .why-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
   .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
   .why-chip.warn { color: var(--amber); border-color: rgba(224,168,0,.55); background: rgba(224,168,0,.08); }
   .why-chip.unknown { color: var(--gray); border-style: dashed; }
@@ -186,17 +186,17 @@
      hive's spoke pod, so an operator can jump from a problematic /fleet row
      straight into the pod for root-causing. Shows cluster · namespace on
      hover; click copies, never expands the row. */
-  .attach-chip { display: inline-block; margin-left: var(--sp-3); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-lg); font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; cursor: pointer; user-select: none; }
+  .attach-chip { display: inline-block; margin-left: var(--sp-3); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; cursor: pointer; user-select: none; }
   .attach-chip:hover { color: var(--fg); border-color: var(--fg); }
   .attach-chip.copied { color: var(--green, #30a46c); border-color: var(--green, #30a46c); }
   /* Per-repo output drill-down in the expanded sub-row. */
-  .repo-activity { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .repo-activity { display: flex; flex-direction: column; gap: 3px; }
   .repo-activity-row { font-size: 11.5px; }
   .repo-activity-row .repo { color: var(--fg, inherit); font-weight: 600; margin-right: var(--sp-3); }
   /* Diagnosis block in the expanded sub-row: every raw fact an operator (or
      an agent watching this page) needs to root-cause the hive without first
      attaching — full error texts, App state + fix detail, budget numbers. */
-  .diag { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 11.5px; border-left: 3px solid var(--border, rgba(128,128,128,.3)); padding-left: var(--sp-4); }
+  .diag { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; border-left: 3px solid var(--border, rgba(128,128,128,.3)); padding-left: var(--sp-4); }
   .diag .k { color: var(--muted); font-weight: 600; margin-right: var(--sp-3); white-space: nowrap; }
   .diag .bad { color: var(--red); }
   .diag .row { display: flex; align-items: baseline; }
@@ -207,10 +207,10 @@
      grows leftward and stays on screen. Shown on hover AND kept open by
      click (touch/keyboard operable), never hover-only. */
   #nav-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green, #46a758); vertical-align: middle; }
-  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: var(--r); padding: var(--sp-2) var(--sp-0); min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
+  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: 8px; padding: var(--sp-2) var(--sp-0); min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
   #nav-avatar-wrap.open #nav-user-menu, #nav-avatar-wrap:hover #nav-user-menu { display: block; }
-  #nav-user-menu > div#nav-menu-user { padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: var(--fs-base); }
-  #nav-user-menu > div#nav-menu-role { padding: var(--sp-1) var(--sp-6) var(--sp-3); border-bottom: 1px solid var(--line, #2a2e37); font-size: var(--fs-sm); color: var(--gray); }
+  #nav-user-menu > div#nav-menu-user { padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: .85rem; }
+  #nav-user-menu > div#nav-menu-role { padding: var(--sp-1) var(--sp-6) var(--sp-3); border-bottom: 1px solid var(--line, #2a2e37); font-size: .72rem; color: var(--gray); }
   #nav-user-menu > a, #nav-user-menu > button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: var(--sp-4) var(--sp-6); background: none; border: none; color: inherit; text-decoration: none; font-size: var(--fs-base); cursor: pointer; }
   #nav-user-menu > a:hover, #nav-user-menu > button:hover { background: rgba(255,255,255,.06); }
   /* Problem hives get a red left border so the eye lands on them. */
@@ -218,9 +218,9 @@
   tr.spoke.health-problem { background: rgba(229,72,77,.05); }
   tr.agent.is-problem td { background: rgba(229,72,77,.07); }
   /* Header summary + controls. */
-  .summary { font-size: var(--fs-base); }
+  .summary { font-size: 13px; }
   .allclear { color: var(--green); font-weight: 600; }
-  .controls { margin-left: auto; display: flex; gap: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); }
+  .controls { margin-left: auto; display: flex; gap: 14px; font-size: var(--fs-sm); color: var(--muted); }
   .controls label { cursor: pointer; user-select: none; }
   @media (max-width: 900px) {
     .site-header { grid-template-columns: 1fr; position: static; }
@@ -458,7 +458,7 @@ function hiveAccessAvatars(h) {
     var hiddenNames = [];
     for (var j = shown.length; j < members.length; j++) hiddenNames.push(String(members[j].username || ""));
     faces += '<span title="' + escAttr(hiddenNames.join(", ")) + '" ' +
-      'style="font-size:var(--fs-xs);color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
+      'style="font-size:var(--fs-2xs);color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
   }
   var label = members.length === 1 ? "1 user with access" : members.length + " users with access";
   return '<span class="hive-access-faces" aria-label="' + escAttr(label) + '" ' +

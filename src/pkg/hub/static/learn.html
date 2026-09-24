@@ -69,10 +69,10 @@
       border: 1px solid #f4c75f6b;
       border-radius: .65rem;
       place-items: center;
-      font-size: var(--fs-xl);
+      font-size: 1.2rem;
       display: grid;
     }
-    nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
     nav a:hover, .header-link:hover { color: var(--text); }
     .header-link {
       border: 1px solid var(--line);
@@ -108,11 +108,11 @@
       font-size: clamp(1.8rem, 3.5vw, 3rem);
       line-height: 1;
     }
-    h3 { font-size: var(--fs-xl); line-height: 1.2; }
-    p { color: var(--muted); font-size: var(--fs-lg); line-height: 1.7; }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
     .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
     .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
-    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: var(--fs-base); color: var(--amber); }
+    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: 0.85rem; color: var(--amber); }
 
     /* ── Buttons ── */
     .button { text-decoration: none; }
@@ -135,14 +135,14 @@
       display: inline-block;
       padding: var(--sp-1) var(--sp-5);
       border-radius: var(--r-pill);
-      font-size: var(--fs-sm);
+      font-size: .74rem;
       font-weight: 900;
       letter-spacing: .06em;
       text-transform: uppercase;
       margin-bottom: .7rem;
     }
     .acmm-card h3 { margin-bottom: .45rem; }
-    .acmm-card p { font-size: var(--fs-md); margin-bottom: var(--sp-0); }
+    .acmm-card p { font-size: .9rem; margin-bottom: var(--sp-0); }
     .lv-1 { background: #80bfff26; color: var(--blue);  border: 1px solid #80bfff4d; }
     .lv-2 { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
     .lv-3 { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
@@ -182,9 +182,9 @@
       min-height: 7rem;
       padding: 1.15rem;
       line-height: 1.5;
-      font-size: var(--fs-md);
+      font-size: .95rem;
     }
-    .feature-list li strong { display: block; color: var(--text); margin-bottom: .35rem; font-size: var(--fs-lg); }
+    .feature-list li strong { display: block; color: var(--text); margin-bottom: .35rem; font-size: 1.02rem; }
 
     /* ── Governor rail ── */
     .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
@@ -324,9 +324,9 @@
       .arch-more { display: inline-flex; align-items: center; gap: var(--sp-4); margin-top: 1.4rem; color: var(--blue); text-decoration: none; font-weight: 600; }
       .arch-more:hover { text-decoration: underline; }
       .arch-ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .8rem; margin-top: 1.4rem; }
-      .arch-ports div { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: .85rem 1rem; }
+      .arch-ports div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .85rem 1rem; }
       .arch-ports strong { color: var(--amber); font-variant-numeric: tabular-nums; }
-      .arch-ports p { margin: var(--sp-2) var(--sp-0) var(--sp-0); color: var(--muted); font-size: var(--fs-md); }
+      .arch-ports p { margin: var(--sp-2) var(--sp-0) var(--sp-0); color: var(--muted); font-size: .9rem; }
     </style>
     <section class="section-pad" id="architecture">
       <div class="section-heading">
@@ -454,10 +454,10 @@ flowchart LR
       .reading-list .rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-6); }
       .reading-list .rl-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1.15rem 1.25rem; display: flex; flex-direction: column; gap: var(--sp-4); transition: border-color .15s ease; overflow: hidden; }
       .reading-list .rl-card:hover { border-color: #80bfff4d; }
-      .reading-list .rl-card a.rl-title { color: var(--blue); font-weight: 600; font-size: var(--fs-lg); line-height: 1.4; text-decoration: none; }
+      .reading-list .rl-card a.rl-title { color: var(--blue); font-weight: 600; font-size: 1.02rem; line-height: 1.4; text-decoration: none; }
       .reading-list .rl-card a.rl-title:hover { text-decoration: underline; }
-      .reading-list .rl-card .rl-by { color: var(--muted); font-size: var(--fs-base); margin-top: auto; }
-      .reading-list .rl-card .rl-date { color: #6b7688; font-size: var(--fs-base); }
+      .reading-list .rl-card .rl-by { color: var(--muted); font-size: .85rem; margin-top: auto; }
+      .reading-list .rl-card .rl-date { color: #6b7688; font-size: .8rem; }
     </style>
     <section class="reading-list" id="reading-list">
       <div class="rl-head">
@@ -492,7 +492,7 @@ flowchart LR
         document.getElementById('nav-logout').style.display='';
         document.getElementById('nav-dashboard').style.display='';
         var u=document.getElementById('nav-user');u.style.display='';
-        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span class="fs-base">'+esc(d.login)+'</span>';
+        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:0.85rem">'+esc(d.login)+'</span>';
       }
     }).catch(function(){});
 

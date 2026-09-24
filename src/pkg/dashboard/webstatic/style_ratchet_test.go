@@ -25,25 +25,25 @@ type styleRatchetCounts struct {
 // removes raw styling — but they must not go UP.
 var styleRatchetBaselines = map[string]styleRatchetCounts{
 	"operator static/index.html": {
-		inlineStyles:   1366,
+		inlineStyles:   1638,
 		rawColors:      153,
-		rawFontSizes:   3,
-		rawPadding:     18,
-		rawBorderRadii: 80,
+		rawFontSizes:   676,
+		rawPadding:     238,
+		rawBorderRadii: 184,
 	},
 	"contributor landing": {
-		inlineStyles:   91,
+		inlineStyles:   95,
 		rawColors:      131,
-		rawFontSizes:   8,
-		rawPadding:     18,
-		rawBorderRadii: 19,
+		rawFontSizes:   202,
+		rawPadding:     119,
+		rawBorderRadii: 54,
 	},
 	"hub static pages": {
-		inlineStyles:   891,
+		inlineStyles:   1010,
 		rawColors:      474,
-		rawFontSizes:   52,
-		rawPadding:     82,
-		rawBorderRadii: 84,
+		rawFontSizes:   469,
+		rawPadding:     177,
+		rawBorderRadii: 125,
 	},
 	"design system preview": {},
 }

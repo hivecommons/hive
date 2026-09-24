@@ -87,7 +87,7 @@
   .masthead .wrap { padding-top: 2.6rem; padding-bottom: 2.2rem; }
   .eyebrow {
     display: inline-flex; align-items: center; gap: var(--sp-4);
-    font-size: var(--fs-sm); letter-spacing: .14em; text-transform: uppercase;
+    font-size: .74rem; letter-spacing: .14em; text-transform: uppercase;
     font-weight: 700; color: var(--blue-deep);
     background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
     padding: .3rem .7rem; border-radius: var(--r-pill);
@@ -106,7 +106,7 @@
   .meta-grid dt { font-size: var(--fs-xs); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
   .meta-grid dd { margin: .15rem 0 .9rem; font-size: var(--fs-md); color: var(--ink); }
   .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
-  .tag { font-size: var(--fs-sm); font-family: var(--mono); color: var(--ink-soft); background: var(--surface-2); border: 1px solid var(--line); padding: .12rem .5rem; border-radius: var(--r); }
+  .tag { font-size: .74rem; font-family: var(--mono); color: var(--ink-soft); background: var(--surface-2); border: 1px solid var(--line); padding: .12rem .5rem; border-radius: var(--r); }
 
   /* ── Layout with TOC ── */
   .shell { display: grid; grid-template-columns: 1fr; gap: var(--sp-0); }
@@ -127,12 +127,12 @@
     margin: var(--sp-0) var(--sp-0) var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 2px solid var(--line);
     display: flex; align-items: baseline; gap: .6rem;
   }
-  h2 .num { font-family: var(--mono); font-size: var(--fs-base); color: var(--blue); font-weight: 700; letter-spacing: 0; }
+  h2 .num { font-family: var(--mono); font-size: .8rem; color: var(--blue); font-weight: 700; letter-spacing: 0; }
   h3 { font-size: 1.06rem; font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--ink); }
   p { margin: var(--sp-0) var(--sp-0) var(--sp-6); }
   a { color: var(--blue); text-decoration-color: color-mix(in srgb, var(--blue) 40%, transparent); text-underline-offset: 2px; }
   strong { color: var(--ink); font-weight: 680; }
-  code { font-family: var(--mono); font-size: .86em; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: .08em .38em; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .08em .38em; }
   ul, ol { padding-left: 1.3rem; }
   li { margin: .35rem 0; }
 
@@ -142,9 +142,9 @@
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .35rem;
   }
-  .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: var(--fs-lg); }
-  .card .dot { width: 26px; height: 26px; border-radius: var(--r); display: grid; place-items: center; font-size: var(--fs-md); background: var(--blue-soft); flex: 0 0 auto; }
-  .card .ver { font-family: var(--mono); font-size: var(--fs-sm); color: var(--ink-faint); }
+  .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: 1rem; }
+  .card .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: .9rem; background: var(--blue-soft); flex: 0 0 auto; }
+  .card .ver { font-family: var(--mono); font-size: .74rem; color: var(--ink-faint); }
   .card p { font-size: .89rem; color: var(--ink-soft); margin: .3rem 0 0; }
 
   /* ── diagrams ── */
@@ -155,7 +155,7 @@
   }
   .diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
   .diagram .mermaid svg { max-width: 100%; height: auto; }
-  figcaption { font-size: var(--fs-base); color: var(--ink-faint); text-align: center; margin-top: .6rem; letter-spacing: .02em; }
+  figcaption { font-size: .8rem; color: var(--ink-faint); text-align: center; margin-top: .6rem; letter-spacing: .02em; }
 
   /* ── worked / didn't panels ── */
   .split { display: grid; grid-template-columns: 1fr; gap: var(--sp-6); max-width: none; }
@@ -172,15 +172,15 @@
 
   /* ── ACMM ladder ── */
   .ladder { display: grid; gap: var(--sp-4); max-width: none; margin-top: var(--sp-4); }
-  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: .7rem .9rem; border-left: 4px solid var(--rung); }
-  .rung .lvl { font-family: var(--mono); font-weight: 700; color: var(--rung); font-size: var(--fs-md); }
-  .rung .rd { font-size: var(--fs-md); color: var(--ink-soft); }
+  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: .7rem .9rem; border-left: 4px solid var(--rung); }
+  .rung .lvl { font-family: var(--mono); font-weight: 700; color: var(--rung); font-size: .95rem; }
+  .rung .rd { font-size: .9rem; color: var(--ink-soft); }
   .rung .rd b { color: var(--ink); }
 
-  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--honey); background: var(--honey-soft); border-radius: 0 8px 8px 0; color: var(--ink-soft); font-size: var(--fs-md); max-width: var(--measure); }
+  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--honey); background: var(--honey-soft); border-radius: 0 8px 8px 0; color: var(--ink-soft); font-size: .95rem; max-width: var(--measure); }
 
   footer { border-top: 1px solid var(--line); }
-  footer .wrap { padding: 2rem 0 3rem; color: var(--ink-faint); font-size: var(--fs-base); }
+  footer .wrap { padding: 2rem 0 3rem; color: var(--ink-faint); font-size: .85rem; }
   footer a { font-weight: 600; }
 
   .disclaimer { font-size: var(--fs-base); color: var(--ink-faint); font-style: italic; }

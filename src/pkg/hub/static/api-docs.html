@@ -68,10 +68,10 @@
       border: 1px solid #f4c75f6b;
       border-radius: .65rem;
       place-items: center;
-      font-size: var(--fs-xl);
+      font-size: 1.2rem;
       display: grid;
     }
-    nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
     nav a:hover, .header-link:hover { color: var(--text); }
     nav a.active { color: var(--amber); }
     .header-link {
@@ -103,9 +103,9 @@
       line-height: .95;
     }
     h2 { font-size: var(--fs-xl); font-weight: 800; margin: 2rem 0 .8rem; color: var(--text); }
-    p { color: var(--muted); font-size: var(--fs-lg); line-height: 1.7; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
     .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
-    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: var(--fs-base); color: var(--amber); }
+    code { background: #17212d; border: 1px solid var(--line); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); font-size: 0.85rem; color: var(--amber); }
     pre {
       background: #080b0f85;
       border: 1px solid var(--line);
@@ -129,7 +129,7 @@
       margin-bottom: var(--sp-6);
     }
     .card strong { color: var(--text); }
-    .card p { font-size: var(--fs-md); margin: .35rem 0 0; }
+    .card p { font-size: .9rem; margin: .35rem 0 0; }
     .card a { color: var(--blue); }
     .card a:hover { text-decoration: underline; }
 
@@ -150,12 +150,12 @@
     .surface-card .tag {
       text-transform: uppercase;
       font-weight: 900;
-      font-size: var(--fs-sm);
+      font-size: .78rem;
       margin-bottom: var(--sp-4);
     }
     .surface-card.hub .tag { color: var(--amber); }
     .surface-card.spoke .tag { color: var(--blue); }
-    .surface-card p { font-size: var(--fs-md); margin: .4rem 0 0; }
+    .surface-card p { font-size: .9rem; margin: .4rem 0 0; }
 
     /* ── Tabs ── */
     .tabs { display: flex; gap: var(--sp-0); border-bottom: 1px solid var(--line); margin-top: var(--sp-4); }
@@ -163,7 +163,7 @@
       padding: .7rem 1.4rem;
       cursor: pointer;
       color: var(--muted);
-      font-size: var(--fs-md);
+      font-size: .9rem;
       font-weight: 700;
       border-bottom: 2px solid transparent;
     }
@@ -242,7 +242,7 @@
         <pre><code>https://hive.hivecommons.dev</code></pre>
 
         <h2>Authentication</h2>
-        <p class="fs-md">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
+        <p style="font-size:.95rem">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
 
         <div class="card">
           <strong>Step 1: Login via browser</strong>
@@ -296,7 +296,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         </div>
 
         <h2>Spoke Integration</h2>
-        <p class="fs-md">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
+        <p style="font-size:.95rem">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
         <div class="card">
           <strong>hive.yaml</strong>
           <pre><code>hub:
@@ -310,7 +310,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         </div>
 
         <h2>Rate Limits</h2>
-        <p class="fs-md">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
+        <p style="font-size:.95rem">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
       </div>
 
       <div id="tab-reference" class="tab-content">
@@ -359,7 +359,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         document.getElementById('nav-logout').style.display='';
         document.getElementById('nav-dashboard').style.display='';
         var u=document.getElementById('nav-user');u.style.display='';
-        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span class="fs-base">'+esc(d.login)+'</span>';
+        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:0.85rem">'+esc(d.login)+'</span>';
       }
     }).catch(function(){});
   </script>

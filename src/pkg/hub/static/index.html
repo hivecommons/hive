@@ -67,10 +67,10 @@
       border: 1px solid #f4c75f6b;
       border-radius: .65rem;
       place-items: center;
-      font-size: var(--fs-xl);
+      font-size: 1.2rem;
       display: grid;
     }
-    nav { color: var(--muted); gap: 1.35rem; font-size: var(--fs-md); }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
     nav a:hover, .header-link:hover { color: var(--text); }
     .header-link {
       border: 1px solid var(--line);
@@ -107,8 +107,8 @@
       font-size: clamp(2rem, 4vw, 3.5rem);
       line-height: .98;
     }
-    h3 { font-size: var(--fs-xl); line-height: 1.2; }
-    p { color: var(--muted); font-size: var(--fs-lg); line-height: 1.7; }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
 
     /* ── Buttons ── */
     .button { text-decoration: none; }
@@ -212,7 +212,7 @@
     }
     .hero-proof span {
       display: block;
-      font-size: var(--fs-sm);
+      font-size: .78rem;
       color: var(--muted);
       margin-top: var(--sp-2);
       line-height: 1.35;
@@ -327,7 +327,7 @@
       color: var(--green);
       text-transform: uppercase;
       font-weight: 900;
-      font-size: var(--fs-sm);
+      font-size: .78rem;
       letter-spacing: .05em;
       margin-bottom: .9rem;
     }
@@ -338,19 +338,19 @@
       color: var(--text);
       border-radius: var(--r-pill);
       padding: .38rem .85rem;
-      font-size: var(--fs-md);
+      font-size: .88rem;
       font-weight: 700;
       white-space: nowrap;
     }
-    .stack-note { font-size: var(--fs-md); margin: var(--sp-0); }
+    .stack-note { font-size: .9rem; margin: var(--sp-0); }
 
     /* ── Comparison table ── */
     .compare-wrap { overflow-x: auto; margin-top: var(--sp-9); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); background: var(--surface-1); box-shadow: var(--shadow-card); }
     .compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 860px; }
-    .compare-table th { text-align: center; padding: var(--sp-6) var(--sp-6); color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--line); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .05em; }
+    .compare-table th { text-align: center; padding: 14px 14px; color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--line); font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em; }
     .compare-table th.cap { text-align: left; }
     .compare-table th.hive-col { color: var(--amber); }
-    .compare-table td { padding: var(--sp-5) var(--sp-6); border-bottom: 1px solid #ffffff0a; text-align: center; vertical-align: middle; color: var(--muted); }
+    .compare-table td { padding: 12px 14px; border-bottom: 1px solid #ffffff0a; text-align: center; vertical-align: middle; color: var(--muted); }
     .compare-table td.cap { text-align: left; color: var(--text); font-weight: 600; }
     .compare-table td.hive-col { background: rgba(244,199,95,0.05); color: var(--text); font-weight: 600; }
     .compare-table tr:hover td { background: rgba(244,199,95,0.03); }
@@ -360,8 +360,8 @@
     .c-no { color: #ff7e7e; opacity: .7; }
     .c-part { color: var(--amber); }
     .c-note { display: block; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); font-weight: 400; }
-    .compare-legend { font-size: var(--fs-sm); color: var(--muted); margin-top: .8rem; text-align: center; }
-    .compare-foot { font-size: var(--fs-sm); color: var(--muted); margin-top: 1.2rem; line-height: 1.5; }
+    .compare-legend { font-size: 0.72rem; color: var(--muted); margin-top: .8rem; text-align: center; }
+    .compare-foot { font-size: 0.78rem; color: var(--muted); margin-top: 1.2rem; line-height: 1.5; }
     .metric-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: .85rem;
@@ -378,7 +378,7 @@
       display: grid;
     }
     .metric-grid span { color: var(--muted); font-size: .86rem; }
-    .metric-grid strong { color: var(--green); font-size: var(--fs-xl); }
+    .metric-grid strong { color: var(--green); font-size: var(--fs-2xl); }
     /* The Public hives tile is an <a> so it can jump to the hive table; give it
        the same box as the sibling <div> tiles, plus a clickable affordance. */
     .metric-grid a.stat-jump {
@@ -395,7 +395,7 @@
     }
     .metric-grid a.stat-jump:hover { border-color: var(--green); background: var(--surface-3); }
     /* Muted call-to-action subtext inside a stat tile (e.g. "click to request one"). */
-    .metric-grid a.stat-jump .stat-cta { color: var(--muted); font-size: var(--fs-xs); }
+    .metric-grid a.stat-jump .stat-cta { color: var(--muted); font-size: .7rem; }
 
     /* ── Loop rail ── */
     .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
@@ -450,11 +450,11 @@
       color: var(--green);
       text-transform: uppercase;
       font-weight: 900;
-      font-size: var(--fs-sm);
+      font-size: .78rem;
       margin-bottom: var(--sp-4);
     }
     .proof-card h3 { margin-bottom: var(--sp-4); }
-    .proof-card p { font-size: var(--fs-md); }
+    .proof-card p { font-size: .9rem; }
 
     /* ── Get started split ── */
     .split {
@@ -502,7 +502,7 @@
       padding: 1.15rem;
       font-weight: 700;
       line-height: 1.45;
-      font-size: var(--fs-md);
+      font-size: .95rem;
     }
 
     /* ── Hive table ── */
@@ -516,7 +516,7 @@
        edge-to-edge .section-pad sections and the table looked misaligned. */
     .section { margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; scroll-margin-top: 5.5rem; }
     .section > h2 {
-      font-size: var(--fs-xl);
+      font-size: var(--fs-2xl);
       font-weight: 800;
       margin-bottom: var(--sp-6);
       display: flex;
@@ -524,7 +524,7 @@
       gap: var(--sp-4);
     }
     .hive-table { width: 100%; border-collapse: collapse; font-size: var(--fs-base); margin: 0 auto; }
-    .hive-table th { text-align: center; padding: var(--sp-5) var(--sp-5); color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--line); font-size: var(--fs-sm); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
+    .hive-table th { text-align: center; padding: 10px 12px; color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--line); font-size: var(--fs-sm); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
     .hive-table td { padding: var(--sp-5); border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
     .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
@@ -962,7 +962,7 @@
           <h3>Get a hive for your project</h3>
           <p>Hosted on our infrastructure &mdash; no Kubernetes, no setup. Request one and invite contributors to run the agents.</p>
           <div class="mt-6"><a class="hv-btn btn-primary button primary" href="/get-started">Request a Hive</a></div>
-          <p style="font-size:var(--fs-base);margin-top:.8rem"><a class="text-info" href="/get-started#self-host">Prefer to self-host? →</a></p>
+          <p style="font-size:.8rem;margin-top:.8rem"><a class="text-info" href="/get-started#self-host">Prefer to self-host? →</a></p>
         </div>
         <div class="proof-card" id="contribute-compute">
           <div class="tag">Community</div>
@@ -994,23 +994,23 @@
         <div class="install-list">
           <div class="install-step">
             <span>1</span>
-            <div><h3>Login with GitHub</h3><p class="fs-md">Authenticate so we can provision your hive and install the GitHub App on your repos.</p></div>
+            <div><h3>Login with GitHub</h3><p style="font-size:.88rem">Authenticate so we can provision your hive and install the GitHub App on your repos.</p></div>
           </div>
           <div class="install-step">
             <span>2</span>
-            <div><h3>Install the Hive App</h3><p class="fs-md">Grant the Hive GitHub App access to the repositories you want maintained.</p></div>
+            <div><h3>Install the Hive App</h3><p style="font-size:.88rem">Grant the Hive GitHub App access to the repositories you want maintained.</p></div>
           </div>
           <div class="install-step">
             <span>3</span>
-            <div><h3>Choose your autonomy level</h3><p class="fs-md">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
+            <div><h3>Choose your autonomy level</h3><p style="font-size:.88rem">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
           </div>
           <div class="install-step">
             <span>4</span>
-            <div><h3>Connect your AI provider</h3><p class="fs-md">On each agent card, pick the CLI (Claude Code, Copilot, &hellip;) and model, then authenticate &mdash; open the agent's terminal and run the CLI's login command, or use the card's Login button. Prefer local? Point agents at your own models via vLLM or llm-d &mdash; no provider account needed.</p></div>
+            <div><h3>Connect your AI provider</h3><p style="font-size:.88rem">On each agent card, pick the CLI (Claude Code, Copilot, &hellip;) and model, then authenticate &mdash; open the agent's terminal and run the CLI's login command, or use the card's Login button. Prefer local? Point agents at your own models via vLLM or llm-d &mdash; no provider account needed.</p></div>
           </div>
           <div class="install-step">
             <span>5</span>
-            <div><h3>Agents start working</h3><p class="fs-md">Within minutes, agents begin triaging issues, writing fixes, and opening PRs. Watch from your dashboard.</p></div>
+            <div><h3>Agents start working</h3><p style="font-size:.88rem">Within minutes, agents begin triaging issues, writing fixes, and opening PRs. Watch from your dashboard.</p></div>
           </div>
         </div>
       </div>
@@ -1046,7 +1046,7 @@
             <tr><th style="text-align:left">Method</th><th style="text-align:left">Type</th><th style="text-align:left">Models</th><th style="text-align:left">Authentication</th></tr>
           </thead>
           <tbody>
-            <tr><td class="hive-name">Claude Code</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Anthropic (Opus, Sonnet, Haiku)</td><td style="text-align:left">Anthropic subscription &mdash; dashboard Login button or <code style="background:#17212d;border:1px solid var(--line);padding:var(--sp-1) var(--sp-2);border-radius:var(--r-sm);color:var(--amber)">/login</code> in the agent terminal</td></tr>
+            <tr><td class="hive-name">Claude Code</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Anthropic (Opus, Sonnet, Haiku)</td><td style="text-align:left">Anthropic subscription &mdash; dashboard Login button or <code style="background:#17212d;border:1px solid var(--line);padding:1px 5px;border-radius:var(--r-sm);color:var(--amber)">/login</code> in the agent terminal</td></tr>
             <tr><td class="hive-name">GitHub Copilot</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Copilot catalog (Claude, GPT, Gemini)</td><td style="text-align:left">GitHub device-flow login</td></tr>
             <tr><td class="hive-name">Gemini CLI</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Gemini</td><td style="text-align:left">Google account or API key</td></tr>
             <tr><td class="hive-name">Goose</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Multi-provider</td><td style="text-align:left">Provider API key</td></tr>
@@ -1065,11 +1065,11 @@
     <section class="section" id="hives">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-5)">
         <h2>Active Hives</h2>
-        <input type="text" id="hive-search" placeholder="Search hives..." oninput="filterHiveTable()" style="padding:var(--sp-4) var(--sp-6);background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);width:250px">
+        <input type="text" id="hive-search" placeholder="Search hives..." oninput="filterHiveTable()" style="padding:8px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
       </div>
       <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
            card both point here, so name the action next to the list it refers to. -->
-      <p style="color:var(--muted);font-size:var(--fs-base);margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong class="text-default">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a class="text-info" href="#leaderboard">leaderboard</a>.</p>
+      <p style="color:var(--muted);font-size:.85rem;margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong class="text-default">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a class="text-info" href="#leaderboard">leaderboard</a>.</p>
       <div id="hive-table-container"><div class="loading">Loading hives...</div></div>
     </section>
 
@@ -1107,10 +1107,10 @@
       .reading-list .rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-6); }
       .reading-list .rl-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1.15rem 1.25rem; display: flex; flex-direction: column; gap: var(--sp-4); transition: border-color .15s ease; overflow: hidden; }
       .reading-list .rl-card:hover { border-color: #80bfff4d; }
-      .reading-list .rl-card a.rl-title { color: var(--blue); font-weight: 600; font-size: var(--fs-lg); line-height: 1.4; text-decoration: none; }
+      .reading-list .rl-card a.rl-title { color: var(--blue); font-weight: 600; font-size: 1.02rem; line-height: 1.4; text-decoration: none; }
       .reading-list .rl-card a.rl-title:hover { text-decoration: underline; }
-      .reading-list .rl-card .rl-by { color: var(--muted); font-size: var(--fs-base); margin-top: auto; }
-      .reading-list .rl-card .rl-date { color: #6b7688; font-size: var(--fs-base); }
+      .reading-list .rl-card .rl-by { color: var(--muted); font-size: .85rem; margin-top: auto; }
+      .reading-list .rl-card .rl-date { color: #6b7688; font-size: .8rem; }
     </style>
     <section class="reading-list" id="reading-list">
       <div class="rl-head">
@@ -1139,7 +1139,7 @@
 
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-    function hiveToast(msg, type) { var t = document.createElement('div'); t.style.cssText = 'position:fixed;top:70px;right:24px;z-index:200;padding:var(--sp-5) var(--sp-7);border-radius:var(--r);font-size:var(--fs-base);max-width:400px;color:#fff;background:' + (type === 'error' ? 'color-mix(in srgb, var(--status-error) 90%, transparent)' : type === 'success' ? 'color-mix(in srgb, var(--status-ok) 90%, transparent)' : 'color-mix(in srgb, var(--status-info) 90%, transparent)'); t.textContent = msg; document.body.appendChild(t); setTimeout(function() { t.remove(); }, 4000); }
+    function hiveToast(msg, type) { var t = document.createElement('div'); t.style.cssText = 'position:fixed;top:70px;right:24px;z-index:200;padding:var(--sp-5) var(--sp-7);border-radius:8px;font-size:0.85rem;max-width:400px;color:#fff;background:' + (type === 'error' ? 'color-mix(in srgb, var(--status-error) 90%, transparent)' : type === 'success' ? 'color-mix(in srgb, var(--status-ok) 90%, transparent)' : 'color-mix(in srgb, var(--status-info) 90%, transparent)'); t.textContent = msg; document.body.appendChild(t); setTimeout(function() { t.remove(); }, 4000); }
 
     function sparkline(points, color, w, h) {
       if (!points || points.length < 2) return '';
@@ -1362,7 +1362,7 @@
           : '<span class="chip-entity" style="display:inline-block" title="Self-hosted by the owner">local</span>';
         return '<tr>' +
           '<td style="white-space:nowrap">' + contributeButton(h) + '</td>' +
-          '<td style="display:flex;align-items:center;gap:var(--sp-5)"><img src="https://github.com/' + esc(h.org) + '.png" style="width:36px;height:36px;border-radius:var(--r);flex-shrink:0" onerror="this.style.display=\'none\'">' + dot + '<div><span class="hive-name">' + esc(h.name || h.id) + '</span></div></td>' +
+          '<td style="display:flex;align-items:center;gap:10px"><img src="https://github.com/' + esc(h.org) + '.png" style="width:36px;height:36px;border-radius:var(--r);flex-shrink:0" onerror="this.style.display=\'none\'">' + dot + '<div><span class="hive-name">' + esc(h.name || h.id) + '</span></div></td>' +
           '<td>' + htype + '</td>' +
           '<td>' + repoLink + '</td>' +
           '<td>' + repoCount + '</td>' +
@@ -1390,7 +1390,7 @@
         var taskText = e.current_task ? '<span class="text-success fs-sm">' + esc(e.current_task) + '</span>' : '<span class="text-muted fs-sm">—</span>';
         return '<tr>' +
           '<td style="white-space:nowrap">' + avatar + '<a href="https://github.com/' + esc(e.github_username) + '" target="_blank">' + esc(e.github_username) + '</a></td>' +
-          '<td class="fs-base text-muted">' + esc(e.hive_name || '') + '</td>' +
+          '<td style="font-size:0.8rem;color:var(--muted)">' + esc(e.hive_name || '') + '</td>' +
           '<td style="text-align:center">' + (e.tasks_completed || 0) + '</td>' +
           '<td style="text-align:center"><span class="acmm-badge acmm-2">' + esc(e.trust_tier || 'newcomer') + '</span></td>' +
           '<td>' + taskText + '</td>' +
@@ -1617,7 +1617,7 @@
         document.getElementById('nav-logout').style.display='';
         var u=document.getElementById('nav-user');
         u.style.display='';
-        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle">'+' <span class="fs-base">'+esc(d.login)+'</span>';
+        u.innerHTML='<img src="'+esc(d.avatar_url)+'" style="width:24px;height:24px;border-radius:50%;vertical-align:middle">'+' <span style="font-size:0.85rem">'+esc(d.login)+'</span>';
         return fetch('/api/saas/access-status').then(function(r2){return r2.json()}).then(function(as){
           _userAccessStatus = as.hives || {};
           if(d.authenticated) document.getElementById('nav-dashboard').style.display='';
@@ -1655,7 +1655,7 @@
       if (!_isLoggedIn) {
         var loginRedirect = '/login?redirect=' + encodeURIComponent('/?request_hive=' + encodeURIComponent(id));
         area.innerHTML = '<p class="fs-sm text-muted mb-4">Login with GitHub to request access to <strong>' + esc(name) + '</strong>.</p>' +
-          '<a href="' + loginRedirect + '" style="padding:var(--sp-4) var(--sp-6);background:var(--amber);color:#17110a;border-radius:var(--r);font-size:var(--fs-base);font-weight:600;text-decoration:none;display:inline-block">Login with GitHub</a>';
+          '<a href="' + loginRedirect + '" style="padding:var(--sp-4) var(--sp-6);background:var(--amber);color:#17110a;border-radius:var(--r);font-size:0.85rem;font-weight:600;text-decoration:none;display:inline-block">Login with GitHub</a>';
         return;
       }
 
@@ -1666,7 +1666,7 @@
         if (!cBase2) { area.innerHTML = roleLine; return; }
         var cUrl = cBase2 + '/contribute';
         area.innerHTML = roleLine +
-          '<a href="' + cUrl + '" target="_blank" style="padding:var(--sp-4) var(--sp-6);background:var(--green);color:#fff;border-radius:var(--r);font-size:var(--fs-base);font-weight:600;text-decoration:none;display:inline-block">Open Contribute Page</a>';
+          '<a href="' + cUrl + '" target="_blank" style="padding:var(--sp-4) var(--sp-6);background:var(--green);color:#fff;border-radius:var(--r);font-size:0.85rem;font-weight:600;text-decoration:none;display:inline-block">Open Contribute Page</a>';
         return;
       }
       if (access && access.status === 'pending') {
@@ -1720,8 +1720,8 @@
         var el = document.getElementById('hub-version');
         if (!el || !data.git_hash) return;
         var isCurrent = data.latest_sha && data.git_hash === data.latest_sha;
-        el.innerHTML = '<span style="font-family:monospace;font-size:var(--fs-xs);color:var(--muted)">' + data.git_hash + '</span>' +
-          (isCurrent ? '<span style="color:var(--green);margin-left:var(--sp-2)" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:var(--sp-2)" title="hub is behind latest ' + (data.latest_sha || '') + '">↑</span>');
+        el.innerHTML = '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)">' + data.git_hash + '</span>' +
+          (isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + (data.latest_sha || '') + '">↑</span>');
       } catch(e) {}
     })();
 
@@ -1765,9 +1765,9 @@
 
   <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center;overscroll-behavior:contain;overscroll-behavior-y:contain" onclick="if(event.target===this)closeContribModal()">
     <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
-      <h2 class="fs-xl mb-2 text-brand">Contribute to <span id="contrib-hive-name"></span></h2>
-      <p class="fs-base text-muted mb-6">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
-      <p style="color:var(--muted);font-size:var(--fs-md);line-height:1.6;margin-bottom:var(--sp-7)">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
+      <h2 style="font-size:1.3rem;margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
+      <p style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-6)">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
+      <p style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:var(--sp-7)">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-5)">
         <button class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
