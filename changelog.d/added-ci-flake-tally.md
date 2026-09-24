@@ -1,0 +1,1 @@
+- Added `src/scripts/ci-flake-tally.sh` so maintainers can rank flaky Go tests and packages from recent GitHub Actions runs with one command.

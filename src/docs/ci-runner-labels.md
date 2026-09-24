@@ -110,3 +110,11 @@ the fleet is reachable, turning that into a legible red X. That is not done
 here: it needs a decision about whether every workflow pays for such a job, and
 guessing at the shape is worse than raising it.
 
+
+## Finding flaky tests in recent CI
+
+Use `src/scripts/ci-flake-tally.sh` when the v5 test workflow is red and you need to separate repeat Go test failures from build or infrastructure noise. The script unsets `GITHUB_TOKEN`, scans recent `v2-tests.yml` runs, fetches failed job logs, strips the GitHub log timestamp prefix, and ranks failing `--- FAIL:` tests and `FAIL github.com/...` packages by distinct workflow run count; failed runs with no test failure marker are listed separately as build/infra failures.
+
+```sh
+bash src/scripts/ci-flake-tally.sh -n 40
+```
