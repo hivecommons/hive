@@ -1,0 +1,1 @@
+- tui: make stream integration tests deterministic (sync hook instead of wall-clock polling), fixing recurring CI flake.

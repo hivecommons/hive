@@ -702,6 +702,11 @@ type harness struct {
 	// stopped" from "goroutines are still running".
 	cmdWG sync.WaitGroup
 
+	// streamHooks receives explicit snapshots from the model after stream state
+	// changes have been applied. Stream tests assert on those snapshots instead
+	// of polling the wall clock for the event loop to converge.
+	streamHooks chan streamHookRecord
+
 	// quitRequested and execRequested record the two commands this harness
 	// recognises but does not run. They live HERE rather than on the model
 	// because production behaviour changes are out of scope for this task: the
@@ -728,12 +733,22 @@ func newHarness(t *testing.T, f *fixtureDashboard, opts ...func(*model)) *harnes
 		opt(&m)
 	}
 
+	streamHooks := make(chan streamHookRecord, 64)
+	m.streamHook = func(record streamHookRecord) {
+		select {
+		case streamHooks <- record:
+		default:
+			t.Errorf("stream hook buffer filled before the test observed %v", record.kind)
+		}
+	}
+
 	h := &harness{
-		t:     t,
-		f:     f,
-		model: m,
-		msgs:  make(chan tea.Msg, 256),
-		done:  make(chan struct{}),
+		t:           t,
+		f:           f,
+		model:       m,
+		msgs:        make(chan tea.Msg, 256),
+		done:        make(chan struct{}),
+		streamHooks: streamHooks,
 	}
 
 	// The window size arrives first, exactly as bubbletea delivers it.
@@ -897,6 +912,38 @@ func (h *harness) waitForView(why string, cond func(string) bool) {
 func (h *harness) waitForFixture(why string, cond func() bool) {
 	h.t.Helper()
 	h.await(why, cond)
+}
+
+// waitForStreamHook blocks until the model reports that a specific stream
+// transition has been applied, returning the exact model snapshot that fired
+// the hook.
+func (h *harness) waitForStreamHook(why string, want streamHookEvent, accept ...func(model) bool) model {
+	h.t.Helper()
+	timer := time.NewTimer(waitTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case got := <-h.streamHooks:
+			if got.kind != want {
+				continue
+			}
+			if len(accept) == 0 || accept[0](got.model) {
+				return got.model
+			}
+		case <-timer.C:
+			h.t.Fatalf("timed out waiting for %s\nframe at timeout:\n%s", why, h.view())
+		}
+	}
+}
+
+func (h *harness) drainStreamHooks() {
+	for {
+		select {
+		case <-h.streamHooks:
+		default:
+			return
+		}
+	}
 }
 
 // await is the shared wait, and it exists to render the failure frame at the
@@ -1108,30 +1155,33 @@ func TestStreamEventUpdatesAgentAndGovernorStateImmediately(t *testing.T) {
 	// construction and SURGE is stable. The contradiction still does all the
 	// work it was designed to do: a SURGE header cannot have come from a poll.
 	f.publish(t, "", integrationStatusBusy)
-	h.waitFor("the connection state to become connected on the first event", func(m model) bool {
-		return m.sseConnected
-	})
-	h.waitFor("the reconcile cadence to stretch so no poll can overwrite the event", func(m model) bool {
-		return m.reconcileInterval == sseReconcileInterval
-	})
+	firstEvent := h.waitForStreamHook("the first stream event to be applied", streamHookApplied)
+	if !firstEvent.sseConnected {
+		t.Fatal("the first stream event did not mark the stream connected")
+	}
+	if got := firstEvent.reconcileInterval; got != sseReconcileInterval {
+		t.Fatalf("first stream event left reconcileInterval = %v, want %v", got, sseReconcileInterval)
+	}
 	h.settle()
 	f.publish(t, "", integrationStatusBusy)
+	secondEvent := h.waitForStreamHook("the second stream event to be applied", streamHookApplied)
 
-	h.waitForView("the header governor mode to follow the stream event", func(v string) bool {
-		return strings.Contains(v, "governor: SURGE")
-	})
-	h.waitForView("the header ws field to report the live stream", func(v string) bool {
-		return strings.Contains(v, "ws: "+wsConnected)
-	})
-	h.waitFor("the stream's agent states to reach the Agents pane", func(m model) bool {
-		agents, ok := m.panes[0].(panes.Agents)
-		if !ok {
-			return false
-		}
-		// scanner is running per /api/agents and PAUSED per the stream.
-		name, paused, ok := agents.SelectedAgent()
-		return ok && name == "scanner" && paused
-	})
+	view := secondEvent.View()
+	if !strings.Contains(view, "governor: SURGE") {
+		t.Fatalf("the header governor mode did not follow the stream event:\n%s", view)
+	}
+	if !strings.Contains(view, "ws: "+wsConnected) {
+		t.Fatalf("the header ws field did not report the live stream:\n%s", view)
+	}
+	agents, ok := secondEvent.panes[0].(panes.Agents)
+	if !ok {
+		t.Fatal("pane 0 is not an Agents pane")
+	}
+	// scanner is running per /api/agents and PAUSED per the stream.
+	name, paused, ok := agents.SelectedAgent()
+	if !ok || name != "scanner" || !paused {
+		t.Fatalf("stream agent state did not reach the Agents pane: name=%q paused=%v ok=%v", name, paused, ok)
+	}
 }
 
 // TestStreamEventDoesNotBlankTheConfiguredGovernorInterval is T29's regression,
@@ -1159,21 +1209,25 @@ func TestStreamEventDoesNotBlankTheConfiguredGovernorInterval(t *testing.T) {
 	// for the stretch first, then publishing again, makes the event the last
 	// writer by construction. See the stream-drop test for the full note.
 	f.publish(t, "", integrationStatusBusy)
-	h.waitFor("the stream to be healthy", func(m model) bool { return m.sseConnected })
-	h.waitFor("the reconcile cadence to stretch", func(m model) bool {
-		return m.reconcileInterval == sseReconcileInterval
-	})
+	firstEvent := h.waitForStreamHook("the first stream event to be applied", streamHookApplied)
+	if !firstEvent.sseConnected {
+		t.Fatal("the first stream event did not mark the stream connected")
+	}
+	if got := firstEvent.reconcileInterval; got != sseReconcileInterval {
+		t.Fatalf("first stream event left reconcileInterval = %v, want %v", got, sseReconcileInterval)
+	}
 	h.settle()
 	f.publish(t, "", integrationStatusBusy)
-	h.waitForView("the stream event to land", func(v string) bool {
-		return strings.Contains(v, "governor: SURGE")
-	})
+	secondEvent := h.waitForStreamHook("the second stream event to be applied", streamHookApplied)
+	if v := secondEvent.View(); !strings.Contains(v, "governor: SURGE") {
+		t.Fatalf("the stream event did not land:\n%s", v)
+	}
 
-	if got := h.snapshot().governorInterval; got != 15*time.Minute {
+	if got := secondEvent.governorInterval; got != 15*time.Minute {
 		t.Fatalf("a stream event carrying no interval overwrote the cached one: got %v, want 15m", got)
 	}
 	// And the frame still renders it, which is the operator-visible half.
-	if v := h.view(); strings.Contains(v, "next eval —") {
+	if v := secondEvent.View(); strings.Contains(v, "next eval —") {
 		t.Errorf("the Governor pane reverted next eval to unknown after a stream event:\n%s", v)
 	}
 }
@@ -1280,24 +1334,32 @@ func TestStreamDropActivatesPollFallbackPreservesDataAndReconnectsOnce(t *testin
 	// seconds, so the second event is the last writer by construction and the
 	// SURGE assertion below is testing the stream rather than a race.
 	f.publish(t, "", integrationStatusBusy)
-	h.waitFor("the stream to be healthy", func(m model) bool { return m.sseConnected })
-	h.waitFor("the reconcile cadence to stretch", func(m model) bool {
-		return m.reconcileInterval == sseReconcileInterval
-	})
+	firstEvent := h.waitForStreamHook("the first stream event to be applied", streamHookApplied)
+	if !firstEvent.sseConnected {
+		t.Fatal("the first stream event did not mark the stream connected")
+	}
+	if got := firstEvent.reconcileInterval; got != sseReconcileInterval {
+		t.Fatalf("first stream event left reconcileInterval = %v, want %v", got, sseReconcileInterval)
+	}
 	h.settle()
 	f.publish(t, "", integrationStatusBusy)
-	h.waitForView("the stream-sourced governor mode", func(v string) bool {
-		return strings.Contains(v, "governor: SURGE")
-	})
+	secondEvent := h.waitForStreamHook("the second stream event to be applied", streamHookApplied)
+	if v := secondEvent.View(); !strings.Contains(v, "governor: SURGE") {
+		t.Fatalf("stream-sourced governor mode did not render:\n%s", v)
+	}
 
 	connectionsBefore := f.streamConnections()
+	h.drainStreamHooks()
 	f.dropStream()
 
 	// (a) The connection state changes, and the header says so.
-	h.waitFor("the model to notice the drop", func(m model) bool { return !m.sseConnected })
-	h.waitForView("the header to report the stream is down", func(v string) bool {
-		return strings.Contains(v, "ws: "+wsNotConnected)
-	})
+	fallback := h.waitForStreamHook("the model to activate poll fallback after the drop", streamHookFallbackActivated)
+	if fallback.sseConnected {
+		t.Fatal("the stream drop did not mark the stream disconnected")
+	}
+	if v := fallback.View(); !strings.Contains(v, "ws: "+wsNotConnected) {
+		t.Fatalf("the header did not report the stream is down:\n%s", v)
+	}
 
 	// (b) The poll fallback is reactivated at the fast cadence.
 	//
@@ -1314,13 +1376,13 @@ func TestStreamDropActivatesPollFallbackPreservesDataAndReconnectsOnce(t *testin
 	// pollInterval. The assertion reads the FIELD the moment it changes, and
 	// the fallback's first fetch is issued immediately by sseDisconnected
 	// rather than one interval later, which is what (d) below observes.
-	h.waitFor("the reconcile cadence to return to the fallback interval", func(m model) bool {
-		return m.reconcileInterval == pollInterval
-	})
+	if got := fallback.reconcileInterval; got != pollInterval {
+		t.Fatalf("reconcile cadence after stream drop = %v, want %v", got, pollInterval)
+	}
 
 	// (c) LAST-GOOD DATA SURVIVES. The panes and the two data header fields
 	// keep what they had — a drop changes `ws:`, not what is known.
-	view := h.view()
+	view := fallback.View()
 	if !strings.Contains(view, "hive: acceptance-hive") {
 		t.Errorf("the hive identity was blanked by a stream drop:\n%s", view)
 	}
@@ -1332,18 +1394,24 @@ func TestStreamDropActivatesPollFallbackPreservesDataAndReconnectsOnce(t *testin
 	}
 
 	// (d) It reconnects, and exactly one reader loop exists afterwards.
-	h.waitForFixture("the stream to be re-dialled after the drop", func() bool {
-		return f.streamConnections() > connectionsBefore
+	dropGen := fallback.sseGen
+	reopened := h.waitForStreamHook("the stream to be re-dialled after the drop", streamHookOpened, func(m model) bool {
+		return m.sseGen == dropGen
 	})
-	h.waitFor("a live stream to be installed again", func(m model) bool {
-		return m.sse != nil
-	})
+	if reopened.sse == nil {
+		t.Fatal("the re-dialled stream was not installed")
+	}
 
 	// One event, one delivery. A duplicated reader loop would consume the
 	// single frame published here and leave the other loop waiting, or would
 	// double-deliver; either way the connection count is the direct evidence.
 	f.publish(t, "", integrationStatus)
-	h.waitFor("the reconnected stream to be healthy", func(m model) bool { return m.sseConnected })
+	reconnected := h.waitForStreamHook("the reconnected stream event to be applied", streamHookApplied, func(m model) bool {
+		return m.sseGen == dropGen
+	})
+	if !reconnected.sseConnected {
+		t.Fatal("the reconnected stream event did not mark the stream connected")
+	}
 
 	h.settle()
 	if got, want := f.streamConnections(), connectionsBefore+1; got != want {
