@@ -1939,7 +1939,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor agent fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -1977,7 +1977,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-toggle-grid">
 <div class="admin-toggle">
 <div class="admin-switch" id="admin-suspend-switch" data-key="contribute_suspended"></div>
-<div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected clankers stay online but idle.</div></div>
+<div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected contributor agents stay online but idle.</div></div>
 </div>
 <div class="admin-toggle">
 <div class="admin-switch" id="admin-wall-switch" data-key="contribute_wall_enabled"></div>
@@ -2041,7 +2041,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </div>
 </div>
-<!-- Operations tab — MONITORING. The Connected-clankers list (with its per-row
+<!-- Operations tab — MONITORING. The connected contributor agents list (with its per-row
      trust / Revoke / Remove controls, still owner/read-write gated), Fleet work
      queue, and the read-only Pipeline & policy panel. Split out of the former
      "Management & Operations" tab; the admin CONTROLS moved to the Management
@@ -2050,7 +2050,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops">
 <h1>Operations</h1>
 <div id="operator-message-banner-ops"></div>
-<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--text)">Management</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">A live view over the contributor agent fleet and its in-flight work. The panels below surface what this hive already knows; the per-contributor trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--text)">Management</strong> tab.</p>
 <div id="ops-announcement" class="announcement-banner" role="status"><span class="ann-level"></span><span class="ann-text"></span><button class="hv-btn btn-secondary" type="button" data-action="dismiss-announcement" aria-label="Dismiss announcement">&times;</button></div>
 <div id="ops-help-links" class="help-links" aria-label="Help and community links"><h4>Help &amp; community</h4><div class="links"></div></div>
 
@@ -2065,7 +2065,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-grid">
 <div>
 <div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected clankers, last 7 days (hourly)"></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected contributor agents</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected contributor agents, last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:var(--text);font-weight:600">Your army</span>
@@ -2188,7 +2188,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      filter. data-scope=mine stays clickable while anonymous on purpose — the
      empty state is what tells a signed-out viewer that signing in fills it. -->
 <span class="ops-filters__sep" aria-hidden="true"></span>
-<button class="ops-scope active" data-scope="all" title="Work from every connected clanker">All contributors</button>
+<button class="ops-scope active" data-scope="all" title="Work from every connected contributor agent">All contributors</button>
 <button class="ops-scope" data-scope="mine" title="Only the work running under your GitHub account">Mine</button>
 </div>
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
@@ -2299,7 +2299,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
   </button>
   <div class="cc-withheld" id="cc-withheld" style="display:none"></div>
 </div>
-<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
+<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a contributor agent grabs one you&rsquo;ll see it fly from here to that agent. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
 </div>
 <!-- Opportunistic Work (#2592): a small, CALM discovery panel of admissible
      issues NOT already at the top of the queue, ranked by a light recency heat
@@ -3546,7 +3546,7 @@ function meProfileRows(p){
   var loadout=p.cli_backend?esc(p.cli_backend):'';
   rows.push(['Loadout',loadout||unset,loadout?' mono':'']);
   var clanker=(p.model?esc(p.model):'')+(ccAdvisorLabel(p)?((p.model?' + ':'')+ccAdvisorLabel(p)):'');
-  rows.push(['Clanker',clanker||unset,clanker?' mono':'']);
+  rows.push(['Contributor agent',clanker||unset,clanker?' mono':'']);
   rows.push(['Sponsor',p.invited_by?esc(p.invited_by):unset,'']);
   var active='since '+esc(meYearMonth(p.registered_at)||'—');
   if(p.last_active){var ago=meTimeAgo(p.last_active);if(ago)active+=' · last op '+esc(ago);}
@@ -4508,10 +4508,10 @@ onEl('clanker-list','click',function(e){
     // clanker, so it moves to different work. Uses the existing
     // POST /api/contributors/{id}/requeue endpoint (owner/read-write only), whose handler
     // now performs the release + reassignment.
-    adminConfirm('Reassign '+user,'Take '+user+' off their current task and hand them their next-priority item; that task goes back to the ready queue for someone else. The released task won&rsquo;t be re-offered to '+user+' for a short window. If nothing else is available the clanker is simply released and idle. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Reassign',function(){
+    adminConfirm('Reassign '+user,'Take '+user+' off their current task and hand them their next-priority item; that task goes back to the ready queue for someone else. The released task won&rsquo;t be re-offered to '+user+' for a short window. If nothing else is available the contributor agent is simply released and idle. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Reassign',function(){
       // Let the operator attach an optional reason. It is recorded in the audit +
       // activity log and pushed to the still-connected worker on task_revoke.
-      var reason=(window.prompt('Reason for reassigning this clanker (optional):','wedged: moving to different work')||'').trim();
+      var reason=(window.prompt('Reason for reassigning this contributor agent (optional):','wedged: moving to different work')||'').trim();
       fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
         .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
         .then(function(x){
@@ -4758,9 +4758,9 @@ function renderClankers(list){
   // a malformed row can't leave the roster stuck on "Loading…".
   try{ccRenderInterestRoster(list);}catch(e){console.error('interest roster render failed',e);}
   if(!el)return;
-  if(!list.length){el.innerHTML='<div class="ops-empty">No clankers connected right now.</div>';return;}
+  if(!list.length){el.innerHTML='<div class="ops-empty">No contributor agents connected right now.</div>';return;}
   el.innerHTML=list.map(function(c){
-    var user=c.github_username||c.contributor_id||'clanker';
+    var user=c.github_username||c.contributor_id||'contributor agent';
     var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
     // Trust tier is now surfaced as a compact medallion beside the identity (below),
     // so drop it from the middot sub-line to avoid duplicating the same string.
@@ -4814,7 +4814,7 @@ function renderClankers(list){
       // task AND immediately reassigns this clanker its next-priority item. An ⓘ marker
       // (same info-btn affordance as the cooldown explainer) states the outcome on hover,
       // so the operator understands it WITHOUT opening the confirm dialog.
-      var reassignInfo='Reassign takes this clanker off its current task and immediately hands it the next-priority item, so it keeps working. The released task goes back to the ready queue for another contributor, and isn&rsquo;t re-offered to this clanker for a short window.';
+      var reassignInfo='Reassign takes this contributor agent off its current task and immediately hands it the next-priority item, so it keeps working. The released task goes back to the ready queue for another contributor, and isn&rsquo;t re-offered to this agent for a short window.';
       var requeueBtn=c.current_task
         ?('<span class="info-affordance"><button type="button" class="hv-btn btn-secondary btn-sm admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
           '<button type="button" class="hv-btn btn-icon btn-sm info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
@@ -4913,7 +4913,7 @@ function ccRenderInterestRoster(list){
   // the display label; matching is case-insensitive so 'nvidia'/'NVIDIA' aggregate.
   var agg={};
   list.forEach(function(c){
-    var who=c.github_username||c.contributor_id||'clanker';
+    var who=c.github_username||c.contributor_id||'contributor agent';
     var interests=c.label_interests||[];
     for(var i=0;i<interests.length;i++){
       var raw=(interests[i]||'').trim();if(!raw)continue;
@@ -6293,7 +6293,7 @@ function ccMaybeAchieve(e){
   } else if(e.action==='failed'){
     if(e.username)ccCompleteStreak[e.username]=0; // a failure breaks the streak
   } else if(e.action==='promoted'){
-    ccAchievement('Achievement unlocked','<span class="who">'+esc(e.username||'a clanker')+'</span> reached <b>'+esc(e.task||'contributor')+'</b>','🎖️');
+    ccAchievement('Achievement unlocked','<span class="who">'+esc(e.username||'a contributor agent')+'</span> reached <b>'+esc(e.task||'contributor')+'</b>','🎖️');
   }
 }
 

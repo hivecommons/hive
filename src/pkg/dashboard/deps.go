@@ -174,8 +174,8 @@ type Dependencies struct {
 	// Distinct from IssueClaimed (open-PR claims, rebuilt each scan). Nil
 	// disables recording, enforcement and the /api/claims routes.
 	IssueClaims *claims.Ledger
-	HookFire   func(context.Context, hooks.Payload)
-	CELTrigger func(context.Context, celtrigger.NormalizedEvent, string)
+	HookFire    func(context.Context, hooks.Payload)
+	CELTrigger  func(context.Context, celtrigger.NormalizedEvent, string)
 	// RunBurndown optionally projects cheap convergence progress for one run
 	// detail page. It is intentionally absent from the list path; sources may
 	// need to inspect a graph or in-memory campaign state for the requested key.

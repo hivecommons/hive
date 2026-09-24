@@ -2601,9 +2601,9 @@
     .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-pill[data-status="info"] { --component-status: var(--status-info); }
     .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-pill[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
-    /* sidebar resource count pills (Repos/Beads/Knowledge/Contributors) —
-       one look, JS toggles display + textContent by id */
-    .oc-nav-count { background: var(--surface-3); border-color: var(--line-subtle); color: var(--text-muted); margin-left: auto; flex-shrink: 0; font-weight: 700; justify-content: center; min-width: var(--badge-count-min-w); }
+    /* sidebar count badges use the shared .badge-count recipe; JS hides zero counts. */
+    .oc-nav-count { margin-left: auto; flex-shrink: 0; }
+    .oc-nav-count[hidden] { display: none; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -3205,16 +3205,12 @@
       <span id="acmm-sidebar-badge" title="Click to change maturity level" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" data-action="openACMMDialog"></span>
     </div>
     <div class="oc-nav-group">
-      <div class="oc-nav-label">Control</div>
+      <div class="oc-nav-label">Overview</div>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
-      <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
-      <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
-      <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
-      <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
-        <span class="oc-tree-arrow">▼</span> <span>Agent</span>
+        <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
       <div class="oc-tree-children" id="oc-agent-tree">
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
@@ -3230,13 +3226,26 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
-      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
-      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
+      <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Repos</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
+      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
+      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Intelligence</div>
+      <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
+      <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
-      <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
-      <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
-      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
+      <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" hidden></span></a>
       <a class="oc-nav-item" data-section="nous-section" data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Admin</div>
+      <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
+      <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
+      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
+    </div>
+    <div class="oc-nav-group">
+      <div class="oc-nav-label">Help</div>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, how to advance, and managing cost"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
@@ -3280,7 +3289,7 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
       <span id="oc-git-version" class="git-version"></span>
-      <!-- Fleet breaker — circular play/pause + status pill (clanker queue-suspend
+      <!-- Fleet breaker — circular play/pause + status pill (agent queue-suspend
            pattern). Kept in .oc-topbar-left, the shortest group, so it cannot
            wrap the topbar to a third row. State + owner-gating rendered by
            _renderFleetBreaker; pill visible to everyone, button interactive only
@@ -4083,7 +4092,7 @@
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
-    // Renders the topbar breaker control (clanker queue-suspend pattern):
+    // Renders the topbar breaker control (agent queue-suspend pattern):
     //  - status pill next to it — green "running" when disengaged, red "PAUSED"
     //    when engaged — so the held-fleet state is unmistakable at a glance;
     //  - a circular icon button showing pause bars while the fleet runs
@@ -12412,6 +12421,21 @@ function burnAreaChart() {
     let _kbRendered = false;
     let _kbGraphView = false;
     let _kbGraphData = null;
+
+    function setSidebarCountBadge(el, count, title) {
+      if (!el) return;
+      const n = Number(count) || 0;
+      if (n > 0) {
+        el.hidden = false;
+        el.textContent = n;
+        if (title) el.title = title;
+      } else {
+        el.hidden = true;
+        el.textContent = '';
+        el.removeAttribute('title');
+      }
+    }
+
     async function fetchKnowledgeStats() {
       try {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
@@ -12425,11 +12449,7 @@ function burnAreaChart() {
           ((_kbCache && _kbCache.layers) || []).forEach(function(l) {
             if (l && typeof l.total_pages === 'number') kbFacts += l.total_pages;
           });
-          if (_kbCache && _kbCache.enabled && kbFacts > 0) {
-            kbBadge.style.display = 'inline-flex';
-            kbBadge.textContent = kbFacts;
-            kbBadge.title = kbFacts + ' knowledge facts';
-          } else { kbBadge.style.display = 'none'; }
+          setSidebarCountBadge(kbBadge, _kbCache && _kbCache.enabled ? kbFacts : 0, kbFacts + ' knowledge facts');
         }
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';
@@ -14850,15 +14870,7 @@ function burnAreaChart() {
       if (!pool) return;
       const activeCount = pool.active || 0;
       const totalCount = pool.registered || 0;
-      if (sidebarBadge) {
-        if (totalCount > 0) {
-          sidebarBadge.style.display = 'inline-flex';
-          sidebarBadge.textContent = totalCount;
-          sidebarBadge.title = `${activeCount} active of ${totalCount} registered`;
-        } else {
-          sidebarBadge.style.display = 'none';
-        }
-      }
+      if (sidebarBadge) setSidebarCountBadge(sidebarBadge, totalCount, `${activeCount} active of ${totalCount} registered`);
       if (statusBadge) {
         statusBadge.textContent = `${activeCount} active / ${totalCount} registered`;
         statusBadge.style.background = activeCount > 0 ? 'var(--green)' : 'var(--line)';
@@ -15246,18 +15258,14 @@ function burnAreaChart() {
       renderAdvisoryDigest(data.advisoryDigest || null);
       renderRepos(data.repos || []);
       var reposBadge = document.getElementById('repos-sidebar-badge');
-      if (reposBadge) { var rc = (data.repos || []).length; if (rc > 0) { reposBadge.style.display = 'inline-flex'; reposBadge.textContent = rc; } else { reposBadge.style.display = 'none'; } }
+      if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
       renderBeads(data.beads || {});
       var beadsBadge = document.getElementById('beads-sidebar-badge');
       if (beadsBadge) {
         var bWorkers = (data.beads && data.beads.workers >= 0) ? data.beads.workers : 0;
         var bSupervisor = (data.beads && data.beads.supervisor >= 0) ? data.beads.supervisor : 0;
         var bTotal = bWorkers + bSupervisor;
-        if (bTotal > 0) {
-          beadsBadge.style.display = 'inline-flex';
-          beadsBadge.textContent = bTotal;
-          beadsBadge.title = bWorkers + ' worker / ' + bSupervisor + ' supervisor beads';
-        } else { beadsBadge.style.display = 'none'; }
+        setSidebarCountBadge(beadsBadge, bTotal, bWorkers + ' worker / ' + bSupervisor + ' supervisor beads');
       }
       updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
@@ -19485,9 +19493,7 @@ function burnAreaChart() {
 
         if (level < ACMM_GOVERNOR_MIN_LEVEL) {
           sidebarGroups.forEach(g => {
-            const label = g.querySelector('.oc-nav-label, .oc-tree-toggle');
-            const text = label ? label.textContent.trim() : '';
-            if (text === 'Control') hide(g);
+            if (g.querySelector('.oc-nav-item[data-section="governor"]')) hide(g);
           });
         }
         sidebarItems.forEach(item => {
@@ -21524,7 +21530,7 @@ function burnAreaChart() {
         </div>
 
         <div class="config-field">
-          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a clanker's card; supervisor is never delegatable.</span></span></label>
+          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a contributor agent card; supervisor is never delegatable.</span></span></label>
           <div style="display:flex;flex-direction:column;gap:var(--sp-3)">
             ${['scanner','quality','outreach'].map(function(r) {
               return '<label style="display:flex;align-items:center;gap:var(--sp-4);font-size:0.78rem;color:var(--muted)" title="Default contributor role; always delegatable"><input type="checkbox" checked disabled> ' + r + ' <span style="font-size:0.65rem;color:var(--green)">always on</span></label>';
@@ -28050,7 +28056,7 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', action: 'welcomeShowConfigTab', actionArg: 'Budget' },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', action: 'welcomeShowConfigTab', actionArg: 'Notifications' },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', action: 'welcomeShowSection', actionArg: 'knowledge-section' },
-      { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
+      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors lend contributor agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', action: 'welcomeShowConfigTab', actionArg: 'Hub' },
       { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', action: 'welcomeShowConfigTab', actionArg: 'Security' },
       { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Settings → Features).', action: 'welcomeShowConfigTab', actionArg: TRAJECTORY_CONFIG_TAB },
